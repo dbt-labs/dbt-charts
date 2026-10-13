@@ -20,9 +20,10 @@ from dbt_charts.core.compile.models.primitives import (
     FormatTable,
     NumberLocale,
     Regional,
+    RegionalLocale,
 )
 from dbt_charts.core.text.currencies import CURRENCIES, CurrencyCode
-from dbt_charts.core.text.format_d3 import LocaleName, number_locale_scope
+from dbt_charts.core.text.format_d3 import NumberLocaleName, regional_scope
 
 from .._svg_render import render_board_to_svg
 
@@ -31,18 +32,21 @@ _NBSP = "\u00a0"
 
 @contextmanager
 def _regional(
-    locale: LocaleName | NumberLocale = "en-US", currency: CurrencyCode | None = None
+    locale: NumberLocaleName | NumberLocale = "en-US",
+    currency: CurrencyCode | None = None,
 ) -> Generator[FormatTable]:
     """The board's locale in scope, and its format table."""
-    regional = Regional(locale=locale, currency=currency)
-    with number_locale_scope(regional.format_locale):
+    regional = Regional(locale=RegionalLocale(number=locale), currency=currency)
+    with regional_scope(
+        regional.format_locale, regional.time_locale, regional.week_start
+    ):
         yield FormatTable(aliases={}, currency=currency)
 
 
 def _money(
     value: float,
     name: str = "currency_full",
-    locale: LocaleName = "en-US",
+    locale: NumberLocaleName = "en-US",
     currency: CurrencyCode | None = None,
 ) -> str:
     with _regional(locale, currency) as formats:
@@ -73,14 +77,17 @@ def _board(
 def test_an_unset_regional_is_en_us_with_its_own_currency() -> None:
     result = compile_board(_board({"type": "table", "query": "q"}, None))
     assert result.success and result.board is not None
-    assert result.board.regional == Regional(locale="en-US", currency=None)
+    assert result.board.regional == Regional(currency=None)
 
 
 def test_meta_and_board_regional_merge_field_by_field() -> None:
     meta = BoardPatch.model_validate({"regional": {"currency": "EUR"}})
-    board = BoardPatch.model_validate({"regional": {"locale": "fr-FR"}})
+    board = BoardPatch.model_validate({"regional": {"locale": {"number": "fr-FR"}}})
     merged = merge_patches(meta, board, nested=False)
-    assert merged.regional.model_dump() == {"locale": "fr-FR", "currency": "EUR"}
+    assert merged.regional.model_dump() == {
+        "locale": {"number": "fr-FR", "time": None},
+        "currency": "EUR",
+    }
 
 
 @pytest.mark.parametrize(
@@ -95,7 +102,7 @@ def test_meta_and_board_regional_merge_field_by_field() -> None:
     ],
 )
 def test_the_locale_places_any_currency(
-    locale: LocaleName, currency: CurrencyCode | None, expected: str
+    locale: NumberLocaleName, currency: CurrencyCode | None, expected: str
 ) -> None:
     assert _money(1234.5, "currency_full", locale, currency) == expected
 
@@ -128,7 +135,7 @@ def test_every_supported_code_formats_every_money_name(code: CurrencyCode) -> No
 def test_an_affix_composes_around_the_currency() -> None:
     with _regional("en-US", "EUR"):
         inline = FormatConfig(spec="currency", prefix="US ")
-        assert format_value(12400, inline) == "US €12.4\u00a0K"
+        assert format_value(12400, inline) == "US €12.4K"
     with _regional("de-DE"):
         net = FormatConfig(spec="currency_whole", suffix=" net")
         assert format_value(1234.5, net) == f"1.235{_NBSP}€ net"
@@ -177,10 +184,12 @@ def test_a_custom_locale_formats_like_d3() -> None:
     [
         {"currency": "eur"},
         {"currency": "€"},
-        {"locale": "xx-YY"},
-        {"locale": {"decimal": ","}},
-        {"locale": _CUSTOM | {"grouping": []}},
-        {"locale": _CUSTOM | {"currency": ["", ""]}, "currency": "USD"},
+        {"locale": {"number": "xx-YY"}},
+        {"locale": "de-DE"},
+        {"locale": {"time": "pt-PT"}},
+        {"locale": {"number": {"decimal": ","}}},
+        {"locale": {"number": _CUSTOM | {"grouping": []}}},
+        {"locale": {"number": _CUSTOM | {"currency": ["", ""]}}, "currency": "USD"},
     ],
 )
 def test_an_invalid_regional_is_an_error(regional: dict[str, Any]) -> None:
@@ -252,8 +261,8 @@ def _painted(svg: str) -> str:
 _REGIONALS: dict[str, tuple[dict[str, Any] | None, str]] = {
     "en-US": (None, "$"),
     "en-US-EUR": ({"currency": "EUR"}, "€"),
-    "de-DE": ({"locale": "de-DE"}, "€"),
-    "sv-SE-USD": ({"locale": "sv-SE", "currency": "USD"}, "$"),
+    "de-DE": ({"locale": {"number": "de-DE"}}, "€"),
+    "sv-SE-USD": ({"locale": {"number": "sv-SE"}, "currency": "USD"}, "$"),
 }
 
 
@@ -270,7 +279,9 @@ def test_the_currency_reaches_every_destination(name: str, regional: str) -> Non
 def test_under_one_swaps_to_plain_digits_in_every_destination(name: str) -> None:
     rows = [["A", 0.67, 1], ["B", 0.42, 2]]
     text = _painted(
-        render_board_to_svg(_board(_DESTINATIONS[name], {"locale": "de-DE"}, rows))
+        render_board_to_svg(
+            _board(_DESTINATIONS[name], {"locale": {"number": "de-DE"}}, rows)
+        )
     )
     assert "€" in text
     assert not re.search(r"\d+m\b", text), text
@@ -287,7 +298,7 @@ def test_a_board_alias_to_a_money_name_prints_the_currency() -> None:
 
 def test_a_custom_locale_reaches_vega() -> None:
     chart = _BAR | {"style": {"number_format": "currency_whole"}}
-    text = _painted(render_board_to_svg(_board(chart, {"locale": _CUSTOM})))
+    text = _painted(render_board_to_svg(_board(chart, {"locale": {"number": _CUSTOM}})))
     assert " EUR" in text and "$" not in text, text
     assert re.search(r"\d\.\d{3}", text), text
 
@@ -295,7 +306,8 @@ def test_a_custom_locale_reaches_vega() -> None:
 _PLACEMENT_BOARD = """
 title: P
 regional:
-  locale: de-DE
+  locale:
+    number: de-DE
 queries:
   q:
     type: values
@@ -504,7 +516,7 @@ def test_a_support_strip_that_repeats_follows_the_locale(
 
 @pytest.mark.parametrize("locale", ["en-US", "de-DE"])
 def test_an_si_column_without_a_shared_tier_pads_in_any_locale(
-    locale: LocaleName,
+    locale: NumberLocaleName,
 ) -> None:
     from dbt_charts.core.compile.resolve.chart._table import (
         _unscaled_decimal_pad_table,
@@ -538,7 +550,9 @@ def test_a_negative_anchored_tick_leads_with_the_currency_then_the_sign() -> Non
 
 
 @pytest.mark.parametrize("locale", ["en-US", "de-DE"])
-def test_a_currency_column_mixing_si_tiers_is_not_padded(locale: LocaleName) -> None:
+def test_a_currency_column_mixing_si_tiers_is_not_padded(
+    locale: NumberLocaleName,
+) -> None:
     from dbt_charts.core.compile.resolve.chart._table import (
         _unscaled_decimal_pad_table,
     )

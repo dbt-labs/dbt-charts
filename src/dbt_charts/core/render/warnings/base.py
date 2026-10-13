@@ -33,10 +33,8 @@ table_overflows is likewise SPARSE: only tables that overflowed their slot
 appear, and only on SVG-family renders (non-SVG formats never rasterize a
 table, so it is empty for them).
 
-static_pagination_caps is likewise SPARSE: only tables whose static export
-hit the pre-rendered-page cap appear, and only on SVG-family renders (a
-static export is the only surface that pre-renders pages at all — non-SVG
-formats and interactive hosts never populate it).
+static_paginations is likewise SPARSE: only tables a static export paginated
+appear, and only on SVG-family renders (the text format reads its own copy).
 
 table_page_squeezes is likewise SPARSE: only tables whose layout slot fit
 fewer rows than their resolved page size appear, and only on SVG-family
@@ -98,7 +96,7 @@ from dbt_charts.core.render.chart.table_overflow import (
     TableOverflow,
 )
 from dbt_charts.core.render.chart.table_page_squeeze import TablePageSqueeze
-from dbt_charts.core.render.chart.table_static_pagination import StaticPaginationCap
+from dbt_charts.core.render.chart.table_static_pagination import StaticPagination
 from dbt_charts.core.render.chart.text_truncation import TextTruncation
 from dbt_charts.core.render.chart.x_domain_paint_order import XDomainPaintOrder
 from dbt_charts.core.render.contrast_warning import ContrastRecord
@@ -124,9 +122,9 @@ class WarningContext(BaseModel):
     # chart id → the table's slot cramping at render time (tables only; sparse —
     # only tables the renderer had to degrade appear, and only on SVG renders).
     table_crampings: dict[str, TableCramping] = {}
-    # chart id → the table's static-export page cap at render time (tables
-    # only; sparse — only a static export that hit the cap populates this).
-    static_pagination_caps: dict[str, StaticPaginationCap] = {}
+    # chart id → how the table paginated in a static export (tables only; sparse
+    # — only a paginated table appears, and only on SVG-family renders).
+    static_paginations: dict[str, StaticPagination] = {}
     # chart id → the page the table's slot cut down at render time (tables
     # only; sparse — only a table whose slot fit fewer rows than its page holds
     # appears, and only on SVG-family renders).

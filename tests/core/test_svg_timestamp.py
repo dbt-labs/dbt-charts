@@ -5,7 +5,7 @@ Tests the data-rendered-at attribute and visible timestamp display.
 
 import re
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from xml.etree import ElementTree
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
@@ -429,3 +429,39 @@ style:
 
         assert timestamp.attrib["text-anchor"] == "end"
         assert float(timestamp.attrib["x"]) == right_edge
+
+
+def test_render_reads_its_clock_from_the_executor() -> None:
+    """Render time is an input, not a wall-clock read inside the renderer.
+
+    With the clock pinned, two renders straddling a real second (or minute)
+    boundary still agree — the property every render-equality test depends on,
+    and the one an ambient ``datetime.now()`` broke on loaded CI.
+    """
+    from pathlib import Path
+
+    from dbt_charts.core.compile import compile
+    from dbt_charts.core.execute import Executor
+    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.render import render
+
+    from .._svg_normalize import normalize_same_run_svg
+    from ._svg_render import SAMPLE_BOARD_YAML
+
+    pinned = datetime(2001, 2, 3, 4, 5, 6, tzinfo=UTC)
+    result = compile(SAMPLE_BOARD_YAML)
+    assert result.board is not None
+    registry = build_adapter_registry(FilesystemProject(Path.cwd()))
+
+    def render_once() -> str:
+        executor = Executor(
+            result.board, adapter_registry=registry, clock=lambda: pinned
+        )
+        output = render(result.board, executor, format="svg").output
+        assert isinstance(output, str)
+        return output
+
+    svg = render_once()
+    assert 'data-rendered-at="2001-02-03T04:05:06Z"' in svg
+    assert _render_timestamp_element(svg).text == "Data as of 04:05 UTC on 3 Feb 2001"
+    assert normalize_same_run_svg(render_once()) == normalize_same_run_svg(svg)

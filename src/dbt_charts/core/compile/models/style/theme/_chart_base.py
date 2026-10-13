@@ -25,7 +25,6 @@ from dbt_charts.core.compile.models.factories import (
 )
 from dbt_charts.core.compile.models.markers import (
     Color,
-    Format,
     Inherit,
     InheritSlot,
     SkipInheritSlots,
@@ -34,12 +33,7 @@ from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
     ColorStyle,
     FontStyle,
-    FormatConfig,
     StaticGradientColorStyle,
-)
-from dbt_charts.core.compile.models.schema_names import (
-    NumberFormatAlias,
-    TimeFormatAlias,
 )
 from dbt_charts.core.compile.models.style.theme.board import (
     PaddingStyle,
@@ -313,16 +307,6 @@ class _CartesianChartStyle(
     axis_band: Annotated[BandAxisStylePatch | None, SkipInheritSlots()] = Field(
         default=None,
         description="Per-chart-type categorical (band) axis overrides; None inherits the global band axis at render.",
-    )
-    number_format: Annotated[
-        NumberFormatAlias | str | FormatConfig | None, Format(kind="number")
-    ] = Field(
-        default=None,
-        description="Default number format for axes and tooltips (D3 format string); None inherits from theme.",
-    )
-    time_format: Annotated[TimeFormatAlias | str | None, Format(kind="time")] = Field(
-        default=None,
-        description="Default time format for temporal axes (D3 time format string or strftime spec like '%b %Y'); None inherits from theme.",
     )
     # InheritSlot: per-family support_table inherits from Style.charts.support_table.
     # Field stays nullable so theme YAML can omit it; inherit_graph.py emits a

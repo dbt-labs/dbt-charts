@@ -54,7 +54,7 @@ def test_board_patch_desugar_rejects_both_theme_and_extends() -> None:
 
     from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
 
-    with pytest.raises(ValidationError, match="Cannot specify both"):
+    with pytest.raises(ValidationError, match="Cannot set both"):
         BOARD_PATCH_ADAPTER.validate_python({"theme": "paper", "extends": "stark"})
 
 

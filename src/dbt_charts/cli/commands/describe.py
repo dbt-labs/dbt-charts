@@ -22,13 +22,21 @@ console = dct_console()
 
 @with_project
 def describe_command(
-    paths: list[Path], *, project: Project, json_output: bool = False
+    paths: list[Path],
+    *,
+    project: Project,
+    chart: str | None = None,
+    json_output: bool = False,
 ) -> None:
-    """Describe the structure of one or more board files."""
+    """Describe the structure of one or more board files, or one chart."""
     from dbt_charts.agent_api import ProjectSession
 
     with ProjectSession.from_project(project) as project_session:
-        results = project_session.describe_paths(paths)
+        if chart is None:
+            results = project_session.describe_paths(paths)
+        else:
+            (path,) = paths
+            results = [project_session.describe_chart(path, chart)]
     _emit(results, json_output=json_output)
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import date
 from typing import Literal
 
 from dbt_charts.core.compile.config import get_chart_rendering
@@ -239,6 +240,7 @@ def _resolve_area(
     width: float,
     datasets: LayerDatasets,
     automatic_link_candidate: AutomaticLinkCandidate,
+    x_date_range: tuple[date, date] | None,
     display_text: ChartDisplayText = None,
 ) -> ResolvedAreaChart:
     data = dataset.all_rows()
@@ -709,6 +711,7 @@ def _resolve_area(
     return ResolvedAreaChart(
         **bkw,
         **_ck,
+        x_date_range=x_date_range,
         wide_measures=wide_measures,
         chart_type="area",
         stack=resolved_stack,

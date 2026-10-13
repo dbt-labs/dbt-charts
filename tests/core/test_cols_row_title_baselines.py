@@ -14,8 +14,7 @@ from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.board.normalized import TitleShift
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.render import layout_sizing
-from dbt_charts.core.render.chart.table import title_ascent
-from dbt_charts.core.render.title_band import TitleMetrics
+from dbt_charts.core.render.title_band import TitleMetrics, title_ascent
 
 from .._svg_normalize import normalize_same_run_svg
 from ._svg_render import render_board_to_svg

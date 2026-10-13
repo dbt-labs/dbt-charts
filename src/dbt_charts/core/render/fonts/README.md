@@ -290,7 +290,7 @@ So figure style is selected by *naming the family* — `dbt Serif Oldstyle Tabul
 `dbt Serif Oldstyle Proportional`, whose oldstyle figures are baked into the glyph
 outlines and therefore survive any renderer. The same reasoning is why
 `dbt Sans Tabular` bakes `tnum` across its masters instead of asking for the feature.
-`render/chart/table.py` still emits `font-feature-settings: 'tnum'` beside its tabular
+the engine's table family still emits `font-feature-settings: 'tnum'` beside its tabular
 family, which is fine: the family is doing the work and the declaration is inert
 decoration for renderers that would honor it.
 

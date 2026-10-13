@@ -52,6 +52,7 @@ class TestArtifactCliSurface:
         assert isinstance(artifact_group, TyperGroup)
         assert "emit" in artifact_group.commands
         assert "render" in artifact_group.commands
+        assert "schema" in artifact_group.commands
 
     def test_board_no_longer_registered(self) -> None:
         result = runner.invoke(app, ["board", "emit", "charts/sales.yml"])
@@ -234,3 +235,34 @@ class TestRenderArtifact:
         assert live_result.exit_code == 0, live_result.output
 
         assert _normalize(replay_result.output) == _normalize(live_result.output)
+
+
+class TestArtifactSchema:
+    def test_schema_prints_the_artifact_json_schema(self) -> None:
+        result = runner.invoke(app, ["artifact", "schema"])
+
+        assert result.exit_code == 0, result.output
+        schema = json.loads(result.output)
+        assert (
+            schema["$id"] == "https://dbtcharts.com/schemas/board-resolved.schema.json"
+        )
+        assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+
+    def test_emitted_artifact_validates_against_the_printed_schema(
+        self, tmp_path: Path
+    ) -> None:
+        from jsonschema import Draft202012Validator
+
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        board = tmp_path / "board.yml"
+        board.write_text(_BOARD_YAML)
+        emit_result = runner.invoke(
+            app, ["artifact", "emit", str(board), "--project-dir", str(tmp_path)]
+        )
+        assert emit_result.exit_code == 0, emit_result.output
+
+        schema_result = runner.invoke(app, ["artifact", "schema"])
+        assert schema_result.exit_code == 0, schema_result.output
+
+        artifact = json.loads((tmp_path / "boards" / "board.board.json").read_text())
+        Draft202012Validator(json.loads(schema_result.output)).validate(artifact)

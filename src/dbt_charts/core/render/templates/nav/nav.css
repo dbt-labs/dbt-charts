@@ -31,3 +31,8 @@
 .dbt-nav-data{color:var(--dbt-system-muted);text-decoration:none;text-underline-offset:3px;}
 .dbt-nav-data:hover,.dbt-nav-data:focus-visible{text-decoration:underline;}
 .dbt-nav-more{color:var(--dbt-system-muted);}
+.dbt-page-loading{cursor:progress;}
+.dbt-page-loading .dbt-nav-strip::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:3px;background:linear-gradient(var(--dbt-system-accent),var(--dbt-system-accent)) 0 0/40% 100% no-repeat;animation:dbt-nav-progress 1.2s ease-in-out infinite;}
+.dbt-page-loading .dbt-charts-svg-container{opacity:.55;transition:opacity .2s ease .15s;}
+@keyframes dbt-nav-progress{from{background-position:-70% 0;}to{background-position:170% 0;}}
+@media (prefers-reduced-motion:reduce){.dbt-page-loading .dbt-nav-strip::after{animation:none;background:var(--dbt-system-accent);}}

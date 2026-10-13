@@ -157,7 +157,10 @@ def test_validate_suppression_codes_rejects_unknown_code() -> None:
         validate_suppression_codes(["WARN-PIE-TOO-MANY-SEGMENT"], source="chart 'c'")
 
 
-@pytest.mark.parametrize("code", ["WARN-ADJACENT-TEXT-ROWS", "WARN-FANOUT-RISK"])
+@pytest.mark.parametrize(
+    "code",
+    ["WARN-ADJACENT-TEXT-ROWS", "WARN-FANOUT-RISK", "WARN-PIE-TOO-MANY-SEGMENTS"],
+)
 def test_validate_suppression_codes_keeps_a_retired_code_loading_with_a_warning(
     code: str,
 ) -> None:

@@ -330,7 +330,7 @@ class TestM6aScaleWithTotal:
     company_revenue_with_total has 8 value rows + 1 total row (193.52M).
     Scale is on quarterly_revenue (always non-null, including on the total row).
 
-    If the is_summary_role guard at table_support.py:965 is removed, the total
+    If the summary-role guard is removed, the total
     row's quarterly_revenue cell (193.52M) gets interpolated via the scale path.
     Domain is [3.89M, 193.52M] (all rows), so 193.52M maps to t=1.0 → last stop
     of dbt-div-crimson-green table surface = #4a985d (darkest WCAG-safe green).

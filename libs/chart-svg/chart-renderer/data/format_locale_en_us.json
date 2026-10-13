@@ -1,0 +1,26 @@
+{
+  "decimal": ".",
+  "currency": [
+    "$",
+    ""
+  ],
+  "percent": "%",
+  "minus": "\u2212",
+  "nan": "NaN",
+  "thousands": ",",
+  "grouping": [
+    3
+  ],
+  "analytic": [
+    "K",
+    "M",
+    "B",
+    "T"
+  ],
+  "narrative": [
+    "k",
+    "mn",
+    "bn",
+    "trn"
+  ]
+}

@@ -46,6 +46,16 @@ Changes in this release:
   (and ``style.charts.<family>.title.sizes``) and a chart-local
   ``style.title.sizes`` have no successor, because the ramp is a board-wide
   font. Each is a ``Deletion`` that can only reach a chart-level style.
+- **Chart-wide format keys retire onto the axis slots**: a chart's
+  ``style.number_format`` becomes ``style.axis_y.labels.format`` (the measure
+  axis, whatever the orientation) and ``style.time_format`` becomes
+  ``style.axis_x.labels.format`` (``Move``s scoped to the chart family). A
+  ``Move`` raises when the chart's own ``axis`` or ``axis_quantitative`` labels
+  already carry a format. ``time_format`` and a scatter's ``number_format``
+  raise: the old keys applied only on a date or numeric channel, which the YAML
+  does not say. A heatmap's
+  keys, and ``style.charts.<family>.number_format`` / ``time_format`` (never
+  read), are ``Deletion``s with a reason.
 """
 
 from __future__ import annotations
@@ -159,6 +169,7 @@ def moves(
         _heading_ramp_moves(source_schema, target_schema, catalog)
         + _divider_moves(source_schema, target_schema, catalog)
         + _kpi_moves(source_schema, target_schema, catalog)
+        + _chart_format_moves(source_schema, target_schema, catalog)
         + tuple(
             dataclasses.replace(
                 move,
@@ -173,6 +184,99 @@ def moves(
                 [(LEGEND_POSITION_TAIL, LEGEND_POSITION_TAIL)],
                 catalog=catalog,
             )
+        )
+    )
+
+
+_CHART_FORMAT_MEASURE_FAMILIES = ("bar", "line", "area", "histogram")
+_CHART_FORMAT_THEME_FAMILIES = (*_CHART_FORMAT_MEASURE_FAMILIES, "scatter", "heatmap")
+
+# Chart-local axis layers that sat below the old key and now would sit above it.
+_MEASURE_FORMAT_COMPETITORS: tuple[YamlKeyPath, ...] = (
+    ("axis", "labels", "format"),
+    ("axis_quantitative", "labels", "format"),
+)
+
+_FORMAT_KEY_DELETION_REASON = (
+    "{key} was never read here, so it formatted nothing. Set a slot's "
+    "labels.format (style.axis_y.labels.format) or formats: on the query."
+)
+_HEATMAP_FORMAT_REASON = (
+    "A heatmap's axes are both grid dimensions, so {key} never applied. "
+    "Set formats: on the query."
+)
+
+
+def _ambiguous_chart_format(message: str) -> Callable[[JsonValue], JsonValue | Dropped]:
+    def refuse(value: JsonValue) -> JsonValue | Dropped:
+        raise MigrationError(f"Cannot migrate {message} Migrate this field manually.")
+
+    return refuse
+
+
+# The old keys formatted an axis only when its channel was numeric (number_format)
+# or temporal (time_format), and the YAML cannot say which channel an axis is.
+_TIME_FORMAT_REFUSAL = _ambiguous_chart_format(
+    "style.time_format: it formatted x only when x is a date, and the YAML does "
+    "not say. If x is a date, move it to style.axis_x.labels.format (or "
+    "style.axis_y.labels.format on a scatter's date y); otherwise delete it."
+)
+_SCATTER_NUMBER_FORMAT_REFUSAL = _ambiguous_chart_format(
+    "style.number_format on a scatter chart: it formatted y only when y is "
+    "numeric, and a dot plot puts the measure on x. Move it to "
+    "style.axis_y.labels.format or style.axis_x.labels.format."
+)
+
+
+def _chart_format_moves(
+    source_schema: str, target_schema: str, catalog: YamlSchemaCatalog
+) -> tuple[Move, ...]:
+    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+
+    def scoped(
+        old: str,
+        new_axis: str,
+        families: tuple[str, ...],
+        *,
+        rewrite: Callable[[JsonValue], JsonValue | Dropped] | None = None,
+        conflicts_with: tuple[YamlKeyPath, ...] = (),
+    ) -> tuple[Move, ...]:
+        found = suffix_rename_moves(
+            AuthoredBoard,
+            source_schema,
+            target_schema,
+            [(("style", new_axis, "labels", "format"), ("style", old))],
+            catalog=catalog,
+        )
+        return tuple(
+            dataclasses.replace(
+                move,
+                chart_type=family,
+                rewrite=rewrite,
+                conflicts_with=conflicts_with,
+            )
+            for move in found
+            for family in families
+        )
+
+    return (
+        scoped(
+            "number_format",
+            "axis_y",
+            _CHART_FORMAT_MEASURE_FAMILIES,
+            conflicts_with=_MEASURE_FORMAT_COMPETITORS,
+        )
+        + scoped(
+            "number_format",
+            "axis_y",
+            ("scatter",),
+            rewrite=_SCATTER_NUMBER_FORMAT_REFUSAL,
+        )
+        + scoped(
+            "time_format",
+            "axis_x",
+            (*_CHART_FORMAT_MEASURE_FAMILIES, "scatter"),
+            rewrite=_TIME_FORMAT_REFUSAL,
         )
     )
 
@@ -528,7 +632,8 @@ def _chart_families_with_title_ramp(schema: JsonObject) -> tuple[str, ...]:
 def deletions(
     source_schema: str, target_schema: str, *, catalog: YamlSchemaCatalog
 ) -> tuple[Deletion, ...]:
-    """Return the Deletions of chart-level ``title.sizes`` and retired KPI keys."""
+    """Return the Deletions of chart-level ``title.sizes``, retired KPI keys, and
+    the format keys no slot ever read."""
     source_schema_obj = catalog.grammar_for(source_schema)
     tails = [
         (*prefix, "title", "sizes")
@@ -559,4 +664,24 @@ def deletions(
         Deletion(source_schema, target_schema, tail, reason=reason, chart_type=family)
         for tail, reason, family in _KPI_DELETIONS
     )
+    for key in ("number_format", "time_format"):
+        deletions.extend(
+            Deletion(
+                source_schema,
+                target_schema,
+                ("style", "charts", family, key),
+                reason=_FORMAT_KEY_DELETION_REASON.format(key=key),
+            )
+            for family in _CHART_FORMAT_THEME_FAMILIES
+            if _schema_path_exists(source_schema_obj, ("style", "charts", family, key))
+        )
+        deletions.append(
+            Deletion(
+                source_schema,
+                target_schema,
+                ("style", key),
+                reason=_HEATMAP_FORMAT_REASON.format(key=key),
+                chart_type="heatmap",
+            )
+        )
     return tuple(deletions)

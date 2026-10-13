@@ -225,7 +225,7 @@ class TestQuantitativeTickLabelsWithRuler:
             prefix="$",
             digit_spec=",.1~f",
             anchor_at_start=False,
-            reservation=compose_suffix_reservation(" K", DBT_SANS_TABULAR_FONT_FAMILY),
+            reservation=compose_suffix_reservation("K", DBT_SANS_TABULAR_FONT_FAMILY),
         )
         ticks = (0.0, 100_000.0, 200_000.0, 300_000.0, 400_000.0, 500_000.0)
         labels = quantitative_tick_labels(
@@ -238,7 +238,7 @@ class TestQuantitativeTickLabelsWithRuler:
             "200" + pad,
             "300" + pad,
             "400" + pad,
-            "$500\u00a0K",
+            "$500K",
         ]
 
     def test_authored_prefix_measures_the_same_as_a_native_dollar(self) -> None:
@@ -256,7 +256,7 @@ class TestQuantitativeTickLabelsWithRuler:
             prefix="",
             digit_spec=",.1~f",
             anchor_at_start=False,
-            reservation=compose_suffix_reservation(" K", DBT_SANS_TABULAR_FONT_FAMILY),
+            reservation=compose_suffix_reservation("K", DBT_SANS_TABULAR_FONT_FAMILY),
         )
         ticks = (0.0, 100_000.0, 200_000.0, 300_000.0, 400_000.0, 500_000.0)
         labels = quantitative_tick_labels(
@@ -271,7 +271,7 @@ class TestQuantitativeTickLabelsWithRuler:
             "200" + pad,
             "300" + pad,
             "400" + pad,
-            "€500\u00a0K",
+            "€500K",
         ]
 
     def test_native_symbol_and_authored_prefix_measure_together_on_the_anchor(
@@ -293,7 +293,7 @@ class TestQuantitativeTickLabelsWithRuler:
             prefix="$",
             digit_spec=",.1~f",
             anchor_at_start=False,
-            reservation=compose_suffix_reservation(" K", DBT_SANS_TABULAR_FONT_FAMILY),
+            reservation=compose_suffix_reservation("K", DBT_SANS_TABULAR_FONT_FAMILY),
         )
         ticks = (0.0, 100_000.0, 200_000.0, 300_000.0, 400_000.0, 500_000.0)
         labels = quantitative_tick_labels(
@@ -308,7 +308,7 @@ class TestQuantitativeTickLabelsWithRuler:
             "200" + pad,
             "300" + pad,
             "400" + pad,
-            "US $500\u00a0K",
+            "US $500K",
         ]
 
     def test_repeat_mode_900k_ladder_matches_the_real_render(self) -> None:
@@ -382,13 +382,13 @@ class TestQuantitativeTickLabelsWithRuler:
             prefix="",
             digit_spec=",.1~f",
             anchor_at_start=False,
-            reservation=compose_suffix_reservation(" K", DBT_SANS_TABULAR_FONT_FAMILY),
+            reservation=compose_suffix_reservation("K", DBT_SANS_TABULAR_FONT_FAMILY),
         )
         labels = quantitative_tick_labels(
             (0.0, 500_000.0), ResolvedFormat(spec=".3~s"), ruler=ruler
         )
         assert labels[0] == "0" + ruler.reservation
-        assert labels[1] == "500\u00a0K"
+        assert labels[1] == "500K"
 
     def test_non_column_forming_never_reserves(self) -> None:
         """A horizontal ruler's ruler.reserve is False -- even though the
@@ -414,7 +414,7 @@ class TestQuantitativeTickLabelsWithRuler:
 
     def test_ruler_negative_anchor_renders_sign_before_symbol(self) -> None:
         """Regression: compacting (ruler) path with a currency prefix and a
-        negative anchor tick must produce '-$500\u00a0K' not '$-500\u00a0K'.
+        negative anchor tick must produce '-$500K' not '$-500K'.
         """
         ruler = ResolvedRulerAxis(
             exponent=3,
@@ -425,7 +425,7 @@ class TestQuantitativeTickLabelsWithRuler:
             prefix="$",
             digit_spec=",.1~f",
             anchor_at_start=True,
-            reservation=compose_suffix_reservation(" K", DBT_SANS_TABULAR_FONT_FAMILY),
+            reservation=compose_suffix_reservation("K", DBT_SANS_TABULAR_FONT_FAMILY),
         )
         ticks = (-500_000.0, -300_000.0, -100_000.0, 0.0)
         labels = quantitative_tick_labels(
@@ -433,9 +433,7 @@ class TestQuantitativeTickLabelsWithRuler:
         )
         pad = ruler.reservation
         # d3 emits U+2212 MINUS SIGN, not ASCII hyphen.
-        assert labels[0] == "−$500\u00a0K", (
-            f"expected sign before symbol, got {labels[0]!r}"
-        )
+        assert labels[0] == "−$500K", f"expected sign before symbol, got {labels[0]!r}"
         assert labels[1] == "−300" + pad
         assert labels[2] == "−100" + pad
         assert labels[3] == "0" + pad
@@ -460,7 +458,7 @@ class TestQuantitativeTickLabelsWithRuler:
             prefix="",
             digit_spec=",.1~f",
             anchor_at_start=True,
-            reservation=compose_suffix_reservation(" K", DBT_SANS_TABULAR_FONT_FAMILY),
+            reservation=compose_suffix_reservation("K", DBT_SANS_TABULAR_FONT_FAMILY),
         )
         ticks = (-600_000.0, -400_000.0, -200_000.0, 0.0)
         labels = quantitative_tick_labels(
@@ -469,7 +467,7 @@ class TestQuantitativeTickLabelsWithRuler:
         pad = ruler.reservation
         # d3 emits U+2212 MINUS SIGN, not ASCII hyphen, for a negative value.
         assert labels == [
-            "\u2212600\u00a0K",
+            "\u2212600K",
             "\u2212400" + pad,
             "\u2212200" + pad,
             "0" + pad,

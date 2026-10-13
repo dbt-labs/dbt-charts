@@ -607,10 +607,9 @@ def _resolve_cartesian_ticks(
             # mixed-sign the same way a strictly positive max is -- the
             # anchored edge (0) is still the data's own ceiling, not the
             # floor negative_floor's strict `< 0` guard describes below.
-            # Bake domainMax only when headroom expanded past the data max.
-            # headroom=0 leaves it None — VL auto-fits.
-            if tick_max > raw_max:
-                domain_max = tick_max
+            # Rungs above a baked domainMax are not drawn, so the baked top is
+            # what tells resolve which positive rungs exist.
+            domain_max = tick_max
             if raw_min < 0:
                 mixed_sign_floor = raw_min * (1.0 + h) if h else raw_min
         else:
@@ -637,6 +636,8 @@ def _resolve_cartesian_ticks(
             tick_max = domain_max
         else:
             tick_min, tick_max = data_min, raw_max
+            if span > 0:
+                domain_max = raw_max
     if target_count is None:
         # Bake the domain only where the floor could bind, judged by a probe
         # at about Vega-Lite's default density; elsewhere its auto-fit domain

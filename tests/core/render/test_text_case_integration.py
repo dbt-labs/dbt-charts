@@ -315,7 +315,7 @@ def test_rect_x_axis_upper_case_produces_label_expr() -> None:
 
 def test_kpi_label_upper_case_reaches_rendered_svg() -> None:
     """style.charts.kpi.label.font.case: upper transforms KPI label text in SVG output."""
-    from dbt_charts.core.render.chart.kpi import render_kpi_svg
+    from .._engine_render import render_kpi_svg
 
     base = get_theme_style()
     seed = base.model_copy(

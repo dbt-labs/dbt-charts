@@ -112,28 +112,6 @@ class TestPlaceholderRendering:
 
         assert svg.startswith("<svg") or "<svg" in svg
 
-    def test_table_placeholder_renders(self, make_chart):
-        """Table placeholder should render with sample data."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
-        from dbt_charts.core.render.placeholder import generate_placeholder_data
-
-        chart = make_chart("table", query=None, query_name=None)
-        placeholder_data = generate_placeholder_data("table", chart)
-        chart = resolve(chart, placeholder_data, chart_style_context=_BOARD_STYLE)
-        svg = render_table_svg(
-            chart,
-            placeholder_data,
-            is_placeholder=True,
-            board_style=resolve_style(get_theme_style()),
-        )
-
-        # Should be valid SVG
-        assert "<svg" in svg
-        # Should have "add data" text
-        assert "add data" in svg.lower()
-
     def test_kpi_placeholder_renders(self, make_chart):
         """KPI placeholder should render with sample value."""
         from dbt_charts.core.render.chart.vega_lite import render_chart

@@ -18,72 +18,6 @@ from dbt_charts.core.compile.resolve.style.board import (
 _BOARD_STYLE = resolve_style(get_theme_style())
 
 
-class TestResolveRowRole:
-    """Unit tests for the resolve_row_role helper."""
-
-    def test_none_spec_returns_value(self):
-        from dbt_charts.core.render.chart.table_support import resolve_row_role
-
-        assert resolve_row_role(None, {"a": 1}) == "value"
-
-    def test_column_ref_returns_role(self):
-        from dbt_charts.core.render.chart.table_support import resolve_row_role
-
-        assert resolve_row_role("row_role", {"row_role": "total"}) == "total"
-        assert resolve_row_role("row_role", {"row_role": "summary"}) == "summary"
-        assert resolve_row_role("row_role", {"row_role": "value"}) == "value"
-
-    def test_case_insensitive(self):
-        from dbt_charts.core.render.chart.table_support import resolve_row_role
-
-        assert resolve_row_role("row_role", {"row_role": "TOTAL"}) == "total"
-        assert resolve_row_role("row_role", {"row_role": "Summary"}) == "summary"
-
-    def test_empty_value_returns_value(self):
-        from dbt_charts.core.render.chart.table_support import resolve_row_role
-
-        assert resolve_row_role("row_role", {"row_role": ""}) == "value"
-
-    def test_null_value_returns_value(self):
-        from dbt_charts.core.render.chart.table_support import resolve_row_role
-
-        assert resolve_row_role("row_role", {"row_role": None}) == "value"
-
-    def test_unknown_value_falls_back_to_value(self):
-        from dbt_charts.core.render.chart.table_support import resolve_row_role
-
-        assert resolve_row_role("row_role", {"row_role": "magic"}) == "value"
-
-    def test_missing_column_falls_back_to_literal(self):
-        from dbt_charts.core.render.chart.table_support import resolve_row_role
-
-        # "nonexistent" is not a column, so spec is treated as literal.
-        # The literal "nonexistent" is not a valid role, so returns "value".
-        assert resolve_row_role("nonexistent", {"a": 1}) == "value"
-
-    def test_literal_role_value(self):
-        from dbt_charts.core.render.chart.table_support import resolve_row_role
-
-        # When spec is literal "total" and no column named "total" exists,
-        # every row is interpreted as having role "total".
-        assert resolve_row_role("total", {"a": 1}) == "total"
-
-    def test_is_summary_role(self):
-        from dbt_charts.core.render.chart.table_support import is_summary_role
-
-        assert is_summary_role("summary") is True
-        assert is_summary_role("total") is True
-        assert is_summary_role("value") is False
-        assert is_summary_role("") is False
-
-    def test_is_total_role(self):
-        from dbt_charts.core.render.chart.table_support import is_total_role
-
-        assert is_total_role("total") is True
-        assert is_total_role("summary") is False
-        assert is_total_role("value") is False
-
-
 class TestRowTypingRendering:
     """Integration tests for summary/total row styling in render_table_svg."""
 
@@ -142,13 +76,11 @@ class TestRowTypingRendering:
         suppressed: the double-rule above the total is the terminal
         visual separator and drawing extras would stack redundantly.
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         _custom_ctx = self._style_with_row_rule()
-        chart = resolve(chart, [], chart_style_context=_custom_ctx)
+        chart = resolve(chart, self._data_with_total(), chart_style_context=_custom_ctx)
         svg = render_table_svg(
             chart,
             self._data_with_total(),
@@ -168,13 +100,13 @@ class TestRowTypingRendering:
         Row rule below the last data row is suppressed (the summary rule
         above the summary row IS the separator between body and summary).
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         _custom_ctx = self._style_with_row_rule()
-        chart = resolve(chart, [], chart_style_context=_custom_ctx)
+        chart = resolve(
+            chart, self._data_with_summary(), chart_style_context=_custom_ctx
+        )
         svg = render_table_svg(
             chart,
             self._data_with_summary(),
@@ -190,13 +122,11 @@ class TestRowTypingRendering:
 
     def test_summary_row_medium(self, make_chart):
         """Summary rows render with font-weight 500 (medium) by default."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         _custom_ctx = self._style_with_row_rule()
-        chart = resolve(chart, [], chart_style_context=_custom_ctx)
+        chart = resolve(chart, self._data_with_total(), chart_style_context=_custom_ctx)
         svg = render_table_svg(
             chart,
             self._data_with_total(),
@@ -207,13 +137,11 @@ class TestRowTypingRendering:
 
     def test_no_row_role_config_no_medium(self, make_chart):
         """When row_role is unset, no data rows get medium styling."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         es = resolve_chart_style_context(get_theme_style())
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, self._data_with_total(), chart_style_context=es)
         svg = render_table_svg(
             chart,
             self._data_with_total(),
@@ -229,9 +157,7 @@ class TestRowTypingRendering:
     def test_no_row_rule_no_summary_rule(self, make_chart):
         """When row_rule_width=0, no summary rule drawn even for summary rows."""
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         es = resolve_chart_style_context(get_theme_style())
@@ -269,7 +195,7 @@ class TestRowTypingRendering:
         es = dataclasses.replace(
             es, table=tc.model_copy(update={"row": new_row, "header": new_header})
         )
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, self._data_with_total(), chart_style_context=es)
         svg = render_table_svg(
             chart,
             self._data_with_total(),
@@ -292,9 +218,8 @@ class TestAnchorsMode:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         chart.style = TableChartStylePatch(
@@ -321,7 +246,7 @@ class TestAnchorsMode:
             {"company": "Mid", "revenue": 5000000, "row_role": "value"},
             {"company": "Total", "revenue": 37190000, "row_role": "total"},
         ]
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,
@@ -338,7 +263,8 @@ class TestAnchorsMode:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
-        from dbt_charts.core.render.chart.table import render_table_svg
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         chart.style = TableChartStylePatch(
@@ -355,7 +281,7 @@ class TestAnchorsMode:
             {"company": name, "revenue": value}
             for name, value in zip("ABC", revenues, strict=True)
         ]
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         return render_table_svg(chart, data, width=600, board_style=_BOARD_STYLE)
 
     @pytest.mark.parametrize("unit", ["EUR", "GBP", "USD", "MXN", "PLN"])
@@ -390,10 +316,11 @@ class TestAnchorsMode:
     def test_anchors_keeps_a_magnitude_suffix_on_every_row(self, make_chart):
         from dbt_charts.core.compile.models.primitives import FormatConfig
 
+        # Mixed tiers resolve no shared scale, so each row names its own magnitude.
         svg = self._anchors_svg(
-            make_chart, FormatConfig(spec=".3~s"), [1_500_000, 2_500_000, 3_500_000]
+            make_chart, FormatConfig(spec=".3~s"), [1_500_000, 2_500, 3_500_000_000]
         )
-        assert svg.count(">M<") == 3
+        assert all(f">{unit}<" in svg for unit in ("M", "k", "G"))
 
 
 class TestAllSymbolsMode:
@@ -411,9 +338,8 @@ class TestAllSymbolsMode:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         chart.style = TableChartStylePatch(
@@ -432,7 +358,7 @@ class TestAllSymbolsMode:
             {"company": "Mid", "revenue": 5_000_000},
             {"company": "Lowly", "revenue": 1_200_000},
         ]
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,
@@ -458,9 +384,8 @@ class TestAllSymbolsMode:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         chart.style = TableChartStylePatch(
@@ -486,7 +411,7 @@ class TestAllSymbolsMode:
             {"company": "Bright", "revenue": 8_460_000, "row_role": "value"},
             {"company": "Total", "revenue": 33_190_000, "row_role": "total"},
         ]
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,
@@ -508,9 +433,8 @@ class TestAllSymbolsMode:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         chart.style = TableChartStylePatch(
@@ -527,7 +451,7 @@ class TestAllSymbolsMode:
             {"company": "Mid", "revenue": 5_000_000},
             {"company": "Lowly", "revenue": 1_200_000},
         ]
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,
@@ -554,9 +478,8 @@ class TestScaleDomainExcludesTotalRows:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         chart.style = TableChartStylePatch(
@@ -588,7 +511,7 @@ class TestScaleDomainExcludesTotalRows:
             ),
         )
 
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,

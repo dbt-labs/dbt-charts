@@ -13,6 +13,7 @@ encapsulates its own behavior.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Any
 
 # Allowlist of valid SQL operators for filter() method
@@ -42,6 +43,22 @@ VALID_OPERATORS = frozenset(
         "!~*",  # PostgreSQL regex operators
     }
 )
+
+
+def ansi_information_schema_tables_sql(schema_condition: str) -> str:
+    """Standard ANSI ``information_schema.tables`` bulk query: the table-only
+    counterpart of :func:`ansi_information_schema_columns_sql`, with the same
+    system-schema and system-catalog exclusions plus a schema condition from
+    :meth:`SQLDialect.schema_condition`."""
+    return (
+        "SELECT table_schema, table_name "
+        "FROM information_schema.tables "
+        "WHERE table_schema NOT IN "
+        "('information_schema', 'pg_catalog', 'pg_toast') "
+        "AND table_catalog NOT IN ('system', 'temp') "
+        f"AND {schema_condition} "
+        "ORDER BY table_schema, table_name"
+    )
 
 
 def ansi_information_schema_columns_sql() -> str:
@@ -329,6 +346,48 @@ class SQLDialect(ABC):
         tool rather than guessing at syntax.
         """
         raise NotImplementedError(f"bulk_schema_sql not implemented for {self.name!r}")
+
+    folds_identifier_case: bool = False
+    """Whether unquoted identifiers compare case-insensitively, so a schema
+    filter must too (:meth:`schema_condition`)."""
+
+    def string_literal(self, value: str) -> str:
+        """*value* as a SQL string literal the engine reads back as the value.
+
+        Escapes so the value cannot terminate its own literal, in the one
+        spelling the engine accepts. Where backslash is the escape character
+        that is `\\'`: GoogleSQL and Spark SQL concatenate adjacent literals, so
+        `''` there is not an escaped quote but the end of one literal and the
+        start of another, and `'O''Brien'` compares against `OBrien`. Everywhere
+        else `''` is the only documented escape. Backslashes are doubled first,
+        so the step that follows does not double the escapes it introduces.
+        """
+        if self.escapes_backslashes:
+            return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+        return "'" + value.replace("'", "''") + "'"
+
+    def schema_condition(self, schemas: Sequence[str], column: str) -> str:
+        """``column IN (...)`` over *schemas*, compared case-insensitively on a
+        dialect that folds identifier case. No schemas matches nothing."""
+        if not schemas:
+            return "1 = 0"
+        if self.folds_identifier_case:
+            literals = ", ".join(self.string_literal(name.lower()) for name in schemas)
+            return f"LOWER({column}) IN ({literals})"
+        literals = ", ".join(self.string_literal(name) for name in schemas)
+        return f"{column} IN ({literals})"
+
+    def bulk_tables_sql(self, scope: str, schemas: Sequence[str]) -> str:
+        """Return SQL that lists every ``(table_schema, table_name)`` in the
+        source in a single query, with the same ``scope`` rules as
+        :meth:`bulk_schema_sql` but without reading any column, so a warehouse
+        with millions of columns still lists within the row ceiling.
+
+        Only the given ``schemas`` are listed.
+
+        The base raises for a dialect without a confirmed bulk form.
+        """
+        raise NotImplementedError(f"bulk_tables_sql not implemented for {self.name!r}")
 
     # --- Representation ---
 

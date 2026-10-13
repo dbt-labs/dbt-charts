@@ -103,3 +103,33 @@ class TestNoJsonPath:
         result = _execute(HttpQuery(url="https://api.example.com/"), response_data)
         assert not result.is_success
         assert "json_path" in str(result.error)
+
+
+class TestReadOnlyMethodGate:
+    """Agent surfaces advertise readOnlyHint, so the default adapter refuses
+    every method but GET before any request is built."""
+
+    @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])
+    def test_default_adapter_refuses_non_get(self, method: str) -> None:
+        with patch(
+            "dbt_charts.core.execute.adapters.http_adapter.httpx.Client"
+        ) as mock_client:
+            result = HttpAdapter().execute(
+                HttpQuery(url="https://api.example.com/x", method=method)
+            )
+        assert not result.is_success
+        assert method in str(result.error)
+        assert "disabled" in str(result.error)
+        mock_client.assert_not_called()
+
+    def test_writable_adapter_still_posts(self) -> None:
+        with patch(
+            "dbt_charts.core.execute.adapters.http_adapter.httpx.Client"
+        ) as mock_client:
+            post = mock_client.return_value.__enter__.return_value.post
+            post.return_value = _mock_response([{"id": 1}])
+            result = HttpAdapter(allow_mutating_methods=True).execute(
+                HttpQuery(url="https://api.example.com/x", method="POST")
+            )
+        assert result.is_success, result.error
+        post.assert_called_once()

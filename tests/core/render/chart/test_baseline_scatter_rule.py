@@ -247,9 +247,9 @@ def test_layered_scatter_with_straddling_line_overlay_emits_zero_rule() -> None:
 
 def test_layered_scatter_bar_overlay_anchors_an_unpinned_shared_scale() -> None:
     """The `layer.type == "bar"` shortcut in `_zero_in_shared_domain`, on the
-    shape where it is still decisive: `headroom: 0` leaves both measure edges
-    unbaked, so nothing pins the scale and VL's own bar-to-zero extension is
-    what puts 0 in the shared domain.
+    shape where it is still decisive: an unset `ticks.count` leaves both
+    measure edges unbaked, so nothing pins the scale and VL's own bar-to-zero
+    extension is what puts 0 in the shared domain.
 
     Both series are all-negative, so neither straddles zero on its own and the
     value union alone would answer False. Remove the shortcut and the rule
@@ -261,7 +261,7 @@ def test_layered_scatter_bar_overlay_anchors_an_unpinned_shared_scale() -> None:
         "x": "x",
         "y": "y",
         "layers": [{"type": "bar", "y": "y2", "label": "t"}],
-        "style": {"axis_y": {"scale": {"headroom": 0}}},
+        "style": {"axis_y": {"ticks": {"count": None}}},
     }
     reset_config()
     chart = TypeAdapter(Chart).validate_python(payload)
@@ -381,3 +381,58 @@ def test_rotated_dot_plot_scatter_emits_x_zero_rule_not_y_zero_rule() -> None:
     assert len(rules) == 1
     assert rules[0]["encoding"]["x"]["datum"] == 0
     assert "datum" not in rules[0]["encoding"].get("y", {})
+
+
+def _bubble_spec(data: list[dict[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "id": "t",
+        "type": "scatter",
+        "x": "x",
+        "y": "y",
+        "size": "s",
+        "style": None,
+    }
+    reset_config()
+    chart = TypeAdapter(Chart).validate_python(payload)
+    return generate_vega_lite_spec(
+        chart, data, width=400, board_style=_BOARD_STYLE, chart_style_context=_BOARD_CTX
+    )
+
+
+def _vega_size_range(spec: dict[str, Any]) -> list[float]:
+    import vl_convert as vlc
+
+    vega = vlc.vegalite_to_vega(spec)
+    (size_scale,) = [sc for sc in vega["scales"] if sc["name"] == "size"]
+    return size_scale["range"]
+
+
+def test_zero_rule_does_not_inherit_the_bubble_size_channel() -> None:
+    """The zero rule shares the top-level encoding and accepts ``size`` as
+    stroke width; inherited, it narrows the bubble scale to [1, 4]. Pinned
+    against the same chart with the rule suppressed (grid hidden)."""
+    data = [{"x": 1, "y": 6000.0, "s": 40}, {"x": 2, "y": 33000.0, "s": 900}]
+    spec = _bubble_spec(data)
+    (rule,) = _rule_layers(spec)
+
+    reset_config()
+    no_rule_chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "t",
+            "type": "scatter",
+            "x": "x",
+            "y": "y",
+            "size": "s",
+            "style": {"axis_y": {"grid": {"visible": False}}},
+        }
+    )
+    no_rule_spec = generate_vega_lite_spec(
+        no_rule_chart,
+        data,
+        width=400,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CTX,
+    )
+    assert _rule_layers(no_rule_spec) == []
+    assert _vega_size_range(spec) == _vega_size_range(no_rule_spec)
+    assert rule["encoding"]["size"] is None

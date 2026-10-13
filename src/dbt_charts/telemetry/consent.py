@@ -1,6 +1,6 @@
 """Consent resolution.
 
-Precedence: ``DO_NOT_TRACK=1`` > ``--no-send-anonymous-usage-stats`` >
+Precedence: ``DO_NOT_TRACK`` > ``--no-send-anonymous-usage-stats`` >
 ``DBT_SEND_ANONYMOUS_USAGE_STATS`` > ``flags.send_anonymous_usage_stats`` in
 ``dbt_project.yml`` > default on. The bottom four are dbt's own order;
 ``DO_NOT_TRACK`` is our addition.
@@ -14,8 +14,9 @@ from pathlib import Path
 from dbt_charts.telemetry.dbt_project import read_dbt_project
 
 ENV_VAR = "DBT_SEND_ANONYMOUS_USAGE_STATS"
-_TRUE = {"1", "true", "yes", "on"}
-_FALSE = {"0", "false", "no", "off"}
+# The spellings of click's BoolParamType, which dbt parses its env vars with.
+_TRUE = {"1", "t", "true", "y", "yes", "on"}
+_FALSE = {"0", "f", "false", "n", "no", "off"}
 
 
 def send_anonymous_usage_stats(
@@ -26,7 +27,9 @@ def send_anonymous_usage_stats(
     Raises:
         ValueError: A consent setting holds a non-boolean value.
     """
-    if env.get("DO_NOT_TRACK") == "1" or no_send_flag:
+    # DO_NOT_TRACK fails closed: any value that is not plainly false opts out.
+    do_not_track = env.get("DO_NOT_TRACK", "").strip().lower()
+    if (do_not_track and do_not_track not in _FALSE) or no_send_flag:
         return False
     if ENV_VAR in env:
         value = env[ENV_VAR].strip().lower()

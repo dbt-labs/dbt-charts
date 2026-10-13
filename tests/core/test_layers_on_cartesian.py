@@ -387,7 +387,7 @@ def test_line_layer_style_unknown_color_token_raises() -> None:
         style={"marks": {"line": {"stroke": {"color": "dbt-creams.does-not-exist"}}}},
     )
     chart = _bar_normalized(layers=[line_layer])
-    with pytest.raises(CompilationError, match="Chart 'bar1'"):
+    with pytest.raises(CompilationError, match="chart 'bar1'"):
         resolve(chart, _BAR_DATA, _default_board_style())
 
 

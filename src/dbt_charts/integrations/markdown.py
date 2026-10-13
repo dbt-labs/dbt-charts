@@ -250,7 +250,9 @@ def _render_with_fallback(
     last_exc: Exception | None = None
     for candidate_project_dir, candidate_base_dir in contexts:
         project = FilesystemProject(candidate_project_dir.resolve())
-        registry = build_adapter_registry(project, read_only=True)
+        registry = build_adapter_registry(
+            project, read_only=True, allow_mutating_methods=True
+        )
         result: BoardRenderResult | None = None
         try:
             # Fence-rendered YAML has no on-disk leaf — a pathless in-memory

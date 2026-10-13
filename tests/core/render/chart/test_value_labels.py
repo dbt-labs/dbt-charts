@@ -878,8 +878,7 @@ class TestFormatTracksEffectiveAxis:
     """Value labels follow the EFFECTIVE measure-axis format, including per-chart
     overrides — not just the board-time axis_quantitative.format.
 
-    Regression: a per-chart format (chart.format / style.number_format /
-    style.axis_y.format) lands on the axis only, so labels stayed on the stale
+    Regression: a per-chart axis format (style.axis_y.labels.format) lands on the axis only, so labels stayed on the stale
     board value — clean ~s axis beside raw-float / mismatched labels.
     """
 
@@ -898,20 +897,6 @@ class TestFormatTracksEffectiveAxis:
             resolved.style.axis_y.labels.format.spec,
         )
 
-    def test_chart_format_flows_to_label(self, make_chart):
-        label_fmt, axis_fmt = self._label_fmt(make_chart, {"format": ",.0f"})
-        assert axis_fmt == ",.0f"
-        assert label_fmt == ",.0f", (
-            f"label should track the per-chart axis format ({axis_fmt!r}), "
-            f"not the stale board inherit — got {label_fmt!r}"
-        )
-
-    def test_number_format_flows_to_label(self, make_chart):
-        label_fmt, axis_fmt = self._label_fmt(
-            make_chart, {"style": {"number_format": ",.0f"}}
-        )
-        assert label_fmt == axis_fmt == ",.0f"
-
     def test_axis_y_format_flows_to_label(self, make_chart):
         label_fmt, axis_fmt = self._label_fmt(
             make_chart, {"style": {"axis_y": {"labels": {"format": ",.0f"}}}}
@@ -923,8 +908,10 @@ class TestFormatTracksEffectiveAxis:
         label_fmt, axis_fmt = self._label_fmt(
             make_chart,
             {
-                "format": ",.0f",
-                "style": {"marks": {"bar": {"labels": {"format": ".2%"}}}},
+                "style": {
+                    "axis_y": {"labels": {"format": ",.0f"}},
+                    "marks": {"bar": {"labels": {"format": ".2%"}}},
+                },
             },
         )
         assert axis_fmt == ",.0f"
@@ -963,7 +950,12 @@ class TestFormatTracksEffectiveAxis:
 
     def test_line_label_tracks_per_chart_format(self, make_chart):
         board_rs, board_ctx = _board_with_line_labels_visible(True)
-        chart = make_chart("line", x="month", y="revenue", format=",.0f")
+        chart = make_chart(
+            "line",
+            x="month",
+            y="revenue",
+            style={"axis_y": {"labels": {"format": ",.0f"}}},
+        )
         resolved = resolve(chart, SAMPLE_DATA, chart_style_context=board_ctx)
         spec = generate_vega_lite_spec(
             chart, SAMPLE_DATA, board_style=board_rs, chart_style_context=board_ctx
@@ -980,7 +972,12 @@ class TestFormatTracksEffectiveAxis:
         # Area value labels ride the overlaid line mark; the sync path differs
         # from bar/line, so exercise it explicitly.
         board_rs, board_ctx = _board_with_line_labels_visible(True)
-        chart = make_chart("area", x="month", y="revenue", format=",.0f")
+        chart = make_chart(
+            "area",
+            x="month",
+            y="revenue",
+            style={"axis_y": {"labels": {"format": ",.0f"}}},
+        )
         resolved = resolve(chart, SAMPLE_DATA, chart_style_context=board_ctx)
         spec = generate_vega_lite_spec(
             chart, SAMPLE_DATA, board_style=board_rs, chart_style_context=board_ctx
@@ -2259,7 +2256,9 @@ def _render_texts(spec: dict[str, Any]) -> list[str]:
     import vl_convert as vlc
 
     svg = vlc.vegalite_to_svg(spec)
-    return [html.unescape(m) for m in re.findall(r"<text[^>]*>(.*?)</text>", svg, re.S)]
+    # (?<!/) skips a self-closing <text/> — a blanked label.
+    pattern = r"<text\b[^>]*(?<!/)>(.*?)</text>"
+    return [html.unescape(m) for m in re.findall(pattern, svg, re.S)]
 
 
 class TestHouseRegister:
@@ -2490,9 +2489,7 @@ class TestHouseRegister:
             chart, _MILLIONS_DATA, board_style=board_rs, chart_style_context=board_ctx
         )
         texts = _render_texts(spec)
-        assert "1.2\u00a0M" in texts, (
-            f"expected analytic '1.2\u00a0M' in rendered texts: {texts}"
-        )
+        assert "1.2M" in texts, f"expected analytic '1.2M' in rendered texts: {texts}"
         assert "1.2mn" not in texts, (
             f"narrative default must not override an authored analytic "
             f"notation: {texts}"
@@ -2516,7 +2513,7 @@ class TestHouseRegister:
             chart, _MILLIONS_DATA, board_style=board_rs, chart_style_context=board_ctx
         )
         texts = _render_texts(spec)
-        assert "€1.2\u00a0M" in texts, f"expected analytic '€1.2\u00a0M': {texts}"
+        assert "€1.2M" in texts, f"expected analytic '€1.2M': {texts}"
         assert "€1.2mn" not in texts, f"narrative must not override: {texts}"
 
 
@@ -2581,7 +2578,7 @@ class TestKpiProvenance:
         keeps the raw d3 suffix character. The rendered SVG must contain a tspan
         with "M" (capital, unspaced) -- the rejected native quadrant -- not "mn".
         """
-        from dbt_charts.core.render.chart.kpi import render_kpi_svg
+        from ..._engine_render import render_kpi_svg
 
         board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart("kpi", value="revenue", style={"value": {"format": "~s"}})
@@ -5048,17 +5045,29 @@ def test_sparse_caption_column_past_the_sampling_window_is_still_text():
         assert "format" not in enc, enc
 
 
+_BLANK_NULL_SCALED = {"test": "!isValid(datum['scaled'])", "value": ""}
+
+
 @pytest.mark.parametrize(
     ("label_format", "expected"),
     [
         pytest.param(
             None,
-            {"field": "__value_label_text", "type": "nominal"},
+            {
+                "field": "__value_label_text",
+                "type": "nominal",
+                "condition": _BLANK_NULL_SCALED,
+            },
             id="theme-default-si-format-takes-the-house-calculate",
         ),
         pytest.param(
             ",.0f",
-            {"field": "scaled", "type": "quantitative", "format": ",.0f"},
+            {
+                "field": "scaled",
+                "type": "quantitative",
+                "format": ",.0f",
+                "condition": _BLANK_NULL_SCALED,
+            },
             id="explicit-d3-format-goes-to-vega-verbatim",
         ),
     ],
@@ -5976,7 +5985,9 @@ def _fit_spec(make_chart, *, stacked, orientation="vertical"):
 def _svg_texts(svg: str) -> list[str]:
     import html
 
-    return [html.unescape(m) for m in re.findall(r"<text[^>]*>(.*?)</text>", svg, re.S)]
+    # (?<!/) skips a self-closing <text/> — a blanked label.
+    pattern = r"<text\b[^>]*(?<!/)>(.*?)</text>"
+    return [html.unescape(m) for m in re.findall(pattern, svg, re.S)]
 
 
 def _svg_plot_rect(svg: str) -> float:
@@ -6473,3 +6484,110 @@ def test_house_register_paints_and_measures_the_sign_after_a_spaced_prefix() -> 
     assert sorted(_render_texts(spec)) == ["EUR −0.5", "EUR −1.2mn"]
     assert painted_label_text(-1_200_000.0, fmt, is_house=True) == "EUR −1.2mn"
     assert painted_label_text(-0.5, fmt, is_house=True) == "EUR −0.5"
+
+
+# ---------------------------------------------------------------------------
+# labels.field with a NULL value
+# ---------------------------------------------------------------------------
+
+_NULL_LABEL_FIELD_ROWS = [
+    {"stage": "Download", "users": 100, "step_change": None},
+    {"stage": "Compile", "users": 40, "step_change": -0.6},
+]
+
+
+def _label_field_texts(
+    chart_type: str,
+    labels: dict[str, Any],
+    rows: list[dict[str, Any]] = _NULL_LABEL_FIELD_ROWS,
+) -> list[str]:
+    """Paint a chart whose ``labels.field`` is null on its first row."""
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+    from dbt_charts.core.compile.normalize.charts import normalize_chart
+    from dbt_charts.core.render.chart.session import BoardRenderSession
+
+    mark = {"bar": "bar", "line": "line", "scatter": "point"}[chart_type]
+    chart_def = {
+        "type": chart_type,
+        "query": "q",
+        "x": "stage",
+        "y": "users",
+        "style": {
+            "marks": {
+                mark: {"labels": {"visible": True, "field": "step_change", **labels}}
+            }
+        },
+    }
+    query_reg: dict[str, Any] = {"q": SqlQuery(sql="SELECT 1", source="test")}
+    board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
+    compiled = normalize_chart("c", chart_def, query_reg, sources={})
+    resolved = resolve(compiled, rows, chart_style_context=board_ctx)
+    session = BoardRenderSession.create(board_rs)
+    spec = session.emit_chart(resolved, _DEFAULT_BOX, {resolved.query_name: rows})
+    return _render_texts(session.finalize_vl(spec))
+
+
+class TestNullLabelFieldValue:
+    """A null ``labels.field`` value paints no label, never the string ``null``."""
+
+    @pytest.mark.parametrize("position", ["above", "top", "middle", "bottom"])
+    @pytest.mark.parametrize("label_format", [None, "percent_delta", ",.1%"])
+    def test_bar(self, position, label_format) -> None:
+        pytest.importorskip("vl_convert")
+        labels: dict[str, Any] = {"position": position}
+        if label_format is not None:
+            labels["format"] = label_format
+        texts = _label_field_texts("bar", labels)
+        assert "null" not in texts, texts
+        assert any(t.startswith(("−", "-")) for t in texts), texts
+
+    def test_text_column(self) -> None:
+        pytest.importorskip("vl_convert")
+        rows = [
+            {"stage": "Download", "users": 100, "step_change": None},
+            {"stage": "Compile", "users": 40, "step_change": "-60%"},
+        ]
+        texts = _label_field_texts("bar", {}, rows)
+        assert "null" not in texts, texts
+        assert "-60%" in texts, texts
+
+    @pytest.mark.parametrize("chart_type", ["line", "scatter"])
+    @pytest.mark.parametrize("label_format", [None, "percent_delta"])
+    def test_line_and_point(self, chart_type, label_format) -> None:
+        pytest.importorskip("vl_convert")
+        labels: dict[str, Any] = {}
+        if label_format is not None:
+            labels["format"] = label_format
+        texts = _label_field_texts(chart_type, labels)
+        assert "null" not in texts, texts
+        assert any(t.startswith(("−", "-")) for t in texts), texts
+
+    def test_fit_test_composes_with_the_null_blank(self, make_chart) -> None:
+        """The text channel holds one condition, so the two tests are ORed."""
+        board_rs, board_ctx = _board_with_bar_labels(
+            {
+                "position": "middle",
+                "field": "note",
+                "font": FontStyle(size=_LABEL_FONT_SIZE),
+            }
+        )
+        rows = [
+            {"month": "Jan", "revenue": 700, "note": None},
+            {"month": "Aug", "revenue": _WEDGE_SEGMENT, "note": 1.0},
+        ]
+        chart = make_chart(
+            "bar",
+            x="month",
+            y="revenue",
+            style={
+                "bar": {"orientation": "vertical"},
+                "axis_y": {"scale": {"continuous": {"domain": [0, _SPAN]}}},
+            },
+        )
+        resolve(chart, rows, chart_style_context=board_ctx)
+        spec = generate_vega_lite_spec(
+            chart, rows, board_style=board_rs, chart_style_context=board_ctx
+        )
+        test = _text_layers(spec)[0]["encoding"]["text"]["condition"]["test"]
+        assert test.startswith("!isValid(datum['note']) || ("), test
+        assert "revenue" in test, test

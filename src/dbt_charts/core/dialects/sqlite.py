@@ -10,6 +10,8 @@ SQLite uses:
 - No ILIKE (only LIKE, which is case-insensitive for ASCII on SQLite)
 """
 
+from collections.abc import Sequence
+
 from dbt_charts.core.dialects.base import SQLDialect
 
 
@@ -76,4 +78,15 @@ class SQLiteDialect(SQLDialect):
             "FROM sqlite_master m JOIN pragma_table_info(m.name) p "
             "WHERE m.type IN ('table', 'view') AND m.name NOT LIKE 'sqlite_%' "
             "ORDER BY m.name, p.cid"
+        )
+
+    def bulk_tables_sql(self, scope: str, schemas: Sequence[str]) -> str:
+        """Whole-database tables and views from ``sqlite_master``."""
+        extra = f"AND {self.schema_condition(schemas, chr(39) + 'main' + chr(39))} "
+        return (
+            "SELECT 'main' AS table_schema, name AS table_name "
+            "FROM sqlite_master "
+            "WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' "
+            f"{extra}"
+            "ORDER BY name"
         )

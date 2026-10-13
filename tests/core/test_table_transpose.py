@@ -39,10 +39,10 @@ class TestTableTransposeStyle:
 class TestTableTransposeRender:
     """render_table_svg with transpose=True pivots a single row to N (label, value) rows."""
 
-    def _make_transposed_chart(self, make_chart):
+    def _make_transposed_chart(self, make_chart, data):
         """Create a table chart with transpose=True in resolved style."""
         chart = make_chart("table", x=None, y=None)
-        resolved = resolve(chart, [], chart_style_context=_BOARD_STYLE)
+        resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
         transposed_tc = resolved.style.table.model_copy(update={"transpose": True})
         return resolved.model_copy(
             update={"style": resolved.style.model_copy(update={"table": transposed_tc})}
@@ -54,12 +54,10 @@ class TestTableTransposeRender:
         The pivoted table always has "Metric" and "Value" column headers —
         these are only present when transpose fires, not in a normal 1-row render.
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
-        chart = self._make_transposed_chart(make_chart)
         data = [{"col_a": 10, "col_b": 20, "col_c": 30}]
+        chart = self._make_transposed_chart(make_chart, data)
         svg = render_table_svg(
             chart,
             data,
@@ -84,18 +82,17 @@ class TestTableTransposeRender:
     def test_transpose_renders_label_column_from_column_config(self, make_chart):
         """Columns with style.columns.<col>.label use the label, not the column key."""
         from dbt_charts.core.compile.models.chart.authored import TableColumnConfig
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
 
-        chart = self._make_transposed_chart(make_chart)
+        from ._engine_render import render_table_svg
+
+        data = [{"dollars_used": 1500, "dollars_balance": 3000}]
+        chart = self._make_transposed_chart(make_chart, data)
         # Patch in column configs with labels
         column_configs = {
             "dollars_used": TableColumnConfig(label="Dollars Used"),
             "dollars_balance": TableColumnConfig(label="Dollars Balance"),
         }
         chart = chart.model_copy(update={"columns": column_configs})
-        data = [{"dollars_used": 1500, "dollars_balance": 3000}]
         svg = render_table_svg(
             chart,
             data,
@@ -115,9 +112,8 @@ class TestTableTransposeRender:
         own render-native key space (see `_transpose_data_for_render` /
         `fill_table_column_defaults`)."""
         from dbt_charts.core.compile.models.chart.normalized import TableChart
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         data = [{"a": 1, "b": 2}]
         chart = TableChart(
@@ -141,15 +137,14 @@ class TestTableTransposeRender:
     def test_transpose_multirow_raises_chart_data_error(self, make_chart):
         """transpose=True with >1 data rows raises ChartDataError."""
         from dbt_charts.core.diagnostics.chart_data import ChartDataError
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
 
-        chart = self._make_transposed_chart(make_chart)
+        from ._engine_render import render_table_svg
+
         data = [
             {"col_a": 10, "col_b": 20},
             {"col_a": 11, "col_b": 21},
         ]
+        chart = self._make_transposed_chart(make_chart, data)
         with pytest.raises(ChartDataError, match="transpose"):
             render_table_svg(
                 chart,
@@ -168,11 +163,8 @@ class TestTableTransposeRender:
         """
         import re
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
-        chart = self._make_transposed_chart(make_chart)
         data = [
             {
                 "dollars_used": 1500,
@@ -187,6 +179,7 @@ class TestTableTransposeRender:
                 "subscription_months": 6,
             }
         ]
+        chart = self._make_transposed_chart(make_chart, data)
         svg = render_table_svg(
             chart,
             data,
@@ -223,6 +216,6 @@ class TestTableTransposeRender:
                 f"Expected label {lbl!r} exactly once in transposed SVG, got {count}"
             )
 
-        # Values use the theme SI default: 1500 -> "1.5\u00a0K", 3000 -> "3\u00a0K".
-        assert "1.5\u00a0K" in svg, f"Expected '1.5\u00a0K' in SVG but got: {svg[:300]}"
-        assert "3\u00a0K" in svg, f"Expected '3\u00a0K' in SVG but got: {svg[:300]}"
+        # Values use the theme SI default: 1500 -> "1.5K", 3000 -> "3K".
+        assert "1.5K" in svg, f"Expected '1.5K' in SVG but got: {svg[:300]}"
+        assert "3K" in svg, f"Expected '3K' in SVG but got: {svg[:300]}"

@@ -187,6 +187,7 @@ class FileSourceMaterializer:
                     previous_relpath = ""
                     first_relpath = ""
                     first_keys: frozenset[str] = frozenset()
+                    row_count = 0
                     materialized_bytes = 0
                     for relpath in relpaths:
                         file_bytes = self._project.read_bytes(relpath)
@@ -201,45 +202,48 @@ class FileSourceMaterializer:
                                 size_mb=materialized_bytes / _BYTES_PER_MB,
                                 cap_mb=byte_cap / _BYTES_PER_MB,
                             )
-                        file_rows, file_arrow = _parse(source, file_bytes, relpath)
-                        if file_rows:
-                            file_keys = frozenset(file_rows[0])
-                            if not first_relpath:
-                                first_keys = file_keys
-                                first_relpath = relpath
-                            elif not union_by_name and file_keys != first_keys:
-                                extra = sorted(file_keys - first_keys)
-                                missing = sorted(first_keys - file_keys)
-                                detail = (f"Extra: {extra}. " if extra else "") + (
-                                    f"Missing: {missing}. " if missing else ""
-                                )
-                                raise DbtChartsError.from_code(
-                                    ERR_GLOB_SCHEMA_MISMATCH,
-                                    source_name=source_name,
-                                    table_name=table_name,
-                                    path=relpath,
-                                    first_path=first_relpath,
-                                    detail=detail,
-                                )
-                            rows.extend(file_rows)
-                            if file_arrow is not None:
-                                arrow = _merge_arrow(
-                                    arrow,
-                                    _normalize_arrow(
-                                        file_arrow, source_name, table_name, relpath
-                                    ),
-                                    source_name,
-                                    table_name,
-                                    relpath,
-                                    previous_relpath,
-                                )
-                                previous_relpath = relpath
-                    if union_by_name and rows:
-                        all_keys = dict.fromkeys(key for row in rows for key in row)
-                        for row in rows:
-                            for column in all_keys:
-                                row.setdefault(column, None)
-                    if not rows:
+                        parsed = _parse(source, file_bytes, relpath)
+                        if isinstance(parsed, list):
+                            file_count = len(parsed)
+                            file_keys = frozenset(parsed[0]) if parsed else frozenset()
+                        else:
+                            file_count = parsed.num_rows
+                            file_keys = frozenset(parsed.column_names)
+                        if not file_count:
+                            continue
+                        if not first_relpath:
+                            first_keys = file_keys
+                            first_relpath = relpath
+                        elif not union_by_name and file_keys != first_keys:
+                            extra = sorted(file_keys - first_keys)
+                            missing = sorted(first_keys - file_keys)
+                            detail = (f"Extra: {extra}. " if extra else "") + (
+                                f"Missing: {missing}. " if missing else ""
+                            )
+                            raise DbtChartsError.from_code(
+                                ERR_GLOB_SCHEMA_MISMATCH,
+                                source_name=source_name,
+                                table_name=table_name,
+                                path=relpath,
+                                first_path=first_relpath,
+                                detail=detail,
+                            )
+                        row_count += file_count
+                        if isinstance(parsed, list):
+                            rows.extend(parsed)
+                        else:
+                            arrow = _merge_arrow(
+                                arrow,
+                                _normalize_arrow(
+                                    parsed, source_name, table_name, relpath
+                                ),
+                                source_name,
+                                table_name,
+                                relpath,
+                                previous_relpath,
+                            )
+                            previous_relpath = relpath
+                    if not row_count:
                         raise ValueError(
                             f"File table {table_name!r}: parsed file(s) contain no rows. "
                             "Empty file sources are not supported — provide a file with "
@@ -247,6 +251,11 @@ class FileSourceMaterializer:
                         )
 
                     if arrow is None:
+                        if union_by_name:
+                            all_keys = dict.fromkeys(key for row in rows for key in row)
+                            for row in rows:
+                                for column in all_keys:
+                                    row.setdefault(column, None)
                         self._replace_table_from_rows(conn, physical, table_name, rows)
                     else:
                         import pyarrow as pa
@@ -599,21 +608,19 @@ def _parse(
     source: CsvSourceConfig | JsonSourceConfig | ParquetSourceConfig,
     file_bytes: bytes,
     relpath: str,
-) -> tuple[list[_JsonRow], pa.Table | None]:
-    """Dispatch to the correct parser, returning rows and the typed Arrow form.
+) -> list[_JsonRow] | pa.Table:
+    """Dispatch to the correct parser.
 
-    The Arrow table is None for JSON/NDJSON, whose values carry no schema beyond
-    what ``json.loads`` produces; for CSV and Parquet it is the file's own typed
-    representation, which ``materialize_and_run`` loads directly so the
-    SQL-visible table keeps those types.
+    JSON/NDJSON returns row dicts: their values carry no schema beyond what
+    ``json.loads`` produces. CSV and Parquet return the file's own typed Arrow
+    table, which ``materialize_and_run`` loads directly so the SQL-visible
+    table keeps those types.
     """
     if isinstance(source, CsvSourceConfig):
-        table = _parse_csv(file_bytes, source.delimiter, source.encoding)
-    elif isinstance(source, JsonSourceConfig):
-        return _parse_json(file_bytes, relpath), None
-    else:
-        table = _parse_parquet(file_bytes)
-    return table.to_pylist(), table
+        return _parse_csv(file_bytes, source.delimiter, source.encoding)
+    if isinstance(source, JsonSourceConfig):
+        return _parse_json(file_bytes, relpath)
+    return _parse_parquet(file_bytes)
 
 
 def _parse_csv(file_bytes: bytes, delimiter: str, encoding: str) -> pa.Table:

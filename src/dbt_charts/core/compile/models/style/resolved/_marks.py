@@ -189,6 +189,14 @@ class ResolvedSeriesLabelStyle(BaseModel):
             "slices [:n_series] for the labels it actually draws."
         ),
     )
+    pin_companions: tuple[tuple[str, str], ...] = Field(
+        description=(
+            "Label ink for each color a `category_colors` pin names, as "
+            "(pinned color, ink) pairs derived against the chart's canvas "
+            "the way the palette's label ink is, so a series pinned to a "
+            "color outside the palette is labeled in that color's ink."
+        ),
+    )
     gap_px: float = Field(
         description=(
             "Target pixel separation between adjacent endpoint labels, fully "

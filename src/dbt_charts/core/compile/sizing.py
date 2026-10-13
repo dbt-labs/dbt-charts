@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import NamedTuple
 
 from dbt_charts.core.compile.conditions import DrawnPredicate, drawn_items, is_drawn
@@ -34,7 +34,9 @@ from dbt_charts.core.compile.models.style.theme.page import FooterStyle
 from dbt_charts.core.compile.resolve import preferred_chart_width
 from dbt_charts.core.compile.resolve.style.markdown_style import (
     prose_content_widths,
+    prose_measure,
     title_max_content_width,
+    title_min_content_width,
 )
 from dbt_charts.core.font_measure import get_font_measurer, get_weighted_font_measurer
 from dbt_charts.core.text.format_d3 import portable_strftime
@@ -105,31 +107,37 @@ class WidthMeasurer:
     def board_own_width(self, board: Board, is_root: bool) -> IntrinsicWidth:
         """What ``board``'s own content needs, inside its page margin.
 
-        A title never wraps, so it needs its one-line width at least and asks
-        for it. Prose needs its widest unbreakable word and asks for its one-line
-        width up to the theme's readable line length. The footer row is a
-        minimum of the root alone: a nested board's footer is never drawn.
+        A title and prose are sized by one rule: each needs its widest
+        unbreakable word and asks for its one-line width up to the readable
+        line length. The footer row is a minimum of the root alone: a nested
+        board's footer is never drawn.
         """
         style = board.resolved_style
         inset = 2 * float(style.frame.card_padding)
         parts = [NO_WIDTH]
         if board.title:
-            one_line = title_max_content_width(
+            title_args = (
                 board.title,
                 board.level,
                 style,
                 self.variable_values,
                 board.base_dir,
             )
-            parts.append(IntrinsicWidth(one_line, one_line).inset(inset))
+            parts.append(
+                IntrinsicWidth(
+                    title_min_content_width(*title_args),
+                    min(
+                        title_max_content_width(*title_args),
+                        prose_measure(style),
+                    ),
+                ).inset(inset)
+            )
         if board.text:
             floor, one_line = prose_content_widths(
                 board.text, style, self.variable_values, board.base_dir
             )
             parts.append(
-                IntrinsicWidth(
-                    floor, min(one_line, float(style.text.preferred_width))
-                ).inset(inset)
+                IntrinsicWidth(floor, min(one_line, prose_measure(style))).inset(inset)
             )
         if is_root:
             parts.append(IntrinsicWidth(_footer_row_width(board), None))
@@ -139,7 +147,7 @@ class WidthMeasurer:
 # A fixed instant, so the floor never depends on when the board renders. The
 # timestamp is drawn with tabular digits, so only the format's words (month,
 # zone) vary in width; late December is among the widest.
-_SAMPLE_TIMESTAMP = datetime(2026, 12, 28, 22, 22, tzinfo=timezone.utc)
+_SAMPLE_TIMESTAMP = datetime(2026, 12, 28, 22, 22, tzinfo=UTC)
 
 
 FOOTER_BRAND_WORD_RE = re.compile(r"\bdbt charts\b", re.IGNORECASE)

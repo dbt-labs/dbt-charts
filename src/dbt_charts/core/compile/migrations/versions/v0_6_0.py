@@ -526,8 +526,8 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
 # Retired built-in theme names that map identically whichever key holds them
 # -- `theme:` sugar or an `extends:` entry. Hand-written, not derived: the
 # *old* ThemeName values (cream, editorial, plain, solid) no longer exist
-# anywhere in source — generate_schema_names.py regenerated ThemeName in the
-# same release that retired them, so there is no live artifact left to walk.
+# anywhere in source — ThemeName dropped them in the same release that
+# retired them, so there is no live artifact left to walk.
 # `stark` was never retired (it kept its name across this boundary), so it
 # has no entry here.
 #

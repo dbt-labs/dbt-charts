@@ -2,7 +2,7 @@
 
 Stage: EXECUTE
 
-Snowflake, Databricks, Trino and Postgres each expose a dedicated field naming who is
+Snowflake, Databricks and Postgres each expose a dedicated field naming who is
 connecting, and each dbt adapter surfaces it as an ordinary credential. Setting one
 costs nothing: it travels with the connect/login request, so a warehouse-native answer
 to "is this dbt charts" lands in its own column instead of requiring a regex over the
@@ -45,13 +45,12 @@ from dbt_charts.core.attribution import connection_identity
 _CREDENTIAL_FIELD: dict[str, str] = {
     "snowflake": "query_tag",
     "databricks": "query_tags",
-    "trino": "client_tags",
     "postgres": "application_name",
     "postgresql": "application_name",
 }
 
 
-def native_attribution_credential(adapter_type: str) -> dict[str, str | list[str]]:
+def native_attribution_credential(adapter_type: str) -> dict[str, str]:
     """The credential field this warehouse exposes for attribution, and its value.
 
     Empty when the warehouse has no such field — see the module docstring for which
@@ -61,8 +60,7 @@ def native_attribution_credential(adapter_type: str) -> dict[str, str | list[str
 
     The value shape follows what each adapter's credential accepts: a JSON object
     string for Snowflake and Databricks (dbt-databricks parses it back into a tag
-    dict), a list of ``key=value`` strings for Trino, and a bare name for Postgres —
-    whose ``application_name`` caps near 63 bytes and cannot hold JSON.
+    dict) and a bare name for Postgres — whose ``application_name`` caps near 63 bytes and cannot hold JSON.
     """
     field = _CREDENTIAL_FIELD.get(adapter_type)
     if field is None:
@@ -70,6 +68,4 @@ def native_attribution_credential(adapter_type: str) -> dict[str, str | list[str
     identity = connection_identity()
     if field == "application_name":
         return {field: identity["app"]}
-    if field == "client_tags":
-        return {field: [f"{key}={value}" for key, value in sorted(identity.items())]}
     return {field: json.dumps(identity)}

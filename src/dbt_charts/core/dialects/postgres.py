@@ -4,9 +4,12 @@ PostgreSQL uses:
 - $1, $2, ... for parameter placeholders
 """
 
+from collections.abc import Sequence
+
 from dbt_charts.core.dialects.base import (
     SQLDialect,
     ansi_information_schema_columns_sql,
+    ansi_information_schema_tables_sql,
 )
 
 
@@ -70,3 +73,9 @@ class PostgresDialect(SQLDialect):
     def bulk_schema_sql(self, scope: str = "") -> str:
         """Postgres/Redshift serve the whole database from the ANSI columns view."""
         return ansi_information_schema_columns_sql()
+
+    def bulk_tables_sql(self, scope: str, schemas: Sequence[str]) -> str:
+        """Postgres/Redshift list the whole database from the ANSI tables view."""
+        return ansi_information_schema_tables_sql(
+            self.schema_condition(schemas, "table_schema")
+        )

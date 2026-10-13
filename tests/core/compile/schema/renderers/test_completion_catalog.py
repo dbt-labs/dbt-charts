@@ -33,10 +33,10 @@ def test_theme_names_exclude_synthetic_default_and_private_and_diagnostics() -> 
     assert "clarity" in names
 
 
-def test_build_catalog_returns_decorated_json_schema() -> None:
+def test_build_catalog_returns_the_board_json_schema() -> None:
     catalog = build_completion_catalog()
 
-    # render_vscode_schema output: a JSON Schema with a $defs table, the
+    # render_yaml_schema output: a JSON Schema with a $defs table, the
     # top-level board properties, and the theme enum sourced from the names above.
     assert "$defs" in catalog
     assert "charts" in catalog["properties"]
@@ -44,7 +44,7 @@ def test_build_catalog_returns_decorated_json_schema() -> None:
 
 
 def test_catalog_has_no_dangling_refs() -> None:
-    """The completion catalog shares render_vscode_schema with the IDE board schema,
+    """The completion catalog shares render_yaml_schema with the IDE board schema,
     so it inherits the same dangling-$ref risk (see test_ide_schema_generation.py's
     test_schema_has_no_dangling_refs for the underlying bug)."""
     dangling = find_dangling_refs(build_completion_catalog())

@@ -156,7 +156,7 @@ def get_weighted_font_measurer(
     simply paints at the browser's default weight. Falling back to the
     unweighted default measurer here matches that paint behavior instead of
     raising on a board that already renders today (repo precedent:
-    render/chart/kpi.py and table.py both ignore a weight outside
+    the KPI and table renderers both ignore a weight outside
     ``VALID_FONT_WEIGHTS`` the same way; this module cannot import that
     frozenset — compile/ layer — without a tach cycle, so the check here is
     structural: keyword-or-numeric, not the same fixed keyword set).

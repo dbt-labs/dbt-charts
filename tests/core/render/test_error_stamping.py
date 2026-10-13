@@ -28,12 +28,8 @@ _RENDER_ROOT = DBT_CHARTS_PKG_DIR / "core" / "render"
 # code yet, so they still fall back to ERR-INTERNAL. Shrinks only.
 ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
     {
-        # chart/kpi.py
-        ("chart/kpi.py", "_slot_font"),
-        ("chart/kpi.py", "render_kpi_svg"),
-        # chart/spark.py
-        ("chart/spark.py", "_resolve_spark_color"),
-        ("chart/spark.py", "render_spark"),
+        # engine.py: invariants between the engine and the code registry
+        ("engine.py", "_render_payload"),
         # chart/presentation.py
         ("chart/presentation.py", "apply_presentation_defaults"),
         # chart/support_table_attachment.py
@@ -44,8 +40,6 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # fully-resolved support-table style), identical in kind to the
         # allowlisted _entry_cell_widths font.size guard above.
         ("chart/support_table_attachment.py", "resolved_pad_font_family"),
-        # chart/table.py
-        ("chart/table.py", "_render_spark_cell"),
         # chart/table_support.py
         ("chart/table_support.py", "resolve_palette_stops"),
         ("chart/table_support.py", "interpolate_scale_color"),
@@ -101,6 +95,11 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # boards.py: a render path that resolves board text without scoping a
         # data provider is a programming error, never author input.
         ("boards.py", "resolve_display_text_via"),
+        # engine.py: the engine emitting a non-error code as an error, or a
+        # warning with no sink, is an engine/registry contract break, never
+        # author input.
+        ("engine.py", "_render_payload"),
+        ("engine.py", "_chart_data_error"),
         # conditions.py
         ("conditions.py", "eval_bool_condition"),
     }

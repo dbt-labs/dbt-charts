@@ -16,6 +16,7 @@ from typing import Any, Protocol
 
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.source import (
+    FILE_SOURCE_TYPES,
     LAKECOMPUTE_ADAPTER,
     VALID_SOURCE_TYPES,
     BaseSourceConfig,
@@ -23,6 +24,7 @@ from dbt_charts.core.compile.models.source import (
     DbtTargetSourceConfig,
     ResolvedSourceConfig,
     SourceConfig,
+    TrinoSourceConfig,
     parse_source_config,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -285,6 +287,18 @@ class DefaultSourceResolver:
                 # Validation errors hide their input, so no credential is quoted.
                 raise ExecutionError(str(exc)) from exc
 
+        if target_dict["type"] == "trino":
+            # A manifest directory would need a field only a dbt_profile source
+            # can carry. Refuse rather than accept it and drop it.
+            if cfg.target_path is not None:
+                raise ExecutionError(
+                    "target_path is not supported for trino sources yet; "
+                    "ref() resolves against the project's default manifest."
+                )
+            return TrinoSourceConfig.model_validate(
+                {**target_dict, "attribution": cfg.attribution}
+            )
+
         # Attribution and target_path ride the dbt charts source entry, not the dbt
         # target — profiles.yml belongs to dbt and rejects keys it doesn't know — so
         # carry them across the expansion or they are lost for every dbt_profile
@@ -321,7 +335,7 @@ class AllowlistedSourceResolver(DefaultSourceResolver):
        name a registered source. This is the trust-boundary decision — it lives
        here, not in a required model field.
     1. Inline source dicts — both per-query `source: {type: ..., host: ...}`
-       and any board-level `board.sources` entry are refused with
+       and any non-file board-level `board.sources` entry are refused with
        `ERR-SOURCE-INLINE-FORBIDDEN` (board.sources values are inline
        source definitions by construction, not name references).
     2. Cross-file `#` references — any authored string containing `#` is
@@ -336,30 +350,26 @@ class AllowlistedSourceResolver(DefaultSourceResolver):
     part of the configured allowlist by definition. A configured `dbt_profile`
     source is refused too — expanding it reads profiles.yml off the host's disk.
 
-    **File sources are ordinary allowlist entries here; the rules above are
-    about warehouse sources.** A csv/json/parquet entry names a repo-relative
-    path — validated by `CsvSourceConfig`/`JsonSourceConfig`/`ParquetSourceConfig`'s
-    own `files:` rules, which reject absolute paths and any path escaping the
+    **File sources are ordinary entries here; the rules above are about
+    warehouse sources.** A csv/json/parquet entry names a repo-relative path —
+    validated by `CsvSourceConfig`/`JsonSourceConfig`/`ParquetSourceConfig`'s own
+    `files:` rules, which reject absolute paths and any path escaping the
     project root — not a host, a port, or a credential. There is no endpoint to
     approve, so a host that resolves file sources from its own repo (Cloud does,
     from the committed `dbt_charts.yml`) puts them in `project_sources` like any
-    other name, and rule 1 is untouched: an *authored* source definition is still
-    refused whatever its type.
+    other name. A file source a board declares itself — a `sources:` entry, or an
+    inline `source: data/x.parquet` path ref, which compiles into one — resolves
+    too, because the render path already materializes exactly that. Rule 1 still
+    refuses an authored source *dict* on a query, and any non-file `board.sources`
+    entry, whatever its type.
 
-    Two paths then diverge, and only one skips this resolver. `Executor` (the
-    render path) short-circuits a file-source query into the
-    `FileSourceMaterializer` before resolution ("Step 4c"), so a rendered board
-    never asks here. `agent_api`'s `execute_query` and `query_board`, which
-    Cloud exposes over MCP and chat, call `AdapterRegistry.execute` directly and
-    DO reach this resolver, which returns the file config normally;
-    `AdapterRegistry.execute` then refuses it itself, because it holds no
-    materializer. That refusal is the one place the "you need the render path"
-    answer lives. `describe_query` reaches it too: it routes a file source's
-    SQL through `check_ad_hoc_query`, which wraps it in `DESCRIBE (...)` and
-    hands it to the same `AdapterRegistry.execute` — the identical
-    no-materializer refusal fires there if none is configured. Behavior is no
-    more permissive than the execute path; describe just answers with columns
-    instead of rows when a materializer *is* present.
+    The execute paths then dispatch a resolved file config themselves: `Executor`
+    (the render path) short-circuits a file-source query into the
+    `FileSourceMaterializer` before resolution ("Step 4c"), and `agent_api`'s
+    `execute_query`, which Cloud exposes over MCP and chat, goes
+    through `AdapterRegistry.execute`, which hands the resolved file config to the
+    registry's materializer — or refuses it when none is configured. That refusal
+    is the one place the "you need a materializer" answer lives.
 
     This is the closed-allowlist resolver — pick it when the caller does not
     trust authored YAML to declare arbitrary connections (e.g. hosted /
@@ -403,10 +413,23 @@ class AllowlistedSourceResolver(DefaultSourceResolver):
             )
 
         if authored in board_sources and authored not in project_sources.sources:
-            raise DbtChartsError.from_code(
-                ERR_SOURCE_INLINE_FORBIDDEN,
+            declared = board_sources[authored]
+            if declared.get("type") not in FILE_SOURCE_TYPES:
+                raise DbtChartsError.from_code(
+                    ERR_SOURCE_INLINE_FORBIDDEN,
+                    query_name=query_name,
+                    offending_value=_summarize_inline_source(declared),
+                )
+            # A board-level file source is what an inline `source: data/x.parquet`
+            # path ref compiles into. Parsing it applies the file config's own
+            # path rules, so it reaches nothing outside the project tree.
+            return DefaultSourceResolver.resolve(
+                self,
+                authored=authored,
+                board_sources=board_sources,
+                project_sources=project_sources,
+                dbt_context=None,
                 query_name=query_name,
-                offending_value=_summarize_inline_source(board_sources[authored]),
             )
 
         if authored not in project_sources.sources:

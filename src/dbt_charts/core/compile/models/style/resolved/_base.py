@@ -19,6 +19,7 @@ that module.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Mapping
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
@@ -490,6 +491,9 @@ class ResolvedAxisStyle:
     # Baked by resolve() for cartesian y-axes; emitters read this, never compute.
     # Empty tuple means no explicit tick ladder (non-measure axes or no data).
     tick_values: tuple[float, ...] = ()
+    # The `tick_values` rungs inside the baked `domain_min`..`domain_max`, the
+    # ones Vega draws. Anchor choice and gutter measurement read this.
+    drawn_tick_values: tuple[float, ...] = ()
     # Baked by resolve(): the single "does this axis ship the ruler
     # composition" decision (core/text/numeral_scale.py's shared_scale_for_ladder,
     # folded with the SI-format check and the authored-label.expr opt-out).
@@ -533,6 +537,9 @@ class ResolvedAxisStyle:
     # or unpinned data close enough to 0 for the axis to reach it on its
     # own. False on a non-measure axis or when no anchor decision ran.
     zero_anchored: bool = False
+    # Calendar unit -> the board's strftime redefinition of that grain's
+    # `date_<grain>` name; an unredefined grain is absent. Never mutated.
+    grain_formats: Mapping[str, str] = dataclasses.field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.ruler is not None and self.tick_label is not None:

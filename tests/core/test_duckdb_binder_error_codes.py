@@ -64,10 +64,10 @@ class TestDuckDBBinderErrorCodes:
             f"expected ERR-BINDER-TYPE-MISMATCH, got {result.error.code!r}"
         )
 
-    def test_catalog_exception_returns_binder_unknown_column_code(self) -> None:
-        """CatalogException (missing table) → ERR-BINDER-UNKNOWN-COLUMN."""
+    def test_missing_table_returns_binder_unknown_relation_code(self) -> None:
+        """CatalogException (missing table) → ERR-BINDER-UNKNOWN-RELATION."""
         from dbt_charts.core.diagnostics.codes_execute import (
-            ERR_BINDER_UNKNOWN_COLUMN,
+            ERR_BINDER_UNKNOWN_RELATION,
         )
 
         adapter = DuckDBAdapter(
@@ -76,9 +76,23 @@ class TestDuckDBBinderErrorCodes:
         try:
             result = adapter._execute(_make_query("SELECT * FROM nonexistent_table"))
             assert result.error is not None
-            assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN, (
-                f"expected ERR-BINDER-UNKNOWN-COLUMN, got {result.error.code!r}"
+            assert result.error.code is ERR_BINDER_UNKNOWN_RELATION, (
+                f"expected ERR-BINDER-UNKNOWN-RELATION, got {result.error.code!r}"
             )
+        finally:
+            adapter.close()
+
+    def test_missing_function_stays_a_catalog_unknown_reference(self) -> None:
+        """A missing function is a CatalogException too, but not a missing relation."""
+        from dbt_charts.core.diagnostics.codes_execute import (
+            ERR_BINDER_UNKNOWN_COLUMN,
+        )
+
+        adapter = DuckDBAdapter(source_config=DuckDBSourceConfig(type="duckdb"))
+        try:
+            result = adapter._execute(_make_query("SELECT no_such_fn(1)"))
+            assert result.error is not None
+            assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
         finally:
             adapter.close()
 

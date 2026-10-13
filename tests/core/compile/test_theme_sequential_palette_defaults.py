@@ -26,7 +26,7 @@ from dbt_charts.core.compile.config import (
     list_built_in_themes,
     reset_config,
 )
-from dbt_charts.core.compile.models.primitives import VEGA_SCHEME_NAMES
+from dbt_charts.core.compile.models.schema_names import VEGA_SCHEME_NAMES
 
 # Scaffolding themes carry no real design intent for this palette — excluded
 # the same way the task's own design conversation scoped "every real theme".

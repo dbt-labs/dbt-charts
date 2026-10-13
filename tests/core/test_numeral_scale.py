@@ -204,7 +204,7 @@ def test_zero_carries_no_suffix_in_anchor_mode():
 
 def test_anchor_mode_suffix_only_on_the_anchor_member():
     scale = SharedScale(exponent=3, mode=SuffixMode.ANCHOR)
-    assert scale.suffix(500_000, is_anchor=True) == "\u00a0K"
+    assert scale.suffix(500_000, is_anchor=True) == "K"
     assert scale.suffix(400_000, is_anchor=False) == ""
 
 
@@ -397,9 +397,9 @@ def test_suffix_at_register_reads_the_named_table_regardless_of_mode():
     consumer needs the narrative suffix for an exponent without first
     building a REPEAT-mode SharedScale just to reach it.
     """
-    assert suffix_at_register(3, "analytic") == "\u00a0K"
+    assert suffix_at_register(3, "analytic") == "K"
     assert suffix_at_register(3, "narrative") == "k"
-    assert suffix_at_register(9, "analytic") == "\u00a0B"
+    assert suffix_at_register(9, "analytic") == "B"
     assert suffix_at_register(9, "narrative") == "bn"
 
 

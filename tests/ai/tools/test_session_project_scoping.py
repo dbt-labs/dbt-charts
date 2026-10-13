@@ -10,7 +10,6 @@ project's backing store, never disk.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -75,88 +74,6 @@ class TestWriteToolsUseBackingStoreNotHost:
             "read_file", {"path": "charts/report.yml"}, context=cloud_context
         )
         assert read_back["content"] == "title: Out Store\n"
-
-
-class TestValidateByYamlContentOnNonFilesystemProject:
-    def test_validate_by_yaml_content_still_works(
-        self, cloud_context: DbtChartsAIContext
-    ) -> None:
-        # The backing-store-agnostic arm a non-filesystem host actually uses.
-        result = dispatch_tool_call(
-            "validate_board",
-            {"yaml_content": "title: T\ncharts: {}\nrows: []\n"},
-            context=cloud_context,
-        )
-        assert isinstance(result, dict)
-
-
-class TestValidateByPathOnNonFilesystemProject:
-    """validate_board's path arm routes existence + compile through the
-    Project seam (project.path_for_fspath(...).exists() / compile_file), so it
-    works against a non-filesystem project (Cloud) — no refusal, no disk read."""
-
-    def test_validates_and_runs_data_lint_without_refusing(
-        self,
-        tmp_path: Path,
-        in_memory_project: Callable[[Path, dict[str, str]], Project],
-    ) -> None:
-        project = in_memory_project(
-            tmp_path / "in-memory-root",
-            {
-                "charts/report.yml": (
-                    "title: Report\n"
-                    "aliases:\n"
-                    "  - /data/no_such_src/analytics/orders/\n"
-                    "queries:\n"
-                    "  q:\n"
-                    "    type: values\n"
-                    "    rows:\n"
-                    "      - {n: 1}\n"
-                    "charts:\n"
-                    "  t:\n"
-                    "    query: q\n"
-                    "    type: table\n"
-                    "rows:\n"
-                    "  - t\n"
-                )
-            },
-        )
-        context = DbtChartsAIContext(
-            project_session=ProjectSession.from_project(project),
-            dashboards_directory=None,
-        )
-        result = dispatch_tool_call(
-            "validate_board", {"path": "charts/report.yml"}, context=context
-        )
-        # The board compiles; the /data/ alias lint (run through annotate_with_data_lint)
-        # then flags the unknown source — proof the seam-based path ran both stages,
-        # not the removed isinstance(project, FilesystemProject) refuse-guard.
-        assert result["success"] is False
-        assert any("no_such_src" in e["message"] for e in result["errors"])
-        blob = json.dumps(result)
-        assert str(Path.cwd()) not in blob
-
-    def test_not_found_path_fails_gracefully_without_leaking_cwd(
-        self,
-        tmp_path: Path,
-        in_memory_project: Callable[[Path, dict[str, str]], Project],
-    ) -> None:
-        """A path absent from the backing store fails as not-found — not the
-        removed refuse-guard — and the not-found hint never surfaces the
-        server's cwd (project.root on a non-filesystem project like Cloud)."""
-        project = in_memory_project(tmp_path / "in-memory-root", {})
-        context = DbtChartsAIContext(
-            project_session=ProjectSession.from_project(project),
-            dashboards_directory=None,
-        )
-        result = dispatch_tool_call(
-            "validate_board", {"path": "charts/missing.yml"}, context=context
-        )
-        assert result["success"] is False
-        assert any("not found" in e["message"].lower() for e in result["errors"])
-        assert not any("filesystem project" in e["message"] for e in result["errors"])
-        blob = json.dumps(result)
-        assert str(Path.cwd()) not in blob
 
 
 class TestReadToolsUseBackingStoreNotDisk:
@@ -224,7 +141,7 @@ class TestReadToolsUseBackingStoreNotDisk:
         assert result["success"] is True
         assert [m["path"] for m in result["matches"]] == ["charts/report.yml"]
 
-    def test_query_board_reads_from_backing_store(
+    def test_execute_query_named_form_reads_from_backing_store(
         self,
         tmp_path: Path,
         in_memory_project: Callable[[Path, dict[str, str]], Project],
@@ -250,14 +167,45 @@ class TestReadToolsUseBackingStoreNotDisk:
             dashboards_directory=None,
         )
         result = dispatch_tool_call(
-            "query_board",
-            {"name": "inline", "path": "charts/queryable.yml"},
+            "execute_query",
+            {"query": "inline", "board": "charts/queryable.yml"},
             context=context,
         )
         assert result["success"] is True
         assert result["data"] == [{"a": 1, "b": 2}]
+        assert result["csv"] == "a,b\n1,2\n"
         # The board exists only in the in-memory store, never on real disk.
         assert not (tmp_path / "charts" / "queryable.yml").exists()
+
+    def test_execute_query_named_form_survives_ragged_rows(
+        self, tmp_path: Path, in_memory_project: Callable[..., Project]
+    ) -> None:
+        board = (
+            "queries:\n"
+            "  ragged:\n"
+            "    type: values\n"
+            "    rows:\n"
+            "      - {a: 1, b: 2}\n"
+            "      - {a: 3}\n"
+            "charts:\n"
+            "  c:\n"
+            "    query: ragged\n"
+            "    type: table\n"
+            "rows:\n"
+            "  - c\n"
+        )
+        project = in_memory_project(tmp_path, {"charts/ragged.yml": board})
+        context = DbtChartsAIContext(
+            project_session=ProjectSession.from_project(project),
+            dashboards_directory=None,
+        )
+        result = dispatch_tool_call(
+            "execute_query",
+            {"query": "ragged", "board": "charts/ragged.yml"},
+            context=context,
+        )
+        assert result["success"] is True, result
+        assert result["csv"].startswith("a,b\n1,2\n3,")
 
 
 class TestLocalFilesystemUnchanged:

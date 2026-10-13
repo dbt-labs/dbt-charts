@@ -23,14 +23,12 @@ from collections.abc import Sequence
 # path instead.
 #
 # Fuzzy matching is actively wrong for a rename: the nearest string to
-# `currency_compact` is `currency_whole`, which compiles clean and silently
-# drops compaction, so an author who followed that hint would get a changed
-# render and no error at all.
+# `number_default` is `number_full`, which compiles clean and silently drops
+# compaction, so an author who followed that hint would get a changed render
+# and no error at all.
 #
 # Drop an entry once boards predating its rename are no longer in the wild.
 RETIRED_FORMAT_SUCCESSORS: dict[str, str] = {
-    "currency_compact": "currency",
-    "compact": "number",
     "number_default": "number",
 }
 
@@ -172,6 +170,15 @@ def suggest_close_theme(
     return _suggest_close_match(theme, available)
 
 
+def suggest_close_chart(
+    chart: str,
+    available: Sequence[str] = (),
+    **_kwargs: object,  # type-state: object_annotation — hint_generator is called with every field of the code; the rest are heterogeneous and unread
+) -> str | None:
+    """Return a 'Did you mean X?' hint for an unknown chart id."""
+    return _suggest_close_match(chart, available)
+
+
 def suggest_close_extends(
     entry: str,
     available: Sequence[str] = (),
@@ -193,10 +200,9 @@ def suggest_close_format(
     for a rename.
     """
     successor = RETIRED_FORMAT_SUCCESSORS.get(spec)
-    # Only when the successor is legal *here*: `available` is scoped to the
-    # slot's own half of the vocabulary, so offering a number name to a
-    # `time_format:` slot would trade a fuzzy wrong answer for a confident one.
-    # An empty pool means no name is legal — the `style.formats` alias-target
+    # Only when the successor is legal *here*: `available` is the pool the slot
+    # takes, so a successor outside it would trade a fuzzy wrong answer for a
+    # confident one. An empty pool means no name is legal — the `style.formats` alias-target
     # check passes one, and a predefined successor there re-raises on the very
     # next compile.
     if successor is not None and successor in available:

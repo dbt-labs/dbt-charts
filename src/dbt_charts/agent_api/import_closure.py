@@ -23,6 +23,7 @@ from dbt_charts.core.compile.models.refs import (
     QUERY_REF_RE,
     VAR_REF_RE,
 )
+from dbt_charts.core.compile.parse.parser import load_yaml_text
 from dbt_charts.core.utils import YAML_LOADER
 
 if TYPE_CHECKING:
@@ -77,17 +78,18 @@ def _load_board_yaml(content: str, relpath: str) -> Any:
 
     Handles ``.md`` boards via their frontmatter YAML (not the raw markdown text,
     which contains two YAML documents and raises ``ComposerError``).
-    Converts ``yaml.YAMLError`` to ``CompilationError`` so callers see one
+    A YAML syntax error raises ``ERR-YAML-SYNTAX``; a markdown board's
+    frontmatter failure raises a plain ``CompilationError``, so callers see one
     declared exception type.
     """
-    try:
-        if relpath.endswith((".md",)):
-            from dbt_charts.core.compile.parse.markdown import parse_markdown_board
+    if relpath.endswith((".md",)):
+        from dbt_charts.core.compile.parse.markdown import parse_markdown_board
 
+        try:
             content, _metadata = parse_markdown_board(content)
-        return yaml.load(content, Loader=YAML_LOADER)
-    except (ValueError, yaml.YAMLError) as exc:
-        raise CompilationError(f"Parse error in '{relpath}': {exc}") from exc
+        except (ValueError, yaml.YAMLError) as exc:
+            raise CompilationError(f"Parse error in '{relpath}': {exc}") from exc
+    return load_yaml_text(content, source=relpath, loader=YAML_LOADER)
 
 
 def _extract_imports(data: dict[str, Any]) -> list[tuple[str, RefKind]]:

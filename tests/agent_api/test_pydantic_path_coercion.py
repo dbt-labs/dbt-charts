@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 from dbt_charts.agent_api.boards import RenderBoardArgs
 from dbt_charts.agent_api.describe import DescribeBoardArgs, DescribeBoardResult
-from dbt_charts.agent_api.validate import ValidateBoardArgs, ValidateResult
+from dbt_charts.agent_api.query import ExecuteQueryArgs
+from dbt_charts.agent_api.validate import ValidateResult
 from dbt_charts.cli.filesystem_project import FilesystemProject
 
 if TYPE_CHECKING:
@@ -21,9 +22,11 @@ if TYPE_CHECKING:
 class TestPydanticPathCoercion:
     """Pydantic v2 must coerce a JSON string ``path`` to Path."""
 
-    def test_validate_board_args_path_is_path(self) -> None:
-        parsed = ValidateBoardArgs.model_validate({"path": "charts/x.yml"})
-        assert isinstance(parsed.path, Path)
+    def test_execute_query_args_board_is_path(self) -> None:
+        parsed = ExecuteQueryArgs.model_validate(
+            {"board": "charts/x.yml", "query": "revenue"}
+        )
+        assert isinstance(parsed.board, Path)
 
     def test_render_board_args_path_is_path(self) -> None:
         parsed = RenderBoardArgs.model_validate({"path": "charts/x.yml"})
@@ -47,17 +50,11 @@ class TestMcpSchemaFormat:
             v.get("format") == "path" for v in prop.get("anyOf", [])
         ), f"schema should carry format=path, got: {prop}"
 
-    def test_validate_board_schema_path_format(self) -> None:
-        from dbt_charts.ai.tool_schemas import VALIDATE_BOARD
+    def test_execute_query_schema_board_path_format(self) -> None:
+        from dbt_charts.ai.tool_schemas import EXECUTE_QUERY
 
-        schema = VALIDATE_BOARD["input_schema"]
-        self._assert_path_format(schema["properties"]["path"])
-
-    def test_query_board_schema_path_format(self) -> None:
-        from dbt_charts.ai.tool_schemas import QUERY_BOARD
-
-        schema = QUERY_BOARD["input_schema"]
-        self._assert_path_format(schema["properties"]["path"])
+        schema = EXECUTE_QUERY["input_schema"]
+        self._assert_path_format(schema["properties"]["board"])
 
 
 class TestFreeFunctionPathContract:
@@ -151,12 +148,6 @@ class TestDispatchPathContract:
         )
         return dispatch_tool_call, ctx
 
-    def test_validate_board_dispatch_accepts_string_path(self, tmp_path: Path) -> None:
-        dispatch, ctx = self._ctx(tmp_path)
-        result = dispatch("validate_board", {"path": "charts/x.yml"}, context=ctx)
-        assert isinstance(result, dict)
-        assert result.get("success") is False
-
     def test_render_board_dispatch_accepts_string_path(self, tmp_path: Path) -> None:
         dispatch, ctx = self._ctx(tmp_path)
         result = dispatch(
@@ -171,10 +162,12 @@ class TestDispatchPathContract:
         assert isinstance(result, dict)
         assert result.get("success") is False
 
-    def test_query_board_dispatch_accepts_string_path(self, tmp_path: Path) -> None:
+    def test_execute_query_dispatch_accepts_string_board(self, tmp_path: Path) -> None:
         dispatch, ctx = self._ctx(tmp_path)
         result = dispatch(
-            "query_board", {"name": "revenue", "path": "charts/x.yml"}, context=ctx
+            "execute_query",
+            {"query": "revenue", "board": "charts/x.yml"},
+            context=ctx,
         )
         assert isinstance(result, dict)
         assert result.get("success") is False

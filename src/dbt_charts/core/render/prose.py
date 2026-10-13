@@ -22,9 +22,9 @@ from typing import TYPE_CHECKING, Literal
 
 from dbt_charts.core.compile.models.board.authored import LayoutType
 from dbt_charts.core.compile.models.board.normalized import ProsePlan, VariableValues
+from dbt_charts.core.compile.resolve.style.markdown_style import readable_measure
 from dbt_charts.core.compile.sizing import card_row_gap, prose_slot_widths
 from dbt_charts.core.render.column_packer import (
-    MAX_CHARS,
     choose_grid,
     columns_earned,
     grid_span,
@@ -62,7 +62,7 @@ def _measure(span_text: float, max_chars: int | None, char_px: float) -> float:
     measured from the span, so the excess lands at the right of each span and
     every left edge stays on a card content edge.
     """
-    return min(span_text, (MAX_CHARS if max_chars is None else max_chars) * char_px)
+    return min(span_text, readable_measure(char_px, max_chars))
 
 
 def _group_spans(
@@ -142,9 +142,9 @@ def _prose_typography(
     from dbt_charts.core.compile.resolve.style.markdown_style import (
         body_text_font_family,
         get_compact_style,
+        max_chars_to_px,
     )
     from dbt_charts.core.font_measure import markdown_font_faces
-    from dbt_charts.core.render.sizing import max_chars_to_px
 
     family = body_text_font_family(resolved_style)
     style = get_compact_style(resolved_style, text_align=text_style.align)
@@ -275,7 +275,6 @@ def render_prose_svg(
         # keep to their span so every edge on the board is a span edge.
         wanted = min(
             renderer.max_content_width(blocks),
-            float(resolved_style.text.preferred_width),
             _measure(width, col.max_chars, char_px),
         )
         if wanted > measure:

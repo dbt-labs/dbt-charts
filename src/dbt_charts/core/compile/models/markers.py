@@ -7,8 +7,18 @@ are picked up by introspection.py to enrich the schema IR.
 from __future__ import annotations
 
 import dataclasses
-from enum import Enum
-from typing import Literal
+from collections.abc import Callable
+from enum import StrEnum
+from typing import Any
+
+from pydantic import GetCoreSchemaHandler
+from pydantic_core import CoreSchema, core_schema
+
+from dbt_charts.core.colors import AUTHORED_COLOR_PATTERN, check_authored_color
+from dbt_charts.core.fonts import (
+    AUTHORED_FONT_STACK_PATTERN,
+    check_authored_font_stack,
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -97,7 +107,7 @@ class SchemaSugar:
     description: str
 
 
-class Strategy(str, Enum):
+class Strategy(StrEnum):
     """Valid merge strategies for the Merge marker."""
 
     OVERRIDE = "override"
@@ -184,12 +194,44 @@ class Facet:
 
     A facet travels with its field through renames and moves, and reaches the IR
     as ``SchemaField.facets``. Attached via ``Annotated[T, Color()]``.
+
+    ``pattern`` is the regex the facet's validator enforces, stated again in the
+    editor schema.
     """
+
+    @property
+    def pattern(self) -> str | None:
+        return None
+
+
+def _checked(inner: CoreSchema, check: Callable[[str], str]) -> CoreSchema:
+    return core_schema.no_info_after_validator_function(
+        lambda value: check(value) if isinstance(value, str) else value, inner
+    )
 
 
 @dataclasses.dataclass(frozen=True)
 class Color(Facet):
-    """The value is a CSS color, so an editor can offer a swatch."""
+    """The value is a CSS color, so an editor can offer a swatch.
+
+    ``column_ref``: the value may instead name a query column (a table column's
+    own colors), so it is neither shape- nor name-checked.
+    """
+
+    column_ref: bool = False
+
+    @property
+    def pattern(self) -> str | None:
+        return None if self.column_ref else AUTHORED_COLOR_PATTERN
+
+    def __get_pydantic_core_schema__(
+        self,
+        source: Any,  # type-state: explicit_any — pydantic's annotation hook receives any source type
+        handler: GetCoreSchemaHandler,
+    ) -> CoreSchema:
+        if self.column_ref:
+            return handler(source)
+        return _checked(handler(source), check_authored_color)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -202,18 +244,9 @@ class Format(Facet):
     sits in, which no wheel-shipped Literal can hold. The facet is what lets a
     surface holding a board widen the offer to the aliases that board defines,
     without matching field names or comparing values against the built-in set.
-
-    `kind` narrows which half of the engine's vocabulary belongs in the slot.
-    Most slots are `"any"`: a `format:` on an axis or a table column is judged
-    by the column it paints, and the same field is a currency on one chart and
-    a date on the next. Two are not — `number_format` feeds a quantitative axis
-    and `time_format` a temporal one — and there the wrong half is a d3 number
-    spec baked onto a date, which renders garbage rather than failing. A board's
-    own `style.formats` aliases are never kind-narrowed: the engine cannot know
-    what spec a user's alias targets, so they stay legal in every slot.
+    A slot is judged by the column it paints, so the same field is a currency on
+    one chart and a date on the next.
     """
-
-    kind: Literal["any", "number", "time"] = "any"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -222,8 +255,20 @@ class FontFamily(Facet):
 
     The wheel knows exactly which faces it ships (``core.fonts``), so an
     editor can offer them — as shortcuts, never a closed set: any CSS family
-    or stack stays a legal value.
+    or stack stays a legal value. An entry that is not a valid CSS identifier
+    is quoted; a character that could end the declaration fails validation.
     """
+
+    @property
+    def pattern(self) -> str | None:
+        return AUTHORED_FONT_STACK_PATTERN
+
+    def __get_pydantic_core_schema__(
+        self,
+        source: Any,  # type-state: explicit_any — pydantic's annotation hook receives any source type
+        handler: GetCoreSchemaHandler,
+    ) -> CoreSchema:
+        return _checked(handler(source), check_authored_font_stack)
 
 
 @dataclasses.dataclass(frozen=True)

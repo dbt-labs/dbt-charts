@@ -83,6 +83,7 @@ from dbt_charts.core.compile.models.constraints import (
     Forbids,
     IsSet,
     Requires,
+    ValueIn,
 )
 from dbt_charts.core.compile.sources.dbt_jinja import render_dbt_jinja_in_dict
 from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_CREDENTIAL_LITERAL
@@ -1158,26 +1159,54 @@ class DatabricksSourceConfig(
         return validate_databricks_http_path(v)
 
 
-class TrinoSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
+TRINO_CREDENTIAL_CONSTRAINTS: tuple[Constraint, ...] = (
+    Requires(
+        ("user", "password"),
+        "Trino method ldap needs user and password.",
+        when=(ValueIn("method", ("ldap",)),),
+    ),
+    Requires(
+        ("jwt_token",),
+        "Trino method jwt needs jwt_token.",
+        when=(ValueIn("method", ("jwt",)),),
+    ),
+    Requires(
+        ("client_certificate", "client_private_key"),
+        "Trino method certificate needs client_certificate and client_private_key.",
+        when=(ValueIn("method", ("certificate",)),),
+    ),
+    # The Kerberos library takes the keytab from the process environment only,
+    # which dbt Charts does not write.
+    Forbids(
+        ("keytab",),
+        "Trino keytab is not read from the source. Set KRB5_CLIENT_KTNAME in the "
+        "environment and remove keytab.",
+    ),
+)
+
+
+class TrinoSourceConfig(AttributedSourceConfig, DatabaseSourceConfig, ConstrainedModel):
     """Trino / Presto source configuration.
 
-    `database` names the Trino catalog; dbt-trino aliases `catalog` → `database`,
-    so authors may write either key (`AliasChoices`). Authentication is
-    multi-method: `method` defaults to none (a `user`, no password). The model
-    declares the union of fields accepted by dbt-trino's method-specific
-    credential classes; each field description names the method that consumes it.
+    `database` names the Trino catalog; a dbt profile spells it `database` and
+    Trino itself `catalog`, so authors may write either key (`AliasChoices`).
+    Authentication is multi-method: `method` defaults to none (a `user`, no
+    password). The fields are the keys of a dbt `type: trino` profile target, so
+    a `dbt_profile` source maps onto this model one-to-one; each field
+    description names the method that consumes it.
 
     Read-only posture: no native driver flag. Bind a SELECT-only Trino role
     (or SELECT-only credentials on the backing catalog) at the cluster level.
     """
 
     source_category: ClassVar[str] = "database"
+    __constraints__ = TRINO_CREDENTIAL_CONSTRAINTS
     type: Literal["trino"] = Field(description="Source type identifier.")
     host: str = Field(description="Trino coordinator host name.")
     port: int = Field(default=8080, description="Trino coordinator port number.")
     database: str = Field(
         validation_alias=AliasChoices("database", "catalog"),
-        description="Trino catalog name (dbt-trino's `database`; `catalog` is accepted too).",
+        description="Trino catalog name (`catalog` is accepted too).",
     )
     schema_: str = Field(alias="schema", description="Default schema for queries.")
     user: str | None = Field(
@@ -1195,7 +1224,10 @@ class TrinoSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
     ] = None
     password: Annotated[
         str | None,
-        Field(description="LDAP password. Required when method is ldap."),
+        Field(
+            min_length=1,
+            description="LDAP password. Required when method is ldap.",
+        ),
     ] = None
     impersonation_user: Annotated[
         str | None,
@@ -1227,10 +1259,10 @@ class TrinoSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
     ] = Field(default_factory=dict)
     prepared_statements_enabled: Annotated[
         bool,
-        Field(description="Whether Trino prepared statements are enabled."),
+        Field(description="Accepted so a dbt profile target maps over; has no effect."),
     ] = True
     retries: Annotated[
-        int | None,
+        int,
         Field(description="Maximum request retry attempts."),
     ] = 3
     timezone: Annotated[
@@ -1255,7 +1287,9 @@ class TrinoSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
     ] = None
     keytab: Annotated[
         str | None,
-        Field(description="Kerberos keytab path."),
+        Field(
+            description="Unsupported; set KRB5_CLIENT_KTNAME in the environment instead."
+        ),
     ] = None
     principal: Annotated[
         str | None,
@@ -1270,11 +1304,21 @@ class TrinoSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
         Field(description="Kerberos or GSSAPI service name."),
     ] = None
     mutual_authentication: Annotated[
-        bool | str | None,
+        bool | Literal["REQUIRED", "OPTIONAL", "DISABLED"] | None,
         Field(
             description="Kerberos or GSSAPI mutual-authentication setting.",
         ),
     ] = None
+
+    @field_validator("mutual_authentication", mode="before")
+    @classmethod
+    def _uppercase_mutual_mode(
+        cls,
+        value: object,  # type-state: object_annotation — raw authored value
+    ) -> object:  # type-state: object_annotation — the same value, uppercased
+        # dbt-trino reads the mode case-insensitively.
+        return value.upper() if isinstance(value, str) else value
+
     force_preemptive: Annotated[
         bool | None,
         Field(
@@ -1299,7 +1343,7 @@ class TrinoSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
     ] = None
     jwt_token: Annotated[
         str | None,
-        Field(description="JWT token. Required when method is jwt."),
+        Field(min_length=1, description="JWT token. Required when method is jwt."),
     ] = None
 
 

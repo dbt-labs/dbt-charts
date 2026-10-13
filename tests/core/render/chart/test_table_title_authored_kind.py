@@ -12,7 +12,8 @@ from dbt_charts.core.compile.models.chart.normalized import TableChart
 from dbt_charts.core.compile.models.query.normalized import ValuesQuery
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
-from dbt_charts.core.render.chart.table import render_table_svg
+
+from ..._engine_render import render_table_svg
 
 _ROWS = [{"revenue": 128_000}]
 

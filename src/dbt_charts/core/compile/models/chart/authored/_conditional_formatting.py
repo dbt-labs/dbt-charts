@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
     BaseModel,
@@ -21,6 +21,7 @@ from dbt_charts.core.compile.models.constraints import (
     IsSet,
     Requires,
 )
+from dbt_charts.core.compile.models.markers import Color
 from dbt_charts.core.compile.models.primitives import (
     FontStyle,
     GlyphText,
@@ -39,7 +40,9 @@ class _PredicateBase(ConstrainedModel):
     # 'in' is a Python keyword, so the field is `in_` in Python and the alias
     # `in` is the only authored spelling. Dumping by alias lets every
     # dump-and-revalidate site in the pipeline round-trip.
-    model_config = ConfigDict(extra="forbid", serialize_by_alias=True)
+    model_config = ConfigDict(
+        extra="forbid", serialize_by_alias=True, allow_inf_nan=False
+    )
 
     eq: Any = Field(
         default=None, description="Match rows where the column value equals this value."
@@ -187,7 +190,7 @@ class ConditionalRule(_PredicateBase):
         default=None,
         description="Text shown before the cell value when the rule matches.",
     )
-    glyph_color: str | None = Field(
+    glyph_color: Annotated[str | None, Color()] = Field(
         default=None,
         description="Color for the glyph when the rule matches. Requires glyph to be set.",
     )

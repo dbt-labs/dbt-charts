@@ -25,7 +25,7 @@ def _plain(text: str) -> str:
 @pytest.fixture(autouse=True)
 def patch_syntax_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point ``_SYNTAX_FILE`` at a controlled corpus and the generated
-    references at empty files, so no CLI test scores against the wheel."""
+    references at empty text, so no CLI test scores against the real ones."""
     fake = tmp_path / "DBT_CHARTS_SYNTAX.md"
     fake.write_text(
         "# dbt charts YAML Syntax\n\n"
@@ -41,10 +41,10 @@ def patch_syntax_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import dbt_charts.agent_api.docs._loader as _loader
 
     monkeypatch.setattr(_loader, "_SYNTAX_FILE", fake)
-    for name in ("_REFERENCE_FILE", "_ERROR_REFERENCE_FILE", "_WARNING_REFERENCE_FILE"):
-        empty = tmp_path / f"empty-{name}.md"
-        empty.write_text("")
-        monkeypatch.setattr(_loader, name, empty)
+    empty: dict[str, str] = dict.fromkeys(
+        ("reference", "error-reference", "warning-reference"), ""
+    )
+    monkeypatch.setattr(_loader, "_generated_text", empty.__getitem__)
 
 
 class TestDocsTopicIndex:

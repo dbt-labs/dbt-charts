@@ -464,12 +464,12 @@ class TestStampDiagnostics:
 
     def test_a_chart_diagnostic_with_no_query_stays_on_the_chart(self) -> None:
         """Every render warning has `path="charts.<id>"` and no query — they are
-        about the chart (too many segments, crowded labels), not its SQL. The
+        about the chart (a dominant slice, crowded labels), not its SQL. The
         query retarget must not capture them, even when the chart happens to
         carry an inline `query:` whose block would resolve."""
         from dbt_charts.core.compile.parse.source_map import stamp_diagnostics
         from dbt_charts.core.diagnostics.codes_render import (
-            WARN_PIE_TOO_MANY_SEGMENTS,
+            WARN_PIE_DOMINANT_SEGMENT,
         )
 
         source_map = {
@@ -477,7 +477,7 @@ class TestStampDiagnostics:
             "charts.c1.query.sql": SourceRange(file="f.yaml", start_line=6, end_line=8),
         }
         d = Diagnostic.from_code(
-            WARN_PIE_TOO_MANY_SEGMENTS, message="too many wedges", path="charts.c1"
+            WARN_PIE_DOMINANT_SEGMENT, message="one big wedge", path="charts.c1"
         )
         stamp_diagnostics([d], source_map)
 

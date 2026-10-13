@@ -411,3 +411,68 @@ def test_cli_describe_command_uses_project_session_with_block(tmp_path: Path) ->
         "describe_command must construct exactly one ProjectSession.from_project(...)"
     )
     fake_project.describe_paths.assert_called_once()
+
+
+class TestDftDescribeChartScope:
+    """dct describe <board> --chart ID describes one chart."""
+
+    def test_chart_flag_narrows_json_to_one_chart(self, tmp_path: Path) -> None:
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        board = tmp_path / "sales.yml"
+        board.write_text(
+            _BOARD_YAML.replace(
+                "rows:\n",
+                "  bars:\n    query: revenue\n    type: bar\n"
+                "    x: month\n    y: total\nrows:\n",
+            )
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "describe",
+                str(board),
+                "--chart",
+                "bars",
+                "--json",
+                "--project-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert [c["name"] for c in data["charts"]] == ["bars"]
+
+    def test_chart_flag_rejects_multiple_paths(self, tmp_path: Path) -> None:
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        (tmp_path / "a.yml").write_text(_BOARD_YAML)
+        (tmp_path / "b.yml").write_text(_BOARD_YAML)
+
+        result = runner.invoke(
+            app,
+            [
+                "describe",
+                str(tmp_path / "a.yml"),
+                str(tmp_path / "b.yml"),
+                "--chart",
+                "trend",
+                "--project-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 2
+        assert "--chart" in result.output + (result.stderr or "")
+
+    def test_unknown_chart_reports_error_code(self, tmp_path: Path) -> None:
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        board = tmp_path / "sales.yml"
+        board.write_text(_BOARD_YAML)
+
+        result = runner.invoke(
+            app,
+            ["describe", str(board), "--chart", "trnd", "--project-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 1
+        combined = result.output + (result.stderr or "")
+        assert "ERR-UNKNOWN-CHART" in combined
+        assert "trend" in combined

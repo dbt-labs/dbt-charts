@@ -37,6 +37,8 @@ from dbt_charts.core.compile.models.primitives import (
     signs_before_prefix,
 )
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_FORMAT_GRAIN_NAME_NOT_REDEFINED,
+    ERR_FORMAT_NATIVE_IN_VEGA_SLOT,
     ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX,
 )
 from dbt_charts.core.font_measure import compose_decimal_units
@@ -55,9 +57,13 @@ from dbt_charts.core.text.numeral_scale import (
 )
 from dbt_charts.core.text.predefined_formats import (
     ALL_PREDEFINED_NAMES,
+    GRAIN_FORMAT_NAMES,
+    GRAIN_NAMES,
+    PREDEFINED_NATIVE,
     PREDEFINED_NUMBER_NAMES,
     PREDEFINED_SPECS,
     PREDEFINED_SUB_UNIT_FALLBACK,
+    PREDEFINED_TEXT_NAMES,
     PREDEFINED_TIME_NAMES,
     PREDEFINED_TIME_SPECS,
     SUB_UNIT_FLOOR,
@@ -134,6 +140,12 @@ def resolve_format(
         if format_str not in PREDEFINED_SPECS:
             return format_str  # native formatter — pass through
         return round_aware_spec(_engine_spec(format_str, formats))
+    if format_str in GRAIN_NAMES:
+        raise CompilationError.from_code(
+            ERR_FORMAT_GRAIN_NAME_NOT_REDEFINED,
+            spec=format_str,
+            field_path="a format",
+        )
     if format_str in PREDEFINED_TIME_NAMES:
         return PREDEFINED_TIME_SPECS[format_str]
 
@@ -151,7 +163,32 @@ def _engine_spec(name: str, formats: FormatTable | None) -> str:
         and not CURRENCIES[formats.currency].digits
     ):
         name = PredefinedNumberFormat.currency_whole
-    return PREDEFINED_SPECS[name]
+    return PREDEFINED_SPECS[name].d3
+
+
+def grain_is_redefined(name: str, aliases: Mapping[str, AuthoredFormat]) -> bool:
+    """Whether following ``name`` through ``aliases`` ends at something other than
+    an engine grain name: a self-alias, or one pointing at an unredefined grain,
+    redefines nothing."""
+    seen: set[str] = set()
+    target: str | None = name
+    while target is not None and target in aliases and target not in seen:
+        seen.add(target)
+        authored = aliases[target]
+        target = authored.spec if isinstance(authored, FormatConfig) else authored
+    return bool(target) and target not in GRAIN_NAMES
+
+
+def grain_format_specs(formats: FormatTable | None) -> dict[str, str]:
+    """Calendar unit -> the strftime spec a board redefined its ``date_<grain>``
+    name to; an unredefined grain is absent."""
+    if formats is None:
+        return {}
+    return {
+        unit: resolve_format(name, formats)
+        for unit, name in GRAIN_FORMAT_NAMES.items()
+        if name in formats and grain_is_redefined(name, formats.aliases)
+    }
 
 
 def _alias_preset(name: str | None, formats: FormatTable | None) -> str | None:
@@ -160,9 +197,7 @@ def _alias_preset(name: str | None, formats: FormatTable | None) -> str | None:
         return None
     target = formats[name]
     spec = target.spec if isinstance(target, FormatConfig) else target
-    if spec in PREDEFINED_NUMBER_NAMES or spec in PREDEFINED_TIME_NAMES:
-        return spec
-    return None
+    return spec if spec in ALL_PREDEFINED_NAMES else None
 
 
 def _resolved_raw(raw: str | None, formats: FormatTable | None) -> str | None:
@@ -170,7 +205,9 @@ def _resolved_raw(raw: str | None, formats: FormatTable | None) -> str | None:
     author's literal spec when a board redefined an engine name (so the engine's
     rules for that name stop applying), else the name itself."""
     if (preset := _alias_preset(raw, formats)) is not None:
-        return preset
+        # An alias of a name the board redefined follows the redefinition; a name
+        # aliased to itself is the engine's own.
+        return preset if preset == raw else _resolved_raw(preset, formats)
     if raw in ALL_PREDEFINED_NAMES and formats is not None and raw in formats:
         target = formats[raw]
         return (target.spec if isinstance(target, FormatConfig) else target) or None
@@ -246,10 +283,13 @@ def tick_min_step_for_format(d3_spec: str) -> float | None:
     Every other type -- SI (``s``), or no type at all (auto) -- has no fixed
     decimal count to derive from and returns None. Also None for a spec
     ``_d3_parse`` can't parse: a native predefined name (``percent_number``)
-    that bypasses d3 entirely.
+    that bypasses d3 entirely -- except ``duration``, whose smallest unit is a
+    whole second.
     """
     if not d3_spec:
         return None
+    if d3_spec == PredefinedNumberFormat.duration:
+        return 1.0
     try:
         parsed = _d3_parse(d3_spec)
     except D3FormatError:
@@ -288,7 +328,7 @@ def get_format_prefix_suffix(
     return _alias_prefix_suffix(format_input, formats)
 
 
-_OPTIONS = ("notation", "sign_placement", "repeat")
+_OPTIONS: tuple[str, ...] = ("notation", "sign_placement", "repeat")
 # What a spec-less format takes from its default beside the spec: a redefined
 # default carries its own affix and options.
 _FILLED_FROM_DEFAULT = ("prefix", "suffix", *_OPTIONS)
@@ -310,14 +350,47 @@ def _format_options(
     else:
         own = dict.fromkeys(_OPTIONS)
         spec = format_input
-    aliased = _alias_target(spec, formats)
-    return {
-        k: getattr(aliased, k) if v is None and aliased is not None else v
-        for k, v in own.items()
-    }
+    inherited = _named_options(spec, formats, frozenset())
+    return {k: inherited[k] if v is None else v for k, v in own.items()}
 
 
-def _format_fields(
+# Engine names that carry options beyond their spec: the definition of the name
+# itself, so every alias of it inherits them and a board's redefinition (a plain
+# string, a FormatConfig) replaces them along with the spec.
+_ENGINE_FORMATS: dict[str, FormatConfig] = {
+    name: FormatConfig(spec=PREDEFINED_SPECS[name].d3, notation="analytic")
+    for name in (
+        PredefinedNumberFormat.compact,
+        PredefinedNumberFormat.currency_compact,
+    )
+}
+
+
+def _named_options(
+    name: str | None, formats: FormatTable | None, seen: frozenset[str]
+) -> dict[str, Any]:  # type-state: explicit_any — ResolvedFormat constructor kwargs
+    """The ``_OPTIONS`` the format named ``name`` carries: its own, else those of
+    what it names in turn. A board's entry wins over the engine's; a name aliased
+    to itself fills what it leaves unset from the engine's definition."""
+    none = dict.fromkeys(_OPTIONS)
+    if name is None or name in seen:
+        return none
+    target = formats[name] if formats is not None and name in formats else None
+    own = (
+        {k: getattr(target, k) for k in _OPTIONS}
+        if isinstance(target, FormatConfig)
+        else none
+    )
+    inner = target.spec if isinstance(target, FormatConfig) else target
+    if target is None or inner == name:
+        engine = _ENGINE_FORMATS.get(name)
+        followed = none if engine is None else {k: getattr(engine, k) for k in _OPTIONS}
+    else:
+        followed = _named_options(inner, formats, seen | {name})
+    return {k: followed[k] if v is None else v for k, v in own.items()}
+
+
+def format_fields(
     format_input: AuthoredFormat
     | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
     | None,
@@ -329,12 +402,16 @@ def _format_fields(
         prefix, suffix = get_format_prefix_suffix(format_input, formats)
         raw = _format_raw_str(format_input)
         options = _format_options(format_input, formats)
+        resolved_raw = _resolved_raw(raw, formats)
+        if not (prefix or suffix) and resolved_raw in PREDEFINED_SPECS:
+            # An authored affix replaces the engine's own unit (`°`).
+            suffix = PREDEFINED_SPECS[resolved_raw].suffix
         fields = {
             "spec": resolve_format(format_input, formats),
             "prefix": prefix,
             "suffix": suffix,
             **options,
-            "raw": _resolved_raw(raw, formats),
+            "raw": resolved_raw,
         }
     return fields
 
@@ -352,9 +429,14 @@ _DEFAULT_NAME = {
 
 def _is_other_kind(fields: _Fields, kind: Literal["number", "time"]) -> bool:
     """Whether ``fields`` spells a look of the other kind: a number look has
-    nothing to say about a date, and a date look nothing about a number."""
+    nothing to say about a date, and a date look nothing about a number. A text
+    name belongs to neither, so it is never the other kind."""
     spec = fields["spec"]
-    return bool(spec) and is_time_format(spec) != (kind == "time")
+    return (
+        bool(spec)
+        and spec not in PREDEFINED_TEXT_NAMES
+        and is_time_format(spec) != (kind == "time")
+    )
 
 
 def _merge_tiers(
@@ -376,17 +458,17 @@ def _merge_tiers(
         fields
         for i, tier in enumerate(tiers)
         if tier is not None
-        for fields in [_format_fields(tier, formats)]
+        for fields in [format_fields(tier, formats)]
         if i == 0 or not _is_other_kind(fields, kind)
     ]
     from_default = not any(tier["spec"] for tier in resolved)
     if from_default:
         name = _DEFAULT_NAME[kind]
-        default = _format_fields(name, formats)
+        default = format_fields(name, formats)
         if engine_default is not None and default["raw"] == name:
             # The destination's name resolves through the board like any other,
             # so a board that redefined it (affix included) prints it whole.
-            instead = _format_fields(engine_default(), formats)
+            instead = format_fields(engine_default(), formats)
             default = (
                 instead
                 | {"raw": instead["raw"] or None}
@@ -416,8 +498,7 @@ def column_format(
 
     Each layer is its own input, strongest first: ``fmt`` is the chart's own slot
     format; ``column`` is the format a query's ``formats:`` declares for the
-    column; ``board`` is the board- or theme-level slot format, or the chart-wide
-    one. Below them sits the board's default for the kind, ``number`` or
+    column; ``board`` is the board- or theme-level slot format. Below them sits the board's default for the kind, ``number`` or
     ``date_short`` through ``formats``, so a name the board redefined supplies
     spec, affix and notation together. Callers never pre-merge layers: every
     field (spec, affix, notation, options) comes from the strongest layer that
@@ -460,6 +541,24 @@ def _finished(
     ):
         fields = fields | {"spec": sub_unit_spec(fields["raw"], formats)}
     return fields
+
+
+def reject_native(fmt: ResolvedFormat, field_path: str) -> ResolvedFormat:
+    """``fmt``, or ``ERR-FORMAT-NATIVE-IN-VEGA-SLOT`` if it is a native.
+
+    For a slot Vega paints from a bare d3 ``format`` that cannot carry the
+    native's expression arm (support table, heatmap and geo tooltips). Checked
+    on the resolved format, so a native inherited from a measure format is
+    caught as well as an authored one.
+    """
+    if fmt.spec in PREDEFINED_NATIVE:
+        raise CompilationError.from_code(
+            ERR_FORMAT_NATIVE_IN_VEGA_SLOT,
+            spec=fmt.spec,
+            field_path=field_path,
+            available=sorted(ALL_PREDEFINED_NAMES - PREDEFINED_NATIVE.keys()),
+        )
+    return fmt
 
 
 def authored_sign_placement(
@@ -509,7 +608,7 @@ def resolve_format_parts(
     ``column_format``. ``spec``, when given, replaces the resolved digits (a
     baked tick spec); ``notation`` is the destination's register when none is set.
     """
-    fields = _finished(_format_fields(format_input, formats), formats, None, notation)
+    fields = _finished(format_fields(format_input, formats), formats, None, notation)
     if spec is not None:
         fields["spec"] = spec
     return ResolvedFormat(**fields)

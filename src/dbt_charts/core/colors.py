@@ -494,6 +494,79 @@ def is_deferred_color_reference(value: str) -> bool:
     return is_color_token(value) or bool(_BARE_IDENTIFIER_PATTERN.match(value))
 
 
+_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+
+
+def _any_case(word: str) -> str:
+    """``word`` spelled case-insensitively; ECMA regex has no ``(?i:)``."""
+    return "".join(f"[{c}{c.upper()}]" for c in word)
+
+
+# Everything a color field may hold, as one ECMA-compatible regex so the JSON
+# Schema and the validator share it. Color functions include the ones
+# `parse_css_color` cannot read; their body may not open a declaration or a rule.
+AUTHORED_COLOR_PATTERN = "|".join(
+    f"(?:{p})"
+    for p in (
+        r"^$",
+        r"^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+        _IDENTIFIER_PATTERN.pattern,
+        _COLOR_TOKEN_PATTERN.pattern,
+        "^(?:"
+        + "|".join(
+            _any_case(w)
+            for w in (
+                "rgb",
+                "rgba",
+                "hsl",
+                "hsla",
+                "oklch",
+                "oklab",
+                "lab",
+                "lch",
+                "color",
+                "var",
+            )
+        )
+        + r""")\([^;{}<>"'\\*\x00-\x1f\x7f]*\)$""",
+    )
+)
+_AUTHORED_COLOR_RE = re.compile(AUTHORED_COLOR_PATTERN)
+
+# `by_tone` is a callout's own placeholder: the cascade replaces it with the
+# tone's color before anything is drawn.
+BY_TONE = "by_tone"
+_KEYWORD_COLORS = frozenset({"transparent", "none", "currentcolor", BY_TONE})
+
+
+def check_authored_color(value: str) -> str:
+    """Return ``value`` if it is shaped like something a color field may hold.
+
+    Shape only: a bare identifier passes, because on a table column it can name a
+    column. See ``is_unknown_color_name`` for the name check.
+    """
+    if _AUTHORED_COLOR_RE.fullmatch(value):
+        return value
+    raise ValueError(
+        f"{value!r} is not a color: use hex, a CSS color name, a palette token "
+        "(palette.slot), or a color function such as rgb() or oklch()"
+    )
+
+
+def is_unknown_color_name(value: str) -> bool:
+    """True when ``value`` is a bare identifier that names no color.
+
+    A leading underscore marks an internal column reference and is never
+    flagged.
+    """
+    return bool(
+        _IDENTIFIER_PATTERN.match(value)
+        and not value.startswith("_")
+        and value.lower() not in _KEYWORD_COLORS
+        and value.lower() not in CSS_COLOR_NAMES
+    )
+
+
 _CSS_COLOR_KEYWORDS = frozenset({"transparent", "none"})
 
 

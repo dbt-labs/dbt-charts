@@ -80,7 +80,7 @@ class TestChartStylePatchUsesCompiledTypes:
                 "axis_y": {
                     "position": "left",
                     "grid": {"visible": False},
-                    "labels": {"font": {"color": "#red"}},
+                    "labels": {"font": {"color": "#bda964"}},
                 }
             }
         )

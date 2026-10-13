@@ -25,16 +25,18 @@ predefined_formats.py where the native formatters that need them are defined.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypedDict, cast, get_args
 
 import vl_convert
+from importlib_resources import files
 
 from d3_format import (
     EN_US,
@@ -45,7 +47,10 @@ from d3_format import (
 )
 from d3_format.errors import D3FormatError
 from dbt_charts.core.text.magnitude_words import MagnitudeWords, magnitude_words
-from dbt_charts.core.text.predefined_formats import PREDEFINED_NUMBER_NAMES
+from dbt_charts.core.text.predefined_formats import (
+    PREDEFINED_NATIVE,
+    PREDEFINED_NUMBER_NAMES,
+)
 
 # The house notation vocabulary — analytic (SI-prefix, " K"/" M") or narrative
 # (prose-style, "k"/"mn"). Declared once here; every other module that needs
@@ -65,7 +70,7 @@ def default_sign_placement(prefix: str | None) -> SignPlacement:
 
 
 # The d3-format locales Vega bundles.
-LocaleName = Literal[
+NumberLocaleName = Literal[
     "ar-AE",
     "ar-BH",
     "ar-DJ",
@@ -127,7 +132,7 @@ LocaleName = Literal[
 ]
 
 
-def number_locale_definition(name: LocaleName) -> LocaleDefinition:
+def number_locale_definition(name: NumberLocaleName) -> LocaleDefinition:
     """d3's locale definition for ``name``, as Vega's bundled d3-format ships it."""
     return cast(
         "LocaleDefinition",
@@ -135,10 +140,89 @@ def number_locale_definition(name: LocaleName) -> LocaleDefinition:
     )  # type-state: cast — vl_convert's stub types d3's locale JSON as dict[str, Any]
 
 
+# The d3-time-format locales Vega bundles.
+TimeLocaleName = Literal[
+    "ar-EG",
+    "ar-SY",
+    "ca-ES",
+    "cs-CZ",
+    "da-DK",
+    "de-CH",
+    "de-DE",
+    "en-CA",
+    "en-GB",
+    "en-US",
+    "es-ES",
+    "es-MX",
+    "fa-IR",
+    "fi-FI",
+    "fr-CA",
+    "fr-FR",
+    "he-IL",
+    "hr-HR",
+    "hu-HU",
+    "it-IT",
+    "ja-JP",
+    "ko-KR",
+    "mk-MK",
+    "nb-NO",
+    "nl-BE",
+    "nl-NL",
+    "pl-PL",
+    "pt-BR",
+    "ru-RU",
+    "sv-SE",
+    "tr-TR",
+    "uk-UA",
+    "vi-VN",
+    "zh-CN",
+    "zh-TW",
+]
+
+
+class TimeLocaleDefinition(TypedDict):
+    """d3's ``timeFormatLocale`` definition, as Vega's ``config.locale.time``."""
+
+    dateTime: str
+    date: str
+    time: str
+    periods: list[str]
+    days: list[str]
+    shortDays: list[str]
+    months: list[str]
+    shortMonths: list[str]
+
+
+WeekdayName = Literal[
+    "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"
+]
+WEEKDAYS: tuple[WeekdayName, ...] = get_args(WeekdayName)
+
+CLDR_FIRST_DAY: dict[str, str] = json.loads(
+    files("dbt_charts.core.text")
+    .joinpath("data", "cldr_first_day.json")
+    .read_text(encoding="utf-8")
+)["firstDay"]
+
+
+def time_locale_definition(name: TimeLocaleName) -> TimeLocaleDefinition:
+    """d3's time locale definition for ``name``, as Vega's bundled d3-time-format
+    ships it."""
+    return cast(
+        "TimeLocaleDefinition",
+        vl_convert.get_time_format_locale(name),
+    )  # type-state: cast — vl_convert's stub types d3's locale JSON as dict[str, Any]
+
+
+def time_locale_week_start(name: TimeLocaleName) -> int:
+    """The index (0 Sunday) of the first weekday CLDR gives ``name``'s region."""
+    return [day[:3] for day in WEEKDAYS].index(CLDR_FIRST_DAY[name[3:]])
+
+
 # d3's SI letters for thousand through trillion; past trillions both registers
-# print the spaced letter.
+# print d3's own letter, glued like the analytic words (`1.2T`, `1.2P`).
 _SI_WORD_LETTERS = ("k", "M", "G", "T")
-_SI_PAST_TRILLIONS = {s: "\u00a0" + s for s in ("P", "E", "Z", "Y")}
+_SI_PAST_TRILLIONS = {s: s for s in ("P", "E", "Z", "Y")}
 SI_LETTERS: tuple[str, ...] = (*_SI_WORD_LETTERS, *_SI_PAST_TRILLIONS)
 
 
@@ -173,20 +257,42 @@ HOUSE_EN_US = HouseLocale(
     narrative=magnitude_words("en-US")[1],
 )
 
-_LOCALE: ContextVar[HouseLocale] = ContextVar("dct_number_locale", default=HOUSE_EN_US)
+EN_US_TIME = time_locale_definition("en-US")
+
+_NUMBER_LOCALE: ContextVar[HouseLocale] = ContextVar(
+    "dct_number_locale", default=HOUSE_EN_US
+)
+_TIME_LOCALE: ContextVar[TimeLocaleDefinition] = ContextVar(
+    "dct_time_locale", default=EN_US_TIME
+)
+_WEEK_START: ContextVar[int] = ContextVar("dct_week_start", default=0)
 
 
 @contextmanager
-def number_locale_scope(locale: HouseLocale) -> Generator[None]:
-    token = _LOCALE.set(locale)
+def regional_scope(
+    number: HouseLocale, time: TimeLocaleDefinition, week_start: int
+) -> Generator[None]:
+    number_token = _NUMBER_LOCALE.set(number)
+    time_token = _TIME_LOCALE.set(time)
+    week_token = _WEEK_START.set(week_start)
     try:
         yield
     finally:
-        _LOCALE.reset(token)
+        _WEEK_START.reset(week_token)
+        _TIME_LOCALE.reset(time_token)
+        _NUMBER_LOCALE.reset(number_token)
 
 
 def active_format_locale() -> HouseLocale:
-    return _LOCALE.get()
+    return _NUMBER_LOCALE.get()
+
+
+def active_time_locale() -> TimeLocaleDefinition:
+    return _TIME_LOCALE.get()
+
+
+def active_week_start() -> int:
+    return _WEEK_START.get()
 
 
 def locale_definition(locale: FormatLocale) -> LocaleDefinition:
@@ -401,20 +507,16 @@ def _milliseconds(d: date | datetime) -> str:
     return f"{ms:03d}"
 
 
-_EPOCH_UTC = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_EPOCH_UTC = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 def _epoch_millis(d: date | datetime) -> str:
     # A naive datetime (or a plain date) is the same "already UTC" convention
-    # table_support.py documents for its own strftime callers -- Vega's
+    # the engine's table follows for its own strftime callers -- Vega's
     # utcFormat has no concept of a naive instant, so ours must pick the one
     # reading that makes measurement match paint.
     dt = d if isinstance(d, datetime) else datetime(d.year, d.month, d.day)
-    dt = (
-        dt.replace(tzinfo=timezone.utc)
-        if dt.tzinfo is None
-        else dt.astimezone(timezone.utc)
-    )
+    dt = dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
     delta = dt - _EPOCH_UTC
     return str(
         (delta.days * 86_400 + delta.seconds) * 1000 + delta.microseconds // 1000
@@ -447,22 +549,26 @@ _DIRECTIVE_COMPUTERS: dict[str, Callable[[date | datetime], str]] = {
 # modified) is decided in `_substitute`, not by the regex.
 _TIME_DIRECTIVE_RE = re.compile(r"%%|%([-_0])?([A-Za-z])")
 
+_NAME_DIRECTIVES = frozenset("aAbBp")
+
 # The d3-time-format directive alphabet portable_strftime renders byte-
 # identical to Vega's utcFormat, bare and under every padding modifier --
 # enforced, not just asserted: ``test_format_d3_vega_parity.py`` probes real
 # Vega (``vl_convert``) for this exact set x every modifier and fails if one
 # drifts, so this comment cannot go stale the way an unverified claim did
 # before (``%_L``, bare ``%f``/``%g``, all silently wrong here at one point).
-# The excluded real d3 directives are %c/%x/%X (locale composites: Python
-# renders them through the host's C-locale strftime, not d3's en-US
-# "%x, %X"), %Z (empty on a naive datetime, unlike d3's "+0000"), and %s
-# (Python's %s silently uses the host's local timezone rather than a true
-# UTC epoch count). %f and %g are real d3 directives whose modifier forms
-# Python renders differently. Every remaining letter
-# is not d3-time-format grammar at all -- Vega paints the literal letter
-# while Python's strftime may compute an unrelated value (or, on Windows,
-# raise).
-VEGA_SAFE_TIME_DIRECTIVES = frozenset("aAbBdeGHIjLmMpqQSuUVwWyY")
+# The excluded real d3 directives are %Z (empty on a naive datetime, unlike
+# d3's "+0000"), and %s (Python's %s silently uses the host's local timezone
+# rather than a true UTC epoch count). %f and %g are real d3 directives whose
+# modifier forms Python renders differently. Every remaining letter is not
+# d3-time-format grammar at all -- Vega paints the literal letter while
+# Python's strftime may compute an unrelated value (or, on Windows, raise).
+VEGA_SAFE_TIME_DIRECTIVES = frozenset("aAbBcdeGHIjLmMpqQSuUVwWxXyY")
+
+
+def time_directive_letters(fmt: str) -> list[str]:
+    """The directive letters ``fmt`` uses, ``%%`` escapes and modifiers aside."""
+    return [letter for _, letter in _TIME_DIRECTIVE_RE.findall(fmt) if letter]
 
 
 def unsupported_time_directives(fmt: str) -> list[str]:
@@ -473,8 +579,8 @@ def unsupported_time_directives(fmt: str) -> list[str]:
     return sorted(
         {
             letter
-            for _, letter in _TIME_DIRECTIVE_RE.findall(fmt)
-            if letter and letter not in VEGA_SAFE_TIME_DIRECTIVES
+            for letter in time_directive_letters(fmt)
+            if letter not in VEGA_SAFE_TIME_DIRECTIVES
         }
     )
 
@@ -483,15 +589,17 @@ def _apply_padding_modifiers(d: date | datetime, fmt: str) -> str:
     """Resolve `-`/`_`/`0` padding modifiers and the twelve CRT-unsupported
     directives (bare or modified) in ``fmt`` to plain text.
 
-    Every other directive (including `%%` and modified non-numeric
-    directives) passes through untouched, so the result is still a valid
-    strftime spec.
+    Name directives (`%a %A %b %B %p`, modified or not) become the active
+    locale's words. Every other directive (including `%%`) passes through
+    untouched, so the result is still a valid strftime spec.
     """
 
     def _substitute(match: re.Match[str]) -> str:
         if match.group(0) == "%%":
             return "%%"
         modifier, letter = match.group(1), match.group(2)
+        if letter in _NAME_DIRECTIVES:
+            return _locale_word(d, letter, active_time_locale())
         if modifier is None:
             computed = _DIRECTIVE_COMPUTERS.get(letter)
             return computed(d) if computed else match.group(0)
@@ -514,9 +622,39 @@ def _apply_padding_modifiers(d: date | datetime, fmt: str) -> str:
     return _TIME_DIRECTIVE_RE.sub(_substitute, fmt)
 
 
+_COMPOSITE_DIRECTIVE_RE = re.compile(r"%%|%[-_0]?([cxX])")
+
+
+def _expand_composites(fmt: str, locale: TimeLocaleDefinition) -> str:
+    """Replace ``%c %x %X`` with the locale's patterns, which may nest
+    (``%c`` holds ``%X``)."""
+    patterns = {"c": locale["dateTime"], "x": locale["date"], "X": locale["time"]}
+
+    def _expand(match: re.Match[str]) -> str:
+        letter = match.group(1)
+        return match.group(0) if letter is None else patterns[letter]
+
+    while (expanded := _COMPOSITE_DIRECTIVE_RE.sub(_expand, fmt)) != fmt:
+        fmt = expanded
+    return fmt
+
+
+def _locale_word(d: date | datetime, letter: str, locale: TimeLocaleDefinition) -> str:
+    weekday = (d.weekday() + 1) % 7
+    pm = isinstance(d, datetime) and d.hour >= 12
+    word = {
+        "a": locale["shortDays"][weekday],
+        "A": locale["days"][weekday],
+        "b": locale["shortMonths"][d.month - 1],
+        "B": locale["months"][d.month - 1],
+        "p": locale["periods"][pm],
+    }[letter]
+    return word.replace("%", "%%")
+
+
 def portable_strftime(d: date | datetime, fmt: str) -> str:
-    """strftime a date/datetime, resolving Windows-CRT-unsupported directives
-    in Python first.
+    """strftime a date/datetime in the active time locale, resolving
+    Windows-CRT-unsupported directives in Python first.
 
     d3-time-format specs (``%-d %b %Y``) borrow the GNU/BSD no-pad modifier,
     and six of them (``%e %G %j %u %V %W``) are themselves glibc/BSD
@@ -526,9 +664,12 @@ def portable_strftime(d: date | datetime, fmt: str) -> str:
     directives Windows' CRT (and glibc/macOS) never implement at all.
     Substituting the affected directives with their computed value before
     delegating the rest of the spec to strftime sidesteps the host libc
-    entirely, so the result is identical on every platform.
+    entirely, so the result is identical on every platform. Day, month and
+    period names (and the ``%c %x %X`` composites) come from the board's
+    ``regional.locale.time``, never the host's C locale.
     """
-    return d.strftime(_apply_padding_modifiers(d, fmt))
+    locale = active_time_locale()
+    return d.strftime(_apply_padding_modifiers(d, _expand_composites(fmt, locale)))
 
 
 # Leading sign glyphs: d3's U+2212 plus ASCII "-"/"+". Parenthesized
@@ -600,6 +741,10 @@ def format_d3(
 
     if not format_spec:
         return affix_signed(str(value), prefix, suffix, sign_placement)
+
+    if format_spec in PREDEFINED_NATIVE:
+        digits, unit = PREDEFINED_NATIVE[format_spec].python(value)
+        return affix_signed(digits + unit, prefix, suffix, sign_placement)
 
     formatted = d3_format(format_spec)(float(value))
 

@@ -184,6 +184,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
                 mark_type,
                 is_band_step,
                 resolves_cartesian_x,
+                chart.x_date_range,
             )
             pipeline_rows = filled if filled is not None else normalized
             vl_type, _, detected_tu = resolve_cartesian_x_type(

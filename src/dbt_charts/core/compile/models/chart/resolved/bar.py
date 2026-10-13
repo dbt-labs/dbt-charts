@@ -10,10 +10,10 @@ from dbt_charts.core.compile.models.chart.resolved._layer import ResolvedLayer
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedBarStyle
 
-from ._base import _CartesianResolvedChartFields
+from ._base import _DateAxisResolvedChartFields
 
 
-class ResolvedBarChart(_CartesianResolvedChartFields):
+class ResolvedBarChart(_DateAxisResolvedChartFields):
     """Render-ready bar (and histogram) chart — all resolve-time values baked in."""
 
     # Narrows base y from str | list[str] | None to str | None — bar never

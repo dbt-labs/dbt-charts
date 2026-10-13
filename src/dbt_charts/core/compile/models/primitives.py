@@ -51,18 +51,28 @@ from dbt_charts.core.compile.models.markers import (
     Strategy,
 )
 from dbt_charts.core.compile.models.schema_names import (
+    VEGA_SCHEME_NAMES,
     ScalePaletteName,
     StopsPaletteName,
 )
 from dbt_charts.core.text.currencies import CURRENCIES, CurrencyCode, with_symbol
 from dbt_charts.core.text.format_d3 import (
+    VEGA_SAFE_TIME_DIRECTIVES,
+    WEEKDAYS,
     HouseLocale,
-    LocaleName,
     Notation,
+    NumberLocaleName,
     SignPlacement,
+    TimeLocaleDefinition,
+    TimeLocaleName,
+    WeekdayName,
     default_sign_placement,
     house_locale,
     number_locale_definition,
+    time_directive_letters,
+    time_locale_definition,
+    time_locale_week_start,
+    unsupported_time_directives,
 )
 from dbt_charts.core.text.magnitude_words import magnitude_words
 from dbt_charts.core.text.predefined_formats import PREDEFINED_NUMBER_NAMES
@@ -99,7 +109,7 @@ Curve = Literal[
 
 # Semantic tone vocabulary shared by KPI value/glyph and table conditional
 # glyphs. Lives here (not in the authored kpi model) because
-# _conditional_formatting.py needs it too, and importing from kpi.py would
+# _conditional_formatting.py needs it too, and importing from the kpi model would
 # create an import cycle (kpi -> _base -> _conditional_formatting).
 ToneLiteral = Literal["positive", "negative", "warning", "info"]
 
@@ -242,7 +252,7 @@ class FormatConfig(BaseModel):
     )
     notation: Notation | None = Field(
         default=None,
-        description="Notation style: 'analytic' for SI-prefix (1 B, 1 M) or 'narrative' for prose-style (1bn, 1mn).",
+        description="Notation style: 'analytic' for SI-prefix (1B, 1M) or 'narrative' for prose-style (1bn, 1mn).",
     )
     sign_placement: SignPlacement | None = Field(
         default=None,
@@ -311,8 +321,8 @@ class NumberLocale(BaseModel):
         default=magnitude_words("en-US")[0],
         description=(
             "The extra-short thousand, million, billion and trillion "
-            "suffixes, where a magnitude is declared once (en-US: K, M, B, T "
-            "after a non-breaking space). A leading space is part of the "
+            "suffixes, where a magnitude is declared once (en-US: K, M, B, T). "
+            "A leading space, where a locale wants one, is part of the "
             "suffix."
         ),
     )
@@ -325,17 +335,94 @@ class NumberLocale(BaseModel):
     )
 
 
-class Regional(BaseModel):
-    """How a board writes numbers: its d3 locale and currency symbol."""
+_Days = tuple[str, str, str, str, str, str, str]
+_Months = tuple[str, str, str, str, str, str, str, str, str, str, str, str]
+
+
+def _checked_pattern(forbidden: str) -> BeforeValidator:
+    """Runs before ``pattern`` so its clearer message wins."""
+
+    def check(
+        pattern: Any,  # type-state: explicit_any — validator input, any JSON value
+    ) -> Any:  # type-state: explicit_any — a non-str is left for the str schema
+        if not isinstance(pattern, str):
+            return pattern
+        if unsupported := unsupported_time_directives(pattern):
+            raise ValueError(
+                f"directives {unsupported} are not painted identically by Vega "
+                "and Python; use only d3-time-format directives"
+            )
+        if recursive := sorted(set(time_directive_letters(pattern)) & set(forbidden)):
+            raise ValueError(
+                f"directives {recursive} would expand into themselves here"
+            )
+        return pattern
+
+    return BeforeValidator(check)
+
+
+def _token_pattern(forbidden: str) -> str:
+    """Whole painted directives only, so expansion can't splice a new one."""
+    letters = "".join(sorted(VEGA_SAFE_TIME_DIRECTIVES - set(forbidden)))
+    return rf"^(?:[^%]|%%|%[-_0]?[{letters}])*$"
+
+
+_DateTimePattern = Annotated[
+    str,
+    _checked_pattern("c"),
+    Field(description="The `%c` pattern.", pattern=_token_pattern("c")),
+]
+_DatePattern = Annotated[
+    str,
+    _checked_pattern("cxX"),
+    Field(description="The `%x` pattern.", pattern=_token_pattern("cxX")),
+]
+_TimePattern = Annotated[
+    str,
+    _checked_pattern("cxX"),
+    Field(description="The `%X` pattern.", pattern=_token_pattern("cxX")),
+]
+
+
+class TimeLocale(BaseModel):
+    """A d3 timeFormatLocale definition."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    locale: LocaleName | NumberLocale = Field(
+    date_time: _DateTimePattern
+    date: _DatePattern
+    time: _TimePattern
+    periods: tuple[str, str] = Field(description="The AM and PM names.")
+    days: _Days = Field(description="The weekday names, Sunday first.")
+    short_days: _Days = Field(description="The abbreviated weekday names.")
+    months: _Months = Field(description="The month names, January first.")
+    short_months: _Months = Field(description="The abbreviated month names.")
+    week_start: WeekdayName = Field(description="The first day of the calendar week.")
+
+
+class RegionalLocale(BaseModel):
+    """The d3 locales a board writes numbers and dates in."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    number: NumberLocaleName | NumberLocale = Field(
         default="en-US",
-        description=(
-            "The d3-format locale for every number on the board: a locale name, "
-            "or a full d3 locale definition."
-        ),
+        description="A d3-format locale name or definition.",
+    )
+    time: TimeLocaleName | TimeLocale = Field(
+        default="en-US",
+        description="A d3-time-format locale name or definition.",
+    )
+
+
+class Regional(BaseModel):
+    """How a board writes numbers and dates: its d3 locales and currency symbol."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    locale: RegionalLocale = Field(
+        default_factory=RegionalLocale,
+        description="The number and time locales.",
     )
     currency: CurrencyCode | None = Field(
         default=None,
@@ -347,20 +434,22 @@ class Regional(BaseModel):
 
     @model_validator(mode="after")
     def _currency_has_a_place(self) -> Regional:
+        number = self.locale.number
         if (
             self.currency is not None
-            and isinstance(self.locale, NumberLocale)
-            and not "".join(self.locale.currency).strip()
+            and isinstance(number, NumberLocale)
+            and not "".join(number.currency).strip()
         ):
             raise ValueError(
-                "regional.currency replaces the symbol in regional.locale.currency, "
-                'which has none: give the template one (e.g. ["$", ""]).'
+                "regional.currency replaces the symbol in "
+                "regional.locale.number.currency, which has none: give the "
+                'template one (e.g. ["$", ""]).'
             )
         return self
 
     @cached_property
     def format_locale(self) -> HouseLocale:
-        locale = self.locale
+        locale = self.locale.number
         definition: LocaleDefinition
         if isinstance(locale, NumberLocale):
             definition = {
@@ -383,6 +472,29 @@ class Regional(BaseModel):
             symbol = CURRENCIES[self.currency].symbol
             definition["currency"] = list(with_symbol((before, after), symbol))
         return house_locale(definition, analytic, narrative)
+
+    @cached_property
+    def time_locale(self) -> TimeLocaleDefinition:
+        locale = self.locale.time
+        if isinstance(locale, str):
+            return time_locale_definition(locale)
+        return {
+            "dateTime": locale.date_time,
+            "date": locale.date,
+            "time": locale.time,
+            "periods": list(locale.periods),
+            "days": list(locale.days),
+            "shortDays": list(locale.short_days),
+            "months": list(locale.months),
+            "shortMonths": list(locale.short_months),
+        }
+
+    @cached_property
+    def week_start(self) -> int:
+        locale = self.locale.time
+        if isinstance(locale, str):
+            return time_locale_week_start(locale)
+        return WEEKDAYS.index(locale.week_start)
 
 
 DEFAULT_REGIONAL = Regional()
@@ -557,7 +669,7 @@ class SpacingValues(BaseModel):
         left: Left spacing in pixels
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     top: float = Field(default=0.0, description="Top spacing in pixels.")
     right: float = Field(default=0.0, description="Right spacing in pixels.")
@@ -688,6 +800,18 @@ class FontStyle(SingleLineFontStyle):
     )
 
 
+class ColumnFontStyle(FontStyle):
+    """A table column's font. ``color`` may name a query column, so it is not a color field."""
+
+    color: Annotated[str | None, Color(column_ref=True)] = Field(
+        default=None,
+        description=(
+            "Text color (CSS color string), or a column ID: a value matching a "
+            "query column name uses that row's value in the named column."
+        ),
+    )
+
+
 class NamedFont(FontStyle):
     """A ``style.fonts`` registry entry: a font other slots reference by name."""
 
@@ -757,7 +881,7 @@ class DividerStyle(BaseModel):
     ``{color: red}`` recolors a divider without switching it on or off.
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     visible: bool = Field(description="Draw the divider.")
     color: Annotated[str, Color()] = Field(description="Divider color.")
@@ -788,7 +912,7 @@ class BorderStyle(BaseModel):
     'No border' is expressed as width=0, color='transparent', radius=0.
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     width: float = Field(description="Border width in pixels.")
     color: str = Field(description="Border color as a CSS color string.")
@@ -820,7 +944,7 @@ class CornerStyle(BaseModel):
     do nothing.
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     radius: float = Field(description="Corner radius in pixels.")
 
@@ -892,7 +1016,7 @@ class BorderStylePatch(BaseModel):
     Doubles as CSS shorthand parser via from_css() for StylePatch.border.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     radius: float | None = Field(
         default=None, description="Border corner radius in pixels."
@@ -986,7 +1110,7 @@ class StrokeStyle(BaseModel):
       - dasharray: absent = solid line. Only spark.empty sets this.
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     color: Annotated[str | None, Color()] = Field(
         default=None, description="Stroke color as a CSS color string."
@@ -1024,98 +1148,6 @@ class FontColorStrokeStyle(StrokeStyle):
             description="Stroke color for rule marks.",
         )
     )
-
-
-# Vega/Vega-Lite's built-in named color schemes (https://vega.github.io/vega/docs/schemes/),
-# the only strings ``ScaleTargetConfig.palette`` forwards straight through to VL's
-# ``scale.scheme``. Sampled-discrete shorthand like "blues-9" is not a real scheme
-# name — VL fails deep inside rendering ("Cannot read properties of undefined")
-# rather than rejecting it up front, so this is validated at compile time instead.
-#
-# Empirically verified against this repo's pinned vl-convert (not hand-copied from
-# docs alone): every name below was round-tripped through
-# ``vlc.vegalite_to_svg`` with a quantitative ``scale.scheme`` encoding and
-# confirmed to render — see ``test_vega_scheme_names_parity.py``, which re-runs
-# that sweep and fails if this set and the bundled renderer ever diverge.
-VEGA_SCHEME_NAMES: frozenset[str] = frozenset(
-    {
-        # Categorical
-        "accent",
-        "category10",
-        "category20",
-        "category20b",
-        "category20c",
-        "dark2",
-        "observable10",
-        "paired",
-        "pastel1",
-        "pastel2",
-        "set1",
-        "set2",
-        "set3",
-        "tableau10",
-        "tableau20",
-        # Sequential (single-hue)
-        "blues",
-        "tealblues",
-        "teals",
-        "greens",
-        "browns",
-        "greys",  # codespell:ignore greys
-        "oranges",
-        "purples",
-        "reds",
-        "warmgreys",
-        # Sequential (multi-hue)
-        "viridis",
-        "magma",
-        "inferno",
-        "plasma",
-        "cividis",
-        "turbo",
-        "bluegreen",
-        "bluepurple",
-        "goldgreen",
-        "goldorange",
-        "goldred",
-        "greenblue",
-        "orangered",
-        "purplebluegreen",
-        "purpleblue",
-        "purplered",
-        "redpurple",
-        "yellowgreenblue",
-        "yellowgreen",
-        "yelloworangebrown",
-        "yelloworangered",
-        # Diverging
-        "blueorange",
-        "brownbluegreen",
-        "purplegreen",
-        "pinkyellowgreen",
-        "purpleorange",
-        "redblue",
-        "redgrey",
-        "redyellowblue",
-        "redyellowgreen",
-        "spectral",
-        # Cyclical
-        "rainbow",
-        "sinebow",
-        # For dark backgrounds
-        "darkblue",
-        "darkgold",
-        "darkgreen",
-        "darkmulti",
-        "darkred",
-        # For light backgrounds
-        "lightgreyred",
-        "lightgreyteal",
-        "lightmulti",
-        "lightorange",
-        "lighttealblue",
-    }
-)
 
 
 def might_be_palette_role(value: str) -> bool:
@@ -1224,7 +1256,7 @@ class ScaleTargetConfig(ScaleTargetPaletteValidationMixin):
     can import it without creating a circular dependency.
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     palette: Annotated[
         ScalePaletteName | list[str] | list[float] | str,

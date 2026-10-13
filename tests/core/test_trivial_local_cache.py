@@ -408,9 +408,9 @@ class TestCacheHitWrittenAt:
             # Aware UTC on both sides: written_at carries a timezone (the
             # backend contract on CacheHit), so bounding it with a naive
             # datetime.now() is a TypeError, not a skew.
-            before = dt.datetime.now(dt.timezone.utc)
+            before = dt.datetime.now(dt.UTC)
             _put(cache, [{"v": 1}])
-            after = dt.datetime.now(dt.timezone.utc)
+            after = dt.datetime.now(dt.UTC)
             hit = cache.get(_SH, _QH, _VH)
             assert isinstance(hit, CacheHit)
             assert before <= hit.written_at <= after

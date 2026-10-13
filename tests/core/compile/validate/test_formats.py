@@ -32,7 +32,9 @@ charts:
     x: month
     y: revenue
     style:
-      number_format: {format_value}
+      axis_y:
+        labels:
+          format: {format_value}
 rows:
   - revenue
 """
@@ -65,14 +67,16 @@ def test_valid_raw_d3_spec_compiles_clean() -> None:
     assert result.success, f"Compile failed: {result.errors}"
 
 
-def test_native_formatter_rejected_on_vega_number_format() -> None:
-    """percent_number on number_format (Vega-painted) must fail at compile.
+def test_native_formatter_rejected_on_vega_axis_y_format() -> None:
+    """percent_number on axis_y.labels.format (Vega-painted) must fail at compile.
 
-    number_format is rendered by Vega, which has no equivalent for the
+    The axis is rendered by Vega, which has no equivalent for the
     Python-only native formatter. Compile must reject it before Vega crashes.
     """
     result = compile_board(_board_with_format("percent_number"))
-    assert not result.success, "percent_number on number_format must fail compile"
+    assert not result.success, (
+        "percent_number on axis_y.labels.format must fail compile"
+    )
     assert result.errors[0].code == "ERR-FORMAT-NATIVE-IN-VEGA-SLOT"
 
 
@@ -93,11 +97,11 @@ def test_year_alias_compiles_clean() -> None:
     assert result.success, f"Compile failed: {result.errors}"
 
 
-def test_percentage_points_delta_rejected_on_vega_number_format() -> None:
-    """percentage_points_delta on number_format (Vega-painted) must fail at compile."""
+def test_percentage_points_delta_rejected_on_vega_axis_y_format() -> None:
+    """percentage_points_delta on axis_y.labels.format (Vega-painted) must fail at compile."""
     result = compile_board(_board_with_format("percentage_points_delta"))
     assert not result.success, (
-        "percentage_points_delta on number_format must fail compile"
+        "percentage_points_delta on axis_y.labels.format must fail compile"
     )
     assert result.errors[0].code == "ERR-FORMAT-NATIVE-IN-VEGA-SLOT"
 
@@ -791,7 +795,6 @@ charts:
       axis_y:
         labels:
           format: {spec: "$,.0f", prefix: "US "}
-      number_format: {spec: "$,.0f", prefix: "US "}
   bar_labels:
     query: q
     type: bar
@@ -1140,7 +1143,7 @@ rows:
     assert "€(100)" in svg
 
 
-def test_affix_on_time_format_rejected() -> None:
+def test_affix_on_axis_x_format_rejected() -> None:
     """A strftime spec has no d3 symbol/sign/SI shape for an affix to compose against,
     and no render path paints a FormatConfig affix on a temporal slot.
     """
@@ -1289,7 +1292,7 @@ def test_affix_beside_a_date_spec_on_a_table_column_still_compiles(
 
 
 def test_mark_label_format_is_validated() -> None:
-    """style.marks.bar.labels.format feeds the same consumer as number_format."""
+    """style.marks.bar.labels.format feeds the same consumer as the axis format."""
     _assert_format_invalid(
         """
 title: T
@@ -1387,7 +1390,9 @@ charts:
     x: month
     y: revenue
     style:
-      number_format: my_alias
+      axis_y:
+        labels:
+          format: my_alias
 rows:
   - revenue
 """,
@@ -1413,17 +1418,14 @@ rows:
         x: month
         y: revenue
         style:
-          number_format: percent_1
+          axis_y:
+            labels:
+              format: percent_1
     rows:
       - inner
 """,
         "percent_1",
     )
-
-
-def test_number_format_does_not_accept_a_strftime_spec() -> None:
-    """number_format is the number slot; time specs belong on axis/column slots."""
-    _assert_format_invalid(_board_with_format('"%b %Y"'), "%b %Y")
 
 
 def test_axis_format_still_accepts_a_strftime_spec() -> None:
@@ -1553,34 +1555,6 @@ rows:
   - c1
 """,
         "percent_1",
-    )
-
-
-def test_chart_id_cannot_widen_time_capability_of_its_slots() -> None:
-    """A chart id spelling a time-capable field name must not relax its siblings.
-
-    number_format is a number slot wherever it appears; naming the chart
-    `columns` must not make a strftime spec acceptable underneath it.
-    """
-    _assert_format_invalid(
-        """
-title: T
-queries:
-  q:
-    source: db
-    sql: SELECT 'Jan' AS month, 100 AS revenue
-charts:
-  columns:
-    query: q
-    type: bar
-    x: month
-    y: revenue
-    style:
-      number_format: "%b %Y"
-rows:
-  - columns
-""",
-        "%b %Y",
     )
 
 
@@ -1738,7 +1712,9 @@ rows:
         x: month
         y: revenue
         style:
-          number_format: mine
+          axis_y:
+            labels:
+              format: mine
     rows:
       - inner
 """
@@ -1764,7 +1740,9 @@ rows:
         x: month
         y: revenue
         style:
-          number_format: percent_1
+          axis_y:
+            labels:
+              format: percent_1
     rows:
       - inner
 """
@@ -1803,14 +1781,18 @@ rows:
         x: month
         y: revenue
         style:
-          number_format: arr
+          axis_y:
+            labels:
+              format: arr
       own_alias:
         query: q
         type: bar
         x: month
         y: revenue
         style:
-          number_format: bps
+          axis_y:
+            labels:
+              format: bps
     rows:
       - root_alias
       - own_alias
@@ -1880,7 +1862,9 @@ tabs:
           x: month
           y: revenue
           style:
-            number_format: arr
+            axis_y:
+              labels:
+                format: arr
 """
     )
     assert not result.success, (
@@ -1889,7 +1873,7 @@ tabs:
     assert result.errors[0].code == "ERR-FORMAT-INVALID"
 
 
-def _board_with_alias(alias_target: str, slot: str) -> str:
+def _board_with_alias(alias_target: str) -> str:
     return f"""
 title: T
 queries:
@@ -1906,7 +1890,9 @@ charts:
     x: month
     y: revenue
     style:
-      {slot}: mine
+      axis_y:
+        labels:
+          format: mine
 rows:
   - revenue
 """
@@ -1921,19 +1907,14 @@ rows:
 )
 def test_style_formats_alias_may_target_a_preset(alias_target: str) -> None:
     """An alias can name a preset, so a named house format keeps house rules."""
-    result = compile_board(_board_with_alias(alias_target, "number_format"))
+    result = compile_board(_board_with_alias(alias_target))
     assert result.success, [e.message for e in result.errors]
 
 
 def test_alias_to_a_native_preset_is_rejected_in_a_vega_slot() -> None:
     """The alias is judged as if its preset were written in the slot."""
-    result = compile_board(_board_with_alias("percent_number", "number_format"))
+    result = compile_board(_board_with_alias("percent_number"))
     assert [e.code for e in result.errors] == ["ERR-FORMAT-NATIVE-IN-VEGA-SLOT"]
-
-
-def test_alias_to_a_number_preset_is_rejected_on_time_format() -> None:
-    result = compile_board(_board_with_alias("currency", "time_format"))
-    assert [e.code for e in result.errors] == ["ERR-FORMAT-KIND-MISMATCH"]
 
 
 # Boards used to pin native-in-Vega rejection for every _VEGA_PAINTED_PARENTS entry.
@@ -2162,46 +2143,6 @@ rows:
 """,
     ),
     (
-        "number_format (always Vega-painted regardless of parent)",
-        """
-title: T
-queries:
-  q:
-    source: db
-    sql: SELECT 'Jan' AS month, 100 AS revenue
-charts:
-  revenue:
-    query: q
-    type: bar
-    x: month
-    y: revenue
-    style:
-      number_format: percent_number
-rows:
-  - revenue
-""",
-    ),
-    (
-        "time_format (always Vega-painted regardless of parent)",
-        """
-title: T
-queries:
-  q:
-    source: db
-    sql: SELECT 'Jan' AS month, 100 AS revenue
-charts:
-  revenue:
-    query: q
-    type: bar
-    x: month
-    y: revenue
-    style:
-      time_format: percent_number
-rows:
-  - revenue
-""",
-    ),
-    (
         "support_table.format (via _VEGA_PAINTED_PARENTS[support_table])",
         """
 title: T
@@ -2277,14 +2218,10 @@ rows:
     assert result.errors[0].code == "ERR-FORMAT-NATIVE-IN-VEGA-SLOT"
 
 
-# ── Format kind: a number alias in a time slot (and vice versa) ──────────────
-# `time_format` feeds a temporal axis and `number_format` a quantitative one.
-# Both are `<Alias> | str`, so the `str` arm swallows every name Pydantic would
-# otherwise reject — the kind check is the only thing standing between
-# `time_format: currency` and a chart that renders wrong and looks right.
+# ── A date axis's format: strftime directives are gated at compile ───────────
 
 
-def _board_with_time_format(format_value: str, *, formats: str = "") -> str:
+def _board_with_axis_x_format(format_value: str, *, formats: str = "") -> str:
     return f"""
 title: T
 queries:
@@ -2300,45 +2237,12 @@ charts:
     x: month
     y: revenue
     style:
-      time_format: {format_value}
+      axis_x:
+        labels:
+          format: {format_value}
 rows:
   - revenue
 """
-
-
-def test_number_alias_on_time_format_fails_compile() -> None:
-    """time_format: currency resolves to "$,.2f" — a d3 *number* spec.
-
-    Baked onto a temporal axis that spec produces garbage tick labels, which is
-    a wrong render that looks right until someone reads the axis.
-    """
-    result = compile_board(_board_with_time_format("currency"))
-
-    assert not result.success, "currency is a number format — illegal in time_format"
-    assert len(result.errors) == 1
-    error = result.errors[0]
-    assert error.code == "ERR-FORMAT-KIND-MISMATCH"
-    assert "currency" in error.message
-    assert "time_format" in error.message
-    assert "date_short" in error.message, "the legal names must be named"
-
-
-def test_a_typo_in_a_time_slot_is_never_pointed_at_a_number_alias() -> None:
-    """`currencyy` in a time slot must not be answered with "did you mean currency?".
-
-    The unknown-spec hint pool is the whole vocabulary by default, so the
-    nearest match to a mistyped number name is the number name — and taking that
-    suggestion just trades ERR-FORMAT-INVALID for ERR-FORMAT-KIND-MISMATCH. The
-    pool is scoped to the slot's own half so the hint is always followable.
-    """
-    result = compile_board(_board_with_time_format("currencyy"))
-
-    assert not result.success
-    error = result.errors[0]
-    assert error.code == "ERR-FORMAT-INVALID"
-    assert "currency" not in (error.hint or ""), (
-        "the hint points at a value the next compile rejects"
-    )
 
 
 def test_a_retired_format_name_is_told_its_successor_at_the_compile_boundary() -> None:
@@ -2346,18 +2250,14 @@ def test_a_retired_format_name_is_told_its_successor_at_the_compile_boundary() -
 
     A value rename cannot be a schema migration — `value_map` is total over its
     field's domain and `format:` is an open string — so an author porting a
-    board off `currency_compact` gets one chance, on this error. A fuzzy match
-    is actively wrong here: the nearest string is `currency_whole`, which
-    compiles clean and silently drops both compaction and cents.
+    board off `number_default` gets one chance, on this error. A fuzzy match
+    is actively wrong here: the nearest string is `number_full`, which
+    compiles clean and silently drops compaction.
 
     Asserted at the boundary, not on the helper: the unit tests pin what
     `suggest_close_format` returns; this pins that it reaches `error.hint`.
     """
-    for retired, successor in (
-        ("currency_compact", "currency"),
-        ("compact", "number"),
-        ("number_default", "number"),
-    ):
+    for retired, successor in (("number_default", "number"),):
         result = compile_board(
             f"""
 title: T
@@ -2372,7 +2272,9 @@ charts:
     x: month
     y: revenue
     style:
-      number_format: {retired}
+      axis_y:
+        labels:
+          format: {retired}
 """
         )
         assert not result.success, f"{retired} must fail compile"
@@ -2383,82 +2285,33 @@ charts:
         )
 
 
-def test_the_kind_error_names_the_escape_hatch_its_slot_actually_has() -> None:
-    """A time slot's way out is a strftime spec, not "a raw d3 spec".
-
-    Generic advice to "use a raw d3 spec" is wrong on exactly this error: a d3
-    number spec baked onto a temporal axis is the defect being rejected.
-    """
-    message = compile_board(_board_with_time_format("currency")).errors[0].message
-    assert "%b %Y" in message
-    assert "d3" not in message, "a d3 number spec is what this slot must not take"
-
-    number_message = compile_board(_board_with_format("date_short")).errors[0].message
-    assert ",.0f" in number_message
-
-
-def test_time_alias_on_time_format_compiles_clean() -> None:
+def test_time_alias_on_axis_x_format_compiles_clean() -> None:
     """date_short is the engine's temporal alias — the one name that belongs."""
-    result = compile_board(_board_with_time_format("date_short"))
+    result = compile_board(_board_with_axis_x_format("date_short"))
     assert result.success, f"Compile failed: {result.errors}"
 
 
-def test_strftime_on_time_format_compiles_clean() -> None:
+def test_strftime_on_axis_x_format_compiles_clean() -> None:
     """A raw d3 time spec is the other honest value for a time slot."""
-    result = compile_board(_board_with_time_format('"%b %Y"'))
+    result = compile_board(_board_with_axis_x_format('"%b %Y"'))
     assert result.success, f"Compile failed: {result.errors}"
 
 
-def test_board_alias_on_time_format_compiles_clean() -> None:
+def test_board_alias_on_axis_x_format_compiles_clean() -> None:
     """`style.formats` keys are user-defined and carry no kind — legal on both.
 
     The engine cannot know whether `fiscal` targets a time or a number spec, so
     narrowing the engine's own vocabulary must not narrow the board's.
     """
     result = compile_board(
-        _board_with_time_format("fiscal", formats='  formats:\n    fiscal: "%b \'%y"\n')
+        _board_with_axis_x_format(
+            "fiscal", formats='  formats:\n    fiscal: "%b \'%y"\n'
+        )
     )
     assert result.success, f"Compile failed: {result.errors}"
 
 
-def test_time_alias_on_number_format_fails_compile() -> None:
-    """The narrowing runs both ways: date_short is not a number format."""
-    result = compile_board(_board_with_format("date_short"))
-
-    assert not result.success, "date_short is a time format — illegal in number_format"
-    assert result.errors[0].code == "ERR-FORMAT-KIND-MISMATCH"
-    assert "number_format" in result.errors[0].message
-
-
 # ── Date-format slot messaging: no directive, and unsupported directives ────
-
-
-def test_date_format_with_no_directive_names_the_slot_a_date_format() -> None:
-    """`MMM YYYY` has no `%` directive -- it fails the d3 number-spec parse too,
-    but the slot (time_format) is a definitively known date/time slot, so the
-    message must not call it a "number format"."""
-    result = compile_board(_board_with_time_format('"MMM YYYY"'))
-
-    assert not result.success
-    error = result.errors[0]
-    assert error.code == "ERR-FORMAT-INVALID"
-    assert "date" in error.message.lower()
-    assert "number format" not in error.message.lower()
-    assert "%b %Y" in error.message, "should suggest a d3 time pattern"
-    assert "d3-format spec" not in error.message, (
-        "a date slot's typo isn't a number-spec parse failure"
-    )
-
-
-def test_iso_date_pattern_with_no_directive_also_names_a_date_format() -> None:
-    """`YYYY-MM-DD` is the other common no-directive pattern authors type."""
-    result = compile_board(_board_with_time_format('"YYYY-MM-DD"'))
-
-    assert not result.success
-    error = result.errors[0]
-    assert error.code == "ERR-FORMAT-INVALID"
-    assert "date" in error.message.lower()
-    assert "number format" not in error.message.lower()
 
 
 def test_unsupported_strftime_directive_fails_compile_not_at_render() -> None:
@@ -2467,7 +2320,7 @@ def test_unsupported_strftime_directive_fails_compile_not_at_render() -> None:
     (ERR-FORMAT-INVALID) that lists the accepted directives, never
     ERR-INTERNAL -- the fallback code for an unclassified crash.
     """
-    result = compile_board(_board_with_time_format('"%K"'))
+    result = compile_board(_board_with_axis_x_format('"%K"'))
 
     assert not result.success
     error = result.errors[0]
@@ -2479,9 +2332,9 @@ def test_unsupported_strftime_directive_fails_compile_not_at_render() -> None:
 def test_compile_accepted_time_directives_are_the_python_strftime_set() -> None:
     """The directives ERR-FORMAT-INVALID lists as accepted are exactly
     PYTHON_STRFTIME_DIRECTIVES (d3's letters are a subset), and %L/%Q/%q
-    still compile on a time_format.
+    still compile on an axis_x format.
     """
-    result = compile_board(_board_with_time_format('"%K"'))
+    result = compile_board(_board_with_axis_x_format('"%K"'))
     assert not result.success
     error = result.errors[0]
     assert error.code == "ERR-FORMAT-INVALID"
@@ -2490,7 +2343,7 @@ def test_compile_accepted_time_directives_are_the_python_strftime_set() -> None:
     assert listed == PYTHON_STRFTIME_DIRECTIVES
 
     for directive in "LQq":
-        assert compile_board(_board_with_time_format(f'"%{directive}"')).success
+        assert compile_board(_board_with_axis_x_format(f'"%{directive}"')).success
 
 
 def test_unsupported_directive_on_axis_format_also_fails_compile() -> None:
@@ -2519,18 +2372,18 @@ rows:
     assert result.errors[0].code == "ERR-FORMAT-INVALID"
 
 
-def test_millisecond_directive_compiles_clean_on_time_format() -> None:
+def test_millisecond_directive_compiles_clean_on_axis_x_format() -> None:
     """%L/%q/%Q are in PYTHON_STRFTIME_DIRECTIVES: portable_strftime
     substitutes them before libc sees the spec, so the compile check accepts them.
     """
-    result = compile_board(_board_with_time_format('"%H:%M:%S.%L"'))
+    result = compile_board(_board_with_axis_x_format('"%H:%M:%S.%L"'))
     assert result.success, f"Compile failed: {result.errors}"
 
 
 def test_millisecond_directive_compiles_clean_in_style_formats_alias() -> None:
     """The same directive is legal through a `style.formats` alias."""
     result = compile_board(
-        _board_with_time_format("ms", formats='  formats:\n    ms: "%H:%M:%S.%L"\n')
+        _board_with_axis_x_format("ms", formats='  formats:\n    ms: "%H:%M:%S.%L"\n')
     )
     assert result.success, f"Compile failed: {result.errors}"
 
@@ -2538,8 +2391,7 @@ def test_millisecond_directive_compiles_clean_in_style_formats_alias() -> None:
 def test_time_alias_on_a_kind_agnostic_format_slot_compiles_clean() -> None:
     """An axis label format is either kind — its column decides, not the field.
 
-    Only `number_format`/`time_format` name their kind in the field itself; a
-    plain `format:` slot must keep the whole vocabulary.
+    A plain `format:` slot must keep the whole vocabulary.
     """
     board = """
 title: T
@@ -2585,7 +2437,9 @@ charts:
     x: month
     y: revenue
     style:
-      number_format: eur
+      axis_y:
+        labels:
+          format: eur
 rows:
   - revenue
 """
@@ -2620,7 +2474,9 @@ charts:
     x: month
     y: revenue
     style:
-      number_format: eur
+      axis_y:
+        labels:
+          format: eur
 rows:
   - revenue
 """
@@ -2660,100 +2516,63 @@ rows:
     assert result.success, result.errors
 
 
-@pytest.mark.parametrize(
-    "eur",
-    [
-        pytest.param('{prefix: "EUR "}', id="spec-less"),
-        pytest.param('{spec: ",.0f", prefix: "EUR "}', id="number-spec"),
-    ],
-)
-def test_affixed_alias_on_time_format_rejected(eur: str) -> None:
-    """An alias smuggles an affix onto style.time_format, which never paints one."""
-    result = compile_board(
-        f"""
-title: T
-style:
-  formats:
-    eur: {eur}
-queries:
-  q:
-    source: db
-    sql: SELECT '2024-01-01'::date AS month, 100 AS revenue
-charts:
-  revenue:
-    query: q
-    type: line
-    x: month
-    y: revenue
-    style:
-      time_format: eur
-rows:
-  - revenue
-"""
-    )
-    assert [e.code for e in result.errors] == ["ERR-FORMAT-AFFIX-TIME-UNSUPPORTED"]
-
-
 # ── Time directive vocabulary: only directives Vega paints identically ───────
-# time_format is Vega-painted (baked onto axis.labels.format) — the x-axis
+# An axis format is Vega-painted (axis.labels.format) — the x-axis
 # overlap resolver also measures it with portable_strftime. A directive Vega
 # renders differently than portable_strftime computes (or doesn't recognize
 # at all) must fail compile, not silently mismeasure a live label.
 
 
-def test_quarter_directive_on_time_format_compiles_clean() -> None:
+def test_quarter_directive_on_axis_x_format_compiles_clean() -> None:
     """%q is now a Vega-safe directive (quarter number)."""
-    result = compile_board(_board_with_time_format('"%q"'))
+    result = compile_board(_board_with_axis_x_format('"%q"'))
     assert result.success, f"Compile failed: {result.errors}"
 
 
-def test_milliseconds_and_epoch_directives_on_time_format_compile_clean() -> None:
+def test_milliseconds_and_epoch_directives_on_axis_x_format_compile_clean() -> None:
     """%L (ms) and %Q (epoch ms) are now Vega-safe directives."""
-    result = compile_board(_board_with_time_format('"%L %Q"'))
+    result = compile_board(_board_with_axis_x_format('"%L %Q"'))
     assert result.success, f"Compile failed: {result.errors}"
 
 
-def test_locale_offset_directive_on_time_format_fails_compile() -> None:
+def test_locale_offset_directive_on_axis_x_format_fails_compile() -> None:
     """%Z is real d3 grammar, but portable_strftime renders it differently
     (empty on a naive datetime, a named zone rather than d3's "+0000"-style
     offset on an aware one) -- must fail compile rather than mismeasure.
     """
-    result = compile_board(_board_with_time_format('"%Z"'))
+    result = compile_board(_board_with_axis_x_format('"%Z"'))
     assert not result.success, "%Z diverges from Vega's paint -- must fail compile"
     assert result.errors[0].code == "ERR-FORMAT-TIME-DIRECTIVE-UNSUPPORTED"
     assert "%Z" in result.errors[0].message
 
 
-def test_locale_composite_directives_on_time_format_fail_compile() -> None:
-    """%c/%x/%X are real d3 grammar (locale composites) portable_strftime
-    renders via the host's C-locale strftime, not d3's en-US "%x, %X" style
-    -- must fail compile rather than mismeasure.
-    """
+def test_locale_composite_directives_on_axis_x_format_compile() -> None:
+    """%c/%x/%X expand from the board's time locale, as d3 does."""
     for directive in ("%c", "%x", "%X"):
-        result = compile_board(_board_with_time_format(f'"{directive}"'))
-        assert not result.success, f"{directive} diverges from Vega -- must fail"
-        assert result.errors[0].code == "ERR-FORMAT-TIME-DIRECTIVE-UNSUPPORTED"
-        assert directive in result.errors[0].message
+        result = compile_board(_board_with_axis_x_format(f'"{directive}"'))
+        assert result.success, directive
 
 
 def test_directive_d3_does_not_define_fails_compile() -> None:
     """%C is not d3-time-format grammar at all -- Vega paints the literal
     letter "C" while portable_strftime computes the century.
     """
-    result = compile_board(_board_with_time_format('"%C"'))
+    result = compile_board(_board_with_axis_x_format('"%C"'))
     assert not result.success, "%C is not a d3 directive -- must fail compile"
     assert result.errors[0].code == "ERR-FORMAT-TIME-DIRECTIVE-UNSUPPORTED"
 
 
-def test_style_formats_alias_on_time_format_cannot_bypass_the_directive_gate() -> None:
+def test_style_formats_alias_on_axis_x_format_cannot_bypass_the_directive_gate() -> (
+    None
+):
     """A `style.formats` alias targeting a Vega-unsafe directive must fail
     compile the same as authoring the directive inline -- the alias is just
-    another spelling of the same Vega-painted `time_format` slot, and
+    another spelling of the same Vega-painted axis_x format slot, and
     `%C` is not d3-time-format grammar at all (Vega paints the literal
     letter while portable_strftime computes an unrelated value).
     """
     result = compile_board(
-        _board_with_time_format("myfmt", formats='  formats:\n    myfmt: "%C"\n')
+        _board_with_axis_x_format("myfmt", formats='  formats:\n    myfmt: "%C"\n')
     )
     assert not result.success, "an alias must not smuggle %C past the directive gate"
     assert result.errors[0].code == "ERR-FORMAT-TIME-DIRECTIVE-UNSUPPORTED"

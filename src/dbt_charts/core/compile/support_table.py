@@ -20,6 +20,7 @@ from typing import Any, Literal
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import (
     column_format,
+    reject_native,
     resolve_format_parts,
 )
 from dbt_charts.core.compile.merge import merge_onto_base
@@ -293,6 +294,8 @@ def resolve_support_table(
                     fmt = voted.model_copy(update={"raw": None})
         elif stamp_number and column == y:
             fmt = resolve_format_parts(PredefinedNumberFormat.number, formats)
+        if fmt is not None:
+            reject_native(fmt, f"support_table[{len(entries)}].format")
         entries.append(_with_resolved_format(entry, fmt))
     return ResolvedSupportTable(entries=entries)
 

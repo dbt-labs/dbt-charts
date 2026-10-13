@@ -6,7 +6,7 @@ then ``finalize_vl`` to produce Vega-Lite JSON — that path is VL-only.
 
 Non-VL families (``kpi``, ``table``, ``spark_bar``, ``callout``) are custom
 SVG, not Vega-Lite: ``render_svg_family`` dispatches them straight to their
-typed ``render_*_svg`` renderer and returns the SVG string, bypassing
+renderer (kpi and spark_bar through the Rust engine) and returns the SVG string, bypassing
 ``emit_chart``/``finalize_vl`` entirely. It returns ``None`` for VL families
 so the caller falls through to the ``emit_chart``/``finalize_vl`` path.
 """
@@ -36,15 +36,12 @@ from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_MULTIPLES_RESOLVED_WITHOUT_DATA
 from dbt_charts.core.render.chart._types import VLDict
-from dbt_charts.core.render.chart.callout import render_callout_chart_svg
 from dbt_charts.core.render.chart.emitters import get_emitter
 from dbt_charts.core.render.chart.feature import FeaturePipeline, chart_rows
 from dbt_charts.core.render.chart.features import DEFAULT_FEATURES
-from dbt_charts.core.render.chart.kpi import render_kpi_svg
-from dbt_charts.core.render.chart.spark_bar import render_spark_bar_svg
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
-from dbt_charts.core.render.chart.table import render_table_svg
 from dbt_charts.core.render.chart.translate import assemble_final_vl
+from dbt_charts.core.render.engine import render_native
 from dbt_charts.core.render.utils import normalize_data_types
 
 
@@ -74,7 +71,7 @@ class BoardRenderSession:
         chart: ResolvedChart,
         data: list[dict[str, Any]],
         *,
-        width: float | None = None,
+        width: float,
         height: float | None = None,
         is_placeholder: bool = False,
         inset: dict[str, int | float] | None = None,
@@ -86,44 +83,51 @@ class BoardRenderSession:
         family that paints a card rect grows it back out over that padding.
         """
         match chart:
-            case ResolvedKpiChart():
-                return render_kpi_svg(
+            case ResolvedKpiChart() | ResolvedSparkBarChart():
+                # No slot height is the card's own: a KPI's `default_height`, a
+                # spark_bar's natural one (the engine's `0.0`).
+                if height:
+                    slot_height = height
+                elif isinstance(chart, ResolvedKpiChart):
+                    kpi_style = chart.style.kpi
+                    assert kpi_style is not None, "resolve() must populate style.kpi"
+                    slot_height = kpi_style.default_height
+                else:
+                    slot_height = 0.0
+                svg, _ = render_native(
                     chart,
                     data,
-                    width,
-                    height,
+                    width=width,
+                    height=slot_height,
+                    padding=inset,
                     board_style=self.board_style,
-                    inset=inset,
-                )
-            case ResolvedTableChart():
-                # No variables= here: render_table_svg reads the board's
-                # current variable values from current_board_variables()
-                # itself when the caller omits the param, so pagination
-                # works for every caller, not just this one. See
-                # board_variables.py.
-                return render_table_svg(
-                    chart,
-                    data,
-                    width,
-                    height,
-                    board_style=self.board_style,
-                    inset=inset,
+                    board_width=None,
                     title_shift=title_shift,
-                )
-            case ResolvedSparkBarChart():
-                return render_spark_bar_svg(
-                    chart,
-                    data,
-                    width,
-                    height,
                     is_placeholder=is_placeholder,
+                )
+                return svg
+            case ResolvedTableChart():
+                return render_native(
+                    chart,
+                    data,
+                    width=width,
+                    height=height
+                    or 0.0,  # type-state: silent_fallback — 0 asks the engine for natural height
+                    padding=inset,
                     board_style=self.board_style,
                     title_shift=title_shift,
-                )
+                )[0]
             case ResolvedCalloutChart():
-                return render_callout_chart_svg(
-                    chart, data, width, height, is_placeholder=is_placeholder
+                svg, _ = render_native(
+                    chart,
+                    data,
+                    width=width,
+                    height=0.0 if height is None else height,
+                    padding=None,
+                    board_style=self.board_style,
+                    board_width=width,
                 )
+                return svg
             case _:
                 return None
 

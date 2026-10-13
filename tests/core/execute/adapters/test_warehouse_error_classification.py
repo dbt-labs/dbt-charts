@@ -32,6 +32,7 @@ from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BINDER_TYPE_MISMATCH,
     ERR_BINDER_UNKNOWN_COLUMN,
+    ERR_BINDER_UNKNOWN_RELATION,
     ERR_MUTATING_SQL,
     ERR_UNPARSEABLE_SQL,
     ERR_WAREHOUSE_CONNECTION,
@@ -69,20 +70,20 @@ class TestClassifyWarehouseErrorBigQuery:
         # Original warehouse message is preserved verbatim in the error text.
         assert "Unrecognized name: 'goals_goal_dollars' at [3:42]" in str(result.error)
 
-    def test_not_found_table_returns_binder_unknown_column_code(self) -> None:
+    def test_not_found_table_returns_binder_unknown_relation_code(self) -> None:
         exc = Exception(
             "Not found: Table my-project:my_dataset.my_table was not found "
             "in location US"
         )
         result = classify_warehouse_error("dbt SQL execution", exc, "bigquery")
         assert result.error is not None
-        assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
+        assert result.error.code is ERR_BINDER_UNKNOWN_RELATION
 
-    def test_not_found_dataset_returns_binder_unknown_column_code(self) -> None:
+    def test_not_found_dataset_returns_binder_unknown_relation_code(self) -> None:
         exc = Exception("Not found: Dataset my-project:no_such_dataset")
         result = classify_warehouse_error("dbt SQL execution", exc, "bigquery")
         assert result.error is not None
-        assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
+        assert result.error.code is ERR_BINDER_UNKNOWN_RELATION
 
     def test_unmatched_bigquery_message_falls_back_to_warehouse_runtime(self) -> None:
         """A BigQuery error we don't have a confident pattern for must not be
@@ -105,9 +106,39 @@ class TestClassifyWarehouseErrorOtherDialects:
         assert result.error is not None
         assert result.error.code is ERR_WAREHOUSE_RUNTIME
 
-    def test_databricks_dialect_falls_back_to_warehouse_runtime(self) -> None:
-        exc = Exception("[TABLE_OR_VIEW_NOT_FOUND] Table or view not found: foo")
+    def test_databricks_unmatched_message_falls_back_to_warehouse_runtime(
+        self,
+    ) -> None:
+        exc = Exception("[PARSE_SYNTAX_ERROR] Syntax error at or near 'FORM'")
         result = classify_warehouse_error("dbt SQL execution", exc, "databricks")
+        assert result.error is not None
+        assert result.error.code is ERR_WAREHOUSE_RUNTIME
+
+    @pytest.mark.parametrize(
+        ("dialect", "message"),
+        [
+            ("databricks", "[TABLE_OR_VIEW_NOT_FOUND] Table or view not found: foo"),
+            (
+                "snowflake",
+                "002003 (42S02): SQL compilation error:\n"
+                "Object 'ANALYTICS.FOO' does not exist or not authorized.",
+            ),
+            ("postgres", 'relation "analytics.foo" does not exist\nLINE 1: select'),
+            ("redshift", 'relation "analytics.foo" does not exist'),
+        ],
+    )
+    def test_missing_relation_message_per_dialect(
+        self, dialect: str, message: str
+    ) -> None:
+        result = classify_warehouse_error(
+            "dbt SQL execution", Exception(message), dialect
+        )
+        assert result.error is not None
+        assert result.error.code is ERR_BINDER_UNKNOWN_RELATION
+
+    def test_missing_column_message_is_not_a_missing_relation(self) -> None:
+        exc = Exception('column "amount" does not exist\nLINE 1: select amount')
+        result = classify_warehouse_error("dbt SQL execution", exc, "postgres")
         assert result.error is not None
         assert result.error.code is ERR_WAREHOUSE_RUNTIME
 
@@ -485,12 +516,13 @@ class TestClassifyWarehouseErrorBySqlstate:
     fallback rather than being read as an unknown-reference verdict.
     """
 
-    def test_object_not_found_is_an_unknown_reference(self) -> None:
-        error = WarehouseStatementError("42S02", "Table 'no_such' does not exist")
+    @pytest.mark.parametrize("sqlstate", ["42S02", "42P01"])
+    def test_object_not_found_is_an_unknown_relation(self, sqlstate: str) -> None:
+        error = WarehouseStatementError(sqlstate, "Table 'no_such' does not exist")
         result = classify_warehouse_error(
             "lakecompute SQL execution", error, "lakecompute"
         )
-        assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
+        assert result.error.code is ERR_BINDER_UNKNOWN_RELATION
         assert "no_such" in str(result.error)
 
     def test_column_not_found_is_an_unknown_reference(self) -> None:

@@ -34,7 +34,11 @@ import re
 import vl_convert as vlc
 
 from d3_format import LocaleDefinition
-from dbt_charts.core.compile.models.primitives import Regional, ResolvedFormat
+from dbt_charts.core.compile.models.primitives import (
+    Regional,
+    RegionalLocale,
+    ResolvedFormat,
+)
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedRulerAxis,
     ResolvedTickLabel,
@@ -51,7 +55,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     compose_axis_format,
     inject_axis_numeral_expr,
 )
-from dbt_charts.core.text.format_d3 import locale_definition, number_locale_scope
+from dbt_charts.core.text.format_d3 import locale_definition, regional_scope
 from dbt_charts.core.text.numeral_scale import (
     SuffixMode,
     ruler_digit_format,
@@ -246,7 +250,7 @@ class TestExpressionShape:
         ruler = _ruler(3, SuffixMode.REPEAT, reserve=False)
         expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         assert '"k"' in expr
-        assert json.dumps("\u00a0K") not in expr
+        assert json.dumps("K") not in expr
         assert RESERVATION_GUARD not in expr
         assert "''" in expr
 
@@ -277,7 +281,7 @@ class TestRealVegaRendering:
             "200" + pad,
             "300" + pad,
             "400" + pad,
-            "$500\u00a0K",
+            "$500K",
         ]
 
     def test_authored_prefix_anchors_on_a_bare_si_spec_like_currencys_dollar(
@@ -304,7 +308,7 @@ class TestRealVegaRendering:
             "200" + pad,
             "300" + pad,
             "400" + pad,
-            "€500\u00a0K",
+            "€500K",
         ]
 
     def test_native_symbol_and_authored_prefix_compose_together_on_the_anchor(
@@ -332,7 +336,7 @@ class TestRealVegaRendering:
             "200" + pad,
             "300" + pad,
             "400" + pad,
-            "US $500\u00a0K",
+            "US $500K",
         ]
 
     def test_authored_suffix_trails_the_magnitude_suffix(self) -> None:
@@ -356,7 +360,7 @@ class TestRealVegaRendering:
             "200" + pad,
             "300" + pad,
             "400" + pad,
-            "500\u00a0K EUR",
+            "500K EUR",
         ]
 
     def test_repeat_mode_900k_ladder(self) -> None:
@@ -443,8 +447,7 @@ class TestComposedReservationSurvivesVlConvert:
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
 
         assert len(ruler.reservation) > 1, (
-            "expected a multi-character composition for ' K' (~1.45 "
-            f"digit-widths), got {ruler.reservation!r}"
+            f"expected a multi-character composition for 'K', got {ruler.reservation!r}"
         )
         for label in labels[:-1]:
             assert label.endswith(ruler.reservation), (
@@ -479,7 +482,7 @@ class TestNegativeLadderAnchor:
         pad = ruler.reservation
         # d3 emits U+2212 MINUS SIGN, not ASCII hyphen, for a negative value.
         assert labels == [
-            "\u2212600\u00a0K",
+            "\u2212600K",
             "\u2212400" + pad,
             "\u2212200" + pad,
             "0" + pad,
@@ -518,7 +521,7 @@ class TestReservationSurvivesVlConvert:
         pad = "  "
         expr = (
             "format(datum.value,',d') + "
-            "(datum.value !== 500000 ? " + repr(pad) + " : ' K')"
+            "(datum.value !== 500000 ? " + repr(pad) + " : 'K')"
         )
         ticks = [0.0, 100_000.0, 200_000.0, 300_000.0, 400_000.0, 500_000.0]
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
@@ -672,15 +675,13 @@ class TestNegativeAnchorCurrencySign:
     """
 
     def test_ruler_negative_anchor_renders_sign_before_symbol(self) -> None:
-        """Compacting ruler path: negative anchor tick must be '-$500\u00a0K', not '$-500\u00a0K'."""
+        """Compacting ruler path: negative anchor tick must be '-$500K', not '$-500K'."""
         ruler = _ruler(3, SuffixMode.ANCHOR, anchor_at_start=True, format_spec="$.3~s")
         expr = inject_axis_numeral_expr({}, ruler, None, _PLAIN)["labelExpr"]
         ticks = [-500_000.0, -300_000.0, -100_000.0, 0.0]
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
         # d3 emits U+2212 MINUS SIGN, not ASCII hyphen.
-        assert labels[0] == "−$500\u00a0K", (
-            f"expected sign before symbol, got {labels[0]!r}"
-        )
+        assert labels[0] == "−$500K", f"expected sign before symbol, got {labels[0]!r}"
 
     def test_tick_label_negative_anchor_renders_sign_before_symbol(self) -> None:
         """Non-compacting tick_label path: negative anchor must be '-$500', not '$-500'."""
@@ -712,7 +713,7 @@ class TestNegativeAnchorCurrencySign:
         )["labelExpr"]
         ticks = [-500_000.0, -300_000.0, -100_000.0, 0.0]
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
-        assert labels[0] == "US −$500\u00a0K", (
+        assert labels[0] == "US −$500K", (
             f"expected prefix+sign+symbol, got {labels[0]!r}"
         )
 
@@ -1071,15 +1072,20 @@ class TestAnchoredNegativeTickParity:
         assert painted == quantitative_tick_labels(ticks, fmt, ruler)
 
     def test_lone_currency_ruler_in_a_suffix_locale(self) -> None:
-        locale = Regional(locale="de-DE").format_locale
+        regional = Regional(locale=RegionalLocale(number="de-DE"))
         ruler = _ruler(3, SuffixMode.ANCHOR, anchor_at_start=True, format_spec="$.3~s")
         fmt = ResolvedFormat(spec="$.3~s")
         ticks = (-500_000.0, -300_000.0, -100_000.0, 0.0)
-        with number_locale_scope(locale):
+        with regional_scope(
+            regional.format_locale, regional.time_locale, regional.week_start
+        ):
             expr = inject_axis_numeral_expr({}, ruler, None, fmt)["labelExpr"]
             measured = quantitative_tick_labels(ticks, fmt, ruler)
         painted = _render_axis_labels(
-            list(ticks), (ticks[0], ticks[-1]), expr, locale_definition(locale)
+            list(ticks),
+            (ticks[0], ticks[-1]),
+            expr,
+            locale_definition(regional.format_locale),
         )
         assert painted[0].startswith("€−500")
         assert painted == measured

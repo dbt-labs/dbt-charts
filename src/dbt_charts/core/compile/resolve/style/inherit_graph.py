@@ -5,24 +5,13 @@ Usage::
     links = build_inherit_graph(Style)
     # {"Style.charts.axis_x.labels.font.color": "Style.charts.axis.labels.font.color", ...}
 
-    chains = flatten_inherit_chains(links)
-    # {"Style.charts.axis_x.labels.font.color": ("Style.charts.axis.labels.font.color",), ...}
-
 Production entry point::
 
     from dbt_charts.core.compile.resolve.style.inherit_graph import get_inherit_graph
     links = get_inherit_graph()  # cached; uses the production Style model
 
-Committed artifact::
-
-    dbt-charts/src/dbt_charts/core/compile/resolve/style/inherit_registry.yaml
-
-Regenerate after adding or removing Inherit / InheritSlot markers::
-
-    just generate-inherit-registry
-
-A drift test (test_inherit_registry.py::test_inherit_registry_matches_graph) fails
-when the committed file diverges from regeneration.
+For the coarser slot-level view (one entry per ``InheritSlot`` container rather
+than per leaf), call ``build_slot_graph(Style)``.
 """
 
 from __future__ import annotations
@@ -300,8 +289,7 @@ def _build_slot_graph(
     """Walk *model_cls* and record slot-level links in *graph*.
 
     Unlike ``_build_graph``, stops at the ``InheritSlot`` boundary and records the
-    container path rather than expanding into individual leaf paths.  Used for the
-    human-readable ``inherit_registry.yaml``.
+    container path rather than expanding into individual leaf paths.
     """
     if model_cls in seen:
         return
@@ -342,16 +330,14 @@ def _build_slot_graph(
 
 
 def build_slot_graph(root_model: type[BaseModel]) -> InheritGraph:
-    """Build a slot-level InheritGraph for registry documentation.
+    """Build a slot-level InheritGraph.
 
     Records ``InheritSlot`` container paths instead of expanding to per-leaf links::
 
         {"Style.charts.font": "Style.font", ...}
 
     rather than the 7-entry per-leaf expansion that ``build_inherit_graph`` emits.
-
-    Used for ``inherit_registry.yaml``.  ``apply_inherit`` uses
-    ``build_inherit_graph`` (per-leaf) for correctness at runtime.
+    ``apply_inherit`` uses ``build_inherit_graph`` (per-leaf) at runtime.
     """
     prefix: StylePath = (root_model.__name__,)
     graph: InheritGraph = {}
@@ -373,34 +359,6 @@ def build_inherit_graph(root_model: type[BaseModel]) -> InheritGraph:
     graph: InheritGraph = {}
     _build_graph(root_model, prefix, frozenset(), valid_paths, graph)
     return graph
-
-
-def flatten_inherit_chains(links: InheritGraph) -> dict[str, tuple[str, ...]]:
-    """Expand single-link parent entries into ordered ancestor tuples.
-
-    For each entry in *links*, follows the parent chain and returns all ancestors
-    in order (direct parent first).  Terminal nodes that are not themselves entries
-    in *links* are included as the final element.
-
-    Example::
-
-        links = {"a.b": "a", "a": "root"}
-        flatten_inherit_chains(links)
-        # {"a.b": ("a", "root"), "a": ("root",)}
-    """
-    memo: dict[str, tuple[str, ...]] = {}
-
-    def _chain(path: str) -> tuple[str, ...]:
-        if path in memo:
-            return memo[path]
-        parent = links.get(path)
-        if parent is None:
-            return ()
-        result = (parent,) + _chain(parent)
-        memo[path] = result
-        return result
-
-    return {path: _chain(path) for path in links}
 
 
 @functools.cache

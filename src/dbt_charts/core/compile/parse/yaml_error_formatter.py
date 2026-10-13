@@ -90,11 +90,16 @@ def _find_discriminator_index(loc: tuple[Any, ...]) -> int | None:
 def _branch_score(err: dict[str, Any]) -> int:
     """Score a branch error — lower is better (more informative).
 
-    extra_forbidden → field we actually authored that's forbidden here → 0 (best)
+    registered code → a validator named the exact failure → -1 (best)
+    extra_forbidden → field we actually authored that's forbidden here → 0
     missing         → required field for this branch missing → 1
     other           → some other type mismatch → 2 (noisier)
     """
+    from dbt_charts.core.diagnostics.registry import CODED_VALIDATION_ERROR
+
     t = err.get("type", "")
+    if t == CODED_VALIDATION_ERROR:
+        return -1
     if t == "extra_forbidden":
         return 0
     if t == "missing":
@@ -291,8 +296,8 @@ def _unsupported_known_chart_field_hint(
                 )
             return (
                 f"`{field_name}:` is not supported on `type: {chart_type}`. "
-                "Use `style.number_format:` (or `style.axis_y.labels.format:`) for axis and "
-                "tooltip formatting."
+                "Use `style.axis_y.labels.format:` for axis and tooltip formatting, or "
+                "`formats:` on the query to format the column everywhere."
             )
         if chart_type == "table":
             return (
@@ -537,6 +542,12 @@ def _model_types_from_annotation(annotation: Any) -> list[type[BaseModel]]:
 
 
 def _allowed_keys_at_path(parent_path: list[str]) -> list[str]:
+    from dbt_charts.core.compile.models.board.authored import (
+        AuthoredBoard,
+        AuthoredBoardInput,
+    )
+    from dbt_charts.core.compile.models.markers import SchemaSugar
+
     annotations = _annotations_at_path(parent_path)
     keys: set[str] = set()
     for annotation in annotations:
@@ -545,6 +556,13 @@ def _allowed_keys_at_path(parent_path: list[str]) -> list[str]:
                 if field.exclude is True:
                     continue
                 keys.add(_field_key(name, field))
+            # Sugar keys (theme:) are desugared before the model sees them.
+            if model is AuthoredBoard:
+                keys.update(
+                    meta.name
+                    for meta in get_args(AuthoredBoardInput)[1:]
+                    if isinstance(meta, SchemaSugar)
+                )
     return sorted(keys)
 
 
@@ -592,9 +610,14 @@ def _retired_key_hint(retired: "RetiredKey", docs_topic: str) -> str:
             "Move",
         )
     )
+    alternative = (
+        ", or set `formats:` on the query to format the column everywhere"
+        if retired.successor[-2:] == ("labels", "format")
+        else ""
+    )
     return (
         f"`{'.'.join(old)}` was {verb} `{'.'.join(new)}` in {version}. "
-        f"{action} the key. See: dct docs {docs_topic}"
+        f"{action} the key{alternative}. See: dct docs {docs_topic}"
     )
 
 
@@ -744,6 +767,16 @@ def _extra_field_diagnostic(
             fields=fields,
         )
 
+    if field_name == "board" and not parent_path:
+        return _ExtraFieldDiagnostic(
+            message=message,
+            hint=(
+                "Board properties (title, rows, queries, ...) go at the top "
+                "level of the file, not nested under 'board:'."
+            ),
+            fields=fields,
+        )
+
     if field_name == "field_labels" and parent_path[-1:] == ["table"]:
         return _ExtraFieldDiagnostic(
             message=message,
@@ -778,7 +811,7 @@ def _extra_field_diagnostic(
         )
 
     if field_path[0:1] == ["charts"] and len(field_path) >= 3:
-        if "style" in field_path and field_name in ("height", "width"):
+        if parent_path[-1:] == ["style"] and field_name in ("height", "width"):
             return _ExtraFieldDiagnostic(
                 message=message,
                 hint=(
@@ -847,52 +880,6 @@ def get_valid_chart_types() -> tuple[str, ...]:
     )
 
     return AUTHORED_CHART_TYPE_TAGS
-
-
-def get_yaml_context(
-    yaml_content: str,
-    line_number: int,
-    context_lines: int = 2,
-) -> str:
-    """Get YAML context around an error line.
-
-    Returns the surrounding lines with the error line highlighted.
-
-    Args:
-        yaml_content: Raw YAML string
-        line_number: Line number of the error (1-indexed)
-        context_lines: Number of lines to show before/after
-
-    Returns:
-        Formatted context string with line numbers and error marker
-    """
-    lines = yaml_content.split("\n")
-
-    # Ensure valid line number
-    if line_number < 1 or line_number > len(lines):
-        return ""
-
-    # Calculate range
-    start = max(0, line_number - context_lines - 1)
-    end = min(len(lines), line_number + context_lines)
-
-    # Build context with line numbers
-    result_lines: list[str] = []
-    for idx in range(start, end):
-        actual_line_num = idx + 1
-        line = lines[idx]
-
-        # Mark the error line
-        if actual_line_num == line_number:
-            marker = ">>>"
-            suffix = "  # <-- Error here"
-        else:
-            marker = "   "
-            suffix = ""
-
-        result_lines.append(f"{marker} {actual_line_num:4d} | {line}{suffix}")
-
-    return "\n".join(result_lines)
 
 
 def suggest_similar_value(
@@ -1026,6 +1013,11 @@ def format_validation_errors_structured(
     )
     from dbt_charts.core.diagnostics.codes_unknown import ERR_INTERNAL
     from dbt_charts.core.diagnostics.diagnostic import Diagnostic
+    from dbt_charts.core.diagnostics.registry import (
+        CODED_VALIDATION_ERROR,
+        REGISTRY,
+        DiagnosticCode,
+    )
 
     raw_errors = error.errors()
     if not raw_errors:
@@ -1063,8 +1055,13 @@ def format_validation_errors_structured(
         )
 
         # Pick the most specific error code based on Pydantic error type
+        # A validator raised ErrorCode.validation_error(): its message is final.
+        coded = err_type == CODED_VALIDATION_ERROR
+        ec: DiagnosticCode
         if err_type == "extra_forbidden":
             ec = ERR_EXTRA_FIELD
+        elif coded:
+            ec = REGISTRY.get(err["ctx"]["code"])
         elif err_type == "model_type" and wrong_shape_keys:
             ec = ERR_WRONG_SHAPE
         elif field_path_str:
@@ -1077,6 +1074,8 @@ def format_validation_errors_structured(
         input_val = err.get("input")
         if extra_field_diagnostic is not None:
             message = extra_field_diagnostic.message
+        elif coded:
+            message = err_msg
         elif field_path_str:
             if isinstance(input_val, str):
                 message = f"Field '{field_path_str}': {err_msg} (got: {input_val!r})"
@@ -1132,7 +1131,13 @@ def format_validation_errors_structured(
             else:
                 hint = newer_schema_hint
 
-        fields = extra_field_diagnostic.fields if extra_field_diagnostic else {}
+        fields = (
+            extra_field_diagnostic.fields
+            if extra_field_diagnostic
+            else err["ctx"]["fields"]
+            if coded
+            else {}
+        )
 
         # No range here — the caller's compile-level source map resolves
         # `.range` from `.path` in one central stamping pass (source_map.py),

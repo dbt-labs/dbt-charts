@@ -52,14 +52,14 @@ def _cramping(
     available: float,
     wrapped: int = 3,
     columns: int = 10,
-    fraction: float = 0.0,
+    suggested: float = 1350.0,
 ) -> TableCramping:
     return TableCramping(
         required_width=required,
         available_width=available,
         wrapped_headers=wrapped,
         column_count=columns,
-        relative_demand_fraction=fraction,
+        suggested_width=suggested,
     )
 
 
@@ -83,19 +83,11 @@ def test_fires_on_shortfall_with_wrapped_headers() -> None:
     assert w.fix is not None
 
 
-def test_suggestion_scales_the_shortfall_by_the_slot_fraction() -> None:
-    """A table holding a fraction of the board must be told to grow the board
-    by more than the raw shortfall — pasting the number back has to clear the
-    warning in one step, not converge toward it."""
+def test_the_engine_suggested_width_is_used_as_recorded() -> None:
     chart_id, ctx = _table_ctx()
-    shortfall = 100.0
-    # Table budget is ~a third of the board: board growth must be ~3x.
-    ctx = ctx.model_copy(
-        update={"table_crampings": {chart_id: _cramping(400.0, 300.0)}}
-    )
-    suggested = _suggested_width(detector.detect(ctx)[0].fix)
-    assert suggested >= _BOARD_WIDTH + shortfall * (_BOARD_WIDTH / 400.0)
-    assert suggested % 50 == 0
+    cramping = _cramping(800.0, 700.0).model_copy(update={"suggested_width": 1350.0})
+    ctx = ctx.model_copy(update={"table_crampings": {chart_id: cramping}})
+    assert _suggested_width(detector.detect(ctx)[0].fix) == 1350.0
 
 
 def test_sub_pixel_shortfall_is_measurement_noise_not_a_warning() -> None:
@@ -146,31 +138,6 @@ def test_overflowing_table_is_columns_overflows_case_not_cramping() -> None:
                 chart_id: TableOverflow(required_width=800.0, available_width=700.0)
             },
         }
-    )
-    assert detector.detect(ctx) == []
-
-
-def test_percent_pins_raise_the_suggestion() -> None:
-    """A %-pinned column keeps its slice of any budget, so the suggestion must
-    solve for the budget where the absolute rest fits into what it leaves —
-    strictly more board than the raw shortfall alone would ask for."""
-    chart_id, ctx = _table_ctx()
-    plain = ctx.model_copy(
-        update={"table_crampings": {chart_id: _cramping(800.0, 700.0)}}
-    )
-    pinned = ctx.model_copy(
-        update={"table_crampings": {chart_id: _cramping(800.0, 700.0, fraction=0.5)}}
-    )
-    assert _suggested_width(detector.detect(pinned)[0].fix) > _suggested_width(
-        detector.detect(plain)[0].fix
-    )
-
-
-def test_pins_exceeding_any_budget_suggest_nothing() -> None:
-    """Fraction >= 1: the pins alone outgrow every budget — no width can help."""
-    chart_id, ctx = _table_ctx()
-    ctx = ctx.model_copy(
-        update={"table_crampings": {chart_id: _cramping(800.0, 700.0, fraction=1.2)}}
     )
     assert detector.detect(ctx) == []
 

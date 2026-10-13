@@ -14,12 +14,12 @@ import pytest
 from pydantic import ValidationError
 
 from dbt_charts.agent_api.search import (
-    MAX_CHART_MATCH_REASONS,
     MAX_SEARCH_LIMIT,
     BoardSearchHit,
     ChartSearchEntry,
     SearchBoardsArgs,
     SearchResult,
+    paginate,
     search_boards,
     search_boards_hits,
 )
@@ -289,10 +289,11 @@ class TestSearchDashboardsContract:
             assert isinstance(hit.referenced_data_paths, list)
 
     def test_empty_query_returns_typed_model(self, corpus_dir: Project) -> None:
-        """Empty query is a structurally distinct outcome (success, no hits)."""
+        """An empty query is a listing: the same typed result, every board."""
         result = search_boards(query="", project=corpus_dir)
         assert isinstance(result, SearchResult)
-        assert result.results == []
+        assert result.success
+        assert len(result.results) == 5
 
     def test_model_dump_produces_wire_shape(self, corpus_dir: Project) -> None:
         """model_dump is a distinct operation; assert the wire keys."""
@@ -310,6 +311,7 @@ class TestSearchDashboardsContract:
                 "file_path",
                 "query_names",
                 "charts",
+                "matched_charts",
                 "sample_sql",
                 "referenced_data_paths",
             ):
@@ -403,8 +405,76 @@ class TestSearchDashboardsHits:
 
         assert result.results == hits[:2]
 
-    def test_empty_query_returns_empty_list(self, corpus_dir: Project) -> None:
-        assert search_boards_hits("   ", corpus_dir) == []
+    def test_empty_query_lists_every_board_in_path_order(
+        self, corpus_dir: Project
+    ) -> None:
+        hits = search_boards_hits("   ", corpus_dir)
+
+        assert [h.file_path for h in hits] == [
+            "charts/finance.yml",
+            "charts/hr/headcount.yml",
+            "charts/inventory.yml",
+            "charts/marketing.yml",
+            "charts/sales.yml",
+        ]
+        assert {h.match_score for h in hits} == {0.0}
+        assert all(h.match_reasons == [] for h in hits)
+
+    def test_empty_query_listing_honors_tags(self, corpus_dir: Project) -> None:
+        hits = search_boards_hits("", corpus_dir, tags=["revenue"])
+
+        assert [h.title for h in hits] == ["Finance Overview", "Sales Performance"]
+
+    def test_punctuation_only_query_still_matches_nothing(
+        self, corpus_dir: Project
+    ) -> None:
+        assert search_boards_hits("!!!", corpus_dir) == []
+
+
+class TestSearchPaging:
+    """A listing larger than ``limit`` pages through ``next`` without gaps."""
+
+    def test_pages_cover_the_listing_exactly_once(self, corpus_dir: Project) -> None:
+        full = [h.file_path for h in search_boards("", corpus_dir).results]
+        seen: list[str] = []
+        cursor: str | None = None
+        pages = 0
+        while True:
+            page = search_boards("", corpus_dir, limit=2, cursor=cursor)
+            seen.extend(h.file_path for h in page.results)
+            pages += 1
+            cursor = page.next
+            if cursor is None:
+                break
+
+        assert seen == full
+        assert pages == 3
+
+    def test_the_last_page_has_no_next(self, corpus_dir: Project) -> None:
+        assert search_boards("", corpus_dir, limit=5).next is None
+        assert search_boards("", corpus_dir, limit=4).next == "4"
+
+    def test_a_zero_limit_page_has_no_cursor_to_loop_on(self) -> None:
+        assert paginate([1, 2, 3], limit=0, cursor=None) == ([], None)
+
+    def test_ranked_search_pages_too(self, corpus_dir: Project) -> None:
+        everything = search_boards_hits("revenue", corpus_dir)
+        first = search_boards("revenue", corpus_dir, limit=1)
+        second = search_boards("revenue", corpus_dir, limit=1, cursor=first.next)
+
+        assert [first.results[0], second.results[0]] == everything[:2]
+
+    @pytest.mark.parametrize("cursor", ["abc", "-1", "1.5", ""])
+    def test_a_cursor_that_is_not_a_next_value_is_refused(self, cursor: str) -> None:
+        with pytest.raises(ValidationError, match="next"):
+            SearchBoardsArgs(query="", cursor=cursor)
+
+    def test_next_is_dropped_from_the_wire_when_absent(
+        self, corpus_dir: Project
+    ) -> None:
+        wire = search_boards("", corpus_dir).model_dump(exclude_none=True)
+
+        assert "next" not in wire
 
 
 # ---------------------------------------------------------------------------
@@ -533,27 +603,50 @@ class TestChartGrainSearch:
         assert chart.id == "2024"
         assert chart.title == "2024"
 
-    def test_chart_match_reasons_are_capped(
+    def test_matched_charts_lists_every_matching_chart_uncapped(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """Many charts matching one token must not balloon match_reasons."""
+        """Every matching chart is named, in board order, under one reason."""
         boards = tmp_path / "charts"
         boards.mkdir()
+        ids = [f"revenue_{c}" for c in "fedcba"]
         chart_lines = "".join(
-            f"  revenue_{i}:\n    title: Revenue {i}\n    type: bar\n" for i in range(6)
+            f"  {i}:\n    title: Revenue {i}\n    type: bar\n" for i in ids
         )
-        row_lines = "".join(f"  - revenue_{i}\n" for i in range(6))
+        row_lines = "".join(f"  - {i}\n" for i in ids)
         (boards / "many.yml").write_text(
             "title: Many Charts\n"
             "notes: revenue everywhere\n"
-            "charts:\n" + chart_lines + "rows:\n" + row_lines
+            "charts:\n" + chart_lines + "  costs:\n    type: bar\n"
+            "rows:\n" + row_lines + "  - costs\n"
         )
 
         result = search_boards(query="revenue", project=local_project(tmp_path))
 
-        reasons = result.results[0].match_reasons
-        named = [r for r in reasons if r.startswith("chart-title: ")]
-        assert len(named) == MAX_CHART_MATCH_REASONS
+        hit = result.results[0]
+        assert hit.matched_charts == ids
+        assert hit.match_reasons.count("chart_match") == 1
+
+    def test_board_matched_without_chart_match_has_no_matched_charts(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "notes_only.yml").write_text(
+            "title: Finance\n"
+            "notes: quarterly revenue review\n"
+            "charts:\n"
+            "  costs:\n"
+            "    type: bar\n"
+            "rows:\n"
+            "  - costs\n"
+        )
+
+        result = search_boards(query="revenue", project=local_project(tmp_path))
+
+        hit = result.results[0]
+        assert hit.matched_charts == []
+        assert "chart_match" not in hit.match_reasons
 
     def test_zero_charts_board_returns_empty_chart_list(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -607,7 +700,7 @@ class TestChartGrainSearch:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """A chart-title match ranks its dashboard above a notes-only match
-        and names the answering chart in match_reasons."""
+        and names the answering chart in matched_charts."""
         boards = tmp_path / "charts"
         boards.mkdir()
         (boards / "revenue_chart.yml").write_text(
@@ -643,12 +736,13 @@ class TestChartGrainSearch:
         assert titles[0] == "Analytics Board"
 
         top_hit = result.results[0]
-        assert "chart-title: monthly_revenue" in top_hit.match_reasons
+        assert top_hit.matched_charts == ["monthly_revenue"]
+        assert "chart_match" in top_hit.match_reasons
 
-    def test_chart_id_match_falls_back_to_id_reason_when_untitled(
+    def test_untitled_chart_matches_on_its_id(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """No explicit chart title -> the id itself is matched and named."""
+        """With no title, the chart id itself is what matches."""
         boards = tmp_path / "charts"
         boards.mkdir()
         (boards / "topline.yml").write_text(
@@ -668,7 +762,7 @@ class TestChartGrainSearch:
 
         result = search_boards(query="topline", project=local_project(tmp_path))
         assert len(result.results) == 1
-        assert "chart-title: topline_kpi" in result.results[0].match_reasons
+        assert result.results[0].matched_charts == ["topline_kpi"]
 
 
 # ---------------------------------------------------------------------------
@@ -680,10 +774,10 @@ class TestSearchDashboardsEdgeCases:
     """Edge tests for empty query, unknown filter, and limit bounds."""
 
     def test_whitespace_only_query(self, corpus_dir: Project) -> None:
-        """Whitespace-only query treated as empty."""
+        """Whitespace-only query is the empty query: a listing."""
 
         result = search_boards(query="   ", project=corpus_dir)
-        assert result.results == []
+        assert len(result.results) == 5
 
     def test_unknown_tag_filter(self, corpus_dir: Project) -> None:
         """Filtering by a nonexistent tag returns empty results."""
@@ -1019,11 +1113,17 @@ class TestSearchHitPathCoordinateSystems:
 
 
 class TestSearchBoardsArgsWireSchema:
-    """The MCP wire model advertises exactly {query, tags, limit} — no path inputs."""
+    """The MCP wire model advertises exactly {query, tags, limit, cursor} — no path inputs."""
 
     def test_wire_schema_has_expected_properties(self) -> None:
         schema = SearchBoardsArgs.model_json_schema()
-        assert set(schema["properties"].keys()) == {"query", "tags", "limit"}
+        assert set(schema["properties"].keys()) == {
+            "query",
+            "tags",
+            "limit",
+            "cursor",
+        }
+        assert schema["required"] == ["query"]
 
     def test_project_dir_is_not_in_wire_schema(self) -> None:
         schema = SearchBoardsArgs.model_json_schema()

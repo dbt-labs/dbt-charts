@@ -1,65 +1,63 @@
-"""Tests for schema_names.py drift and name-list exclusions.
-
-TDD: written before the fix existed. The drift test regenerates the module
-in memory and compares it to the committed source.
-"""
+"""Each closed name list in schema_names.py matches its canonical source."""
 
 from __future__ import annotations
 
-import importlib.util
 import typing
 
-from ...._paths import DBT_CHARTS_DIR, DBT_CHARTS_PKG_DIR
-
-_SCRIPT_PATH = DBT_CHARTS_DIR / "scripts" / "generate_schema_names.py"
-_MODULE_PATH = DBT_CHARTS_PKG_DIR / "core" / "compile" / "models" / "schema_names.py"
-
-
-def test_schema_names_matches_generator_output(tmp_path, monkeypatch):
-    """Committed schema_names.py must match fresh regeneration."""
-    committed = _MODULE_PATH.read_text(encoding="utf-8")
-
-    fake_out = tmp_path / "schema_names.py"
-    spec = importlib.util.spec_from_file_location("generate_schema_names", _SCRIPT_PATH)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    monkeypatch.setattr(mod, "_OUT", fake_out)
-    mod.main()
-
-    assert fake_out.read_text(encoding="utf-8") == committed, (
-        "schema_names.py is stale. Re-run: just generate-schema-names"
-    )
-
-
-def test_generate_script_writes_to_committed_module_path():
-    spec = importlib.util.spec_from_file_location("generate_schema_names", _SCRIPT_PATH)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    assert mod._OUT == _MODULE_PATH
+from dbt_charts.core.colors import VARIANT_WORDS
+from dbt_charts.core.compile.config import get_theme_style, list_built_in_themes
+from dbt_charts.core.compile.models.palette import (
+    HARD_FAIL_PALETTE_NAMES,
+    PALETTE_WARN_ALIASES,
+)
+from dbt_charts.core.compile.models.schema_names import (
+    VEGA_SCHEME_NAMES,
+    CategorySlotToken,
+    ChartWarningCode,
+    FormatAlias,
+    PaletteName,
+    ScalePaletteName,
+    StopsPaletteName,
+    ThemeName,
+    WarningCode,
+)
+from dbt_charts.core.compile.resolve.style.palette import list_palettes, palette
+from dbt_charts.core.diagnostics.codes_retired import RETIRED_WARNING_CODES
+from dbt_charts.core.diagnostics.registry import REGISTRY
+from dbt_charts.core.text.predefined_formats import (
+    PREDEFINED_SPECS,
+    PREDEFINED_TEXT_NAMES,
+    PREDEFINED_TIME_SPECS,
+)
 
 
-def test_theme_name_excludes_private_and_diagnostics():
-    from dbt_charts.core.compile.models.schema_names import ThemeName
+def _names(alias: object) -> list[str]:
+    return list(typing.get_args(alias))
 
-    names = typing.get_args(ThemeName)
-    assert not any(n.startswith("_") for n in names)
-    assert not any(n.startswith("diagnostics-") for n in names)
-    assert "clarity" in names
+
+def test_theme_name_is_built_in_themes_minus_private_and_diagnostics():
+    expected = [
+        n
+        for n in list_built_in_themes()
+        if not n.startswith("_") and not n.startswith("diagnostics-")
+    ]
+    assert _names(ThemeName) == expected
+    assert "clarity" in expected
+
+
+def test_palette_name_is_every_palette_plus_categorical_variants():
+    variants = {
+        f"{name}.{tier}"
+        for name in list_palettes("categorical")
+        for tier in VARIANT_WORDS
+    }
+    assert _names(PaletteName) == sorted({*list_palettes(), *variants})
 
 
 def test_palette_name_excludes_hard_fail_and_warn_alias_names():
-    from dbt_charts.core.compile.models.schema_names import PaletteName
-    from dbt_charts.core.compile.resolve.style.palette import (
-        _HARD_FAIL_NAMES,
-        _WARN_ALIASES,
-    )
-
-    names = set(typing.get_args(PaletteName))
-    assert not (names & _HARD_FAIL_NAMES)
-    assert not (names & set(_WARN_ALIASES))
+    names = set(_names(PaletteName))
+    assert not (names & HARD_FAIL_PALETTE_NAMES)
+    assert not (names & set(PALETTE_WARN_ALIASES))
 
 
 def test_stops_palette_name_holds_only_names_that_resolve_to_stops():
@@ -71,48 +69,44 @@ def test_stops_palette_name_holds_only_names_that_resolve_to_stops():
     `PaletteName` keeps the whole index: `style.palettes` binds roles to color
     sources, and `_base.yaml` binds `info: info`.
     """
-    from dbt_charts.core.compile.models.schema_names import (
-        PaletteName,
-        StopsPaletteName,
-    )
-    from dbt_charts.core.compile.resolve.style.palette import list_palettes, palette
-
     tones = set(list_palettes("tone"))
-    names = set(typing.get_args(StopsPaletteName))
+    names = set(_names(StopsPaletteName))
     assert not (names & tones)
-    assert set(typing.get_args(PaletteName)) - names == tones
+    assert set(_names(PaletteName)) - names == tones
     for name in names:
         palette(name)
 
 
-def test_scale_palette_name_excludes_hard_fail_and_warn_alias_names():
-    """VEGA_SCHEME_NAMES contains "rainbow", which is also a _HARD_FAIL_NAMES
-    anti-pattern — the union must not resurrect it into ScalePaletteName."""
-    from dbt_charts.core.compile.models.schema_names import ScalePaletteName
-    from dbt_charts.core.compile.resolve.style.palette import (
-        _HARD_FAIL_NAMES,
-        _WARN_ALIASES,
-    )
-
-    names = set(typing.get_args(ScalePaletteName))
-    assert not (names & _HARD_FAIL_NAMES), (
-        f"hard-fail anti-pattern name(s) leaked into ScalePaletteName: {names & _HARD_FAIL_NAMES}"
-    )
-    assert not (names & set(_WARN_ALIASES))
-
-
 def test_scale_palette_name_is_union_of_palettes_and_vega_schemes_minus_excluded():
-    from dbt_charts.core.compile.models.primitives import VEGA_SCHEME_NAMES
-    from dbt_charts.core.compile.models.schema_names import (
-        ScalePaletteName,
-        StopsPaletteName,
-    )
-    from dbt_charts.core.compile.resolve.style.palette import (
-        _HARD_FAIL_NAMES,
-        _WARN_ALIASES,
+    """VEGA_SCHEME_NAMES contains "rainbow", which is also a hard-fail
+    anti-pattern — the union must not resurrect it into ScalePaletteName."""
+    excluded = HARD_FAIL_PALETTE_NAMES | set(PALETTE_WARN_ALIASES)
+    assert "rainbow" in VEGA_SCHEME_NAMES & excluded
+    expected = (set(_names(StopsPaletteName)) | VEGA_SCHEME_NAMES) - excluded
+    assert _names(ScalePaletteName) == sorted(expected)
+
+
+def test_format_aliases_are_the_predefined_spec_and_text_names():
+    # Plain strings, not the str-mixin enum members the spec maps are keyed
+    # by: pydantic would hand an enum member back, and the docs would print it.
+    assert {type(n) for n in _names(FormatAlias)} == {str}
+    assert _names(FormatAlias) == sorted(
+        {*PREDEFINED_SPECS, *PREDEFINED_TIME_SPECS, *PREDEFINED_TEXT_NAMES}
     )
 
-    names = set(typing.get_args(ScalePaletteName))
-    excluded = _HARD_FAIL_NAMES | set(_WARN_ALIASES)
-    expected = (set(typing.get_args(StopsPaletteName)) | VEGA_SCHEME_NAMES) - excluded
-    assert names == expected
+
+def test_category_slots_match_widest_category_palette_under_the_real_resolver():
+    """The slot count walks raw theme YAML; the theme resolver is the oracle."""
+    widest = 0
+    for name in _names(ThemeName):
+        palettes = get_theme_style(name).palettes
+        assert palettes is not None
+        widest = max(widest, len(palette(palettes["category"])))
+    assert _names(CategorySlotToken) == [f"category[{i}]" for i in range(1, widest + 1)]
+
+
+def test_warning_codes_are_registry_warnings_plus_retired():
+    warnings = REGISTRY.codes(level="warning")
+    assert _names(WarningCode) == sorted(warnings | RETIRED_WARNING_CODES)
+    chart_scoped = {c for c in warnings if REGISTRY.get(c).domain != "query"}
+    assert _names(ChartWarningCode) == sorted(chart_scoped | RETIRED_WARNING_CODES)

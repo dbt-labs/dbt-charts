@@ -2,12 +2,11 @@
 
 A table sizes its columns to honor each one's minimum readable width. When
 those widths sum past the width the table was handed (its dashboard tile, or the
-page), the renderer has no choice but to widen the whole table past its slot —
-so it spills over its neighbor or is clipped, printing columns on top of each
-other. Nothing surfaces that to the author.
+page), the renderer clips the table at its slot's edge, so the columns past it
+are not shown. Nothing but a warning surfaces that to the author.
 
 This module is the seam that lets a warning detector see it. The table renderer
-records the overflow at the exact point it decides to widen past its slot — so
+records the overflow at the exact point it decides the columns don't fit — so
 the signal is the renderer's own boundary, not a separate guess — into a sink
 that ``TABLE_COLUMNS_OVERFLOW`` reads via ``WarningContext.table_overflows``.
 
@@ -35,7 +34,7 @@ class TableOverflow(BaseModel):
     actually rendered — not an estimate. ``required_width`` is the table's
     natural width once every column has its honored (minimum readable) width;
     ``available_width`` is the width the table was given. Recorded exactly when
-    ``required_width > available_width`` — the renderer's own widen boundary.
+    ``required_width > available_width`` — the renderer's own clip boundary.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -48,8 +47,8 @@ class TableCramping(BaseModel):
     """A table the renderer had to degrade to fit the width it was given.
 
     Distinct from ``TableOverflow``, which is the physical case: columns that
-    cannot fit even at their minimum readable width, so the table paints past
-    its slot. Cramping is the quieter ladder below that — the renderer absorbs
+    cannot fit even at their minimum readable width, so the table is clipped at
+    its slot's edge. Cramping is the quieter ladder below that — the renderer absorbs
     the width shortfall by wrapping headers, and the table still fits its box
     while reading badly. The height axis is not cramping: a slot cutting the
     rows-per-page down is captured as ``TablePageSqueeze``
@@ -68,12 +67,8 @@ class TableCramping(BaseModel):
     available_width: float
     wrapped_headers: int
     column_count: int
-    # The fraction of the budget consumed by percentage-pinned columns (0.0
-    # when none). Their demand scales with the very budget a wider board would
-    # grant, so the detector's suggested width must solve for the budget where
-    # the absolute remainder fits into what the percentages leave over —
-    # scaling the raw shortfall would under-shoot on every paste-back.
-    relative_demand_fraction: float
+    # The board width that clears the cramping, sized by the engine.
+    suggested_width: float
 
 
 # Stack of active collection sinks (innermost last); empty when no render pass

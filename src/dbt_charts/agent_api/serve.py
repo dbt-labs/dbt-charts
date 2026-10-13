@@ -96,6 +96,7 @@ def prepare_serve(
         max_workers=max_workers,
         no_cache=no_cache,
         cache_path=cache_path,
+        allow_mutating_methods=True,
     )
 
     return ServeSetup(

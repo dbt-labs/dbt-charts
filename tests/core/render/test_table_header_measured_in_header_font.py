@@ -12,20 +12,13 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
-import pytest
-
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.config import reset_config
-from dbt_charts.core.compile.models.chart.authored import TableColumnConfig
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.render import render
-from dbt_charts.core.render.chart.table_support import (
-    measure_column_demands,
-    measure_column_word_floors,
-)
 
 _CELL_FONT = get_font_measurer("Inter Variable")
 _HEADER_FONT = get_font_measurer("Source Serif 4")
@@ -63,42 +56,9 @@ def teardown_function() -> None:
     reset_config()
 
 
-def _measure_args() -> dict[str, object]:
-    return {
-        "columns": ["quarterly"],
-        "column_configs": {"quarterly": TableColumnConfig()},
-        "data": [{"quarterly": "Al"}],
-        "measurer": _CELL_FONT,
-        "header_measurer": _HEADER_FONT,
-        "font_size": _SIZE,
-        "header_font_size": _SIZE,
-        "cell_pad": 6,
-        "column_when_rules": {},
-    }
-
-
 def test_the_fonts_differ() -> None:
     """The tests below mean nothing if the two fonts measure the same."""
     assert _HEADER_FONT.measure(_HEADER, _SIZE) > _CELL_FONT.measure(_HEADER, _SIZE)
-
-
-def test_header_demand_is_measured_in_the_header_font() -> None:
-    cell_demands, header_demands = measure_column_demands(**_measure_args())
-
-    assert header_demands["quarterly"] == pytest.approx(
-        _HEADER_FONT.measure(_HEADER, _SIZE)
-    )
-    assert cell_demands["quarterly"] == pytest.approx(
-        _CELL_FONT.measure("Al", _SIZE) + 12
-    )
-
-
-def test_header_word_floor_is_measured_in_the_header_font() -> None:
-    floors = measure_column_word_floors(**_measure_args())
-
-    assert floors["quarterly"] == pytest.approx(
-        _HEADER_FONT.measure(_HEADER, _SIZE) + 12
-    )
 
 
 def _render_svg(yaml_text: str, local_project: Callable[..., FilesystemProject]) -> str:

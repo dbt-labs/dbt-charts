@@ -13,7 +13,6 @@ from dbt_charts.core.compile.models.source import (
     PostgresSourceConfig,
     RedshiftSourceConfig,
     SnowflakeSourceConfig,
-    TrinoSourceConfig,
 )
 
 from .._paths import DBT_CHARTS_DIR
@@ -47,7 +46,6 @@ def test_every_snapshotted_dbt_field_has_a_closed_source_model_field() -> None:
         "postgres": PostgresSourceConfig,
         "redshift": RedshiftSourceConfig,
         "snowflake": SnowflakeSourceConfig,
-        "trino": TrinoSourceConfig,
     }
     field_renames = {
         "bigquery": {"database": "project", "schema": "dataset", "method": None},

@@ -4,7 +4,7 @@ Python implementation of the [d3-format](https://github.com/d3/d3-format) spec p
 
 ## Install
 
-This library ships as a peer package inside the `dbt-charts` wheel (`dbt-charts/pyproject.toml`'s `[tool.hatch.build.targets.wheel.force-include]`) — it is not published to PyPI or independently installable. Import directly:
+This library ships as a peer package inside the `dbt-charts` wheel (`dbt-charts/_build_backend.py`) — it is not published to PyPI or independently installable. Import directly:
 
 ```python
 from d3_format import format, parse, D3FormatError
@@ -155,7 +155,7 @@ The locale fixture (`tests/fixtures/locale_parity.json`) comes from the d3-forma
 
 dbt charts wraps this library in `dbt-charts/src/dbt_charts/core/compile/format_value.py` to add:
 
-- **`bi` notation**: d3's SI `k/M/G/T` suffixes are remapped to `K/M/B/T` with a space separator (e.g. `"1.5G"` → `"1.5 B"`). The `B`-for-billion convention is dbt charts-specific; this library emits `G` per the SI standard.
+- **`bi` notation**: d3's SI `k/M/G/T` suffixes are remapped to `K/M/B/T` with no separator (e.g. `"1.5G"` → `"1.5B"`). The `B`-for-billion convention is dbt charts-specific; this library emits `G` per the SI standard.
 - **`editorial` notation**: SI suffixes remapped to `k/mn/bn/tr` (journalistic abbreviations, no space).
 - **`None` value**: rendered as `"—"` (em dash) regardless of spec.
 

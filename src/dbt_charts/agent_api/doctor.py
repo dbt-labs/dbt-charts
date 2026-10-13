@@ -27,8 +27,7 @@ from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
     AdapterNotInstalledError,
     import_adapter_module,
 )
-from dbt_charts.core.execute.drivers import is_driver_source
-from dbt_charts.core.execute.drivers.lakecompute import require_lakecompute_extra
+from dbt_charts.core.execute.drivers import is_driver_source, require_driver_extra
 from dbt_charts.core.project_roots import resolve_profiles_path
 
 
@@ -231,7 +230,7 @@ def _adapter_check(
                 name, f"{config.type} source, no adapter needed"
             ), config
         if is_driver_source(config):
-            require_lakecompute_extra()
+            require_driver_extra(config)
         elif config.type.lower() not in SUPPORTED_ADAPTER_TYPES:
             native = f"{config.type} source, runs natively (no dbt adapter needed)"
             return _adapter_skip(name, native), config

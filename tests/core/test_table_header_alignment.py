@@ -205,315 +205,6 @@ def _find_number_tspans(svg: str) -> list[tuple[float, str]]:
 # ---------------------------------------------------------------------------
 
 
-class TestLanePositionsAnchorAtMidpoint:
-    """`_compute_lane_positions` anchors the number tspan so its horizontal
-    center sits at the column's content midpoint.  The returned `number_x`
-    is the right edge of the widest number (tspan is right-aligned), so
-    the invariant is: `number_x - max_value_w / 2 == cell_midpoint`.
-    """
-
-    def _call(self, rows, columns, col_widths, font_size=14):
-        from dbt_charts.core.compile.models.primitives import FontStyle
-        from dbt_charts.core.render.chart.table import _compute_lane_positions
-
-        # Single column for simplicity: cell_x = padding_x
-        padding_x = 16
-        col_x_offsets = [0.0]
-        return (
-            _compute_lane_positions(
-                rows=rows,
-                columns=columns,
-                column_configs={},
-                col_widths=col_widths,
-                col_x_offsets=col_x_offsets,
-                padding_x=padding_x,
-                cell_pad=12,
-                cell_font=FontStyle(size=float(font_size)),
-                formats={"number": ".3~s"},
-                column_when_rules={},
-            ),
-            padding_x,
-            col_x_offsets,
-        )
-
-    def test_number_tspan_center_sits_at_cell_midpoint(self):
-        rows = [{"Revenue": 849}, {"Revenue": 12}, {"Revenue": 456}]
-        col_widths = {"Revenue": 200.0}
-        positions, padding_x, offsets = self._call(rows, ["Revenue"], col_widths)
-        assert "Revenue" in positions
-        prefix_x, number_x, suffix_x, content_left, content_right = positions["Revenue"]
-
-        # The widest number is 3 chars.  With a measurer we can compute the
-        # width exactly; without one, we reproduce the heuristic the
-        # function uses.  In either case the invariant is the same:
-        # number tspan center == cell_midpoint.
-        cell_x = padding_x + offsets[0]
-        cell_midpoint = cell_x + col_widths["Revenue"] / 2
-
-        # Infer the measured width from the positions:
-        # number_x is the tspan's right edge; its left edge is at
-        # (number_x - widest_w), so center is number_x - widest_w/2.
-        # To test the invariant we compare half-widths from the midpoint
-        # to the left and right edges of the number's bounding box.
-        widest_w = number_x - (
-            # Re-derive: content_left = prefix_x - max_prefix_w; for this
-            # case there's no prefix (plain integers), so content_left == prefix_x
-            # and max_prefix_w == 0.  Similarly no suffix.  So the number
-            # tspan spans (prefix_x .. number_x), width = number_x - prefix_x.
-            prefix_x
-        )
-        tspan_center = number_x - widest_w / 2
-        assert tspan_center == pytest.approx(cell_midpoint, abs=0.5), (
-            f"Number tspan center {tspan_center} must sit at cell midpoint "
-            f"{cell_midpoint} (column=Revenue, positions={positions})"
-        )
-
-    def test_date_outlier_in_numeric_column_widens_lane_for_its_own_content(self):
-        """A date-shaped outlier inside an otherwise-numeric column (e.g.
-        real numbers plus one long date string) must contribute its own
-        measured width to the lane, not just route onto a lane sized from
-        the numbers alone — an undersized lane pushes the outlier's glyph
-        left of where it belongs, potentially into the neighboring column.
-        """
-        col_widths = {"N": 200.0}
-        positions_numbers_only, *_ = self._call([{"N": 1}, {"N": 2}], ["N"], col_widths)
-        positions_with_outlier, *_ = self._call(
-            [{"N": 1}, {"N": 2}, {"N": "15 Sep 2024"}], ["N"], col_widths
-        )
-        assert "N" in positions_numbers_only
-        assert "N" in positions_with_outlier
-        content_width_numbers_only = (
-            positions_numbers_only["N"][4] - positions_numbers_only["N"][3]
-        )
-        content_width_with_outlier = (
-            positions_with_outlier["N"][4] - positions_with_outlier["N"][3]
-        )
-        assert content_width_with_outlier > content_width_numbers_only, (
-            f"Lane content width must grow to fit the date-shaped outlier — "
-            f"got {content_width_with_outlier} vs "
-            f"{content_width_numbers_only} for numbers alone"
-        )
-
-    def test_date_lane_number_x_clamps_to_the_column_content_area(self):
-        """A uniformly date-like column narrower than its widest value (the
-        normal case — a column doesn't always get its full measured
-        demand) must not lane past its own content area:
-        _render_data_rows truncates the same string to the cell, so an
-        unclamped number_x would anchor the drawn glyph outside the
-        column, or off the SVG entirely.
-
-        The returned ``content_right`` isn't a usable bound here — for a
-        pure date column (no prefix/suffix) it is defined as
-        ``number_x + max_suffix_w`` and so trivially tracks ``number_x``
-        regardless of clamping. Compare against the cell's actual
-        geometric content-area edge instead, independently derived from
-        the same padding/width inputs used below.
-
-        Uses a real ``ResolvedTableColumnConfig(align="right")`` rather than the
-        ``_call`` helper's empty ``column_configs`` — the date lane path
-        trusts the resolved ``align`` field (see _compute_lane_positions),
-        so a column with no config at all is never date-lane-eligible,
-        matching what resolve always materializes in a real render.
-        """
-        from dbt_charts.core.compile.models.primitives import FontStyle
-        from dbt_charts.core.compile.models.style.resolved.table import (
-            ResolvedTableColumnConfig,
-        )
-        from dbt_charts.core.render.chart.table import _compute_lane_positions
-
-        col_widths = {"D": 40.0}
-        padding_x = 16
-        cell_pad = 12
-        positions = _compute_lane_positions(
-            rows=[{"D": "9 May 2026"}, {"D": "15 Jul 2026"}],
-            columns=["D"],
-            column_configs={"D": ResolvedTableColumnConfig(align="right")},
-            col_widths=col_widths,
-            col_x_offsets=[0.0],
-            padding_x=padding_x,
-            cell_pad=cell_pad,
-            cell_font=FontStyle(size=14.0),
-            formats={"number": ".3~s"},
-            column_when_rules={},
-        )
-        assert "D" in positions
-        _prefix_x, number_x, *_ = positions["D"]
-        cell_x = padding_x
-        content_area_right = cell_x + col_widths["D"] - cell_pad
-        assert number_x <= content_area_right + 0.01, (
-            f"number_x ({number_x}) must not exceed the column's actual "
-            f"content-area right edge ({content_area_right}) — the fold "
-            f"must clamp to what _render_data_rows will actually draw."
-        )
-
-    def test_date_lane_trusts_the_resolved_align_not_the_raw_content(self):
-        """A column whose content is unanimously date-like still earns no
-        lane unless its resolved ``align`` is literally ``"right"`` — even
-        though content alone would satisfy classify_date_column_align's own
-        rule. _compute_lane_positions must not re-decide alignment from the
-        raw rows; it reads the verdict resolve (or render's own
-        pivot/transpose leaf synthesis) already finalized. Pins the fix for
-        a case where an earlier design silently ignored the resolved field
-        and re-derived its own verdict, making resolve's classification
-        inert — both by overriding an explicit ``align: left``, and by
-        granting a lane from content alone when no column config resolved
-        ``align`` at all.
-        """
-        from dbt_charts.core.compile.models.primitives import FontStyle
-        from dbt_charts.core.compile.models.style.resolved.table import (
-            ResolvedTableColumnConfig,
-        )
-        from dbt_charts.core.render.chart.table import _compute_lane_positions
-
-        rows = [{"D": "9 May 2026"}, {"D": "1 Jun 2026"}]
-        col_widths = {"D": 200.0}
-        common_kwargs = {
-            "rows": rows,
-            "columns": ["D"],
-            "col_widths": col_widths,
-            "col_x_offsets": [0.0],
-            "padding_x": 16,
-            "cell_pad": 12,
-            "cell_font": FontStyle(size=14.0),
-            "formats": {"number": ".3~s"},
-        }
-        positions_align_left = _compute_lane_positions(
-            column_configs={"D": ResolvedTableColumnConfig(align="left")},
-            **common_kwargs,
-            column_when_rules={},
-        )
-        positions_align_right = _compute_lane_positions(
-            column_configs={"D": ResolvedTableColumnConfig(align="right")},
-            **common_kwargs,
-            column_when_rules={},
-        )
-        positions_no_config = _compute_lane_positions(
-            column_configs={}, **common_kwargs, column_when_rules={}
-        )
-        assert "D" not in positions_align_left, (
-            "align: left must win outright — no lane — even though every "
-            "value in the column is date-like."
-        )
-        assert "D" in positions_align_right
-        assert "D" not in positions_no_config, (
-            "with no resolved column config at all, render must not "
-            "self-classify the column as date-right from raw content — "
-            "that classification only ever happens once, at resolve."
-        )
-
-    def test_prefix_has_visible_gap_before_widest_number(self):
-        """The ``$`` prefix must not visually kiss the widest number.
-
-        Regression for #1244, which removed the 2px gap introduced in #1186
-        on the theory that tabular-digit measurement was accurate enough for
-        zero-gap to read as "touching, not overlapping". In practice a
-        zero-gap "$" + "193.52" reads as a kiss, not a separator. The fix
-        restores a 3px gap (matching ``suffix_gap``) when a prefix exists.
-        """
-        from dbt_charts.core.compile.models.style.resolved.table import (
-            ResolvedTableColumnConfig,
-        )
-        from dbt_charts.core.render.chart.table import _compute_lane_positions
-
-        # Widest cell drives prefix_x; include the total-row-sized value.
-        # Use d3 format string "$,.2s" to get a real "$" prefix (the
-        # FormatConfig-type path doesn't emit a prefix via format_kpi_parts).
-        rows = [{"Amount": 193_520_000}, {"Amount": 5_630_000}]
-        col_widths = {"Amount": 220.0}
-        col_cfg = {
-            "Amount": ResolvedTableColumnConfig(
-                format="$,.2s",
-            )
-        }
-        from dbt_charts.core.compile.models.primitives import FontStyle
-
-        positions = _compute_lane_positions(
-            rows=rows,
-            columns=["Amount"],
-            column_configs=col_cfg,
-            col_widths=col_widths,
-            col_x_offsets=[0.0],
-            padding_x=16,
-            cell_pad=12,
-            cell_font=FontStyle(size=14.0),
-            column_when_rules={},
-        )
-        prefix_x, number_x, _suffix_x, _content_left, _content_right = positions[
-            "Amount"
-        ]
-        # Measure the widest number via the same strict path the lane computer uses.
-        from dbt_charts.core.compile.format_value import format_kpi_parts
-        from dbt_charts.core.font_measure import get_font_measurer
-
-        _p, num_str, _s = format_kpi_parts(193_520_000, col_cfg["Amount"].format)
-        measurer = get_font_measurer(None, numeric=True)
-        max_content_w = measurer.measure(num_str, 14.0)
-
-        gap = (number_x - max_content_w) - prefix_x
-        assert gap == pytest.approx(3.0, abs=0.5), (
-            f"Prefix must sit 3px left of the widest number to avoid "
-            f"visual kiss; got gap={gap:.2f}px "
-            f"(prefix_x={prefix_x}, number_x={number_x}, "
-            f"max_content_w={max_content_w:.2f})"
-        )
-
-    def test_no_prefix_no_gap(self):
-        """Columns without a prefix don't add a spurious 3px of left padding."""
-        from dbt_charts.core.render.chart.table import _compute_lane_positions
-
-        rows = [{"Revenue": 849}, {"Revenue": 12}]
-        col_widths = {"Revenue": 200.0}
-        from dbt_charts.core.compile.models.primitives import FontStyle
-
-        positions = _compute_lane_positions(
-            rows=rows,
-            columns=["Revenue"],
-            column_configs={},
-            col_widths=col_widths,
-            col_x_offsets=[0.0],
-            padding_x=16,
-            cell_pad=12,
-            cell_font=FontStyle(size=14.0),
-            formats={"number": ".3~s"},
-            column_when_rules={},
-        )
-        prefix_x, number_x, _suffix_x, *_ = positions["Revenue"]
-        # Without a prefix, prefix_x == number_x - max_content_w (no gap).
-        # We don't know max_content_w without re-measuring, but we can assert
-        # the relative invariant: tspan spans (prefix_x .. number_x) exactly.
-        # The absence of a gap means number_x - prefix_x equals the number
-        # width.  Compare to a with-prefix run of equal values to cross-check.
-        from dbt_charts.core.compile.models.style.resolved.table import (
-            ResolvedTableColumnConfig,
-        )
-
-        cfg_with_prefix = {
-            "Revenue": ResolvedTableColumnConfig(
-                format="$,.0f",
-            )
-        }
-        positions_with_prefix = _compute_lane_positions(
-            rows=rows,
-            columns=["Revenue"],
-            column_configs=cfg_with_prefix,
-            col_widths=col_widths,
-            col_x_offsets=[0.0],
-            padding_x=16,
-            cell_pad=12,
-            cell_font=FontStyle(size=14.0),
-            column_when_rules={},
-        )
-        prefix_x_with, _number_x_with, *_ = positions_with_prefix["Revenue"]
-        # The with-prefix run must sit at least ~3px further left than the
-        # no-prefix run (same numbers, same cell width, so number_x is
-        # similar).  If the no-prefix path accidentally got a gap too, this
-        # distance would collapse.
-        assert prefix_x - prefix_x_with >= 2.5, (
-            f"No-prefix prefix_x ({prefix_x}) should be ~3px to the right of "
-            f"with-prefix prefix_x ({prefix_x_with}); gap-for-no-prefix bug?"
-        )
-
-
 # ---------------------------------------------------------------------------
 # Integration tests against the full SVG output
 # ---------------------------------------------------------------------------
@@ -523,14 +214,12 @@ class TestNumericHeaderCentersOnMidpoint:
     """Numeric column headers render with text-anchor='middle' at x=midpoint."""
 
     def test_short_numeric_header_centered(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"Name": "Alice", "Revenue": 849}, {"Name": "Bob", "Revenue": 102}]
         _custom_board = _style()
-        chart = resolve(chart, [], chart_style_context=_custom_board)
+        chart = resolve(chart, data, chart_style_context=_custom_board)
         svg = render_table_svg(
             chart,
             data,
@@ -549,9 +238,7 @@ class TestNumericHeaderCentersOnMidpoint:
         """A wide header that would not fit the value lane must still center —
         it wraps or hyphenates into the full cell width, never flips to end-anchor.
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [
@@ -559,7 +246,7 @@ class TestNumericHeaderCentersOnMidpoint:
             {"Region": "South", "Median Income": 48000},
         ]
         _custom_board = _style()
-        chart = resolve(chart, [], chart_style_context=_custom_board)
+        chart = resolve(chart, data, chart_style_context=_custom_board)
         svg = render_table_svg(
             chart,
             data,
@@ -580,14 +267,12 @@ class TestTextHeaderStaysLeftAligned:
     """Text column headers remain left-aligned at cell_x + pad."""
 
     def test_text_header_starts_at_cell_left(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"Name": "Alice", "Revenue": 849}]
         _custom_board = _style()
-        chart = resolve(chart, [], chart_style_context=_custom_board)
+        chart = resolve(chart, data, chart_style_context=_custom_board)
         svg = render_table_svg(
             chart,
             data,
@@ -624,9 +309,7 @@ class TestHeaderCenterEqualsNumberCenter:
         Uses a wide width (1200px) to avoid the fit cascade recomputing
         column widths at a different font size.
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [
@@ -635,7 +318,7 @@ class TestHeaderCenterEqualsNumberCenter:
             {"Name": "Carol", "Revenue": 7},
         ]
         _custom_board = _style()
-        chart = resolve(chart, [], chart_style_context=_custom_board)
+        chart = resolve(chart, data, chart_style_context=_custom_board)
         svg = render_table_svg(
             chart,
             data,
@@ -702,54 +385,6 @@ class TestHeaderCenterEqualsNumberCenter:
         )
 
 
-class TestEqualDistributionAcrossColumnTypes:
-    """All auto-columns receive equal share of available_width.
-
-    Content-aware clustering was removed in favor of equal distribution.
-    Tables that need unequal column widths use explicit width: overrides.
-    """
-
-    def test_all_auto_columns_equal_share(self):
-        """Five mixed columns at 900px each get 180px."""
-        from dbt_charts.core.render.chart.table_support import (
-            calculate_column_layout,
-        )
-
-        columns = ["Alpha", "Beta", "Category", "Gamma", "Delta"]
-        col_widths, _, actual_w = calculate_column_layout(
-            columns,
-            {},
-            900.0,
-        )
-        expected = 900.0 / 5
-        for col in columns:
-            assert abs(col_widths[col] - expected) <= 0.5, (
-                f"Column '{col}' got {col_widths[col]:.1f}px, "
-                f"expected equal share {expected:.1f}px"
-            )
-        assert abs(actual_w - 900.0) <= 0.5
-
-    def test_three_auto_columns_equal_share(self):
-        """Three numeric columns at 700px each get equal share."""
-        from dbt_charts.core.render.chart.table_support import (
-            calculate_column_layout,
-        )
-
-        columns = ["Rank", "Visitors", "Pageviews"]
-        col_widths, _, actual_w = calculate_column_layout(
-            columns,
-            {},
-            700.0,
-        )
-        expected = 700.0 / 3
-        for col in columns:
-            assert abs(col_widths[col] - expected) <= 0.5, (
-                f"Column '{col}' got {col_widths[col]:.1f}px, "
-                f"expected equal share {expected:.1f}px"
-            )
-        assert abs(actual_w - 700.0) <= 0.5
-
-
 class TestPerColumnRuleCentersOnMidpoint:
     """Per-column header rules (Classic variant) center on cell midpoint."""
 
@@ -768,9 +403,7 @@ class TestPerColumnRuleCentersOnMidpoint:
         """The per-column rule for a numeric column centers on the same x
         as the header text.
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [
@@ -778,7 +411,7 @@ class TestPerColumnRuleCentersOnMidpoint:
             {"Name": "Bob", "Revenue": 102},
         ]
         custom_board = self._classic_style()
-        chart = resolve(chart, [], chart_style_context=custom_board)
+        chart = resolve(chart, data, chart_style_context=custom_board)
         svg = render_table_svg(
             chart,
             data,
@@ -856,9 +489,7 @@ class TestBICascadeStepThree:
     def test_bi_header_shrinks_before_body(self, make_chart):
         """At a width narrow enough to trigger step 3, BI headers should
         be at 8 while body is still at 11."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         # Many columns to force deep cascade
         data = [
@@ -873,7 +504,7 @@ class TestBICascadeStepThree:
         custom_board = self._bi_style()
         chart = resolve(
             make_chart("table", x=None, y=None),
-            [],
+            data,
             chart_style_context=custom_board,
         )
         # Try progressively narrow widths to find step-3 territory
@@ -937,9 +568,7 @@ class TestWrapLimitUsesFullContentArea:
         sizes the column wide enough to fit the header — even under the
         char-count heuristic (CI has no fonttools measurer).
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         # "Median Income" is 13 chars.  The char-count heuristic (CI, no
@@ -952,7 +581,7 @@ class TestWrapLimitUsesFullContentArea:
             {"Region": "South Pacific Coast", "Median Income": 48000000000000},
         ]
         custom_board = _style()
-        chart = resolve(chart, [], chart_style_context=custom_board)
+        chart = resolve(chart, data, chart_style_context=custom_board)
         svg = render_table_svg(
             chart,
             data,
@@ -1009,9 +638,7 @@ class TestDateCellsUseLanePositions:
     """
 
     def test_date_cell_x_matches_lane_number_x(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         # Wide column relative to the date string so the bug is visible:
@@ -1069,9 +696,7 @@ class TestDateCellsUseLanePositions:
         """Header center-x must equal the date value block's content
         midpoint — the same invariant numeric columns enforce.
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [
@@ -1119,9 +744,7 @@ class TestDateCellsUseLanePositions:
         still produce a consistent value-block: every cell anchors at the
         same number_x.
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         # "2024" parses as date-like (year pattern); pair it with a real
@@ -1132,7 +755,7 @@ class TestDateCellsUseLanePositions:
             {"Label": "C", "Year/Count": 567},
         ]
         custom_board = _style()
-        chart = resolve(chart, [], chart_style_context=custom_board)
+        chart = resolve(chart, data, chart_style_context=custom_board)
         svg = render_table_svg(
             chart,
             data,
@@ -1169,9 +792,7 @@ class TestDateCellsUseLanePositions:
         the header. The mixed-spelling fixture elsewhere in this file never
         earns a lane in the first place, so it can't exercise this path.
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         data = [
             {"Region": "A", "Last Close": "9 May 2026"},
@@ -1215,9 +836,7 @@ class TestDateCellsUseLanePositions:
         center via the plain ``align == "center"`` cell branch — the header
         must center to match, not fall to its no-lane "start" default.
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         data = [
             {"Region": "A", "Last Close": "9 May 2026"},
@@ -1283,9 +902,7 @@ class TestDateColumnMixedSpellingPerCellBug:
         2026") do. Without a unanimous match the column gets no alignment
         verdict, so every cell — matching or not — must share one anchor
         ("start"), not split across "start" and "end"."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         chart = resolve(
@@ -1326,9 +943,7 @@ class TestDateColumnMixedSpellingPerCellBug:
         """The literal repro: an authored ``align: left`` must win for
         every cell, even the ones an individual per-cell date check would
         have called date-like ("9 May 2026", "1 May 2026")."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -1366,9 +981,7 @@ class TestDateColumnMixedSpellingPerCellBug:
         lane — not just the detector-matching subset. Every cell shares one
         anchor and the header centers on that same lane, never a mix.
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -1423,9 +1036,8 @@ class TestDateColumnMixedSpellingPerCellBug:
         unclamped lane pushed number_x to 483.8 on a 400px-wide SVG.
         """
         from dbt_charts.core.compile.models.chart.normalized import TableChart
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         data = [
             {
@@ -1471,9 +1083,8 @@ class TestPivotedDateLeafColumnAlignment:
 
     def test_single_dim_single_measure_date_leaf_right_aligns(self) -> None:
         from dbt_charts.core.compile.models.chart.normalized import TableChart
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         pre_pivot_data = [
             {"region": "US", "month": "Jan", "last_close": "15 Jan 2024"},
@@ -1505,9 +1116,8 @@ class TestPivotedDateLeafColumnAlignment:
         single-measure case above — exercise it separately.
         """
         from dbt_charts.core.compile.models.chart.normalized import TableChart
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         pre_pivot_data = [
             {

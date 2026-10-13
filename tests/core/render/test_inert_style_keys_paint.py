@@ -15,6 +15,7 @@ from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.render import render
 
 from ..._svg_normalize import normalize_same_run_svg
+from .._svg_render import pinned_clock
 
 _BOARD = """\
 queries:
@@ -53,6 +54,7 @@ def svg_of(
             result.board,
             adapter_registry=build_adapter_registry(local_project(Path.cwd())),
             query_registry=result.query_registry,
+            clock=pinned_clock,
         )
         out = render(result.board, executor, format="svg")
         assert out.board_error is None, out.board_error

@@ -37,6 +37,7 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("adapters/dbt_adapter.py", "_read_lakecompute_target"),
         ("adapters/dbt_adapter.py", "_read_profiles_yml"),
         ("adapters/dbt_adapter.py", "_read_target_dict"),
+        ("adapters/dbt_adapter.py", "_read_trino_target"),
         # adapters/dbt_adapter_factory.py
         ("adapters/dbt_adapter_factory.py", "build_adapter"),
         ("adapters/dbt_adapter_factory.py", "import_adapter_module"),
@@ -54,12 +55,16 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # chart_resolution.py — _LayerRows is a Mapping, so __getitem__ must raise
         # KeyError for an absent key (`in` and .get() depend on it).
         ("chart_resolution.py", "_LayerRows.__getitem__"),
-        # drivers/ — both are implementer contract breaches, not authoring
-        # mistakes: a call site that skips `is_driver_source`, and a pin table
-        # that does not hold exactly one version per driver. No board YAML, CLI
-        # flag, or variable value can reach either.
+        # drivers/_driver_index.py — an implementer contract breach, not an
+        # authoring mistake: a pin table that does not hold exactly one version
+        # per driver. No board YAML, CLI flag, or variable value can reach it.
         ("drivers/_driver_index.py", "pinned_version"),
-        ("drivers/base.py", "open_driver"),
+        # drivers/trino.py — `_set` narrows a field the source model's
+        # constraints already require, so no authored input reaches its raise.
+        # The unmapped column type is raised while a statement runs and is
+        # classified with the warehouse's own errors by the caller.
+        ("drivers/trino.py", "_set"),
+        ("drivers/trino.py", "arrow_column_type"),
         # duckdb_config.py
         ("duckdb_config.py", "normalize_duckdb_config"),
         # executor.py — an adapter/test-double's truncated_reason failing

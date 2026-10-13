@@ -2,7 +2,7 @@
 
 Every chart family except table draws its title/subtitle through Vega-Lite's own
 title component, styled from ``style.title`` (``ResolvedChartsStyle.title``).
-Table draws its title block by hand in ``render/chart/table.py`` and, until this
+Table draws its title block by hand in the table engine and, until this
 fix, read a second, table-only copy of the subtitle font size/color instead of
 the same ``style.title.subtitle`` the chart families use.
 
@@ -118,7 +118,7 @@ def _vl_title_subtitle(
 def _table_title_subtitle(
     chart_el: ET.Element,
 ) -> tuple[float, float, float, float, str]:
-    """Same tuple shape as ``_vl_title_subtitle``, read off table.py's hand-drawn
+    """Same tuple shape as ``_vl_title_subtitle``, read off the table's hand-drawn
     ``<text>``/``<tspan>`` pair. Table emits title then subtitle, both before any
     header/row text, so they are always the first two ``<text>`` elements."""
     texts = list(chart_el.iter(f"{SVG_NS}text"))

@@ -48,7 +48,7 @@ def _strip_filters(
     style = chart_style
     if style is None:
         style = (
-            LineChartStylePatch(time_format=time_format)
+            LineChartStylePatch(axis_x={"labels": {"format": time_format}})
             if time_format
             else LineChartStylePatch()
         )

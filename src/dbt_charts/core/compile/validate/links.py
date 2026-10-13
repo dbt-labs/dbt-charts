@@ -10,7 +10,7 @@ Compile-time validation cannot see two cases: a table cell/row link is built
 from query row data (unknown until execute), and a chart link's sentinel
 prefix is stripped only after Vega has rendered it. Both are re-checked at
 render time by ``core.render.svg_utils.checked_href`` — see
-``core/render/converters/chart.py`` and ``core/render/chart/table_support.py``.
+``core/render/converters/chart.py`` and the engine's table family.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ def _check_link(link: str, field_path: str, exempt_from_anchoring: bool) -> None
     ``exempt_from_anchoring`` is set by the caller for a link whose render
     path re-checks the fully-resolved value with ``checked_href`` regardless
     of anchoring: a table column link, or a table chart's own chart-root
-    ``link:`` (both resolve through ``core/render/chart/table_support.py``).
+    ``link:`` (both resolve through the engine's table family).
     """
     prefix = link.split("{{", 1)[0]
     if not is_safe_href(prefix):

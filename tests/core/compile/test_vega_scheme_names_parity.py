@@ -15,7 +15,7 @@ import json
 
 import vl_convert as vlc
 
-from dbt_charts.core.compile.models.primitives import VEGA_SCHEME_NAMES
+from dbt_charts.core.compile.models.schema_names import VEGA_SCHEME_NAMES
 
 
 def _spec_for(scheme: str) -> str:

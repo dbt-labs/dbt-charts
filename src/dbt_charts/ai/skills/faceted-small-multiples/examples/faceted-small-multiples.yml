@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Signups by Channel
 notes: Faceted small multiples pattern — one series per segment via color encoding
 

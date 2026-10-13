@@ -22,7 +22,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style_and_context,
 )
-from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+from .._engine_render import render_kpi_svg
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 

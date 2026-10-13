@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 import sqlglot
 import sqlglot.errors
@@ -161,8 +161,8 @@ def parse_sql_statements(
     substituted = _substitute_dbt_calls(sql)
     if substituted is None:
         return (
-            "a dbt ref()/source() call uses a spelling this index cannot "
-            "resolve to a model name"
+            "a dbt ref()/source() call uses a spelling that cannot be "
+            "resolved to a model name"
         )
     substituted_sql, via_dbt = substituted
     try:
@@ -172,7 +172,7 @@ def parse_sql_statements(
         skeleton = build_skeleton(substituted_sql, all_branches=True)
         parsed = sqlglot.parse(skeleton, read=dialect)
     except _PARSE_ERRORS as exc:
-        return f"SQL could not be parsed: {exc}"
+        return f"{PARSE_FAILURE_PREFIX}{exc}"
     statements = [
         s for s in parsed if s is not None and not isinstance(s, exp.Semicolon)
     ]
@@ -183,6 +183,46 @@ def parse_sql_statements(
     if _cte_with_keywords(skeleton, dialect) > with_nodes:
         return "SQL cannot be analyzed: the parser dropped a WITH clause"
     return statements, via_dbt
+
+
+_TreeT = TypeVar("_TreeT", bound=exp.Expr)
+PARSE_FAILURE_PREFIX = "SQL could not be parsed: "
+NODE_PREFIX = "__dct_node_"
+
+
+def name_dbt_nodes(sql: str, nodes: dict[str, str]) -> str:
+    """Replace each ref()/source() call with a reserved identifier of its own.
+
+    A CTE or view named like a model is then never the model, and a bare name
+    is never the model unless a call put it there. ``nodes`` maps the
+    identifier (lowercased) back to the manifest name.
+    """
+
+    def ref(match: re.Match[str]) -> str:
+        placeholder = f"{NODE_PREFIX}{len(nodes)}"
+        nodes[placeholder] = match.group(1)
+        return placeholder
+
+    def source(match: re.Match[str]) -> str:
+        placeholder = f"{NODE_PREFIX}{len(nodes)}"
+        nodes[placeholder] = f"{match.group(1)}.{match.group(2)}"
+        return placeholder
+
+    return SOURCE_CALL_RE.sub(source, REF_CALL_RE.sub(ref, sql))
+
+
+def fold_relation_names(tree: _TreeT) -> _TreeT:
+    """Lowercase table, alias and qualifier names in place.
+
+    ``build_scope`` binds a CTE or alias by exact spelling, but engines treat
+    unquoted names case-insensitively: left alone, ``FROM T`` after ``WITH t``
+    reads as a base table. Column names keep their case.
+    """
+    for node in tree.find_all(exp.Table, exp.TableAlias, exp.Column):
+        ident = node.args.get("table" if isinstance(node, exp.Column) else "this")
+        if isinstance(ident, exp.Identifier):
+            ident.set("this", ident.name.lower())
+    return tree
 
 
 def _cte_with_keywords(sql: str, dialect: str | None) -> int:
@@ -267,7 +307,7 @@ def _setup_refs(
     return columns, defined, via_dbt, None
 
 
-def _resolve_source(scope: Scope, table_alias: str) -> exp.Table | Scope | None:
+def resolve_source(scope: Scope, table_alias: str) -> exp.Table | Scope | None:
     """The alias's source in this scope or, for a correlated reference, the
     nearest ancestor scope that knows it."""
     current: Scope | None = scope
@@ -343,7 +383,7 @@ def _collect(statement: exp.Expr, dialect: str | None, refs: QueryColumnRefs) ->
                     "a templated expression stands where a column name would be"
                 )
                 return
-            source = _resolve_source(scope, col.table)
+            source = resolve_source(scope, col.table)
             if isinstance(source, exp.Table):
                 parts = [source.catalog, source.db, source.name]
                 # Containment, not prefix: build_skeleton splices placeholders

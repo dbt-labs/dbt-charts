@@ -87,6 +87,7 @@ class TestResolveSharedScaleForTableColumn:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         return resolved["amount"].shared_scale
@@ -139,6 +140,7 @@ class TestResolveSharedScaleForTableColumn:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         assert resolved["amount"].shared_scale is not None
@@ -237,6 +239,7 @@ class TestFormatKpiPartsSharedScale:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         scale = resolved["amount"].shared_scale
@@ -334,7 +337,7 @@ class TestFormatKpiPartsSharedScale:
 
 
 class TestSharedScaleAnchorsRender:
-    """Full render-path regression: table.py's row-paint loop strips the
+    """Full render-path regression: the table's row-paint loop strips the
     magnitude suffix on non-anchor rows for an ANCHOR-mode shared_scale
     column under `symbol_mode: anchors`, and keeps it on every row for a
     REPEAT-mode one -- the acceptance criterion for wiring shared_scale into
@@ -345,8 +348,8 @@ class TestSharedScaleAnchorsRender:
         self, make_chart
     ) -> None:
         from dbt_charts.core.compile.resolve import resolve
-        from dbt_charts.core.render.chart.table import render_table_svg
 
+        from ._engine_render import render_table_svg
         from .test_table_variants import _BOARD_STYLE, _style_with
 
         chart = make_chart("table", x=None, y=None)
@@ -376,8 +379,8 @@ class TestSharedScaleAnchorsRender:
         self, make_chart
     ) -> None:
         from dbt_charts.core.compile.resolve import resolve
-        from dbt_charts.core.render.chart.table import render_table_svg
 
+        from ._engine_render import render_table_svg
         from .test_table_variants import _BOARD_STYLE, _style_with
 
         chart = make_chart("table", x=None, y=None)
@@ -409,8 +412,8 @@ class TestSharedScaleAnchorsRender:
         column that happens to share a magnitude.
         """
         from dbt_charts.core.compile.resolve import resolve
-        from dbt_charts.core.render.chart.table import render_table_svg
 
+        from ._engine_render import render_table_svg
         from .test_table_variants import _BOARD_STYLE, _style_with
 
         chart = make_chart("table", x=None, y=None)
@@ -434,8 +437,8 @@ class TestSharedScaleAnchorsRender:
         first row that can actually carry it.
         """
         from dbt_charts.core.compile.resolve import resolve
-        from dbt_charts.core.render.chart.table import render_table_svg
 
+        from ._engine_render import render_table_svg
         from .test_table_variants import _BOARD_STYLE, _style_with
 
         chart = make_chart("table", x=None, y=None)
@@ -473,6 +476,7 @@ class TestSubTierPrecisionAndRefusal:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         return resolved["amount"].shared_scale
@@ -593,6 +597,7 @@ class TestPadTableCappedAtObservedDepth:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -629,6 +634,7 @@ class TestPadTableCappedAtObservedDepth:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -658,82 +664,10 @@ class TestSizingFunctionsRegression:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         return resolved["amount"]
-
-    def test_measure_column_demands_handles_numeric_string_cells(self) -> None:
-        from dbt_charts.core.font_measure import get_font_measurer
-        from dbt_charts.core.render.chart.table_support import (
-            measure_column_demands,
-        )
-
-        values = (3_456_789, 8_765_432, 87_654_321)
-        rows = [{"amount": v} for v in values]
-        col = self._resolved_column(rows)
-        assert col.shared_scale is not None
-        measurer = get_font_measurer(DBT_SANS_TABULAR_FONT_FAMILY, numeric=True)
-
-        def _demand(data: list[dict[str, Any]]) -> float:
-            cell_demands, _ = measure_column_demands(
-                columns=["amount"],
-                column_configs={"amount": col},
-                data=data,
-                measurer=measurer,
-                header_measurer=measurer,
-                font_size=11,
-                header_font_size=11,
-                cell_pad=8,
-                column_when_rules={},
-            )
-            return cell_demands["amount"]
-
-        # CSV/warehouse adapters can deliver numbers as strings -- must
-        # measure the same real (scaled) content int cells do, not silently
-        # fall through to the unscaled per-row SI text (round-1 CRITICAL #3:
-        # that fallback also caused an IndexError from a pad-depth mismatch
-        # against the scaled digit_spec's pad table). Mutation-sensitive:
-        # reverting the string coercion sends string cells through
-        # format_table_cell_value's independent "3.46 M" / "8.77 M" /
-        # "87.7 M" path instead of the shared digit_spec's "3.46" / "8.77" /
-        # "87.65" -- a measurably different (narrower) demand.
-        int_demand = _demand(rows)
-        string_demand = _demand([{"amount": str(v)} for v in values])
-        assert string_demand == int_demand, (
-            f"string cells must measure identically to int cells under a "
-            f"shared_scale column; got {string_demand} vs {int_demand}"
-        )
-
-    def test_compute_lane_positions_reserves_room_for_the_anchor_suffix(self) -> None:
-        # Mutation-sensitive: if is_anchor=True were dropped (or wrongly
-        # False) when measuring an ANCHOR-mode shared_scale column, the
-        # suffix lane would size to an empty string and content_right would
-        # collapse onto the number lane -- no width reserved for "M" at all.
-        from dbt_charts.core.compile.models.primitives import FontStyle
-        from dbt_charts.core.render.chart.table import _compute_lane_positions
-
-        rows = [{"amount": v} for v in (3_500_000, 4_200_000, 12_000_000)]
-        col = self._resolved_column(rows)
-        assert col.shared_scale is not None
-        positions = _compute_lane_positions(
-            rows=rows,
-            columns=["amount"],
-            column_configs={"amount": col},
-            col_widths={"amount": 300.0},
-            col_x_offsets=[0.0],
-            padding_x=16,
-            cell_pad=8,
-            cell_font=FontStyle(family=DBT_SANS_TABULAR_FONT_FAMILY, size=12.0),
-            column_when_rules={},
-        )
-        _, number_x, suffix_x, _, content_right = positions["amount"]
-        assert suffix_x > number_x, (
-            "suffix lane must sit to the right of the number lane"
-        )
-        assert content_right > number_x, (
-            "content_right must reserve room for the anchor row's real "
-            "suffix, not collapse onto the number lane"
-        )
 
 
 class TestAllowSharedScaleGate:
@@ -761,6 +695,7 @@ class TestAllowSharedScaleGate:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         return resolved["amount"].shared_scale
@@ -800,6 +735,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -819,7 +755,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
     def test_sub_dollar_currency_cell_bakes_deep_enough_for_its_own_render(
         self,
     ) -> None:
-        # Regression: table.py's format_kpi_parts prints a sub-$1 currency
+        # Regression: the table's lane formatter prints a sub-$1 currency
         # cell through a different, deeper spec than the rest of the column
         # (the per-row sub-unit swap). A bake that measures every row
         # with the bare SI spec is too shallow for that swapped row.
@@ -836,6 +772,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -874,6 +811,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -902,6 +840,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -925,6 +864,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -946,6 +886,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         assert len(resolved["amount"].decimal_pad_table) - 2 == 4
@@ -973,6 +914,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -1007,6 +949,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -1038,6 +981,7 @@ def test_column_alias_to_a_preset_keeps_its_sub_unit_pad() -> None:
             },
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         return resolved["amount"].decimal_pad_table
@@ -1047,27 +991,3 @@ def test_column_alias_to_a_preset_keeps_its_sub_unit_pad() -> None:
     assert (
         pad("mine", FormatTable(aliases={"mine": "currency"}, currency="USD")) == direct
     )
-
-
-def test_shared_scale_width_text_keeps_the_authored_prefix_gap() -> None:
-    from dbt_charts.core.compile.models.primitives import FormatConfig
-    from dbt_charts.core.render.chart.table_support import _rendered_cell_text
-
-    columns = {
-        "amount": TableColumnConfig(format=FormatConfig(spec="number", prefix="EUR "))
-    }
-    resolved = _with_resolved_scale_stops(
-        columns,
-        text_color=None,
-        formats=None,
-        font_family=DBT_SANS_TABULAR_FONT_FAMILY,
-        rows=[{"amount": v} for v in (3_500_000, 4_200_000, 12_000_000)],
-        allow_shared_scale=True,
-        own_formats={n: c.format for n, c in columns.items()},
-        defaults_format=None,
-        declared=None,
-    )
-    assert resolved is not None
-    assert resolved["amount"].shared_scale is not None
-    text = _rendered_cell_text(3_500_000, resolved["amount"], None)
-    assert text.startswith("EUR "), text

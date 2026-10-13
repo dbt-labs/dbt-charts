@@ -81,8 +81,8 @@ class TestQuerySourceTyping:
 
     A *compiled* board query always names its source (normalize_query injects the
     inherited default and raises ERR-SOURCE-REQUIRED / -NOT-FOUND), but the
-    field stays optional because the ad-hoc runtime boundary (execute_query /
-    describe_query with no source) constructs a sourceless query that runs
+    field stays optional because the ad-hoc runtime boundary (execute_query with
+    no source) constructs a sourceless query that runs
     against the scratch DuckDB locally and is rejected by the guarded resolver on
     hosted surfaces. An inline dict is rejected at compile time (see
     test_sources.py::TestInlineFileSourcePaths::test_inline_dict_source_still_forbidden_alongside_file_paths).

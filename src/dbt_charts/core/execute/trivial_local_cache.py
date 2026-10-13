@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path  # noqa: TID251 — DuckDB cache file (DCT_CACHE_PATH)
 from typing import Any
 
@@ -103,7 +103,7 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
             slots = self._read_slots(source_hash, query_hash, variables_hash)
             written_at = slots.rows_written_at
             if written_at is not None and (
-                ttl is None or datetime.now(timezone.utc) - written_at <= ttl
+                ttl is None or datetime.now(UTC) - written_at <= ttl
             ):
                 if slots.row_count == 0:
                     return CacheHit(

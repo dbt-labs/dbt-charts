@@ -45,6 +45,7 @@ from dbt_charts.core.render.chart.features.value_labels import (
     label_size_encoding,
 )
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
+from dbt_charts.core.text.predefined_formats import PREDEFINED_NATIVE
 from dbt_charts.core.utils import coerce_numeric_cell
 
 
@@ -133,7 +134,7 @@ class ZeroValueLabelFeature:
         }
         if labels.format is not None:
             fmt = labels.format
-            if fmt.prefix or fmt.suffix:
+            if fmt.prefix or fmt.suffix or fmt.spec in PREDEFINED_NATIVE:
                 # Only the value 0 paints, so the affix is composed once in
                 # Python; a per-row transform would break a sorted domain.
                 text_enc.pop("field")

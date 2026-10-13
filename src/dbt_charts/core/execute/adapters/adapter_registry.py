@@ -38,6 +38,8 @@ from dbt_charts.core.compile.models.source import (
     ParquetSourceConfig,
     is_file_source,
 )
+from dbt_charts.core.compile.sql_guard import sqlglot_dialect
+from dbt_charts.core.compile.template.parameterized import DateRangeFilter
 from dbt_charts.core.diagnostics.base import DbtChartsError
 
 # ERR_SOURCE_NOT_FOUND is compile-owned (dropping the domain segment
@@ -48,7 +50,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_SOURCE_NOT_FOUND_EMPTY,
     ERR_SOURCE_NOT_NAMED,
 )
-from dbt_charts.core.dialects import SQLDialect, get_dialect
+from dbt_charts.core.dialects import DIALECTS, SQLDialect, get_dialect
 from dbt_charts.core.execute.adapters.base import (
     BaseAdapter,
     QueryParams,
@@ -69,7 +71,10 @@ from dbt_charts.core.execute.source_resolver import (
     DbtContext,
     DefaultSourceResolver,
 )
-from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
+from dbt_charts.core.execute.sql_literals import (
+    INLINE_PLACEHOLDERS,
+    inline_params_for_dialect,
+)
 from dbt_charts.core.execute.sql_translate import (
     dialect_differs,
     dialect_unsupported,
@@ -81,6 +86,7 @@ from dbt_charts.core.project import Project
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Board
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
+    from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
     from dbt_charts.core.execute.adapters.sql_adapter import PreparedSql
     from dbt_charts.core.execute.file_source_materializer import (
         FileSourceMaterializer,
@@ -126,6 +132,7 @@ def build_adapter_registry(
     project: Project,
     *,
     read_only: bool = True,
+    allow_mutating_methods: bool = False,
     allowed_types: set[str] | None = None,
     profile_type: str = "duckdb",
     target: str = "dev",
@@ -153,6 +160,10 @@ def build_adapter_registry(
             ``build_cloud_adapter_registry``, not this function, but the
             fallback keeps this function itself host-agnostic.)
         read_only: Whether SQL adapters should be read-only (default True).
+        allow_mutating_methods: Let http sources use POST/PUT/PATCH/DELETE
+            (default False: GET only). A host that runs human-authored
+            boards (a CLI, an app, a docs renderer) passes True; agent surfaces
+            leave it off so their read-only tool hints hold.
         allowed_types: If set, only register adapters whose supported_types
             intersect with this set. None means register all.
         profile_type: SQL dialect (default "duckdb").
@@ -270,7 +281,7 @@ def build_adapter_registry(
 
     # Lazy adapters — zero cost until actually called
     if _should_register({"http"}):
-        registry.register(HttpAdapter())
+        registry.register(HttpAdapter(allow_mutating_methods=allow_mutating_methods))
 
     if _should_register({"values"}):
         registry.register(ValuesAdapter())
@@ -367,6 +378,10 @@ class AdapterRegistry:
     def project(self) -> Project:
         """Return the registry's project."""
         return self._project
+
+    @property
+    def dbt_refs(self) -> DbtRefResolver:
+        return self._dbt_refs
 
     def register(self, adapter: BaseAdapter) -> None:
         """Register an adapter.
@@ -471,6 +486,20 @@ class AdapterRegistry:
     def register_source(self, name: str, config: dict[str, Any]) -> None:
         """Register a synthetic source. Idempotent: first registration wins."""
         self._sources.register(name, config)
+
+    @property
+    def project_sources(self) -> ProjectSourcesConfig:
+        """The sources execution resolves against: the project's, plus any
+        registered at runtime. Compile against this, not ``project.sources``,
+        so a runtime-registered source is known to the compiler too."""
+        return self._sources.runtime_config()
+
+    def effective_source(self, source: str | None) -> str | None:
+        """*source*, or the project's implicit dbt source when it names none.
+
+        The one rule for SQL that names no source; None when there is neither.
+        """
+        return source if source is not None else self.project_sources.implicit_source
 
     def _derive_dbt_context(self) -> DbtContext | None:
         from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
@@ -907,6 +936,92 @@ class AdapterRegistry:
             query, variables=variables, params=params, source_config=source_config
         )
 
+    def render_with_range_filters(
+        self, query: AnyQuery, variables: VariableValues, *, board: Board
+    ) -> tuple[str, str | None, list[DateRangeFilter]] | None:
+        """The SQL execution renders for a query, plus its ``filter_date_range()`` calls.
+
+        Returns ``(sql, sqlglot dialect, filters)``, or None when there is no SQL to
+        parse here: a non-SQL query, a file or ``dbt_profile`` source, or a source
+        whose type is not declared.
+
+        Raises:
+            DbtChartsError: dbt refs that don't resolve, or a template that
+                doesn't render.
+        """
+        from dbt_charts.core.compile.template.parameterized import (
+            render_parameterized_with_queries,
+        )
+        from dbt_charts.core.execute.adapters.dbt_adapter import render_dbt_sql
+
+        if not is_sql_query(query):
+            return None
+        dbt = self._dbt_deferral(query, board)
+        sql_type = query.dialect or (
+            dbt.resolve_target_type()
+            if dbt
+            else self._declared_warehouse_type(query, board)
+        )
+        if sql_type not in DIALECTS:
+            return None
+        warehouse = DIALECTS[sql_type]
+        resolved_sql, _ = self._dbt_refs.resolve(query.sql)
+        filters: list[DateRangeFilter] = []
+        strict = not query.lenient_variables
+        if dbt:
+            sql = render_dbt_sql(
+                resolved_sql, variables, sql_type, strict=strict, range_filters=filters
+            )
+        else:
+            rendered = render_parameterized_with_queries(
+                resolved_sql,
+                variables,
+                queries=board.queries,
+                dialect=INLINE_PLACEHOLDERS,
+                strict=strict,
+                warehouse=warehouse,
+                range_filters=filters,
+            )
+            sql = inline_params_for_dialect(
+                rendered.sql, rendered.params, INLINE_PLACEHOLDERS, escaping=warehouse
+            )
+        return sql, sqlglot_dialect(sql_type), filters
+
+    def _dbt_deferral(self, query: SqlQuery, board: Board) -> DbtAdapter | None:
+        """The ``DbtAdapter`` execution would route a query to, or None.
+
+        A source name that resolves to nothing, with no project ``sources:`` to
+        resolve against, is the source-less case ``get_adapter`` routes.
+        """
+        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
+
+        if query.source is None or self._sources.runtime_config().sources:
+            return None
+        if query.source in board.sources:
+            return None
+        adapter = self.get_adapter(query, None)
+        return adapter if isinstance(adapter, DbtAdapter) else None
+
+    def _declared_warehouse_type(self, query: SqlQuery, board: Board) -> str | None:
+        """The warehouse type the source a SQL query runs against declares.
+
+        A source-less query runs against the project's implicit dbt source. A
+        ``dbt_profile`` source names its warehouse only in profiles.yml, which is
+        read (never connected to); a file source has no dialect to name.
+        """
+        source = self.effective_source(query.source)
+        if source is None:
+            return None
+        declared = board.sources.get(source) or self.project_sources.sources.get(source)
+        if declared is None:
+            return None
+        if declared.get("type") != "dbt_profile":
+            return declared.get("type")
+        expanded = self._resolver.resolve(
+            declared, board.sources, self.project_sources, self._derive_dbt_context()
+        )
+        return None if expanded is None else expanded.type
+
     def execute_prepared(
         self,
         prepared: PreparedSql,
@@ -998,6 +1113,11 @@ class AdapterRegistry:
             available=[s["name"] for s in self.list_sql_sources()],
         )
 
+    def dbt_manifest_version(self, target_path: str | None) -> str:
+        """Version of the dbt manifest ``ref()`` / ``source()`` resolve against
+        for *target_path*; ``""`` when none exists."""
+        return self._dbt_refs.manifest_version(target_path)
+
     def resolve_query_source(
         self,
         query: AnyQuery,
@@ -1016,20 +1136,26 @@ class AdapterRegistry:
         Returns None for a source-less non-SQL query (inline values, http,
         schema list-all): those have no connection and must not be gated on one.
 
+        SQL that names no source runs against the project's implicit dbt source
+        when it has one (``implicit_dbt_source``).
+
         Raises:
-            DbtChartsError: ERR-SOURCE-NOT-NAMED when SQL names no source
-                (there is no build-time default connection to fall back to), or
+            DbtChartsError: ERR-SOURCE-NOT-NAMED when SQL names no source and
+                there is no implicit one to fall back to, or
                 whatever the resolver raises for an unresolvable name.
         """
+        project_sources = self.project_sources
         authored = getattr(query, "source", None)
         if authored is None:
             if not is_sql_query(query):
                 return None
-            raise self._source_not_named_error()
+            authored = self.effective_source(None)
+            if authored is None:
+                raise self._source_not_named_error()
         return self._resolver.resolve(
             authored=authored,
             board_sources=board.sources if board is not None else {},
-            project_sources=self._sources.runtime_config(),
+            project_sources=project_sources,
             dbt_context=(
                 dbt_context if dbt_context is not None else self._derive_dbt_context()
             ),
@@ -1043,17 +1169,20 @@ class AdapterRegistry:
 
         Args:
             source: Named source profile. Every query must name a configured
-                source — there is no default-DuckDB fallback for None.
+                source; None falls back only to the project's implicit dbt
+                source (``effective_source``).
 
         Returns:
             source_config dict with at least a 'type' key.
 
         Raises:
-            DbtChartsError: ERR-SOURCE-NOT-NAMED if source is None;
+            DbtChartsError: ERR-SOURCE-NOT-NAMED if source is None and there
+                is no implicit source;
                 ERR-SOURCE-NOT-FOUND if the named source is missing but
                 others are configured; ERR-SOURCE-NOT-FOUND-EMPTY if no
                 sources are configured.
         """
+        source = self.effective_source(source)
         if source is None:
             raise self._source_not_named_error()
 

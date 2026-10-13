@@ -1281,8 +1281,8 @@ def test_ordinal_x_strip_text_includes_dx_for_band_centering():
     # Bug B: with align:right at bandPosition:0.5 the right edge of each cell
     # sits at the band center, making values look shifted left of the bar.
     # Fix: the text mark must carry a positive dx so the column center aligns
-    # with the band midpoint (same invariant as _compute_lane_positions in
-    # table.py: number_x = band_center + max_w / 2).
+    # with the band midpoint (the table's numeric lane has the same
+    # invariant: number_x = band_center + max_w / 2).
 
     spec = _base_spec()  # ordinal x
     table = _table([ResolvedSupportTableSource(source="revenue", format="$.2s")])

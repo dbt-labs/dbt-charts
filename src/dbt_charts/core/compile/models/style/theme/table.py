@@ -524,10 +524,9 @@ class TableChartStyle(
     text_baseline_offset: float = Field(
         description="Vertical offset to align SVG text baseline with cell grid in pixels."
     )
-    # No title_baseline_offset field: the title baseline is derived from the
-    # resolved title font size (render/chart/table.py's _TITLE_ASCENT_RATIO),
-    # the same way Vega-Lite places every chart family's title baseline — a
-    # flat theme constant here only ever matched one width-tiered title size.
+    # No title baseline offset field: the baseline follows the resolved title
+    # font size, as in every chart family, so a flat constant cannot go stale
+    # when the title size changes with the width tier.
     title_subtitle_gap: float = Field(
         description=(
             "Pure whitespace between the title's descent and the subtitle's "

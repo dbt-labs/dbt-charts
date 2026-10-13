@@ -182,9 +182,18 @@ def _line_with_binding(
     )
 
 
+def _with_percent_axis_y(style: Any) -> Any:
+    """``style`` with a percent-format measure axis."""
+    labels = dataclasses.replace(
+        style.axis_y.labels, format=ResolvedFormat(spec=".0%", raw=".0%")
+    )
+    return style.model_copy(
+        update={"axis_y": dataclasses.replace(style.axis_y, labels=labels)}
+    )
+
+
 def _area(
     area_style: ResolvedAreaStyle,
-    format: str | None = None,
     stack: Literal["none", "zero", "normalize", "center"] | None = None,
 ) -> ResolvedAreaChart:
     return ResolvedAreaChart(
@@ -193,7 +202,6 @@ def _area(
         chart_type="area",
         x="date",
         y="value",
-        format=format,
         stack=stack,
         style=area_style,
         **_C,
@@ -738,9 +746,10 @@ def test_baseline_percent_format_area_fires_both_zero_and_unity_rules(
         chart_type="area",
         x="date",
         y="value",
-        format=ResolvedFormat(spec=".0%", raw=".0%"),
         stack=None,
-        style=area_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
+        style=_with_percent_axis_y(
+            area_style.model_copy(update={"axis_x": ax, "axis_y": ay})
+        ),
         **_C,
         field_labels={},
     )
@@ -780,9 +789,9 @@ def test_unity_baseline_applies_to_format_alias_line(
 ) -> None:
     """BaselineFeature must emit a unity rule when axis_y.labels.format resolves to a D3 percent spec.
 
-    chart.format may be a dbt charts alias ('percent_whole') that contains no literal '%'.
-    The baked axis_y.labels.format ('.0%') is the resolved D3 spec and is the canonical
-    signal so the 100% rule fires for NRR-style percent line charts.
+    The authored format may be a dbt charts alias ('percent_whole') that contains no
+    literal '%'. The baked axis_y.labels.format ('.0%') is the resolved D3 spec and is
+    the canonical signal so the 100% rule fires for NRR-style percent line charts.
     """
     pct_labels = dataclasses.replace(
         line_style.axis_y.labels, format=ResolvedFormat(spec=".0%")
@@ -795,7 +804,6 @@ def test_unity_baseline_applies_to_format_alias_line(
         chart_type="line",
         x="month",
         y="pct",
-        format="percent_whole",  # alias — no literal '%'
         variable_dependencies=frozenset(),
         resolved_channels={},
         palette=(),
@@ -820,7 +828,7 @@ def test_unity_baseline_applies_to_format_alias_line(
     ]
     assert unity_layers, (
         "BaselineFeature must emit a unity rule for a line chart with "
-        "axis_y.format='.0%' even when chart.format is a dbt charts alias."
+        "axis_y.format='.0%' even when the authored format is a dbt charts alias."
     )
 
 
@@ -879,7 +887,7 @@ def test_unity_baseline_apply_appends_styled_rule_at_one(
     # Data reaches 1.0 so the unity rule's domain gate passes (the zero rule
     # fires independently); isolate and assert the styled unity rule.
     data = [{"date": "2024-01", "value": 0.5}, {"date": "2024-02", "value": 1.1}]
-    _chart = _area(area_style, format=ResolvedFormat(spec=".0%", raw=".0%"))
+    _chart = _area(_with_percent_axis_y(area_style))
     result = BaselineFeature().apply(
         _spec("area"), _chart, _DEFAULT_BOX, {_chart.query_name: data}
     )
@@ -1522,8 +1530,7 @@ def test_baseline_unity_rule_fires_for_format_config_percent(
         chart_type="area",
         x="date",
         y="pct",
-        format=ResolvedFormat(spec=".0%", raw=".0%"),
-        style=area_style,
+        style=_with_percent_axis_y(area_style),
         **_C,
         field_labels={},
     )
@@ -1756,7 +1763,7 @@ def test_baseline_normalize_stacked_percent_area_dedupes_unity_rule(
     up with the top-rule pair's own datum-1) — never the old duplicate-unity
     ``[0, 1, 1]`` triple.
     """
-    chart = _area(area_style, stack="normalize", format=".0%")
+    chart = _area(_with_percent_axis_y(area_style), stack="normalize")
     result = BaselineFeature().apply(
         _spec("area"), chart, _DEFAULT_BOX, {chart.query_name: []}
     )
@@ -1780,9 +1787,10 @@ def test_baseline_normalize_stacked_percent_bar_dedupes_unity_rule(
         x="month",
         y="revenue",
         stack="normalize",
-        format=".0%",
         orientation="vertical",
-        style=bar_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
+        style=_with_percent_axis_y(
+            bar_style.model_copy(update={"axis_x": ax, "axis_y": ay})
+        ),
         **_C,
         field_labels={},
     )

@@ -978,7 +978,7 @@ def test_geoshape_sub_dollar_color_measure_tooltip_avoids_si_milli() -> None:
     data = [{"id": "CA", "cents": 0.42}, {"id": "NY", "cents": 0.25}]
     resolved = resolve(compiled, data, board_style)
     assert isinstance(resolved, ResolvedGeoshapeChart)
-    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"].d3
 
 
 def test_geoshape_value_field_spelling_votes_not_color_channel() -> None:
@@ -1014,7 +1014,7 @@ def test_geoshape_value_field_spelling_votes_not_color_channel() -> None:
     data = [{"id": "CA", "cents": 0.42}, {"id": "NY", "cents": 0.25}]
     resolved = resolve(compiled, data, board_style)
     assert isinstance(resolved, ResolvedGeoshapeChart)
-    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"].d3
 
 
 def test_resolve_point_map_sub_dollar_size_measure_tooltip_avoids_si_milli() -> None:
@@ -1049,7 +1049,7 @@ def test_resolve_point_map_sub_dollar_size_measure_tooltip_avoids_si_milli() -> 
     ]
     resolved = resolve(compiled, data, board_style)
     assert isinstance(resolved, ResolvedPointMapChart)
-    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"].d3
 
 
 def test_resolve_point_map_color_measure_never_votes_only_size_does() -> None:
@@ -1089,7 +1089,7 @@ def test_resolve_point_map_color_measure_never_votes_only_size_does() -> None:
     ]
     resolved = resolve(compiled, data, board_style)
     assert isinstance(resolved, ResolvedPointMapChart)
-    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency"].d3
 
 
 def test_resolve_point_map_negative_size_row_never_votes() -> None:
@@ -1127,7 +1127,7 @@ def test_resolve_point_map_negative_size_row_never_votes() -> None:
     ]
     resolved = resolve(compiled, data, board_style)
     assert isinstance(resolved, ResolvedPointMapChart)
-    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency"].d3
 
 
 def test_heatmap_sub_dollar_color_measure_tooltip_avoids_si_milli() -> None:
@@ -1157,7 +1157,7 @@ def test_heatmap_sub_dollar_color_measure_tooltip_avoids_si_milli() -> None:
     resolved = resolve(compiled, data, board_style)
     assert isinstance(resolved, ResolvedHeatmapChart)
     assert isinstance(resolved.style, ResolvedHeatmapStyle)
-    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"].d3
 
 
 def test_faceted_scatter_x_never_votes_since_the_facet_tooltip_never_paints_it() -> (
@@ -1197,7 +1197,7 @@ def test_faceted_scatter_x_never_votes_since_the_facet_tooltip_never_paints_it()
     ]
     resolved = resolve(compiled, data, board_style)
     assert isinstance(resolved, ResolvedScatterChart)
-    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency"].d3
 
 
 def test_layered_scatter_x_never_votes_since_the_layer_tooltip_never_paints_it() -> (
@@ -1233,7 +1233,7 @@ def test_layered_scatter_x_never_votes_since_the_layer_tooltip_never_paints_it()
     ]
     resolved = resolve(compiled, data, board_style)
     assert isinstance(resolved, ResolvedScatterChart)
-    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency"].d3
 
 
 def test_resolve_point_map_style_marks_point_override_propagates() -> None:
@@ -1583,51 +1583,8 @@ def test_kpi_format_config_preserved_through_resolve() -> None:
 
 
 # ---------------------------------------------------------------------------
-# HIGH regression: format on cartesian charts must survive compile → resolve
+# HIGH regression: cartesian y type narrowing drops legal authored values
 # ---------------------------------------------------------------------------
-
-
-def test_bar_compiled_accepts_format_field() -> None:
-    """_CartesianCompiledChartFields must have a format field so authored format
-    is not silently dropped during normalization."""
-    compiled = _bar_compiled(format="$0.0a")
-    assert compiled.format == "$0.0a"
-
-
-def test_bar_resolve_format_reaches_resolved() -> None:
-    """format authored on a cartesian compiled chart must appear on the resolved chart."""
-    from dbt_charts.core.compile.resolve import resolve
-
-    compiled = _bar_compiled(format="$0.0a")
-    resolved = resolve(compiled, _BAR_DATA, _default_board_style())
-    assert isinstance(resolved, ResolvedBarChart)
-    assert resolved.format == ResolvedFormat(spec="$0.0a", raw="$0.0a"), (
-        f"format was silently dropped; got {resolved.format!r}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# HIGH regression: cartesian format/y type narrowing drops legal authored values
-# ---------------------------------------------------------------------------
-
-
-def test_cartesian_resolved_accepts_format_config(bar_style: ResolvedBarStyle) -> None:
-    """_CartesianResolvedChartFields.format carries an affix-bearing ResolvedFormat."""
-    fmt = ResolvedFormat(spec="$,.2f", suffix=" USD")
-    resolved = ResolvedBarChart(
-        panel_axes=(),
-        id="b",
-        chart_type="bar",
-        x="m",
-        y="v",
-        style=bar_style,
-        format=fmt,
-        **_C,
-        field_labels={},
-    )
-    assert resolved.format == fmt, (
-        f"ResolvedFormat was coerced or dropped; got {resolved.format!r}"
-    )
 
 
 def test_cartesian_resolved_wide_measures_accepted(bar_style: ResolvedBarStyle) -> None:
@@ -2361,7 +2318,7 @@ def test_heatmap_tooltip_vote_ignores_an_int_beyond_float_range() -> None:
     ]
     resolved = resolve(compiled, data, _currency_tooltip_style())
     assert isinstance(resolved, ResolvedHeatmapChart)
-    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"].d3
 
 
 def test_geoshape_tooltip_vote_ignores_an_int_beyond_float_range() -> None:
@@ -2384,4 +2341,4 @@ def test_geoshape_tooltip_vote_ignores_an_int_beyond_float_range() -> None:
     ]
     resolved = resolve(compiled, data, _currency_tooltip_style())
     assert isinstance(resolved, ResolvedGeoshapeChart)
-    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"]
+    assert resolved.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"].d3

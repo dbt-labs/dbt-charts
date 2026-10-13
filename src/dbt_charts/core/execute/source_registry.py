@@ -42,4 +42,6 @@ class SourceRegistry:
         This is what the resolver consumes at query time — project sources win
         over synthetic on name collision (matches the ordering in `all()`).
         """
-        return ProjectSourcesConfig(sources=self.all())
+        return ProjectSourcesConfig(
+            sources=self.all(), implicit_source=self._project.implicit_source
+        )

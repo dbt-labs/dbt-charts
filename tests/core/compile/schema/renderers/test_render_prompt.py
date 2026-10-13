@@ -150,7 +150,7 @@ class TestRenderPromptFieldAnnotations:
     def test_single_value_literal_rendered_as_const(self) -> None:
         result = render_prompt(introspect())
         assert 'const: "http"' in result
-        assert 'enum: "http"' not in result
+        assert 'enum: "http" |' not in result
 
     def test_single_value_type_tag_has_no_description(self) -> None:
         """Inferable tags render bare; an ExplicitTag-marked tag keeps its

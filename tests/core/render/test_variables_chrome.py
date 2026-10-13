@@ -30,6 +30,8 @@ from dbt_charts.core.render.variables_strip import (
     render_variables_strip_svg,
 )
 
+from .._svg_render import PINNED_RENDER_TIME
+
 _WIDE = 1000.0
 
 
@@ -46,6 +48,7 @@ class _NoQueries:
     """
 
     cache_hit_ats: list = []
+    rendered_at = PINNED_RENDER_TIME
 
     def execute_query(self, name, variables):
         raise AssertionError(f"no query expected, got {name!r}")
@@ -371,6 +374,8 @@ def test_a_query_backed_select_draws_the_widget_its_data_resolved_to() -> None:
     """End to end: options decide the widget, and the chrome draws that one."""
 
     class _Executor:
+        rendered_at = PINNED_RENDER_TIME
+
         def execute_query(self, name, variables):
             return [{"d": "2024-01-01"}, {"d": "2024-02-01"}]
 
@@ -448,6 +453,7 @@ rows:
 
         class _Executor:
             cache_hit_ats: list = []
+            rendered_at = PINNED_RENDER_TIME
 
             def execute_query(self, name, variables):
                 if name == "enable_check":
@@ -511,6 +517,8 @@ class TestDrawnStateMatchesTheResolvedControl:
         """
 
         class _Executor:
+            rendered_at = PINNED_RENDER_TIME
+
             def execute_query(self, name, variables):
                 return [{"v": "0"}, {"v": "1"}]
 
@@ -1172,3 +1180,32 @@ def test_an_empty_field_draws_its_placeholder_as_a_hint_not_a_value(
     value = [e for e in group.iter() if e.tag.endswith("text")][-1]
     assert value.get("fill") == _rs().variables.value.font.color
     assert group.get("data-dbt-placeholder") == "Type here"
+
+
+@pytest.mark.parametrize("input_type", ["date", "datepicker", "daterange"])
+def test_a_date_control_publishes_the_boards_time_locale(input_type: str) -> None:
+    from dbt_charts.core.compile.models.primitives import Regional, RegionalLocale
+    from dbt_charts.core.text.format_d3 import regional_scope
+
+    regional = Regional(locale=RegionalLocale(time="de-DE"))
+    with (
+        interactive_controls(True),
+        regional_scope(
+            regional.format_locale, regional.time_locale, regional.week_start
+        ),
+    ):
+        svg, _ = _strip({"when": Variable(input=input_type)})
+
+    names = json.loads(_groups(svg)[0].get("data-dbt-time-locale"))
+    assert names["months"][2] == "März"
+    assert names["days"][0] == "Sonntag"
+    assert names["shortDays"][1] == "Mo"
+    assert names["weekStart"] == 1
+
+
+def test_only_a_live_calendar_publishes_the_time_locale() -> None:
+    with interactive_controls(True):
+        svg, _ = _strip({"region": Variable(input="text")})
+    assert _groups(svg)[0].get("data-dbt-time-locale") is None
+    svg, _ = _strip({"when": Variable(input="date")})
+    assert _groups(svg)[0].get("data-dbt-time-locale") is None

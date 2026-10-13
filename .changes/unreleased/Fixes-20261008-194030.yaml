@@ -1,0 +1,3 @@
+kind: Fixes
+body: Cached query results refresh when the dbt manifest a ref() resolves against changes.
+time: 2026-10-08T19:40:30.401228-07:00

@@ -17,8 +17,6 @@ from __future__ import annotations
 
 import re
 
-import pytest
-
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
@@ -26,7 +24,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
 )
 from dbt_charts.core.font_measure import get_font_measurer
-from dbt_charts.core.render.chart.table import render_table_svg
+
+from ._engine_render import render_table_svg
 
 _BOARD_STYLE = resolve_style(get_theme_style())
 _BOARD_CTX = resolve_chart_style_context(get_theme_style())
@@ -175,7 +174,7 @@ class TestHeaderWrap:
 # One wide-content/short-header column plus seven of the inverse — the shape
 # that made the text column swell while every numeric column sat below its own
 # label. Every call below passes `word_floors`, because the render path always
-# does (table.py) and floors interact with the header-width growth.
+# does and floors interact with the header-width growth.
 _CONTENT_DEMANDS = dict.fromkeys(_LABELS, 40.0) | {"metric": 168.0}
 _HEADER_DEMANDS = {
     "metric": 108.0,
@@ -188,78 +187,6 @@ _HEADER_DEMANDS = {
     "change": 40.0,
 }
 _WORD_FLOORS = dict.fromkeys(_LABELS, 45.0) | {"metric": 75.0}
-
-
-def _allocate(width, *, floors=_WORD_FLOORS):
-    from dbt_charts.core.render.chart.table_support import calculate_column_layout
-
-    return calculate_column_layout(
-        list(_LABELS),
-        {},
-        width,
-        demands=_CONTENT_DEMANDS,
-        header_demands=_HEADER_DEMANDS,
-        word_floors=floors,
-    )
-
-
-class TestColumnBudget:
-    def test_surplus_goes_to_header_width_before_content_width(self):
-        """No column sits below its header while another holds spare width.
-
-        Scaling by content demand alone hands the surplus to whichever column has
-        the widest *values*, so the text column swells past what it needs while
-        numeric columns land under their own labels.
-        """
-        widths, _, total = _allocate(_WIDTH)
-        for col, header_width in _HEADER_DEMANDS.items():
-            assert widths[col] >= header_width, (
-                f"{col} allocated {widths[col]:.1f}px, below its {header_width}px "
-                f"header while the budget still had room: {widths}"
-            )
-        assert total == pytest.approx(_WIDTH), "Allocation must spend the full budget"
-
-    def test_a_tall_word_floor_does_not_rob_a_column_of_its_header_width(self):
-        """A single outsized floor must not drag its siblings back under theirs.
-
-        Enforcing floors as a *corrective pass* after growing columns to their
-        header width let the floored column claw width back out of the columns
-        that pass had just raised — `b`'s 150px floor is funded proportionally
-        from every donor, dropping `a` from 150.7px to ~105px, under its 110px
-        header. Folding the floor into the demand means one allocation honors
-        both constraints and nothing is undone afterwards.
-        """
-        from dbt_charts.core.render.chart.table_support import calculate_column_layout
-
-        columns = ["a", "b", "c", "d"]
-        widths, _, total = calculate_column_layout(
-            columns,
-            {},
-            400.0,
-            demands=dict.fromkeys(columns, 40.0),
-            header_demands={"a": 110.0, "b": 40.0, "c": 74.0, "d": 68.0},
-            word_floors={"a": 45.0, "b": 150.0, "c": 40.0, "d": 38.0},
-        )
-        assert widths["b"] >= 150.0, f"Outsized floor not honored: {widths}"
-        assert total == pytest.approx(400.0)
-
-        # This budget cannot cover every header (129px of gap, 127px of
-        # surplus), so some column must fall short — the invariant is that the
-        # shortfall is shared, not that one column is starved to pad another.
-        # Under the old two-pass order `a` landed at 105.4px, below its 110px
-        # header, while `c` and `d` sat *above* theirs at 75.1 and 69.5.
-        need = {"a": 110.0, "b": 150.0, "c": 74.0, "d": 68.0}
-        starved = [c for c in columns if widths[c] < need[c] - 0.5]
-        padded = [c for c in columns if widths[c] > need[c] + 0.5]
-        assert not (starved and padded), (
-            f"{starved} left short of their header while {padded} were padded "
-            f"beyond what they need: {widths}"
-        )
-
-    def test_allocation_spends_the_budget_exactly_when_over_subscribed(self):
-        """Under-budget tables scale down without leaking or losing width."""
-        _, _, total = _allocate(300.0)
-        assert total == pytest.approx(300.0)
 
 
 class TestSubtitleWrap:
@@ -319,6 +246,7 @@ class TestSizerAgreesWithRenderer:
         from unittest.mock import MagicMock
 
         from dbt_charts.core.execute.executor import Executor
+        from dbt_charts.core.render.board_variables import root_board_width
         from dbt_charts.core.render.layout_sizing import _get_table_height_from_data
 
         chart = _chart(make_chart)
@@ -326,15 +254,16 @@ class TestSizerAgreesWithRenderer:
         executor.execute_chart.return_value = [_NARROW_ROW]
 
         resolved = resolve(chart, [_NARROW_ROW], chart_style_context=_BOARD_CTX)
-        estimated = _get_table_height_from_data(
-            chart,
-            resolved,
-            executor,
-            {},
-            card_padding=float(_BOARD_STYLE.frame.card_padding),
-            board_style=_BOARD_STYLE,
-            width=_WIDTH,
-        )
+        with root_board_width(_WIDTH):
+            estimated = _get_table_height_from_data(
+                chart,
+                resolved,
+                executor,
+                {},
+                card_padding=float(_BOARD_STYLE.frame.card_padding),
+                board_style=_BOARD_STYLE,
+                width=_WIDTH,
+            )
         # The sizer measures inside the card padding; paint at the same width.
         svg = render_table_svg(
             resolved,
@@ -346,120 +275,4 @@ class TestSizerAgreesWithRenderer:
         assert estimated >= painted, (
             f"Sizer reserves {estimated}px but the renderer paints {painted}px — "
             "the explicit-slot path would drop rows or paginate early."
-        )
-
-    def test_reservation_covers_a_two_line_header_band(self):
-        """The reserved band is never smaller than the renderer's wrapped band.
-
-        ``resolve_wrapped_headers`` returns ``max(header.height, padding*2 +
-        lines*line_height)``. Reserving the flat ``header.height`` was enough
-        while headers were always one line; with ``wrap-two`` as the effective
-        default the two-line result can exceed it, and the sizer has to cover
-        that or the explicit-slot path subtracts too little chrome.
-        """
-        from dbt_charts.core.compile.models.primitives import FontStyle
-        from dbt_charts.core.render.chart.table_support import (
-            reserve_header_band,
-            resolve_wrapped_headers,
-        )
-
-        tc = _BOARD_STYLE.chart_defaults.table
-        body = int(tc.font.size)
-        header_font = FontStyle(
-            size=float(tc.header.font.size or body),
-            family=tc.font.family,
-            weight=tc.header.font.weight,
-            case=tc.header.font.case,
-        )
-        # Columns far too narrow for their labels — forces the two-line branch.
-        columns = list(_LABELS)
-        _, _truncated, rendered_band = resolve_wrapped_headers(
-            columns,
-            {},
-            dict.fromkeys(columns, 60.0),
-            header_overflow="wrap-two",
-            header_height=float(tc.header.height),
-            header_font=header_font,
-            padding=int(tc.outer_padding),
-            table_config=tc,
-            measurer=get_font_measurer(tc.font.family),
-        )
-        assert reserve_header_band(tc, body) >= rendered_band, (
-            "Sizer reserves less than the renderer's wrapped header band"
-        )
-
-    def test_hidden_header_reserves_nothing(self):
-        from dbt_charts.core.render.chart.table_support import reserve_header_band
-
-        tc = _BOARD_STYLE.chart_defaults.table
-        hidden = tc.model_copy(
-            update={"header": tc.header.model_copy(update={"visible": False})}
-        )
-        assert reserve_header_band(hidden, 14) == 0
-
-
-class TestMixedBranchFloors:
-    """Folding floors into the demand changes the mixed branch too.
-
-    ``auto_demands`` feeds ``_classify_columns``, the headroom factor, and the
-    text budget — so a header word floor now shifts all three, not just the
-    all-compact path the reported bug lived on.
-    """
-
-    def test_header_floor_reclassifies_a_column_as_text(self):
-        """A header token wider than the compact ceiling makes its column text.
-
-        Compact columns are pinned to their demand; text columns compete for the
-        remaining budget. A column whose *label* needs more than the ceiling is
-        no longer compact, so it must join the text pool rather than pin wide.
-        """
-        from dbt_charts.core.render.chart.table_support import (
-            _COMPACT_DEMAND_CEILING,
-            _classify_columns,
-            calculate_column_layout,
-        )
-
-        columns = ["narrow", "wide_label"]
-        demands = {"narrow": 40.0, "wide_label": 40.0}
-        floors = {"narrow": 40.0, "wide_label": _COMPACT_DEMAND_CEILING + 50.0}
-
-        # Without the floor folded in, both columns look compact.
-        assert _classify_columns(demands, {}) == ({"narrow", "wide_label"}, set())
-
-        widths, _, total = calculate_column_layout(
-            columns, {}, 600.0, demands=demands, word_floors=floors
-        )
-        assert widths["wide_label"] >= floors["wide_label"], (
-            "A column whose header token exceeds the compact ceiling must still "
-            f"get its floor: {widths}"
-        )
-        assert total == pytest.approx(600.0)
-
-    def test_a_floor_is_clamped_to_max_width_before_becoming_demand(self):
-        """Folding a floor in must not let it outrank a declared ``max_width``.
-
-        A 300px floor on a column capped at 60px contributes 60px of demand, not
-        300 — so the allocation is identical to one where the floor *was* 60.
-
-        (Separately, the all-compact branch's proportional residual can still
-        grow a capped column past its ``max_width``. That gap predates this
-        change — verified against the base commit — and is filed as follow-up
-        rather than fixed here.)
-        """
-        from dbt_charts.core.compile.models.chart.authored import TableColumnConfig
-        from dbt_charts.core.render.chart.table_support import calculate_column_layout
-
-        def widths_for(floor: float) -> dict[str, float]:
-            result, _, _ = calculate_column_layout(
-                ["capped", "other"],
-                {"capped": TableColumnConfig(max_width=60)},
-                600.0,
-                demands={"capped": 40.0, "other": 40.0},
-                word_floors={"capped": floor, "other": 40.0},
-            )
-            return result
-
-        assert widths_for(300.0) == widths_for(60.0), (
-            "A word floor above max_width changed the allocation — it was "
-            "applied raw instead of being clamped at the cap."
         )

@@ -249,8 +249,9 @@ def _resolve_scatter(
     # can't fire regardless, but the format is required, not defaulted
     # (see build_resolved_axis's docstring).
     # Scatter's tooltip_format tracks an explicit chart-authored measure format
-    # (style.number_format / chart.format) — falls back to the board default
-    # tooltip.format when the author didn't override it, same as bar/line/area.
+    # (axis_y labels.format or the y column's declared format) — falls back to
+    # the board default tooltip.format when the author didn't override it, same
+    # as bar/line/area.
     # emitters/scatter.py paints tooltip_format on the y encoding
     # unconditionally, but x only ever gets it through the structured
     # tooltip's plain (non-faceted, non-layered) scatter branch

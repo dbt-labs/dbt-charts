@@ -258,7 +258,7 @@ def cadence_label_text(
 ) -> str:
     """The text one tick paints at ``format_tu``, in the vocabulary Vega uses.
 
-    ``axis.labels.format`` (from ``style.time_format``) replaces the per-grain
+    ``axis.labels.format`` replaces the per-grain
     TEXT wherever it is authored, on both sides of the engine: here for the
     measurement, and in ``default_label_expr_for``'s own ``authored_format``
     for what Vega paints. One row of the author's spec per speaking tick —
@@ -290,7 +290,7 @@ def cadence_label_text(
     if format_tu == "yearquarter":
         return f"Q{(d.month - 1) // 3 + 1}"
     if format_tu == "yearmonth":
-        return d.strftime("%b")
+        return portable_strftime(d, "%b")
     if format_tu == "yearweek":
         return portable_strftime(d, "W%V")
     raise ValueError(
@@ -691,9 +691,7 @@ def _parse_date(value: Any) -> dt.date | dt.datetime | None:
     if isinstance(value, str):
         if _ISO_DATETIME_RE.match(value):
             try:
-                # Python <3.11: fromisoformat doesn't accept the trailing 'Z' UTC suffix.
-                v = value[:-1] + "+00:00" if value.endswith("Z") else value
-                return dt.datetime.fromisoformat(v)
+                return dt.datetime.fromisoformat(value)
             except ValueError:
                 return None
         if _ISO_DATE_RE.match(value):
@@ -719,11 +717,9 @@ def epoch_ms(
     if parsed is None:
         return None
     if isinstance(parsed, dt.datetime):
-        aware = parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
+        aware = parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.UTC)
         return aware.timestamp() * 1000.0
-    midnight = dt.datetime(
-        parsed.year, parsed.month, parsed.day, tzinfo=dt.timezone.utc
-    )
+    midnight = dt.datetime(parsed.year, parsed.month, parsed.day, tzinfo=dt.UTC)
     return midnight.timestamp() * 1000.0
 
 
@@ -935,6 +931,36 @@ def ordinal_scaffold_within_budget(
     occupy a slot nor extend a span. ``detect_time_unit`` already raised at
     ≥10% unparseable, so what is left cannot move the verdict far.
     """
+    total_bands, occupied = _band_counts(panels, time_unit)
+    max_ordinal = get_chart_rendering().type_inference.max_ordinal_buckets
+    return total_bands - occupied <= max(occupied, max_ordinal)
+
+
+def range_extension_keeps_band_axis(
+    panels: list[list[Any]],  # type-state: explicit_any — raw x cells
+    time_unit: str,
+    date_range: tuple[dt.date, dt.date],
+) -> bool:
+    """Whether scaffolding *panels* out to *date_range* leaves the band axis a band axis.
+
+    The extended axis must pass the scaffold budget, and a coarse grain, which
+    bar also flips to continuous time past ``max_ordinal_buckets`` bands, must
+    stay under that count in total.
+    """
+    extended = [[*values, *date_range] for values in panels]
+    if not ordinal_scaffold_within_budget(extended, time_unit):
+        return False
+    if time_unit in FINE_BUCKET_UNITS:
+        return True
+    total_bands, _ = _band_counts(extended, time_unit)
+    return total_bands <= get_chart_rendering().type_inference.max_ordinal_buckets
+
+
+def _band_counts(
+    panels: list[list[Any]],  # type-state: explicit_any — raw x cells
+    time_unit: str,
+) -> tuple[int, int]:
+    """The bands the shared scale spans and how many of them hold a value."""
     spans: list[tuple[int, int]] = []
     occupied: set[dt.date] = set()
     for values in panels:
@@ -966,8 +992,7 @@ def ordinal_scaffold_within_budget(
         if hi >= start:
             total_bands += hi - start + 1
         merged_hi = hi if merged_hi is None else max(merged_hi, hi)
-    max_ordinal = get_chart_rendering().type_inference.max_ordinal_buckets
-    return total_bands - len(occupied) <= max(len(occupied), max_ordinal)
+    return total_bands, len(occupied)
 
 
 _MIXED_LABEL_MSG = (
@@ -1104,7 +1129,7 @@ def calendar_bucket_key(value: Any) -> dt.datetime | None:
         return dt.datetime.combine(parsed, dt.time.min)
     if parsed.tzinfo is None:
         return parsed
-    return parsed.astimezone(dt.timezone.utc).replace(tzinfo=None)
+    return parsed.astimezone(dt.UTC).replace(tzinfo=None)
 
 
 def ordinal_axis_values(
@@ -1394,12 +1419,15 @@ def complete_ordinal_time_series(
     dim_fields: list[str],
     fill: str,
     fiscal_year_start_month: int,
+    date_range: tuple[dt.date, dt.date] | None = None,
 ) -> list[dict[str, Any]]:
     """Synthesize missing time-bucket rows so every bucket in [min, max] is present.
 
     For ordinal bucketed-time charts the engine must supply every bucket
     between the dataset's min and max so the ordinal x-axis has a slot for
     each period. Without this, missing buckets simply disappear from the axis.
+    A ``date_range`` widens [min, max] to it, so edge buckets are filled by
+    ``fill`` like interior ones.
 
     A row is placed by the bucket it falls INSIDE (``_enclosing_bucket``), not
     by whether its value already sits on a bucket start — the scaffold and the
@@ -1426,6 +1454,7 @@ def complete_ordinal_time_series(
             to this anchor before enumerating forward, so mid-period data
             (e.g. starting in March) still yields a full Jan/Apr/Jul/Oct-
             anchored (or fiscally-shifted) bucket range.
+        date_range: Range the scaffold spans when it reaches past the data.
 
     Returns:
         A new list of dicts, sorted (bucket asc, dim_1 asc, …), with the
@@ -1464,8 +1493,16 @@ def complete_ordinal_time_series(
 
     min_date = min(parsed_dates)
     max_date = max(parsed_dates)
+    range_start, range_end = (min_date, max_date) if date_range is None else date_range
+    # A yearweek bucket has no absolute boundary: the range's first bucket is the
+    # 7-day step, counted from the data's own first week, that contains its start.
     all_buckets = _enumerate_buckets(
-        min_date, max_date, time_unit, fiscal_year_start_month
+        _enclosing_bucket(
+            min(min_date, range_start), time_unit, fiscal_year_start_month, min_date
+        ),
+        max(max_date, range_end),
+        time_unit,
+        fiscal_year_start_month,
     )
 
     # Determine distinct dimension values from actual data
@@ -1581,6 +1618,82 @@ def complete_ordinal_time_series(
         )
 
     return result
+
+
+def temporal_range_domain(
+    date_range: tuple[dt.date, dt.date],
+    time_unit: str | None,
+    x_values: list[Any],  # type-state: explicit_any — raw x cells
+    fiscal_year_start_month: int,
+    *,
+    spans_bucket: bool,
+) -> list[str] | None:
+    """A continuous temporal x domain spanning a proven filter range, or None.
+
+    Bucketed axes run from where Vega-Lite draws the mark of the bucket containing
+    the range's start to the one containing its end, or to that bucket's end when
+    marks span their bucket (``spans_bucket``). Unbucketed axes run over the
+    range's whole days. None for a time-part unit (``monthofyear``,
+    ``dayofweek``...), whose marks are not on the calendar, when the data names no
+    bucket to anchor a ``yearweek`` series on, and whenever a data value would fall
+    outside the domain: the axis is then left as it was rather than clipping marks.
+    """
+    start, end = date_range
+    parsed = [d for d in map(_parse_date, x_values) if d is not None]
+    if not parsed:
+        return None
+    if time_unit in BUCKETED_CALENDAR_UNITS:
+        days = [d.date() if isinstance(d, dt.datetime) else d for d in parsed]
+        anchor = min(days)
+        first = _enclosing_bucket(start, time_unit, fiscal_year_start_month, anchor)
+        last = _enclosing_bucket(end, time_unit, fiscal_year_start_month, anchor)
+        lower, upper = _vega_position(first, time_unit), _vega_position(last, time_unit)
+        marks = [
+            _vega_position(
+                _enclosing_bucket(day, time_unit, fiscal_year_start_month, anchor),
+                time_unit,
+            )
+            for day in days
+        ]
+        if spans_bucket:
+            upper = _next_bucket(upper, time_unit)
+        bounds = [lower.isoformat(), upper.isoformat()]
+        in_domain = all(lower <= mark <= upper for mark in marks)
+    elif time_unit in (None, "none"):
+        lower, upper = start, end + dt.timedelta(days=1)
+        # Vega-Lite reads a date-only string as UTC and a naive timestamp as local
+        # time: bounds in the data's own convention keep both on one clock.
+        naive = [d for d in parsed if isinstance(d, dt.datetime) and d.tzinfo is None]
+        if naive and len(naive) != len(parsed):
+            return None
+        if naive:
+            bounds = [f"{lower.isoformat()}T00:00:00", f"{upper.isoformat()}T00:00:00"]
+            low, high = (dt.datetime.combine(b, dt.time()) for b in (lower, upper))
+            in_domain = all(low <= d <= high for d in naive)
+        else:
+            low, high = (
+                dt.datetime.combine(b, dt.time(), dt.UTC) for b in (lower, upper)
+            )
+            in_domain = all(low <= _as_utc(d) <= high for d in parsed)
+            bounds = [lower.isoformat(), upper.isoformat()]
+    else:
+        return None
+    return bounds if in_domain else None
+
+
+def _as_utc(value: dt.date | dt.datetime) -> dt.datetime:
+    """The instant Vega-Lite places a date-only or offset-carrying value at."""
+    if isinstance(value, dt.datetime):
+        return value
+    return dt.datetime.combine(value, dt.time(), dt.UTC)
+
+
+def _vega_position(bucket: dt.date, time_unit: str) -> dt.date:
+    """Where Vega-Lite draws a bucket's mark: ``yearweek`` floors to the Sunday on
+    or before the bucket, whatever weekday the data's own weeks start on."""
+    if time_unit == "yearweek":
+        return bucket - dt.timedelta(days=(bucket.weekday() + 1) % 7)
+    return bucket
 
 
 def _opens_fiscal_period(date: dt.date, period_length: int, start_month: int) -> bool:
@@ -1863,8 +1976,8 @@ def day_week_context(
         opens_month and (date.month - fiscal_year_start_month) % 12 == 0
     )
     if carries_year:
-        return date.strftime("%b'%y")
-    return date.strftime("%b") if opens_month else ""
+        return portable_strftime(date, "%b'%y")
+    return portable_strftime(date, "%b") if opens_month else ""
 
 
 def opens_label_period(
@@ -1981,7 +2094,7 @@ def default_label_expr_for(
     row-stacking axis rotates onto the horizontal and the context row spills
     into the neighboring tick.
 
-    ``authored_format`` (``axis.labels.format``, from ``style.time_format``)
+    ``authored_format`` (``axis.labels.format``)
     replaces the per-grain TEXT with the author's own — one row, no stacked
     year context — and changes nothing else. The gate still decides which
     ticks speak. That split is the whole point: text and cadence are
@@ -2402,7 +2515,7 @@ def default_subday_label_expr_for(
     instants = sorted(
         {
             (
-                p.astimezone(dt.timezone.utc).replace(tzinfo=None)
+                p.astimezone(dt.UTC).replace(tzinfo=None)
                 if isinstance(p, dt.datetime) and p.tzinfo is not None
                 else (
                     p
@@ -2498,8 +2611,21 @@ def tooltip_header_date_expr(value_ref: str, time_unit: str) -> str:
     if time_unit == "yearmonth":
         return f"utcFormat({v}, '%b %Y')"
     if time_unit == "yearweek":
-        return f"'Week of ' + utcFormat({v}, '%b %-d, %Y')"
-    return f"utcFormat({v}, '%b %-d, %Y')"
+        return _week_range_expr(v)
+    return f"utcFormat({v}, '%-d %b %Y')"
+
+
+def _week_range_expr(start: str) -> str:
+    """The week bucket as a date range, shaped like ``format_daterange_label``."""
+    end = f"(time({start}) + 6 * 864e5)"
+    day_month_year = f"utcFormat({end}, '%-d %b %Y')"
+    return (
+        f"utcyear({start}) !== utcyear({end}) ? "
+        f"utcFormat({start}, '%-d %b %Y') + ' – ' + {day_month_year} : "
+        f"utcmonth({start}) !== utcmonth({end}) ? "
+        f"utcFormat({start}, '%-d %b') + ' – ' + {day_month_year} : "
+        f"utcFormat({start}, '%-d') + '–' + {day_month_year}"
+    )
 
 
 def _parse_label_value_date(value: Any) -> dt.date | dt.datetime:
@@ -2516,16 +2642,12 @@ def _parse_label_value_date(value: Any) -> dt.date | dt.datetime:
     if isinstance(value, (dt.datetime, dt.date)):
         return value
     if isinstance(value, str):
-        # Python <3.11: fromisoformat rejects the trailing 'Z' UTC suffix —
-        # normalize it so the same board parses identically on 3.10 and 3.13
-        # (mirrors _parse_date above).
-        v = value[:-1] + "+00:00" if value.endswith("Z") else value
         try:
-            return dt.datetime.fromisoformat(v)
+            return dt.datetime.fromisoformat(value)
         except ValueError:
             pass
         try:
-            return dt.date.fromisoformat(v)
+            return dt.date.fromisoformat(value)
         except ValueError:
             pass
     from dbt_charts.core.diagnostics.chart_data import ChartDataError
@@ -2545,12 +2667,10 @@ def _label_value_to_utc_ms(value: dt.date | dt.datetime) -> float:
     regardless of which VL scale type the axis ultimately resolves to.
     """
     if isinstance(value, dt.datetime):
-        d = value if value.tzinfo is not None else value.replace(tzinfo=dt.timezone.utc)
+        d = value if value.tzinfo is not None else value.replace(tzinfo=dt.UTC)
         return d.timestamp() * 1000
     return (
-        dt.datetime(
-            value.year, value.month, value.day, tzinfo=dt.timezone.utc
-        ).timestamp()
+        dt.datetime(value.year, value.month, value.day, tzinfo=dt.UTC).timestamp()
         * 1000
     )
 

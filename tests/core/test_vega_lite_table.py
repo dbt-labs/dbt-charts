@@ -3,6 +3,7 @@
 Split from test_vega_lite.py — table and error handling tests.
 """
 
+import html
 import re
 
 from dbt_charts.core.compile.config import (
@@ -14,7 +15,6 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
     resolve_style_and_context,
 )
-from dbt_charts.core.render.svg_utils import escape_attr
 
 _BOARD_STYLE = resolve_style(get_theme_style())
 _BOARD_CONTEXT = resolve_chart_style_context(get_theme_style())
@@ -27,9 +27,8 @@ class TestTableProportionalSizing:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [
@@ -65,9 +64,8 @@ class TestTableProportionalSizing:
             get_theme_style,
         )
         from dbt_charts.core.compile.resolve.style.board import resolve_style
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         body_family = get_theme_style().font.family.split(",")[0].strip()
         title_family = (
@@ -86,7 +84,7 @@ class TestTableProportionalSizing:
             width=400,
             board_style=board,
         )
-        assert f'font-family="{escape_attr(body_family)},' in svg_narrow
+        assert f'font-family="{body_family},' in html.unescape(svg_narrow)
         # width=700 → medium tier → title family (sans on default, serif on editorial)
         chart_medium = resolve(
             raw_chart, data, chart_style_context=_BOARD_CONTEXT, width=700.0
@@ -97,16 +95,15 @@ class TestTableProportionalSizing:
             width=700,
             board_style=board,
         )
-        assert escape_attr(title_family) in svg_medium
+        assert title_family in html.unescape(svg_medium)
 
     def test_table_title_can_use_dbt_oldstyle_tabular_family(self, make_chart):
         """dbt oldstyle tabular font is used at medium/wide widths (serif tier)."""
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         # Build a modified style with the dbt serif font without mutating global state.
         original_style = get_theme_style()
@@ -137,9 +134,8 @@ class TestTableProportionalSizing:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -168,9 +164,8 @@ class TestTableProportionalSizing:
         emit a different font-family on the subtitle.
         """
         from dbt_charts.core.compile.config import get_theme_style
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         stark_style = get_theme_style("stark")
         chart = make_chart(
@@ -257,9 +252,8 @@ class TestTableProportionalSizing:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         title = (
             "Revenue performance by enterprise segment and partner region "
@@ -291,9 +285,8 @@ class TestTableProportionalSizing:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [
@@ -322,9 +315,8 @@ class TestTableProportionalSizing:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -366,9 +358,8 @@ class TestTableProportionalSizing:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -404,10 +395,9 @@ class TestTableProportionalSizing:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
         from dbt_charts.core.render.controls import interactive_controls
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"name": f"row{i}"} for i in range(25)]
@@ -432,9 +422,8 @@ class TestTableProportionalSizing:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"name": f"row{i}"} for i in range(5)]
@@ -454,10 +443,9 @@ class TestTableProportionalSizing:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
         from dbt_charts.core.render.controls import interactive_controls
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -484,10 +472,9 @@ class TestTableProportionalSizing:
     def test_table_chart_enabled_pagination_inherits_default_page_rows(
         self, make_chart
     ):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
         from dbt_charts.core.render.controls import interactive_controls
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -514,10 +501,9 @@ class TestTableProportionalSizing:
         self, make_chart
     ):
         from dbt_charts.core.compile.resolve.style.board import resolve_style
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
         from dbt_charts.core.render.controls import interactive_controls
+
+        from ._engine_render import render_table_svg
 
         tc = resolve_style(get_theme_style()).chart_defaults.table
         row_height = int(tc.row.height)
@@ -536,7 +522,9 @@ class TestTableProportionalSizing:
         # include pagination_control_height — with 5 rows and a 2-row budget,
         # pagination fires; height-limited pagination now properly reserves
         # its control band so the controls land inside the viewBox.
-        from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
+        from dbt_charts.core.render.sizing import (
+            TABLE_PAGINATION_CONTROL_HEIGHT as _PAGINATION_CONTROL_HEIGHT,
+        )
 
         explicit_height = (
             header_height
@@ -577,9 +565,8 @@ class TestHeaderLink:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -610,9 +597,8 @@ class TestHeaderLink:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"name": "Alice"}]
@@ -632,9 +618,8 @@ class TestHeaderLink:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -659,7 +644,7 @@ class TestHeaderLink:
             board_style=resolve_style(get_theme_style()),
         )
         assert "&amp;" in svg
-        assert "&#x27;" in svg or "&quot;" in svg
+        assert '"2"' in html.unescape(svg)
 
 
 class TestTableColumnConfig:
@@ -672,9 +657,8 @@ class TestTableColumnConfig:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -708,9 +692,8 @@ class TestTableColumnConfig:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -743,9 +726,8 @@ class TestTableColumnConfig:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         data = [{"name": "Alice", "city": "Seattle"}]
         default_chart = make_chart("table", x=None, y=None)
@@ -797,9 +779,8 @@ class TestTableColumnConfig:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -856,9 +837,8 @@ class TestCellLink:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -893,9 +873,8 @@ class TestCellLink:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -930,9 +909,8 @@ class TestCellLink:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -965,9 +943,8 @@ class TestCellLink:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -1001,9 +978,8 @@ class TestCellLink:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -1035,9 +1011,8 @@ class TestCellLink:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -1065,9 +1040,8 @@ class TestCellLink:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"name": "Alice"}]
@@ -1097,13 +1071,10 @@ class TestColumnIdStyleResolution:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.compile.models.chart.authored import (
-            FontStyle,
-            TableColumnConfig,
-        )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from dbt_charts.core.compile.models.chart.authored import TableColumnConfig
+        from dbt_charts.core.compile.models.primitives import ColumnFontStyle
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -1113,7 +1084,7 @@ class TestColumnIdStyleResolution:
                 "columns": {
                     "name": TableColumnConfig(
                         background="row_bg",
-                        font=FontStyle(color="row_fg", weight="row_weight"),
+                        font=ColumnFontStyle(color="row_fg", weight="row_weight"),
                     ),
                 }
             },
@@ -1159,9 +1130,8 @@ class TestFitCascade:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [
@@ -1190,9 +1160,8 @@ class TestFitCascade:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"Name": "Alice", "Score": 95}]
@@ -1219,9 +1188,8 @@ class TestTableRules:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [
@@ -1278,9 +1246,8 @@ class TestTableRules:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [
@@ -1350,14 +1317,14 @@ class TestPerChartErrorHandling:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart.callout import render_callout_svg
+        from dbt_charts.core.render.engine import render_callout_card
 
-        svg = render_callout_svg(
+        svg = render_callout_card(
             message="expects exactly 1 row",
             width=400,
             height=100,
-            callout_style=resolve_chart_style_context(get_theme_style()).callout_error,
-            base_dir=None,
+            style=resolve_chart_style_context(get_theme_style()).callout_error,
+            chart_id="callout",
         )
         assert "Callout" not in svg
         assert "revenue_kpi" not in svg

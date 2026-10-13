@@ -1,10 +1,10 @@
 """Render the diagnostic registry as a per-level markdown reference page.
 
-Mirrors `compile.schema.renderers.prompt.render_prompt` for `yaml-reference.md`:
-introspect a single source of truth (here, `REGISTRY`) into a committed,
-drift-tested markdown artifact. One function, filtered by `level`, replaces
-the old wheel-only `render_error_reference` and the previously-missing
-warning reference — errors and warnings differ only in which codes match.
+Mirrors `compile.schema.renderers.prompt.render_prompt` for the YAML field
+reference: introspect a single source of truth (here, `REGISTRY`) into
+markdown, rendered when read (`dct docs`, MCP) or when the docs site builds,
+never committed. One function, filtered by `level`: errors and warnings
+differ only in which codes match.
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ from dbt_charts.core.diagnostics.registry import (
 # imports every codes_*.py and registers every ERR-*/WARN-* code as a side effect.
 
 _TITLE: dict[str, str] = {
-    "error": "dbt charts Error Reference",
-    "warning": "dbt charts Warning Reference",
+    "error": "dbt Charts Error Reference",
+    "warning": "dbt Charts Warning Reference",
 }
 
 _INTRO: dict[str, str] = {

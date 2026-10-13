@@ -362,3 +362,52 @@ def test_a_board_whose_text_reads_a_query_emits_and_replays(
     assert replayed.success, replayed.errors
     assert replayed.svg is not None
     assert "4242" in re.sub(r"<[^>]+>", "", replayed.svg)
+
+
+_TABS_EMAIL_YAML = """
+title: Tabs
+variables:
+  email:
+    input: text
+queries:
+  people:
+    type: values
+    rows:
+      - {email: 'ann@example.com'}
+    formats:
+      email: email
+charts:
+  first:
+    query: people
+    type: table
+  second:
+    query: people
+    type: table
+tabs:
+  items:
+    - title: One
+      rows:
+        - first
+    - title: Two
+      rows:
+        - second
+"""
+
+
+def test_artifact_keeps_a_filter_link_over_the_text_link_on_every_tab(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    (tmp_path / "board.yml").write_text(_TABS_EMAIL_YAML)
+    project = local_project(tmp_path)
+
+    result = emit_board_artifact(
+        tmp_path / "board.yml",
+        tmp_path / "out" / "board.artifact.json",
+        tmp_path / "out" / "board.recording.json",
+        project=project,
+        adapter_registry=build_adapter_registry(project),
+    )
+
+    assert result.success, result.errors
+    assert result.artifact_path is not None
+    assert "mailto" not in result.artifact_path.read_text()

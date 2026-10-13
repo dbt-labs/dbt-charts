@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Monthly Recurring Revenue
 notes: Single-metric bignum pattern — hero KPI with prior-period delta support row
 

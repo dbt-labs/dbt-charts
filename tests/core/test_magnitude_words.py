@@ -7,12 +7,16 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
-from dbt_charts.core.compile.models.primitives import NumberLocale, Regional
+from dbt_charts.core.compile.models.primitives import (
+    NumberLocale,
+    Regional,
+    RegionalLocale,
+)
 from dbt_charts.core.text.format_d3 import (
-    LocaleName,
     Notation,
+    NumberLocaleName,
     format_d3,
-    number_locale_scope,
+    regional_scope,
 )
 from dbt_charts.core.text.magnitude_words import (
     _BY_LANGUAGE,
@@ -29,12 +33,14 @@ _FR = {
 
 
 def _formatted(regional: Regional, value: float, notation: Notation) -> str:
-    with number_locale_scope(regional.format_locale):
+    with regional_scope(
+        regional.format_locale, regional.time_locale, regional.week_start
+    ):
         return format_d3(value, ".2~s", notation=notation)
 
 
-@pytest.mark.parametrize("name", get_args(LocaleName))
-def test_every_named_locale_has_its_words(name: LocaleName) -> None:
+@pytest.mark.parametrize("name", get_args(NumberLocaleName))
+def test_every_named_locale_has_its_words(name: NumberLocaleName) -> None:
     analytic, narrative = magnitude_words(name)
     assert all(w.strip() for w in (*analytic, *narrative))
 
@@ -49,18 +55,21 @@ def test_a_region_row_differs_from_its_language(region: str) -> None:
     [("analytic", "1,5\xa0M"), ("narrative", "1,5\xa0Mio.")],
 )
 def test_a_named_locale_prints_its_own_words(notation: Notation, expected: str) -> None:
-    assert _formatted(Regional(locale="de-DE"), 1_500_000, notation) == expected
+    assert (
+        _formatted(Regional(locale=RegionalLocale(number="de-DE")), 1_500_000, notation)
+        == expected
+    )
 
 
 @pytest.mark.parametrize(
-    ("notation", "expected"), [("analytic", "1.5\xa0M"), ("narrative", "1.5mn")]
+    ("notation", "expected"), [("analytic", "1.5M"), ("narrative", "1.5mn")]
 )
 def test_en_us_keeps_the_house_words(notation: Notation, expected: str) -> None:
     assert _formatted(Regional(), 1_500_000, notation) == expected
 
 
 def test_a_definition_without_words_prints_en_us_words() -> None:
-    regional = Regional(locale=NumberLocale.model_validate(_FR))
+    regional = Regional(locale=RegionalLocale(number=NumberLocale.model_validate(_FR)))
     assert _formatted(regional, 1_500_000, "narrative") == "1,5mn"
 
 
@@ -72,7 +81,7 @@ def test_a_definition_names_its_own_words() -> None:
             "narrative": ["k", "\xa0Mio.", "\xa0Mrd.", "\xa0Bio."],
         }
     )
-    regional = Regional(locale=locale)
+    regional = Regional(locale=RegionalLocale(number=locale))
     assert _formatted(regional, 2_500_000_000, "analytic") == "2,5 Md"
     assert _formatted(regional, 2_500_000_000, "narrative") == "2,5\xa0Mrd."
 

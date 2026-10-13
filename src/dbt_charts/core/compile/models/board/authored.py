@@ -9,7 +9,7 @@ LayoutType for board layout variants.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Any, ClassVar, Literal, get_args
 
 from pydantic import (
@@ -22,7 +22,6 @@ from pydantic import (
     Tag,
     TypeAdapter,
     field_validator,
-    model_validator,
 )
 
 from dbt_charts.core.compile.models.cache import CacheInput, CachePatch
@@ -67,6 +66,10 @@ from dbt_charts.core.compile.models.variable.authored import (
     Variable,
     reject_internal_variable_keys,
 )
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_THEME_AND_EXTENDS,
+    ERR_VALIDATION_FIELD,
+)
 
 
 def _var_discriminator(v: object) -> str:
@@ -86,7 +89,7 @@ def _chart_discriminator(v: object) -> str:
 # on the CrossFileRef subclass itself (refs.py), invisible to JSON Schema.
 # Declaring it here, on the annotation, is what schema/introspection.py reads back
 # — the migrator's projected schema widens for free instead of needing a
-# hand-maintained copy (renderers/json_schema.py, renderers/vscode_schema.py).
+# hand-maintained copy in renderers/json_schema.py.
 VariableOrRef = Annotated[
     Annotated[Variable, BeforeValidator(reject_internal_variable_keys), Tag("@inline")]
     | Annotated[
@@ -130,6 +133,8 @@ ChartOrRef = Annotated[
 # ============================================================================
 # LAYOUT SUB-SHAPES
 # ============================================================================
+
+ChartName = Annotated[str, Field(description="Chart name reference.")]
 
 # Both spellings: a pre-rename board still authors `description:` here, and
 # the retired form predates the rename either way, so a `notes:` sibling must
@@ -192,7 +197,7 @@ class GridItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     item: Annotated[
-        str | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart],
+        ChartName | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart],
         BeforeValidator(_check_layout_item),
     ] = Field(
         description="Chart name or inline chart/board definition to place in this grid cell."
@@ -293,12 +298,12 @@ class TabItem(BaseModel):
 
     # Layout fields (tab can contain nested layouts)
     rows: Annotated[
-        list[str | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
+        list[ChartName | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
         | None,
         BeforeValidator(_check_layout_list),
     ] = Field(default=None, description="Vertical stack layout for this tab's content.")
     cols: Annotated[
-        list[str | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
+        list[ChartName | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
         | None,
         BeforeValidator(_check_layout_list),
     ] = Field(default=None, description="Horizontal layout for this tab's content.")
@@ -408,11 +413,15 @@ def desugar_theme(
         return data
     theme_val = data["theme"]
     if not isinstance(theme_val, str):
-        raise ValueError(f"'theme:' must be a theme name string, got {theme_val!r}")
-    if data.get("extends") is not None:
-        raise ValueError(
-            "Cannot specify both 'theme:' and 'extends:'. "
-            "'theme:' is sugar for 'extends:'; use one or the other."
+        raise ERR_VALIDATION_FIELD.validation_error(
+            field_path="theme",
+            pydantic_msg=f"must be a theme name string, got {theme_val!r}",
+        )
+    extends = data.get("extends")
+    if extends is not None:
+        entries = [theme_val, *(extends if isinstance(extends, list) else [extends])]
+        raise ERR_THEME_AND_EXTENDS.validation_error(
+            theme=theme_val, combined=f"[{', '.join(map(str, entries))}]"
         )
     data = {k: v for k, v in data.items() if k != "theme"}
     data["extends"] = theme_val
@@ -609,7 +618,7 @@ class AuthoredBoard(ConstrainedModel):
 
     # Layout (at most one)
     rows: Annotated[
-        list[str | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
+        list[ChartName | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
         | None,
         BeforeValidator(_check_layout_list),
         Merge(Strategy.APPEND, nested=Strategy.CHILD),
@@ -619,7 +628,7 @@ class AuthoredBoard(ConstrainedModel):
         description="Vertical stack layout: list of chart names or inline chart/board definitions.",
     )
     cols: Annotated[
-        list[str | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
+        list[ChartName | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
         | None,
         BeforeValidator(_check_layout_list),
         Merge(Strategy.APPEND, nested=Strategy.CHILD),
@@ -744,17 +753,6 @@ class AuthoredBoard(ConstrainedModel):
     ) -> Any:  # type-state: explicit_any — passthrough of the same boundary value
         return validate_incremental_value(v)
 
-    @model_validator(mode="before")
-    @classmethod
-    def reject_board_key(cls, data: Any) -> Any:
-        """Reject 'board' as a top-level key."""
-        if isinstance(data, dict) and "board" in data:
-            raise ValueError(
-                "'board:' is not valid. Board properties (title, rows, queries, etc.) "
-                "should be at the top level of the YAML file, not nested under 'board:'."
-            )
-        return data
-
     def get_default_source(self) -> str | None:
         """Return the default source name, or None."""
         return self.source
@@ -798,7 +796,7 @@ AuthoredBoard.model_rebuild()
 # ============================================================================
 
 
-class LayoutType(str, Enum):
+class LayoutType(StrEnum):
     """Layout types for organizing charts.
 
     - rows: Vertical stack of items

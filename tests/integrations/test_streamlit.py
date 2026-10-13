@@ -395,3 +395,31 @@ def test_missing_streamlit_raises_actionable_import_error() -> None:
     assert result.returncode != 0
     assert "streamlit" in result.stderr.lower()
     assert "install" in result.stderr.lower()
+
+
+class TestStBoardHttpMethods:
+    def test_st_board_sends_the_post_an_http_source_declares(
+        self, tmp_path: Path, frame: _FrameRecorder
+    ) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from dbt_charts.integrations import streamlit as st_integration
+
+        project_dir = _make_project(tmp_path)
+        (project_dir / "charts" / "search.yml").write_text(
+            "queries:\n  hits:\n    type: http\n"
+            "    url: https://api.example.com/search\n    method: POST\n"
+            "    json_path: $.hits\n"
+            "charts:\n  t:\n    query: hits\n    type: table\nrows:\n  - t\n"
+        )
+        response = MagicMock()
+        response.json.return_value = {"hits": [{"title": "a"}]}
+
+        with patch(
+            "dbt_charts.core.execute.adapters.http_adapter.httpx.Client"
+        ) as mock_client:
+            post = mock_client.return_value.__enter__.return_value.post
+            post.return_value = response
+            st_integration.st_board("charts/search.yml", project_dir=project_dir)
+
+        post.assert_called_once()

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Cards and layouts
 style:
   frame:
@@ -263,7 +264,9 @@ charts:
     x: week
     y: revenue
     style:
-      number_format: currency
+      axis_y:
+        labels:
+          format: currency
     support_table:
       - source: revenue
         format: currency_whole
@@ -282,7 +285,9 @@ charts:
     x: category
     y: revenue
     style:
-      number_format: currency
+      axis_y:
+        labels:
+          format: currency
   width_demo_kpi:
     type: kpi
     query: kpi_metrics
@@ -310,7 +315,9 @@ charts:
     x: month
     y: revenue
     style:
-      number_format: currency
+      axis_y:
+        labels:
+          format: currency
   grid_side_chart:
     query: category_revenue
     type: table
@@ -330,7 +337,9 @@ charts:
     x: month
     y: tickets_resolved
     style:
-      number_format: integer
+      axis_y:
+        labels:
+          format: integer
   tabs_revenue_bar:
     query: category_revenue
     type: bar
@@ -339,7 +348,9 @@ charts:
     x: category
     y: revenue
     style:
-      number_format: currency
+      axis_y:
+        labels:
+          format: currency
   tabs_active_users_line:
     query: monthly_active_users
     type: line
@@ -348,7 +359,9 @@ charts:
     x: month
     y: active_users
     style:
-      number_format: integer
+      axis_y:
+        labels:
+          format: integer
   tabs_tickets_line:
     query: monthly_tickets_created_resolved
     type: line
@@ -358,7 +371,9 @@ charts:
     y: value
     color: series
     style:
-      number_format: integer
+      axis_y:
+        labels:
+          format: integer
   documents_status_bar:
     type: bar
     query: documents_by_status
@@ -368,7 +383,9 @@ charts:
     x: status
     y: share
     style:
-      number_format: percent_whole
+      axis_y:
+        labels:
+          format: percent_whole
   recent_orders_table:
     type: table
     query: recent_orders

@@ -184,7 +184,11 @@ def _cartesian_roles(
         # run. Drop that histogram gate and this line becomes a crash inside a
         # tooltip feature.
         header_data = normalize_labeled_temporal(data, chart.x)
-        header = (header_tooltip_field(chart.x, x_title, header_data),)
+        header = (
+            header_tooltip_field(
+                chart.x, x_title, header_data, style.axis_x.grain_formats
+            ),
+        )
 
     # Wide charts (y: [m1, m2, ...]) are folded client-side by VL: at render
     # time datum[WIDE_VALUE_FIELD] = the measure value and
@@ -427,7 +431,7 @@ def _stack_group_total(
     ]
     total_field = TooltipField(
         _GROUP_TOTAL_FIELD,
-        "Total",
+        "Σ",
         kind="quantitative",
         format=chart.style.tooltip_format,
     )
@@ -443,7 +447,7 @@ def _stack_group_total(
         },
     ]
     pct_field = TooltipField(
-        _GROUP_PCT_FIELD, "Share", kind="quantitative", format=_PERCENT_TOOLTIP_FORMAT
+        _GROUP_PCT_FIELD, "%", kind="quantitative", format=_PERCENT_TOOLTIP_FORMAT
     )
     return [pct_field, *values], (total_field,)
 
@@ -474,16 +478,14 @@ def _pie_roles(
     # context, so both render muted (low-contrast). See MUTED in _tooltip.py.
     values = [
         TooltipField(
-            PIE_PCT_FIELD, "Share", kind="quantitative", format=_PERCENT_TOOLTIP_FORMAT
+            PIE_PCT_FIELD, "%", kind="quantitative", format=_PERCENT_TOOLTIP_FORMAT
         ),
         TooltipField(
             chart.theta, value_title, kind="quantitative", format=fmt, muted=True
         ),
     ]
     total = (
-        TooltipField(
-            PIE_TOTAL_FIELD, "Total", kind="quantitative", format=fmt, muted=True
-        ),
+        TooltipField(PIE_TOTAL_FIELD, "Σ", kind="quantitative", format=fmt, muted=True),
     )
     return header, values, total
 
@@ -580,7 +582,9 @@ def _scatter_roles(
         )
     else:
         x_data = normalize_labeled_temporal(data, chart.x)
-        x_row = header_tooltip_field(chart.x, x_title, x_data)
+        x_row = header_tooltip_field(
+            chart.x, x_title, x_data, style.axis_x.grain_formats
+        )
     values = [_value_tooltip_field(chart.y, y_title, data, fmt), x_row]
 
     color_ch = chart.resolved_channels.get("color")
@@ -609,8 +613,8 @@ def _heatmap_roles(
     x_title = chart.x_label or field_title(chart.x, chart.field_labels)
     y_title = chart.y_label or field_title(chart.y, chart.field_labels)
     header = (
-        header_tooltip_field(chart.x, x_title, data),
-        header_tooltip_field(chart.y, y_title, data),
+        header_tooltip_field(chart.x, x_title, data, style.axis_x.grain_formats),
+        header_tooltip_field(chart.y, y_title, data, style.axis_x.grain_formats),
     )
     color_ch = chart.resolved_channels.get("color")
     assert color_ch is not None and color_ch.data_field  # heatmap's value channel

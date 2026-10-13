@@ -4,6 +4,8 @@ BigQuery uses:
 - @param1, @param2 for named parameter placeholders
 """
 
+from collections.abc import Sequence
+
 from dbt_charts.core.dialects.base import SQLDialect
 
 
@@ -59,6 +61,19 @@ class BigQueryDialect(SQLDialect):
             "SELECT table_schema, table_name, column_name, data_type "
             f"FROM `{scope}`.INFORMATION_SCHEMA.COLUMNS "
             "ORDER BY table_schema, table_name, ordinal_position"
+        )
+
+    def bulk_tables_sql(self, scope: str, schemas: Sequence[str]) -> str:
+        """Whole-warehouse tables from the region-wide INFORMATION_SCHEMA."""
+        if not scope:
+            raise NotImplementedError("bigquery bulk_tables_sql requires a region")
+        condition = self.schema_condition(schemas, "table_schema")
+        where = f"WHERE {condition} "
+        return (
+            "SELECT table_schema, table_name "
+            f"FROM `{scope}`.INFORMATION_SCHEMA.TABLES "
+            f"{where}"
+            "ORDER BY table_schema, table_name"
         )
 
     def quote(self, identifier: str) -> str:

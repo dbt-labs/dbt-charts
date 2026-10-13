@@ -480,7 +480,7 @@ def _project_conditional_formatting_inputs(
             "color": lambda r: r.font.color if r.font is not None else None,
         }
     else:
-        # table: lowered per-cell in render/chart/table.py, not here. Table is
+        # table: lowered per-cell by the engine's table family, not here. Table is
         # the only other family whose authored model still declares
         # conditional_formatting, so it's the only one that can reach this
         # branch with a non-empty `cf`.

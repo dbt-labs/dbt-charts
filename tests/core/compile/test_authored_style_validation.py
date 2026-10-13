@@ -147,3 +147,12 @@ class TestMergedStyleOverlayFields:
         ep = effective_padding(resolved)
         assert ep.top == 14.0  # 10 padding + 4 border
         assert ep.left == 14.0
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+def test_an_authored_style_float_rejects_a_non_finite_value(value: float) -> None:
+    """`.inf` / `.nan` in YAML must fail at compile, not mid-render."""
+    from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
+
+    with pytest.raises(ValidationError, match="finite"):
+        TableChartStylePatch.model_validate({"preferred_width": value})

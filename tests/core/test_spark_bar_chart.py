@@ -18,9 +18,10 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve import resolve
-from dbt_charts.core.render.chart import render_spark_bar_svg
 from dbt_charts.core.render.chart.vega_lite import render_chart
 from dbt_charts.core.render.placeholder import generate_placeholder_data
+
+from ._engine_render import render_spark_bar_svg
 
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
@@ -238,7 +239,7 @@ class TestSparkBarDimensions:
 
         svg = render_spark_bar_svg(chart, data, width=300, board_style=_BOARD_STYLE)
 
-        assert 'width="300"' in svg
+        assert 'width="300.0"' in svg
 
     def test_spark_bar_auto_height(self, make_chart) -> None:
         """Height auto-calculates based on number of bars."""
@@ -787,6 +788,7 @@ def test_spark_bar_subtitle_font_size_none_asserts(make_chart):
     from dbt_charts.core.compile.models.primitives import FontStyle
     from dbt_charts.core.compile.models.style.theme import SubtitleStyle
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError
 
     base_ctx = resolve_chart_style_context(get_theme_style())
     sb_override = base_ctx.spark_bar.model_copy(
@@ -803,9 +805,7 @@ def test_spark_bar_subtitle_font_size_none_asserts(make_chart):
         chart_style_context=ctx_custom,
     )
 
-    with pytest.raises(
-        AssertionError, match="theme must supply spark_bar.subtitle.font.size"
-    ):
+    with pytest.raises(ChartDataError, match="spark_bar.subtitle.font.size absent"):
         render_spark_bar_svg(resolved, data, board_style=_BOARD_STYLE)
 
 
@@ -840,6 +840,6 @@ def test_spark_bar_subtitle_font_size_reads_directly_from_theme(make_chart):
 
     svg = render_spark_bar_svg(resolved, data, board_style=_BOARD_STYLE)
 
-    assert f'font-size="{distinctive_size}' in svg, (
+    assert f'font-size="{distinctive_size}"' in svg, (
         f"Expected subtitle font-size={distinctive_size} verbatim in SparkBar SVG"
     )

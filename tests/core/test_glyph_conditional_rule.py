@@ -179,66 +179,6 @@ class TestResolveConditionalStylesGlyph:
         )
 
 
-class TestResolveCellGlyph:
-    """resolve_cell_glyph layers static col_config glyph + when-rule glyph."""
-
-    def test_static_glyph_only(self) -> None:
-        from dbt_charts.core.compile.models.chart.authored import (
-            TableColumnConfig,
-        )
-        from dbt_charts.core.render.chart.table_support import resolve_cell_glyph
-
-        col = TableColumnConfig.model_validate({"glyph": "●", "glyph_color": "#888"})
-        glyph, color = resolve_cell_glyph(col, 42, None)
-        assert glyph == "●"
-        assert color == "#888"
-
-    def test_when_glyph_overrides_static(self) -> None:
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
-            TableColumnConfig,
-        )
-        from dbt_charts.core.render.chart.table_support import resolve_cell_glyph
-
-        col = TableColumnConfig.model_validate({"glyph": "●", "glyph_color": "#888"})
-        rules = [
-            ConditionalRule.model_validate(
-                {"lt": 0, "glyph": "▼", "glyph_color": "#dc2626"}
-            )
-        ]
-        glyph, color = resolve_cell_glyph(col, -5, rules)
-        assert glyph == "▼"
-        assert color == "#dc2626"
-
-    def test_when_no_match_falls_back_to_static(self) -> None:
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
-            TableColumnConfig,
-        )
-        from dbt_charts.core.render.chart.table_support import resolve_cell_glyph
-
-        col = TableColumnConfig.model_validate({"glyph": "●", "glyph_color": "#888"})
-        rules = [
-            ConditionalRule.model_validate(
-                {"lt": 0, "glyph": "▼", "glyph_color": "#dc2626"}
-            )
-        ]
-        glyph, color = resolve_cell_glyph(col, 5, rules)
-        assert glyph == "●"
-        assert color == "#888"
-
-    def test_no_glyph_anywhere(self) -> None:
-        from dbt_charts.core.compile.models.chart.authored import (
-            TableColumnConfig,
-        )
-        from dbt_charts.core.render.chart.table_support import resolve_cell_glyph
-
-        col = TableColumnConfig.model_validate({})
-        glyph, color = resolve_cell_glyph(col, 42, None)
-        assert glyph is None
-        assert color is None
-
-
 class TestConditionalRuleTone:
     def _tones(self) -> KpiTonesStyle:
         from dbt_charts.core.compile.models.style.theme import KpiTonesStyle

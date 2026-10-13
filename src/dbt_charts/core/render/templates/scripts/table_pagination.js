@@ -1,5 +1,5 @@
 /*{# Static-export table pagination. Every page's rows and paginator are drawn
-   into the SVG already (render/chart/table.py); this only toggles which
+   into the SVG already (the engine's table family); this only toggles which
    `data-dbt-table-page` group is visible. No re-render, no server round trip
    -- the same reason the chart hover runtime (chart_interactivity.js) ships
    inline instead of depending on a host: the artifact must work standalone. #}*/

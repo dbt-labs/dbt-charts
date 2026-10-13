@@ -1,0 +1,31 @@
+# Standalone workspace, deliberately not a member of ../Cargo.toml's
+# [workspace]: pyo3's build script probes for a Python interpreter (even
+# under abi3) to resolve ABI config, so joining the main workspace would make
+# `cargo build --workspace`/`cargo test --workspace` in libs/chart-svg (run
+# by every d3rs/chart-renderer/mdsvg/compile contributor, Python-agnostic
+# work) require a working Python toolchain and pull in pyo3's proc-macro
+# build cost.
+[workspace]
+
+[package]
+name = "dbt-charts-core-py"
+version = "0.0.1"
+edition = "2021"
+description = "dbt_charts._engine: chart-renderer's render exposed to Python. Not a public API."
+
+[lib]
+name = "_engine"
+crate-type = ["cdylib"]
+
+[dependencies]
+chart-renderer = { path = "../chart-renderer" }
+serde = "1"
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+
+[dependencies.pyo3]
+version = "0.29.2"
+features = ["extension-module", "abi3-py311"]
+
+[profile.release]
+lto = true
+strip = true

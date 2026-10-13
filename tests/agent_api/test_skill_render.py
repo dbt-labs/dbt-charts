@@ -15,24 +15,24 @@ from dbt_charts.agent_api.skill_render import (
 
 class TestSurfaceExpansion:
     def test_expands_s_macro_on_tool_surface(self) -> None:
-        out = render_skill_body("Run {{ s_validate_board }} now.", surface="tool")
-        assert out == "Run validate_board now."
+        out = render_skill_body("Run {{ s_render_board }} now.", surface="tool")
+        assert out == "Run render_board now."
 
     def test_expands_s_macro_on_cli(self) -> None:
-        out = render_skill_body("Run {{ s_validate_board }} now.", surface="cli")
-        assert out == "Run dct validate now."
+        out = render_skill_body("Run {{ s_render_board }} now.", surface="cli")
+        assert out == "Run dct render now."
 
     def test_expands_multi_line_block_macro_tool_surface(self) -> None:
-        body = "Try this:\n{{ s_validate_example }}\nDone."
+        body = "Try this:\n{{ s_render_png_example }}\nDone."
         out = render_skill_body(body, surface="tool")
-        assert 'validate_board(path="' in out
-        assert "dct validate" not in out
+        assert 'render_board(path="' in out
+        assert "dct render" not in out
 
     def test_expands_multi_line_block_macro_cli(self) -> None:
-        body = "Try this:\n{{ s_validate_example }}\nDone."
+        body = "Try this:\n{{ s_render_png_example }}\nDone."
         out = render_skill_body(body, surface="cli")
-        assert "dct validate charts/" in out
-        assert "validate_board(" not in out
+        assert "dct render charts/" in out
+        assert "render_board(" not in out
 
 
 class TestSurfaceSelection:
@@ -41,11 +41,11 @@ class TestSurfaceSelection:
     @pytest.mark.parametrize(
         ("body", "surface", "expected"),
         [
-            ("{{ s_validate_board }}", "tool", "validate_board"),
-            ("{{ s_validate_board }}", "cli", "dct validate"),
-            # Regression: s_query_board CLI side uses positional board context.
-            ("{{ s_query_board }}", "cli", "dct query BOARD.yml QUERY"),
-            ("{{ s_query_board }}", "tool", "query_board"),
+            ("{{ s_render_board }}", "tool", "render_board"),
+            ("{{ s_render_board }}", "cli", "dct render"),
+            # Regression: the CLI side uses positional board context.
+            ("{{ s_execute_named_query }}", "cli", "dct query BOARD.yml QUERY"),
+            ("{{ s_execute_named_query }}", "tool", "execute_query(board, query)"),
         ],
     )
     def test_s_macro_picks_correct_side(
@@ -99,11 +99,11 @@ class TestToolAvailabilityGate:
     """{{#if_tool NAME}}...{{/if_tool}} blocks gate on available_tools."""
 
     def test_keeps_block_when_tool_available(self) -> None:
-        body = "Before.\n{{#if_tool validate_board}}Call validate_board.{{/if_tool}}\nAfter."
-        out = render_skill_body(
-            body, surface="tool", available_tools={"validate_board"}
+        body = (
+            "Before.\n{{#if_tool render_board}}Call render_board.{{/if_tool}}\nAfter."
         )
-        assert "Call validate_board." in out
+        out = render_skill_body(body, surface="tool", available_tools={"render_board"})
+        assert "Call render_board." in out
         assert "{{#if_tool" not in out
         assert "{{/if_tool}}" not in out
 
@@ -111,9 +111,7 @@ class TestToolAvailabilityGate:
         body = (
             "Before.\n{{#if_tool search_boards}}Call search_boards.{{/if_tool}}\nAfter."
         )
-        out = render_skill_body(
-            body, surface="tool", available_tools={"validate_board"}
-        )
+        out = render_skill_body(body, surface="tool", available_tools={"render_board"})
         assert "search_boards" not in out
         assert "Before." in out
         assert "After." in out

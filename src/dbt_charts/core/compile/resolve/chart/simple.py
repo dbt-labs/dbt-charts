@@ -11,6 +11,10 @@ from dbt_charts.core.compile.format import (
     kpi_format_native,
     resolve_format_parts,
 )
+from dbt_charts.core.compile.format_value import (
+    raise_if_format_cannot_print_number,
+    text_format_link,
+)
 from dbt_charts.core.compile.merge import merge_onto_base, to_padding_style
 from dbt_charts.core.compile.models.chart.normalized import (
     CalloutChart,
@@ -24,6 +28,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedSparkBarChart,
 )
 from dbt_charts.core.compile.models.primitives import (
+    ResolvedFormat,
     resolved_as,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -49,6 +54,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     declared_column_format,
 )
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
+from dbt_charts.core.text.predefined_formats import PREDEFINED_TEXT_NAMES
 from dbt_charts.core.utils import coerce_numeric_cell
 
 __all__ = [
@@ -78,7 +84,7 @@ def _resolve_kpi(
     )
     board_value = chart_style_context.kpi.value.format
     declared = declared_column_format(
-        normalized, normalized.value, formats, time=headline is None
+        normalized, normalized.value, formats, time=headline is None, text=True
     )
     base = _base_kwargs(
         normalized,
@@ -98,8 +104,15 @@ def _resolve_kpi(
     support_column = kpi_support_rule_column(normalized)
     cf = base["conditional_formatting"]
     support_rules = cf[support_column] if cf and support_column in cf else None
+    value_format = finalize_kpi_value_format(
+        chart_value, headline, formats, board=board_value, column=declared
+    )
+    text_link = _kpi_text_link(
+        value_format, data, normalized.value, normalized.id, bool(base["link"])
+    )
     return ResolvedKpiChart(
         **base,
+        text_link=text_link,
         chart_type="kpi",
         value=normalized.value,
         label=_resolve_text(
@@ -121,14 +134,34 @@ def _resolve_kpi(
         ),
         glyph=normalized.glyph,
         variant=kpi.variant,
-        format=finalize_kpi_value_format(
-            chart_value, headline, formats, board=board_value, column=declared
-        ),
+        format=value_format,
         format_native=kpi_format_native(
             formats, chart_value, board=board_value, column=declared
         ),
         style=ResolvedKpiStyle(kpi=kpi),
     )
+
+
+def _kpi_text_link(
+    value_format: ResolvedFormat | None,
+    data: list[dict[str, Any]],  # type-state: explicit_any — rows are raw query output
+    value_column: str,
+    chart_id: str,
+    has_link: bool,
+) -> str | None:
+    """The link an ``email`` / ``url`` headline implies, below the chart's own.
+
+    A number under a text format is an error even when the chart's own link wins;
+    only the ``url`` shape check is skipped then.
+    """
+    if value_format is None or value_format.raw not in PREDEFINED_TEXT_NAMES:
+        return None
+    cell = data[0].get(value_column) if len(data) == 1 else None
+    if coerce_numeric_cell(cell) is not None:
+        raise_if_format_cannot_print_number(value_format.raw)
+    if has_link:
+        return None
+    return text_format_link(value_format.raw, cell, f"KPI {chart_id!r}")
 
 
 def _headline_numeric_value(

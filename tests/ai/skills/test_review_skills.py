@@ -29,7 +29,7 @@ def _rendered_body(name: str, surface: str = "cli") -> str:
     """Return the surface-rendered body for assertions.
 
     Default is the CLI surface because these tests originally asserted
-    `dct validate` / `dct render` literals; that vocabulary still has
+    `dct render` literals; that vocabulary still has
     to survive on the CLI side after the macro migration. Tool-call
     assertions explicitly pass ``surface="tool"``.
     """
@@ -77,17 +77,6 @@ class TestStructuralReviewChecklist:
     """
 
     SKILL = "board-structural-review"
-
-    def test_invokes_dct_validate_first_on_cli(self, body: str) -> None:
-        assert "dct validate" in body
-        assert "uv run dct validate" not in body, (
-            "shipped skill must use bare `dct`; in-repo guidance lives in AGENTS.md"
-        )
-
-    def test_invokes_validate_board_on_tool_surface(self, tool_body: str) -> None:
-        """Tool-rendered body must use the function-call name, not the CLI command."""
-        assert "validate_board" in tool_body
-        assert "dct validate" not in tool_body
 
     def test_kpi_one_row_anti_pattern(self, body: str) -> None:
         assert "exactly 1 row" in body or "1 row" in body

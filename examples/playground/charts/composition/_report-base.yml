@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 # Template board: shared presentation defaults for report-style dashboards.
 #
 # The underscore prefix marks this as a non-listable building block.

@@ -18,6 +18,8 @@ from pathlib import Path
 import yaml
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.compile import CompileResult, compile
+from dbt_charts.core.compile.compiler import compile_file
 from dbt_charts.core.compile.parse.markdown import markdown_to_yaml
 
 
@@ -482,3 +484,84 @@ class TestDetectCompileAgreement:
         assert result.success, (
             f"compile_file rejected a file iter_boards surfaces; errors: {result.errors}"
         )
+
+
+_LONG_BODY = "\n".join(f"Line {n} of prose." for n in range(20))
+_TWO_COLUMNS = "style:\n  text:\n    column:\n      max_number: 2\n"
+
+
+def _compile_md(
+    in_memory_project: Callable[..., FilesystemProject],
+    md: str,
+    meta: str | None = None,
+    extra: dict[str, str] | None = None,
+) -> CompileResult:
+    files = {"charts/page.md": md, **(extra or {})}
+    if meta is not None:
+        files["charts/meta.yml"] = meta
+    project = in_memory_project(Path("/tmp/test-md-default"), files)
+    return compile_file(project.path("charts/page.md").read_board())
+
+
+def _max_number(result: CompileResult) -> int | None:
+    assert result.success and result.board is not None, result.errors
+    return result.board.resolved_style.text.column.max_number
+
+
+class TestMarkdownBoardsDefaultToOneColumn:
+    def test_markdown_board_is_one_column(
+        self, in_memory_project: Callable[..., FilesystemProject]
+    ) -> None:
+        assert _max_number(_compile_md(in_memory_project, _LONG_BODY)) == 1
+
+    def test_yaml_board_keeps_the_renderer_choice(self) -> None:
+        text = "\n".join(f"  {line}" for line in _LONG_BODY.splitlines())
+        result = compile(f"text: |\n{text}\n")
+        assert _max_number(result) is None
+
+    def test_frontmatter_overrides_the_default(
+        self, in_memory_project: Callable[..., FilesystemProject]
+    ) -> None:
+        md = f"---\nboard:\n  style:\n    text:\n      column:\n        max_number: 2\n---\n\n{_LONG_BODY}\n"
+        assert _max_number(_compile_md(in_memory_project, md)) == 2
+
+    def test_meta_yml_overrides_the_default(
+        self, in_memory_project: Callable[..., FilesystemProject]
+    ) -> None:
+        result = _compile_md(in_memory_project, _LONG_BODY, meta=_TWO_COLUMNS)
+        assert _max_number(result) == 2
+
+    def test_extends_template_overrides_the_default(
+        self, in_memory_project: Callable[..., FilesystemProject]
+    ) -> None:
+        md = f"---\nboard:\n  extends: ./base.yml\n---\n\n{_LONG_BODY}\n"
+        result = _compile_md(
+            in_memory_project, md, extra={"charts/base.yml": _TWO_COLUMNS}
+        )
+        assert _max_number(result) == 2
+
+    def test_frontmatter_style_siblings_survive_the_default(
+        self, in_memory_project: Callable[..., FilesystemProject]
+    ) -> None:
+        md = f"---\nboard:\n  style:\n    footer:\n      visible: false\n---\n\n{_LONG_BODY}\n"
+        result = _compile_md(in_memory_project, md)
+        assert _max_number(result) == 1
+        assert not result.board.resolved_style.footer.visible
+
+    def test_null_frontmatter_style_compiles(
+        self, in_memory_project: Callable[..., FilesystemProject]
+    ) -> None:
+        md = f"---\nboard:\n  style:\n---\n\n{_LONG_BODY}\n"
+        assert _max_number(_compile_md(in_memory_project, md)) == 1
+
+    def test_string_frontmatter_style_is_a_validation_error(
+        self, in_memory_project: Callable[..., FilesystemProject]
+    ) -> None:
+        md = f"---\nboard:\n  style: dark\n---\n\n{_LONG_BODY}\n"
+        result = _compile_md(in_memory_project, md)
+        assert not result.success
+        assert any("style" in str(e).lower() for e in result.errors)
+
+    def test_default_is_not_authored_in_the_parsed_file(self) -> None:
+        data = yaml.safe_load(markdown_to_yaml(_LONG_BODY))
+        assert "style" not in data

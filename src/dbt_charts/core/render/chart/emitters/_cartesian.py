@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
+from datetime import date
 from typing import Any, Literal, NamedTuple
 
 from dbt_charts.core.compile.config import get_chart_rendering
@@ -70,6 +71,7 @@ from dbt_charts.core.render.chart.time_unit_detect import (
     canonicalize_ordinal_x,
     detect_time_unit,
     normalize_labeled_temporal,
+    temporal_range_domain,
     vl_time_unit,
 )
 from dbt_charts.core.render.chart.type_inference import (
@@ -88,6 +90,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     inject_axis_numeral_expr,
 )
 from dbt_charts.core.render.chart.x_domain import vl_sort_op
+from dbt_charts.core.render.numeral_expr import vl_format_key
 from dbt_charts.core.render.utils import normalize_scalar_for_json
 from dbt_charts.core.text.case import field_title
 from dbt_charts.core.text.category_label import category_label_text
@@ -217,6 +220,31 @@ def cartesian_x_scale_domain(
             vl_type=vl_type,
         )
     return {"domain": list(_sc_cont.domain)}
+
+
+def pin_temporal_range(
+    x_scale: VLDict,
+    vl_type: str,
+    x_date_range: tuple[date, date] | None,
+    time_unit: str | None,
+    rows: Rows,
+    x_field: str,
+    fiscal_year_start_month: int,
+    *,
+    spans_bucket: bool,
+) -> None:
+    """Set ``x_scale["domain"]`` in place; an authored domain always wins."""
+    if x_date_range is None or vl_type != "temporal" or "domain" in x_scale:
+        return
+    domain = temporal_range_domain(
+        x_date_range,
+        time_unit,
+        [row.get(x_field) for row in rows],
+        fiscal_year_start_month,
+        spans_bucket=spans_bucket,
+    )
+    if domain is not None:
+        x_scale["domain"] = domain
 
 
 def chart_sort_to_vl(sort: ChartSort | None) -> VLDict | None:
@@ -452,6 +480,8 @@ def resolve_cartesian_x(
     reserved_width: float = 0.0,
     *,
     panel_fields: tuple[str, ...],
+    x_date_range: tuple[date, date] | None,
+    overlay_bars: bool = False,
 ) -> CartesianXResolution:
     """Resolve x encoding type, axis VL dict, and x scale for a cartesian x field.
 
@@ -469,7 +499,8 @@ def resolve_cartesian_x(
     scale's full band domain when overlay layers extend it past this axis's
     own rows (``overlay_x_domain_values``) — forwarded to both the crowding
     measurement and the tick-value/cadence build, mirroring bar's own overlay
-    handling (``bar.py``'s ``_emit_vertical``).
+    handling (``bar.py``'s ``_emit_vertical``). ``overlay_bars`` reports
+    whether an overlay layer draws bars.
 
     ``reserved_width`` is horizontal chrome the caller already knows about
     and this function does not — chiefly the endpoint-label rail
@@ -543,6 +574,16 @@ def resolve_cartesian_x(
         panel_fields=panel_fields,
     )
     x_scale.update(cartesian_x_scale_domain(ax.scale, vl_type, chart_id))
+    pin_temporal_range(
+        x_scale,
+        vl_type,
+        x_date_range,
+        detected_tu,
+        data,
+        x_field,
+        ax.fiscal_year_start_month,
+        spans_bucket=overlay_bars,
+    )
     nudge_band_scale_off_range_start(
         x_scale, vl_type, ax_vl, band_doubled or curve == BAND_STEP_CURVE
     )
@@ -1320,7 +1361,7 @@ def effective_measure_domain(
 
     1. **Authored domain** wins outright, and suppresses everything below it by
        design — resolve leaves the baked bounds None whenever one is set.
-    2. **Baked ``domain_min`` / ``domain_max``** — the headroom-expanded edges,
+    2. **Baked ``domain_min`` / ``domain_max``** — the pinned edges,
        taken per-edge, because None means "auto-fit THIS edge" and the two are
        decided separately (a zero-anchored axis bakes only the top).
     3. **The zero-anchor floor**, for a low edge resolve left unbaked:
@@ -1352,11 +1393,6 @@ def effective_measure_domain(
     rule's own datum then stretched the domain to cover the mark that should
     never have been drawn. A tick list is not a domain; keep this function
     reading only pinned facts.
-
-    A consequence worth naming: a ``headroom: 0`` axis whose ladder rounds out
-    past ``value`` still reports False here, because nothing pins that edge.
-    Making that case work needs the domain pinned at resolve — which is what
-    the one-ended/bounded-domain task's ``include`` field is for.
 
     ``data_extent`` is None when the measure column carries no numeric rows
     under the field the caller asked about — including a synthetic folded field
@@ -1406,7 +1442,9 @@ def full_rule_at(
     The rule's own datum has no span column, so the perpendicular span
     channel is explicitly nulled (VL's "None disables an inherited channel")
     — otherwise a ``y_start`` bar's ``y2``/``x2`` field leaks into the rule and
-    its auto aria description announces ``NaN``.
+    its auto aria description announces ``NaN``. ``size`` is nulled too: a
+    rule mark accepts it as stroke width, so an inherited bubble ``size``
+    narrows the shared size scale to the rule's stroke-width range.
 
     ``announce=False`` hides the rule from the accessibility tree. The
     normalize-stack rules ``_insert_top_rules`` adds need it: Vega-Lite derives
@@ -1421,6 +1459,7 @@ def full_rule_at(
             "y": {"value": 0},
             "y2": {"value": "height"},
             "x2": None,
+            "size": None,
             "color": {"value": color},
             "yOffset": {"value": 0},
         }
@@ -1430,6 +1469,7 @@ def full_rule_at(
             "x": {"value": 0},
             "x2": {"value": "width"},
             "y2": None,
+            "size": None,
             "color": {"value": color},
             "xOffset": {"value": 0},
         }
@@ -1660,7 +1700,7 @@ def pin_normalize_axis_format(ay_vl: VLDict, ay: ResolvedAxisStyle) -> None:
     """
     if ay.labels.expr is None:
         ay_vl.pop("labelExpr", None)
-    ay_vl["format"] = PREDEFINED_SPECS[PredefinedNumberFormat.percent_whole]
+    ay_vl["format"] = PREDEFINED_SPECS[PredefinedNumberFormat.percent_whole].d3
 
 
 def build_cartesian_y_encoding(
@@ -1686,7 +1726,7 @@ def build_cartesian_y_encoding(
         "title": y_title,
         "axis": ay_vl,
         "scale": resolve_measure_y_scale(ay),
-        "format": tooltip_format.spec,
+        **vl_format_key(tooltip_format.spec),
     }
 
 
@@ -1865,6 +1905,7 @@ __all__ = [
     "build_palette_config",
     "build_x_enc",
     "cartesian_x_scale_domain",
+    "pin_temporal_range",
     "chart_sort_to_vl",
     "dimension_sort_to_vl",
     "pin_sorted_domain",

@@ -213,7 +213,7 @@ class EndpointLabelsConfig(BaseModel):
     `style.charts.series_label.font`.
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
     visible: bool = Field(
         description=(

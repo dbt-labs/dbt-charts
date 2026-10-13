@@ -38,7 +38,7 @@ from dbt_charts.core.fonts import (
     DBT_SANS_TABULAR_FONT_FAMILY,
     DBT_SERIF_OLDSTYLE_TABULAR_FONT_FAMILY,
 )
-from dbt_charts.core.text.format_d3 import LocaleName
+from dbt_charts.core.text.format_d3 import NumberLocaleName
 from dbt_charts.core.text.magnitude_words import magnitude_words
 from dbt_charts.core.text.numeral_scale import SharedScale, SuffixMode
 
@@ -77,9 +77,9 @@ _ALL_TABULAR_FAMILIES = (
 
 
 @pytest.mark.parametrize("font_family", _ALL_TABULAR_FAMILIES)
-@pytest.mark.parametrize("name", get_args(LocaleName))
+@pytest.mark.parametrize("name", get_args(NumberLocaleName))
 def test_every_locale_word_composes_a_reservation(
-    name: LocaleName, font_family: str
+    name: NumberLocaleName, font_family: str
 ) -> None:
     measurer = _measurer_for_composition(font_family)
     analytic, narrative = magnitude_words(name)

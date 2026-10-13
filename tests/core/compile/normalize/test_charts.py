@@ -587,25 +587,6 @@ def test_table_chart_height_width_min_max_always_none() -> None:
     assert compiled.max_height is None
 
 
-def test_cartesian_format_always_none() -> None:
-    """Cartesian charts have no authored top-level format; normalized format must be None.
-
-    _CartesianChartFields authored has no format field (format lives in style).
-    The getattr in _build_cartesian always returned None.
-    """
-    from dbt_charts.core.compile.normalize.charts import normalize_chart
-
-    qr = _registry(q=_sql())
-    compiled = normalize_chart(
-        "b",
-        {"type": "bar", "x": "month", "y": "revenue", "query": "q"},
-        qr,
-        sources={},
-    )
-    assert isinstance(compiled, BarChart)
-    assert compiled.format is None
-
-
 def test_geoshape_basemap_always_none_height_width_wired() -> None:
     """GeoshapeChart has no authored basemap; normalized basemap must be None.
 

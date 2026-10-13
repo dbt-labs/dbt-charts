@@ -3,7 +3,7 @@
 Claude-Code-style primitives — read, write, edit, glob, grep — that let an
 agent author and save boards directly, rather than via a domain-specific
 "write a dashboard" verb. The agent composes these with the typed dct tools
-(``validate_board``, ``render_board``, ``schema``, ``execute_query``).
+(``render_board``, ``schema``, ``execute_query``).
 
 Every path is resolved against and confined to the project root. A path that
 escapes the root (``..`` traversal, absolute path outside, symlink out) is

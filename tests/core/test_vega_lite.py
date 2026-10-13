@@ -1113,7 +1113,8 @@ class TestRenderKpiSvg:
         from dbt_charts.core.compile.models.style.authored import (
             KpiChartStylePatch,
         )
-        from dbt_charts.core.render.chart import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         data = [{"revenue": 42000}]
         # Override the narrative-compact default so the test asserts on a
@@ -1146,7 +1147,8 @@ class TestRenderKpiSvg:
         import re
 
         from dbt_charts.core.compile.models.chart.normalized import KpiChart
-        from dbt_charts.core.render.chart import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         data = [{"delta": -131}]
         chart = self._resolve(
@@ -1170,7 +1172,8 @@ class TestRenderKpiSvg:
         from dbt_charts.core.compile.models.chart.authored import (
             KpiSupportConfig,
         )
-        from dbt_charts.core.render.chart import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         data = [{"revenue": 42000, "delta_pct": 0.124}]
         chart = self._resolve(
@@ -1229,7 +1232,8 @@ class TestRenderKpiSvg:
         from dbt_charts.core.compile.models.style.authored import (
             KpiChartStylePatch,
         )
-        from dbt_charts.core.render.chart import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         data = [{"revenue": 5000}]
         chart = self._resolve(
@@ -1262,7 +1266,8 @@ class TestRenderKpiSvg:
         from dbt_charts.core.compile.models.style.authored import (
             KpiChartStylePatch,
         )
-        from dbt_charts.core.render.chart import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         data = [{"rate": 0.85}]
         chart = self._resolve(
@@ -1293,7 +1298,8 @@ class TestRenderKpiSvg:
         from dbt_charts.core.compile.models.style.authored import (
             KpiChartStylePatch,
         )
-        from dbt_charts.core.render.chart import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         data = [{"count": 100}]
         chart = self._resolve(
@@ -1321,7 +1327,8 @@ class TestRenderKpiSvg:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         data = [{"count": 100}]
         chart = self._resolve(make_chart("kpi", value="count", label="Count"), data)
@@ -1355,7 +1362,8 @@ class TestRenderKpiSvg:
             get_theme_style,
         )
         from dbt_charts.core.compile.models.chart.authored import KpiSupportConfig
-        from dbt_charts.core.render.chart import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         expected_x = float(get_theme_style().charts.kpi.content_padding.left)
 
@@ -1393,10 +1401,10 @@ class TestRenderKpiSvg:
             )
 
     def test_kpi_svg_keeps_extra_gap_between_value_and_title(self, make_chart):
-        """Value comes first, title second — gap respects minimum_title_value_gap."""
+        """Value comes first, title second — the engine keeps its 14px minimum gap."""
         import xml.etree.ElementTree as ET
 
-        from dbt_charts.core.render.chart import render_kpi_svg
+        from ._engine_render import render_kpi_svg
 
         data = [{"count": 100}]
         chart = self._resolve(make_chart("kpi", value="count", label="Count"), data)
@@ -1411,10 +1419,8 @@ class TestRenderKpiSvg:
         ns = {"svg": "http://www.w3.org/2000/svg"}
         ys = [float(node.attrib["y"]) for node in root.findall("svg:text", ns)]
         assert len(ys) >= 2
-        from dbt_charts.core.compile.config import get_chart_rendering
-
         # ys[0] is the value baseline, ys[1] is the title baseline.
-        assert ys[1] - ys[0] >= float(get_chart_rendering().kpi.minimum_title_value_gap)
+        assert ys[1] - ys[0] >= 14.0
 
     def test_kpi_svg_value_font_size_equals_authored_value(self, make_chart):
         import xml.etree.ElementTree as ET
@@ -1422,7 +1428,8 @@ class TestRenderKpiSvg:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         data = [{"count": 100}]
         chart = self._resolve(make_chart("kpi", value="count", label="Count"), data)
@@ -1449,7 +1456,8 @@ class TestRenderKpiSvg:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         data = [{"count": 100}]
         chart = self._resolve(make_chart("kpi", value="count", label="Count"), data)
@@ -1468,7 +1476,8 @@ class TestRenderKpiSvg:
             get_theme_style,
         )
         from dbt_charts.core.diagnostics.chart_data import ChartDataError
-        from dbt_charts.core.render.chart import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         # resolve with dummy data, then call with empty data to test the error
         data = [{"revenue": 1}]
@@ -1487,7 +1496,8 @@ class TestRenderKpiSvg:
             get_theme_style,
         )
         from dbt_charts.core.diagnostics.chart_data import ChartDataError
-        from dbt_charts.core.render.chart import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         multi_data = [{"revenue": 1}, {"revenue": 2}]
         chart = self._resolve(make_chart("kpi", value="revenue"), multi_data)

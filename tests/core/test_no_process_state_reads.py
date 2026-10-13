@@ -11,15 +11,11 @@ import ast
 import json
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 from typing import NamedTuple
 
 import dbt_charts
-
-try:  # Python 3.11+ stdlib; 3.10 falls through to the tomli back-compat dep.
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - exercised on 3.10 CI
-    import tomli as tomllib  # type: ignore[no-redef]
 
 CORE = Path(dbt_charts.__file__).resolve().parent / "core"
 

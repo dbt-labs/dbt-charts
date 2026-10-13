@@ -13,6 +13,7 @@ distributions) construct it directly — that edge is not tach-covered.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -20,7 +21,6 @@ from typing import TYPE_CHECKING, Any
 from dbt_charts.core.project import (
     ALL_FILES_GLOB,
     CHARTS_SUBDIR,
-    FACES_FALLBACK_SUBDIR,
     PROJECT_CONFIG_NAME,
     SKIP_SCAN_DIRS,
     GrepHit,
@@ -124,7 +124,7 @@ class FilesystemProject(Project):
 
     @cached_property
     def charts_dir(self) -> Path:
-        return self.root / self._boards_physical_subdir()
+        return self.root / CHARTS_SUBDIR
 
     def package_charts_dirs(self) -> list[Path]:
         """Absolute paths of every installed package's ``charts/`` directory.
@@ -134,45 +134,6 @@ class FilesystemProject(Project):
         notices a package added or removed by a ``dbt deps`` re-run.
         """
         return [self.root / root.relpath for root in package_board_roots(self)]
-
-    def _boards_physical_subdir(self) -> str:
-        """The on-disk directory that answers canonical ``charts/`` paths.
-
-        Pre-rename projects still carry ``faces/``; they keep working through a
-        store-level translation — consumers always speak ``charts/`` and never
-        see the physical name. ``charts/`` wins outright when both exist (the
-        two are never merged), and nothing here ever creates ``faces/``.
-        Probed per call, not cached: a live ``dct serve`` must notice when the
-        user renames the directory. Written surfaces (``dct init``, schemas,
-        docs) stay ``charts/``-only.
-        """
-        if (self.root / CHARTS_SUBDIR).is_dir():
-            return CHARTS_SUBDIR
-        if (self.root / FACES_FALLBACK_SUBDIR).is_dir():
-            return FACES_FALLBACK_SUBDIR
-        return CHARTS_SUBDIR
-
-    def _physical(self, relpath: str) -> str:
-        """Map a canonical relpath to its physical location under the fallback."""
-        physical = self._boards_physical_subdir()
-        if physical == CHARTS_SUBDIR:
-            return relpath
-        if relpath == CHARTS_SUBDIR:
-            return physical
-        if relpath.startswith(f"{CHARTS_SUBDIR}/"):
-            return f"{physical}{relpath[len(CHARTS_SUBDIR) :]}"
-        return relpath
-
-    def _canonical(self, relpath: str) -> str:
-        """Inverse of ``_physical`` for paths yielded by listings."""
-        physical = self._boards_physical_subdir()
-        if physical == CHARTS_SUBDIR:
-            return relpath
-        if relpath == physical:
-            return CHARTS_SUBDIR
-        if relpath.startswith(f"{physical}/"):
-            return f"{CHARTS_SUBDIR}{relpath[len(physical) :]}"
-        return relpath
 
     @cached_property
     def files(self) -> ProjectFileQueries:
@@ -250,21 +211,21 @@ class FilesystemProject(Project):
         """Raises ValueError if *relpath* is absolute, empty/blank, or escapes
         above the project root."""
         assert_relpath(relpath)
-        return (self.root / self._physical(relpath)).exists()
+        return (self.root / relpath).exists()
 
     def read_text(self, relpath: str) -> str:
         """Raises FileNotFoundError if the path does not exist, or ValueError
         if *relpath* is absolute, empty/blank, or escapes above the project
         root."""
         assert_relpath(relpath)
-        return (self.root / self._physical(relpath)).read_text(encoding="utf-8")
+        return (self.root / relpath).read_text(encoding="utf-8")
 
     def read_bytes(self, relpath: str) -> bytes:
         """Raises FileNotFoundError if the path does not exist, or ValueError
         if *relpath* is absolute, empty/blank, or escapes above the project
         root."""
         assert_relpath(relpath)
-        return (self.root / self._physical(relpath)).read_bytes()
+        return (self.root / relpath).read_bytes()
 
     def file_version(self, relpath: str) -> str:
         """Stat signature (``mtime_ns:size``) — no file read on the common path.
@@ -274,28 +235,53 @@ class FilesystemProject(Project):
         for tracked, dirty, and untracked files alike, and costs one ``stat``.
         """
         assert_relpath(relpath)
-        st = (self.root / self._physical(relpath)).stat()
+        st = (self.root / relpath).stat()
         return f"{st.st_mtime_ns}:{st.st_size}"
 
-    def iter_files(self, under: str, *, recursive: bool) -> Iterator[str]:
-        """Skips traversal-noise directories (``SKIP_SCAN_DIRS``)."""
-        under = self._physical(under)
+    def iter_files(
+        self,
+        under: str,
+        *,
+        recursive: bool,
+        onerror: Callable[[str, OSError], None] | None = None,
+    ) -> Iterator[str]:
+        """Skips traversal-noise directories (``SKIP_SCAN_DIRS``).
+
+        ``onerror``, when given, is called with a project-relative path and
+        the ``OSError`` for a directory ``os.walk``'s own ``scandir`` cannot
+        enter (permission denied, most commonly). Without it, ``os.walk``'s
+        default (``onerror=None``) silently skips that directory -- the
+        walk simply yields fewer files, with no way for a caller to tell
+        "no boards here" from "couldn't read this directory". Every
+        existing caller passes no ``onerror``, so this is additive only;
+        ``list_boards`` is the first to use it.
+        """
         subtree = self.root if under == "." else self.root / under
         if not subtree.is_dir():
             return
 
         if recursive:
             candidates = []
-            for root_str, dirs, files in os.walk(subtree, topdown=True):
+
+            def _record_walk_error(exc: OSError) -> None:
+                if onerror is None:
+                    return
+                failed = Path(exc.filename) if exc.filename else subtree
+                onerror(posix_relpath(failed, self.root), exc)
+
+            walk_onerror = _record_walk_error if onerror is not None else None
+            for root_str, dirs, files in os.walk(
+                subtree, topdown=True, onerror=walk_onerror
+            ):
                 dirs[:] = sorted(d for d in dirs if d not in SKIP_SCAN_DIRS)
                 root_path = Path(root_str)
                 for name in files:
                     candidates.append(posix_relpath(root_path / name, self.root))
-            yield from (self._canonical(c) for c in sorted(candidates))
+            yield from sorted(candidates)
         else:
             for p in sorted(subtree.iterdir()):
                 if p.is_file():
-                    yield self._canonical(posix_relpath(p, self.root))
+                    yield posix_relpath(p, self.root)
 
     def iter_dir(self, under: str) -> Iterator[ProjectPath | ProjectDirectory]:
         """``os.scandir`` over *under*, filtered/sorted per ``Project.iter_dir``.
@@ -305,7 +291,6 @@ class FilesystemProject(Project):
         project root is excluded (e.g. a ``charts/tasks -> ../../tasks``
         symlink), even though ``os.scandir`` itself would happily follow it.
         """
-        under = self._physical(under)
         subtree = self.root if under == "." else self.root / under
         if not subtree.is_dir():
             return
@@ -331,10 +316,10 @@ class FilesystemProject(Project):
         files.sort(key=lambda e: e.name.lower())
         for entry in dirs:
             child = entry.name if under == "." else f"{under}/{entry.name}"
-            yield ProjectDirectory(self, self._canonical(child))
+            yield ProjectDirectory(self, child)
         for entry in files:
             child = entry.name if under == "." else f"{under}/{entry.name}"
-            yield ProjectPath(self, self._canonical(child))
+            yield ProjectPath(self, child)
 
     def write_text(self, relpath: str, content: str) -> None:
         """Write *content* under the project root, creating parent directories.
@@ -353,7 +338,7 @@ class FilesystemProject(Project):
         that guard while ``resolve()`` still collapsed it back onto the
         package file underneath.
         """
-        candidate = Path(self._physical(relpath))
+        candidate = Path(relpath)
         candidate = candidate if candidate.is_absolute() else self.root / candidate
         resolved = candidate.resolve()
         if resolved != self.root and self.root not in resolved.parents:
@@ -372,7 +357,7 @@ class FilesystemProject(Project):
         ``dbt_packages/`` path is refused outright — see ``write_text`` for why
         the check runs against the resolved path, not the raw *relpath*.
         """
-        candidate = Path(self._physical(relpath))
+        candidate = Path(relpath)
         candidate = candidate if candidate.is_absolute() else self.root / candidate
         resolved = candidate.resolve()
         if resolved != self.root and self.root not in resolved.parents:

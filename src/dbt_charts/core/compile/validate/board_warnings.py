@@ -8,6 +8,8 @@ markdown boards after their translation to YAML.
 
 from __future__ import annotations
 
+import difflib
+
 from dbt_charts.core.compile.format import resolve_format_parts
 from dbt_charts.core.compile.models.board.normalized import Board, LayoutItem
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -19,9 +21,11 @@ from dbt_charts.core.compile.models.chart.normalized import (
 from dbt_charts.core.compile.normalize.chart_focus import (
     PRE_FOCUS_PLACED_CHARTS_META_KEY,
 )
+from dbt_charts.core.compile.validate.formats import format_names_used
 from dbt_charts.core.diagnostics import (
     WARN_AXIS_ALIGN_DISCARDED,
     WARN_DOUBLE_HEADER,
+    WARN_FORMAT_UNUSED_NAME,
     WARN_H1_BODY_NO_TITLE,
     WARN_SINGLE_CHART_REDUNDANT_TITLE,
     WARN_UNREFERENCED_CHART,
@@ -29,15 +33,19 @@ from dbt_charts.core.diagnostics import (
     RelatedLocation,
 )
 from dbt_charts.core.fonts import font_is_tabular
+from dbt_charts.core.text.predefined_formats import ALL_PREDEFINED_NAMES
 
 
-def detect_board_warnings(board: Board) -> list[Diagnostic]:
+def detect_board_warnings(
+    board: Board, own_format_names: frozenset[str]
+) -> list[Diagnostic]:
     """Return non-fatal warnings read off the compiled board tree."""
     warnings: list[Diagnostic] = []
     _detect_double_headers(board, warnings)
     _detect_single_chart_redundant_title(board, warnings)
     _detect_orphan_charts(board, warnings)
     _detect_axis_align_discarded(board, warnings)
+    _detect_unused_format_names(board, own_format_names, warnings)
     return warnings
 
 
@@ -368,5 +376,39 @@ def _detect_axis_align_discarded(board: Board, warnings: list[Diagnostic]) -> No
                     format_alias=fmt,
                 ),
                 fix=WARN_AXIS_ALIGN_DISCARDED.fix_template,
+            )
+        )
+
+
+def _engine_name_hint(name: str) -> str:
+    engines = sorted(ALL_PREDEFINED_NAMES)
+    related = [engine for engine in engines if engine.startswith(name)]
+    related = related or difflib.get_close_matches(name, engines, n=3, cutoff=0.7)
+    if not related:
+        return ""
+    return " Did you mean " + " or ".join(f"`{engine}`" for engine in related) + "?"
+
+
+def _detect_unused_format_names(
+    board: Board, own_format_names: frozenset[str], warnings: list[Diagnostic]
+) -> None:
+    """Warn on a name this board file's ``style.formats`` defines and nothing reads.
+
+    Only names from the board's own file are judged: one inherited from
+    ``meta.yml`` may be used by a sibling board this compile cannot see.
+    """
+    unjudged = own_format_names - ALL_PREDEFINED_NAMES
+    if not unjudged:
+        return
+    used = format_names_used(board)
+    for name in sorted(unjudged - used):
+        warnings.append(
+            Diagnostic.from_code(
+                WARN_FORMAT_UNUSED_NAME,
+                path=f"style.formats.{name}",
+                message=WARN_FORMAT_UNUSED_NAME.message_template.format(
+                    name=name, did_you_mean=_engine_name_hint(name)
+                ),
+                fix=WARN_FORMAT_UNUSED_NAME.fix_template,
             )
         )

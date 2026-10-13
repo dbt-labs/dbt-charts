@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import uuid
 from pathlib import Path
 
@@ -12,13 +13,14 @@ import yaml
 from typer.core import TyperGroup
 from typer.testing import CliRunner
 
-from dbt_charts.cli.main import app
+from dbt_charts.cli.main import _option_path, app
 from dbt_charts.telemetry import emitter
 from dbt_charts.telemetry.emitter import (
     CliInvocation,
     begin_invocation,
     command_path,
     get_user_id,
+    user_file_path,
 )
 
 
@@ -38,9 +40,9 @@ def sent(monkeypatch: pytest.MonkeyPatch) -> list[CliInvocation]:
 
 @pytest.fixture
 def user_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    path = tmp_path / "home" / ".dbt" / ".user.yml"
-    monkeypatch.setattr(emitter, "USER_FILE", path)
-    return path
+    profiles_dir = tmp_path / "home" / ".dbt"
+    monkeypatch.setenv("DBT_PROFILES_DIR", str(profiles_dir))
+    return profiles_dir / ".user.yml"
 
 
 def test_user_id_is_created_once(user_file: Path) -> None:
@@ -56,11 +58,55 @@ def test_user_id_reads_existing_dbt_cookie(user_file: Path) -> None:
     assert get_user_id(user_file) == "11111111-1111-4111-8111-111111111111"
 
 
+def test_user_id_regenerates_when_file_is_empty(user_file: Path) -> None:
+    user_file.parent.mkdir(parents=True)
+    user_file.write_text("", encoding="utf-8")
+    new = get_user_id(user_file)
+    assert str(uuid.UUID(new)) == new
+    assert get_user_id(user_file) == new
+
+
 def test_user_id_malformed_file_raises(user_file: Path) -> None:
     user_file.parent.mkdir(parents=True)
     user_file.write_text("- not\n- a mapping\n", encoding="utf-8")
     with pytest.raises(ValueError, match=str(user_file)):
         get_user_id(user_file)
+
+
+def test_user_file_follows_dbt_profiles_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DBT_PROFILES_DIR", str(tmp_path / "p"))
+    assert user_file_path(os.environ) == tmp_path / "p" / ".user.yml"
+    monkeypatch.delenv("DBT_PROFILES_DIR")
+    assert user_file_path(os.environ) == Path.home() / ".dbt" / ".user.yml"
+
+
+def test_first_run_notice_prints_once_on_creation(
+    tmp_path: Path,
+    sent: list[CliInvocation],
+    user_file: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    begin_invocation("render", no_send_flag=False, project_dir=tmp_path)
+    notice = capsys.readouterr().err
+    assert "sending anonymous usage stats to dbt Labs" in notice
+    assert "DO_NOT_TRACK=1" in notice
+    assert "--no-send-anonymous-usage-stats" in notice
+    assert "/reference/telemetry" in notice
+    begin_invocation("render", no_send_flag=False, project_dir=tmp_path)
+    assert capsys.readouterr().err == ""
+
+
+def test_no_notice_and_no_file_when_consent_is_off(
+    tmp_path: Path,
+    sent: list[CliInvocation],
+    user_file: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    begin_invocation("render", no_send_flag=True, project_dir=tmp_path)
+    assert capsys.readouterr().err == ""
+    assert not user_file.parent.exists()
 
 
 def test_start_and_end_payloads(
@@ -204,3 +250,110 @@ class TestCliWiring:
         monkeypatch.setattr(emitter, "send", boom)
         result = CliRunner().invoke(app, ["docs"])
         assert result.exit_code == 0
+
+
+class TestOptionPath:
+    """The root callback reads the project-dir options as click will."""
+
+    def test_last_occurrence_wins(self, tmp_path: Path) -> None:
+        args = ["--project-dir", "a", "--project-dir=b", "--project-dir", "c"]
+        assert _option_path(args, "--project-dir", "X") == Path("c").resolve()
+
+    def test_stops_at_the_double_dash_terminator(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("X", raising=False)
+        args = ["--project-dir", "a", "--", "--project-dir", "b"]
+        assert _option_path(args, "--project-dir", "X") == Path("a").resolve()
+
+    def test_flag_beats_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("X", "from_env")
+        assert (
+            _option_path(["--project-dir", "a"], "--project-dir", "X")
+            == Path("a").resolve()
+        )
+        assert _option_path([], "--project-dir", "X") == Path("from_env").resolve()
+
+
+class TestTargetedProject:
+    """Consent and project_id come from the targeted project, not cwd."""
+
+    @staticmethod
+    def _project(root: Path, *, send: bool) -> Path:
+        root.mkdir()
+        (root / "dbt_project.yml").write_text(
+            f"name: demo\nflags:\n  send_anonymous_usage_stats: {str(send).lower()}\n",
+            encoding="utf-8",
+        )
+        return root
+
+    @pytest.mark.parametrize("option", ["--project-dir", "--dbt-project-dir"])
+    def test_option_target_opts_out(
+        self,
+        option: str,
+        sent: list[CliInvocation],
+        user_file: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        target = self._project(tmp_path / "target", send=False)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        result = CliRunner().invoke(app, ["render", option, str(target)])
+        assert result.exit_code == 2
+        assert sent == []
+
+    @pytest.mark.parametrize(
+        ("env", "option"),
+        [
+            ("DCT_PROJECT_DIR", "--project-dir"),
+            ("DBT_PROJECT_DIR", "--dbt-project-dir"),
+        ],
+    )
+    def test_env_and_equals_forms_target_the_project(
+        self,
+        env: str,
+        option: str,
+        sent: list[CliInvocation],
+        user_file: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        target = self._project(tmp_path / "target", send=False)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        monkeypatch.setenv(env, str(target))
+        assert CliRunner().invoke(app, ["render"]).exit_code == 2
+        assert sent == []
+        monkeypatch.delenv(env)
+        result = CliRunner().invoke(app, ["render", f"{option}={target}"])
+        assert result.exit_code == 2
+        assert sent == []
+
+    def test_targeted_project_supplies_project_id(
+        self,
+        sent: list[CliInvocation],
+        user_file: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        target = self._project(tmp_path / "target", send=True)
+        monkeypatch.chdir(tmp_path)
+        CliRunner().invoke(app, ["render", "--project-dir", str(target)])
+        assert sent[0].project_id == hashlib.md5(b"demo").hexdigest()
+
+    def test_invalid_consent_warns_on_stderr_and_sends_nothing(
+        self,
+        sent: list[CliInvocation],
+        user_file: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("DBT_SEND_ANONYMOUS_USAGE_STATS", "maybe")
+        result = CliRunner().invoke(app, ["docs"])
+        assert result.exit_code == 0
+        assert "DBT_SEND_ANONYMOUS_USAGE_STATS" in result.stderr
+        assert sent == []

@@ -76,7 +76,7 @@ renders.
 | `charts.*.sort.by`, `charts.*.sort.order` | The column to sort by, and `asc` or `desc`. |
 | `charts.*.value`, `charts.*.label` | KPI: the column holding the number, and its caption. |
 | `charts.*.support.value`, `charts.*.style.support.format` | KPI: a second line under the number, such as the change from the prior period. |
-| `charts.*.style.number_format` | The format of a chart's measure axis and tooltips. |
+| `charts.*.style.axis_y.labels.format` | The format of a chart's measure axis and tooltips. |
 | `charts.*.style.value.format` | The format of a KPI's number. |
 | `charts.*.style.columns.*.label`, `charts.*.style.columns.*.format` | Table: a column's header and its format. |
 
@@ -90,12 +90,16 @@ text. The axis labels a date by its grain; text it can't read as a date
 ### Formats
 
 A format is one of these names: `currency`, `currency_whole`, `currency_full`,
-`number`, `number_full`, `integer`, `delta`, `percent`, `percent_whole`,
+`currency_compact`, `number`, `number_full`, `compact`, `integer`, `delta`, `percent`, `percent_whole`,
 `percent_delta`, `percent_number`, `percent_number_delta`,
-`percentage_points_delta`, `year`, `date_short`, `time_short`. The three
-percent formats take a fraction (0.25). The two "percent number" formats and
-the points format take a whole number (25), on KPI values and table columns
-only. A d3 number or time spec also works.
+`percentage_points_delta`, `year`, `id`, `duration`, `bytes`, `latitude`,
+`longitude`, `rating`, `date_short`, `time_short`. The three percent formats
+take a fraction (0.25). The two "percent number" formats and the points format
+take a whole number (25), on KPI values and table columns only. `duration` takes
+seconds and `bytes` takes bytes. A date axis labels by its grain; a board
+relabels a grain by redefining `date_year`, `date_quarter`, `date_month` or
+`date_week` in `style.formats` (the names are valid in a slot only once
+redefined). A d3 number or time spec also works.
 
 ### Styling a board
 

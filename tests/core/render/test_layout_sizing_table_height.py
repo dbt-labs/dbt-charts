@@ -12,6 +12,7 @@ All tests here FAIL on pre-fix main and PASS after the fix.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -74,9 +75,9 @@ def _call_provider(
     """Call _get_table_height_from_data with the given resolved_style."""
     from dbt_charts.core.render.layout_sizing import _get_table_height_from_data
 
-    resolved = resolve(chart, [], board_context)
+    resolved = resolve(chart, executor.execute_chart(chart, {}), board_context)
     assert isinstance(resolved, ResolvedTableChart)
-    return _get_table_height_from_data(
+    height = _get_table_height_from_data(
         chart,
         resolved,
         executor,
@@ -84,6 +85,8 @@ def _call_provider(
         card_padding=float(resolved_style.frame.card_padding),
         board_style=resolved_style,
     )
+    assert height is not None
+    return height
 
 
 # ---------------------------------------------------------------------------
@@ -473,7 +476,9 @@ class TestGrowBy2RuleOnSelfSizing:
 
     def test_row_count_page_rows_plus_three_paginates(self):
         """23 rows at page_rows=20 — past grow-by-2 cap, height caps at 20 rows + chrome."""
-        from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
+        from dbt_charts.core.render.sizing import (
+            TABLE_PAGINATION_CONTROL_HEIGHT as _PAGINATION_CONTROL_HEIGHT,
+        )
 
         chart = _make_table_chart()
         height_23 = _call_provider(chart, _make_executor(23))
@@ -492,7 +497,9 @@ class TestGrowBy2RuleOnSelfSizing:
 
     def test_row_count_one_hundred_paginates_to_page_rows(self):
         """100-row table at page_rows=20 — paginates, height caps at 20 + chrome."""
-        from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
+        from dbt_charts.core.render.sizing import (
+            TABLE_PAGINATION_CONTROL_HEIGHT as _PAGINATION_CONTROL_HEIGHT,
+        )
 
         chart = _make_table_chart()
         height_100 = _call_provider(chart, _make_executor(100))
@@ -520,7 +527,9 @@ class TestCapNoteHeightReservation:
         )
 
     def test_page_count_within_cap_reserves_no_extra_line(self):
-        from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
+        from dbt_charts.core.render.sizing import (
+            TABLE_PAGINATION_CONTROL_HEIGHT as _PAGINATION_CONTROL_HEIGHT,
+        )
 
         chart = self._paginated_chart(page_rows=5)
         # 100 rows / 5 per page = 20 pages -- exactly at the cap, not past it.
@@ -534,9 +543,9 @@ class TestCapNoteHeightReservation:
         )
 
     def test_page_count_past_cap_reserves_the_cap_note_line(self):
-        from dbt_charts.core.render.chart.table import (
-            _PAGINATION_CAP_NOTE_HEIGHT,
-            _PAGINATION_CONTROL_HEIGHT,
+        _PAGINATION_CAP_NOTE_HEIGHT = 20
+        from dbt_charts.core.render.sizing import (
+            TABLE_PAGINATION_CONTROL_HEIGHT as _PAGINATION_CONTROL_HEIGHT,
         )
 
         chart = self._paginated_chart(page_rows=5)
@@ -578,86 +587,6 @@ class TestRendererShrinkToContent:
     changes in padding, header height, or row height.
     """
 
-    def _call_resolve(
-        self,
-        n_rows: int,
-        height: float | None,
-        page_rows: int,
-    ) -> float:
-        from dbt_charts.core.render.chart.table import (
-            PaginationConfig,
-            _resolve_visible_rows,
-        )
-
-        rs = resolve_style(get_theme_style())
-        tc = rs.chart_defaults.table
-        row_h = int(tc.row.height)
-        header_h = int(tc.header.height)
-        padding = int(tc.outer_padding)
-        bottom_padding = int(tc.bottom_padding)
-        data = [{"col": i} for i in range(n_rows)]
-        pagination = PaginationConfig(enabled=True, page_rows=page_rows)
-        result = _resolve_visible_rows(
-            data=data,
-            height=height,
-            title_height=0.0,
-            header_height=float(header_h),
-            padding=padding,
-            row_height=row_h,
-            bottom_padding=bottom_padding,
-            pagination=pagination,
-            page=1,
-        )
-        return result[0]  # table_height
-
-    def test_single_row_oversized_slot_collapses_to_content(self):
-        """1 data row with a 318px slot (sized for page_rows=9) must collapse to content.
-
-        Pre-fix: table_height == 318 (dead whitespace).
-        Post-fix: table_height == auto-sized height for 1 row (no padding below last row).
-        """
-        auto_height = self._call_resolve(n_rows=1, height=None, page_rows=9)
-        slotted_height = self._call_resolve(n_rows=1, height=318, page_rows=9)
-
-        assert slotted_height == auto_height, (
-            f"Single-row table with oversized 318px slot should collapse to "
-            f"auto-sized height {auto_height}px, got {slotted_height}px"
-        )
-        assert slotted_height < 318, (
-            f"Slotted height must be smaller than the slot (318px), got {slotted_height}"
-        )
-
-    def test_full_page_slightly_oversized_slot_collapses_to_content(self):
-        """9 data rows with a slightly-oversized slot (auto + 50px) collapse to content.
-
-        This distinguishes shrink-fired from shrink-skipped: the slot is 50px
-        larger than content so if shrink did NOT fire the result would be slot,
-        but with shrink it should equal the auto-sized height.
-        """
-        auto_height = self._call_resolve(n_rows=9, height=None, page_rows=9)
-        oversized_slot = auto_height + 50.0
-        slotted_height = self._call_resolve(
-            n_rows=9, height=oversized_slot, page_rows=9
-        )
-
-        assert slotted_height == auto_height, (
-            f"9-row table with slot={oversized_slot} (50px over auto_height={auto_height}) "
-            f"must collapse to auto-sized content height, got {slotted_height}"
-        )
-
-    def test_few_rows_oversized_slot_collapses_to_content(self):
-        """3 data rows with a page_rows=9 slot must collapse to auto-sized content height."""
-        auto_height = self._call_resolve(n_rows=3, height=None, page_rows=9)
-        slotted_height = self._call_resolve(n_rows=3, height=318, page_rows=9)
-
-        assert slotted_height == auto_height, (
-            f"3-row table with oversized 318px slot should collapse to "
-            f"auto-sized height {auto_height}px, got {slotted_height}px"
-        )
-        assert slotted_height < 318, (
-            f"Slotted height must be smaller than the slot (318px), got {slotted_height}"
-        )
-
     def test_summary_row_gap_included_when_slot_shrunk(self):
         """Summary gap must be included in SVG height when an oversized slot is shrunk.
 
@@ -668,9 +597,8 @@ class TestRendererShrinkToContent:
         import re
 
         from dbt_charts.core.compile.models.style.authored import ChartStylePatch
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from .._engine_render import render_table_svg
 
         rs = resolve_style(get_theme_style())
         tc = rs.chart_defaults.table
@@ -718,135 +646,6 @@ class TestRendererShrinkToContent:
 # ---------------------------------------------------------------------------
 # Regression: title_row.height floor must not apply to title-only tables
 # ---------------------------------------------------------------------------
-
-
-class TestTitleBlockHeightNoSubtitleFloor:
-    """``title_row.height`` is the height floor only when a subtitle is present.
-
-    Bug: ``compute_table_title_block_layout`` applied
-    ``max(int(tc.title_row.height), ...)`` unconditionally, before the subtitle
-    block was computed, so title-only tables carried the full floor (40px by
-    default) even when the natural single-line title content was only ~22–31px.
-    The gap between title and the first table row was visibly inflated.
-
-    Fix: the floor moves inside the subtitle branch.
-    """
-
-    def _call(
-        self,
-        title: str,
-        subtitle: str,
-        table_width: float = 600.0,
-        floor_override: float | None = None,
-    ) -> tuple[int, float]:
-        """Return (title_block_height, title_row_floor) for the given args.
-
-        ``floor_override`` patches ``tc.title_row.height`` before computing the
-        layout, so the floor's effect can be pinned theme-independently — an
-        inflated floor makes "does the floor apply here" unambiguous regardless
-        of what the active theme's real title font/floor happen to be.
-        """
-        from dbt_charts.core.compile.config import get_theme_style
-        from dbt_charts.core.compile.resolve.style.board import (
-            resolve_chart_style_context,
-            resolve_style,
-        )
-        from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
-        from dbt_charts.core.render.chart.table import compute_table_title_block_layout
-
-        rcs = resolve_chart_style_context(get_theme_style())
-        tc = rcs.table
-        if floor_override is not None:
-            tc = tc.model_copy(
-                update={
-                    "title_row": tc.title_row.model_copy(
-                        update={"height": floor_override}
-                    )
-                }
-            )
-        title_font = resolve_title_font(rcs, width=table_width)
-        rs = resolve_style(get_theme_style())
-        height = compute_table_title_block_layout(
-            chart_title=title,
-            chart_subtitle=subtitle,
-            table_width=table_width,
-            tc=tc,
-            padding=int(tc.outer_padding),
-            title_style=rcs.title,
-            card_padding=float(rs.frame.card_padding),
-            title_font=title_font,
-        ).height
-        return height, tc.title_row.height
-
-    def test_title_only_height_is_below_subtitle_floor(self) -> None:
-        """Title-only block must not be padded to the subtitle-floor height.
-
-        Pre-fix: ``height == int(tc.title_row.height)`` (floor applied unconditionally).
-        Post-fix: ``height < int(tc.title_row.height)`` (natural content height only).
-        """
-        height, floor = self._call(title="My Title", subtitle="")
-        assert height < int(floor), (
-            f"Title-only block height ({height}px) should be strictly less than the "
-            f"subtitle floor ({int(floor)}px) — the floor must not apply without a subtitle"
-        )
-
-    def test_title_only_ignores_inflated_floor(self) -> None:
-        """Title-only block must ignore the floor even when it's set far above content.
-
-        Theme-independent pin: an inflated floor (1000px) makes it unambiguous
-        whether the floor applies — no dependence on the active theme's real
-        title-row height happening to exceed natural content.
-        """
-        height, floor = self._call(title="My Title", subtitle="", floor_override=1000.0)
-        assert floor == 1000.0
-        assert height < 100, (
-            f"Title-only block height ({height}px) should be unaffected by an inflated "
-            f"floor ({int(floor)}px) — the floor must not apply without a subtitle"
-        )
-
-    def test_title_with_subtitle_height_respects_floor(self) -> None:
-        """Title+subtitle block must still be at least ``tc.title_row.height`` tall.
-
-        The floor ensures adequate clearance for both text rows.
-        This must be unaffected by the title-only fix.
-        """
-        height, floor = self._call(title="My Title", subtitle="Supporting context here")
-        assert height >= int(floor), (
-            f"Title+subtitle block height ({height}px) should be at least the "
-            f"subtitle floor ({int(floor)}px)"
-        )
-
-    def test_title_with_subtitle_respects_inflated_floor(self) -> None:
-        """Title+subtitle block must bind exactly to an inflated floor.
-
-        Theme-independent pin for the invariant the previous test could miss:
-        at the default 600px width, natural subtitle content (43px) already
-        exceeds the real theme floor (40px), so that test can't tell "floor
-        applied" from "floor irrelevant, content is just tall enough." An
-        inflated floor (1000px) makes it unambiguous — if the floor were
-        accidentally dropped from the subtitle branch, this would fail.
-        """
-        height, floor = self._call(
-            title="My Title", subtitle="Supporting context here", floor_override=1000.0
-        )
-        assert height == int(floor), (
-            f"Title+subtitle block height ({height}px) should equal the inflated floor "
-            f"({int(floor)}px) exactly — the floor must still bind with a subtitle present"
-        )
-
-    def test_title_only_below_floor_at_each_width_tier(self) -> None:
-        """Natural height (< floor) holds across all four width tiers.
-
-        Each tier resolves a different title font size; the natural content
-        height must be below the floor at every tier so no tier silently
-        reintroduces the dead gap.
-        """
-        for width in (200.0, 400.0, 600.0, 1200.0):
-            height, floor = self._call(title="My Title", subtitle="", table_width=width)
-            assert height < int(floor), (
-                f"At width={width}px: title-only height {height}px should be "
-                f"< subtitle floor {int(floor)}px"
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -920,7 +719,9 @@ rows:
 
     def test_small_shortfall_grows_past_authored_ceiling(self, local_project):
         """Shortfall within the pagination-control-bar budget grows instead of clamping."""
-        from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
+        from dbt_charts.core.render.sizing import (
+            TABLE_PAGINATION_CONTROL_HEIGHT as _PAGINATION_CONTROL_HEIGHT,
+        )
 
         natural_height = self._size_with_ceiling(local_project, n_rows=10, ceiling=None)
         small_shortfall_ceiling = natural_height - (_PAGINATION_CONTROL_HEIGHT - 5)
@@ -937,7 +738,9 @@ rows:
 
     def test_large_shortfall_still_clamps_to_authored_ceiling(self, local_project):
         """A shortfall past the pagination-control-bar budget still clamps (unchanged)."""
-        from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
+        from dbt_charts.core.render.sizing import (
+            TABLE_PAGINATION_CONTROL_HEIGHT as _PAGINATION_CONTROL_HEIGHT,
+        )
 
         natural_height = self._size_with_ceiling(local_project, n_rows=10, ceiling=None)
         large_shortfall_ceiling = natural_height - (_PAGINATION_CONTROL_HEIGHT + 20)
@@ -994,7 +797,9 @@ rows:
         sibling to absorb the mismatch, so an under-measured container is
         directly visible here.
         """
-        from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
+        from dbt_charts.core.render.sizing import (
+            TABLE_PAGINATION_CONTROL_HEIGHT as _PAGINATION_CONTROL_HEIGHT,
+        )
 
         natural_height = self._size_with_ceiling(local_project, n_rows=10, ceiling=None)
         small_shortfall_ceiling = natural_height - (_PAGINATION_CONTROL_HEIGHT - 5)
@@ -1060,7 +865,9 @@ rows:
         budget and scales every auto item down to make the deficit disappear —
         even though the auto item's own content never changed.
         """
-        from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
+        from dbt_charts.core.render.sizing import (
+            TABLE_PAGINATION_CONTROL_HEIGHT as _PAGINATION_CONTROL_HEIGHT,
+        )
 
         natural_table_height = self._size_with_ceiling(
             local_project, n_rows=10, ceiling=None
@@ -1086,3 +893,117 @@ rows:
             f"({natural_auto_height}px), unaffected by the other item's authored "
             "height"
         )
+
+
+# ---------------------------------------------------------------------------
+# The engine draws a table at the height it needs, not the slot it is given
+# ---------------------------------------------------------------------------
+
+
+def _drawn_height(chart: Chart, row_count: int, slot_height: float = 0.0) -> float:
+    """The height of the SVG the engine draws for `chart` in a slot `slot_height`
+    tall (0: unbounded)."""
+    from dbt_charts.core.render.engine import render_native
+
+    rows = [{"col": i} for i in range(row_count)]
+    resolved = resolve(chart, rows, _DEFAULT_CONTEXT)
+    assert isinstance(resolved, ResolvedTableChart)
+    svg, _ = render_native(
+        resolved,
+        rows,
+        width=400.0,
+        height=slot_height,
+        padding=None,
+        board_style=_DEFAULT_RESOLVED,
+        board_width=400.0,
+    )
+    match = re.search(r'<svg[^>]*?\sheight="([\d.]+)"', svg)
+    assert match is not None
+    return float(match.group(1))
+
+
+class TestEngineShrinksASingleOversizedSlotToContent:
+    """A single-page table in a slot sized for a full page draws at its content
+    height: no dead space below the last row."""
+
+    @staticmethod
+    def _chart() -> Chart:
+        return _make_table_chart(
+            ChartStylePatch.model_validate({"table": {"pagination": {"page_rows": 9}}})
+        )
+
+    def test_single_row_oversized_slot_collapses_to_content(self):
+        auto_height = _drawn_height(self._chart(), 1)
+        slotted_height = _drawn_height(self._chart(), 1, 318.0)
+        assert slotted_height == auto_height < 318.0
+
+    def test_full_page_slightly_oversized_slot_collapses_to_content(self):
+        auto_height = _drawn_height(self._chart(), 9)
+        assert _drawn_height(self._chart(), 9, auto_height + 50.0) == auto_height
+
+    def test_few_rows_oversized_slot_collapses_to_content(self):
+        auto_height = _drawn_height(self._chart(), 3)
+        slotted_height = _drawn_height(self._chart(), 3, 318.0)
+        assert slotted_height == auto_height < 318.0
+
+
+class TestTitleBlockHeightNoSubtitleFloor:
+    """`title_row.height` floors the title block only when a subtitle is present:
+    a title-only table does not carry the full floor as a dead gap above its
+    first row."""
+
+    @staticmethod
+    def _chart(subtitle: str, title_row_height: float | None = None) -> Chart:
+        patch = (
+            None
+            if title_row_height is None
+            else ChartStylePatch.model_validate(
+                {"table": {"title_row": {"height": title_row_height}}}
+            )
+        )
+        base = _make_table_chart(patch)
+        return base.model_copy(update={"title": "My Title", "subtitle": subtitle})
+
+    def test_title_only_ignores_an_inflated_floor(self):
+        plain = _drawn_height(self._chart(""), 1)
+        inflated = _drawn_height(self._chart("", 1000.0), 1)
+        assert inflated == plain
+
+    def test_title_with_subtitle_binds_to_an_inflated_floor(self):
+        plain = _drawn_height(self._chart("Supporting context here"), 1)
+        inflated = _drawn_height(self._chart("Supporting context here", 1000.0), 1)
+        assert inflated >= plain + 900.0
+
+    def test_title_only_is_shorter_than_the_same_table_with_a_subtitle(self):
+        assert _drawn_height(self._chart(""), 1) < _drawn_height(
+            self._chart("Supporting context here"), 1
+        )
+
+
+class TestSizingProbeRecordsNoWarnings:
+    """The probe draws every page of the table to measure it: a cell truncated on
+    a page the main pass never shows is not a warning about the board."""
+
+    def test_a_truncated_cell_on_an_unshown_page_is_not_recorded(self) -> None:
+        from dbt_charts.core.render.chart.text_truncation import (
+            collect_text_truncations,
+        )
+
+        patch = ChartStylePatch.model_validate(
+            {
+                "table": {
+                    "pagination": {"page_rows": 2},
+                    "columns": {"col": {"width": 40}},
+                    "wrap": False,
+                }
+            }
+        )
+        chart = _make_table_chart(patch)
+        rows = [
+            {"col": f"a cell value far too long for forty pixels {i}"} for i in range(6)
+        ]
+        executor = MagicMock(spec=Executor)
+        executor.execute_chart.return_value = rows
+        with collect_text_truncations() as recorded:
+            _call_provider(chart, executor)
+        assert recorded == {}

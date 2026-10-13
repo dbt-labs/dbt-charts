@@ -135,6 +135,126 @@ class TestResolveLabelFormat:
         assert is_house is False
 
 
+class TestCompactFormats:
+    """`compact` and `currency_compact` print two significant digits in the
+    analytic register (K, M, B), where `number` and `currency` print three."""
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (1234567, "1.2M"),
+            (45321, "45K"),
+            (1.2e9, "1.2B"),
+            (-1234567, "\u22121.2M"),
+            (0.5, "0.50"),
+        ],
+    )
+    def test_compact(self, value, expected):
+        assert format_value(value, "compact") == expected
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (1234567, "$1.2M"),
+            (45321, "$45K"),
+            (1.2e9, "$1.2B"),
+            (0.5, "$0.50"),
+        ],
+    )
+    def test_currency_compact(self, value, expected):
+        assert format_value(value, "currency_compact") == expected
+
+    def test_kpi_parts_split_the_magnitude_letter_into_the_suffix(self):
+        assert format_kpi_parts(1234567, "compact") == ("", "1.2", "M")
+        assert format_kpi_parts(1.2e9, "currency_compact") == ("$", "1.2", "B")
+
+    def test_the_register_is_analytic_in_a_narrative_slot(self):
+        """A KPI value or table cell asks for the narrative register; these names
+        keep the analytic one wherever they are used."""
+        assert format_kpi_parts(
+            140_093_000, "compact", None, default_number=True, native=False
+        ) == ("", "140", "M")
+        assert (
+            column_format(
+                "number", None, "currency_compact", notation="narrative"
+            ).notation
+            == "analytic"
+        )
+        assert (
+            column_format("number", None, "number", notation="narrative").notation
+            == "narrative"
+        )
+
+    @pytest.mark.parametrize("name", ["compact", "currency_compact"])
+    def test_a_redefined_name_prints_exactly_its_own_spec(self, name):
+        """The analytic pin belongs to the engine's definition of the name: a
+        board that redefines it gets what the same spec prints under any other
+        name."""
+        redefined = {name: ".3s"}
+        other = {"other_name": ".3s"}
+        for value in (140_093_000, 1.2e9):
+            assert format_kpi_parts(value, name, redefined) == format_kpi_parts(
+                value, "other_name", other
+            )
+        assert column_format("number", redefined, name).notation is None
+
+    @pytest.mark.parametrize(
+        ("name", "formats", "expected"),
+        [
+            ("compact", {"compact": "compact"}, ("", "140", "M")),
+            ("revenue", {"revenue": "compact"}, ("", "140", "M")),
+            ("revenue", {"revenue": "currency_compact"}, ("$", "140", "M")),
+        ],
+    )
+    def test_an_alias_of_the_engine_name_keeps_the_analytic_register(
+        self, name, formats, expected
+    ):
+        """The pin follows the name the format resolves to, not the one typed:
+        a metric name aliased to a preset is the normal authoring pattern."""
+        fmt = column_format("number", formats, name, notation="narrative")
+        assert fmt.notation == "analytic"
+        assert format_kpi_parts(140_093_000, name, formats) == expected
+
+    @pytest.mark.parametrize("name", ["compact", "currency_compact"])
+    def test_an_alias_of_a_redefined_name_follows_the_redefinition(self, name):
+        formats = {name: ".3s", "revenue": name}
+        literal = {"other_name": ".3s"}
+        for value in (140_093_000, 1.2e9):
+            assert format_kpi_parts(value, "revenue", formats) == format_kpi_parts(
+                value, "other_name", literal
+            )
+        assert column_format("number", formats, "revenue").notation is None
+
+    @pytest.mark.parametrize(
+        ("name", "notation"), [("compact", "narrative"), ("number", "analytic")]
+    )
+    def test_a_self_aliased_name_keeps_the_options_it_authors(self, name, notation):
+        """An entry that aliases a name to itself redefines it: what it sets wins
+        over the engine's definition, what it leaves unset follows it."""
+        formats = {name: FormatConfig(spec=name, notation=notation)}
+        assert column_format("number", formats, name).notation == notation
+        formats = {
+            "currency": FormatConfig(spec="currency", prefix="€", repeat="anchor")
+        }
+        assert column_format("number", formats, "currency").repeat == "anchor"
+        formats = {
+            "currency": FormatConfig(
+                spec="currency", prefix="€", sign_placement="after_prefix"
+            )
+        }
+        assert (
+            column_format("number", formats, "currency").sign_placement
+            == "after_prefix"
+        )
+
+    def test_a_config_alias_of_the_engine_name_inherits_its_definition(self):
+        formats = {"revenue": FormatConfig(spec="compact", suffix=" USD")}
+        assert column_format("number", formats, "revenue").notation == "analytic"
+
+    def test_the_names_resolve_on_every_vocabulary_surface(self):
+        assert {"compact", "currency_compact"} <= PREDEFINED_NUMBER_NAMES
+
+
 class TestRetiredFormatSuccessors:
     """The retired-name hint is the entire migration path for this rename.
 
@@ -142,7 +262,7 @@ class TestRetiredFormatSuccessors:
     field's domain and `format:` is an open string — so the diagnostic is all an
     author gets. Delete the table and CI stays green while every hint regresses
     to the fuzzy match the module's own comment warns against: the nearest string
-    to `currency_compact` is `currency_whole`, which compiles clean and silently
+    to `number_default` is `number_full`, which compiles clean and silently
     drops compaction.
     """
 
@@ -150,8 +270,6 @@ class TestRetiredFormatSuccessors:
     # successor back out of `RETIRED_FORMAT_SUCCESSORS` makes every assertion
     # true of any table, including an empty one and a corrupted one.
     EXPECTED = {
-        "currency_compact": "'currency_compact' was renamed to 'currency'.",
-        "compact": "'compact' was renamed to 'number'.",
         "number_default": "'number_default' was renamed to 'number'.",
     }
 
@@ -191,7 +309,7 @@ class TestRetiredFormatSuccessors:
         """
         from dbt_charts.core.diagnostics.hints import suggest_close_format
 
-        hint = suggest_close_format("compact", ["date_short", "time_short"])
+        hint = suggest_close_format("number_default", ["date_short", "time_short"])
         assert hint is None or "number" not in hint
 
     def test_a_typo_still_gets_the_fuzzy_match(self):
@@ -420,7 +538,7 @@ class TestFormatValue:
         assert format_value(1234567.89, "money", formats) == "$1,234,567.89"
         assert format_value(0.123, "percent", formats) == "12.3%"
         # .2s = 2 significant figures via d3_format lib
-        assert format_value(1500000, "number", formats) == "1.5\u00a0M"
+        assert format_value(1500000, "number", formats) == "1.5M"
 
     def test_d3_formatting_without_formats(self):
         assert format_value(1234.56, "$,.2f") == "$1,234.56"
@@ -464,7 +582,7 @@ class TestNewAliases:
         assert resolve_format("currency") == "$.3~s"
 
     def test_currency_formats_value(self):
-        assert format_value(1_500_000, "currency") == "$1.5\u00a0M"
+        assert format_value(1_500_000, "currency") == "$1.5M"
 
     def test_percent_whole_resolves(self):
         assert resolve_format("percent_whole") == ".0%"
@@ -551,8 +669,8 @@ class TestNotationFamilies:
         assert format_d3(4_500_000_000_000, ",.2s") == "4.5T"
 
     def test_analytic_notation_explicit(self):
-        assert format_d3(1_500, ",.2s", notation="analytic") == "1.5\u00a0K"
-        assert format_d3(2_500_000, ",.2s", notation="analytic") == "2.5\u00a0M"
+        assert format_d3(1_500, ",.2s", notation="analytic") == "1.5K"
+        assert format_d3(2_500_000, ",.2s", notation="analytic") == "2.5M"
 
     # --- Narrative notation ---
 
@@ -714,7 +832,7 @@ class TestNotationRenameRegression:
             FormatConfig(notation="default")
 
     def test_format_d3_analytic_renders_analytic_register(self):
-        assert format_d3(1_500, "$.2s", notation="analytic") == "$1.5\u00a0K"
+        assert format_d3(1_500, "$.2s", notation="analytic") == "$1.5K"
 
     def test_format_d3_narrative_renders_narrative_register(self):
         assert format_d3(1_500_000_000, ".2s", notation="narrative") == "1.5bn"
@@ -758,31 +876,26 @@ class TestRoundAwareSignificantFigures:
         assert format_kpi_parts(1_250_000, "$,.3s") == ("$", "1.25", "M")
 
 
-class TestAboveTrillionsNarrativeFallback:
-    """No accepted narrative form exists above trillions, so narrative
-    borrows the analytic (spaced, capital-letter) suffix rather than emit
-    d3's bare, unmapped SI letter — a shipped artifact must always speak a
-    house register."""
+class TestAboveTrillions:
+    """No house word exists above trillions: both registers print d3's own
+    letter, glued like the analytic words, so the ladder reads `1.2T`, `1.2P`."""
 
-    def test_peta_falls_back_to_analytic_form(self):
-        assert format_d3(1e15, ",.2~s", notation="narrative") == "1\u00a0P"
+    def test_peta_prints_the_glued_letter_in_both_registers(self):
+        assert format_d3(1e15, ",.2~s", notation="narrative") == "1P"
+        assert format_d3(1e15, ",.2~s", notation="analytic") == "1P"
 
-    def test_fallback_is_never_the_bare_d3_letter(self):
-        # d3's own raw SI output for 1e15 is "1P" -- the house register must
-        # never let that reach a shipped artifact.
-        assert format_d3(1e15, ",.2~s", notation="narrative") != "1P"
+    def test_exa_zetta_yotta_print_the_glued_letter(self):
+        assert format_d3(1e18, ",.2~s", notation="narrative") == "1E"
+        assert format_d3(1e21, ",.2~s", notation="narrative") == "1Z"
+        assert format_d3(1e24, ",.2~s", notation="narrative") == "1Y"
 
-    def test_exa_zetta_yotta_all_fall_back(self):
-        assert format_d3(1e18, ",.2~s", notation="narrative") == "1\u00a0E"
-        assert format_d3(1e21, ",.2~s", notation="narrative") == "1\u00a0Z"
-        assert format_d3(1e24, ",.2~s", notation="narrative") == "1\u00a0Y"
-
-    def test_analytic_unaffected_by_the_fallback(self):
-        assert format_d3(1e15, ",.2~s", notation="analytic") == "1\u00a0P"
+    def test_analytic_ladder_is_glued_through_peta(self):
+        assert format_d3(1.2e12, ",.2~s", notation="analytic") == "1.2T"
+        assert format_d3(1.2e15, ",.2~s", notation="analytic") == "1.2P"
 
     def test_kpi_parts_headline_fallback_has_no_leading_space(self):
         # format_kpi_parts splits the magnitude into its own lane; visual
-        # spacing is geometry (kpi.py's dx="2"), not a string character, so
+        # spacing is geometry (the KPI card's dx="2"), not a string character, so
         # the lane-suffix stays bare like every other magnitude token.
         assert format_kpi_parts(1e15, {"spec": ",.2~s", "notation": "narrative"}) == (
             "",
@@ -976,7 +1089,7 @@ class TestJinjaFormatFilter:
         assert result == "1M", f"expected '1M', got {result!r}"
 
     def test_no_analytic_notation_applied(self) -> None:
-        """No house notation — '1.5G' not rewritten to '1.5\u00a0B'."""
+        """No house notation — '1.5G' not rewritten to '1.5B'."""
         result = self._render("{{ value | format('.2s') }}", 1_500_000_000.0)
         assert result == "1.5G", f"expected raw d3 '1.5G', got {result!r}"
 
@@ -994,10 +1107,10 @@ class TestCompactNamesAreActuallyCompact:
     @pytest.mark.parametrize(
         ("name", "value", "expected"),
         [
-            ("number", 50_752.9, "50.8\u00a0K"),
-            ("currency", 50_752.9, "$50.8\u00a0K"),
-            ("number", 1_234_567.89, "1.23\u00a0M"),
-            ("currency", 1_234_567.89, "$1.23\u00a0M"),
+            ("number", 50_752.9, "50.8K"),
+            ("currency", 50_752.9, "$50.8K"),
+            ("number", 1_234_567.89, "1.23M"),
+            ("currency", 1_234_567.89, "$1.23M"),
         ],
     )
     def test_compact_name_trims_to_three_significant_digits(
@@ -1013,8 +1126,8 @@ class TestCompactNamesAreActuallyCompact:
         [
             ("number", 999, "999"),
             ("currency", 999, "$999"),
-            ("number", 1_500, "1.5\u00a0K"),
-            ("currency", 2_000_000, "$2\u00a0M"),
+            ("number", 1_500, "1.5K"),
+            ("currency", 2_000_000, "$2M"),
         ],
     )
     def test_already_short_values_are_unchanged(
@@ -1152,14 +1265,14 @@ class TestSubUnitFloorVote:
     def test_all_values_below_one_falls_back_to_currency_full(self) -> None:
         assert (
             resolve_format_parts_for_values("currency", None, [0.42, 0.25, 0.67]).spec
-            == PREDEFINED_SPECS["currency_full"]
+            == PREDEFINED_SPECS["currency_full"].d3
         )
 
     def test_one_value_below_one_pulls_the_whole_set(self) -> None:
         # Mixed set: any member in the band pulls the register.
         assert (
             resolve_format_parts_for_values("currency", None, [0.42, 3.0]).spec
-            == PREDEFINED_SPECS["currency_full"]
+            == PREDEFINED_SPECS["currency_full"].d3
         )
 
     def test_negative_money_below_one_falls_back(self) -> None:
@@ -1167,26 +1280,24 @@ class TestSubUnitFloorVote:
         # the same as its positive counterpart.
         assert (
             resolve_format_parts_for_values("currency", None, [-0.42]).spec
-            == PREDEFINED_SPECS["currency_full"]
+            == PREDEFINED_SPECS["currency_full"].d3
         )
 
     def test_all_values_at_or_above_one_keeps_si_spec(self) -> None:
         assert (
             resolve_format_parts_for_values("currency", None, [12.99, 100.0]).spec
-            == PREDEFINED_SPECS["currency"]
+            == PREDEFINED_SPECS["currency"].d3
         )
 
     def test_all_zero_keeps_si_spec(self) -> None:
-        assert (
-            resolve_format_parts_for_values("currency", None, [0.0, 0.0]).spec
-            == (PREDEFINED_SPECS["currency"])
+        assert resolve_format_parts_for_values("currency", None, [0.0, 0.0]).spec == (
+            PREDEFINED_SPECS["currency"].d3
         )
 
     def test_sub_cent_only_slot_keeps_si_spec(self) -> None:
         # ``$,.2f`` would print $0.00 for every value.
-        assert (
-            resolve_format_parts_for_values("currency", None, [0.0023]).spec
-            == (PREDEFINED_SPECS["currency"])
+        assert resolve_format_parts_for_values("currency", None, [0.0023]).spec == (
+            PREDEFINED_SPECS["currency"].d3
         )
 
     def test_plain_quantity_slot_never_votes(self) -> None:
@@ -1194,14 +1305,14 @@ class TestSubUnitFloorVote:
         # to ``,.2f`` would print 2500000 as "2,500,000.00".
         assert (
             resolve_format_parts_for_values("number", None, [0.5, 2_500_000]).spec
-            == PREDEFINED_SPECS["number"]
+            == PREDEFINED_SPECS["number"].d3
         )
 
     def test_money_prefix_below_one_falls_back(self) -> None:
         config = FormatConfig(spec="number", prefix="£")
         assert (
             resolve_format_parts_for_values(config, None, [0.67]).spec
-            == PREDEFINED_SPECS["number_full"]
+            == PREDEFINED_SPECS["number_full"].d3
         )
 
     def test_inline_d3_spec_never_takes_house_floor(self) -> None:
@@ -1218,7 +1329,7 @@ class TestSubUnitFloorVote:
     def test_none_values_are_skipped(self) -> None:
         assert (
             resolve_format_parts_for_values("currency", None, [None, None]).spec
-            == PREDEFINED_SPECS["currency"]
+            == PREDEFINED_SPECS["currency"].d3
         )
 
     def test_parity_with_format_value_on_a_band_crossing_set(self) -> None:
@@ -1250,7 +1361,7 @@ class TestSubUnitFloorVoteSpecLessAffix:
     def test_spec_less_affix_dict_below_one_falls_back_to_number_full(self) -> None:
         assert (
             _vote({"prefix": "£"}, None, [0.67], PredefinedNumberFormat.number).spec
-            == PREDEFINED_SPECS["number_full"]
+            == PREDEFINED_SPECS["number_full"].d3
         )
 
     def test_spec_less_affix_format_config_below_one_falls_back(self) -> None:
@@ -1258,7 +1369,7 @@ class TestSubUnitFloorVoteSpecLessAffix:
             _vote(
                 FormatConfig(prefix="£"), None, [0.67], PredefinedNumberFormat.number
             ).spec
-            == PREDEFINED_SPECS["number_full"]
+            == PREDEFINED_SPECS["number_full"].d3
         )
 
     def test_spec_less_affix_alias_below_one_falls_back(self) -> None:
@@ -1267,19 +1378,19 @@ class TestSubUnitFloorVoteSpecLessAffix:
         formats = {"gbp": FormatConfig(prefix="£")}
         assert (
             _vote("gbp", formats, [0.67], PredefinedNumberFormat.number).spec
-            == PREDEFINED_SPECS["number_full"]
+            == PREDEFINED_SPECS["number_full"].d3
         )
 
     def test_spec_less_affix_currency_default_below_one_falls_back(self) -> None:
         assert (
             _vote({"prefix": "£"}, None, [0.67], PredefinedNumberFormat.currency).spec
-            == PREDEFINED_SPECS["currency_full"]
+            == PREDEFINED_SPECS["currency_full"].d3
         )
 
     def test_spec_less_affix_above_one_keeps_si_spec(self) -> None:
         assert (
             _vote({"prefix": "£"}, None, [12400.0], PredefinedNumberFormat.number).spec
-            == PREDEFINED_SPECS["number"]
+            == PREDEFINED_SPECS["number"].d3
         )
 
     def test_no_affix_no_default_is_unaffected(self) -> None:
@@ -1297,7 +1408,7 @@ class TestSubUnitFloorVoteSpecLessAffix:
                 [0.67],
                 PredefinedNumberFormat.number,
             ).spec
-            == PREDEFINED_SPECS["currency_full"]
+            == PREDEFINED_SPECS["currency_full"].d3
         )
 
 
@@ -1311,7 +1422,7 @@ class TestResolveFormatPartsForValues:
             [0.5, 1234.5, 2456789.0],
             PredefinedNumberFormat.number,
         )
-        assert parts.spec == PREDEFINED_SPECS["number_full"]
+        assert parts.spec == PREDEFINED_SPECS["number_full"].d3
         assert (parts.prefix, parts.suffix, parts.notation) == (
             "£",
             " GBP",
@@ -1344,7 +1455,7 @@ class TestResolveLabelFormatValuesAware:
             FormatConfig(prefix="£"), None, values=[0.67]
         )
         assert (resolved.spec, resolved.prefix) == (
-            PREDEFINED_SPECS["number_full"],
+            PREDEFINED_SPECS["number_full"].d3,
             "£",
         )
         assert is_house is True
@@ -1353,20 +1464,20 @@ class TestResolveLabelFormatValuesAware:
         resolved, is_house = resolve_label_format(
             FormatConfig(prefix="£"), None, values=[12400.0]
         )
-        assert (resolved.spec, resolved.prefix) == (PREDEFINED_SPECS["number"], "£")
+        assert (resolved.spec, resolved.prefix) == (PREDEFINED_SPECS["number"].d3, "£")
         assert is_house is True
 
     def test_bare_predefined_name_label_below_one_falls_back(self) -> None:
         # Not just the spec-less-affix shape -- an explicit "currency"/"number" label
         # format is itself a Vega-painted bake with no per-value floor.
         resolved, is_house = resolve_label_format("currency", None, values=[0.42])
-        assert resolved.spec == PREDEFINED_SPECS["currency_full"]
+        assert resolved.spec == PREDEFINED_SPECS["currency_full"].d3
         assert is_house is True
 
     def test_no_values_passed_keeps_si_spec(self) -> None:
         # Omitting values (the default) never votes.
         resolved, is_house = resolve_label_format("currency", None)
-        assert resolved.spec == PREDEFINED_SPECS["currency"]
+        assert resolved.spec == PREDEFINED_SPECS["currency"].d3
         assert is_house is True
 
 

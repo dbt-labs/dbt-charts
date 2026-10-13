@@ -403,7 +403,7 @@ def test_one_band_spelled_two_ways_counts_once() -> None:
     base = [{"month": m, "revenue": 1.0} for m in months]
     layer = [
         {
-            "month": dt.datetime.fromisoformat(m).replace(tzinfo=dt.timezone.utc),
+            "month": dt.datetime.fromisoformat(m).replace(tzinfo=dt.UTC),
             "goal": 2.0,
         }
         for m in months

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -39,9 +39,8 @@ from dbt_charts.core.render.board_resolve import build_resolved_board
 from dbt_charts.core.render.boards import render_board_svg
 from dbt_charts.core.render.controls import interactive_controls
 
-_CLIP_ID = re.compile(r"clip\d+")
-_RENDER_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
-_DATA_AS_OF = re.compile(r"Data as of [^<]+")
+from ..._svg_normalize import normalize_same_run_svg
+from .._svg_render import PINNED_RENDER_TIME
 
 _YAML = """
 title: Board Replay
@@ -92,12 +91,6 @@ charts:
 rows:
   - shares
 """
-
-
-def _normalize(svg: str) -> str:
-    out = _CLIP_ID.sub("clipN", svg)
-    out = _RENDER_TIME.sub("RENDER_TIME", out)
-    return _DATA_AS_OF.sub("DATA_AS_OF", out)
 
 
 def _live(tmp_path: Path, board: str = _YAML) -> tuple[bytes, BoardRecording, str]:
@@ -204,7 +197,7 @@ def test_pie_artifact_replays_the_same_recording(tmp_path: Path) -> None:
         reloaded_recording.variables,
     )
 
-    assert _normalize(replay_svg) == _normalize(live_svg)
+    assert normalize_same_run_svg(replay_svg) == normalize_same_run_svg(live_svg)
 
 
 _EUR_YAML = """
@@ -240,13 +233,13 @@ def test_a_saved_board_keeps_its_currency(tmp_path: Path) -> None:
     )
 
     assert "€" in replay_svg and "$" not in replay_svg
-    assert _normalize(replay_svg) == _normalize(live_svg)
+    assert normalize_same_run_svg(replay_svg) == normalize_same_run_svg(live_svg)
 
 
 def test_pie_fingerprint_survives_recording_json_non_finite_values() -> None:
     rows = [{"series": "A", "value": 1, "unrelated": float("nan")}]
     recording = BoardRecording(
-        recorded_at=datetime.now(timezone.utc),
+        recorded_at=datetime.now(UTC),
         variables={},
         rows_by_query={"shares": rows},
         provenance={},
@@ -416,7 +409,7 @@ def test_render_board_from_artifact_reproduces_the_live_svg(tmp_path: Path) -> N
     reloaded = load_board_artifact(artifact_bytes)
     replay_svg = render_board_from_artifact(reloaded, recording, recording.variables)
 
-    assert _normalize(replay_svg) == _normalize(live_svg)
+    assert normalize_same_run_svg(replay_svg) == normalize_same_run_svg(live_svg)
 
 
 _DT_YAML = """
@@ -501,7 +494,7 @@ def test_render_board_from_artifact_stamps_the_recording_time(tmp_path: Path) ->
     artifact_bytes, recording, _live_svg = _live(tmp_path)
     reloaded = load_board_artifact(artifact_bytes)
     stale_recording = recording.model_copy(
-        update={"recorded_at": datetime(2019, 3, 4, 5, 6, tzinfo=timezone.utc)}
+        update={"recorded_at": datetime(2019, 3, 4, 5, 6, tzinfo=UTC)}
     )
 
     replay_svg = render_board_from_artifact(
@@ -509,6 +502,24 @@ def test_render_board_from_artifact_stamps_the_recording_time(tmp_path: Path) ->
     )
 
     assert "Data as of 05:06 UTC on 4 Mar 2019" in replay_svg
+
+
+def test_a_replay_is_a_pure_function_of_artifact_and_recording(
+    tmp_path: Path,
+) -> None:
+    """No wall clock reaches a replay: it stamps the recording's own time, so
+    replaying one recording twice gives the same picture on any day."""
+    artifact_bytes, recording, _live_svg = _live(tmp_path)
+    reloaded = load_board_artifact(artifact_bytes)
+    old = recording.model_copy(
+        update={"recorded_at": datetime(2019, 3, 4, 5, 6, 7, tzinfo=UTC)}
+    )
+
+    first = render_board_from_artifact(reloaded, old, old.variables)
+
+    assert 'data-rendered-at="2019-03-04T05:06:07Z"' in first
+    again = render_board_from_artifact(reloaded, old, old.variables)
+    assert normalize_same_run_svg(again) == normalize_same_run_svg(first)
 
 
 def test_render_board_from_artifact_raises_on_unrecorded_query(
@@ -632,7 +643,7 @@ def test_render_board_from_artifact_reproduces_a_paginated_table_page(
 
     assert "row_6" in replay_svg
     assert not re.search(r"\brow_1\b", replay_svg)
-    assert _normalize(replay_svg) == _normalize(live_svg)
+    assert normalize_same_run_svg(replay_svg) == normalize_same_run_svg(live_svg)
 
 
 def test_render_board_from_artifact_dedupes_repeated_callout_css() -> None:
@@ -660,6 +671,7 @@ cols: [c1, c2]
     executor = MagicMock(spec=Executor)
     executor.execute_chart.return_value = []
     executor.cache_hit_ats = []
+    executor.rendered_at = PINNED_RENDER_TIME
     variables: dict[str, object] = {}
     resolved, _render_cache = build_resolved_board(result.board, executor, variables)
     recording = record_board(resolved, executor, variables)
@@ -729,7 +741,7 @@ def test_artifact_replay_does_not_double_paint_an_unstyled_nested_boards_tint(
 
 def test_a_saved_board_keeps_its_locale(tmp_path: Path) -> None:
     board = _EUR_YAML.replace(
-        "regional:\n  currency: EUR\n", "regional:\n  locale: fr-FR\n"
+        "regional:\n  currency: EUR\n", "regional:\n  locale:\n    number: fr-FR\n"
     )
     board = board.replace("[A, 0.5]", "[A, 1234.5]")
     artifact_bytes, recording, live_svg = _live(tmp_path, board)
@@ -742,4 +754,4 @@ def test_a_saved_board_keeps_its_locale(tmp_path: Path) -> None:
     )
 
     assert ">1,23<" in replay_svg
-    assert _normalize(replay_svg) == _normalize(live_svg)
+    assert normalize_same_run_svg(replay_svg) == normalize_same_run_svg(live_svg)

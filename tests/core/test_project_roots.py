@@ -7,12 +7,15 @@ from pathlib import Path
 import pytest
 import yaml
 
+from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_CONFIG_INVALID
 from dbt_charts.core.project_roots import (
     DCT_ROOT_MARKERS,
     find_dct_root,
     find_project_root,
     find_repo_root,
     find_root,
+    implicit_dbt_source,
     resolve_dbt_project_dir,
 )
 
@@ -87,6 +90,52 @@ def test_find_project_root_returns_project_root(tmp_path: Path) -> None:
     result = find_project_root(boards, tmp_path)
 
     assert result == tmp_path
+
+
+def test_find_project_root_accepts_a_bare_dbt_project(tmp_path: Path) -> None:
+    """A dbt project with no dbt_charts.yml is a render root."""
+    (tmp_path / "dbt_project.yml").write_text("name: shop\nprofile: shop\n")
+    boards = tmp_path / "charts"
+    boards.mkdir()
+
+    assert find_project_root(boards, tmp_path) == tmp_path
+
+
+def test_find_project_root_still_skips_a_serve_only_config(tmp_path: Path) -> None:
+    (tmp_path / "dbt_project.yml").write_text("name: shop\nprofile: shop\n")
+    inner = tmp_path / "inner"
+    inner.mkdir()
+    (inner / "dbt_charts.yml").write_text("server:\n  port: 1\n")
+
+    assert find_project_root(inner, tmp_path) == tmp_path
+
+
+def test_implicit_dbt_source_is_named_after_the_profile() -> None:
+    assert implicit_dbt_source({}, "name: shop\nprofile: warehouse\n") == (
+        "warehouse",
+        {"type": "dbt_profile"},
+    )
+
+
+def test_implicit_dbt_source_is_off_once_anything_is_declared() -> None:
+    declared = {"mine": {"type": "duckdb"}}
+    assert implicit_dbt_source(declared, "profile: warehouse\n") is None
+
+
+@pytest.mark.parametrize("dbt_project_yaml", [None, "name: shop\n", ""])
+def test_implicit_dbt_source_needs_a_dbt_project_with_a_profile(
+    dbt_project_yaml: str | None,
+) -> None:
+    assert implicit_dbt_source({}, dbt_project_yaml) is None
+
+
+@pytest.mark.parametrize("dbt_project_yaml", ["profile: 3\n", "profile: [a\n"])
+def test_implicit_dbt_source_rejects_a_malformed_dbt_project_with_a_coded_error(
+    dbt_project_yaml: str,
+) -> None:
+    with pytest.raises(CompilationError) as exc_info:
+        implicit_dbt_source({}, dbt_project_yaml)
+    assert exc_info.value.code is ERR_SOURCE_CONFIG_INVALID
 
 
 def test_resolve_dbt_project_dir_explicit_wins(tmp_path: Path) -> None:

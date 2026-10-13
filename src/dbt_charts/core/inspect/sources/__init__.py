@@ -14,7 +14,7 @@ Two peers ship today:
     available — no inference, no naming heuristics. Honest empty.
 
 Each source exposes ``name``, ``generated_at``, ``list_schemas``,
-``list_tables``, ``profile_table``, and ``describe_query``. Methods return
+``list_tables``, and ``profile_table``. Methods return
 bare-scalar ``dict | None`` (no per-field provenance wrapping; provenance
 lives only in the response-level ``_meta`` footer).
 ``None`` means "this source has nothing to contribute" — silent

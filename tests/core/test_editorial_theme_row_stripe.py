@@ -2,7 +2,7 @@
 
 Editorial (the default theme when `theme:` is unset) previously left
 `charts.table.row.stripe` unset, skipping the `stripes_enabled` render
-guard in `core/render/chart/table.py` entirely — tables rendered with no
+guard in the table renderer entirely — tables rendered with no
 zebra striping. `cream.yaml` (which extends editorial) already sets
 `dbt-creams.surface-subtle` one scaffold step off its own canvas; editorial
 should do the same with its own gray scaffold.

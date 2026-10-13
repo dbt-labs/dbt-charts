@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Sales Dashboard with Filters
 notes: |
   Filter-bar pattern — region dropdown and date controls wired to queries. Inline data used here; in production, replace with sql: + WHERE {{ filter(...) }}.

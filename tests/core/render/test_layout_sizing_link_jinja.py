@@ -57,6 +57,7 @@ def _make_ctx() -> SizingRenderCtx:
 
 def _make_executor() -> MagicMock:
     executor = MagicMock(spec=Executor)
+    executor.render_with_range_filters.return_value = None
     executor.execute_query.return_value = _ROWS
     return executor
 

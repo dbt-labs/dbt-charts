@@ -52,9 +52,7 @@ Skip visual review when:
 
 - Structural review surfaced `blocker` findings — fix those first; rendering
   may be misleading until the YAML is correct
-- The user asked for a quick / cheap review{{#if_tool validate_board}}
-- `{{ s_validate_board }}` failed inside
-  structural review — there's nothing valid to render yet{{/if_tool}}
+- The user asked for a quick / cheap review
 
 ### Step 3: Synthesize
 

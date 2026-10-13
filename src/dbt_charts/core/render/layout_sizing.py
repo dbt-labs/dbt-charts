@@ -70,6 +70,7 @@ from dbt_charts.core.render.chart.spec_builders import (
 )
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 from dbt_charts.core.render.conditions import item_is_drawn
+from dbt_charts.core.render.engine import render_native
 from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.prose import plan_board_prose
 from dbt_charts.core.render.sizing import (
@@ -285,6 +286,7 @@ def _resolve_with_runtime_inputs(
     )
     from dbt_charts.core.render.chart.auto_link import (  # noqa: PLC0415
         get_auto_link_context,
+        get_filter_variables_context,
         synthesize_auto_link,
     )
 
@@ -335,6 +337,7 @@ def _resolve_with_runtime_inputs(
         table_column_links=table_column_links,
         table_column_rows=table_column_rows,
         pie_title_font=pie_title_font,
+        filter_variables=get_filter_variables_context(),
     )
 
 
@@ -432,61 +435,37 @@ def _get_table_height_from_data(
     card_padding: float,
     board_style: ResolvedStyle,
     width: float | None = None,
-) -> float:
-    """Slot height for a table: the height the renderer draws it at, unbounded.
+) -> float | None:
+    """Slot height for a table: the height the engine draws it at, unbounded.
 
     ``width`` is the outer slot width (``None``: the table-family preferred
     width); the table is measured inside the same padding the main pass
-    renders it in. A failure sizes for a one-row error card.
-
-    Measurement runs the table layout only, never the paint. A paint-only
-    failure (bad swatch or spark cell, invalid color) is not seen here, so
-    the main pass draws its error card in the full-height slot.
+    renders it in. ``None`` for a table the engine cannot draw: the caller
+    sizes it as any chart the main pass will draw an error card for.
     """
     from dbt_charts.core.render.chart.spec_builders import additive_padding
-    from dbt_charts.core.render.chart.table import (
-        compute_table_title_block_layout,
-        measure_table_height,
-    )
-    from dbt_charts.core.render.chart.table_support import reserve_header_band
+    from dbt_charts.core.render.engine import render_native
 
-    tc = resolved.style.table
-    effective_width = width if width is not None else tc.preferred_width
+    effective_width = (
+        width if width is not None else resolved.style.table.preferred_width
+    )
     padding = additive_padding(card_padding, resolved.layout_padding)
     try:
         data = executor.execute_chart(chart, variables)
-        return measure_table_height(
+        _, natural_height = render_native(
             resolved,
             data,
-            max(effective_width - padding["left"] - padding["right"], 0.0),
+            width=max(effective_width - padding["left"] - padding["right"], 0.0),
+            height=0.0,
+            padding=None,
             board_style=board_style,
+            record_warnings=False,
         )
     except Exception as exc:  # noqa: BLE001 — the main pass draws any table failure as an error card
         _log.warning("Table height estimation failed for chart %r: %s", chart.id, exc)
-    assert tc.font.size is not None, (
-        "TableChartStyle.font.size must be set after cascade"
-    )
-    row_height = int(tc.row.height)
-    padding_y = int(tc.outer_padding)
-    title_height = compute_table_title_block_layout(
-        chart_title=chart.title,
-        chart_subtitle=chart.subtitle,
-        table_width=effective_width,
-        tc=tc,
-        padding=padding_y,
-        title_style=resolved.style.title,
-        card_padding=card_padding,
-        title_font=resolved.style.title_font,
-    ).height
-    header_body_gap = int(row_height * 0.25) if tc.header.visible else 0
-    return (
-        title_height
-        + reserve_header_band(tc, int(tc.font.size))
-        + header_body_gap
-        + row_height
-        + padding_y
-        + int(tc.bottom_padding)
-    )
+        return None
+    assert natural_height is not None, "the engine measures every table"
+    return natural_height
 
 
 def _make_chart_width_measurer(
@@ -506,7 +485,7 @@ def _make_chart_width_measurer(
     a nested theme measures with its own fonts.
     """
     from dbt_charts.core.render.chart.spec_builders import additive_padding
-    from dbt_charts.core.render.chart.table import measure_table_natural_width
+    from dbt_charts.core.render.engine import measure_table_natural_width
 
     def chart_width(
         chart: Chart, resolved_style: ResolvedStyle, ctx: ChartStyleContext
@@ -523,7 +502,7 @@ def _make_chart_width_measurer(
                 )
             assert isinstance(resolved, ResolvedTableChart)
             natural = measure_table_natural_width(
-                resolved, executor.execute_chart(chart, variables)
+                resolved, executor.execute_chart(chart, variables), resolved_style
             )
         except DbtChartsError as exc:
             _log.warning("Table width measurement failed for %r: %s", chart.id, exc)
@@ -749,7 +728,7 @@ def _make_data_aware_height_provider(
                 if resolved_table is None:
                     return _unresolved_height(item.chart, width, resolved_style)
                 assert isinstance(resolved_table, ResolvedTableChart)
-                return _get_table_height_from_data(
+                table_height = _get_table_height_from_data(
                     item.chart,
                     resolved_table,
                     executor,
@@ -757,7 +736,10 @@ def _make_data_aware_height_provider(
                     card_padding=card_pad,
                     board_style=resolved_style,
                     width=width,
-                ) + _vertical_inset(resolved_table)
+                )
+                if table_height is None:
+                    return _unresolved_height(item.chart, width, resolved_style)
+                return table_height + _vertical_inset(resolved_table)
 
             # callout and spark_bar render their real SVG to measure it, and
             # either can fail doing so (a callout's image ref, spark_bar's data
@@ -776,22 +758,22 @@ def _make_data_aware_height_provider(
                 if resolved_callout is None:
                     return _unresolved_height(item.chart, width, resolved_style)
                 try:
-                    _chart_svg, _, actual_height = _render_chart_to_svg(
+                    callout_svg, natural_height = render_native(
                         resolved_callout,
-                        executor,
-                        variables,
-                        width,
-                        height=None,
-                        resolved_style=resolved_style,
+                        [],
+                        width=width,
+                        height=0.0,
+                        padding=None,
+                        board_style=resolved_style,
+                        board_width=width,
                     )
                 except DbtChartsError as exc:
                     return _sizing_render_failed(item.chart, exc, width, resolved_style)
+                assert natural_height is not None
+                actual_height = natural_height
                 render_ctx.render_cache[
                     (item.chart.id, width, actual_height, NO_TITLE_SHIFT)
-                ] = (
-                    _chart_svg,
-                    actual_height,
-                )
+                ] = (callout_svg, actual_height)
                 render_ctx.natural_heights[(item.chart.id, width)] = actual_height
                 return actual_height
 

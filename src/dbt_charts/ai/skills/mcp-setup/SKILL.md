@@ -101,11 +101,8 @@ After setup, your AI assistant has access to these tools:
 
 | Tool | Purpose |
 |------|---------|
-| `validate_board` | Fast YAML schema and cross-reference validation — use after every file edit |
 | `render_board` | Compile, execute queries, and generate visual HTML/text output |
-| `query_board` | Run one named query from a saved board and inspect columns/sample rows |
-| `execute_query` | Run ad-hoc SQL queries while exploring data or testing SQL |
-| `describe_query` | Return column schema for a SQL string without fetching rows |
+| `execute_query` | Run ad-hoc SQL, or one named query from a saved board, and inspect columns/sample rows |
 | `docs` | Browse the packaged YAML reference corpus offline |
 | `list_skills` / `get_skill` | Discover and read packaged dbt charts authoring skills — `get_skill` returns the full body including example YAML |
 
@@ -159,6 +156,6 @@ After configuration, test by asking your AI assistant:
 
 - "List available data sources" → should invoke `schema` (no args)
 - "Show me the database schema" → should invoke `schema(source=...)`
-- "Validate this dashboard YAML file" → should invoke `validate_board`
+- "Render this dashboard YAML file" → should invoke `render_board`
 
 If the assistant doesn't recognize these tools, the MCP server isn't connected — check the Troubleshooting steps above.

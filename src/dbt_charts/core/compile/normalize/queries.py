@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 _QUERY_TYPES_TAKING_CONNECTION_DEFAULT = frozenset({"sql"})
 
 
-def _is_file_source_ref(source: str) -> bool:
+def is_file_source_ref(source: str) -> bool:
     """True if a `source:` string is an inline file path rather than a registry name.
 
     Extension matching is case-insensitive to stay consistent with
@@ -296,7 +296,7 @@ def normalize_query(
                 )
             raw_source = query_dict.get("source")
             if isinstance(raw_source, str):
-                if _is_file_source_ref(raw_source):
+                if is_file_source_ref(raw_source):
                     # Inline file-path source: register it into the sources
                     # registry under the literal authored ref so execute-time
                     # lookup (`board_sources.get(query.source)`) resolves it

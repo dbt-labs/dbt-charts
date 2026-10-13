@@ -25,6 +25,7 @@ from .._board_utils import _default_chart_style_context, _default_resolved_style
 def _make_executor(data: list[dict[str, Any]]) -> MagicMock:
     executor = MagicMock(spec=Executor)
     executor.execute_chart.return_value = data
+    executor.render_with_range_filters.return_value = None
     return executor
 
 
@@ -157,7 +158,12 @@ def test_render_chart_item_error_diagnostic_carries_authored_path(
     collector: list[Any] = []
 
     _render_chart_item(
-        chart, executor, {}, _default_chart_style_context(), error_collector=collector
+        chart,
+        executor,
+        {},
+        _default_chart_style_context(),
+        error_collector=collector,
+        filter_variables=frozenset(),
     )
 
     assert collector[0].path == f"charts.{chart.id}"
@@ -178,6 +184,7 @@ _OMITTED_FROM_PROJECTION = {
     "measure_type": "derived at resolve from the y and y_start columns' data",
     "span_date_format": "baked from `style.formats.date_short` for a date-span tooltip",
     "x_tooltip_format": "baked from the query's `formats:` for a numeric scatter x tooltip",
+    "color_format": "baked from the query's `formats:` for a numeric color column's legend",
     # Shares a name with an authored field but not a shape: the resolved layer
     # carries the full set of baked mark styles (line_mark/point_mark/...) plus
     # `query_name`, none of which the authored layer accepts. Projecting it
@@ -188,6 +195,7 @@ _OMITTED_FROM_PROJECTION = {
     # something that cannot be authored back.
     "stack": "authored as style.stack, not a chart-root field",
     "variant": "authored as KPI style.variant, not a chart-root field",
+    "text_link": "derived from the KPI's `email`/`url` format, never authored",
     # Reads like an authored field but is resolved from the style cascade and
     # rejected on the authored bar surface.
     "orientation": "resolved from style; not authorable",
@@ -204,6 +212,7 @@ _OMITTED_FROM_PROJECTION = {
         "rendering, never authorable or user-facing"
     ),
     "layout_padding": "internal layout info",
+    "x_date_range": "derived at resolve from the query's filter_date_range(); not authorable",
     "legend": "resolved legend",
     "max_height": "derived sizing",
     "min_height": "derived sizing",

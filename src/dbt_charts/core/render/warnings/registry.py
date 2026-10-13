@@ -14,7 +14,7 @@ place:
   GEOMETRY-dependent: reads ``ctx.vega_specs`` or another WarningContext field
     a render-at-a-real-width pass populates (``table_overflows``,
     ``authored_chart_heights``, ``series_label_truncations``,
-    ``text_truncations``, ``static_pagination_caps``,
+    ``text_truncations``, ``static_paginations``,
     ``x_domain_paint_orders``). A chart that never
     laid out (an inactive tab, a collapsed `details:` section) has none of
     these — the detector's own ``if chart_id not in ctx.vega_specs`` /
@@ -50,6 +50,7 @@ import dbt_charts.core.render.warnings.facet_panel_width_below_minimum as facet_
 import dbt_charts.core.render.warnings.kpi_align_overflow as kpi_align_overflow
 import dbt_charts.core.render.warnings.kpi_inline_fallback as kpi_inline_fallback
 import dbt_charts.core.render.warnings.kpi_label_truncated as kpi_label_truncated
+import dbt_charts.core.render.warnings.kpi_support_truncated as kpi_support_truncated
 import dbt_charts.core.render.warnings.layer_x_domain_paint_order as layer_x_domain_paint_order
 import dbt_charts.core.render.warnings.layered_chart_shared_y_axis_scale_mismatch as layered_chart_shared_y_axis_scale_mismatch
 import dbt_charts.core.render.warnings.layout_min_exceeds_height as layout_min_exceeds_height
@@ -61,7 +62,6 @@ import dbt_charts.core.render.warnings.low_text_contrast as low_text_contrast
 import dbt_charts.core.render.warnings.normalize_percent_format_reads_raw_value as normalize_percent_format_reads_raw_value
 import dbt_charts.core.render.warnings.palette_unsupported as palette_unsupported
 import dbt_charts.core.render.warnings.pie_dominant_segment as pie_dominant_segment
-import dbt_charts.core.render.warnings.pie_too_many_segments as pie_too_many_segments
 import dbt_charts.core.render.warnings.pie_total_exceeds_inner_radius as pie_total_exceeds_inner_radius
 import dbt_charts.core.render.warnings.plot_height_below_minimum as plot_height_below_minimum
 import dbt_charts.core.render.warnings.plot_width_below_minimum as plot_width_below_minimum
@@ -104,6 +104,7 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
     kpi_align_overflow,
     kpi_inline_fallback,
     kpi_label_truncated,
+    kpi_support_truncated,
     layer_x_domain_paint_order,
     layout_min_exceeds_height,
     legend_position_width_fallback,
@@ -138,7 +139,6 @@ _DATA_DETECTORS: list[ModuleType] = [
     normalize_percent_format_reads_raw_value,
     palette_unsupported,
     pie_dominant_segment,
-    pie_too_many_segments,
     point_map_negative_size_values,
     point_map_out_of_projection,
     query_result_truncated,

@@ -6,7 +6,7 @@ the error, so a re-run's outcome replaces the prior one.
 """
 
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -490,9 +490,7 @@ class TestTimestampsAreAwareUTC:
                 ).fetchone()[0]
                 assert stored.tzinfo is None, "the column is WITHOUT TIME ZONE"
                 drift = abs(
-                    (
-                        stored - datetime.now(timezone.utc).replace(tzinfo=None)
-                    ).total_seconds()
+                    (stored - datetime.now(UTC).replace(tzinfo=None)).total_seconds()
                 )
                 assert drift < 300, (
                     f"TimeZone={zone}: stored {stored} is {drift / 3600:.1f}h from "
@@ -530,7 +528,7 @@ class TestTimestampsAreAwareUTC:
         put_rows(cache, [{"a": 1}])
         hit = cache.get(SOURCE_HASH, QUERY_HASH, VARS_HASH)
         assert isinstance(hit, CacheHit)
-        age = datetime.now(timezone.utc) - hit.written_at
+        age = datetime.now(UTC) - hit.written_at
         assert timedelta(0) <= age < timedelta(minutes=5), (
             f"entry reads as {age} old — a naive-local timestamp relabeled as "
             "UTC lands off by the machine's offset"

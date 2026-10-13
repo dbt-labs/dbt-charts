@@ -17,8 +17,7 @@ Architecture:
 
     Tools (actions):
         - render_board - Validate + render; pass as_link=true for URL-only (folds view_dashboard)
-        - execute_query - Run SQL against data sources
-        - query_board - Run one named query from a board YAML and return columns + rows
+        - execute_query - Run SQL, or one named query from a board YAML, and return columns + rows
         - schema - Drill the data hierarchy: source → schema → table → column
         - search_boards - Search dashboards by keyword/structure
         - docs - Browse dbt charts YAML reference docs offline

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from urllib.parse import quote
 
 import httpx
 import pytest
@@ -14,6 +15,7 @@ from dbt_charts.cloud_client.errors import (
     ApiFailed,
     CredentialMissing,
     InvalidCredential,
+    InvalidPathSegment,
     TransportFailed,
     UnexpectedResponse,
 )
@@ -445,3 +447,66 @@ def test_connect_url_declares_the_terminal_landing() -> None:
             cloud.connect_url("acme")
             == "https://cloud.example/acme/github/connect/?landing=terminal"
         )
+
+
+def test_export_audit_follows_every_page_with_the_filters() -> None:
+    seen: list[httpx.Request] = []
+
+    def event(n: int) -> dict[str, object]:
+        return {
+            "id": str(n),
+            "created_at": "2026-10-08T00:00:00Z",
+            "actor": None,
+            "action": "public_access_changed",
+            "project": None,
+            "summary": f"event {n}",
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        page = int(request.url.params["page"])
+        return httpx.Response(
+            200,
+            json={"events": [event(page)], "next_page": 2 if page == 1 else None},
+        )
+
+    with client(handler) as cloud:
+        events = cloud.export_audit("acme", {"actor": "a@x.com"})
+
+    assert [e.id for e in events] == ["1", "2"]
+    assert [r.url.params["actor"] for r in seen] == ["a@x.com", "a@x.com"]
+
+
+@pytest.mark.parametrize("email", ["../../members/x", "a?b@c.com", "a#b@c.com"])
+def test_path_segments_from_user_input_cannot_retarget_the_request(
+    email: str,
+) -> None:
+    """httpx collapses dot segments and splits on ``?``/``#`` before sending,
+    so an unencoded value in a path would silently hit another endpoint."""
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.raw_path.decode())
+        return httpx.Response(200, json={"message": "ok"})
+
+    client(handler).change_team_member("acme", "t", email, add=False)
+
+    assert seen == [f"/api/orgs/acme/teams/t/members/{quote(email, safe='')}"]
+
+
+@pytest.mark.parametrize("name", [".", ".."])
+def test_a_dot_segment_is_refused_before_any_request(name: str) -> None:
+    """httpx resolves a bare ``.`` or ``..`` segment, which encoding leaves
+    alone: ``teams/../members/x`` would remove x from the organization."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"message": "ok"})
+
+    cloud = client(handler)
+    with pytest.raises(InvalidPathSegment, match="is not a name"):
+        cloud.change_team_member("acme", name, "a@x.com", add=False)
+    with pytest.raises(InvalidPathSegment, match="is not a name"):
+        cloud.set_public("acme", name, allow=True)
+    assert seen == []

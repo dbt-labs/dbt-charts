@@ -41,15 +41,16 @@ def test_every_database_source_type_has_a_dbt_adapter():
     from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
         SUPPORTED_ADAPTER_TYPES,
     )
+    from dbt_charts.core.execute.drivers import DRIVER_SOURCE_TYPES
 
-    database_types = {
-        type_name
-        for type_name, model in _SOURCE_TYPE_MAP.items()
-        if model.source_category == "database"
-    } - {
-        "sqlite",  # SqliteAdapter is native, not a dbt adapter
-        "lakecompute",  # connects through dbt's ADBC lake compute driver
-    }
+    database_types = (
+        {
+            type_name
+            for type_name, model in _SOURCE_TYPE_MAP.items()
+            if model.source_category == "database"
+        }
+        - {"sqlite"}
+    ) - DRIVER_SOURCE_TYPES  # sqlite: SqliteAdapter is native
     assert database_types <= SUPPORTED_ADAPTER_TYPES, (
         f"authorable but no _ADAPTER_TYPE_MAP entry: "
         f"{sorted(database_types - SUPPORTED_ADAPTER_TYPES)}"

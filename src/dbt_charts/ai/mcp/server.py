@@ -3,10 +3,9 @@
 Resources: dct://boards, dct://board/{path},
            dct://docs/all, dct://docs/{topic}, dct://guide/*
 
-Tools: all tools from dbt_charts.ai.tool_schemas.ALL_TOOLS (validate_board,
-       render_board, execute_query, describe_query,
-       search_boards, query_board, docs, describe_board, list_skills,
-       get_skill, search_skills, list_diagnostic_codes, get_diagnostic_code)
+Tools: all tools from dbt_charts.ai.tool_schemas.ALL_TOOLS (render_board,
+       execute_query, search_boards, docs, describe_board, list_skills,
+       get_skill, list_diagnostic_codes, get_diagnostic_code)
 
 Usage: dct mcp serve
 """
@@ -25,6 +24,7 @@ if TYPE_CHECKING:
 from pydantic import AnyUrl, TypeAdapter
 
 from dbt_charts._install_hint import install_hint
+from dbt_charts.agent_api.query_csv import model_json
 from dbt_charts.ai.context import DbtChartsAIContext
 from dbt_charts.ai.tool_schemas import ALL_TOOLS
 from dbt_charts.ai.tools import dispatch_tool_call
@@ -48,7 +48,7 @@ _BASE_RESOURCES = [
         "dct://docs/reference",
         "text/markdown",
         "dbt charts YAML Field Reference (generated)",
-        "Auto-generated field-level spec for every YAML field. Regenerate with the repo's `gen-references`/`gen-yaml-reference` recipe.",
+        "Auto-generated field-level spec for every YAML field, rendered from the compiler's models.",
     ),
     (
         "dct://docs/error-reference",
@@ -189,6 +189,7 @@ def create_server(context: DbtChartsAIContext) -> Any:
             ResourceTemplate,
             TextContent,
             Tool,
+            ToolAnnotations,
         )
     except ImportError as e:
         raise ImportError(
@@ -236,6 +237,7 @@ def create_server(context: DbtChartsAIContext) -> Any:
                 name=cast(str, t["name"]),
                 description=cast(str | None, t["description"]),
                 inputSchema=cast(dict[str, Any], t["input_schema"]),
+                annotations=ToolAnnotations(**t["annotations"]),
             )
             for t in ALL_TOOLS
         ]
@@ -247,7 +249,7 @@ def create_server(context: DbtChartsAIContext) -> Any:
         arguments = arguments or {}
         result = dispatch_tool_call(name, arguments, context=context)
         content: list[ContentBlock] = [
-            TextContent(type="text", text=json.dumps(result, indent=2))
+            TextContent(type="text", text=model_json(result))
         ]
         return CallToolResult(content=content, isError=_is_domain_error(result))
 

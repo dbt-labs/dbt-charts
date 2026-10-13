@@ -15,6 +15,7 @@ drift from the contract.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -136,6 +137,78 @@ class TestFilesystemIterOrdering:
         paths = list(project.iter_files("charts", recursive=True))
         # 'charts/a_sub/a.yml' must come before 'charts/b.yml' in global sort.
         assert paths == ["charts/a_sub/a.yml", "charts/b.yml"]
+
+
+class TestIterFilesOnError:
+    """`iter_files`'s optional `onerror` callback -- without it, `os.walk`'s
+    own default (`onerror=None`) silently skips a directory it cannot
+    enter, so a caller with no way to observe that gets a confidently wrong
+    empty result. `list_boards` is the first caller that needs to know."""
+
+    def test_default_onerror_silently_skips_an_unreadable_directory(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Pin today's baseline: with no `onerror`, an unreadable directory
+        is invisible, not an error -- this is `os.walk`'s own default, not
+        a bug in `iter_files` itself; `list_boards` is what must not trust
+        it alone."""
+        charts = tmp_path / "charts"
+        charts.mkdir()
+        (charts / "good.yml").write_text("title: Good\n")
+        blocked = charts / "blocked"
+        blocked.mkdir()
+        (blocked / "hidden.yml").write_text("title: Hidden\n")
+        blocked.chmod(0o000)
+        try:
+            if os.access(blocked, os.R_OK):
+                pytest.skip("running as root or on a filesystem that ignores chmod")
+            project = local_project(tmp_path)
+            paths = list(project.iter_files("charts", recursive=True))
+        finally:
+            blocked.chmod(0o755)
+
+        assert paths == ["charts/good.yml"]
+
+    def test_onerror_is_called_with_the_relpath_and_the_exception(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        charts = tmp_path / "charts"
+        charts.mkdir()
+        (charts / "good.yml").write_text("title: Good\n")
+        blocked = charts / "blocked"
+        blocked.mkdir()
+        blocked.chmod(0o000)
+        errors: list[tuple[str, OSError]] = []
+        try:
+            if os.access(blocked, os.R_OK):
+                pytest.skip("running as root or on a filesystem that ignores chmod")
+            project = local_project(tmp_path)
+            paths = list(
+                project.iter_files(
+                    "charts",
+                    recursive=True,
+                    onerror=lambda relpath, exc: errors.append((relpath, exc)),
+                )
+            )
+        finally:
+            blocked.chmod(0o755)
+
+        assert paths == ["charts/good.yml"]
+        assert len(errors) == 1
+        relpath, exc = errors[0]
+        assert relpath == "charts/blocked"
+        assert isinstance(exc, OSError)
+
+    def test_no_onerror_means_no_behavior_change(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Every existing caller passes no `onerror` -- confirms the
+        parameter is additive, not a signature break."""
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "a.yml").write_text("title: A\n")
+        project = local_project(tmp_path)
+
+        assert list(project.iter_files("charts", recursive=True)) == ["charts/a.yml"]
 
 
 class TestSubclassOverridesReads:

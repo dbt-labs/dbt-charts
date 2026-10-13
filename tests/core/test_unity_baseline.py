@@ -107,11 +107,11 @@ def test_ratio_percent_line_domain_including_one_emits_unity_rule_without_zero()
     None
 ):
     style = LineChartStylePatch(
-        number_format="percent_whole",
         axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[0.95, 1.2])
-            )
+            ),
         ),
     )
 
@@ -134,7 +134,7 @@ def test_ratio_percent_line_data_below_one_skips_unity_rule() -> None:
         {"x": "Feb", "y": 0.18},
         {"x": "Mar", "y": 0.30},
     ]
-    style = LineChartStylePatch(number_format="percent_whole")
+    style = LineChartStylePatch(axis_y={"labels": {"format": "percent_whole"}})
 
     spec = _spec("line", data, style=style, color="x")
 
@@ -147,11 +147,11 @@ def test_ratio_percent_line_data_below_one_skips_unity_rule() -> None:
 
 def test_ratio_percent_line_domain_excluding_one_skips_unity_rule() -> None:
     style = LineChartStylePatch(
-        number_format="percent_whole",
         axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[1.02, 1.2])
-            )
+            ),
         ),
     )
 
@@ -167,11 +167,11 @@ def test_percent_number_line_does_not_emit_ratio_unity_rule() -> None:
         {"x": "Mar", "y": 115},
     ]
     style = LineChartStylePatch(
-        number_format="percent_number",
         axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_number"),
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[95, 120])
-            )
+            ),
         ),
     )
 
@@ -182,12 +182,12 @@ def test_percent_number_line_does_not_emit_ratio_unity_rule() -> None:
 
 def test_normalize_ratio_percent_bar_dedupes_top_and_unity_rule() -> None:
     style = BarChartStylePatch(
-        number_format="percent_whole",
         orientation="vertical",
         axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[0, 1])
-            )
+            ),
         ),
     )
 
@@ -229,7 +229,7 @@ def test_normalize_area_percent_format_keeps_zero_baseline_dedupes_unity() -> No
     baseline — the percent carve-out's early ``return`` dropped it along with
     the duplicate 1 it was meant to dedupe — while still emitting exactly one
     100% rule (from ``_apply_unity``), never the old ``[0, 1, 1]`` triple."""
-    style = AreaChartStylePatch(number_format="percent_whole")
+    style = AreaChartStylePatch(axis_y={"labels": {"format": "percent_whole"}})
 
     spec = _spec("area", _RATIO_DATA, style=style, color="x", stack="normalize")
 
@@ -243,12 +243,12 @@ def test_non_normalize_ratio_percent_bar_domain_including_one_emits_unity_rule()
     """Bar is no longer excluded from the unity gate: a non-normalize percent
     bar whose domain reaches 1.0 gets the same unity rule line/area do."""
     style = BarChartStylePatch(
-        number_format="percent_whole",
         orientation="vertical",
         axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[0, 1.2])
-            )
+            ),
         ),
     )
 
@@ -261,12 +261,12 @@ def test_non_normalize_ratio_percent_bar_domain_excluding_one_skips_unity_rule()
     None
 ):
     style = BarChartStylePatch(
-        number_format="percent_whole",
         orientation="vertical",
         axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[1.02, 1.2])
-            )
+            ),
         ),
     )
 
@@ -277,11 +277,11 @@ def test_non_normalize_ratio_percent_bar_domain_excluding_one_skips_unity_rule()
 
 def test_unity_rule_is_first_layer_for_line() -> None:
     style = LineChartStylePatch(
-        number_format="percent_whole",
         axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[0.95, 1.2])
-            )
+            ),
         ),
     )
 
@@ -294,8 +294,8 @@ def test_unity_rule_is_first_layer_for_line() -> None:
 
 def test_grid_not_visible_skips_unity_rule() -> None:
     style = LineChartStylePatch(
-        number_format="percent_whole",
         axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
             grid=BaseAxisGridStylePatch(visible=False),
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[0.95, 1.2])
@@ -312,8 +312,8 @@ def test_grid_threshold_visible_false_skips_unity_rule() -> None:
     """axis_y.grid.threshold.visible=false is the granular off-switch for
     ``_apply_unity``, distinct from the blanket grid.visible gate above."""
     style = LineChartStylePatch(
-        number_format="percent_whole",
         axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
             grid=BaseAxisGridStylePatch(threshold={"visible": False}),
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[0.95, 1.2])
@@ -333,11 +333,11 @@ def test_straddling_zero_and_one_emits_both_rules() -> None:
         {"x": "Mar", "y": 1.1},
     ]
     style = LineChartStylePatch(
-        number_format="percent_whole",
         axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[-0.2, 1.2])
-            )
+            ),
         ),
     )
 
@@ -349,11 +349,11 @@ def test_straddling_zero_and_one_emits_both_rules() -> None:
 
 def test_ratio_percent_area_domain_including_one_emits_unity_rule() -> None:
     style = AreaChartStylePatch(
-        number_format="percent_whole",
         axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[0.95, 1.2])
-            )
+            ),
         ),
     )
 
@@ -368,11 +368,11 @@ def test_unity_rule_renders_as_one_visible_horizontal_line() -> None:
     import vl_convert as vlc
 
     style = LineChartStylePatch(
-        number_format="percent_whole",
         axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[0.95, 1.2])
-            )
+            ),
         ),
     )
 
@@ -403,8 +403,10 @@ def test_headroom_pulling_domain_below_one_emits_unity_rule() -> None:
     on screen, so it gets the heavy rule rather than a hairline gridline.
     """
     style = LineChartStylePatch(
-        number_format="percent_whole",
-        axis_y=AxisYStylePatch(scale=BaseScaleStylePatch(headroom=0.59)),
+        axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
+            scale=BaseScaleStylePatch(headroom=0.59),
+        ),
     )
 
     spec = _spec("line", _NRR_DATA, style=style)
@@ -419,8 +421,10 @@ def test_headroom_leaving_one_out_of_view_skips_unity_rule() -> None:
     only the rendered domain differs, which is exactly what the gate reads.
     """
     style = LineChartStylePatch(
-        number_format="percent_whole",
-        axis_y=AxisYStylePatch(scale=BaseScaleStylePatch(headroom=0.1)),
+        axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
+            scale=BaseScaleStylePatch(headroom=0.1),
+        ),
     )
 
     spec = _spec("line", _NRR_DATA, style=style)
@@ -448,8 +452,10 @@ def test_zero_headroom_ladder_reaching_one_skips_unity_rule() -> None:
     is what the one-ended/bounded-domain task's `include` field is for.
     """
     style = LineChartStylePatch(
-        number_format="percent_whole",
-        axis_y=AxisYStylePatch(scale=BaseScaleStylePatch(headroom=0)),
+        axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
+            scale=BaseScaleStylePatch(headroom=0),
+        ),
     )
 
     spec = _spec("line", _UPTIME_DATA, style=style)
@@ -463,8 +469,10 @@ def _unity_rules_across_headroom(
     counts = []
     for headroom in headrooms:
         style = LineChartStylePatch(
-            number_format="percent_whole",
-            axis_y=AxisYStylePatch(scale=BaseScaleStylePatch(headroom=headroom)),
+            axis_y=AxisYStylePatch(
+                labels=AxisLabelStylePatch(format="percent_whole"),
+                scale=BaseScaleStylePatch(headroom=headroom),
+            ),
         )
         counts.append(len(_unity_rule_layers(_spec("line", data, style=style))))
     return counts
@@ -515,7 +523,7 @@ def test_zero_anchored_percent_area_reaching_one_emits_unity_rule() -> None:
         {"x": "Feb", "y": 3.20},
         {"x": "Mar", "y": 5.00},
     ]
-    style = AreaChartStylePatch(number_format="percent_whole")
+    style = AreaChartStylePatch(axis_y={"labels": {"format": "percent_whole"}})
 
     spec = _spec("area", data, style=style)
 
@@ -538,12 +546,12 @@ def test_zero_anchored_axis_with_authored_ladder_still_floors_at_zero() -> None:
         {"x": "Mar", "y": 5.00},
     ]
     style = LineChartStylePatch(
-        number_format="percent_whole",
         axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
             scale=BaseScaleStylePatch(
                 values=[0, 2, 4, 6],
                 continuous=ScaleContinuousStylePatch(zero=True),
-            )
+            ),
         ),
     )
 
@@ -557,11 +565,11 @@ def test_ratio_percent_scatter_domain_including_one_emits_unity_rule() -> None:
     tuple widened to ``ResolvedScatterChart`` alongside line and area, and
     must fire under the same domain-reach rule as its line twin above."""
     style = ScatterChartStylePatch(
-        number_format="percent_whole",
         axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[0.95, 1.2])
-            )
+            ),
         ),
     )
 
@@ -572,11 +580,11 @@ def test_ratio_percent_scatter_domain_including_one_emits_unity_rule() -> None:
 
 def test_ratio_percent_scatter_domain_excluding_one_skips_unity_rule() -> None:
     style = ScatterChartStylePatch(
-        number_format="percent_whole",
         axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="percent_whole"),
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[1.02, 1.2])
-            )
+            ),
         ),
     )
 

@@ -90,3 +90,9 @@ class ReplayDataProvider:
     def cache_hit_ats(self) -> list[datetime]:
         """The recording time, so the board stamps "data as of" honestly."""
         return [self.recorded_at]
+
+    @property
+    def rendered_at(self) -> datetime:
+        """The recording time: a replay reproduces the recorded render, its
+        stamp included, so one recording replays to the same bytes on any day."""
+        return self.recorded_at

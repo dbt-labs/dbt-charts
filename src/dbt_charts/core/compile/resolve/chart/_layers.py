@@ -60,6 +60,7 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import (
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_LAYER_AXIS_TITLE_WITHOUT_POSITION,
     ERR_LAYERS_AMBIGUOUS_Y_DOMAIN,
 )
 from dbt_charts.core.text.format_d3 import is_d3_si_spec
@@ -433,6 +434,18 @@ def _resolve_layer_list(
     """
     if not layers:
         return ()
+    # A layer's own y-axis title only has an axis to land on once some layer
+    # pins `axis_y.position` and splits the scales.
+    if not any(
+        layer.axis_y is not None and layer.axis_y.position is not None
+        for layer in layers
+    ):
+        for index, layer in enumerate(layers):
+            if layer.axis_y is not None and layer.axis_y.title is not None:
+                raise CompilationError.from_code(
+                    ERR_LAYER_AXIS_TITLE_WITHOUT_POSITION,
+                    field_path=f"charts.{chart_id}.layers[{index}].axis_y.title",
+                )
     return tuple(
         _resolve_one_layer(
             layer,

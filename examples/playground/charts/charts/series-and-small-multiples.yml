@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 # Series and small multiples
 # ===========================
 # How dbt Charts handles many series, repeated small-multiple panels, ragged
@@ -184,7 +185,9 @@ charts:
     y: value
     color: series
     style:
-      number_format: integer
+      axis_y:
+        labels:
+          format: integer
   six_series_line:
     query: daily_revenue_top6
     type: line
@@ -194,7 +197,9 @@ charts:
     y: revenue
     color: product
     style:
-      number_format: currency
+      axis_y:
+        labels:
+          format: currency
   twelve_series_line:
     query: daily_revenue_by_region_category
     type: line
@@ -204,7 +209,9 @@ charts:
     y: revenue
     color: segment
     style:
-      number_format: currency
+      axis_y:
+        labels:
+          format: currency
   stacked_area_five:
     query: daily_revenue_top5
     type: area
@@ -215,7 +222,9 @@ charts:
     color: product
     style:
       stack: zero
-      number_format: currency
+      axis_y:
+        labels:
+          format: currency
   ragged_series_line:
     query: ragged_weekly_revenue
     type: line
@@ -225,7 +234,9 @@ charts:
     y: revenue
     color: product
     style:
-      number_format: currency
+      axis_y:
+        labels:
+          format: currency
   gapped_series_line:
     query: gapped_revenue
     type: line
@@ -235,7 +246,9 @@ charts:
     y: revenue
     color: product
     style:
-      number_format: currency
+      axis_y:
+        labels:
+          format: currency
   small_multiples_bar_category:
     query: weekly_revenue_by_category
     type: bar
@@ -244,8 +257,10 @@ charts:
     x: week
     y: revenue
     style:
-      number_format: currency
       stack: zero
+      axis_y:
+        labels:
+          format: currency
     multiples:
       rows: category
   small_multiples_line_region:
@@ -256,7 +271,9 @@ charts:
     x: date
     y: revenue
     style:
-      number_format: currency
+      axis_y:
+        labels:
+          format: currency
     multiples:
       columns: region
   long_label_bar:
@@ -270,7 +287,9 @@ charts:
       by: total_uses
       order: desc
     style:
-      number_format: integer
+      axis_y:
+        labels:
+          format: integer
   dense_category_bar:
     query: country_gdp_top25
     type: bar
@@ -281,7 +300,9 @@ charts:
     y: gdp
     style:
       orientation: horizontal
-      number_format: currency
+      axis_y:
+        labels:
+          format: currency
   cadence_daily:
     query: docs_daily
     type: bar
@@ -290,7 +311,9 @@ charts:
     x: day
     y: documents
     style:
-      number_format: integer
+      axis_y:
+        labels:
+          format: integer
   cadence_weekly:
     query: docs_weekly
     type: bar
@@ -299,7 +322,9 @@ charts:
     x: week
     y: documents
     style:
-      number_format: integer
+      axis_y:
+        labels:
+          format: integer
   cadence_monthly:
     query: docs_monthly
     type: bar
@@ -308,7 +333,9 @@ charts:
     x: month
     y: documents
     style:
-      number_format: integer
+      axis_y:
+        labels:
+          format: integer
   single_point_stack:
     query: single_point_stack
     type: bar
@@ -319,7 +346,9 @@ charts:
     color: series
     style:
       stack: zero
-      number_format: currency
+      axis_y:
+        labels:
+          format: currency
 rows:
   - text: |
       **14 charts.** Series count, small multiples, ragged and gapped data, long

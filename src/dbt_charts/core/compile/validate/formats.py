@@ -10,25 +10,22 @@ contract this validator runs ahead of).
 
 Coverage is the authored surface: board-level ``style:`` and every chart,
 recursively, plus the alias table's own targets (validated in
-``_validate_board``). Slots are recognized by
-field name (``_FORMAT_FIELDS``) rather than by type annotation; every current
-format field is spelled one of those three names, so the coverage is complete.
+``_validate_board``). Slots are recognized by the field name ``format`` rather
+than by type annotation; every current format field is spelled that way, so the
+coverage is complete.
 
 Time-format slots (axis ticks, table columns — anywhere a date-typed column
 value might render) additionally accept a strftime-style spec (``%b %Y``):
 an author may write the strftime form directly rather than through a predefined
 alias (``date_short``).
 
-A slot that knows its own kind — ``number_format`` feeds a quantitative axis,
-``time_format`` a temporal one — accepts only that half of the predefined
-vocabulary; the other half raises ``ERR-FORMAT-KIND-MISMATCH``. The kind is read
-off the field's ``Format`` facet rather than its name, so it travels with the
-field. User ``style.formats`` aliases are exempt: the engine cannot know which
-kind a user's alias targets, so they stay legal in every slot.
+A redefined engine name (``style.formats.percent``) keeps its kind: a number name
+cannot be redefined as a date spec, and vice versa (``ERR-FORMAT-KIND-MISMATCH``).
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 
 from pydantic import BaseModel
@@ -36,9 +33,12 @@ from pydantic import BaseModel
 from d3_format import parse as _d3_parse
 from d3_format.errors import D3FormatError
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.format import missing_format_columns, resolve_format_parts
+from dbt_charts.core.compile.format import (
+    grain_is_redefined,
+    missing_format_columns,
+    resolve_format_parts,
+)
 from dbt_charts.core.compile.models.board.normalized import Board
-from dbt_charts.core.compile.models.markers import Format
 from dbt_charts.core.compile.models.primitives import (
     FormatAliases,
     FormatConfig,
@@ -48,10 +48,13 @@ from dbt_charts.core.compile.models.query.normalized import Query, ValuesQuery
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_AFFIX_TIME_UNSUPPORTED,
     ERR_FORMAT_ALIAS_CYCLE,
+    ERR_FORMAT_GRAIN_NAME_NOT_REDEFINED,
     ERR_FORMAT_INVALID,
     ERR_FORMAT_KIND_MISMATCH,
     ERR_FORMAT_NATIVE_IN_VEGA_SLOT,
     ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX,
+    ERR_FORMAT_TEXT_IN_VEGA_SLOT,
+    ERR_FORMAT_TEXT_REDEFINED,
     ERR_FORMAT_TIME_DIRECTIVE_UNSUPPORTED,
     ERR_QUERY_FORMAT_SPEC,
     ERR_QUERY_FORMAT_UNKNOWN,
@@ -66,14 +69,12 @@ from dbt_charts.core.text.format_d3 import (
 )
 from dbt_charts.core.text.predefined_formats import (
     ALL_PREDEFINED_NAMES,
-    PREDEFINED_NATIVE_NAMES,
+    GRAIN_NAMES,
     PREDEFINED_NUMBER_NAMES,
+    PREDEFINED_TEXT_NAMES,
     PREDEFINED_TIME_NAMES,
+    PYTHON_ONLY_NATIVE_NAMES,
 )
-
-# Field names that hold an authored format spec. Every current format field is
-# spelled one of these; a future field named otherwise would need a new entry here.
-_FORMAT_FIELDS = frozenset({"format", "number_format", "time_format"})
 
 # Field names whose subtree may also carry a strftime spec: axis ticks, table
 # columns, and the footer timestamp are the slots that render a date. Matched on
@@ -95,7 +96,6 @@ _TIME_CAPABLE_FIELDS = frozenset(
         "mirror",
         "columns",
         "column_defaults",
-        "time_format",
         "timestamp",
     }
 )
@@ -106,32 +106,21 @@ _AXIS_FIELDS = frozenset(
     {"axis", "axis_x", "axis_y", "axis_band", "axis_quantitative", "mirror"}
 )
 
-# Per slot kind: the predefined names it accepts, and the sentence naming what
-# else is legal there. "any" is absent on purpose -- a missing entry means no
-# narrowing, which is what a kind-agnostic `format:` slot wants.
-#
-# The escape-hatch sentence is kind-specific because the generic one was wrong
-# half the time: a raw d3 *number* spec is exactly what must not reach a
-# temporal axis, so telling a `time_format` author "a raw d3 spec works too"
-# reproduces the defect this error exists to reject.
-_KIND_RULES: dict[str, tuple[frozenset[str], str]] = {
+# What else is legal when a redefinition has the wrong kind, per kind.
+_KIND_ESCAPE_HATCHES: dict[str, str] = {
     "number": (
-        PREDEFINED_NUMBER_NAMES,
         "A raw d3 number spec (e.g. ',.0f') or a `style.formats` alias of your "
-        "own works here too.",
+        "own works here too."
     ),
     "time": (
-        PREDEFINED_TIME_NAMES,
         "A strftime spec (e.g. '%b %Y') or a `style.formats` alias of your own "
-        "works here too.",
+        "works here too."
     ),
 }
 
 # Field names whose child format slots are rendered by Vega (not Python).
 # PREDEFINED_NATIVE members bypass d3 and have no Vega equivalent; they are
 # rejected here so the author gets a compile error rather than a Vega crash.
-# `number_format` and `time_format` are always Vega-painted regardless of parent;
-# _iter_format_slots sets vega_painted=True for those field names directly.
 _VEGA_PAINTED_PARENTS = frozenset(
     {
         "axis",
@@ -149,29 +138,15 @@ _VEGA_PAINTED_PARENTS = frozenset(
 )
 
 
-def _slot_kind(model: type[BaseModel], name: str) -> str:
-    """The declared kind of one format slot: "number", "time", or "any".
-
-    Read from the field's ``Format`` facet, which ``build_patch_model_ext``
-    forwards onto every generated patch model — so a chart's authored
-    ``BarChartStylePatch.time_format`` answers the same as the theme field it
-    was generated from.
-    """
-    for meta in model.model_fields[name].metadata:
-        if isinstance(meta, Format):
-            return meta.kind
-    return "any"
-
-
 def _iter_format_slots(
     node: object,  # type-state: object_annotation — recursive tree walk over a BaseModel/dict/list/tuple/leaf mix; each isinstance branch below narrows it
     path: str,
     time_capable: bool,
     vega_painted: bool = False,
     axis_painted: bool = False,
-) -> Iterator[tuple[str, str | FormatConfig, bool, bool, str, bool]]:
-    """Yield (field_path, spec, time_capable, vega_painted, kind,
-    reject_time_affix) per format slot.
+) -> Iterator[tuple[str, str | FormatConfig, bool, bool, bool]]:
+    """Yield (field_path, spec, time_capable, vega_painted, reject_time_affix)
+    per format slot.
 
     ``vega_painted`` gates ERR-FORMAT-NATIVE-IN-VEGA-SLOT; ``reject_time_affix``
     marks an axis slot, where an affix beside a date spec is rejected.
@@ -187,20 +162,8 @@ def _iter_format_slots(
             child_vega = vega_painted or name in _VEGA_PAINTED_PARENTS
             child_axis = axis_painted or name in _AXIS_FIELDS
             child = f"{path}.{name}"
-            if name in _FORMAT_FIELDS and isinstance(value, (str, FormatConfig)):
-                # number_format and time_format are always Vega-painted: both feed
-                # into axis.labels.format via the Layer-10 merge in axis_cascade.py
-                # and are rendered by Vega, never by Python renderers.
-                slot_vega = child_vega or name in ("number_format", "time_format")
-                kind = _slot_kind(type(node), name)
-                yield (
-                    child,
-                    value,
-                    child_time,
-                    slot_vega,
-                    kind,
-                    child_axis or kind == "time",
-                )
+            if name == "format" and isinstance(value, (str, FormatConfig)):
+                yield (child, value, child_time, child_vega, child_axis)
             else:
                 yield from _iter_format_slots(
                     value, child, child_time, child_vega, child_axis
@@ -253,9 +216,8 @@ def _validate_spec(
     value: str | FormatConfig,
     formats: FormatTable | None,
     field_path: str,
-    time_format: bool,
+    time_capable: bool,
     vega_painted: bool = False,
-    kind: str = "any",
     *,
     reject_time_affix: bool,
 ) -> None:
@@ -272,17 +234,10 @@ def _validate_spec(
     per-chart walk (``_iter_format_slots``) never reaches it.
 
     ``vega_painted=True`` is passed for slots rendered by Vega (axis labels,
-    mark value labels, ``number_format``, ``time_format``, ``support_table``).
+    mark value labels, ``support_table``).
     PREDEFINED_NATIVE members bypass d3 entirely and have no Vega equivalent;
     they are rejected here so the author gets ERR-FORMAT-NATIVE-IN-VEGA-SLOT
     rather than a Vega runtime crash.
-
-    ``kind`` is the slot's own half of the vocabulary (``"number"`` for
-    ``number_format``, ``"time"`` for ``time_format``, ``"any"`` everywhere
-    else). A predefined name from the other half raises
-    ERR-FORMAT-KIND-MISMATCH: ``time_format: currency`` resolves to ``$,.2f``,
-    which Vega bakes onto a temporal axis as garbage tick labels rather than
-    failing.
     """
     if (
         isinstance(value, FormatConfig)
@@ -296,30 +251,33 @@ def _validate_spec(
     spec = value.spec if isinstance(value, FormatConfig) else value
     if not spec:
         return
-    rule = _KIND_RULES.get(kind)
+    aliases = {} if formats is None else formats.aliases
     if spec in ALL_PREDEFINED_NAMES:
-        if vega_painted and spec in PREDEFINED_NATIVE_NAMES:
+        if spec in GRAIN_NAMES and not grain_is_redefined(spec, aliases):
+            raise CompilationError.from_code(
+                ERR_FORMAT_GRAIN_NAME_NOT_REDEFINED, spec=spec, field_path=field_path
+            )
+        if vega_painted and spec in PYTHON_ONLY_NATIVE_NAMES:
             raise CompilationError.from_code(
                 ERR_FORMAT_NATIVE_IN_VEGA_SLOT,
                 spec=spec,
                 field_path=field_path,
-                available=sorted(ALL_PREDEFINED_NAMES - PREDEFINED_NATIVE_NAMES),
+                available=sorted(
+                    ALL_PREDEFINED_NAMES
+                    - PYTHON_ONLY_NATIVE_NAMES
+                    - GRAIN_NAMES
+                    - PREDEFINED_TEXT_NAMES
+                ),
             )
-        if rule is not None and spec not in rule[0]:
+        if vega_painted and spec in PREDEFINED_TEXT_NAMES:
             raise CompilationError.from_code(
-                ERR_FORMAT_KIND_MISMATCH,
-                spec=spec,
-                field_path=field_path,
-                kind=kind,
-                available=sorted(rule[0] - PREDEFINED_NATIVE_NAMES),
-                escape_hatch=rule[1],
+                ERR_FORMAT_TEXT_IN_VEGA_SLOT, spec=spec, field_path=field_path
             )
         # A predefined TIME name has no PREDEFINED_SPECS entry: route it to the
         # time-shaped check.
         if reject_time_affix and spec in PREDEFINED_TIME_NAMES:
             _check_time_affix_conflict(value, field_path, spec)
         return
-    aliases = {} if formats is None else formats.aliases
     if spec in aliases:
         aliased = aliases[spec]
         aliased_spec = aliased.spec if isinstance(aliased, FormatConfig) else aliased
@@ -334,9 +292,8 @@ def _validate_spec(
                 ),
                 formats,
                 field_path,
-                time_format,
+                time_capable,
                 vega_painted=vega_painted,
-                kind=kind,
                 reject_time_affix=reject_time_affix,
             )
             return
@@ -351,24 +308,19 @@ def _validate_spec(
                 suffix=_resolved_parts.suffix or None,
                 notation=_resolved_parts.notation,
             )
-        # An alias target skips the kind check, so a time-shaped target
-        # reaches here whatever this slot's `time_format` flag says; and an
-        # alias is the only way an affix reaches a `time_format` slot.
-        if (kind == "time" and has_resolved_affix) or (
-            aliased_spec and reject_time_affix and is_time_format(aliased_spec)
-        ):
+        if aliased_spec and reject_time_affix and is_time_format(aliased_spec):
             _check_time_affix_conflict(effective_value, field_path, spec)
         # A Vega-painted time slot reached through an alias gets the same
         # directive gate as the directive written inline.
         if (
-            time_format
+            time_capable
             and vega_painted
             and aliased_spec
             and is_time_format(aliased_spec)
         ):
             _raise_if_unsupported_time_directives(aliased_spec, field_path)
         return
-    if time_format and is_time_format(spec):
+    if time_capable and is_time_format(spec):
         # A directive portable_strftime doesn't paint must fail here, at compile -- not reach render, where it's either
         # an uncoded ValueError (ERR-INTERNAL, Python-painted slots) or a
         # literal, unrendered letter (Vega-painted slots).
@@ -397,32 +349,17 @@ def _validate_spec(
     try:
         _d3_parse(spec)
     except D3FormatError as e:
-        # Scoped to the slot's own half: suggesting `currency` for `currencyy`
-        # in a `time_format` would hand the author the very value the kind check
-        # rejects one compile later.
-        available = sorted({*aliases, *(rule[0] if rule else ALL_PREDEFINED_NAMES)})
-        if kind == "time":
-            # No `%` directive was found, so this isn't a d3-format parse
-            # failure at all -- pointing the author at number-spec parsing
-            # would mislead them; the slot's own kind already settles what
-            # it should have written instead.
-            explanation = (
-                "it is not an engine-predefined format name and not a key "
-                f"in `style.formats`. {_KIND_RULES['time'][1]}"
-            )
-        else:
-            explanation = (
-                "it is not an engine-predefined format name, not a key in "
-                f"`style.formats`, and is not a valid d3-format spec ({e.reason} "
-                f"at position {e.position})."
-            )
         raise CompilationError.from_code(
             ERR_FORMAT_INVALID,
             spec=spec,
             field_path=field_path,
-            kind_noun="date/time" if kind == "time" else "number",
-            explanation=explanation,
-            available=available,
+            kind_noun="number",
+            explanation=(
+                "it is not an engine-predefined format name, not a key in "
+                f"`style.formats`, and is not a valid d3-format spec ({e.reason} "
+                f"at position {e.position})."
+            ),
+            available=sorted({*aliases, *ALL_PREDEFINED_NAMES}),
         ) from e
 
 
@@ -431,6 +368,10 @@ def _check_redefinition_kind(name: str, target: str | FormatConfig) -> None:
     spec = target.spec if isinstance(target, FormatConfig) else target
     if name not in ALL_PREDEFINED_NAMES:
         return
+    if name in PREDEFINED_TEXT_NAMES:
+        raise CompilationError.from_code(
+            ERR_FORMAT_TEXT_REDEFINED, field_path=f"style.formats.{name}", name=name
+        )
     if not spec:
         raise CompilationError.from_code(
             ERR_FORMAT_INVALID,
@@ -454,8 +395,8 @@ def _check_redefinition_kind(name: str, target: str | FormatConfig) -> None:
             spec=spec,
             field_path=f"style.formats.{name}",
             kind=kind,
-            available=sorted(names - PREDEFINED_NATIVE_NAMES),
-            escape_hatch=_KIND_RULES[kind][1],
+            available=sorted(names - PYTHON_ONLY_NATIVE_NAMES - GRAIN_NAMES),
+            escape_hatch=_KIND_ESCAPE_HATCHES[kind],
         )
 
 
@@ -487,6 +428,12 @@ def _validate_query_formats(
     if not query.formats:
         return
     for column, name in query.formats.items():
+        if name in GRAIN_NAMES and not grain_is_redefined(name, formats):
+            raise CompilationError.from_code(
+                ERR_FORMAT_GRAIN_NAME_NOT_REDEFINED,
+                spec=name,
+                field_path=f"queries.{query_name}.formats.{column}",
+            )
         if name in ALL_PREDEFINED_NAMES or name in formats:
             continue
         try:
@@ -503,7 +450,7 @@ def _validate_query_formats(
             query=query_name,
             column=column,
             spec=name,
-            available=sorted({*formats, *ALL_PREDEFINED_NAMES}),
+            available=sorted({*formats, *ALL_PREDEFINED_NAMES - GRAIN_NAMES}),
         )
     if isinstance(query, ValuesQuery):
         returned = set(query.columns) if query.columns else set().union(*query.rows)
@@ -515,6 +462,60 @@ def _validate_query_formats(
                     column=column,
                     columns=", ".join(sorted(returned)),
                 )
+
+
+def _boards(board: Board) -> Iterator[Board]:
+    yield board
+    for item in board.layout.items:
+        if item.board is not None:
+            yield from _boards(item.board)
+
+
+def _spec_name(spec: str | FormatConfig) -> str | None:
+    return spec.spec if isinstance(spec, FormatConfig) else spec
+
+
+def format_names_used(board: Board) -> set[str]:
+    """Format names read by a slot, a query column, or a text ``format('name')``
+    call, on this board or any nested board."""
+    used: set[str] = set()
+    text_call = re.compile(r"""\bformat\(\s*(['"])(.+?)\1""")
+    for each in _boards(board):
+        roots = (*each.charts.values(), each.authored_style)
+        for root in roots:
+            if root is not None:
+                names = (
+                    _spec_name(spec)
+                    for _, spec, *_ in _iter_format_slots(root, "", False)
+                )
+                used.update(name for name in names if name is not None)
+        queries = [*each.queries.values()]
+        queries += [
+            chart.query
+            for chart in each.charts.values()
+            if chart.type != "callout" and chart.query_is_inline and chart.query
+        ]
+        for query in queries:
+            if query.formats is not None:
+                used.update(query.formats.values())
+    texts = (
+        text for text in _strings(board.model_dump(mode="python")) if "format(" in text
+    )
+    used.update(match[1] for text in texts for match in text_call.findall(text))
+    return used - {""}
+
+
+def _strings(
+    node: object,  # type-state: object_annotation — recursive walk over a model_dump tree of dict/list/leaf values
+) -> Iterator[str]:
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for value in node.values():
+            yield from _strings(value)
+    elif isinstance(node, (list, tuple)):
+        for value in node:
+            yield from _strings(value)
 
 
 def validate_board_format_specs(board: Board) -> None:
@@ -550,9 +551,12 @@ def _validate_board(board: Board, validated: set[int]) -> None:
         _validate_query_formats(query_name, query, aliases)
     for alias, target in aliases.items():
         _check_redefinition_kind(alias, target)
+        target_spec = target.spec if isinstance(target, FormatConfig) else target
         _validate_spec(
             target,
-            None,
+            # Only a grain name resolves through the table; any other alias
+            # target must itself be an engine name or a d3 spec.
+            formats if target_spec in GRAIN_NAMES else None,
             f"style.formats.{alias}",
             True,
             # Axes read an engine name by default, and Vega paints them.
@@ -591,7 +595,7 @@ def _validate_board(board: Board, validated: set[int]) -> None:
     # authored patch, not resolved_style -- the latter carries theme content
     # this pass has no business rejecting.
     if board.authored_style is not None:
-        for field_path, spec, timed, is_vega, kind, reject_affix in _iter_format_slots(
+        for field_path, spec, timed, is_vega, reject_affix in _iter_format_slots(
             board.authored_style, "style", False
         ):
             _validate_spec(
@@ -600,7 +604,6 @@ def _validate_board(board: Board, validated: set[int]) -> None:
                 field_path,
                 timed,
                 vega_painted=is_vega,
-                kind=kind,
                 reject_time_affix=reject_affix,
             )
     for chart_id, chart in board.charts.items():
@@ -613,7 +616,7 @@ def _validate_board(board: Board, validated: set[int]) -> None:
             and chart.query is not None
         ):
             _validate_query_formats(chart_id, chart.query, aliases)
-        for field_path, spec, timed, is_vega, kind, reject_affix in _iter_format_slots(
+        for field_path, spec, timed, is_vega, reject_affix in _iter_format_slots(
             chart, f"charts.{chart_id}", False
         ):
             _validate_spec(
@@ -622,6 +625,5 @@ def _validate_board(board: Board, validated: set[int]) -> None:
                 field_path,
                 timed,
                 vega_painted=is_vega,
-                kind=kind,
                 reject_time_affix=reject_affix,
             )

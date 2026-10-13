@@ -1,0 +1,5 @@
+kind: Features
+body: Search results name the charts that matched on each board, and `dct describe --chart` describes a single chart.
+time: 2026-10-09T14:16:14.838391-07:00
+custom:
+    DbtChartsIssue: "20"

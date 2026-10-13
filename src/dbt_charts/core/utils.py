@@ -53,8 +53,7 @@ _YEAR_STRING_PATTERN = re.compile(r"^\d{4}$")
 
 # Cell-scope date detector — shared by compile-time table column alignment
 # (classify_date_column_align) and the render-time table cell/lane machinery
-# (dbt_charts.core.render.chart.table.py and table_support.py both import
-# is_date_like from here). Distinct from render/chart/type_inference.py's
+# (the Rust table family mirrors it). Distinct from render/chart/type_inference.py's
 # DATE_LIKE_PATTERNS (chart-scope: axis type inference), which is a
 # separate, wider list — the two detectors are deliberately not unified.
 _DATE_RE = re.compile(

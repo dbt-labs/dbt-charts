@@ -228,8 +228,8 @@ def test_board_axis_quantitative_beats_board_channel():
     assert resolved.labels.format.spec == ",.1%"
 
 
-def test_chart_fallback_format_beats_board_axis_y():
-    """chart.format / style.number_format wins over board-level axis_y.labels.format."""
+def test_column_layer_format_beats_board_axis_y():
+    """The axis column's declared format wins over board-level axis_y.labels.format."""
     board_patch = StylePatch.model_validate(
         {"charts": {"axis_y": {"labels": {"format": "$,.0f"}}}}
     )
@@ -238,7 +238,7 @@ def test_chart_fallback_format_beats_board_axis_y():
         ctx,
         "axis_y",
         "quantitative",
-        chart_fallback_format=",.1%",
+        column_layer_format=",.1%",
         chart_type="",
         label_authored=False,
     )

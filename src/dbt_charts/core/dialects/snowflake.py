@@ -4,6 +4,8 @@ Snowflake uses:
 - ? for positional parameters or :name for named parameters
 """
 
+from collections.abc import Sequence
+
 from dbt_charts.core.dialects.base import SQLDialect
 
 
@@ -19,6 +21,7 @@ class SnowflakeDialect(SQLDialect):
     """
 
     name = "snowflake"
+    folds_identifier_case = True
     # Single-quoted constants use backslash escape sequences: a constant holding
     # a backslash 'must escape the backslash with a second backslash'.
     # https://docs.snowflake.com/en/sql-reference/data-types-text
@@ -61,4 +64,18 @@ class SnowflakeDialect(SQLDialect):
             f"FROM {db}INFORMATION_SCHEMA.COLUMNS "
             "WHERE table_schema <> 'INFORMATION_SCHEMA' "
             "ORDER BY table_schema, table_name, ordinal_position"
+        )
+
+    def bulk_tables_sql(self, scope: str, schemas: Sequence[str]) -> str:
+        """Whole-database tables; ``scope`` qualifies the database as in
+        :meth:`bulk_schema_sql`."""
+        db = f'"{scope.replace(chr(34), chr(34) * 2)}".' if scope else ""
+        condition = self.schema_condition(schemas, "table_schema")
+        extra = f"AND {condition} "
+        return (
+            "SELECT table_schema, table_name "
+            f"FROM {db}INFORMATION_SCHEMA.TABLES "
+            "WHERE table_schema <> 'INFORMATION_SCHEMA' "
+            f"{extra}"
+            "ORDER BY table_schema, table_name"
         )

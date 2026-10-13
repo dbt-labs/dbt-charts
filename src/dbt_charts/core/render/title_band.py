@@ -38,10 +38,7 @@ from dbt_charts.core.render.chart.spec_builders import (
     VEGA_SUBTITLE_PADDING,
     VEGA_TITLE_OFFSET,
 )
-from dbt_charts.core.render.chart.table import (
-    compute_table_title_block_layout,
-    title_ascent,
-)
+from dbt_charts.core.render.engine import table_title_geometry
 from dbt_charts.core.render.sizing import get_title_height, title_baseline_offset
 
 if TYPE_CHECKING:
@@ -87,6 +84,16 @@ def row_title_shifts(metrics: Sequence[TitleMetrics | None]) -> list[TitleShift]
     ]
 
 
+# Vega-Lite places a title's baseline `round(size * 0.8)` below its box top
+# at every width-tiered size.
+_TITLE_ASCENT_RATIO = 0.8
+
+
+def title_ascent(font_size: float) -> float:
+    """First-baseline distance below a Vega-Lite title's top at ``font_size``."""
+    return float(round(font_size * _TITLE_ASCENT_RATIO))
+
+
 def chart_title_metrics(
     chart: ResolvedChart, card_padding: float, slot_width: float
 ) -> TitleMetrics | None:
@@ -114,22 +121,8 @@ def chart_title_metrics(
     size = float(title_font.size)
     inset_top = card_padding + chart.layout_padding.top
     if isinstance(chart, ResolvedTableChart):
-        padding = int(chart.style.table.outer_padding)
-        block = compute_table_title_block_layout(
-            chart_title=chart.title,
-            chart_subtitle=chart.subtitle
-            or "",  # type-state: silent_fallback — no subtitle is the empty string the title-block helper reads as absent
-            table_width=slot_width,
-            tc=chart.style.table,
-            padding=padding,
-            title_style=chart.style.title,
-            card_padding=card_padding,
-            title_font=title_font,
-        )
-        ascent = title_ascent(size)
-        return TitleMetrics(
-            ascent=inset_top + padding + ascent, tail=block.height - ascent
-        )
+        ascent, tail = table_title_geometry(chart, slot_width)
+        return TitleMetrics(ascent=inset_top + ascent, tail=tail)
     if isinstance(chart, ResolvedSparkBarChart):
         spark = get_chart_rendering().spark_bar
         block_height = spark.title_height + (int(size) if chart.subtitle else 0)

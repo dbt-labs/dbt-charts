@@ -12,7 +12,10 @@ Covers the contract changes:
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
+from typing import Any
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -31,8 +34,9 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
-from dbt_charts.core.render.chart.kpi import render_kpi_svg
 from dbt_charts.core.render.errors import RenderError
+
+from ..._engine_render import render_kpi_svg
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
@@ -614,35 +618,29 @@ class TestKpiTemporalFormat:
         # this slot (`_TIME_CAPABLE_FIELDS` doesn't cover KPI value/support);
         # a `style.formats` alias (validated with `time_format=True`) is the
         # only author-reachable route to a strftime spec here, and resolves
-        # through the same `resolve_format` call `_format_value_parts` makes.
-        from dbt_charts.core.render.chart.kpi import _format_value_parts
+        # through the same `resolve_format` call `kpi_value_text` makes.
+        from dbt_charts.core.render.chart.kpi_value import kpi_value_text
 
-        _, number_str, _, is_numeric = _format_value_parts(
+        text = kpi_value_text(
             "2026-11-15", "my_date", "t", formats={"my_date": "%Y/%m"}
         )
-        assert number_str == "2026/11"
-        assert is_numeric is False
+        assert text == "2026/11"
 
     def test_negative_value_with_spaced_prefix_places_sign_after_prefix(self):
-        """A KPI has no anchor-row concept -- unlike table.py's `symbol_mode."""
+        """A KPI has no anchor-row concept -- unlike a table's `symbol_mode."""
         from dbt_charts.core.compile.models.primitives import FormatConfig
-        from dbt_charts.core.render.chart.kpi import _format_value_parts
+        from dbt_charts.core.render.chart.kpi_value import kpi_value_text
 
-        prefix, number_str, suffix, is_numeric = _format_value_parts(
-            -500, FormatConfig(spec=",.0f", prefix="EUR "), "chart_id"
+        text = kpi_value_text(
+            -500, FormatConfig(spec=",.0f", prefix="EUR "), "chart_id", None
         )
-        assert is_numeric is True
-        assert prefix == "EUR"
-        assert number_str == "−500"
-        assert suffix == ""
+        assert text == "EUR −500"
 
     def test_invalid_strftime_alias_raises(self):
-        from dbt_charts.core.render.chart.kpi import _format_value_parts
+        from dbt_charts.core.render.chart.kpi_value import kpi_value_text
 
         with pytest.raises(ChartDataError, match="unknown directive"):
-            _format_value_parts(
-                "2026-11-15", "bad_date", "t", formats={"bad_date": "%v"}
-            )
+            kpi_value_text("2026-11-15", "bad_date", "t", formats={"bad_date": "%v"})
 
     def test_d3_fill_char_percent_spec_falls_back_to_date_short(self):
         # `%` is also a legal d3-format FILL character (e.g. `%>10,.0f`) and
@@ -1210,72 +1208,116 @@ def test_kpi_label_color_no_longer_inherits_style_title_font_color():
 # ---------------------------------------------------------------------------
 
 
-def _charts_style_with_overflow(overflow):
-    """Return a ChartsStyle copy with kpi.label.overflow set to ``overflow``."""
-    import dataclasses
+@dataclass(frozen=True)
+class _CardGeometry:
+    height: float
+    label_baseline_first: float
+    support_baseline: float | None
+    label_line_height: float
 
-    base = _es()
-    label = base.kpi.label.model_copy(update={"overflow": overflow})
-    return dataclasses.replace(base, kpi=base.kpi.model_copy(update={"label": label}))
+
+def _card_geometry(
+    *,
+    overflow: str = "wrap-two",
+    label: str = "Revenue",
+    width: float = 180,
+    height: float = 1,
+    has_support: bool = False,
+) -> _CardGeometry:
+    """Render a stacked KPI and read its slot baselines back off the SVG.
+
+    ``height=1`` is below any card's content, so the card is its structural
+    minimum height.
+    """
+    from dbt_charts.core.render.engine import render_native
+
+    kwargs: dict[str, Any] = {}
+    if has_support:
+        kwargs["support"] = {"value": "delta", "label": "vs prior"}
+    resolved, data = _resolved_kpi(
+        value="revenue",
+        label=label,
+        _data=[{"revenue": 1_500_000, "delta": 5}],
+        **kwargs,
+    )
+    kpi_style = resolved.style.kpi
+    label = kpi_style.label.model_copy(update={"overflow": overflow})
+    resolved = resolved.model_copy(
+        update={
+            "style": resolved.style.model_copy(
+                update={"kpi": kpi_style.model_copy(update={"label": label})}
+            )
+        }
+    )
+    board_style = resolve_style(get_theme_style())
+    svg, _ = render_native(
+        resolved,
+        data,
+        width=width,
+        height=height,
+        padding=None,
+        board_style=board_style,
+        board_width=None,
+    )
+    label_baseline = re.search(
+        r'data-authored-kind="label".*?<tspan x="[^"]+" y="([\d.]+)"', svg, re.S
+    )
+    assert label_baseline is not None
+    card_height = re.search(r'<svg[^>]* height="([\d.]+)"', svg)
+    assert card_height is not None
+    support = re.findall(r'<text x="[^"]+" y="([\d.]+)" text-anchor', svg)
+    return _CardGeometry(
+        height=float(card_height[1]),
+        label_baseline_first=float(label_baseline[1]),
+        support_baseline=float(support[-1]) if has_support else None,
+        label_line_height=resolved.style.kpi.label.font.size + 4.0,
+    )
 
 
 class TestKpiLabelSlotByOverflow:
     """``support_baseline`` reserves one line under single-line overflow modes
     (``clip``/``truncate``) instead of the default two-line ``wrap-two`` slot.
 
-    Asserts the slot delta in terms of the layout's own ``label_line_height``
-    so the test does not pin a theme literal.
+    Asserts the slot delta in terms of the label line height so the test does
+    not pin a theme literal.
     """
 
-    def _layout(self, overflow, label="Revenue", width=180, height=0):
-        from dbt_charts.core.render.chart.kpi import (
-            _resolve_kpi_fonts,
-            _resolve_kpi_layout,
-        )
-
-        charts_style = _charts_style_with_overflow(overflow)
-        return _resolve_kpi_layout(
-            label_text=label,
-            requested_width=width,
-            requested_height=height,
-            kpi_config=charts_style.kpi,
-            fonts=_resolve_kpi_fonts(charts_style.kpi),
-            has_support=True,
+    @staticmethod
+    def _slot_lines(card: _CardGeometry) -> float:
+        assert card.support_baseline is not None
+        return (card.support_baseline - card.label_baseline_first) / (
+            card.label_line_height
         )
 
     def test_wrap_two_preserves_two_line_slot(self):
-        layout = self._layout("wrap-two")
-        delta = layout.support_baseline - layout.label_baseline_first
-        assert delta == pytest.approx(2 * layout.label_line_height)
+        card = _card_geometry(overflow="wrap-two", has_support=True)
+        assert self._slot_lines(card) == pytest.approx(2)
 
     def test_truncate_collapses_to_one_line_slot(self):
-        layout = self._layout("truncate")
-        delta = layout.support_baseline - layout.label_baseline_first
-        assert delta == pytest.approx(1 * layout.label_line_height)
+        card = _card_geometry(overflow="truncate", has_support=True)
+        assert self._slot_lines(card) == pytest.approx(1)
 
     def test_clip_collapses_to_one_line_slot(self):
-        layout = self._layout("clip")
-        delta = layout.support_baseline - layout.label_baseline_first
-        assert delta == pytest.approx(1 * layout.label_line_height)
+        card = _card_geometry(overflow="clip", has_support=True)
+        assert self._slot_lines(card) == pytest.approx(1)
 
     def test_row_alignment_under_truncate_with_mixed_label_lengths(self):
         """Two KPIs at the same width under ``truncate``: short and would-wrap
         labels share the same support baseline (theme-wide overflow shifts
         every KPI by the same amount)."""
-        short = self._layout("truncate", label="Revenue")
-        wrappy = self._layout(
-            "truncate",
+        short = _card_geometry(overflow="truncate", label="Revenue", has_support=True)
+        wrappy = _card_geometry(
+            overflow="truncate",
             label="New customers acquired this quarter from inbound channels",
+            has_support=True,
         )
         assert short.support_baseline == wrappy.support_baseline
 
     def test_minimum_card_height_drops_under_truncate(self):
         """``minimum_card_h`` under ``truncate`` is smaller than under
-        ``wrap-two`` by approximately one ``label_line_height``. We read the
-        layout's ``height`` with ``requested_height=0`` so it returns the
-        structural minimum."""
-        wrap = self._layout("wrap-two", height=0)
-        trunc = self._layout("truncate", height=0)
+        ``wrap-two`` by approximately one label line height."""
+        wrap = _card_geometry(overflow="wrap-two", has_support=True)
+        trunc = _card_geometry(overflow="truncate", has_support=True)
         assert wrap.height - trunc.height == pytest.approx(wrap.label_line_height)
 
 
@@ -1287,41 +1329,19 @@ class TestKpiLabelSlotByOverflow:
 class TestKpiSupportSlotCollapse:
     """Cards with no support content drop the reserved third-line slot.
 
-    The legacy layout always reserved one ``label_line_height`` + support
+    The legacy layout always reserved one label line height + support
     descender below the label slot for a delta/comparison line, leaving a
     visible gap below rows of bare label+value KPIs. The collapse keeps the
     reservation only when a support row will actually be emitted.
     """
 
-    def _layout(
-        self,
-        has_support: bool,
-        label: str = "Revenue",
-        width: float = 180,
-        height: float = 0,
-    ):
-        from dbt_charts.core.render.chart.kpi import (
-            _resolve_kpi_fonts,
-            _resolve_kpi_layout,
-        )
-
-        charts_style = _es()
-        return _resolve_kpi_layout(
-            label_text=label,
-            requested_width=width,
-            requested_height=height,
-            kpi_config=charts_style.kpi,
-            fonts=_resolve_kpi_fonts(charts_style.kpi),
-            has_support=has_support,
-        )
-
     def test_no_support_card_collapses_one_line(self):
-        """Card height without support drops by ~one ``label_line_height``
+        """Card height without support drops by ~one label line height
         compared to with-support — the reserved third line is the support
         row's slot. Tolerance accommodates the descender swap (support font
         vs label font may differ by a few pixels)."""
-        without = self._layout(has_support=False)
-        with_support = self._layout(has_support=True)
+        without = _card_geometry(has_support=False)
+        with_support = _card_geometry(has_support=True)
         delta = with_support.height - without.height
         assert delta == pytest.approx(without.label_line_height, abs=4.0)
 
@@ -1329,8 +1349,8 @@ class TestKpiSupportSlotCollapse:
         """Two no-support cards at the same width have the same height
         regardless of label content — the label slot stays reserved at two
         lines; only the support slot collapses."""
-        short = self._layout(has_support=False, label="Revenue")
-        long_ = self._layout(
+        short = _card_geometry(has_support=False, label="Revenue")
+        long_ = _card_geometry(
             has_support=False,
             label="New customers acquired this quarter from inbound channels",
         )

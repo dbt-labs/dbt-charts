@@ -52,24 +52,7 @@ from dbt_charts.core.compile.models.query.authored import (
     AuthoredSqlQuery,
     AuthoredValuesQuery,
 )
-from dbt_charts.core.compile.models.source import (
-    BigQuerySourceConfig,
-    CsvSourceConfig,
-    DatabricksSourceConfig,
-    DbtProfileSourceConfig,
-    DuckDBSourceConfig,
-    HttpSourceConfig,
-    JsonSourceConfig,
-    LakeComputeApiKeySource,
-    LakeComputeFivetranSource,
-    LakeComputeOktaSource,
-    LakeComputeTokenSource,
-    ParquetSourceConfig,
-    PostgresSourceConfig,
-    RedshiftSourceConfig,
-    SnowflakeSourceConfig,
-    SQLiteSourceConfig,
-)
+from dbt_charts.core.compile.models.source import SourceConfig
 from dbt_charts.core.compile.models.style.authored import PaginationConfig
 
 
@@ -89,10 +72,12 @@ class SchemaField:
     extra_union_types: list[str] = dataclasses.field(
         default_factory=list
     )  # primitive type names alongside models or enums in a union
-    # Regex pattern for a pattern-constrained primitive in extra_union_types
-    # (e.g. {"str": VAR_REF_RE.pattern}) — keyed by the same name so the
-    # renderer can look up a constraint for a name it already has.
-    extra_union_type_patterns: dict[str, str] = dataclasses.field(default_factory=dict)
+    # JSON Schema keywords (pattern, description) a primitive arm in
+    # extra_union_types declares, e.g. {"str": {"pattern": VAR_REF_RE.pattern}},
+    # keyed by the same name so the renderer can look them up.
+    extra_union_type_keywords: dict[str, dict[str, str]] = dataclasses.field(
+        default_factory=dict
+    )
     container_mapping_models: list[str] = dataclasses.field(default_factory=list)
     # Item-type branch names (models and/or primitives) for a list[...] sibling
     # arm beside a non-container arm in the same union — the mirror of
@@ -434,7 +419,6 @@ def _type_repr(annotation: Any) -> str:
         return f"one of: {', '.join(values)}"
 
     # Guard: only match plain types, not generic aliases (list[X], dict[K,V])
-    # On Python 3.10, isinstance(list[X], type) can return True for GenericAlias.
     if origin is None and isinstance(annotation, type):
         if issubclass(annotation, Enum):
             return f"one of: {', '.join(e.value for e in annotation)}"
@@ -610,29 +594,32 @@ def _extra_union_types(annotation: Any) -> list[str]:
     return list(dict.fromkeys(result))
 
 
-def _string_constraint_pattern(
+def _arm_keywords(
     annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _nested_model_names/_extra_union_types
-) -> str | None:
-    """Return the regex pattern if annotation is `Annotated[str, StringConstraints(pattern=...)]`."""
-    if not hasattr(annotation, "__metadata__"):
-        return None
+) -> dict[str, str]:
+    """`pattern`/`description` an `Annotated[str, ...]` arm declares."""
+    keywords: dict[str, str] = {}
+    if get_origin(annotation) is not Annotated:
+        return keywords
     for meta in annotation.__metadata__:
         if isinstance(meta, StringConstraints) and isinstance(meta.pattern, str):
-            return meta.pattern
-    return None
+            keywords["pattern"] = meta.pattern
+        if isinstance(meta, FieldInfo) and meta.description:
+            keywords["description"] = meta.description
+    return keywords
 
 
-def _extra_union_type_patterns(
+def _extra_union_type_keywords(
     annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _extra_union_types
-) -> dict[str, str]:
-    """Regex pattern for a pattern-constrained string arm in extra_union_types.
+) -> dict[str, dict[str, str]]:
+    """JSON Schema keywords a primitive arm in extra_union_types declares.
 
     Mirrors _extra_union_types' traversal exactly (same skip_containers guard,
-    same container recursion) but collects the `StringConstraints.pattern` a
-    `str` arm carries — e.g. VariableOrRef/ChartOrRef's cross-file-ref string
-    arm (`VAR_REF_PATTERN_STR`/`CHART_REF_PATTERN_STR`, board/authored.py). A
-    plain (unconstrained) `str` arm — queries: has one on purpose, since
-    normalize_query_value treats any string failing QUERY_REF_RE as SQL —
+    same container recursion) but collects `_arm_keywords`, e.g.
+    VariableOrRef/ChartOrRef's cross-file-ref string arm pattern
+    (`VAR_REF_PATTERN_STR`/`CHART_REF_PATTERN_STR`, board/authored.py). A
+    plain `str` arm (queries: has one on purpose, since
+    normalize_query_value treats any string failing QUERY_REF_RE as SQL)
     contributes nothing here.
     """
     annotation = _unwrap_annotated(annotation)
@@ -643,15 +630,15 @@ def _extra_union_type_patterns(
 
     if origin in (list, dict):
         item = args[-1]
-        pattern = _string_constraint_pattern(item)
-        if pattern is not None and _unwrap_annotated(item) is str:
-            return {"str": pattern}
-        return _extra_union_type_patterns(item)
+        keywords = _arm_keywords(item)
+        if keywords and _unwrap_annotated(item) is str:
+            return {"str": keywords}
+        return _extra_union_type_keywords(item)
 
     non_none_args = [a for a in args if a is not type(None)]
     skip_containers = len(non_none_args) > 1
 
-    result: dict[str, str] = {}
+    result: dict[str, dict[str, str]] = {}
     for arg in args:
         raw_arg = arg
         arg = _unwrap_annotated(arg)
@@ -671,14 +658,14 @@ def _extra_union_type_patterns(
             and isinstance(arg, type)
             and arg.__name__ in _PRIMITIVE_NAMES
         ):
-            pattern = _string_constraint_pattern(raw_arg)
-            if pattern is not None:
-                result[arg.__name__] = pattern
+            keywords = _arm_keywords(raw_arg)
+            if keywords:
+                result[arg.__name__] = keywords
             continue
         # Same container/union-only recursion as _extra_union_types — a tuple
         # arm's positions are not union members to widen through.
         if arg_origin in (list, dict, Union, types.UnionType):
-            result.update(_extra_union_type_patterns(arg))
+            result.update(_extra_union_type_keywords(arg))
     return result
 
 
@@ -783,6 +770,8 @@ def _value_constraints(
             found["max_length"] = meta.max_length
         elif isinstance(meta, _PATTERN_METADATA) and "pattern" in vars(meta):
             found["pattern"] = vars(meta)["pattern"]
+        elif isinstance(meta, Facet) and meta.pattern is not None:
+            found["pattern"] = meta.pattern
     return found
 
 
@@ -971,7 +960,7 @@ def _build_schema_field(
         nested_models=_nested_model_names(annotation),
         container=_get_container(annotation),
         extra_union_types=extra_union_types,
-        extra_union_type_patterns=_extra_union_type_patterns(annotation),
+        extra_union_type_keywords=_extra_union_type_keywords(annotation),
         container_mapping_models=_container_mapping_models(annotation),
         container_list_models=_container_list_models(annotation),
         tuple_item_reprs=_tuple_item_reprs(annotation),
@@ -1201,22 +1190,7 @@ def introspect() -> AuthorableSchema:
         AuthoredCompactValuesQuery,
         AuthoredSchemaQuery,
         PaginationConfig,
-        PostgresSourceConfig,
-        SnowflakeSourceConfig,
-        BigQuerySourceConfig,
-        RedshiftSourceConfig,
-        DatabricksSourceConfig,
-        DuckDBSourceConfig,
-        SQLiteSourceConfig,
-        CsvSourceConfig,
-        ParquetSourceConfig,
-        JsonSourceConfig,
-        HttpSourceConfig,
-        DbtProfileSourceConfig,
-        LakeComputeTokenSource,
-        LakeComputeApiKeySource,
-        LakeComputeOktaSource,
-        LakeComputeFivetranSource,
+        *get_args(SourceConfig),
         # Compiled style root — walks style/theme/ types so inherit-chain metadata
         # (Inherit/InheritSlot markers) is visible in the schema IR.
         Style,

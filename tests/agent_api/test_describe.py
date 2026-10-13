@@ -399,3 +399,119 @@ class TestDescribeBoardPathTypes:
 
         assert result.success is True, result.errors
         assert result.path == "sub/x.yml"
+
+
+_CHART_SCOPE_BOARD_YAML = """
+title: Sales Dashboard
+queries:
+  revenue:
+    sql: SELECT month, SUM(amount) AS total FROM orders WHERE region = '{{ region }}' GROUP BY 1
+    source: analytics
+  product_list:
+    sql: SELECT name FROM products WHERE tier = '{{ tier }}'
+    source: analytics
+charts:
+  trend:
+    query: revenue
+    type: line
+    x: month
+    y: total
+    title: Revenue Trend
+  products:
+    query: product_list
+    type: table
+variables:
+  region:
+    input: select
+    options:
+      static: [North, South]
+    default: North
+  tier:
+    input: select
+    options:
+      static: [gold, silver]
+    default: gold
+rows:
+  - trend
+  - products
+"""
+
+
+class TestDescribeBoardChartScope:
+    """describe_board(chart=...) narrows to one chart and the context it needs."""
+
+    def test_chart_scope_keeps_only_its_query_and_variables(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.describe import describe_board
+
+        board = _write_board(tmp_path, _CHART_SCOPE_BOARD_YAML)
+        result = describe_board(board, project=local_project(tmp_path), chart="trend")
+
+        assert result.success is True, result.errors
+        assert result.title == "Sales Dashboard"
+        assert [c.name for c in result.charts] == ["trend"]
+        assert result.charts[0].title == "Revenue Trend"
+        assert [q.name for q in result.queries] == ["revenue"]
+        assert [v.name for v in result.variables] == ["region"]
+        assert result.layout is None
+
+    def test_chart_scope_keeps_layer_queries(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.describe import describe_board
+
+        board = _write_board(
+            tmp_path,
+            """
+title: Layered
+queries:
+  by_category:
+    columns: [region, revenue]
+    values:
+      - [East, 1]
+  totals:
+    columns: [region, total]
+    values:
+      - [East, 1]
+  unrelated:
+    columns: [v]
+    values:
+      - [1]
+charts:
+  stacked:
+    query: by_category
+    type: bar
+    x: region
+    y: revenue
+    layers:
+      - type: line
+        query: totals
+        y: total
+  other:
+    query: unrelated
+    type: kpi
+    value: v
+rows:
+  - stacked
+  - other
+""",
+        )
+        result = describe_board(board, project=local_project(tmp_path), chart="stacked")
+
+        assert result.success is True, result.errors
+        assert {q.name for q in result.queries} == {"by_category", "totals"}
+
+    def test_unknown_chart_fails_with_available_charts(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.describe import describe_board
+
+        board = _write_board(tmp_path, _CHART_SCOPE_BOARD_YAML)
+        result = describe_board(board, project=local_project(tmp_path), chart="trnd")
+
+        assert result.success is False
+        (err,) = result.errors
+        assert err.code == "ERR-UNKNOWN-CHART"
+        assert "products" in err.message and "trend" in err.message
+        assert err.hint is not None and "trend" in err.hint

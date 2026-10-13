@@ -6,7 +6,8 @@ from types import EllipsisType
 from typing import Any, Literal
 
 from dbt_charts.core.compile.config import get_chart_rendering
-from dbt_charts.core.compile.format import column_format
+from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.format import column_format, resolve_format_parts
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     PieChart,
@@ -40,7 +41,6 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
     _bound_scales,
-    _resolved_chart_format,
     _shared_kwargs,
     _title_font,
 )
@@ -79,6 +79,7 @@ from dbt_charts.core.compile.resolve.style.legend_position import (
 from dbt_charts.core.compile.resolve.style.palette import mark_ink
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_compile import ERR_PIE_TOTAL_WITHOUT_HOLE
 from dbt_charts.core.text.predefined_formats import PredefinedNumberFormat
 
 __all__ = [
@@ -202,6 +203,12 @@ def _resolve_pie(
 
     # Voted against the slice tooltip's set so the two never disagree.
     is_donut_shape = pie.inner_radius is not None and pie.inner_radius > 0
+    # Resolved here, not at normalize: the hole can come from the board or theme
+    # cascade, which normalize never sees.
+    if total is not None and total.visible and not is_donut_shape:
+        raise CompilationError.from_code(
+            ERR_PIE_TOTAL_WITHOUT_HOLE, field_path=f"charts.{normalized.id}.total"
+        )
     chart_total_format = (
         primary.total.value.format
         if primary is not None and primary.total is not None and primary.total.value
@@ -271,9 +278,13 @@ def _resolve_pie(
     )
     authored_edge = authored_position.edge
 
-    slice_format = _resolved_chart_format(
-        normalized.format if normalized.format is not None else theta_declared,
-        chart_style_context.formats,
+    slice_authored = (
+        normalized.format if normalized.format is not None else theta_declared
+    )
+    slice_format = (
+        resolve_format_parts(slice_authored, chart_style_context.formats)
+        if slice_authored is not None
+        else None
     )
 
     def plan_for(arc_mode: ArcRenderMode) -> AttachmentPlan:
@@ -361,6 +372,7 @@ def _resolve_pie(
             # entry and stripped from the rest reads as data loss here, not
             # alignment (see _with_resolved_scale_stops's own docstring).
             allow_shared_scale=False,
+            filter_variables=frozenset(),
         )
         heading = "Too small to label" if mode == "hybrid" else ""
         heading_font = resolve_hybrid_heading_font(attached_table.style.table)

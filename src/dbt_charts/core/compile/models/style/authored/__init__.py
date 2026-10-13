@@ -195,7 +195,7 @@ class ChartStylePatch(BaseModel):
     in the final compiled model.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     # Chart-level sizing — valid on all chart types that support aspect-ratio
     # sizing (i.e. not kpi / table / callout / spark_bar which use fixed sizing).

@@ -119,13 +119,11 @@ def _goal_table(fmt: str = "$,.3s"):
 def test_anchor_declares_the_magnitude_once_in_narrative_form():
     """Within one tier: the suffix rides the anchor cell and nothing else.
 
-    Narrative ("mn"), not analytic (" M") — the strip's cells are already
-    separated by band space, so the analytic form's leading space would be a
-    second separator competing with the first.
+    Narrative ("mn"), not analytic ("M").
     """
     calc = _cell_calc(_attach(_goal_table(), entry_numerals=[_MILLIONS]))
 
-    assert '" M"' not in calc
+    assert '"M"' not in calc
     # The suffix is gated on the anchor, so it cannot reach a bare cell.
     assert (
         '(datum["goal"] !== 0 && datum.__support_table_carries === 1 '
@@ -1146,12 +1144,13 @@ def test_left_axis_currency_honors_an_explicit_repeat_anchor(spec, values, expec
 def test_left_axis_trailing_currency_declares_once_with_the_magnitude():
     """A currency the locale writes after the digits is a trailing unit, so a
     left-axis strip states it once with the magnitude suffix."""
-    from dbt_charts.core.compile.models.primitives import Regional
-    from dbt_charts.core.text.format_d3 import locale_definition, number_locale_scope
+    from dbt_charts.core.compile.models.primitives import Regional, RegionalLocale
+    from dbt_charts.core.text.format_d3 import locale_definition, regional_scope
 
-    locale = Regional(locale="de-DE").format_locale
+    regional = Regional(locale=RegionalLocale(number="de-DE"))
+    locale = regional.format_locale
     values = [441e6, 448e6, -456e6]
-    with number_locale_scope(locale):
+    with regional_scope(locale, regional.time_locale, regional.week_start):
         strip = _house_affix_numerals_values(values, hang="right", spec="currency")
         painted = _paint(strip, values, locale_definition(locale))
         twins = [
@@ -1790,7 +1789,7 @@ def test_a_wide_row_and_a_hung_suffix_in_different_rows_do_not_add_up():
 @pytest.mark.parametrize(
     ("vertical", "values", "suffix", "repeats"),
     [
-        (True, [441e6, 448e6], " M", False),
+        (True, [441e6, 448e6], "M", False),
         (True, [999_600.0, 500_000.0], "k", True),
         (False, [441e6, 448e6], "mn", False),
     ],

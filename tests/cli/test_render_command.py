@@ -1717,3 +1717,26 @@ class TestRenderSkipsDefaultsFiles:
         error_payloads = [p for p in payloads if p["code"] == "ERR-NOTHING-TO-RENDER"]
         assert len(error_payloads) == 1, payloads
         assert error_payloads[0]["level"] == "error"
+
+
+def test_render_help_example_validates(tmp_path: Path) -> None:
+    """The stdin example in `dct render --help` renders as written."""
+    import re
+
+    from dbt_charts.cli.main import render
+
+    assert render.__doc__ is not None
+    match = re.search(
+        r"printf '([^']*)' \| dct render - --format terminal", render.__doc__
+    )
+    assert match, "render --help lost its stdin example"
+    board_yaml = match.group(1).encode().decode("unicode_escape")
+    (tmp_path / "dbt_charts.yml").write_text("sources: {}\n")
+    (tmp_path / "data.csv").write_text("id,amount\n1,10\n")
+
+    result = runner.invoke(
+        app,
+        ["render", "-", "--format", "terminal", "--project-dir", str(tmp_path)],
+        input=board_yaml,
+    )
+    assert result.exit_code == 0, result.output

@@ -1,0 +1,3 @@
+kind: Features
+body: Ids, durations, file sizes, coordinates, ratings and date grains each have a format name.
+time: 2026-10-05T09:01:00.000000-07:00

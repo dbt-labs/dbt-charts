@@ -45,7 +45,7 @@ import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any, NoReturn, SupportsIndex
+from typing import Any, NamedTuple, NoReturn, SupportsIndex
 
 from jinja2 import (
     StrictUndefined,
@@ -133,6 +133,26 @@ def _validate_operator(operator: object) -> str:
             f"Must be one of: {', '.join(sorted(VALID_OPERATORS))}"
         )
     return operator
+
+
+class DateRangeFilter(NamedTuple):
+    """One non-empty ``filter_date_range()`` call: the column and calendar bounds."""
+
+    column: str
+    start: date
+    end: date
+
+
+def _as_date(
+    bound: Any,  # type-state: explicit_any — a runtime variable value: date, datetime, or string
+) -> date | None:
+    """The calendar date of a bound, or None for a string ISO parsing rejects."""
+    if isinstance(bound, date):
+        return bound
+    try:
+        return datetime.fromisoformat(str(bound)).date()
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -413,6 +433,7 @@ def render_parameterized(
     profile_type: str = "postgres",
     strict: bool = True,
     warehouse: SQLDialect | None = None,
+    range_filters: list[DateRangeFilter] | None = None,
 ) -> ParameterizedQuery:
     """Render Jinja template to parameterized SQL.
 
@@ -439,6 +460,9 @@ def render_parameterized(
         warehouse: The engine whose SQL the filter helpers spell (see
             `SQLDialect.date_expr`). Defaults to `dialect`; pass it when
             `dialect` is a placeholder style no engine parses.
+        range_filters: Collects each `filter_date_range()` call that emitted a
+            range, as column and calendar bounds. A bound ISO parsing rejects is
+            not collected.
 
     Returns:
         ParameterizedQuery with SQL, params, and template_hash
@@ -501,7 +525,7 @@ def render_parameterized(
         warehouse = dialect
     context["filter"] = make_filter_helper(collector.add_param, warehouse)
     context["filter_date_range"] = make_filter_date_range_helper(
-        collector.add_param, warehouse
+        collector.add_param, warehouse, range_filters
     )
 
     # Handle queries namespace if present
@@ -746,7 +770,9 @@ def _is_calendar_date(
 
 
 def make_filter_date_range_helper(
-    emit: Emitter, dialect: SQLDialect
+    emit: Emitter,
+    dialect: SQLDialect,
+    range_filters: list[DateRangeFilter] | None = None,
 ) -> Callable[..., str]:
     """Create the filter_date_range() helper, over the same emission strategy.
 
@@ -763,6 +789,7 @@ def make_filter_date_range_helper(
         dialect: Target SQL dialect — its `date_expr()` spells the
             "compare this column as a date" comparison, which differs on
             SQLite (no native DATE type).
+        range_filters: See `render_parameterized`.
 
     Returns:
         Date range filter helper function
@@ -779,7 +806,8 @@ def make_filter_date_range_helper(
             date_range: Tuple/list of [start, end] dates
 
         Returns:
-            SQL BETWEEN clause with parameter placeholders
+            SQL BETWEEN clause, or a one-sided >= / <= clause when one end is
+            empty, with parameter placeholders; 1=1 when both ends are empty
 
         Raises:
             ValueError: If column name is invalid
@@ -817,20 +845,31 @@ def make_filter_date_range_helper(
             )
 
         start, end = actual_value
-        if not start or not end:
+        if not start and not end:
             return "1=1"  # Empty dates = no filter (intentional)
 
         # A date range is inclusive of the whole end day, so the column is
         # compared as a date; bounds carrying a time of day are compared raw.
+        if not start or not end:
+            bound, op = (start, ">=") if start else (end, "<=")
+            col = column if isinstance(bound, datetime) else dialect.date_expr(column)
+            return f"{col} {op} {emit(bound)}"
         timed = (isinstance(start, datetime), isinstance(end, datetime))
-        if all(timed):
-            return f"{column} BETWEEN {emit(start)} AND {emit(end)}"
-        if any(timed):
+        if any(timed) and not all(timed):
             raise ValueError(
                 f"date_range mixes a date with a datetime ({start!r}, {end!r}); "
                 f"the column can only be compared one way"
             )
-        return f"{dialect.date_expr(column)} BETWEEN {emit(start)} AND {emit(end)}"
+        compared = column if all(timed) else dialect.date_expr(column)
+        sql = f"{compared} BETWEEN {emit(start)} AND {emit(end)}"
+        if (
+            range_filters is not None
+            and not any(timed)  # its excluded hours would read as empty days
+            and (start_date := _as_date(start))
+            and (end_date := _as_date(end))
+        ):
+            range_filters.append(DateRangeFilter(column, start_date, end_date))
+        return sql
 
     return filter_date_range_helper
 
@@ -843,6 +882,7 @@ def render_parameterized_with_queries(
     profile_type: str = "postgres",
     strict: bool = True,
     warehouse: SQLDialect | None = None,
+    range_filters: list[DateRangeFilter] | None = None,
 ) -> ParameterizedQuery:
     """Render parameterized SQL with query reference support.
 
@@ -859,6 +899,7 @@ def render_parameterized_with_queries(
         strict: If True (default), raises on undefined variables.
         warehouse: The engine whose SQL the filter helpers spell; see
             `render_parameterized`.
+        range_filters: See `render_parameterized`.
 
     Returns:
         ParameterizedQuery with SQL, params, and template_hash
@@ -878,4 +919,5 @@ def render_parameterized_with_queries(
         profile_type=profile_type,
         strict=strict,
         warehouse=warehouse,
+        range_filters=range_filters,
     )

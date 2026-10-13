@@ -16,7 +16,10 @@ from typing import get_args, get_origin
 import pytest
 
 from dbt_charts.core.compile.models.chart.authored import AUTHORED_CHART_TYPE_TAGS
-from dbt_charts.core.compile.models.query.authored import RestMethod
+from dbt_charts.core.compile.models.query.authored import (
+    RestMethod,
+    _BaseQueryFields,
+)
 from dbt_charts.core.compile.models.variable.authored import VariableInputType
 from dbt_charts.core.compile.parse.yaml_error_formatter import (
     _CHART_SHAPE_RECIPES,
@@ -44,6 +47,20 @@ def test_sources_registry_has_its_own_topic() -> None:
     section = _SYNTAX_TEXT.split("\n## Sources\n", 1)[1].split("\n## ", 1)[0]
     for source_type in ("duckdb", "postgres", "bigquery", "dbt_profile", "csv"):
         assert f"type: {source_type}" in section, f"no `type: {source_type}` example"
+
+
+def test_docs_styling_topic_exists() -> None:
+    """Themes, fonts and the cascade have one topic, which also states what
+    style cannot build."""
+    from dbt_charts.agent_api.docs import docs
+
+    result = docs(topic="styling")
+    assert result.success, result.errors
+    assert result.topic is not None
+    body = result.topic.content
+    for needle in ("theme:", "extends:", "style.fonts", "meta.yml", "no light/dark"):
+        assert needle in body, needle
+    assert docs(topic="theme").hints[0].startswith("Did you mean: styling")
 
 
 def test_format_object_form_is_documented_in_syntax() -> None:
@@ -236,7 +253,10 @@ def _predefined_number_formats() -> list[tuple[str, str | None]]:
         PredefinedNumberFormat,
     )
 
-    return [(m.value, PREDEFINED_SPECS.get(m.value)) for m in PredefinedNumberFormat]
+    return [
+        (m.value, PREDEFINED_SPECS[m.value].d3 if m.value in PREDEFINED_SPECS else None)
+        for m in PredefinedNumberFormat
+    ]
 
 
 @pytest.mark.parametrize(("alias", "spec"), _predefined_number_formats())
@@ -275,6 +295,12 @@ _ALIAS_RENDER_PROBES: dict[str, float | int] = {
     "percentage_points_delta": 1.8,
     "delta": 1234,
     "year": 2026,
+    "id": 1204331,
+    "duration": 5025,
+    "bytes": 1534000,
+    "latitude": 37.7749,
+    "longitude": -122.41942,
+    "rating": 4.5,
 }
 
 
@@ -292,9 +318,10 @@ def test_number_format_alias_example_matches_engine(
         line for line in _SYNTAX_TEXT.splitlines() if line.startswith(f"| `{alias}` |")
     ]
     assert rows, f"no alias-catalog row found for {alias!r}"
-    assert f"`{rendered}`" in rows[0], (
+    # A name can head another table's row too (`latitude`, the map field).
+    assert any(f"`{rendered}`" in row for row in rows), (
         f"Alias {alias!r}: the engine renders {probe!r} as {rendered!r} on the "
-        f"default path, but the doc row does not show it: {rows[0]!r}"
+        f"default path, but no doc row shows it: {rows!r}"
     )
 
 
@@ -327,4 +354,16 @@ def test_unsupported_chart_shape_documented_in_syntax(noun: str) -> None:
     assert noun.replace("_", " ") in _SYNTAX_TEXT or noun in _SYNTAX_TEXT, (
         f"Chart shape {noun!r} is listed unsupported but is not named in "
         "dbt_charts/DBT_CHARTS_SYNTAX.md."
+    )
+
+
+def test_common_query_fields_are_fields_of_every_query_type() -> None:
+    section = _SYNTAX_TEXT.split("Common fields (all query types):", 1)[1]
+    table = section.split("\n\n", 2)[1]
+    documented = set(re.findall(r"^\| `(\w+)` \|", table, flags=re.MULTILINE))
+
+    assert documented
+    assert documented <= set(_BaseQueryFields.model_fields), (
+        "DBT_CHARTS_SYNTAX.md lists these as common to all query types, but the "
+        f"authored models reject them: {sorted(documented - set(_BaseQueryFields.model_fields))}"
     )

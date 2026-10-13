@@ -180,7 +180,7 @@
         "titleFontWeight": 600.0,
         "titlePadding": 10.0
       },
-      "title": "Count",
+      "title": "#",
       "type": "quantitative"
     }
   },

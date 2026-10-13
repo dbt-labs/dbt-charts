@@ -1,551 +1,255 @@
-"""Generated. Do not edit by hand — run `just generate-schema-names`.
+"""Closed name lists the authored models expose as ``Literal`` enums.
 
-Source: list_built_in_themes() (compile/config.py), PREDEFINED_SPECS
-(text/predefined_formats.py), list_palettes() and palette()
-(compile/resolve/style/palette.py), VEGA_SCHEME_NAMES
-(compile/models/primitives.py), get_theme_style() (compile/config.py),
-REGISTRY and RETIRED_WARNING_CODES (diagnostics/).
+Each list is derived at import from the package data that defines it — theme
+and palette YAML, ``PREDEFINED_SPECS``, the diagnostics ``REGISTRY`` — so the
+JSON Schema offers exactly what the engine accepts, with nothing to regenerate.
+
+The derivation runs while the models that use these aliases are still
+importing, so it reads only leaf modules and raw YAML: the palette resolver
+and ``get_theme_style()`` both import (or validate through) those models.
+
+Static checkers cannot see a ``Literal`` built at runtime, so under
+``TYPE_CHECKING`` every alias is ``str``.
 """
 
 from __future__ import annotations
 
-from typing import Literal
+from functools import cache
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
-# Built-in theme stems offered as `theme:`/`extends:` value completions.
-# Excludes the private `_base` completeness floor and diagnostic-only themes.
-ThemeName = Literal[
-    "clarity",
-    "neon",
-    "paper",
-    "stark",
-    "vivid",
-]
+import yaml
+from importlib_resources import files
 
-# Named dbt charts palettes (sequential, diverging, categorical, scaffold, tone).
-# Excludes hard-fail anti-pattern names and warn-alias migration names — neither
-# is a real palette YAML entry, so list_palettes() already omits them.
-# The whole index, which only `style.palettes` (the role map) accepts.
-PaletteName = Literal[
-    "category-6-tonal-blue",
-    "category-6-tonal-blue.dark",
-    "category-6-tonal-blue.deep",
-    "category-6-tonal-blue.light",
-    "category-6-tonal-blue.pale",
-    "category-6-tonal-brown",
-    "category-6-tonal-brown.dark",
-    "category-6-tonal-brown.deep",
-    "category-6-tonal-brown.light",
-    "category-6-tonal-brown.pale",
-    "category-6-tonal-green",
-    "category-6-tonal-green.dark",
-    "category-6-tonal-green.deep",
-    "category-6-tonal-green.light",
-    "category-6-tonal-green.pale",
-    "category-6-tonal-orange",
-    "category-6-tonal-orange.dark",
-    "category-6-tonal-orange.deep",
-    "category-6-tonal-orange.light",
-    "category-6-tonal-orange.pale",
-    "category-6-tonal-purple",
-    "category-6-tonal-purple.dark",
-    "category-6-tonal-purple.deep",
-    "category-6-tonal-purple.light",
-    "category-6-tonal-purple.pale",
-    "dbt-creams",
-    "dbt-div-blue-red",
-    "dbt-div-blue-red-dark",
-    "dbt-div-coolwarm",
-    "dbt-div-coolwarm-dark",
-    "dbt-div-crimson-green",
-    "dbt-div-crimson-green-dark",
-    "dbt-div-orange-teal",
-    "dbt-div-orange-teal-dark",
-    "dbt-div-sunset",
-    "dbt-div-sunset-dark",
-    "dbt-grays",
-    "dbt-seq-amber",
-    "dbt-seq-amber-dark",
-    "dbt-seq-blue",
-    "dbt-seq-blue-dark",
-    "dbt-seq-brown",
-    "dbt-seq-brown-dark",
-    "dbt-seq-gray",
-    "dbt-seq-gray-dark",
-    "dbt-seq-green",
-    "dbt-seq-green-dark",
-    "dbt-seq-purple",
-    "dbt-seq-purple-dark",
-    "dbt-seq-rust",
-    "dbt-seq-rust-dark",
-    "dbt-seq-teal",
-    "dbt-seq-teal-dark",
-    "editorial-10",
-    "editorial-10.dark",
-    "editorial-10.deep",
-    "editorial-10.light",
-    "editorial-10.pale",
-    "hero-6",
-    "hero-6.dark",
-    "hero-6.deep",
-    "hero-6.light",
-    "hero-6.pale",
-    "info",
-    "negative",
-    "positive",
-    "tableau",
-    "tableau.dark",
-    "tableau.deep",
-    "tableau.light",
-    "tableau.pale",
-    "vivid-10",
-    "vivid-10.dark",
-    "vivid-10.deep",
-    "vivid-10.light",
-    "vivid-10.pale",
-    "warning",
-]
+from dbt_charts.core.colors import VARIANT_WORDS
+from dbt_charts.core.compile.models.palette import (
+    HARD_FAIL_PALETTE_NAMES,
+    PALETTE_WARN_ALIASES,
+    PaletteIndexEntry,
+    build_palette_index,
+)
+from dbt_charts.core.diagnostics.codes_retired import RETIRED_WARNING_CODES
+from dbt_charts.core.diagnostics.registry import REGISTRY
+from dbt_charts.core.text.predefined_formats import (
+    PREDEFINED_SPECS,
+    PREDEFINED_TEXT_NAMES,
+    PREDEFINED_TIME_SPECS,
+    PredefinedNumberFormat,
+    PredefinedTimeFormat,
+)
+from dbt_charts.core.utils import UniqueKeyLoader
 
-# PaletteName minus the tone family — the names a `palette:` field takes.
-# A tone is a color-token source and resolves to no stops, so `palette()`
-# refuses every one: naming a tone there parses and dies at resolve.
-StopsPaletteName = Literal[
-    "category-6-tonal-blue",
-    "category-6-tonal-blue.dark",
-    "category-6-tonal-blue.deep",
-    "category-6-tonal-blue.light",
-    "category-6-tonal-blue.pale",
-    "category-6-tonal-brown",
-    "category-6-tonal-brown.dark",
-    "category-6-tonal-brown.deep",
-    "category-6-tonal-brown.light",
-    "category-6-tonal-brown.pale",
-    "category-6-tonal-green",
-    "category-6-tonal-green.dark",
-    "category-6-tonal-green.deep",
-    "category-6-tonal-green.light",
-    "category-6-tonal-green.pale",
-    "category-6-tonal-orange",
-    "category-6-tonal-orange.dark",
-    "category-6-tonal-orange.deep",
-    "category-6-tonal-orange.light",
-    "category-6-tonal-orange.pale",
-    "category-6-tonal-purple",
-    "category-6-tonal-purple.dark",
-    "category-6-tonal-purple.deep",
-    "category-6-tonal-purple.light",
-    "category-6-tonal-purple.pale",
-    "dbt-creams",
-    "dbt-div-blue-red",
-    "dbt-div-blue-red-dark",
-    "dbt-div-coolwarm",
-    "dbt-div-coolwarm-dark",
-    "dbt-div-crimson-green",
-    "dbt-div-crimson-green-dark",
-    "dbt-div-orange-teal",
-    "dbt-div-orange-teal-dark",
-    "dbt-div-sunset",
-    "dbt-div-sunset-dark",
-    "dbt-grays",
-    "dbt-seq-amber",
-    "dbt-seq-amber-dark",
-    "dbt-seq-blue",
-    "dbt-seq-blue-dark",
-    "dbt-seq-brown",
-    "dbt-seq-brown-dark",
-    "dbt-seq-gray",
-    "dbt-seq-gray-dark",
-    "dbt-seq-green",
-    "dbt-seq-green-dark",
-    "dbt-seq-purple",
-    "dbt-seq-purple-dark",
-    "dbt-seq-rust",
-    "dbt-seq-rust-dark",
-    "dbt-seq-teal",
-    "dbt-seq-teal-dark",
-    "editorial-10",
-    "editorial-10.dark",
-    "editorial-10.deep",
-    "editorial-10.light",
-    "editorial-10.pale",
-    "hero-6",
-    "hero-6.dark",
-    "hero-6.deep",
-    "hero-6.light",
-    "hero-6.pale",
-    "tableau",
-    "tableau.dark",
-    "tableau.deep",
-    "tableau.light",
-    "tableau.pale",
-    "vivid-10",
-    "vivid-10.dark",
-    "vivid-10.deep",
-    "vivid-10.light",
-    "vivid-10.pale",
-]
+if TYPE_CHECKING:
+    from importlib_resources.abc import Traversable
 
-# StopsPaletteName union Vega/Vega-Lite scheme names — the only closed set
-# ScaleTargetConfig.palette accepts (it also forwards Vega scheme names
-# straight through to VL's scale.scheme). Hard-fail and warn-alias scheme
-# names (e.g. 'rainbow') are excluded — see _HARD_FAIL_NAMES/_WARN_ALIASES.
-ScalePaletteName = Literal[
-    "accent",
-    "bluegreen",
-    "blueorange",
-    "bluepurple",
-    "blues",
-    "brownbluegreen",
-    "browns",
-    "category-6-tonal-blue",
-    "category-6-tonal-blue.dark",
-    "category-6-tonal-blue.deep",
-    "category-6-tonal-blue.light",
-    "category-6-tonal-blue.pale",
-    "category-6-tonal-brown",
-    "category-6-tonal-brown.dark",
-    "category-6-tonal-brown.deep",
-    "category-6-tonal-brown.light",
-    "category-6-tonal-brown.pale",
-    "category-6-tonal-green",
-    "category-6-tonal-green.dark",
-    "category-6-tonal-green.deep",
-    "category-6-tonal-green.light",
-    "category-6-tonal-green.pale",
-    "category-6-tonal-orange",
-    "category-6-tonal-orange.dark",
-    "category-6-tonal-orange.deep",
-    "category-6-tonal-orange.light",
-    "category-6-tonal-orange.pale",
-    "category-6-tonal-purple",
-    "category-6-tonal-purple.dark",
-    "category-6-tonal-purple.deep",
-    "category-6-tonal-purple.light",
-    "category-6-tonal-purple.pale",
-    "category10",
-    "category20",
-    "category20b",
-    "category20c",
-    "cividis",
-    "dark2",
-    "darkblue",
-    "darkgold",
-    "darkgreen",
-    "darkmulti",
-    "darkred",
-    "dbt-creams",
-    "dbt-div-blue-red",
-    "dbt-div-blue-red-dark",
-    "dbt-div-coolwarm",
-    "dbt-div-coolwarm-dark",
-    "dbt-div-crimson-green",
-    "dbt-div-crimson-green-dark",
-    "dbt-div-orange-teal",
-    "dbt-div-orange-teal-dark",
-    "dbt-div-sunset",
-    "dbt-div-sunset-dark",
-    "dbt-grays",
-    "dbt-seq-amber",
-    "dbt-seq-amber-dark",
-    "dbt-seq-blue",
-    "dbt-seq-blue-dark",
-    "dbt-seq-brown",
-    "dbt-seq-brown-dark",
-    "dbt-seq-gray",
-    "dbt-seq-gray-dark",
-    "dbt-seq-green",
-    "dbt-seq-green-dark",
-    "dbt-seq-purple",
-    "dbt-seq-purple-dark",
-    "dbt-seq-rust",
-    "dbt-seq-rust-dark",
-    "dbt-seq-teal",
-    "dbt-seq-teal-dark",
-    "editorial-10",
-    "editorial-10.dark",
-    "editorial-10.deep",
-    "editorial-10.light",
-    "editorial-10.pale",
-    "goldgreen",
-    "goldorange",
-    "goldred",
-    "greenblue",
-    "greens",
-    "greys",
-    "hero-6",
-    "hero-6.dark",
-    "hero-6.deep",
-    "hero-6.light",
-    "hero-6.pale",
-    "inferno",
-    "lightgreyred",
-    "lightgreyteal",
-    "lightmulti",
-    "lightorange",
-    "lighttealblue",
-    "magma",
-    "observable10",
-    "orangered",
-    "oranges",
-    "paired",
-    "pastel1",
-    "pastel2",
-    "pinkyellowgreen",
-    "plasma",
-    "purpleblue",
-    "purplebluegreen",
-    "purplegreen",
-    "purpleorange",
-    "purplered",
-    "purples",
-    "redblue",
-    "redgrey",
-    "redpurple",
-    "reds",
-    "redyellowblue",
-    "redyellowgreen",
-    "set1",
-    "set2",
-    "set3",
-    "sinebow",
-    "spectral",
-    "tableau",
-    "tableau.dark",
-    "tableau.deep",
-    "tableau.light",
-    "tableau.pale",
-    "tableau10",
-    "tableau20",
-    "tealblues",
-    "teals",
-    "turbo",
-    "viridis",
-    "vivid-10",
-    "vivid-10.dark",
-    "vivid-10.deep",
-    "vivid-10.light",
-    "vivid-10.pale",
-    "warmgreys",
-    "yellowgreen",
-    "yellowgreenblue",
-    "yelloworangebrown",
-    "yelloworangered",
-]
+_DEFAULTS_DIR = files("dbt_charts.core") / "defaults"
+_THEMES_DIR = _DEFAULTS_DIR / "themes"
 
-# Engine-predefined format names (PredefinedNumberFormat + PredefinedTimeFormat).
-# A predefined name resolves to a d3 spec or native formatter at render time;
-# a raw d3 spec or user style.formats alias is equally legal, so every field
-# carrying this reads `FormatAlias | str` — the Literal names the shortcuts,
-# it does not close the set. Kind-agnostic slots (`format:`) take this one;
-# a slot that knows its kind takes the matching half below.
-FormatAlias = Literal[
-    "currency",
-    "currency_full",
-    "currency_whole",
-    "date_short",
-    "delta",
-    "integer",
-    "number",
-    "number_full",
-    "percent",
-    "percent_delta",
-    "percent_whole",
-    "time_short",
-    "year",
-]
 
-# The number half — PredefinedNumberFormat, i.e. every name resolving to a
-# d3 *number* spec. What `number_format` offers and accepts.
-NumberFormatAlias = Literal[
-    "currency",
-    "currency_full",
-    "currency_whole",
-    "delta",
-    "integer",
-    "number",
-    "number_full",
-    "percent",
-    "percent_delta",
-    "percent_whole",
-    "year",
-]
+# Vega/Vega-Lite's built-in named color schemes (https://vega.github.io/vega/docs/schemes/),
+# the only strings ``ScaleTargetConfig.palette`` forwards straight through to VL's
+# ``scale.scheme``. Sampled-discrete shorthand like "blues-9" is not a real scheme
+# name — VL fails deep inside rendering ("Cannot read properties of undefined")
+# rather than rejecting it up front, so this is validated at compile time instead.
+#
+# Empirically verified against this repo's pinned vl-convert (not hand-copied from
+# docs alone): every name below was round-tripped through
+# ``vlc.vegalite_to_svg`` with a quantitative ``scale.scheme`` encoding and
+# confirmed to render — see ``test_vega_scheme_names_parity.py``, which re-runs
+# that sweep and fails if this set and the bundled renderer ever diverge.
+VEGA_SCHEME_NAMES: frozenset[str] = frozenset(
+    {
+        # Categorical
+        "accent",
+        "category10",
+        "category20",
+        "category20b",
+        "category20c",
+        "dark2",
+        "observable10",
+        "paired",
+        "pastel1",
+        "pastel2",
+        "set1",
+        "set2",
+        "set3",
+        "tableau10",
+        "tableau20",
+        # Sequential (single-hue)
+        "blues",
+        "tealblues",
+        "teals",
+        "greens",
+        "browns",
+        "greys",  # codespell:ignore greys
+        "oranges",
+        "purples",
+        "reds",
+        "warmgreys",
+        # Sequential (multi-hue)
+        "viridis",
+        "magma",
+        "inferno",
+        "plasma",
+        "cividis",
+        "turbo",
+        "bluegreen",
+        "bluepurple",
+        "goldgreen",
+        "goldorange",
+        "goldred",
+        "greenblue",
+        "orangered",
+        "purplebluegreen",
+        "purpleblue",
+        "purplered",
+        "redpurple",
+        "yellowgreenblue",
+        "yellowgreen",
+        "yelloworangebrown",
+        "yelloworangered",
+        # Diverging
+        "blueorange",
+        "brownbluegreen",
+        "purplegreen",
+        "pinkyellowgreen",
+        "purpleorange",
+        "redblue",
+        "redgrey",
+        "redyellowblue",
+        "redyellowgreen",
+        "spectral",
+        # Cyclical
+        "rainbow",
+        "sinebow",
+        # For dark backgrounds
+        "darkblue",
+        "darkgold",
+        "darkgreen",
+        "darkmulti",
+        "darkred",
+        # For light backgrounds
+        "lightgreyred",
+        "lightgreyteal",
+        "lightmulti",
+        "lightorange",
+        "lighttealblue",
+    }
+)
 
-# The time half — PredefinedTimeFormat, i.e. every name resolving to a d3
-# *time* spec. What `time_format` offers and accepts, beside a raw strftime
-# spec like `%b %Y`.
-TimeFormatAlias = Literal[
-    "date_short",
-    "time_short",
-]
 
-# Category role slot tokens, `category[1]`..`category[N]` — N is the widest
-# palette any built-in theme binds to the `category` role. Pinning a category
-# to a slot (rather than a hex) is what lets it re-skin with the theme, so
-# these are the values worth completing. Like FormatAlias, the field carrying
-# this reads `CategorySlotToken | str`: dotted palette tokens
-# (`dbt-grays.muted`) and literal hex stay legal.
-CategorySlotToken = Literal[
-    "category[1]",
-    "category[2]",
-    "category[3]",
-    "category[4]",
-    "category[5]",
-    "category[6]",
-    "category[7]",
-    "category[8]",
-    "category[9]",
-    "category[10]",
-]
+def built_in_theme_stems(themes_dir: Traversable) -> list[str]:
+    """Sorted stems of every ``*.yaml`` theme file in ``themes_dir``."""
+    return sorted(
+        entry.name.removesuffix(".yaml")
+        for entry in themes_dir.iterdir()
+        if entry.name.endswith(".yaml")
+    )
 
-# Every warning code a `query.ignore` may suppress, plus retired codes
-# (still accepted, with a warning).
-WarningCode = Literal[
-    "WARN-ADJACENT-TEXT-ROWS",
-    "WARN-AREA-UNSTACKED-READS-AS-STACKED",
-    "WARN-AXIS-ALIGN-DISCARDED",
-    "WARN-AXIS-LABEL-COLLISION",
-    "WARN-AXIS-TITLE-TRUNCATED",
-    "WARN-BAR-BAND-WIDTH-TOO-NARROW",
-    "WARN-BAR-GROUPED-SERIES-COINCIDE",
-    "WARN-CALLOUT-TEXT-TRUNCATED",
-    "WARN-CATEGORY-COLOR-PIN-UNSEEN",
-    "WARN-CHART-TITLE-TRUNCATED",
-    "WARN-COLUMN-CHECK-UNAVAILABLE",
-    "WARN-DATE-AS-TEXT",
-    "WARN-DBT-MANIFEST-MISSING",
-    "WARN-DBT-MODEL-COLUMNS-UNRESOLVED",
-    "WARN-DBT-QUERY-COLUMNS-INDETERMINATE",
-    "WARN-DEFAULTS-FILE-GIVEN-AS-BOARD",
-    "WARN-DOUBLE-HEADER",
-    "WARN-DUAL-AXIS-COMPETING-SCALES",
-    "WARN-ENDPOINT-LABEL-GAP-OVERFLOW",
-    "WARN-ENDPOINT-LABEL-RAIL-OVERFLOW",
-    "WARN-ENDPOINT-LABEL-RAIL-TIED",
-    "WARN-EXTENDS-LAYOUT-APPENDED",
-    "WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM",
-    "WARN-FANOUT-RISK",
-    "WARN-FLAT-COLS-UNSIZED-OVERFLOW",
-    "WARN-H1-BODY-NO-TITLE",
-    "WARN-HTML-POLICY-CAPPED",
-    "WARN-KPI-ALIGN-OVERFLOW",
-    "WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED",
-    "WARN-KPI-LABEL-TRUNCATED",
-    "WARN-LAYER-X-DOMAIN-PAINT-ORDER",
-    "WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH",
-    "WARN-LAYOUT-MIN-EXCEEDS-HEIGHT",
-    "WARN-LEGEND-POSITION-WIDTH-FALLBACK",
-    "WARN-LEGEND-VALUES-UNRESOLVED",
-    "WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER",
-    "WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS",
-    "WARN-LOW-TEXT-CONTRAST",
-    "WARN-MISSING-JOIN-PREDICATE",
-    "WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE",
-    "WARN-PALETTE-UNSUPPORTED",
-    "WARN-PARSE-ERROR",
-    "WARN-PIE-DOMINANT-SEGMENT",
-    "WARN-PIE-TOO-MANY-SEGMENTS",
-    "WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS",
-    "WARN-PLOT-HEIGHT-BELOW-MINIMUM",
-    "WARN-PLOT-WIDTH-BELOW-MINIMUM",
-    "WARN-POINT-MAP-NEGATIVE-SIZE-VALUES",
-    "WARN-POINT-MAP-OUT-OF-PROJECTION",
-    "WARN-QUERY-RESULT-TRUNCATED",
-    "WARN-QUERY-RETURNED-ZERO-ROWS",
-    "WARN-REAGGREGATION",
-    "WARN-REDUNDANT-AUTHORED-DEFAULT",
-    "WARN-REDUNDANT-AUTHORED-LABEL",
-    "WARN-REDUNDANT-ENCODING",
-    "WARN-SCHEMA-MIGRATED",
-    "WARN-SERIES-LABEL-TRUNCATED",
-    "WARN-SERIES-LABELS-REPEAT-WORD",
-    "WARN-SINGLE-CHART-REDUNDANT-TITLE",
-    "WARN-SPARK-LABEL-TRUNCATED",
-    "WARN-STATIC-PAGINATION-CAPPED",
-    "WARN-SUPPORT-TABLE-CELL-OVERFLOW",
-    "WARN-TABLE-COLUMNS-OVERFLOW",
-    "WARN-TABLE-CRAMPED",
-    "WARN-TABLE-PAGE-SQUEEZED",
-    "WARN-TABLE-TEXT-TRUNCATED",
-    "WARN-TEMPORAL-SINGLE-POINT",
-    "WARN-TOO-MANY-COLOR-CATEGORIES",
-    "WARN-TOO-MANY-X-CATEGORIES",
-    "WARN-UNREFERENCED-CHART",
-    "WARN-VALUE-LABELS-CROWD-WIDTH",
-    "WARN-WAREHOUSE-CHECK-UNAVAILABLE",
-    "WARN-WIDE-MEASURE-LABEL-COLLISION",
-    "WARN-Y-ENCODING-MOSTLY-NULL",
-]
 
-# WarningCode minus query-domain codes: what a chart's `warnings_ignore`
-# can suppress.
-ChartWarningCode = Literal[
-    "WARN-ADJACENT-TEXT-ROWS",
-    "WARN-AREA-UNSTACKED-READS-AS-STACKED",
-    "WARN-AXIS-ALIGN-DISCARDED",
-    "WARN-AXIS-LABEL-COLLISION",
-    "WARN-AXIS-TITLE-TRUNCATED",
-    "WARN-BAR-BAND-WIDTH-TOO-NARROW",
-    "WARN-BAR-GROUPED-SERIES-COINCIDE",
-    "WARN-CALLOUT-TEXT-TRUNCATED",
-    "WARN-CATEGORY-COLOR-PIN-UNSEEN",
-    "WARN-CHART-TITLE-TRUNCATED",
-    "WARN-COLUMN-CHECK-UNAVAILABLE",
-    "WARN-DBT-MANIFEST-MISSING",
-    "WARN-DBT-MODEL-COLUMNS-UNRESOLVED",
-    "WARN-DBT-QUERY-COLUMNS-INDETERMINATE",
-    "WARN-DEFAULTS-FILE-GIVEN-AS-BOARD",
-    "WARN-DOUBLE-HEADER",
-    "WARN-DUAL-AXIS-COMPETING-SCALES",
-    "WARN-ENDPOINT-LABEL-GAP-OVERFLOW",
-    "WARN-ENDPOINT-LABEL-RAIL-OVERFLOW",
-    "WARN-ENDPOINT-LABEL-RAIL-TIED",
-    "WARN-EXTENDS-LAYOUT-APPENDED",
-    "WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM",
-    "WARN-FANOUT-RISK",
-    "WARN-FLAT-COLS-UNSIZED-OVERFLOW",
-    "WARN-H1-BODY-NO-TITLE",
-    "WARN-HTML-POLICY-CAPPED",
-    "WARN-KPI-ALIGN-OVERFLOW",
-    "WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED",
-    "WARN-KPI-LABEL-TRUNCATED",
-    "WARN-LAYER-X-DOMAIN-PAINT-ORDER",
-    "WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH",
-    "WARN-LAYOUT-MIN-EXCEEDS-HEIGHT",
-    "WARN-LEGEND-POSITION-WIDTH-FALLBACK",
-    "WARN-LEGEND-VALUES-UNRESOLVED",
-    "WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER",
-    "WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS",
-    "WARN-LOW-TEXT-CONTRAST",
-    "WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE",
-    "WARN-PALETTE-UNSUPPORTED",
-    "WARN-PIE-DOMINANT-SEGMENT",
-    "WARN-PIE-TOO-MANY-SEGMENTS",
-    "WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS",
-    "WARN-PLOT-HEIGHT-BELOW-MINIMUM",
-    "WARN-PLOT-WIDTH-BELOW-MINIMUM",
-    "WARN-POINT-MAP-NEGATIVE-SIZE-VALUES",
-    "WARN-POINT-MAP-OUT-OF-PROJECTION",
-    "WARN-QUERY-RESULT-TRUNCATED",
-    "WARN-QUERY-RETURNED-ZERO-ROWS",
-    "WARN-REDUNDANT-AUTHORED-DEFAULT",
-    "WARN-REDUNDANT-AUTHORED-LABEL",
-    "WARN-REDUNDANT-ENCODING",
-    "WARN-SCHEMA-MIGRATED",
-    "WARN-SERIES-LABEL-TRUNCATED",
-    "WARN-SERIES-LABELS-REPEAT-WORD",
-    "WARN-SINGLE-CHART-REDUNDANT-TITLE",
-    "WARN-SPARK-LABEL-TRUNCATED",
-    "WARN-STATIC-PAGINATION-CAPPED",
-    "WARN-SUPPORT-TABLE-CELL-OVERFLOW",
-    "WARN-TABLE-COLUMNS-OVERFLOW",
-    "WARN-TABLE-CRAMPED",
-    "WARN-TABLE-PAGE-SQUEEZED",
-    "WARN-TABLE-TEXT-TRUNCATED",
-    "WARN-TEMPORAL-SINGLE-POINT",
-    "WARN-TOO-MANY-COLOR-CATEGORIES",
-    "WARN-TOO-MANY-X-CATEGORIES",
-    "WARN-UNREFERENCED-CHART",
-    "WARN-VALUE-LABELS-CROWD-WIDTH",
-    "WARN-WAREHOUSE-CHECK-UNAVAILABLE",
-    "WARN-WIDE-MEASURE-LABEL-COLLISION",
-    "WARN-Y-ENCODING-MOSTLY-NULL",
+@cache
+def _category_binding(theme: str) -> str:
+    """The palette ``theme`` binds to the ``category`` role, through ``extends:``."""
+    data = yaml.load(
+        (_THEMES_DIR / f"{theme}.yaml").read_text(encoding="utf-8"),
+        Loader=UniqueKeyLoader,
+    )
+    palettes = data["style"].get("palettes")
+    if palettes is not None and "category" in palettes:
+        return palettes["category"]
+    parent = data["extends"]
+    if not isinstance(parent, str):
+        raise ValueError(
+            f"theme '{theme}': `extends:` must name one theme to derive the "
+            f"category slot count, got {parent!r}"
+        )
+    return _category_binding(parent)
+
+
+def _color_count(entry: PaletteIndexEntry) -> int:
+    if entry["family"] != "categorical":
+        raise ValueError(f"category role bound to non-categorical palette {entry}")
+    data = yaml.load(entry["path"].read_text(encoding="utf-8"), Loader=UniqueKeyLoader)
+    return len(data["colors"])
+
+
+_palettes = build_palette_index(_DEFAULTS_DIR / "palettes")
+_tones = {name for name, entry in _palettes.items() if entry["family"] == "tone"}
+_categorical = [n for n, e in _palettes.items() if e["family"] == "categorical"]
+
+# Built-in theme stems minus the private `_base` completeness floor and the
+# diagnostic-only themes.
+_theme_names = [
+    name
+    for name in built_in_theme_stems(_THEMES_DIR)
+    if not name.startswith("_") and not name.startswith("diagnostics-")
 ]
+# Every categorical palette derives every variant tier live, so each gets a
+# completion for all of them.
+_palette_names = sorted(
+    {*_palettes, *(f"{name}.{tier}" for name in _categorical for tier in VARIANT_WORDS)}
+)
+# A tone resolves to no stops: `palette()` refuses every one.
+_stops_palette_names = sorted(set(_palette_names) - _tones)
+# VEGA_SCHEME_NAMES includes "rainbow", a hard-fail anti-pattern; offering it
+# would promote the exact name the resolver refuses.
+_scale_palette_names = sorted(
+    {*_stops_palette_names, *VEGA_SCHEME_NAMES}
+    - (HARD_FAIL_PALETTE_NAMES | set(PALETTE_WARN_ALIASES))
+)
+# A higher slot resolves under no shipped theme, so offering it would complete
+# authors straight into an UnknownColorError.
+_category_slots = max(
+    _color_count(_palettes[_category_binding(name)]) for name in _theme_names
+)
+# Native formatters (Python-only, Vega-invalid) have no d3 spec, so the spec
+# maps exclude them. Their keys are str-mixin enum members; a Literal needs the
+# plain values.
+_number_formats = sorted(
+    m.value for m in PredefinedNumberFormat if m in PREDEFINED_SPECS
+)
+_time_formats = sorted(
+    m.value for m in PredefinedTimeFormat if m in PREDEFINED_TIME_SPECS
+)
+_warning_codes = REGISTRY.codes(level="warning")
+# A query-domain diagnostic never carries a chart id, so a chart-scoped
+# `warnings_ignore` naming one would silently suppress nothing.
+_chart_warning_codes = {c for c in _warning_codes if REGISTRY.get(c).domain != "query"}
+
+if TYPE_CHECKING:
+    ThemeName: TypeAlias = str
+    PaletteName: TypeAlias = str
+    StopsPaletteName: TypeAlias = str
+    ScalePaletteName: TypeAlias = str
+    FormatAlias: TypeAlias = str
+    CategorySlotToken: TypeAlias = str
+    WarningCode: TypeAlias = str
+    ChartWarningCode: TypeAlias = str
+else:
+    # Built-in themes offered as `theme:`/`extends:` value completions.
+    ThemeName = Literal[tuple(_theme_names)]
+    # The whole palette index, which only `style.palettes` (the role map) accepts.
+    PaletteName = Literal[tuple(_palette_names)]
+    # PaletteName minus the tone family — the names a `palette:` field takes.
+    StopsPaletteName = Literal[tuple(_stops_palette_names)]
+    # StopsPaletteName plus the Vega scheme names ScaleTargetConfig.palette
+    # forwards to VL's scale.scheme, minus anti-pattern names.
+    ScalePaletteName = Literal[tuple(_scale_palette_names)]
+    # Engine-predefined format names. A raw d3 spec or a style.formats alias is
+    # equally legal, so every field carrying one reads `FormatAlias | str`: the
+    # Literal names the shortcuts, it does not close the set. The column's type
+    # decides which half applies.
+    FormatAlias = Literal[
+        tuple(sorted({*_number_formats, *_time_formats, *PREDEFINED_TEXT_NAMES}))
+    ]
+    # `category[1]`..`category[N]`, N the widest palette any built-in theme
+    # binds to the `category` role. The field reads `CategorySlotToken | str`:
+    # dotted palette tokens and literal hex stay legal.
+    CategorySlotToken = Literal[
+        tuple(f"category[{i}]" for i in range(1, _category_slots + 1))
+    ]
+    # Retired codes stay legal: a board that suppresses one keeps loading, with
+    # a warning.
+    WarningCode = Literal[tuple(sorted(_warning_codes | RETIRED_WARNING_CODES))]
+    ChartWarningCode = Literal[
+        tuple(sorted(_chart_warning_codes | RETIRED_WARNING_CODES))
+    ]

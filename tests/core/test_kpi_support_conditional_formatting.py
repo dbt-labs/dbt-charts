@@ -14,7 +14,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+from ._engine_render import render_kpi_svg
 
 _GREEN = "#00884d"
 _RED = "#94001e"

@@ -44,6 +44,17 @@ class TestSetTopLevelScalar:
         result = set_board_values(original, {"theme": "neon"})
         assert result == '---\ntheme: "neon"\ntitle: Existing\n'
 
+    def test_inserts_new_key_after_leading_modeline_lines(self) -> None:
+        modeline = "# yaml-language-server: $schema=https://example.test/b.json"
+        original = f"---\n{modeline}\ntitle: Existing\n"
+        result = set_board_values(original, {"theme": "neon"})
+        assert result == f'---\n{modeline}\ntheme: "neon"\ntitle: Existing\n'
+
+    def test_plain_leading_comment_is_not_a_modeline(self) -> None:
+        original = "# my board\ntitle: Existing\n"
+        result = set_board_values(original, {"theme": "neon"})
+        assert result == 'theme: "neon"\n# my board\ntitle: Existing\n'
+
     def test_deletes_existing_key(self) -> None:
         original = "theme: neon\ntitle: Existing\n"
         result = set_board_values(original, {"theme": None})

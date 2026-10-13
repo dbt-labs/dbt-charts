@@ -28,7 +28,6 @@ from dbt_charts.agent_api.describe import (
     QueryDescription,
     VariableDescription,
 )
-from dbt_charts.agent_api.describe_query import DescribeQueryColumn, DescribeQueryResult
 from dbt_charts.agent_api.diagnostics import (
     DiagnosticCodeDetail,
     DiagnosticCodeDetailResult,
@@ -68,10 +67,8 @@ from dbt_charts.agent_api.skills import (
     SkillExample,
     SkillList,
     SkillMetadata,
-    SkillSearchHit,
-    SkillSearchResult,
 )
-from dbt_charts.agent_api.validate import ContentValidateResult, ValidateResult
+from dbt_charts.agent_api.validate import ValidateResult
 from dbt_charts.cli.filesystem_project import FilesystemProject
 
 # (instance, attribute to mutate) — one representative field per model is enough;
@@ -92,7 +89,6 @@ FROZEN_RESULT_INSTANCES: list[tuple[BaseModel, str]] = [
     ),
     (DiagnosticCodeDetailResult(success=True, mode="diagnostic_detail"), "success"),
     (ValidateResult(success=True, path="x"), "success"),
-    (ContentValidateResult(success=True), "success"),
     (ScaffoldResult(), "created_files"),
     (DoctorReport(success=True, checks=[]), "success"),
     (DoctorCheck(code="install", status="pass", message="x"), "status"),
@@ -127,10 +123,7 @@ FROZEN_RESULT_INSTANCES: list[tuple[BaseModel, str]] = [
         "updated",
     ),
     (InstallSkillsResult(), "installed"),
-    (DescribeQueryColumn(name="n", type="t"), "name"),
-    (DescribeQueryResult(success=True), "success"),
     (DocsResult(mode="index"), "mode"),
-    (SkillSearchResult(query="q"), "success"),
     (GrepMatch(path="x", line_number=1, line="l"), "path"),
     (
         BoardSearchHit(
@@ -142,15 +135,10 @@ FROZEN_RESULT_INSTANCES: list[tuple[BaseModel, str]] = [
             file_path="charts/x",
             query_names=[],
             charts=[],
+            matched_charts=[],
             referenced_data_paths=[],
         ),
         "title",
-    ),
-    (
-        SkillSearchHit(
-            name="n", description="d", kind="workflow", has_examples=False, score=1.0
-        ),
-        "name",
     ),
     (QueryDescription(name="n", type="t", summary="s"), "name"),
     (ChartDescription(name="n", type="t", query="q"), "name"),

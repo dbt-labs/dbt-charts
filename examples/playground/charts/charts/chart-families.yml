@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Chart families
 style:
   frame:
@@ -129,7 +130,9 @@ charts:
     y: revenue
     style:
       orientation: vertical
-      number_format: currency_whole
+      axis_y:
+        labels:
+          format: currency_whole
   horizontal_bar:
     query: product_revenue
     type: bar
@@ -142,7 +145,9 @@ charts:
       order: desc
     style:
       orientation: horizontal
-      number_format: currency_whole
+      axis_y:
+        labels:
+          format: currency_whole
   grouped_bar:
     query: region_category_revenue
     type: bar
@@ -152,7 +157,9 @@ charts:
     y: revenue
     color: category
     style:
-      number_format: currency_whole
+      axis_y:
+        labels:
+          format: currency_whole
   stacked_bar:
     query: region_category_revenue
     type: bar
@@ -163,7 +170,9 @@ charts:
     color: category
     style:
       stack: zero
-      number_format: currency_whole
+      axis_y:
+        labels:
+          format: currency_whole
   stacked_bar_normalized:
     query: region_category_category_share
     type: bar
@@ -174,7 +183,9 @@ charts:
     color: category
     style:
       stack: normalize
-      number_format: percent_whole
+      axis_y:
+        labels:
+          format: percent_whole
   mirror_bar:
     query: company_growth
     type: bar
@@ -187,7 +198,9 @@ charts:
       order: desc
     style:
       orientation: horizontal
-      number_format: percent_delta
+      axis_y:
+        labels:
+          format: percent_delta
   line_single:
     query: monthly_active_users
     type: line
@@ -204,7 +217,9 @@ charts:
     y: revenue
     color: category
     style:
-      number_format: currency_whole
+      axis_y:
+        labels:
+          format: currency_whole
   area_stacked:
     query: weekly_revenue_by_category
     type: area
@@ -215,7 +230,9 @@ charts:
     color: category
     style:
       stack: zero
-      number_format: currency_whole
+      axis_y:
+        labels:
+          format: currency_whole
   scatter_basic:
     query: order_scatter
     type: scatter
@@ -227,7 +244,9 @@ charts:
     x_label: Units Sold
     y_label: Revenue
     style:
-      number_format: currency_whole
+      axis_y:
+        labels:
+          format: currency_whole
   bubble_scatter:
     query: company_growth_margin
     type: scatter
@@ -240,8 +259,10 @@ charts:
     x_label: Growth rate
     y_label: Margin
     style:
-      number_format: percent_whole
       axis_x:
+        labels:
+          format: percent_whole
+      axis_y:
         labels:
           format: percent_whole
   pie_basic:
@@ -266,8 +287,6 @@ charts:
     x: region
     y: product
     color: revenue
-    style:
-      number_format: currency_whole
   spark_revenue:
     query: monthly_revenue
     type: spark_bar

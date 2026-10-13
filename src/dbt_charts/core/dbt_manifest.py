@@ -27,7 +27,7 @@ import os
 from dataclasses import dataclass
 from pathlib import PureWindowsPath
 from posixpath import normpath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import yaml
 
@@ -72,6 +72,14 @@ class LoadedManifest:
     version: str
 
 
+RawFormats = dict[
+    str, object
+]  # type-state: object_annotation — meta.format as authored
+"""Column -> ``meta.format``, unvalidated: a bad value only fails where it is read."""
+
+RawTableFormats = dict[str, RawFormats]
+
+
 @dataclass(frozen=True)
 class RefIndex:
     """Compact derived index for ref()/source() resolution and did-you-mean.
@@ -80,12 +88,15 @@ class RefIndex:
     sources:           (source_name, table) → (relation_name, schema).
     available_refs:    sorted ref names for unknown-ref diagnostics.
     available_sources: sorted "source.table" strings for unknown-source diagnostics.
+    formats:           ref name or "source.table" → column → ``meta.format``; only
+                       columns that carry one, so models without any are absent.
     """
 
     refs: dict[str, tuple[str, str]]
     sources: dict[tuple[str, str], tuple[str, str]]
     available_refs: list[str]
     available_sources: list[str]
+    formats: RawTableFormats
 
 
 def manifest_relpath(project: Project | None, target_path: str | None = None) -> str:
@@ -174,6 +185,7 @@ def ref_index(loaded: LoadedManifest) -> RefIndex:
     """
     refs: dict[str, tuple[str, str]] = {}
     sources: dict[tuple[str, str], tuple[str, str]] = {}
+    formats: RawTableFormats = {}
 
     for node in loaded.raw.get("nodes", {}).values():
         if node.get("resource_type") not in _REFABLE_RESOURCE_TYPES:
@@ -187,7 +199,9 @@ def ref_index(loaded: LoadedManifest) -> RefIndex:
         else:
             alias = str(node.get("alias") or name)
             rel = f"{schema}.{alias}"
-        refs.setdefault(name, (rel, schema))
+        if name not in refs:
+            refs[name] = (rel, schema)
+            _add_formats(formats, name, node)
 
     for node in loaded.raw.get("sources", {}).values():
         source_name = node.get("source_name")
@@ -199,7 +213,9 @@ def ref_index(loaded: LoadedManifest) -> RefIndex:
             rel = str(node["relation_name"])
         else:
             rel = f"{schema}.{table_name}"
-        sources.setdefault((source_name, table_name), (rel, schema))
+        if (source_name, table_name) not in sources:
+            sources[(source_name, table_name)] = (rel, schema)
+            _add_formats(formats, f"{source_name}.{table_name}", node)
 
     available_refs = sorted(refs)
     available_sources = sorted(f"{s}.{t}" for s, t in sources)
@@ -208,7 +224,39 @@ def ref_index(loaded: LoadedManifest) -> RefIndex:
         sources=sources,
         available_refs=available_refs,
         available_sources=available_sources,
+        formats=formats,
     )
+
+
+class _ManifestColumn(TypedDict, total=False):
+    meta: dict[str, object]  # type-state: object_annotation — free-form dbt meta
+
+
+class _ManifestNode(TypedDict, total=False):
+    columns: dict[str, _ManifestColumn]
+
+
+def _add_formats(
+    formats: RawTableFormats,
+    key: str,
+    node: _ManifestNode,
+) -> None:
+    """Record the node's columns that carry ``meta.format``, as authored.
+
+    dbt merges a column's ``meta`` and ``config.meta`` into ``meta`` in the
+    manifest, so that is the only place to read. A value that is not a format
+    name is kept: it only fails when a query reads that column.
+    """
+    columns = node.get("columns")
+    if columns is None:
+        return
+    found: RawFormats = {}
+    for column, spec in columns.items():
+        meta = spec.get("meta")
+        if meta is not None and "format" in meta:
+            found[column] = meta["format"]
+    if found:
+        formats[key] = found
 
 
 def load_manifest_at(project: Project, relpath: str) -> LoadedManifest:

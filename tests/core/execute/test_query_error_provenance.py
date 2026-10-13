@@ -62,14 +62,12 @@ def test_named_query_sql_syntax_error_keeps_execute_code_and_query_name(
     assert len(rendered.chart_errors) == 1
     error = rendered.chart_errors[0]
     assert REGISTRY.get(error.code).domain == "execute"
-    assert error.code == "ERR-BINDER-UNKNOWN-COLUMN"
+    assert error.code == "ERR-BINDER-UNKNOWN-RELATION"
     assert error.fields["query_name"] == "broken_query"
     assert error.detail
     # The message is exactly the registered template — no wrap-and-stringify
     # prefix chain ("Query execution failed: DuckDB SQL execution failed: ...").
-    assert error.message.startswith(
-        "Warehouse could not resolve a column or table reference: "
-    )
+    assert error.message.startswith("Warehouse could not find a table or view: ")
     assert "Query execution failed" not in error.message
     assert "DuckDB SQL execution failed" not in error.message
 
@@ -77,7 +75,7 @@ def test_named_query_sql_syntax_error_keeps_execute_code_and_query_name(
     # "Query Error: {name}" / "Chart Error: {id}" string.
     data = rendered.data
     assert isinstance(data, str)
-    assert "Warehouse rejected an unknown column or table reference" in data
+    assert "Warehouse reports a table or view does not exist" in data
     assert "Query Error:" not in data
     assert "Chart Error:" not in data
     # Query attribution must still reach the *rendered* placard body — not
@@ -85,7 +83,7 @@ def test_named_query_sql_syntax_error_keeps_execute_code_and_query_name(
     # distinguishable by which query produced them.
     assert "(query: broken_query)" in data
 
-    # ERR-BINDER-UNKNOWN-COLUMN carries no sqlglot position at all — it must
+    # ERR-BINDER-UNKNOWN-RELATION carries no sqlglot position at all — it must
     # keep highlighting the whole query block (columns=None), never a
     # guessed column, so the SQL-position narrowing below can't regress this.
     assert error.range is not None

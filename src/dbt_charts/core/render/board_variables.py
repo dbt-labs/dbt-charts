@@ -5,7 +5,7 @@ Purpose: Let a render-time decision that depends on a variable's current value
 (e.g. which page a paginated table is showing) read it without every caller
 having to remember to thread ``variables=`` through.
 
-Consumers (``render_table_svg`` today) read ``current_board_variables()``
+Consumers (the engine seam) read ``current_board_variables()``
 themselves rather than requiring each caller to pass a ``variables=``
 parameter through — a caller that forgot to opt in is exactly how a prior
 variables-plumbing gap shipped (two production call sites silently painted
@@ -44,6 +44,26 @@ def board_variables(values: VariableValues) -> Generator[None]:
         yield
     finally:
         _BOARD_VARIABLES.reset(token)
+
+
+_ROOT_BOARD_WIDTH: ContextVar[float | None] = ContextVar(
+    "dct_root_board_width", default=None
+)
+
+
+@contextmanager
+def root_board_width(width: float) -> Generator[None]:
+    """Scope the root board's width: the engine sizes a table's width fix from it."""
+    token = _ROOT_BOARD_WIDTH.set(width)
+    try:
+        yield
+    finally:
+        _ROOT_BOARD_WIDTH.reset(token)
+
+
+def current_root_board_width() -> float | None:
+    """The root board's width for the render pass in progress, if any."""
+    return _ROOT_BOARD_WIDTH.get()
 
 
 def current_board_variables() -> VariableValues | None:

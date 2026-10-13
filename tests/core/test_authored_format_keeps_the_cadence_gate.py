@@ -2,7 +2,7 @@
 
 `default_label_expr_for` builds two things: the label TEXT (a per-grain
 vocabulary) and the GATE that blanks every tick which doesn't open a label
-period. An authored `style.time_format` legitimately replaces the first. It
+period. An authored axis_x `labels.format` legitimately replaces the first. It
 used to replace the whole expression, taking the gate with it.
 
 That only shows where the tick set is denser than the label cadence, which is
@@ -80,9 +80,10 @@ _ORDINAL_LINE = _LINE + "\n    style:\n      axis_x:\n        type: ordinal"
 
 
 def _with_format(body: str) -> str:
-    if "style:" in body:
-        return body + "\n      time_format: '%b %Y'"
-    return body + "\n    style:\n      time_format: '%b %Y'"
+    labels = "\n        labels:\n          format: '%b %Y'"
+    if "axis_x:" in body:
+        return body + labels
+    return body + "\n    style:\n      axis_x:" + labels
 
 
 @pytest.mark.parametrize(
@@ -121,7 +122,7 @@ def test_a_dense_tick_axis_does_not_paint_every_bucket() -> None:
     """The consequence, stated in painted labels rather than expression shape:
     a bar keeps one tick per bucket by design, so without the gate all 36
     speak at once."""
-    axis = _x_axis(_BAR + "\n    style:\n      time_format: '%b %Y'")
+    axis = _x_axis(_with_format(_BAR))
     assert len(axis.get("values", []) or []) == len(_MONTHS), (
         "bar must keep its per-bucket ticks — that is the positional cue "
         "_LABEL_THINNING_TICK_MARK_TYPES exists to preserve"
@@ -133,7 +134,7 @@ def test_a_dense_tick_axis_does_not_paint_every_bucket() -> None:
 
 def test_the_authored_format_is_what_the_speaking_ticks_say() -> None:
     """Keeping the gate must not cost the author their format."""
-    axis = _x_axis(_BAR + "\n    style:\n      time_format: '%b %Y'")
+    axis = _x_axis(_with_format(_BAR))
     assert "%b %Y" in str(axis.get("labelExpr", ""))
     # …and the per-grain vocabulary it replaced is gone from the text half.
     # ("%Y-%m" survives in the anchor comparison, which is a date equality

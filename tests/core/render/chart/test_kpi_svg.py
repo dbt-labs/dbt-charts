@@ -1,6 +1,6 @@
-"""KPI SVG regression guard: render path must stay byte-identical across calls.
+"""KPI card layout regressions, rendered through the engine.
 
-Both sides resolve from the SAME authored chart dict via the real pipeline
+Each chart resolves from an authored chart dict via the real pipeline
 (normalize -> resolve). Never hand-construct ResolvedKpiChart directly —
 that would hide gaps in the KPI resolver.
 """
@@ -22,22 +22,6 @@ def _styles() -> tuple[Any, Any]:
     return resolve_style_and_context(get_theme_style(get_default_theme_name()))
 
 
-def _oracle_svg(
-    chart_def: dict[str, Any],
-    query_registry: dict[str, Any],
-    data: list[dict[str, Any]],
-    board_rs: Any,
-    board_ctx: Any,
-) -> str:
-    """Reference path: authored dict -> normalize_chart -> resolve -> render_kpi_svg."""
-    from dbt_charts.core.compile.normalize.charts import normalize_chart
-    from dbt_charts.core.render.chart.kpi import render_kpi_svg
-
-    flat = normalize_chart("chart1", chart_def, query_registry, sources={})
-    resolved = resolve(flat, data, chart_style_context=board_ctx)
-    return render_kpi_svg(resolved, data, board_style=board_rs)
-
-
 def _v2_svg(
     chart_def: dict[str, Any],
     query_registry: dict[str, Any],
@@ -49,7 +33,8 @@ def _v2_svg(
     from dbt_charts.core.compile.models.chart.resolved.kpi import ResolvedKpiChart
     from dbt_charts.core.compile.normalize.charts import normalize_chart
     from dbt_charts.core.compile.resolve import resolve
-    from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+    from ..._engine_render import render_kpi_svg
 
     compiled = normalize_chart("chart1", chart_def, query_registry, sources={})
     resolved = resolve(compiled, data, chart_style_context=board_ctx)
@@ -59,82 +44,6 @@ def _v2_svg(
 
 _QUERY_REGISTRY = {"q": ValuesQuery(rows=[{"revenue": 128_000, "delta": 0.12}])}
 _DATA = _QUERY_REGISTRY["q"].rows
-
-_FIXTURES: dict[str, dict[str, Any]] = {
-    "plain_value": {
-        "type": "kpi",
-        "query": "q",
-        "value": "revenue",
-    },
-    "value_label_support": {
-        "type": "kpi",
-        "query": "q",
-        "value": "revenue",
-        "label": "Revenue",
-        "support": {
-            "value": "delta",
-            "label": "vs last month",
-            "glyph": "▲",
-        },
-    },
-    "tone_glyph": {
-        "type": "kpi",
-        "query": "q",
-        "value": "revenue",
-        "label": "Revenue",
-        "glyph": "▲",
-        "style": {"support": {"tone": "positive"}},
-        "support": {
-            "label": "vs last month",
-        },
-    },
-    "conditional_formatting": {
-        "type": "kpi",
-        "query": "q",
-        "value": "revenue",
-        "label": "Revenue",
-        "conditional_formatting": {
-            "revenue": {
-                "when": [
-                    {"gt": 100_000, "font": {"color": "#00aa00"}},
-                    {"lte": 100_000, "font": {"color": "#ff0000"}},
-                ]
-            }
-        },
-    },
-}
-
-
-@pytest.mark.parametrize("fixture_name", sorted(_FIXTURES))
-def test_v2_kpi_svg_byte_identical(fixture_name: str) -> None:
-    chart_def = _FIXTURES[fixture_name]
-    board_rs, board_ctx = _styles()
-    oracle = _oracle_svg(chart_def, _QUERY_REGISTRY, _DATA, board_rs, board_ctx)
-    result = _v2_svg(chart_def, _QUERY_REGISTRY, _DATA, board_rs, board_ctx)
-    assert oracle == result, (
-        f"KPI SVG parity FAILED for fixture={fixture_name!r}\nORACLE=\n{oracle}\n\nV2=\n{result}"
-    )
-
-
-@pytest.mark.parametrize("variant", ["stacked", "inline", "compact"])
-def test_v2_kpi_svg_byte_identical_across_variants(variant: str) -> None:
-    chart_def = {
-        "type": "kpi",
-        "query": "q",
-        "value": "revenue",
-        "label": "Revenue",
-        "style": {"variant": variant},
-        "support": {
-            "value": "delta",
-            "label": "vs last month",
-        },
-    }
-    board_rs, board_ctx = _styles()
-    oracle = _oracle_svg(chart_def, _QUERY_REGISTRY, _DATA, board_rs, board_ctx)
-    result = _v2_svg(chart_def, _QUERY_REGISTRY, _DATA, board_rs, board_ctx)
-    assert oracle == result, (
-        f"KPI SVG parity FAILED for variant={variant!r}\nORACLE=\n{oracle}\n\nV2=\n{result}"
-    )
 
 
 # Matches `23-kpi-variant-x-slots.yml`'s `one` query (series_ix=1, point_ix=0)
@@ -146,7 +55,8 @@ _OVERFLOW_DATA = _OVERFLOW_QUERY_REGISTRY["q"].rows
 def _render_inline_at_width(chart_def: dict[str, Any], width: float) -> str:
     """Render a KPI chart at an explicit width through the real pipeline."""
     from dbt_charts.core.compile.normalize.charts import normalize_chart
-    from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+    from ..._engine_render import render_kpi_svg
 
     board_rs, board_ctx = _styles()
     flat = normalize_chart("chart1", chart_def, _OVERFLOW_QUERY_REGISTRY, sources={})
@@ -261,7 +171,8 @@ _BARE_VALUE_OVERFLOW_WIDTH = 200.0
 
 def _render_bare_value_at_width(chart_def: dict[str, Any], width: float) -> str:
     from dbt_charts.core.compile.normalize.charts import normalize_chart
-    from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+    from ..._engine_render import render_kpi_svg
 
     board_rs, board_ctx = _styles()
     flat = normalize_chart(

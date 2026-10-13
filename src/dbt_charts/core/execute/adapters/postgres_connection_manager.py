@@ -11,9 +11,9 @@ a dbt table rebuild takes, until the pool was closed.
 dbt-postgres grew an ``autocommit`` credential in 1.11, but this package supports 1.10
 as well, where an ``autocommit`` key is silently dropped on the way to the driver. So
 the setting goes on the psycopg2 handle itself, where no adapter version can ignore it.
-Every other warehouse we build already reads outside a transaction: dbt-redshift,
-dbt-snowflake and dbt-trino open autocommit connections, and BigQuery, Databricks and
-Spark have no session transaction to leave open.
+Every other warehouse we build already reads outside a transaction: dbt-redshift
+and dbt-snowflake open autocommit connections, and BigQuery, Databricks and Spark
+have no session transaction to leave open.
 """
 
 from __future__ import annotations

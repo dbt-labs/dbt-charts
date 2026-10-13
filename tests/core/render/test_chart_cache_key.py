@@ -106,6 +106,7 @@ def test_repeated_non_pie_reuses_its_canonical_resolved_chart() -> None:
 
     chart = _bar_chart("shared_bar")
     executor = MagicMock(spec=Executor)
+    executor.render_with_range_filters.return_value = None
     executor.execute_query.return_value = [{"x": "A", "y": 1}]
     rs, ctx = resolve_style_and_context(get_theme_style())
     render_ctx = SizingRenderCtx(

@@ -19,7 +19,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+
+from ._engine_render import render_table_svg
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 

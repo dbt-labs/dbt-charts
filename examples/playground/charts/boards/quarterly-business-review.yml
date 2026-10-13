@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 # Quarterly business review — a prose-heavy report. Reads like a written memo
 # with charts embedded where the argument needs them, authored data-honestly
 # against the Dundersign silver layer (no invented dimensions).

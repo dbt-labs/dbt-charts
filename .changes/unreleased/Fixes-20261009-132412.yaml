@@ -1,0 +1,3 @@
+kind: Fixes
+body: Board queries over a parquet or CSV file source declared by path now run from the MCP connector and Cloud chat instead of being refused as an inline source.
+time: 2026-10-09T13:24:12.434964-07:00

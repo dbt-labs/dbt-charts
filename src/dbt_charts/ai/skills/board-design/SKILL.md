@@ -70,12 +70,12 @@ Before designing, work through these in order:
 | Trending over time? | `line` | Continuous data, time on x-axis |
 | Category comparison? | `bar` | Categorical x-axis, include zero baseline |
 | Composition over time? | `area` (stacked) | Parts of a whole changing |
-| Portion of whole? | `pie` | **Only for 2-3 segments** — use bar for more |
+| Portion of whole? | `pie` | Few slices read best; the renderer drops small wedges' labels and, past about four labelable wedges, attaches a table, so do not restructure a many-slice pie |
 | Relationship? | `scatter` | Two numeric variables |
 | Precise values? | `table` | When exact numbers matter |
 
 **Avoid:**
-- Pie for >3 categories (humans compare angles poorly — use bar)
+- Pie where the reader must compare close slice sizes (humans compare angles poorly — use bar)
 - Multiple chart types for visual variety (consistency aids scanning)
 - Scrolling layouts (if it scrolls, it's usually a report — unless the user asked for more on one page or you're reproducing a scrolling source)
 
@@ -140,12 +140,12 @@ weight: 600}`, not a repeated inline block.
 
 Apply standard numeric-display judgment (two-numeral rule, no false precision, tabular numerals in columns). dbt charts-specific defaults:
 
-- **Put format in the family slot — not chart root.** Cartesian charts: the measure → `style.number_format` (equivalently `style.axis_y.labels.format` — the measure, even on a horizontal bar where it draws along the bottom). The dimension (`style.axis_x.labels.format`) takes a number preset only when its ticks are themselves numbers; a text-category axis takes no number format, and a date axis takes a time token instead. A band-scale dimension raises `ERR-LABEL-FORMAT-AXIS-MISMATCH`; so does a temporal one now — dates get no numeric-tick exemption, so use a time token or `style.time_format` there instead. `heatmap` has no measure axis at all — its value is on the color channel, so a preset on either axis raises. `style.axis_y.mirror.format` follows the same rule whenever the mirrored edge is categorical — a dot plot's y, and also a default-orientation (horizontal) bar, where the rotation puts the category on that edge. KPI value → `style.value.format`. Table column → `style.columns.<col>.format`. Chart-root `format:` is rejected on cartesian families.
+- **Put format in the family slot — not chart root.** Cartesian charts: the column's format on the query (`formats:`), or the chart's own `style.axis_y.labels.format` for an exception — the measure, even on a horizontal bar where it draws along the bottom. The dimension (`style.axis_x.labels.format`) takes a number preset only when its ticks are themselves numbers; a text-category axis takes no number format, and a date axis takes a time token instead. A band-scale dimension raises `ERR-LABEL-FORMAT-AXIS-MISMATCH`; so does a temporal one now — dates get no numeric-tick exemption, so use a time token there instead. `heatmap` has no measure axis at all — its value is on the color channel, so a preset on either axis raises. `style.axis_y.mirror.format` follows the same rule whenever the mirrored edge is categorical — a dot plot's y, and also a default-orientation (horizontal) bar, where the rotation puts the category on that edge. KPI value → `style.value.format`. Table column → `style.columns.<col>.format`. Chart-root `format:` is rejected on cartesian families.
 - **Use format aliases, not raw d3 specs.** `currency`, `currency_whole`, `percent`, `percent_delta`, `integer`, `number` inside the slot above — not bare `format: currency_whole` at chart root. Raw d3 (`"$,.0f"`) only when no alias fits.
-- **A board's currency and separators come from `regional:`, never a format per chart.** `regional.locale: de-DE` sets the separators, the magnitude words (`1,5 Mio.`) and the locale's own currency (`1.234,50 €`); `regional.currency` (an ISO code: USD, EUR, GBP, JPY, CAD, AUD, CHF, SEK, NOK, DKK, INR, CNY, BRL, MXN) only changes that currency. Set it in the board, or in `charts/meta.yml` for a folder. It is board-wide: every money name (`currency`, `currency_whole`, `currency_full`) and every `$` spec prints it. Never write `prefix: "€"` for the board's own currency.
+- **A board's currency and separators come from `regional:`, never a format per chart.** `regional.locale.number: de-DE` sets the separators, the magnitude words (`1,5 Mio.`) and the locale's own currency (`1.234,50 €`), `regional.locale.time: de-DE` the month and weekday names (`Mrz`); `regional.currency` (an ISO code: USD, EUR, GBP, JPY, CAD, AUD, CHF, SEK, NOK, DKK, INR, CNY, BRL, MXN) only changes that currency. Set it in the board, or in `charts/meta.yml` for a folder. It is board-wide: every money name (`currency`, `currency_whole`, `currency_full`) and every `$` spec prints it. Never write `prefix: "€"` for the board's own currency.
 - **Object form of `format` (`spec`, `prefix`, `suffix`, `notation` keys) only for what `regional` cannot express:** a second currency on the board (define it once as a `style.formats` alias over a spec without `$`, e.g. `usd: {spec: ",.0f", prefix: "US$"}`), a long-form name (`suffix: " US dollars"`), or a combination like `50 $ US`. A glued symbol follows the sign (`−€500`), a spaced code leads it (`EUR −500`), and an anchored prefix always leads it; `sign_placement` overrides the default, and `repeat: every`/`anchor` sets whether the affix repeats. A suffix trails the digits (`500 EUR`). A table column keeps the sign against the digits (`€  −500`) and rejects `sign_placement`. Works as a `style.formats` alias target too, not just inline.
-- **Drop cents above $10.** `style.number_format: currency_whole` (or `style.value.format` on KPIs) is the dashboard default. Reserve `currency_full` (with cents) for reconciliation surfaces — billing, financial statements.
-- **Notation family: analytic for chrome, narrative for prose.** Analytic (`$2.5 M`, space, uppercase K/M/B) for axes, KPIs, tables, tooltips. Narrative (`$2.5mn`, no space, lowercase) only for text cards, titles, annotations. Independent of theme choice.
+- **Drop cents above $10.** `formats: {revenue: currency_whole}` on the query (or `style.value.format` on KPIs) is the dashboard default. Reserve `currency_full` (with cents) for reconciliation surfaces — billing, financial statements.
+- **Notation family: analytic for chrome, narrative for prose.** Analytic (`$2.5M`, uppercase K/M/B, no space) for axes, KPIs, tables, tooltips. Narrative (`$2.5mn`, no space, lowercase) only for text cards, titles, annotations. Independent of theme choice.
 - **Zero strips trailing decimals even when siblings have them.** A `$0` KPI uses `currency_whole` even if its partner uses `currency`. A `0%` KPI uses `percent_whole` even if its partner uses `.2%`. The rule generalizes to any unit.
 - **Percent precision is a group decision.** Default by magnitude: ≥20% → `.0%`; 1–20% → `.1%`; <1% → `.2%`. **Modulate by surface:** a single KPI or short rail can afford one more decimal; a long table column or axis wants the simpler form. **Override:** when tenths carry signal regardless of magnitude (A/B rates, churn, conversion in a tight range), use `format: ".2%"`.
 - **Compaction is a group decision, not per-value.** Compact when ≥4 similar-magnitude values exceed 10,000, or when surface density demands it. Adjacent surfaces showing the same metric may compact differently — a reconciliation table can show full precision while the headline KPI uses `currency`.
@@ -192,7 +192,7 @@ Before delivering:
 |---------|-----|
 | Too many charts (>8) the user didn't ask for | Split into multiple focused dashboards |
 | KPIs without context | Add comparison period, trend, or target |
-| Pie chart with 7 segments | Use a bar chart instead |
+| Pie where the reader must rank close slices | Use a bar chart; a many-slice pie is otherwise fine, its labels are handled automatically |
 | Decorative color | Color must encode data or meaning |
 | A hex literal in a color slot | Use a palette token — `category[1]`, `negative.solid`, `dbt-grays.muted` — so the theme still owns the color |
 | Generic titles | Titles should state what the chart answers |
@@ -205,7 +205,7 @@ Before delivering:
 | Excuse | Reality |
 |--------|---------|
 | "12 metrics is too many, I'll trim their list" | An explicit user ask wins. Suggest a split once, then build all 12. The 8-max default applies when the design is yours to choose. |
-| "Pie chart is fine for 6 categories" | It's not — humans compare angles poorly. Use bar. |
+| "Pie chart is fine for 6 categories" | For part-of-whole, yes: small wedges drop their labels and an attached table names the rest. For ranking close slices, use bar. |
 | "The legend explains the colors" | Direct labels are always better than legends. |
 | "I'll just pick a hex that looks right" | It looks right against nothing. The palette is already CVD-checked and contrast-checked as a set — a hand-picked hex is one color that no longer belongs to it, and it survives a theme switch that everything around it answers. |
 | "More charts = more value" | More charts = more noise. Each must earn its place. |

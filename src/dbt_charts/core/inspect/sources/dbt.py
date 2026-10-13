@@ -2,8 +2,7 @@
 
 The dbt-core adapter (built by ``build_adapter()`` with macros loaded per
 the bootstrap-dbt-macro-manifest task) answers live questions:
-``list_schemas``, ``list_relations``, ``get_columns_in_relation``,
-``get_column_schema_from_query``. The manifest contributes only what is
+``list_schemas``, ``list_relations``, ``get_columns_in_relation``. The manifest contributes only what is
 *explicitly declared* — descriptions, declared types, listed tests, tags,
 owner, and ``relationships:`` tests.
 
@@ -19,7 +18,7 @@ from __future__ import annotations
 
 import re
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from dbt_common.exceptions.base import DbtRuntimeError
@@ -76,7 +75,7 @@ def _snowflake_identifier(value: str | None) -> str:
 def _json_datetime(value: datetime) -> str:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("last_modified must be timezone-aware")
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _bq_partition_type(column: str, data_type: str | None) -> PartitionType:
@@ -399,13 +398,6 @@ class DbtSchemaSource:
         if isinstance(max_loaded_at, datetime) and max_loaded_at.year == 1:
             return None
         return max_loaded_at if isinstance(max_loaded_at, datetime) else None
-
-    def describe_query(self, sql: str) -> dict[str, Any] | None:
-        with open_connection(self._adapter, "dct_schema_describe_query"):
-            cols = list(self._adapter.get_column_schema_from_query(sql))
-        if not cols:
-            return None
-        return {"columns": {c.name: {"actual_type": _column_dtype(c)} for c in cols}}
 
     # ---- Lineage helpers ---------------------------------------------------
 

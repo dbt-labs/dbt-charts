@@ -47,17 +47,16 @@ from dbt_charts.core.render.board_resolve import (
     build_resolved_board_static,
 )
 from dbt_charts.core.render.chart import rendering as _rendering_mod
-from dbt_charts.core.render.chart.rendering import (
-    _callout_error_title,
-    render_chart_item,
-)
+from dbt_charts.core.render.chart.rendering import render_chart_item
 from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.render_result import RenderResult
 from dbt_charts.core.render.renderer import render
 from dbt_charts.core.render.warnings.base import WarningContext
-from dbt_charts.core.render.warnings.pie_too_many_segments import (
-    detect as detect_pie_too_many_segments,
+from dbt_charts.core.render.warnings.pie_dominant_segment import (
+    detect as detect_pie_dominant_segment,
 )
+
+from .._svg_render import PINNED_RENDER_TIME
 
 # Bound before any test patches the module attribute, so the per-chart patch
 # helper can still delegate for the charts it is not simulating a failure for.
@@ -141,6 +140,7 @@ def _executor_good_bad(good_rows, bad_exc):
     # svg footer/timestamp code iterates this attribute directly — it must be
     # a real (empty) list, not the default MagicMock attribute.
     mock.cache_hit_ats = []
+    mock.rendered_at = PINNED_RENDER_TIME
     # An unconfigured MagicMock.is_cached() is truthy for any input, which
     # would route every query through render()'s synchronous cache-hit
     # pre-pass (a plain, un-isolated `execute_query` call) instead of the
@@ -165,6 +165,7 @@ def test_render_returns_render_result():
     mock_executor.execute_query.return_value = [{"value": 42}]
     mock_executor._query_errors = {}
     mock_executor.cache_hit_ats = []
+    mock_executor.rendered_at = PINNED_RENDER_TIME
 
     with (
         patch.object(_renderer_mod, "execute_queries_parallel"),
@@ -234,7 +235,23 @@ def test_callout_error_title_uses_registered_code_title():
     """The placard title is the registered ErrorCode's title, not a hand-rolled
     "Query Error: {name}" / "Chart Error: {id}" string — it depends only on
     the diagnostic code, not on whether a query_name happens to be set."""
-    assert _callout_error_title(ERR_FILE_NOT_FOUND.code) == ERR_FILE_NOT_FOUND.title
+    from dbt_charts.core.compile.config import get_theme_style
+    from dbt_charts.core.compile.resolve.style import resolve_style
+    from dbt_charts.core.diagnostics.base import DbtChartsError
+    from dbt_charts.core.render.engine import render_error_placard
+
+    diagnostic = DbtChartsError.from_code(
+        ERR_FILE_NOT_FOUND, path="missing.csv"
+    ).to_diagnostic()
+    svg = render_error_placard(
+        diagnostic,
+        chart_id="c",
+        width=400.0,
+        height=200.0,
+        style=resolve_style(get_theme_style()).chart_defaults.callout_error,
+    )
+
+    assert f">{ERR_FILE_NOT_FOUND.title}</text>" in svg
 
 
 def test_chart_render_error_isolated():
@@ -442,34 +459,44 @@ def test_render_chart_item_no_collector_still_returns_error_block():
 
 
 # ---------------------------------------------------------------------------
-# render_callout_svg — code/hint/doc_url
+# render_callout_card — code/hint/doc_url
 # ---------------------------------------------------------------------------
 
 
 def test_inline_callout_block_renders_code():
-    """render_callout_svg with code renders that code string in SVG."""
-    from dbt_charts.core.render.chart.callout import render_callout_svg
+    """render_callout_card with code renders that code string in SVG."""
+    from dbt_charts.core.render.engine import render_callout_card
 
-    svg = render_callout_svg(
+    svg = render_callout_card(
         message="Column missing",
         width=300.0,
-        code="ERR-INTERNAL",
-        callout_style=resolve_style(get_theme_style()).chart_defaults.callout_error,
-        base_dir=None,
+        placard={
+            "code": "ERR-INTERNAL",
+            "code_url": "https://docs.dbtcharts.com/reference/errors/#err-internal",
+            "hint": None,
+            "doc_url": None,
+        },
+        style=resolve_style(get_theme_style()).chart_defaults.callout_error,
+        chart_id="callout",
     )
     assert "ERR-INTERNAL" in svg
 
 
 def test_inline_callout_block_renders_hint():
-    """render_callout_svg with hint includes hint text in SVG."""
-    from dbt_charts.core.render.chart.callout import render_callout_svg
+    """render_callout_card with hint includes hint text in SVG."""
+    from dbt_charts.core.render.engine import render_callout_card
 
-    svg = render_callout_svg(
+    svg = render_callout_card(
         message="Column missing",
         width=300.0,
-        hint="Check your column names",
-        callout_style=resolve_style(get_theme_style()).chart_defaults.callout_error,
-        base_dir=None,
+        placard={
+            "code": "ERR-INTERNAL",
+            "code_url": "https://docs.dbtcharts.com/reference/errors/#err-internal",
+            "hint": "Check your column names",
+            "doc_url": None,
+        },
+        style=resolve_style(get_theme_style()).chart_defaults.callout_error,
+        chart_id="callout",
     )
     assert "Check your column names" in svg
 
@@ -923,6 +950,7 @@ def _resolve_stage_executor(rows_by_query: dict[str, list[dict[str, object]]]):
     mock._query_errors = {}
     mock.query_data_ages = {}
     mock.cache_hit_ats = []
+    mock.rendered_at = PINNED_RENDER_TIME
     return mock
 
 
@@ -1170,10 +1198,12 @@ def test_warning_detector_tolerates_chart_missing_from_resolved_board() -> None:
     assert "good" in resolved.charts
     context = WarningContext(
         board_spec=resolved,
-        chart_results={"broken": [{"label": str(n)} for n in range(9)]},
+        chart_results={
+            "broken": [{"label": "a", "amount": 999}, {"label": "b", "amount": 1}]
+        },
         vega_specs={},
     )
-    assert detect_pie_too_many_segments(context) == []
+    assert detect_pie_dominant_segment(context) == []
 
 
 def test_query_execution_failure_still_isolates_through_the_real_pipeline() -> None:

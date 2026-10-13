@@ -421,6 +421,7 @@ class TestGapFillOrdinalTimeRequiresIsTemporal:
             True,
             is_temporal=True,
             detected_time_unit="yearmonth",
+            x_date_range=None,
         )
         assert filled is not None
         # Continuous temporal scale: sorted/canonicalized, no missing
@@ -442,6 +443,7 @@ class TestGapFillOrdinalTimeRequiresIsTemporal:
             True,
             is_temporal=False,
             detected_time_unit="yearmonth",
+            x_date_range=None,
         )
         assert filled is not None
         # Ordinal bucketed scale: Mar and Apr synthesized as null rows.
@@ -1344,6 +1346,7 @@ class TestGapFillPerPanelAuthoredTemporalWithZeroRows:
             "line",
             False,
             True,
+            None,
         )
 
         assert x_authored_temporal is True

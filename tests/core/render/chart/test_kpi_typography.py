@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import re
 from typing import Any
 
@@ -10,6 +11,8 @@ import pytest
 from dbt_charts.core.compile.models.chart.resolved import ResolvedKpiChart
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, ValuesQuery
 from dbt_charts.core.compile.resolve import resolve
+
+from ..._engine_render import render_kpi_svg
 
 _ROWS = [{"revenue": 128_000, "delta": 0.12}]
 _TONE_POSITIVE = "positive"
@@ -23,7 +26,6 @@ def _render(
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
     from dbt_charts.core.compile.normalize.charts import normalize_chart
     from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
-    from dbt_charts.core.render.chart.kpi import render_kpi_svg
 
     board_rs, board_ctx = resolve_style_and_context(
         get_theme_style(get_default_theme_name())
@@ -83,7 +85,7 @@ _FIELDS = {
     "family": (
         "Georgia, serif",
         "font-family",
-        "Georgia, &#x27;Noto Emoji&#x27;, serif",
+        "Georgia, 'Noto Emoji', serif",
     ),
     "size": (31, "font-size", "31.0"),
     "weight": (800, "font-weight", "800"),
@@ -120,7 +122,7 @@ def test_every_font_field_reaches_every_slot(
     value, attr, emitted = _FIELDS[field]
     style = _nest(path, {field: value})
     svg = _render(_kpi(style, variant), width=900)
-    assert _attr(_tspan(svg, text), attr) == emitted
+    assert html.unescape(_attr(_tspan(svg, text), attr) or "") == emitted
 
 
 @pytest.mark.parametrize(

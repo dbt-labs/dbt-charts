@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic_core import PydanticCustomError
 
 from dbt_charts._docs_site import docs_site_url
 
@@ -15,6 +16,9 @@ from dbt_charts._docs_site import docs_site_url
 ERROR_GUIDE_PATH = "guides/error-handling"
 
 _DC = TypeVar("_DC", bound="DiagnosticCode")
+
+# pydantic error type of ErrorCode.validation_error(); ctx["code"] names the code.
+CODED_VALIDATION_ERROR = "coded_error"
 
 _LEVEL_PREFIX: dict[str, str] = {
     "error": "ERR-",
@@ -91,6 +95,24 @@ class ErrorCode(DiagnosticCode):
 
     level: Literal["error"] = "error"
     fix_template: str | None = None
+
+    def validation_error(
+        self,
+        **fields: object,  # type-state: object_annotation — template fields are heterogeneous, as in DbtChartsError.from_code
+    ) -> PydanticCustomError:
+        """The error a pydantic validator raises to report this code.
+
+        The rendered message rides in context so pydantic never re-formats it.
+        """
+        return PydanticCustomError(
+            CODED_VALIDATION_ERROR,
+            "{message}",
+            {
+                "message": self.message_template.format(**fields),
+                "code": self.code,
+                "fields": fields,
+            },
+        )
 
 
 class WarningCode(DiagnosticCode):

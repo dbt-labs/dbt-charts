@@ -40,11 +40,10 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.render.chart.callout import render_callout_chart_svg
-from dbt_charts.core.render.chart.kpi import render_kpi_svg
-from dbt_charts.core.render.chart.spark_bar import render_spark_bar_svg
-from dbt_charts.core.render.chart.table import render_table_svg
 from dbt_charts.core.render.chart.vega_lite import render_chart
+from dbt_charts.core.render.engine import render_native
+
+from ..._engine_render import render_kpi_svg, render_spark_bar_svg, render_table_svg
 
 # Oracle type: (resolved, data, width, height, board_style) -> svg string
 _Oracle = Callable[
@@ -93,7 +92,15 @@ def _oracle_callout(
     board_style: ResolvedStyle,
 ) -> str:
     assert isinstance(resolved, ResolvedCalloutChart)
-    return render_callout_chart_svg(resolved, data, width, height)
+    return render_native(
+        resolved,
+        data,
+        width=width,
+        height=height,
+        padding=None,
+        board_style=board_style,
+        board_width=width,
+    )[0]
 
 
 def _board_style() -> ResolvedStyle:

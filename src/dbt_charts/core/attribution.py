@@ -29,6 +29,7 @@ is the failure mode where a cost model quietly attributes spend to the wrong tea
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
@@ -77,9 +78,10 @@ _process_surface: dict[str, str] = {}
 # unwinds per request the way `attribute()`'s scope does. Values are opaque
 # IDs the host mints, never emails or display names: the label charset would
 # mangle a PII value anyway, and warehouse query history is broadly readable
-# and long-retained.
+# and long-retained. `tool` is per-call, set by the tool dispatcher; like the
+# others it must stay off `connection_identity()`.
 SCOPE_DIMENSIONS = frozenset(
-    {"surface", "board", "query", "target", "actor", "client", "request"}
+    {"surface", "board", "query", "target", "actor", "client", "request", "tool"}
 )
 
 
@@ -132,6 +134,17 @@ def connection_identity() -> dict[str, str]:
     comment, which is rebuilt per call.
     """
     return {**engine_attribution(), **_process_surface}
+
+
+def attribution_payload() -> str:
+    """The per-query attribution as the JSON a query comment or job label carries.
+
+    Merge order is immaterial: :func:`validate_attribution` has already rejected
+    every engine-owned key at the compile boundary, so an authored pair cannot
+    collide with one. For ``app`` that guard is RESERVED_KEYS rather than the
+    ``dbt_charts_`` prefix, since it sits outside the namespace.
+    """
+    return json.dumps({**engine_attribution(), **current_attribution()})
 
 
 def current_attribution() -> dict[str, str]:

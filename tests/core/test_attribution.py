@@ -196,6 +196,15 @@ class TestActorClientRequestDimensions:
         assert current["dbt_charts_client"] == "web"
         assert current["dbt_charts_request"] == "req-1"
 
+    def test_tool_reaches_current_attribution_and_stays_off_connection_identity(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`tool` is per-call: on a pooled connection it would mislabel the next tool."""
+        monkeypatch.setattr(attribution_module, "_process_surface", {})
+        with attribute({"tool": "execute_query"}, {}):
+            assert current_attribution()["dbt_charts_tool"] == "execute_query"
+            assert "dbt_charts_tool" not in connection_identity()
+
     def test_actor_never_reaches_process_surface(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

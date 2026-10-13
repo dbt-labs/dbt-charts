@@ -25,7 +25,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     MultiplesConfig,
 )
 from dbt_charts.core.compile.models.markers import Url
-from dbt_charts.core.compile.models.primitives import FormatConfig, VariableDependencies
+from dbt_charts.core.compile.models.primitives import VariableDependencies
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.vega_lite.contracts import Projection
 
@@ -158,10 +158,6 @@ class _CartesianChartFields(_SharedChartFields, _FieldLabelsField):
     min_height: float | None = Field(default=None, description="Minimum height floor.")
     max_height: float | None = Field(
         default=None, description="Maximum height ceiling."
-    )
-    format: str | FormatConfig | None = Field(
-        default=None,
-        description="How the number is written: a D3 spec, a preset name, or a format block.",
     )
 
 

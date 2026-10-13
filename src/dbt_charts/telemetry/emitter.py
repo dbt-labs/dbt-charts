@@ -7,10 +7,13 @@ arguments), versions, and hashed/anonymous ids. Nothing else.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import platform
+import sys
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from importlib.metadata import version
 from pathlib import Path
@@ -18,12 +21,37 @@ from typing import Literal
 
 import typer
 import yaml
+from dbtlabs.proto.public.v1.common.vortex_telemetry_contexts_pb2 import (
+    VortexTelemetryCommonContext,
+)
+from dbtlabs.proto.public.v1.events.charts_pb2 import CliInvocation as CliInvocationPb
+from dbtlabs.proto.public.v1.events.vortex_pb2 import VortexMessageEnrichment
+from dbtlabs_vortex.producer import log_proto, shutdown
 from typer.core import TyperGroup
 
 from dbt_charts.telemetry.consent import send_anonymous_usage_stats
 from dbt_charts.telemetry.dbt_project import read_dbt_project
 
-USER_FILE = Path.home() / ".dbt" / ".user.yml"
+DOCS_URL = "https://docs.dbtcharts.com/reference/telemetry/"
+FIRST_RUN_NOTICE = (
+    "dct: sending anonymous usage stats to dbt Labs. Disable with DO_NOT_TRACK=1 "
+    f"or --no-send-anonymous-usage-stats. {DOCS_URL}"
+)
+
+# The producer logs delivery failures at ERROR, and the CLI's root handler
+# prints them to stderr; a failed send must never reach the user.
+_producer_logger = logging.getLogger("dbtlabs_vortex")
+_producer_logger.addHandler(logging.NullHandler())
+_producer_logger.propagate = False
+
+# A finished command must not hang on the network; unsent events are dropped.
+SHUTDOWN_TIMEOUT_SECONDS = 1.0
+
+
+def user_file_path(env: Mapping[str, str]) -> Path:
+    """Locate ``.user.yml`` next to ``profiles.yml``, where dbt keeps it."""
+    profiles_dir = env.get("DBT_PROFILES_DIR")
+    return (Path(profiles_dir) if profiles_dir else Path.home() / ".dbt") / ".user.yml"
 
 
 @dataclass(frozen=True)
@@ -42,13 +70,34 @@ class CliInvocation:
 
 
 def send(event: CliInvocation) -> None:
-    # No-op until the dbt-protos release carrying charts.proto lands.
-    return
+    """Queue the event for Vortex.
+
+    proto3 scalars have no null: absent values go out as ``""`` / ``0``, and
+    ``progress`` says which ones to expect. Vortex fills ``enrichment``
+    server-side and dct has no dbt platform account, so both stay empty.
+    """
+    log_proto(
+        CliInvocationPb(
+            enrichment=VortexMessageEnrichment(),
+            common_context=VortexTelemetryCommonContext(),
+            event_id=event.event_id,
+            invocation_id=event.invocation_id,
+            progress=event.progress,
+            command=event.command,
+            version=event.version,
+            python_version=event.python_version,
+            os_name=event.os_name,
+            project_id=event.project_id or "",
+            dbt_local_cookie_user_id=event.dbt_local_cookie_user_id,
+            result_type=event.result_type or "",
+            duration_ms=event.duration_ms or 0,
+        )
+    )
 
 
 def get_user_id(path: Path) -> str:
     """Return dbt's anonymous user cookie, creating it on first run."""
-    if path.is_file():
+    if path.is_file() and path.read_text(encoding="utf-8").strip():
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict) or not isinstance(data.get("id"), str):
             raise ValueError(f"{path}: expected a mapping with a string `id`")
@@ -103,6 +152,9 @@ class Invocation:
                 duration_ms=int((time.monotonic() - self.started_at) * 1000),
             )
         )
+        # log_proto only enqueues; the worker batches every 5s and registers no
+        # exit hook, so flush here, bounded.
+        shutdown(timeout_seconds=SHUTDOWN_TIMEOUT_SECONDS)
 
 
 def begin_invocation(
@@ -117,6 +169,8 @@ def begin_invocation(
         if not isinstance(project.get("name"), str):
             raise ValueError(f"{project_dir / 'dbt_project.yml'}: missing `name`")
         project_id = hashlib.md5(project["name"].encode()).hexdigest()
+    user_file = user_file_path(os.environ)
+    first_run = not user_file.exists()
     start = CliInvocation(
         event_id=str(uuid.uuid4()),
         invocation_id=str(uuid.uuid4()),
@@ -126,9 +180,11 @@ def begin_invocation(
         python_version=platform.python_version(),
         os_name=platform.system(),
         project_id=project_id,
-        dbt_local_cookie_user_id=get_user_id(USER_FILE),
+        dbt_local_cookie_user_id=get_user_id(user_file),
         result_type=None,
         duration_ms=None,
     )
+    if first_run:
+        print(FIRST_RUN_NOTICE, file=sys.stderr)
     send(start)
     return Invocation(start, time.monotonic())

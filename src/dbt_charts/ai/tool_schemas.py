@@ -13,7 +13,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.agent_api.boards import RenderBoardArgs
 from dbt_charts.agent_api.describe import DescribeBoardArgs
-from dbt_charts.agent_api.describe_query import DescribeQueryArgs
 from dbt_charts.agent_api.diagnostics import (
     GetDiagnosticCodeArgs,
     ListDiagnosticCodesArgs,
@@ -28,17 +27,56 @@ from dbt_charts.agent_api.files import (
     ReadFileArgs,
     WriteFileArgs,
 )
-from dbt_charts.agent_api.query import ExecuteQueryArgs, QueryBoardArgs
+from dbt_charts.agent_api.query import ExecuteQueryArgs
 from dbt_charts.agent_api.search import SearchBoardsArgs
-from dbt_charts.agent_api.skills import GetSkillArgs, SearchSkillsArgs
-from dbt_charts.agent_api.validate import ValidateBoardArgs
+from dbt_charts.agent_api.skills import GetSkillArgs
 
 
-def _ai_tool(name: str, model: type[BaseModel]) -> dict[str, Any]:
+def _annotations(
+    title: str,
+    *,
+    read_only: bool = True,
+    destructive: bool = False,
+    open_world: bool = False,
+) -> dict[str, Any]:
+    """MCP ToolAnnotations: hosts auto-approve on ``readOnlyHint``, and Claude's
+    connector directory requires a title plus a read-only or destructive hint.
+
+    ``execute_query`` counts as read-only: its SQL runs under a read-only guard.
+    ``open_world`` marks tools that run a board's http sources, which can reach
+    arbitrary URLs (GET only under a read-only session).
+    """
+    return {
+        "title": title,
+        "readOnlyHint": read_only,
+        "destructiveHint": destructive,
+        "idempotentHint": not destructive,
+        "openWorldHint": open_world,
+    }
+
+
+_WRITES = {"read_only": False, "destructive": True}
+
+
+def _ai_tool(
+    name: str,
+    model: type[BaseModel],
+    title: str,
+    *,
+    read_only: bool = True,
+    destructive: bool = False,
+    open_world: bool = False,
+) -> dict[str, Any]:
     desc = textwrap.dedent(model.__doc__ or "").strip()
     return {
         "name": name,
         "description": desc,
+        "annotations": _annotations(
+            title,
+            read_only=read_only,
+            destructive=destructive,
+            open_world=open_world,
+        ),
         "input_schema": model.model_json_schema(by_alias=True),
     }
 
@@ -91,7 +129,7 @@ def _render_board_tool() -> dict[str, Any]:
     pass -- without it, a caller could send 'format' anyway and get it
     silently honored.
     """
-    tool = _ai_tool("render_board", RenderBoardArgs)
+    tool = _ai_tool("render_board", RenderBoardArgs, "Render board", open_world=True)
     schema = tool["input_schema"]
     properties = {k: v for k, v in schema["properties"].items() if k != "format"}
     properties["include_raw_data"] = INCLUDE_RAW_DATA_PROPERTY
@@ -107,55 +145,52 @@ def _render_board_tool() -> dict[str, Any]:
     }
 
 
-VALIDATE_BOARD = _ai_tool("validate_board", ValidateBoardArgs)
 RENDER_BOARD = _render_board_tool()
-EXECUTE_QUERY = _ai_tool("execute_query", ExecuteQueryArgs)
-DESCRIBE_QUERY = _ai_tool("describe_query", DescribeQueryArgs)
-SEARCH_BOARDS = _ai_tool("search_boards", SearchBoardsArgs)
+EXECUTE_QUERY = _ai_tool(
+    "execute_query", ExecuteQueryArgs, "Run query", open_world=True
+)
+SEARCH_BOARDS = _ai_tool("search_boards", SearchBoardsArgs, "Search boards")
 
-DOCS = _ai_tool("docs", DocsArgs)
+DOCS = _ai_tool("docs", DocsArgs, "Read docs")
 
-LIST_DIAGNOSTIC_CODES = _ai_tool("list_diagnostic_codes", ListDiagnosticCodesArgs)
-GET_DIAGNOSTIC_CODE = _ai_tool("get_diagnostic_code", GetDiagnosticCodeArgs)
+LIST_DIAGNOSTIC_CODES = _ai_tool(
+    "list_diagnostic_codes", ListDiagnosticCodesArgs, "List diagnostic codes"
+)
+GET_DIAGNOSTIC_CODE = _ai_tool(
+    "get_diagnostic_code", GetDiagnosticCodeArgs, "Get diagnostic code"
+)
 
-QUERY_BOARD = _ai_tool("query_board", QueryBoardArgs)
-
-DESCRIBE_BOARD = _ai_tool("describe_board", DescribeBoardArgs)
+DESCRIBE_BOARD = _ai_tool("describe_board", DescribeBoardArgs, "Describe board")
 
 LIST_SKILLS: dict[str, Any] = {
     "name": "list_skills",
+    "annotations": _annotations("List skills"),
     "description": (
         "List all agent skills packaged with dct. "
         "Returns name, description, kind (workflow or pattern), and has_examples "
         "for each skill. Call this first to discover what patterns are available, "
-        "then use get_skill to read the full guide for the pattern you want, "
-        "or search_skills to filter by keyword."
+        "then use get_skill to read the full guide for the pattern you want."
     ),
     "input_schema": {"type": "object", "properties": {}},
 }
 
-GET_SKILL = _ai_tool("get_skill", GetSkillArgs)
-SEARCH_SKILLS = _ai_tool("search_skills", SearchSkillsArgs)
-READ_FILE = _ai_tool("read_file", ReadFileArgs)
-WRITE_FILE = _ai_tool("write_file", WriteFileArgs)
-EDIT_FILE = _ai_tool("edit_file", EditFileArgs)
-GLOB_FILES = _ai_tool("glob_files", GlobFilesArgs)
-GREP_FILES = _ai_tool("grep_files", GrepFilesArgs)
-MOVE_FILE = _ai_tool("move_file", MoveFileArgs)
-DELETE_FILE = _ai_tool("delete_file", DeleteFileArgs)
+GET_SKILL = _ai_tool("get_skill", GetSkillArgs, "Get skill")
+READ_FILE = _ai_tool("read_file", ReadFileArgs, "Read file")
+WRITE_FILE = _ai_tool("write_file", WriteFileArgs, "Write file", **_WRITES)
+EDIT_FILE = _ai_tool("edit_file", EditFileArgs, "Edit file", **_WRITES)
+GLOB_FILES = _ai_tool("glob_files", GlobFilesArgs, "Find files")
+GREP_FILES = _ai_tool("grep_files", GrepFilesArgs, "Search file contents")
+MOVE_FILE = _ai_tool("move_file", MoveFileArgs, "Move file", **_WRITES)
+DELETE_FILE = _ai_tool("delete_file", DeleteFileArgs, "Delete file", **_WRITES)
 
 ALL_TOOLS: list[dict[str, Any]] = [
-    VALIDATE_BOARD,
     RENDER_BOARD,
     EXECUTE_QUERY,
-    DESCRIBE_QUERY,
     SEARCH_BOARDS,
     DOCS,
-    QUERY_BOARD,
     DESCRIBE_BOARD,
     LIST_SKILLS,
     GET_SKILL,
-    SEARCH_SKILLS,
     LIST_DIAGNOSTIC_CODES,
     GET_DIAGNOSTIC_CODE,
 ]
@@ -204,6 +239,12 @@ class SuggestBoardPlacementArgs(BaseModel):
 # absent from ALL_TOOLS (no MCP meaning) and AGENT_TOOLS (drafts/promotion is a
 # Cloud concept — confirmed no _drafts/ handling exists outside Cloud).
 # Cloud's own agent profile appends this to AGENT_TOOLS.
-SUGGEST_BOARD_PLACEMENT = _ai_tool("suggest_board_placement", SuggestBoardPlacementArgs)
+# It upserts an advisory row, so it is not read-only, but never destructive.
+SUGGEST_BOARD_PLACEMENT = _ai_tool(
+    "suggest_board_placement",
+    SuggestBoardPlacementArgs,
+    "Suggest board placement",
+    read_only=False,
+)
 
 AGENT_TOOLS: list[dict[str, Any]] = ALL_TOOLS + FILE_TOOLS

@@ -3,6 +3,7 @@
 Templates the dict produced by board_to_dict into compact markdown text.
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 from dbt_charts.core.compile.models.board.normalized import (
@@ -12,10 +13,14 @@ from dbt_charts.core.compile.models.board.normalized import (
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.board_to_dict import (
+    MAX_TABLE_COLUMNS_SHOWN,
     NO_ROW_CAP,
+    TABLE_PREVIEW_ROW_CAP,
     board_to_dict,
     kept_rows_phrase,
 )
+from dbt_charts.core.render.chart.table_static_pagination import StaticPagination
+from dbt_charts.core.text.row_table import row_table
 
 
 def render_board_text(
@@ -25,6 +30,8 @@ def render_board_text(
     error_collector: list[Diagnostic] | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
     include_data: bool = False,
+    *,
+    static_paginations: Mapping[str, StaticPagination],
 ) -> str:
     """Render a compiled board to compact markdown text for AI agents.
 
@@ -32,6 +39,10 @@ def render_board_text(
     grouped by query name (not per chart, so a query shared by several
     charts is dumped once), capped by ``max_rows_per_query`` the same way
     every other row-embedding format is (head + tail, never silent).
+
+    ``static_paginations`` is what the draw recorded per paginated table
+    (keyed by chart id); each such table gets a line stating its row and page
+    counts and how many pages a static export carries.
     """
     d = board_to_dict(
         board,
@@ -42,7 +53,7 @@ def render_board_text(
         include_text_format=True,
     )
     lines: list[str] = []
-    _render_board(d, lines, depth=1)
+    _render_board(d, lines, 1, static_paginations)
     if include_data:
         data_lines = _render_include_data(d)
         if data_lines:
@@ -116,6 +127,7 @@ def _render_board(
     board: dict[str, Any],  # type-state: explicit_any — wire dict
     lines: list[str],
     depth: int,
+    static_paginations: Mapping[str, StaticPagination],
 ) -> bool:
     """Render a board dict to markdown lines at the given heading depth.
 
@@ -141,16 +153,21 @@ def _render_board(
         lines.append(heading)
     for item in items:
         if item["type"] == "chart":
-            _render_chart(item, lines, depth + 1)
+            _render_chart(item, lines, depth + 1, static_paginations)
         elif item["type"] == "board":
             child_lines: list[str] = []
-            if _render_board(item["board"], child_lines, depth + 1):
+            if _render_board(item["board"], child_lines, depth + 1, static_paginations):
                 lines.append("")
                 lines.extend(child_lines)
     return len(lines) > start_len
 
 
-def _render_chart(item: dict[str, Any], lines: list[str], depth: int) -> None:
+def _render_chart(
+    item: dict[str, Any],  # type-state: explicit_any — wire dict
+    lines: list[str],
+    depth: int,
+    static_paginations: Mapping[str, StaticPagination],
+) -> None:
     """Render a chart item to markdown lines."""
     # Chart error: emit a compact error line instead of data
     if "_error" in item:
@@ -183,8 +200,11 @@ def _render_chart(item: dict[str, Any], lines: list[str], depth: int) -> None:
         columns_line = _table_columns_summary(chart)
         if columns_line:
             lines.append(f"- {columns_line}")
+        pagination = static_paginations.get(chart["id"])
+        if pagination is not None:
+            lines.append(f"- {_pagination_line(pagination)}")
         if data:
-            lines.extend(_table_row_preview(chart, data))
+            lines.extend(_table_row_preview(item, data))
 
     # Field mappings
     fields = _field_mappings(chart)
@@ -225,12 +245,6 @@ def _render_kpi_value(
         lines.append(f"- support: {kpi_text['support']}")
 
 
-#: Cap on columns listed by name before collapsing to a "+N more" tail — this
-#: module's whole audience is agent context, and a wide table (60+ columns)
-#: would otherwise emit a single line over a thousand bytes long.
-_MAX_TABLE_COLUMNS_SHOWN = 20
-
-
 def _table_columns_summary(
     chart: dict[str, Any],  # type-state: explicit_any — wire dict
 ) -> str:
@@ -253,31 +267,24 @@ def _table_columns_summary(
         parts.append(f"{label} ({format_name})" if format_name else label)
     if not parts:
         return ""
-    if len(parts) > _MAX_TABLE_COLUMNS_SHOWN:
-        shown = parts[:_MAX_TABLE_COLUMNS_SHOWN]
-        more = len(parts) - _MAX_TABLE_COLUMNS_SHOWN
+    if len(parts) > MAX_TABLE_COLUMNS_SHOWN:
+        shown = parts[:MAX_TABLE_COLUMNS_SHOWN]
+        more = len(parts) - MAX_TABLE_COLUMNS_SHOWN
         return f"columns: {', '.join(shown)}, +{more} more"
     return f"columns: {', '.join(parts)}"
 
 
-#: Rows shown in a table chart's unconditional preview — enough to sample the
-#: shape of the data without paying full-row-dump token cost on every render.
-_TABLE_PREVIEW_ROW_CAP = 3
-
-
-def _round_for_display(
-    value: Any,  # type-state: explicit_any — a raw query row cell, dynamically typed
-) -> Any:  # type-state: explicit_any — same cell, unchanged unless it's a float
-    """Trim float noise past double precision for markdown display.
-
-    Ints, strings, and everything else pass through unchanged — only floats
-    carry the raw-precision noise (``13356.789999999998``) this exists to
-    trim, without rounding away real digits: this feeds ``## Data`` and
-    table previews, where exact values are the point.
-    """
-    if isinstance(value, float):
-        return float(f"{value:.15g}")
-    return value
+def _pagination_line(pagination: StaticPagination) -> str:
+    """State a paginated table's row and page counts and what a static file keeps."""
+    carried = (
+        f"the first {pagination.rendered_pages} pages"
+        if pagination.rendered_pages < pagination.total_pages
+        else f"all {pagination.total_pages} pages"
+    )
+    return (
+        f"{pagination.total_rows:,} rows, {pagination.page_rows} a page, "
+        f"{pagination.total_pages} pages; the static file carries {carried}"
+    )
 
 
 def _markdown_table(
@@ -285,59 +292,28 @@ def _markdown_table(
     *,
     gap_after: int | None = None,
 ) -> list[str]:
-    """Render rows as a compact markdown table, columns taken from the first row.
+    """Render rows as a markdown table, columns taken from the first row.
 
-    A pipe character in a cell is escaped so it cannot be mistaken for a
-    column boundary. ``gap_after`` inserts a ``...`` marker row after that
-    many rows -- the seam between a head-capped chunk and a tail-capped one,
-    so two non-adjacent slices of the same query are never mistaken for
-    contiguous rows.
+    No rows means no table: the columns are unknown.
     """
     if not rows:
         return []
-    columns = list(rows[0].keys())
-    lines = [
-        f"| {' | '.join(columns)} |",
-        f"| {' | '.join(['---'] * len(columns))} |",
-    ]
-    for i, row in enumerate(rows):
-        if gap_after is not None and i == gap_after:
-            lines.append(f"| {' | '.join(['...'] * len(columns))} |")
-        cells = [
-            str(_round_for_display(row.get(col))).replace("|", "\\|") for col in columns
-        ]
-        lines.append(f"| {' | '.join(cells)} |")
-    return lines
+    return row_table(rows, list(rows[0].keys()), gap_after=gap_after).split("\n")
 
 
 def _table_row_preview(
-    chart: dict[str, Any],  # type-state: explicit_any — wire dict
+    item: dict[str, Any],  # type-state: explicit_any — wire dict
     data: list[dict[str, Any]],  # type-state: explicit_any — wire rows
 ) -> list[str]:
-    """Build the table chart's unconditional row preview: first few rows,
-    row-capped with an explicit note when more rows exist — never a silent
-    truncation.
-
-    Columns are filtered and capped the same way ``_table_columns_summary``
-    does — a ``visible: false`` column never reaches the preview, and a wide
-    table's preview stays within the same column budget as its columns line.
+    """Build the table chart's unconditional row preview: first few rows, each
+    cell as the column's format paints it (``board_to_dict._table_text_rows``,
+    which also drops hidden columns and caps wide tables), with an explicit
+    note when more rows exist — never a silent truncation.
     """
     lines: list[str] = []
-    shown_rows = data[:_TABLE_PREVIEW_ROW_CAP]
-    if len(data) > _TABLE_PREVIEW_ROW_CAP:
-        lines.append(f"- showing first {_TABLE_PREVIEW_ROW_CAP} of {len(data)} rows")
-
-    columns = chart.get("columns")
-    if columns:
-        visible = [
-            name for name, cfg in columns.items() if cfg.get("visible") is not False
-        ]
-    else:
-        visible = list(shown_rows[0].keys()) if shown_rows else []
-    visible = visible[:_MAX_TABLE_COLUMNS_SHOWN]
-
-    projected = [{col: row.get(col) for col in visible} for row in shown_rows]
-    lines.extend(_markdown_table(projected))
+    if len(data) > TABLE_PREVIEW_ROW_CAP:
+        lines.append(f"- showing first {TABLE_PREVIEW_ROW_CAP} of {len(data)} rows")
+    lines.extend(_markdown_table(item["table_text"]))
     return lines
 
 

@@ -1,0 +1,3 @@
+kind: Fixes
+body: A query against a missing table now reports ERR-BINDER-UNKNOWN-RELATION, which replaces ERR-BINDER-UNKNOWN-COLUMN and ERR-WAREHOUSE-RUNTIME for that case.
+time: 2026-10-09T19:15:08.032577-07:00

@@ -294,6 +294,87 @@ rows:
     assert any(label.startswith("US ") for label in labels), labels
 
 
+def test_drawn_tick_values_exclude_rungs_outside_the_baked_domain():
+    """Gutter measurement reads the drawn rungs, not the full ladder."""
+    ay_merged = _merged_axis_y()
+    ay = build_resolved_axis(
+        ay_merged,
+        format=baked_format(ay_merged),
+        tick_values=(-40e6, -20e6, 0.0, 20e6),
+        domain_max=16e6,
+        chart_id="test",
+        formats=None,
+    )
+    assert ay.drawn_tick_values == (-40e6, -20e6, 0.0)
+
+
+@pytest.mark.parametrize("chart_type", ["bar", "line"])
+@pytest.mark.parametrize(
+    ("low", "high", "spec", "prefix", "expected"),
+    [
+        # 15M tops out below the 20M rung: no positive rung is drawn, so the
+        # unit sits on the lowest drawn tick (a line's zoomed floor is the
+        # data minimum, so its -40M rung is not drawn) rather than vanishing
+        # on the 0.
+        (
+            -38_000_000,
+            15_000_000,
+            ".3~s",
+            "US ",
+            {"bar": "US \u221240", "line": "US \u221220"},
+        ),
+        (-38_000_000, 20_000_000, ".3~s", "US ", {"bar": "US 20", "line": "US 20"}),
+        (-380, 150, ",.0f", "EUR ", {"bar": "EUR \u2212400", "line": "EUR \u2212200"}),
+        (-380, 200, ",.0f", "EUR ", {"bar": "EUR 200", "line": "EUR 200"}),
+    ],
+)
+def test_headroom_zero_unit_sits_on_a_drawn_tick(
+    chart_type: str,
+    low: float,
+    high: float,
+    spec: str,
+    prefix: str,
+    expected: dict[str, str],
+):
+    """The top edge is pinned at the data max, so the unit anchors on the largest
+    drawn positive tick, else the lowest drawn tick."""
+    import re
+
+    from .._svg_render import render_board_to_svg
+
+    svg = render_board_to_svg(
+        f"""
+title: t
+queries:
+  q:
+    columns: [k, v]
+    values:
+      - [a, {low}]
+      - [b, {high}]
+charts:
+  c:
+    query: q
+    type: {chart_type}
+    x: k
+    y: v
+    style:
+      axis_y:
+        scale:
+          headroom: 0
+      number_format:
+        spec: "{spec}"
+        prefix: "{prefix}"
+        repeat: anchor
+rows:
+  - c
+"""
+    )
+    labels = [
+        t for t in re.findall(r"<text[^>]*>([^<]*)</text>", svg) if t.startswith(prefix)
+    ]
+    assert len(labels) == 1 and labels[0].startswith(expected[chart_type]), labels
+
+
 def test_ladderless_zero_crossing_affix_anchors_on_the_last_tick():
     from dbt_charts.core.compile.models.primitives import ResolvedFormat
     from dbt_charts.core.compile.resolve.style.axis_cascade import (
@@ -403,6 +484,29 @@ def test_column_forming_compacting_axis_on_non_tabular_font_raises():
             formats=None,
         )
     assert exc_info.value.code is ERR_AXIS_COLUMN_REQUIRES_TABULAR_FONT
+
+
+def test_non_tabular_axis_font_error_names_the_keys_and_the_body_font_slot():
+    ay_merged = _with_family(_merged_axis_y(), "Comic Sans MS")
+    with pytest.raises(CompilationError) as exc_info:
+        build_resolved_axis(
+            ay_merged,
+            format=baked_format(ay_merged),
+            tick_values=_ANCHOR_TICKS,
+            column_forming=True,
+            chart_id="fixture",
+            formats=None,
+        )
+    message = str(exc_info.value)
+    fix = exc_info.value.to_diagnostic().fix
+    assert "'Comic Sans MS'" in message
+    assert "style.fonts.numeral" in message
+    assert "style.fonts.label" in message
+    assert fix is not None
+    assert "style.fonts.body" in fix
+    assert "style.fonts.label" in fix
+    assert "style.fonts.numeral" in fix
+    assert "tabular" in fix
 
 
 def test_column_forming_compacting_axis_on_vendored_non_tabular_font_raises():
@@ -2025,15 +2129,14 @@ def test_end_to_end_percent_alias_bakes_plain_percent_ticks_through_real_resolve
     assert d3_format_apply(ay.labels.format.spec, 0.123) == "12.3%"
 
 
-def test_end_to_end_chart_level_number_format_percent_bakes_plain_percent_ticks():
-    """The chart-level fallback (``style.number_format``) reaches the axis
-    through axis_cascade's Layer 10 (``chart_authored_axis_format`` /
-    ``chart_fallback_format``), with no ``axis_y.labels.format`` authored at
-    all. The name still reaches the axis as a house format, so the same
-    tick-derivation rule applies.
+def test_end_to_end_chart_axis_y_percent_bakes_plain_percent_ticks():
+    """A chart's own ``axis_y.labels.format`` name reaches the axis as a house
+    format, so the same tick-derivation rule applies.
     """
     board = resolve_chart_style_context(get_theme_style())
-    patch = BarChartStylePatch.model_validate({"number_format": "percent"})
+    patch = BarChartStylePatch.model_validate(
+        {"axis_y": {"labels": {"format": "percent"}}}
+    )
     data = [
         {"month": "Jan", "revenue": 0.1},
         {"month": "Feb", "revenue": 0.2},

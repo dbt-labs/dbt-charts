@@ -38,24 +38,6 @@ if TYPE_CHECKING:
     from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 
 
-class ValidateBoardArgs(BaseModel):
-    """Validate a board YAML file without executing queries.
-
-    Runs YAML parse, Pydantic schema validation, and cross-reference checks
-    (chart → query resolution, variable resolution, partial-include expansion).
-    Fast — no warehouse connection, no query execution. Use this as the inner
-    edit-loop verb: edit, validate, fix, repeat. Prefer render_board for a
-    full compile + execute validation.
-    """
-
-    path: Path | None = Field(
-        None, description="Path to board YAML file (use this OR yaml_content)"
-    )
-    yaml_content: str | None = Field(
-        None, description="YAML content to validate directly (use this OR path)"
-    )
-
-
 class ValidateResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -70,24 +52,6 @@ class ValidateResult(BaseModel):
     )
     errors: list[Diagnostic] = Field(
         default_factory=list, description="Validation errors found in the board file."
-    )
-    warnings: list[Diagnostic] = Field(
-        default_factory=list,
-        description=(
-            "Non-fatal warnings as Diagnostic objects with stable codes. "
-            "Each warning carries code, message, and an optional fix hint."
-        ),
-    )
-
-
-class ContentValidateResult(BaseModel):
-    """Result of validating in-memory YAML content — no file on disk."""
-
-    model_config = ConfigDict(frozen=True)
-
-    success: bool
-    errors: list[Diagnostic] = Field(
-        default_factory=list, description="Validation errors found in the YAML."
     )
     warnings: list[Diagnostic] = Field(
         default_factory=list,
@@ -280,44 +244,6 @@ def _validate_resolved(
         path=resolved.relpath,
         errors=errors,
         warnings=warnings,
-    )
-
-
-def validate_content(yaml_content: str, *, project: Project) -> ContentValidateResult:
-    """Fast schema + cross-reference validation of in-memory YAML.
-
-    No warehouse, no query execution, no file on disk — for surfaces (e.g. the
-    Playground) that hold unsaved scratch YAML in memory. Mirrors ``validate()``
-    but reuses ``compile()`` directly instead of ``compile_file()``, since there
-    is no path to resolve or read. Cross-file refs resolve against the project's
-    charts/ directory, matching the in-memory render path (``core.board.
-    render_dashboard``'s ``yaml_content`` branch).
-
-    Lint findings from ``validate_compiled_queries`` carry ``range=None`` by
-    design: in-memory content has no file identity, so ``_stamp_compile_result``
-    leaves ``source_map`` empty and stamping is a no-op.
-    """
-    from dbt_charts.core.compile.compiler import (
-        compile as _compile,
-        validate_compiled_queries,
-    )
-    from dbt_charts.core.dbt_model_columns import check_model_columns
-    from dbt_charts.core.dbt_ref_check import check_manifest_refs
-
-    result = _compile(
-        yaml_content,
-        base_dir=project.directory(CHARTS_SUBDIR),
-        project_sources=project.sources,
-        project_cache=project.cache,
-    )
-    validate_compiled_queries(result)
-    check_manifest_refs(result, project)
-    check_model_columns(result, project)
-    warnings, _suppressed = partition_compile_warnings(
-        list(result.warnings), result.board, None, project.warnings_ignore
-    )
-    return ContentValidateResult(
-        success=result.success, errors=list(result.errors), warnings=warnings
     )
 
 
@@ -550,29 +476,3 @@ def _warehouse_findings(
                 )
 
     return errors, warnings
-
-
-def validate_board(
-    *,
-    path: Path | None,
-    yaml_content: str | None,
-    project: Project,
-) -> ValidateResult | ContentValidateResult:
-    """Unified validate_board dispatch for the AI tool layer.
-
-    Routes to ``validate()`` (path) or ``validate_content()`` (yaml_content).
-    Raises ``ValueError`` when neither or both are provided — the caller
-    (``_handle_validate`` shim) lets this propagate to ``dispatch_tool_call``'s
-    central exception handler. Returns a typed model; the shim serializes.
-    """
-    if path is None and yaml_content is None:
-        raise ValueError("Provide one of 'path' or 'yaml_content'")
-    if path is not None and yaml_content is not None:
-        raise ValueError("Provide only one of 'path' or 'yaml_content', not both")
-    if yaml_content is not None:
-        return validate_content(yaml_content, project=project)
-    assert path is not None  # guaranteed by the checks above
-    annotated = annotate_with_data_lint(
-        [validate(path=path, project=project)], project=project
-    )
-    return annotated[0]

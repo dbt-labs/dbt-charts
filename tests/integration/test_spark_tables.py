@@ -15,7 +15,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+
+from ..core._engine_render import render_table_svg
 
 
 def _make_chart(
@@ -23,6 +24,7 @@ def _make_chart(
     subtitle: str = "",
     link: str | None = None,
     style: dict[str, Any] | None = None,
+    data: list[dict[str, Any]] | None = None,
 ) -> Any:
     """Build a ResolvedChart for table rendering tests.
 
@@ -44,7 +46,7 @@ def _make_chart(
         }
     )
     board_style = resolve_chart_style_context(get_theme_style())
-    return resolve(chart, [], chart_style_context=board_style)
+    return resolve(chart, data or [], chart_style_context=board_style)
 
 
 class TestSparkAlignmentInvariant:
@@ -266,11 +268,11 @@ class TestSparkTableRendering:
 
     def test_table_without_spark_config(self) -> None:
         """Table without spark config still renders normally."""
-        chart = _make_chart(title="Sales by Region")
         data = [
             {"region": "North", "sales": 125000},
             {"region": "South", "sales": 98000},
         ]
+        chart = _make_chart(title="Sales by Region", data=data)
 
         svg_output = render_table_svg(
             chart,

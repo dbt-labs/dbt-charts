@@ -59,7 +59,13 @@ class InMemoryProject(Project):
     def read_bytes(self, relpath: str) -> bytes:
         return self.read_text(relpath).encode("utf-8")
 
-    def iter_files(self, under: str, *, recursive: bool) -> Iterator[str]:
+    def iter_files(
+        self,
+        under: str,
+        *,
+        recursive: bool,
+        onerror: Callable[[str, OSError], None] | None = None,
+    ) -> Iterator[str]:
         prefix = "" if under == "." else f"{under}/"
         matches = [p for p in self._files if p.startswith(prefix)]
         if not recursive:

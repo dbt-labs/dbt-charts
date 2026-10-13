@@ -131,7 +131,7 @@
         "labelFont": "'dbt Sans Tabular', 'Noto Emoji', Inter, system-ui, sans-serif",
         "labelFontSize": 11.0,
         "labelFontWeight": "400",
-        "labelPadding": 24.98486328125,
+        "labelPadding": 24.67333984375,
         "labelSeparation": 16.0,
         "orient": "right",
         "tickColor": "#D0D3D9",

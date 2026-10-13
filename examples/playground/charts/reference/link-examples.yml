@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: link Click-Through Examples
 notes: |
   Demonstrates all three link usage patterns:

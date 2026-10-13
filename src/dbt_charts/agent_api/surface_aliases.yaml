@@ -7,9 +7,9 @@
 #
 # Common patterns inside a SKILL.md:
 #
-#   "Use `{{ s_validate_board }}` after every edit."
-#     → Tool-call agent reads: `validate_board`
-#     → CLI agent reads: `dct validate`
+#   "Use `{{ s_render_board }}` after every edit."
+#     → Tool-call agent reads: `render_board`
+#     → CLI agent reads: `dct render`
 #
 #   "{{ s_render_png_example }}"
 #     → Whole code block flips between surfaces.
@@ -25,10 +25,6 @@
 
 # ---- Inline tool references (one-liners inside prose) ----------------------
 
-validate_board:
-  tool: "validate_board"
-  dct: "dct validate"
-
 execute_query:
   tool: "execute_query"
   dct: "dct query SOURCE SQL"
@@ -37,13 +33,9 @@ render_board:
   tool: "render_board"
   dct: "dct render"
 
-query_board:
-  tool: "query_board"
+execute_named_query:
+  tool: "execute_query(board, query)"
   dct: "dct query BOARD.yml QUERY"
-
-describe_query:
-  tool: "describe_query"
-  dct: "dct query SOURCE SQL --describe"
 
 search_boards:
   tool: "search_boards"
@@ -190,16 +182,6 @@ render_png_example:
   dct: |
     ```bash
     dct render charts/finance/revenue-overview.yml --format png
-    ```
-
-validate_example:
-  tool: |
-    ```text
-    validate_board(path="charts/finance/revenue-overview.yml")
-    ```
-  dct: |
-    ```bash
-    dct validate charts/finance/revenue-overview.yml
     ```
 
 # ---- Cross-skill pointers (single-line footers) ---------------------------

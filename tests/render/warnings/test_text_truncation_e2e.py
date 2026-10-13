@@ -320,7 +320,8 @@ rows:
         f"Expected WARN_TABLE_TEXT_TRUNCATED; got: {codes}"
     )
     warn = next(w for w in result.warnings if w.code == WARN_TABLE_TEXT_TRUNCATED.code)
-    assert warn.path is not None and long_col in warn.path
+    assert warn.path == "charts.t"
+    assert [r.path for r in warn.related] == [f"charts.t.style.columns.{long_col}"]
 
     # A short header must NOT fire.
     clean_board = InMemoryBoard(

@@ -55,10 +55,7 @@ def render_board_resolved_schema() -> JsonSchemaValue:
         A self-contained JSON Schema dict describing the envelope
         ``{$id, version, styles, board}``: draft-2020-12 ``$schema``, a
         stable ``$id``, and a Pydantic-derived ``$defs`` body with
-        ``ResolvedBoard.style`` rewritten to a ``StyleRef`` pointer. Not
-        yet canonicalized for cross-Python-version stability; the
-        generation script applies that pass before writing the committed
-        artifact.
+        ``ResolvedBoard.style`` rewritten to a ``StyleRef`` pointer.
     """
     defs = TypeAdapter(ResolvedBoard).json_schema(mode="serialization")["$defs"]
     defs["StyleRef"] = TypeAdapter(StyleRef).json_schema(mode="serialization")

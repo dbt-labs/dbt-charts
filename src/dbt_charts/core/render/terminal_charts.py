@@ -29,7 +29,7 @@ from dbt_charts.core.compile.models.style.theme import KpiValueStyle
 from dbt_charts.core.compile.resolve.chart.channel import parse_style_channel
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_KPI_MULTIROW, ERR_KPI_NO_DATA
-from dbt_charts.core.render.chart.kpi import kpi_value_text
+from dbt_charts.core.render.chart.kpi_value import kpi_value_text
 from dbt_charts.core.render.utils import normalize_data_types, slug_to_text
 from dbt_charts.core.text.format_d3 import NULL_DISPLAY, d3_format
 
@@ -332,7 +332,7 @@ def render_kpi_terminal(
     ERR-KPI-NO-DATA and multi-row results ERR-KPI-MULTIROW, so the same
     authoring mistake fails the same way regardless of output medium.
     """
-    from dbt_charts.core.render.chart.kpi import _resolve_value  # noqa: PLC0415
+    from dbt_charts.core.render.chart.kpi_value import resolve_kpi_value  # noqa: PLC0415
 
     # render_kpi_terminal is only dispatched for KPI charts; narrow the union.
     assert isinstance(chart, KpiChart)
@@ -347,7 +347,7 @@ def render_kpi_terminal(
 
     raw_value = chart.value
     row = data[0]
-    cell, _ = _resolve_value(raw_value, row, chart_id)
+    cell = resolve_kpi_value(raw_value, row, chart_id)
 
     # chart.style.value is None when a KPI's style: never touches value:, though
     # the patch stub types it non-Optional; the local re-declaration narrows it.

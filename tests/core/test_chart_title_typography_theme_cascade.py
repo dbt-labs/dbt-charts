@@ -248,7 +248,7 @@ class TestTableTitleEditorialCream:
         got back Inter (default theme's title family). The table path has no
         overlay step, so the wrong family ended up in the SVG.
         """
-        from dbt_charts.core.render.chart.table import render_table_svg
+        from ._engine_render import render_table_svg
 
         board_rs = _editorial_cream_resolved()
         resolved = resolve(
@@ -283,7 +283,8 @@ class TestTableTitleEditorialCream:
         import re
 
         from dbt_charts.core.compile.resolve.style.typography import chart_title_spec
-        from dbt_charts.core.render.chart.table import render_table_svg
+
+        from ._engine_render import render_table_svg
 
         charts = _editorial_cream_charts()
         expected_size, _, _ = chart_title_spec(390.0, chart_style_context=charts)

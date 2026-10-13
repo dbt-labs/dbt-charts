@@ -34,7 +34,7 @@ Regression tests for CRITICAL/HIGH review findings:
     against a real DuckDB warehouse succeeds.
 """
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -1246,7 +1246,7 @@ class _StringCoercingStubCache:
             for row in outcome
         ]
         self._store[(source_hash, query_hash, variables_hash)] = CacheHit(
-            rows=rows, written_at=datetime.now(timezone.utc)
+            rows=rows, written_at=datetime.now(UTC)
         )
 
     def clear(self, source_hash: str, query_hash: str, variables_hash: str) -> None:

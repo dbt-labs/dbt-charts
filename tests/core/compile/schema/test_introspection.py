@@ -4,6 +4,9 @@ TDD: these tests were written before introspection.py existed.
 Run them to watch them fail, then implement to make them pass.
 """
 
+from typing import get_args
+
+from dbt_charts.core.compile.models.source import SourceConfig
 from dbt_charts.core.compile.schema.introspection import (
     introspect,
     introspect_project_config,
@@ -184,18 +187,7 @@ class TestPatchModelsCollected:
 class TestSourceConfigTypeRequired:
     """Source connector 'type' discriminator must be required, never optional."""
 
-    _CONFIGS = [
-        "PostgresSourceConfig",
-        "SnowflakeSourceConfig",
-        "BigQuerySourceConfig",
-        "RedshiftSourceConfig",
-        "DuckDBSourceConfig",
-        "CsvSourceConfig",
-        "ParquetSourceConfig",
-        "JsonSourceConfig",
-        "HttpSourceConfig",
-        "DbtProfileSourceConfig",
-    ]
+    _CONFIGS = [member.__name__ for member in get_args(SourceConfig)]
 
     def test_type_field_is_required_in_ir(self) -> None:
         schema = introspect()

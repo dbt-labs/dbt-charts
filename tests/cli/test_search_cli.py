@@ -174,3 +174,33 @@ class TestDftSearchHelpLayout:
             assert form in lines, (
                 f"Search example {form!r} not on its own line. Full output:\n{output}"
             )
+
+
+class TestDftSearchShowsMatchedCharts:
+    """Human output names each matching chart under its board."""
+
+    def test_matched_chart_ids_print_under_board(self, tmp_path: Path) -> None:
+        charts = tmp_path / "charts"
+        charts.mkdir()
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        (charts / "sales.yml").write_text(
+            "title: Sales\n"
+            "charts:\n"
+            "  k_revenue:\n"
+            "    title: Revenue\n"
+            "    type: kpi\n"
+            "  k_orders:\n"
+            "    title: Orders\n"
+            "    type: kpi\n"
+            "rows:\n"
+            "  - k_revenue\n"
+            "  - k_orders\n"
+        )
+
+        result = runner.invoke(
+            app, ["search", "revenue", "--project-dir", str(tmp_path)]
+        )
+        assert result.exit_code == 0, result.output
+        lines = [line.strip() for line in result.output.splitlines()]
+        assert "chart k_revenue (kpi): Revenue" in lines
+        assert "k_orders" not in result.output

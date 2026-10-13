@@ -35,7 +35,7 @@ from ..._paths import DBT_CHARTS_DIR
 
 # ---------------------------------------------------------------------------
 # Fake dbt-core adapter — duck-types BaseAdapter.list_schemas /
-# list_relations / get_columns_in_relation / get_column_schema_from_query.
+# list_relations / get_columns_in_relation.
 # ---------------------------------------------------------------------------
 
 
@@ -61,7 +61,6 @@ class FakeAdapter:
     columns_by_relation: dict[tuple[str, str], list[_FakeColumn]] = field(
         default_factory=dict
     )
-    query_columns: dict[str, list[_FakeColumn]] = field(default_factory=dict)
 
     def add_table(
         self,
@@ -77,9 +76,6 @@ class FakeAdapter:
             _FakeColumn(name=n, dtype=t) for n, t in columns
         ]
 
-    def set_query_columns(self, sql: str, columns: list[tuple[str, str]]) -> None:
-        self.query_columns[sql] = [_FakeColumn(name=n, dtype=t) for n, t in columns]
-
     # dbt-core BaseAdapter methods we forward to:
 
     def list_schemas(self, database: str | None) -> list[str]:
@@ -93,9 +89,6 @@ class FakeAdapter:
         return list(
             self.columns_by_relation.get((relation.schema, relation.identifier), [])
         )
-
-    def get_column_schema_from_query(self, sql: str) -> list[_FakeColumn]:
-        return list(self.query_columns.get(sql, []))
 
     @classmethod
     def type(cls) -> str:  # noqa: A003 — mirrors dbt adapter classmethod name
@@ -553,33 +546,6 @@ class TestListTables:
         adapter.add_table("other", "x", [("id", "BIGINT")])
         src = DbtSchemaSource(adapter=adapter, project=local_project(tmp_path))
         assert src.list_tables(schema="public") is None
-
-
-# ---------------------------------------------------------------------------
-# describe_query
-# ---------------------------------------------------------------------------
-
-
-class TestDescribeQuery:
-    def test_forwards_to_adapter_get_column_schema_from_query(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        adapter = FakeAdapter()
-        adapter.set_query_columns(
-            "SELECT 1 AS x, 'hi' AS y", [("x", "INTEGER"), ("y", "VARCHAR")]
-        )
-        src = DbtSchemaSource(adapter=adapter, project=local_project(tmp_path))
-        out = src.describe_query(sql="SELECT 1 AS x, 'hi' AS y")
-        assert out is not None
-        assert out["columns"]["x"]["actual_type"] == "INTEGER"
-        assert out["columns"]["y"]["actual_type"] == "VARCHAR"
-
-    def test_returns_none_when_query_yields_no_columns(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        adapter = FakeAdapter()
-        src = DbtSchemaSource(adapter=adapter, project=local_project(tmp_path))
-        assert src.describe_query(sql="SELECT 1") is None
 
 
 # ---------------------------------------------------------------------------

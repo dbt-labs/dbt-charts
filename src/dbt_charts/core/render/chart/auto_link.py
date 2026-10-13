@@ -26,6 +26,7 @@ Per-column link precedence (table cells):
   1. Explicit authored ``link:`` on a column config
   2. FK-drill link — on declared-FK dimension columns
   3. Per-column filter link — column is a declared board variable
+  4. Text-format link — column formatted `email` (mailto:) or `url`
   A column with none of these is not a cell link. The chart-root link
   (auto_link detail URL) is separate: the renderer paints it as a whole-row
   band beneath the cells, and a cell link — when present — wins the click.

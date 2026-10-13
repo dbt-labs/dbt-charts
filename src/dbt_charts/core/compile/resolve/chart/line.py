@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import date
 
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
@@ -113,6 +114,7 @@ def _resolve_line(
     width: float,
     datasets: LayerDatasets,
     automatic_link_candidate: AutomaticLinkCandidate,
+    x_date_range: tuple[date, date] | None,
     display_text: ChartDisplayText = None,
 ) -> ResolvedLineChart:
     data = dataset.all_rows()
@@ -453,6 +455,7 @@ def _resolve_line(
     return ResolvedLineChart(
         **bkw,
         **_ck,
+        x_date_range=x_date_range,
         wide_measures=wide_measures,
         chart_type="line",
         style=ResolvedLineStyle(

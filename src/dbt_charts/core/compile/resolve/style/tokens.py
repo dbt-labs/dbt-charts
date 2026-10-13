@@ -12,7 +12,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from dbt_charts.core.colors import is_color_token
+from dbt_charts.core.colors import is_color_token, is_unknown_color_name
+from dbt_charts.core.compile.models.markers import Color
 from dbt_charts.core.compile.models.primitives import SingleLineFontStyle
 from dbt_charts.core.compile.models.style.theme import Style
 from dbt_charts.core.compile.models.style.theme.category_colors import (
@@ -154,6 +155,31 @@ def _resolve_one_color_token(
     )
 
 
+def _unknown_color_name(
+    node: BaseModel,
+    name: str,
+    value: object,  # type-state: object_annotation — a model field holds any type
+) -> str | None:
+    """The reason ``value`` is not a color, when it sits in a ``Color()`` field.
+
+    ``None`` for a value that is fine, or a field that does not hold a color.
+    """
+    field = type(node).model_fields.get(name)
+    color = (
+        next((m for m in field.metadata if isinstance(m, Color)), None)
+        if field is not None
+        else None
+    )
+    if (
+        not isinstance(value, str)
+        or color is None
+        or color.column_ref
+        or not is_unknown_color_name(value)
+    ):
+        return None
+    return f"'{value}' is not a CSS color name or a palette token"
+
+
 def _resolve_color_tokens(
     node: Any,
     palettes: Mapping[str, str] | None = None,
@@ -205,6 +231,7 @@ def _resolve_color_tokens(
     )
     from dbt_charts.core.compile.models.style.theme import Style
     from dbt_charts.core.compile.resolve.style.palette import (
+        UnknownColorError,
         UnknownPaletteError,
         resolve_palette_alias,
     )
@@ -252,7 +279,7 @@ def _resolve_color_tokens(
             # `palette()`: it also reports whether *value* is a known
             # anti-pattern alias (`RdYlGn`, and its shorthand forms
             # `RdYlGn:5`/`RdYlGn_r` -- stripped the same way
-            # `_parse_palette_reference` does before the `_WARN_ALIASES`
+            # `_parse_palette_reference` does before the `PALETTE_WARN_ALIASES`
             # check, so a shorthand alias is caught exactly like the bare
             # name is), in which case the literal string is left as-is:
             # `chart_context.py`'s own detector re-derives
@@ -300,8 +327,14 @@ def _resolve_color_tokens(
             # as `_walk` does, so the name reaches the bake untouched.
             if name in _PALETTE_FIELDS and isinstance(value, str):
                 continue
+            if reason := _unknown_color_name(node, name, value):
+                raise UnknownColorError(f"{name}: {reason}")
             new = _resolve_color_tokens(
-                value, palettes, roles, in_keyed_collection, single_series_palette
+                value,
+                palettes,
+                roles,
+                in_keyed_collection,
+                single_series_palette,
             )
             if new is not value:
                 updates[name] = new
@@ -315,7 +348,11 @@ def _resolve_color_tokens(
     if isinstance(node, list):
         new_list = [
             _resolve_color_tokens(
-                item, palettes, roles, in_keyed_collection, single_series_palette
+                item,
+                palettes,
+                roles,
+                in_keyed_collection,
+                single_series_palette,
             )
             for item in node
         ]
@@ -414,6 +451,10 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
     ``single_series_palette`` comes off ``base.charts.color.categorical``,
     already resolved to hex at this point, for the ``single_series[N]`` form.
     """
+    from dbt_charts.core.compile.errors import CompilationError
+    from dbt_charts.core.compile.resolve.style.palette import UnknownColorError
+    from dbt_charts.core.diagnostics.codes_compile import ERR_COLOR_TOKEN
+
     palettes = base.palettes
     roles = base.roles
     authored_single_series = (
@@ -427,12 +468,16 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
         authored_single_series if isinstance(authored_single_series, list) else None
     )
 
-    def _walk(node: Any) -> Any:
+    def _walk(
+        node: Any,  # type-state: explicit_any — any Style patch node: model, list, dict, or leaf
+        path: str,
+    ) -> Any:  # type-state: explicit_any — returns the same node shape it was given
         if isinstance(node, CategoryColorBinding):
             return node.model_copy(
                 update={
                     "values": {
-                        value: _walk(color) for value, color in node.values.items()
+                        value: _walk(color, f"{path}.{value}")
+                        for value, color in node.values.items()
                     }
                 }
             )
@@ -454,7 +499,11 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
                 # tokens, e.g. `[category.blue, "#fff"]`) still walks below.
                 if name in _PALETTE_FIELDS and isinstance(value, str):
                     continue
-                new = _walk(value)
+                if reason := _unknown_color_name(node, name, value):
+                    raise CompilationError.from_code(
+                        ERR_COLOR_TOKEN, scope=f"{path}.{name}", reason=reason
+                    )
+                new = _walk(value, f"{path}.{name}")
                 if new is not value:
                     updates[name] = new
             return node.model_copy(update=updates) if updates else node
@@ -462,12 +511,18 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
             if node in _THEME_SELF_TOKENS:
                 return _self_token_replacement(node, base)
             if is_color_token(node):
-                return _resolve_one_color_token(
-                    node, palettes, roles, single_series_palette
-                )
+                try:
+                    return _resolve_one_color_token(
+                        node, palettes, roles, single_series_palette
+                    )
+                except UnknownColorError as exc:
+                    # No field_path: the patch may come from another file.
+                    raise CompilationError.from_code(
+                        ERR_COLOR_TOKEN, scope=f"{path} ({node})", reason=str(exc)
+                    ) from exc
             return node
         if isinstance(node, list):
-            new_list = [_walk(item) for item in node]
+            new_list = [_walk(item, f"{path}.{i}") for i, item in enumerate(node)]
             return (
                 new_list
                 if any(a is not b for a, b in zip(new_list, node, strict=True))
@@ -477,12 +532,14 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
             # Bindings only — see the matching branch in _resolve_color_tokens
             # for why every other dict on Style is left alone.
             return {
-                key: _walk(value) if isinstance(value, CategoryColorBinding) else value
+                key: _walk(value, f"{path}.{key}")
+                if isinstance(value, CategoryColorBinding)
+                else value
                 for key, value in node.items()
             }
         return node
 
-    return _walk(patch)
+    return _walk(patch, "style")
 
 
 __all__ = [
@@ -554,7 +611,7 @@ def _resolve_palette_leaf(
     field gets) does not duplicate the model branch's substitute/check/expand
     logic.
     """
-    from dbt_charts.core.compile.models.primitives import VEGA_SCHEME_NAMES
+    from dbt_charts.core.compile.models.schema_names import VEGA_SCHEME_NAMES
     from dbt_charts.core.compile.resolve.style.palette import resolve_palette_ref
 
     try:

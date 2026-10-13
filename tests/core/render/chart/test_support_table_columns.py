@@ -1024,7 +1024,9 @@ def test_column_cell_forces_tabular_font_regardless_of_authored_family():
     numbers needs vertical digit alignment the row strip never does.
     """
     from dbt_charts.core.fonts import font_is_tabular
-    from dbt_charts.core.render.chart.table import _table_numeric_cell_font
+    from dbt_charts.core.render.chart.support_table_attachment import (
+        _numeric_cell_font as _table_numeric_cell_font,
+    )
 
     proportional_family = "Inter, system-ui, sans-serif"
     assert not font_is_tabular(proportional_family)
@@ -1082,7 +1084,9 @@ def test_column_width_measurement_matches_the_painted_tabular_typeface():
     gutter/overhang bug.
     """
     from dbt_charts.core.font_measure import get_font_measurer
-    from dbt_charts.core.render.chart.table import _table_numeric_cell_font
+    from dbt_charts.core.render.chart.support_table_attachment import (
+        _numeric_cell_font as _table_numeric_cell_font,
+    )
 
     proportional_family = "Inter, system-ui, sans-serif"
     style = _dt_style(

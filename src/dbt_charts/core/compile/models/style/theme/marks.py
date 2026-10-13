@@ -492,7 +492,7 @@ class LineMarkStyle(BaseModel):
     # Cascade tier sentinel: None means "not specified at this tier".
     # Sits on the mark, not inside ``stroke``, and NOT because a flat variant
     # field is prettier — ``Style.charts.area.marks`` inherits wholesale from
-    # ``Style.charts.marks`` (inherit_registry), so this stroke object is copied
+    # ``Style.charts.marks`` (an ``InheritSlot``), so this stroke object is copied
     # verbatim into ``AreaLineStyle.stroke``. A ``disconnected_cap`` inside it
     # would become authorable at ``charts.area.marks.line.stroke`` and silently
     # do nothing — an area edge is one continuous silhouette with no ``connect``.

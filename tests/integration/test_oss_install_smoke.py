@@ -264,7 +264,7 @@ def wheel_metadata(built_dbt_charts_wheel: Path) -> str:
 
 
 def test_wheel_metadata_no_local_label(wheel_metadata: str) -> None:
-    """`hatch-vcs` strips the `+g<sha>` PEP 440 local label.
+    """`_build_backend.py` strips the `+g<sha>` PEP 440 local label.
 
     PyPI rejects uploads whose version carries a local label, so an unstripped
     suffix would block release. The check pins the empirical behavior of

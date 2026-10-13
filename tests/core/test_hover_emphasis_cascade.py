@@ -178,29 +178,18 @@ _SWITCH_OFF = "style:\n  charts:\n    hover_emphasis:\n      visible: false\n"
 
 
 def _chart_markup(yaml: str) -> str:
-    """Rendered SVG, normalized for everything that is not the board's own geometry.
+    """Rendered SVG without the root's published hover facts.
 
-    Three things legitimately differ between two renders and none of them is
-    what this comparison is about: the root's published hover facts (carrying the
-    switch is their whole job), ``data-rendered-at`` (a wall clock), and Vega's clipPath ids
-    (a process-global counter, so the second render in a process is offset from
-    the first). The ids are renumbered in order of appearance rather than erased,
-    so a genuine change in which clip a node references still fails this.
+    Carrying the switch is those facts' whole job; the picture beneath them is
+    what must not change. The render helper pins the clock, so the only other
+    difference between two renders is the per-process id counters.
     """
+    from .._svg_normalize import normalize_same_run_svg
     from ._svg_render import render_board_to_svg
 
     svg = re.sub(r"<script.*?</script>", "", render_board_to_svg(yaml), flags=re.S)
-
-    # The switch rides on the board root as data now, not in a script; the
-
-    # picture beneath it is what must not change.
-
     svg = re.sub(r' data-dbt-hover-emphasis="[^"]*"', "", svg)
-    svg = re.sub(r'data-rendered-at="[^"]*"', "", svg)
-    seen: dict[str, str] = {}
-    return re.sub(
-        r"clip\d+", lambda m: seen.setdefault(m.group(0), f"clip{len(seen)}"), svg
-    )
+    return normalize_same_run_svg(svg)
 
 
 def test_the_switch_changes_no_rendered_markup() -> None:

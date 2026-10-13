@@ -68,6 +68,7 @@ from dbt_charts.core.text.numeral_scale import (
     sub_unit_digit_format,
     sub_unit_scientific_format,
 )
+from dbt_charts.core.text.predefined_formats import PREDEFINED_NATIVE, VEGA_ARMS
 from dbt_charts.core.utils import Rows, is_vega_numeric_value
 
 # ---------------------------------------------------------------------------
@@ -324,6 +325,9 @@ def painted_label_text(
     parts = _NO_FORMAT if format_input is None else format_input
     affix = (parts.prefix, parts.suffix)
     sign = parts.placement
+    if parts.spec in PREDEFINED_NATIVE:
+        number, unit = PREDEFINED_NATIVE[parts.spec].python(value)
+        return f"{parts.prefix}{number}{unit}{parts.suffix}"
     if not is_house:
         return format_d3(value, parts.spec, *affix, parts.notation, sign)
     notation = _label_notation(parts, is_house)
@@ -360,7 +364,7 @@ def _label_value_expr(value_expr: str, fmt: ResolvedFormat) -> str:
     """The Vega text for one value: affixed, notation-registered, or plain d3."""
     if fmt.prefix or fmt.suffix:
         return _affixed_digits_expr(value_expr, fmt.spec, fmt, anchored=False)
-    if fmt.notation is not None:
+    if fmt.notation is not None or fmt.spec in VEGA_ARMS:
         return numeral_vega_expr(value_expr, fmt.spec, fmt.notation)
     return f"format({value_expr}, {_json.dumps(fmt.spec)})"
 
@@ -391,6 +395,9 @@ def _house_register_text_encoding(
 ) -> tuple[VLDict, list[VLDict]]:
     """Build the ``text`` channel encoding for a value label.
 
+    A null ``labels.field`` value is blanked with a ``condition`` — never a
+    ``filter`` (see ``_fit_hide_test``) — since Vega would paint ``null``.
+
     ``label_is_text`` short-circuits every formatting route below: a text
     column (a caption like "Pace" sourced via ``labels.field``) is drawn
     verbatim as nominal text. Number-formatting a string is what painted
@@ -406,21 +413,33 @@ def _house_register_text_encoding(
     Returns ``(text_encoding, transforms)``; ``transforms`` is empty only for
     the plain ``text.format`` route.
     """
+    transforms: list[VLDict] = []
     if label_is_text:
-        return {"field": label_field, "type": "nominal"}, []
-    if labels.format is None:
-        return {"field": label_field, "type": "quantitative"}, []
-    parts = labels.format
-    if is_house:
-        expr = _house_register_expr(f"datum[{label_field!r}]", parts)
-    elif parts.prefix or parts.suffix or parts.notation is not None:
-        expr = _label_value_expr(f"datum[{label_field!r}]", parts)
+        text_enc: VLDict = {"field": label_field, "type": "nominal"}
+    elif labels.format is None:
+        text_enc = {"field": label_field, "type": "quantitative"}
+    elif not is_house and not (
+        labels.format.prefix
+        or labels.format.suffix
+        or labels.format.notation is not None
+        or labels.format.spec in VEGA_ARMS
+    ):
+        text_enc = {
+            "field": label_field,
+            "type": "quantitative",
+            "format": labels.format.spec,
+        }
     else:
-        return {"field": label_field, "type": "quantitative", "format": parts.spec}, []
-    return (
-        {"field": calc_field, "type": "nominal"},
-        [{"calculate": expr, "as": calc_field}],
-    )
+        register = _house_register_expr if is_house else _label_value_expr
+        expr = register(f"datum[{label_field!r}]", labels.format)
+        text_enc = {"field": calc_field, "type": "nominal"}
+        transforms.append({"calculate": expr, "as": calc_field})
+    if isinstance(labels, ResolvedMarkLabels) and labels.field is not None:
+        text_enc["condition"] = {
+            "test": f"!isValid(datum[{label_field!r}])",
+            "value": "",
+        }
+    return text_enc, transforms
 
 
 def _null_safe_position(expr: str, y_field: str) -> str:
@@ -1625,6 +1644,8 @@ class ValueLabelFeature:
             stack_offset=stack_offset,
         )
         if hide_test is not None:
+            if (blank := enc["text"].get("condition")) is not None:
+                hide_test = f"{blank['test']} || ({hide_test})"
             enc["text"] = {
                 **enc["text"],
                 "condition": {"test": hide_test, "value": ""},

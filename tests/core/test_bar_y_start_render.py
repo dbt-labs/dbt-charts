@@ -225,7 +225,7 @@ class TestValueLabels:
             y="end_value",
             y_start="start_value",
             style={
-                "number_format": "$,.0f",
+                "axis_y": {"labels": {"format": "$,.0f"}},
                 "marks": {"bar": {"labels": {"visible": True}}},
             },
         )
@@ -405,7 +405,7 @@ class TestTooltips:
             _spec(_BRIDGE, x="step", y="end_value", y_start="start_value")
         )
         assert "start value: " in desc and "end value: " in desc
-        assert "Change: " in desc
+        assert "\\u0394: " in desc
 
     def test_row_starting_at_zero_reads_as_a_plain_bar(self):
         (desc,) = _descriptions(
@@ -415,22 +415,24 @@ class TestTooltips:
 
     def test_bars_that_only_rise_report_a_range(self):
         (desc,) = _descriptions(_spec(_RANGES))
-        assert "Range: " in desc and "Change: " not in desc
+        assert "\\u0394: " in desc and "\\u2212" not in desc
 
     def test_span_change_honors_an_affixed_number_format(self):
         """A y_start bar with an affixed ``number_format`` must not crash the
         whole board (issue #27 widened ``tooltip_format`` to accept a
-        ``FormatConfig``) and its Change row must show the affix."""
+        ``FormatConfig``) and its Δ row must show the affix."""
         (desc,) = _descriptions(
             _spec(
                 _BRIDGE,
                 x="step",
                 y="end_value",
                 y_start="start_value",
-                style={"number_format": {"spec": ",.0f", "prefix": "EUR "}},
+                style={
+                    "axis_y": {"labels": {"format": {"spec": ",.0f", "prefix": "EUR "}}}
+                },
             )
         )
-        assert "Change: " in desc
+        assert "\\u0394: " in desc
         assert json.dumps("EUR ") in desc
 
     def test_date_span_reports_readable_dates_and_a_duration(self):
@@ -476,7 +478,7 @@ class TestTooltips:
         (block,) = set(descriptions)
         assert 'Before: "' in block and 'After: "' in block
         assert '"low: "' not in block and '"high: "' not in block
-        assert "Range: " in block
+        assert "\\u0394: " in block
 
     def test_nested_bar_layer_reads_open_high_low_close(self):
         rows = [
@@ -493,7 +495,18 @@ class TestTooltips:
             block.index(f'"{name}: "') for name in ("open", "high", "low", "close")
         ]
         assert order == sorted(order)
-        assert "Change: " in block
+        assert "\\u0394: " in block
+
+    def test_span_layer_series_is_named_for_its_two_ends(self):
+        rows = [{"day": "Mon", "high": 104, "open": 100, "close": 103}]
+        spec = _spec(
+            rows,
+            x="day",
+            y_start=None,
+            layers=[{"type": "bar", "y": "close", "y_start": "open"}],
+        )
+        (block,) = [d for d in set(_descriptions(spec)) if '"open: "' in d]
+        assert '("open \\u2013 close")' in block and " to " not in block
 
 
 class TestSpanLabelPositions:
@@ -783,12 +796,12 @@ def test_span_label_and_tooltip_place_the_sign_by_the_prefix(prefix, gain, loss)
         y="end_value",
         y_start="start_value",
         style={
-            "number_format": fmt,
+            "axis_y": {"labels": {"format": fmt}},
             "marks": {"bar": {"labels": {"visible": True, "format": fmt}}},
         },
     )
     painted = _painted(spec)
     assert gain in painted and loss in painted, painted
-    assert any(f"Change: {loss}" in t for t in painted), painted
+    assert any(f"Δ: {loss}" in t for t in painted), painted
     resolved = resolve_format_parts(FormatConfig(**fmt), None)
     assert painted_span_label_text(126, 148, resolved, False) == loss

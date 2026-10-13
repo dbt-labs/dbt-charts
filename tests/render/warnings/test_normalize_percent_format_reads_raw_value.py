@@ -24,7 +24,7 @@ from dbt_charts.core.render.warnings import (
 
 from ...core._board_utils import make_test_resolved_board, make_test_resolved_chart
 
-_PERCENT_STYLE: dict[str, Any] = {"number_format": "percent_whole"}
+_PERCENT_STYLE: dict[str, Any] = {"axis_y": {"labels": {"format": "percent_whole"}}}
 
 
 def _ctx(chart: Chart, rows: list[dict[str, Any]]) -> WarningContext:
@@ -70,7 +70,7 @@ def _shares() -> list[dict[str, Any]]:
 # --- fires -----------------------------------------------------------------
 
 
-def test_fires_on_raw_counts_under_a_percent_number_format() -> None:
+def test_fires_on_raw_counts_under_a_percent_axis_format() -> None:
     chart = _bar(y="val", style=_PERCENT_STYLE)
 
     (warning,) = detector.detect(_ctx(chart, _counts()))
@@ -183,7 +183,7 @@ def test_silent_when_every_group_already_sums_to_one() -> None:
 def test_silent_when_the_measure_format_is_not_a_percent() -> None:
     """A currency format prints the true raw number; only its unit differs
     from the axis, which is a legitimate thing to author."""
-    chart = _bar(y="val", style={"number_format": "currency_whole"})
+    chart = _bar(y="val", style={"axis_y": {"labels": {"format": "currency_whole"}}})
 
     assert detector.detect(_ctx(chart, _counts())) == []
 

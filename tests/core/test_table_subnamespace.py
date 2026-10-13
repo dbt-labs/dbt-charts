@@ -5,7 +5,7 @@ Verifies:
 - TableChartStyle: max_rows removed; background/color/bottom_padding added; rule_color → rule.color
 - TableHeaderStyle: font_compact (FontStyle|None) replaces font_weight_compact; height is float
 - TableRowRoleStyle: font_weight added
-- table.py and layout_sizing.py use table_config for these fields
+- the table engine and layout_sizing.py read these fields from the table style
 """
 
 from __future__ import annotations
@@ -19,7 +19,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+
+from ._engine_render import render_table_svg
 
 _BOARD_STYLE = resolve_style(get_theme_style())
 
@@ -103,7 +104,7 @@ from dbt_charts.core.compile.models.primitives import StaticGradientColorStyle a
 
 
 class TestTableRendererUsesNestedConfig:
-    """table.py reads from table_config (TableChartStyle) for nested fields."""
+    """The table engine reads nested fields from the table style (TableChartStyle)."""
 
     def _make_chart(self):
         from dbt_charts.core.compile.models.chart.normalized import TableChart
@@ -145,7 +146,7 @@ class TestTableRendererUsesNestedConfig:
         data = [{"a": "x"}]
         chart = resolve(
             self._make_chart(),
-            [],
+            data,
             chart_style_context=resolve_chart_style_context(seed),
         )
         svg = render_table_svg(
@@ -173,7 +174,7 @@ class TestTableRendererUsesNestedConfig:
         data = [{"a": "hello"}]
         chart = resolve(
             self._make_chart(),
-            [],
+            data,
             chart_style_context=resolve_chart_style_context(seed),
         )
         svg = render_table_svg(

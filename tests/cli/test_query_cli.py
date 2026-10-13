@@ -243,38 +243,27 @@ class TestQueryOptionVariety:
         )
         assert result.exit_code == 0, result.output
 
-    def test_limit_1_on_named_query_execute(self, board_dir: Path) -> None:
-        """--limit 1 on named-query execute returns exactly 1 row, truncated=True."""
-        from dbt_charts.agent_api.query import QueryBoardResult
+    def test_json_returns_every_row_up_to_the_ceiling(self, project_dir: Path) -> None:
+        from dbt_charts.agent_api.query import ExecuteQueryResult
 
-        multi_board = board_dir / "multi.yaml"
-        multi_board.write_text(
-            'source: db\nqueries:\n  rows:\n    sql: "select 1 as n union all select 2 as n union all select 3 as n"\n'
-            "charts:\n  c:\n    query: rows\n    type: table\nrows:\n  - c\n"
-        )
         result = runner.invoke(
             app,
             [
                 "query",
-                str(multi_board),
-                "rows",
+                "db",
+                "select * from range(1500) t(x)",
                 "--project-dir",
-                str(board_dir),
-                "--limit",
-                "1",
+                str(project_dir),
                 "--json",
             ],
         )
         assert result.exit_code == 0, result.output
-        parsed = QueryBoardResult.model_validate_json(result.output)
-        assert parsed.success is True
-        assert parsed.row_count == 1
+        parsed = ExecuteQueryResult.model_validate_json(result.output)
+        assert parsed.row_count == 1000
         assert parsed.truncated is True
+        assert "csv" not in json.loads(result.output)
 
-    def test_limit_1000_on_named_query_execute(self, board_dir: Path) -> None:
-        """--limit 1000 (upper documented bound) is accepted on named-query execute."""
-        from dbt_charts.agent_api.query import QueryBoardResult
-
+    def test_limit_flag_is_an_unknown_option(self, board_dir: Path) -> None:
         result = runner.invoke(
             app,
             [
@@ -284,13 +273,11 @@ class TestQueryOptionVariety:
                 "--project-dir",
                 str(board_dir),
                 "--limit",
-                "1000",
-                "--json",
+                "5",
             ],
         )
-        assert result.exit_code == 0, result.output
-        parsed = QueryBoardResult.model_validate_json(result.output)
-        assert parsed.success is True
+        assert result.exit_code != 0
+        assert "No such option" in result.output
 
     def test_two_var_pairs_both_land_in_query_output(self, board_dir: Path) -> None:
         """Repeatable --var with two k=v pairs: both values reach the query output."""
@@ -360,9 +347,7 @@ class TestQueryOptionVariety:
 
 
 class TestQueryWideResultRendering:
-    """Off a TTY, Rich falls back to an assumed 80-column width and ellipsizes
-    every cell to fit -- an agent capturing stdout got single-character column
-    names for a 29-column result. Full names/values must always print."""
+    """A 29-column result prints every full column name, never an ellipsis."""
 
     def test_many_columns_render_full_names_not_ellipsized(
         self, project_dir: Path
@@ -378,43 +363,77 @@ class TestQueryWideResultRendering:
         assert "long_column_name_number_28" in result.output
 
 
-class TestQueryTruncationNotice:
-    """A row-limit clip must never print a bare 'N rows' that looks complete."""
+class TestQueryPrintsTheModelsCsv:
+    """The default output is the CSV the MCP tool gives the model: rows on
+    stdout, under the same byte budget, with any cut notice on stderr."""
 
-    def test_truncated_raw_sql_result_names_the_limit_flag(
-        self, project_dir: Path
-    ) -> None:
+    def test_raw_sql_prints_csv(self, project_dir: Path) -> None:
         result = runner.invoke(
             app,
             [
                 "query",
                 "db",
-                "select * from range(30) t(x)",
+                "select 1 as a, 'x,y' as b",
                 "--project-dir",
                 str(project_dir),
             ],
         )
         assert result.exit_code == 0, result.output
-        assert "truncated" in result.output
-        assert "--limit" in result.output
+        assert result.output == 'a,b\n1,"x,y"\n'
 
-    def test_truncated_describe_result_mentions_describe_flag(
+    def test_board_query_prints_csv(self, board_dir: Path) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "query",
+                str(board_dir / "test.yaml"),
+                "revenue",
+                "--project-dir",
+                str(board_dir),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert result.output == "a,b\n1,2\n"
+
+    def test_a_result_over_the_budget_is_cut_with_the_notice(
         self, project_dir: Path
     ) -> None:
-        cols = ", ".join(f"{i} as c{i}" for i in range(29))
+        from dbt_charts.agent_api.query_csv import (
+            MODEL_RESULT_BYTE_BUDGET,
+            SQL_QUERY_HINT,
+        )
+
         result = runner.invoke(
             app,
             [
                 "query",
                 "db",
-                f"describe select {cols}",
+                "select repeat('x', 1000) as s from range(100)",
                 "--project-dir",
                 str(project_dir),
             ],
         )
         assert result.exit_code == 0, result.output
-        assert "truncated" in result.output
-        assert "--describe" in result.output
+        assert result.stdout.startswith("s\n")
+        assert "Showing " not in result.stdout
+        assert len(result.stdout.encode("utf-8")) < MODEL_RESULT_BYTE_BUDGET
+        assert " of 100 fetched rows." in result.stderr
+        assert SQL_QUERY_HINT in result.stderr
+
+    def test_zero_rows_say_so_on_stderr(self, project_dir: Path) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "query",
+                "db",
+                "select 1 as a where false",
+                "--project-dir",
+                str(project_dir),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert result.stderr.strip() == "0 rows"
+        assert "0 rows" not in result.stdout
 
 
 class TestQueryCommonErrors:
@@ -513,29 +532,6 @@ class TestQueryCommonErrors:
         assert "key=value" in combined
         assert "'country'" in combined
 
-    def test_limit_negative_on_named_query(self, board_dir: Path) -> None:
-        """--limit -1 (undocumented negative) passes through; pinning current behavior."""
-        from dbt_charts.agent_api.query import QueryBoardResult
-
-        result = runner.invoke(
-            app,
-            [
-                "query",
-                str(board_dir / "test.yaml"),
-                "revenue",
-                "--project-dir",
-                str(board_dir),
-                "--limit",
-                "-1",
-                "--json",
-            ],
-        )
-        # Current behavior: exit 0 with 0 rows (limit capped to MAX or negative yields empty)
-        assert result.exit_code == 0
-        parsed = QueryBoardResult.model_validate_json(result.output)
-        assert parsed.success is True
-        assert parsed.row_count == 0
-
     def test_file_not_found_with_validate_exits_one(self) -> None:
         """--file pointing to a non-existent path with --validate exits 1 (non-JSON output)."""
         result = runner.invoke(
@@ -586,19 +582,14 @@ rows:
 
 
 class TestQueryCliDbtRefOfflineModes:
-    """--validate and --describe reach the warehouse-free preview."""
+    """--validate reaches the warehouse-free preview."""
 
     @pytest.fixture
     def ref_board_dir(self, file_duckdb_project_dir: Path) -> Path:
         (file_duckdb_project_dir / "b.yml").write_text(REF_BOARD)
         return file_duckdb_project_dir
 
-    @pytest.mark.parametrize(
-        "modes", [["--validate"], ["--describe"], ["--validate", "--describe"]]
-    )
-    def test_offline_modes_resolve_ref(
-        self, ref_board_dir: Path, modes: list[str]
-    ) -> None:
+    def test_validate_resolves_ref(self, ref_board_dir: Path) -> None:
         result = runner.invoke(
             app,
             [
@@ -607,11 +598,27 @@ class TestQueryCliDbtRefOfflineModes:
                 "orders",
                 "--project-dir",
                 str(ref_board_dir),
-                *modes,
+                "--validate",
             ],
         )
         assert result.exit_code == 0, result.output
-        if "--describe" in modes:
-            # `users` also exists in the fixture and describes cleanly, so the
-            # exit code alone would not catch a ref resolved to the wrong table.
-            assert "user_id" in result.output
+
+
+def test_dct_query_accepts_a_csv_path_as_its_source(project_dir: Path) -> None:
+    (project_dir / "data").mkdir()
+    (project_dir / "data" / "orders.csv").write_text("id,amount\n1,10\n2,32\n")
+    result = runner.invoke(
+        app,
+        [
+            "query",
+            "data/orders.csv",
+            "select count(*) as n, sum(amount) as total from orders"
+            " where amount >= {{ floor }}",
+            "--var",
+            "floor=0",
+            "--project-dir",
+            str(project_dir),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert result.output == "n,total\n2,42\n"

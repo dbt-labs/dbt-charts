@@ -13,9 +13,11 @@ from typing import TYPE_CHECKING, TypeVar
 
 from pydantic import BaseModel
 
+from dbt_charts.core.colors import is_unknown_color_name
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.primitives import NamedFont, SingleLineFontStyle
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_COLOR_TOKEN,
     ERR_FONT_REGISTRY,
     ERR_FONT_UNKNOWN,
 )
@@ -71,7 +73,13 @@ def resolve_registry(
         return resolved[name]
 
     for name in registry:
-        resolve(name, (name,))
+        font = resolve(name, (name,))
+        if font is not None and font.color and is_unknown_color_name(font.color):
+            raise CompilationError.from_code(
+                ERR_COLOR_TOKEN,
+                scope=f"style.fonts.{name}.color",
+                reason=f"'{font.color}' is not a CSS color name or a palette token",
+            )
     return resolved
 
 

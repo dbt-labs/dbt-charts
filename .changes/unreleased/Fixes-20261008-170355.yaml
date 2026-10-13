@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'Common authoring mistakes such as theme: with extends:, YAML syntax errors, and unresolvable style color tokens now report a specific error code instead of ERR-INTERNAL or a traceback.'
+time: 2026-10-08T17:03:55.454853-07:00

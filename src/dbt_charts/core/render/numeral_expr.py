@@ -26,6 +26,7 @@ from dbt_charts.core.text.format_d3 import (
     currency_suffix,
 )
 from dbt_charts.core.text.numeral_scale import SUB_UNIT_SCIENTIFIC_FLOOR
+from dbt_charts.core.text.predefined_formats import VEGA_ARMS
 
 
 def numeral_vega_expr(
@@ -81,6 +82,9 @@ def numeral_vega_expr(
     if not format_spec:
         raise RenderError.from_code(ERR_NUMERAL_EXPR_EMPTY_SPEC)
 
+    if format_spec in VEGA_ARMS:
+        return VEGA_ARMS[format_spec](value_expr)
+
     call = f"format({value_expr},{json.dumps(format_spec)})"
     if notation is not None and _is_si_spec(format_spec):
         # format_d3's notation step: the SI letter precedes a trailing currency.
@@ -100,6 +104,15 @@ def numeral_vega_expr(
             )
 
     return call
+
+
+def vl_format_key(spec: str) -> dict[str, str]:
+    """A field definition's own ``format`` key for ``spec``.
+
+    A native format is no d3 spec: Vega-Lite's d3 would reject its name, and
+    the text it names is painted by an expression instead (``numeral_vega_expr``).
+    """
+    return {} if spec in VEGA_ARMS else {"format": spec}
 
 
 def sub_unit_guarded_vega_expr(

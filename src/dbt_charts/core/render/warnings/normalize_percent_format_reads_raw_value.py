@@ -21,9 +21,8 @@ percent format is honest — the shape `examples/ai_spend` and `examples/rockets
 ship, which gating on ``stack == "normalize"`` alone would report.
 
 Reading ``style.axis_y.labels.format`` covers BOTH authoring doors with one
-read: ``style.number_format`` / a chart's ``format:`` reach it through the axis
-cascade's chart-format layer, and ``style.axis_y.labels.format`` is authored
-onto it directly. The theme default is an SI spec (``.3~s``), never a percent,
+read: the query's ``formats:`` reaches it through the axis cascade's column
+layer, and ``style.axis_y.labels.format`` is authored onto it directly. The theme default is an SI spec (``.3~s``), never a percent,
 so a percent format here is always one the author wrote.
 
 Only a percent format fires: a currency or plain-digit format prints the true
@@ -99,9 +98,9 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             Diagnostic.from_code(
                 WARN_NORMALIZE_PERCENT_FORMAT_READS_RAW_VALUE,
                 chart=chart_id,
-                # The format is usually authored as `style.number_format`, not
-                # here; this anchor leans on the candidate walk to land on
-                # `style`, then the chart, when the axis key is absent.
+                # The format may come from the query's `formats:`, not here;
+                # this anchor leans on the candidate walk to land on `style`,
+                # then the chart, when the axis key is absent.
                 path=f"charts.{chart_id}.style.axis_y.labels.format",
                 field=field,
                 message=WARN_NORMALIZE_PERCENT_FORMAT_READS_RAW_VALUE.message_template.format(

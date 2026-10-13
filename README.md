@@ -217,7 +217,7 @@ rows:
 
 ## Getting started
 
-> **Beta.** dbt Charts is pre-1.0. Requires Python 3.10 to 3.13.
+> **Beta.** dbt Charts is pre-1.0. Requires Python 3.11 to 3.13.
 
 ### With an agent
 
@@ -397,7 +397,8 @@ your_dbt_project/
 **Local sources:** CSV, Parquet, JSON, DuckDB.
 
 **Warehouses:** Athena, BigQuery, ClickHouse, Databricks, PostgreSQL, Redshift, Snowflake,
-Spark, Trino. Connected through dbt adapters, each installed as an extra.
+Spark, Trino. Each is installed as an extra: Trino connects through its own Python
+client, the rest through dbt adapters.
 
 **Output formats:** `dct serve` for a live board with working filters. `dct render` to
 HTML, PDF, PNG, SVG, JSON, and even

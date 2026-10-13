@@ -42,6 +42,8 @@ from dbt_charts.core.compile.models.board.normalized import (
     Layout,
     LayoutItem,
 )
+from dbt_charts.core.diagnostics import ERR_UNKNOWN_CHART
+from dbt_charts.core.diagnostics.base import DbtChartsError
 
 # Read by compile/validate/board_warnings.py to judge WARN-UNREFERENCED-CHART.
 PRE_FOCUS_PLACED_CHARTS_META_KEY = "pre_focus_placed_chart_ids"
@@ -83,7 +85,7 @@ def focus_on_chart(board: Board, chart_id: str) -> Board:
         A new Board with simplified layout and filtered variables
 
     Raises:
-        ValueError: If the chart is not found
+        DbtChartsError: ERR-UNKNOWN-CHART if the board has no such chart
 
     Example:
         >>> result = compile(yaml_content)
@@ -93,11 +95,8 @@ def focus_on_chart(board: Board, chart_id: str) -> Board:
     # Find the chart - all charts (including inline) are now in board.charts
     chart = board.charts.get(chart_id)
     if chart is None:
-        available_charts = (
-            ", ".join(sorted(board.charts.keys())) if board.charts else "none"
-        )
-        raise ValueError(
-            f"Chart '{chart_id}' not found in board. Available charts: {available_charts}"
+        raise DbtChartsError.from_code(
+            ERR_UNKNOWN_CHART, chart=chart_id, available=sorted(board.charts)
         )
 
     # Filter variables to only those the chart needs.

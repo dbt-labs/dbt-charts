@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from dbt_charts.core.compile.format import resolve_format_parts
+from dbt_charts.core.compile.format import column_format
 from dbt_charts.core.compile.merge import merge_onto_base, to_padding_style
 from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -24,7 +24,6 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedSupportTable,
 )
 from dbt_charts.core.compile.models.primitives import (
-    AuthoredFormat,
     FormatTable,
     ResolvedFontStyle,
     ResolvedFormat,
@@ -45,9 +44,11 @@ from dbt_charts.core.compile.models.style.theme import (
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     CategoryColorScale,
 )
+from dbt_charts.core.compile.resolve.chart._channels import _column_numeric_values
 from dbt_charts.core.compile.resolve.style.category_colors import (
     categorical_channel_fields,
 )
+from dbt_charts.core.compile.resolve.style.chart_context import declared_column_format
 from dbt_charts.core.compile.resolve.style.legend_position import (
     decide_legend_direction,
     decide_legend_position,
@@ -69,6 +70,7 @@ __all__ = [
     "_FAMILY_SLOT",
     "_base_kwargs",
     "_cartesian_kwargs",
+    "_color_column_format",
     "_geo_kwargs",
     "_resolve_text",
     "_shared_kwargs",
@@ -365,12 +367,22 @@ def _title_font(
     )
 
 
-def _resolved_chart_format(
-    chart_format: AuthoredFormat | None, formats: FormatTable | None
+def _color_column_format(
+    normalized: _BaseChartFields,
+    color_field: str | None,
+    formats: FormatTable | None,
+    data: list[dict[str, Any]],  # type-state: explicit_any — query-row boundary values
 ) -> ResolvedFormat | None:
-    if chart_format is None:
+    """How the query says a numeric color column prints, for its legend/tooltip.
+
+    None when the query declares no number format for the column or the column
+    paints no numbers, so the emitter keeps the engine default.
+    """
+    values = _column_numeric_values(data, color_field)
+    declared = declared_column_format(normalized, color_field, formats, time=False)
+    if declared is None or not values:
         return None
-    return resolve_format_parts(chart_format, formats)
+    return column_format("number", formats, column=declared, values=values)
 
 
 def _shared_kwargs(
@@ -641,8 +653,8 @@ def _cartesian_kwargs(
         "aspect_ratio": normalized.aspect_ratio,
         "min_height": normalized.min_height,
         "max_height": normalized.max_height,
-        "format": _resolved_chart_format(
-            normalized.format, chart_style_context.formats
+        "color_format": _color_column_format(
+            normalized, normalized.color, chart_style_context.formats, data
         ),
     }
 

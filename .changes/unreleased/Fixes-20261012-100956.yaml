@@ -1,0 +1,5 @@
+kind: Fixes
+body: Hyphens in KPI, support line, and support table label text no longer paint with a figure-width gap.
+time: 2026-10-12T10:09:56.557723-07:00
+custom:
+    DbtChartsIssue: "66"

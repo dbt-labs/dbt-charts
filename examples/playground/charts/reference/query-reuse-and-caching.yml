@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 # Query Reuse & Caching Tutorial
 # Demonstrates referencing one query from another ({{ queries.X }}) and the
 # result cache ({{ queries.X.cache }} + cache: false).

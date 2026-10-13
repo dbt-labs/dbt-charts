@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 # Every Variable Input Type
 # =========================
 # One board carrying one control of every widget dbt charts draws, so the whole

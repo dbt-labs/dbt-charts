@@ -224,6 +224,7 @@ def render_inspect_dashboard(
     project: FilesystemProject,
     adapter_registry: AdapterRegistry,
     standalone: bool = False,
+    source_name: str | None = None,
 ) -> str:
     """Render a profile template to HTML.
 
@@ -250,6 +251,8 @@ def render_inspect_dashboard(
         variables: Variables to substitute in the template
         project: Project for resolving sources and relative paths
         adapter_registry: Pre-configured registry to resolve/execute against
+        source_name: The source to query, when the caller names one. None
+            picks the registry's default via ``resolve_source_name``.
         standalone: Output will be opened with no host, so carry font bytes
             inline rather than naming ``/static/fonts/...`` (the super-schema
             CLI's case). ``dct serve`` leaves this at the default — it already
@@ -263,7 +266,11 @@ def render_inspect_dashboard(
         InspectProfileCompileError: If compilation fails
     """
     safe_vars = validate_inspect_variables(variables)
-    safe_vars["source_name"] = resolve_source_name(adapter_registry)
+    safe_vars["source_name"] = (
+        source_name
+        if source_name is not None
+        else resolve_source_name(adapter_registry)
+    )
 
     # Use warm cache when dbt-charts-super-schema is installed; fall back to
     # dbt-only resolver (cache=None) when it is not. The cache enriches
@@ -288,7 +295,7 @@ def render_inspect_dashboard(
 
     result = compile(
         substituted_yaml,
-        project_sources=project.sources,
+        project_sources=adapter_registry.project_sources,
         project_cache=project.cache,
     )
     if result.errors or not result.board:

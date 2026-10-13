@@ -79,11 +79,10 @@ def test_render_kpi_terminal_money_prefix_below_one_falls_back(make_chart):
     sub-unit-floor rule format_kpi_parts/format_value apply everywhere else,
     reached through `finalize_kpi_value_format` (too small to compact, so it
     stays spec-less) exactly like the large-value case above reaches the SI
-    branch. `render/chart/kpi.py`'s SVG painter runs the identical
-    `finalize_kpi_value_format` + `format_kpi_parts` pipeline on this same
-    chart.format (only the tuple-vs-string return shape differs from
-    terminal's `format_value`), so asserting both here pins SVG and terminal
-    to the same digits.
+    branch. The engine's KPI card formats this same chart.format with the same
+    `format_kpi_parts` rules (only the tuple-vs-string return shape differs from
+    terminal's `format_value`), so asserting both here pins the card and the
+    terminal to the same digits.
     """
     from dbt_charts.core.compile.format import finalize_kpi_value_format
     from dbt_charts.core.compile.format_value import format_kpi_parts, format_value

@@ -43,7 +43,8 @@ import copy
 import re
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from operator import attrgetter
 from typing import TYPE_CHECKING, Any, overload
 
 if TYPE_CHECKING:
@@ -56,6 +57,7 @@ from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.board.normalized import (
     Board,
+    LayoutType,
     VariableValues,
 )
 from dbt_charts.core.compile.models.cache import (
@@ -127,7 +129,7 @@ def compiled_meta() -> dict[str, str]:
     that construct a `Board` directly without going through `normalize_board`.
     """
     return {
-        "compiled_at": datetime.now(timezone.utc).isoformat(),
+        "compiled_at": datetime.now(UTC).isoformat(),
         "version": "0.1.0",
     }
 
@@ -266,6 +268,39 @@ def _pin_unauthored_nested_background(
     return patch.model_copy(update={"background": replacement})
 
 
+def _with_nested_layout_gap(
+    patch: StylePatch,
+    board_style: StylePatch | None,
+    layout_type: LayoutType | None,
+) -> StylePatch:
+    """``patch`` with this board's own ``style.layout.<type>.gap`` as its ``style.gap``.
+
+    A nested board pitches its items by ``style.gap`` (0 when unset) and never
+    reads ``layout.<type>.gap``, so an authored layout gap would otherwise
+    validate and do nothing. An explicit ``style.gap`` wins.
+
+    The gap deliberately does not inherit: it applies at the board that
+    authored it and never reaches a board nested inside it. So it is read from
+    ``board_style`` (this board's own raw patch, never the merged one) and
+    lives only in the patch this board resolves from, not in the patch handed
+    down to its children.
+    """
+    if board_style is None or layout_type is None or patch.gap is not None:
+        return patch
+    if layout_type not in (LayoutType.ROWS, LayoutType.COLS, LayoutType.GRID):
+        return patch
+    # model_dump, not attribute access: a patch model's TYPE_CHECKING stub
+    # types every field as non-optional, so the unauthored cases read as
+    # statically impossible (see _pin_unauthored_nested_background).
+    own_layout = board_style.model_dump(exclude_unset=True).get("layout")
+    if own_layout is None:
+        return patch
+    layout_patch = own_layout.get(layout_type.value)
+    if layout_patch is None or layout_patch.get("gap") is None:
+        return patch
+    return patch.model_copy(update={"gap": layout_patch["gap"]})
+
+
 def compile_board_resolved_style(
     board_style: StylePatch | None,
     parent_resolved: ResolvedStyle | None,
@@ -275,6 +310,7 @@ def compile_board_resolved_style(
     parent_theme_name: str | None = None,
     *,
     currency: CurrencyCode | None = DEFAULT_REGIONAL.currency,
+    layout_type: LayoutType | None = None,
 ) -> tuple[ResolvedStyle, ChartStyleContext, StylePatch | None]:
     """Build the authoritative ResolvedStyle + ChartStyleContext for this board scope.
 
@@ -318,6 +354,12 @@ def compile_board_resolved_style(
     already falls through to the parent's theme when this board authors
     none, so a difference here can only come from this scope's own
     authoring), which decides the ink-canvas bottom layer below.
+
+    ``layout_type`` is this board's own layout, which a nested board needs to
+    read its authored ``layout.<type>.gap`` (``_with_nested_layout_gap``). Left
+    ``None`` where it is not yet known — ``normalize_board`` resolves a board
+    before its layout exists, and the parent's ``_propagate_resolved_style``
+    re-resolves every nested board with the type afterward.
     """
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
     from dbt_charts.core.compile.merge import scope_patch
@@ -373,10 +415,18 @@ def compile_board_resolved_style(
         own_patch, board_style, is_nested=is_nested, replacement=replacement
     )
 
+    # What this board itself resolves from; ``own_patch`` stays the patch its
+    # children inherit.
+    resolve_patch = (
+        _with_nested_layout_gap(own_patch, board_style, layout_type)
+        if is_nested
+        else own_patch
+    )
+
     cache = _current_board_style_cache()
     key = (
         effective_theme,
-        repr(own_patch.model_dump(exclude_unset=True)),
+        repr(resolve_patch.model_dump(exclude_unset=True)),
         bottom_layer,
         currency,
     )
@@ -392,7 +442,7 @@ def compile_board_resolved_style(
         return copy.copy(cached[0]), cached[1], own_patch
 
     resolved = resolve_style_and_context(
-        base, own_patch, base_background=bottom_layer, currency=currency
+        base, resolve_patch, base_background=bottom_layer, currency=currency
     )
     cache[key] = resolved
     return (*resolved, own_patch)
@@ -422,35 +472,40 @@ def _block_font_sets_prose_font(style: StylePatch) -> StylePatch:
 
 
 def _board_regional(board: AuthoredBoard, parent: Regional | None) -> Regional:
-    """A nested board writes numbers the way its root does."""
+    """A nested board writes numbers and dates the way its root does."""
     if parent is None:
         return board.regional or Regional()
     authored = board.regional
-    if authored is not None and any(
-        getattr(authored, name) != getattr(parent, name)
-        for name in authored.model_fields_set
-    ):
+    if authored is None:
+        return parent
+    authored_fields = {
+        f"locale.{name}" for name in authored.locale.model_fields_set
+    } | (authored.model_fields_set - {"locale"})
+    differing = sorted(
+        field
+        for field in authored_fields
+        if attrgetter(field)(authored) != attrgetter(field)(parent)
+    )
+    if differing:
         raise CompilationError.from_code(
             ERR_REGIONAL_NESTED_MISMATCH,
             field_path="regional",
             board=board.title
             or "A nested board",  # type-state: silent_fallback — an untitled nested board has no name to cite
-            authored=_regional_text(authored, authored.model_fields_set),
-            root=_regional_text(parent, {"locale", "currency"}),
+            authored=_regional_text(authored, differing),
+            root=_regional_text(parent, differing),
         )
     return parent
 
 
-def _regional_text(regional: Regional, names: set[str]) -> str:
-    shown = {
-        "locale": regional.locale
-        if isinstance(regional.locale, str)
-        else "a custom locale",
-        "currency": "the locale's own currency"
-        if regional.currency is None
-        else regional.currency,
-    }
-    return ", ".join(f"{name}: {shown[name]}" for name in sorted(names))
+def _regional_text(regional: Regional, fields: list[str]) -> str:
+    def _shown(field: str) -> str:
+        value = attrgetter(field)(regional)
+        if value is None:
+            return "the locale's own currency"
+        return value if isinstance(value, str) else "a custom locale"
+
+    return ", ".join(f"{field}: {_shown(field)}" for field in fields)
 
 
 def _root_width_style_patch(board: AuthoredBoard) -> StylePatch | None:
@@ -533,6 +588,7 @@ def sync_board_resolved_style(
             parent_patch,
             theme_name=board.theme,
             currency=board.regional.currency,
+            layout_type=board.layout.type,
         )
     )
     for item in board.layout.items or []:
@@ -572,6 +628,7 @@ def _propagate_resolved_style(
                 theme_name=item.board.theme,
                 parent_theme_name=parent_theme_name,
                 currency=item.board.regional.currency,
+                layout_type=item.board.layout.type,
             )
             _propagate_resolved_style(
                 item.board.layout,
@@ -718,7 +775,13 @@ def normalize_board(
     # a real state at this boundary, but past it `sources` carries the source-scope
     # `cache:` layer, and an optional that resolves to `{}` on its own reads a
     # forgotten argument as "no source policy" — day-old data, no type error.
-    sources: dict[str, Any] = parent_context.get("sources") or {}
+    # Never `or {}`: an empty registry is the caller's shared dict, and inline
+    # file sources registered below must land in it.
+    sources: dict[
+        str, Any  # type-state: explicit_any — a source config is a per-warehouse dict
+    ] = parent_context.get(  # type-state: silent_fallback — no project config is a real root state, as above
+        "sources", {}
+    )
     # This board's own `cache:` over the one it inherits from the board it's nested
     # in — every query normalized below here (named, inline on a chart, inline on
     # a variable's options) gets it folded in between the source and query layers.

@@ -179,6 +179,10 @@ class Move:
     # Set to a chart `type:` literal to fire only inside charts of that family,
     # for a path other families keep (`style.title.overflow`).
     chart_type: str | None = None
+    # Tails, relative to the mapping holding the source key, that must be
+    # absent: a value there is a competing spelling the move would silently
+    # override, so the move raises instead.
+    conflicts_with: tuple[YamlKeyPath, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -2676,6 +2680,15 @@ def _apply_move(
         return notices
     for parent, key, bindings in list(move_source_locations(mapping, move, catalog)):
         destination = _substitute_wildcards(move.new_path, bindings)
+        if isinstance(parent, dict):
+            for tail in move.conflicts_with:
+                if _tail_present(parent, tail):
+                    raise MigrationConflictError(
+                        f"Cannot move {_format_path(move.old_path)!r} to "
+                        f"{_format_path(move.new_path)!r}: "
+                        f"{_format_path(tail)!r} is also set. "
+                        "Choose one value and migrate manually."
+                    )
         if move.rewrite_note is not None:
             assert move.rewrite is not None, "rewrite_note needs a rewrite"
             value = parent[int(key)] if isinstance(parent, list) else parent[str(key)]

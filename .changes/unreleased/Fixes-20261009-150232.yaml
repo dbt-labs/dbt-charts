@@ -1,0 +1,3 @@
+kind: Fixes
+body: A replayed board now stamps the time its data was recorded, so replaying one recording gives the same output every time.
+time: 2026-10-09T15:02:32.123575-07:00

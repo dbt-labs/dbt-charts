@@ -26,17 +26,27 @@ Pure functions — no DB queries, no side effects.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, overload
 
-import sqlglot
 import sqlglot.errors
 from sqlglot import exp
 from sqlglot.dialects.dialect import Dialect
 from sqlglot.dialects.postgres import Postgres
 from sqlglot.dialects.tsql import TSQL
+from sqlglot.optimizer.scope import Scope, build_scope
 
-from dbt_charts.core.compile.sql_guard import require_sqlglot_dialect
+from dbt_charts.core.column_refs import (
+    NODE_PREFIX,
+    PARSE_FAILURE_PREFIX,
+    fold_relation_names,
+    name_dbt_nodes,
+    parse_sql_statements,
+)
+from dbt_charts.core.compile.sql_guard import (
+    SKELETON_PLACEHOLDER_PREFIX,
+    require_sqlglot_dialect,
+)
 from dbt_charts.core.diagnostics.codes_query import (
     WARN_DATE_AS_TEXT,
     WARN_MISSING_JOIN_PREDICATE,
@@ -107,6 +117,37 @@ def _source_name(node: exp.Table | exp.Subquery) -> str:
     return node.alias or node.name
 
 
+_PLACEHOLDER_RE = re.compile(
+    rf"{NODE_PREFIX}\d+|{re.escape(SKELETON_PLACEHOLDER_PREFIX)}\d+__", re.IGNORECASE
+)
+
+
+def _unmask(diag: QueryDiagnostic, nodes: dict[str, str]) -> QueryDiagnostic:
+    """Spell the parser's stand-ins for ref()/source()/{{ }} as the author wrote them."""
+
+    def spell(match: re.Match[str]) -> str:
+        name = nodes.get(match.group(0).lower())
+        if name is None:
+            return "<templated>"
+        if "." in name:
+            schema, table = name.split(".", 1)
+            return f"{{{{ source('{schema}', '{table}') }}}}"
+        return f"{{{{ ref('{name}') }}}}"
+
+    def mask(text: str) -> str:
+        return _PLACEHOLDER_RE.sub(spell, text)
+
+    return replace(
+        diag,
+        message=mask(diag.message),
+        detail=None if diag.detail is None else mask(diag.detail),
+        recommendation=(
+            None if diag.recommendation is None else mask(diag.recommendation)
+        ),
+        evidence=tuple(mask(e) for e in diag.evidence),
+    )
+
+
 def _direct_from_sources(select: exp.Select) -> list[exp.Table | exp.Subquery]:
     """Get direct table/subquery sources from FROM clause (non-recursive)."""
     from_ = select.find(exp.From)
@@ -129,25 +170,19 @@ def _direct_from_sources(select: exp.Select) -> list[exp.Table | exp.Subquery]:
     return sources
 
 
-def _direct_join_sources(select: exp.Select) -> list[exp.Table | exp.Subquery]:
-    """Get direct table/subquery sources from JOIN clauses (non-recursive)."""
-    sources: list[exp.Table | exp.Subquery] = []
-    for join in select.find_all(exp.Join):
-        # Skip joins that don't belong directly to `select`'s own scope.
-        # `find_all` walks the whole tree regardless of scope, so a nested
-        # subquery's or CTE's own join would otherwise leak into `select`'s
-        # source list as if it joined there directly. This must be checked
-        # scope-relative (nearest enclosing SELECT) rather than by ancestor
-        # chain: `select` is itself a CTE body when this runs via lineage
-        # propagation, and an ancestor-chain check for exp.CTE can't tell
-        # "this join is inside a CTE nested in select" apart from "this join
-        # IS select's own body, which happens to sit inside a CTE".
-        if join.parent_select is not select:
-            continue
-        for child in join.iter_expressions():
-            if isinstance(child, (exp.Subquery, exp.Table)):
-                sources.append(child)
-    return sources
+def _caps_at_one_row(limit: exp.Expression) -> bool:
+    """Whether a ``LIMIT`` or ``FETCH FIRST`` node caps the result at one row."""
+    if isinstance(limit, exp.Fetch):
+        options = limit.args.get("limit_options")
+        # WITH TIES can return more than the count; PERCENT is not a row count.
+        if options is not None and (
+            options.args.get("with_ties") or options.args.get("percent")
+        ):
+            return False
+        count = limit.args.get("count")
+    else:
+        count = limit.args.get("expression")
+    return count is not None and count.name == "1"
 
 
 def _is_single_row_select(select: exp.Expression) -> bool:
@@ -159,7 +194,7 @@ def _is_single_row_select(select: exp.Expression) -> bool:
     if not isinstance(select, exp.Select):
         return False
     limit = select.args.get("limit")
-    if limit is not None and limit.expression.name == "1":
+    if limit is not None and _caps_at_one_row(limit):
         return True
     if select.args.get("from_") is None:
         return True
@@ -364,79 +399,49 @@ def _select_output_columns(select: exp.Select) -> dict[str, _AggFuncType | None]
 
 
 def _propagate_aggregate_columns(
-    parsed: exp.Expression,
+    scope: Scope, memo: dict[int, dict[str, _AggFuncType | None]]
 ) -> _AggMap:
-    """Build a map of source_name → {column_name: is_aggregate_derived}.
+    """Map each CTE / subquery source of ``scope`` to its aggregate-derived outputs.
 
-    Walks CTEs and inline subqueries to determine which output columns
-    are aggregate-derived so the outer query can detect re-aggregation.
+    Keys are the aliases the SELECT reads them by. Sources come from the scope
+    walk, so a name resolves to the relation it actually names (a CTE shadows
+    a table of that name), and a source's own sources are resolved first so
+    pass-through columns inherit aggregate status. A set operation is not
+    tracked: its arms may disagree. ``memo`` (by expression identity) keeps a
+    source referenced many times from being recomputed per reference.
     """
     agg_map: _AggMap = {}
-
-    # CTEs — process in order so later CTEs can inherit from earlier ones
-    with_ = parsed.find(exp.With)
-    if with_:
-        for cte in with_.expressions:
-            if not isinstance(cte, exp.CTE):
-                continue
-            alias = cte.alias
-            inner_select = cte.find(exp.Select)
-            if alias and inner_select:
-                outputs = _select_output_columns(inner_select)
-                # Propagate aggregate lineage: if this CTE selects from
-                # another CTE/source already in agg_map, columns that are
-                # merely passed through (not re-aggregated, not in GROUP BY)
-                # inherit aggregate status from the upstream source.
-                _inherit_aggregate_lineage(inner_select, outputs, agg_map)
-                agg_map[alias.lower()] = outputs
-
-    # Inline subqueries in FROM / JOIN of the main SELECT
-    if isinstance(parsed, exp.Select):
-        for src in _direct_from_sources(parsed) + _direct_join_sources(parsed):
-            if isinstance(src, exp.Subquery):
-                name = (src.alias or "<subquery>").lower()
-                inner_select = src.find(exp.Select)
-                if inner_select:
-                    outputs = _select_output_columns(inner_select)
-                    _inherit_aggregate_lineage(inner_select, outputs, agg_map)
-                    agg_map[name] = outputs
-
+    for alias, (_, source) in scope.selected_sources.items():
+        select = source.expression if isinstance(source, Scope) else None
+        if not isinstance(source, Scope) or not isinstance(select, exp.Select):
+            continue
+        if id(select) not in memo:
+            outputs = _select_output_columns(select)
+            _inherit_aggregate_lineage(
+                select, outputs, _propagate_aggregate_columns(source, memo)
+            )
+            memo[id(select)] = outputs
+        agg_map[alias.lower()] = memo[id(select)]
     return agg_map
 
 
-def _resolve_known_sources(select: exp.Select, agg_map: _AggMap) -> dict[str, str]:
-    """Map each FROM/JOIN source name visible in ``select`` to its ``agg_map`` key.
-
-    Only sources we've actually analyzed — CTEs and inline subqueries, whose
-    own output columns ``agg_map`` tracks — resolve to an entry. A raw base
-    table never appears here since we have no way to see its columns.
-
-    Re-aggregation detection uses it to resolve a column reference back to
-    the source that actually defines it, rather than guessing from the
-    column's name alone.
-    """
-    resolved: dict[str, str] = {}
-    for src in _direct_from_sources(select) + _direct_join_sources(select):
-        name = _source_name(src).lower()
-        if isinstance(src, exp.Table):
-            table_name = src.name.lower()
-            if table_name in agg_map:
-                resolved[name] = table_name
-        elif name in agg_map:
-            resolved[name] = name
-    return resolved
+def _source_labels(scope: Scope) -> dict[str, str]:
+    """Alias -> how diagnostics name that source: the CTE's name, else the alias."""
+    labels: dict[str, str] = {}
+    for alias, (_, source) in scope.selected_sources.items():
+        owner = source.expression.parent if isinstance(source, Scope) else None
+        name = owner.alias if isinstance(owner, exp.CTE) else alias
+        labels[alias.lower()] = name.lower() if name else "<subquery>"
+    return labels
 
 
 def _column_inherits_aggregate(
-    col_name: str,
-    ref: str,
-    source_keys: dict[str, str],
-    agg_map: _AggMap,
+    col_name: str, ref: str, agg_map: _AggMap
 ) -> _AggFuncType | None:
     """The aggregate function an output column inherits from lineage, if any.
 
-    A qualified reference (``ref`` present in ``source_keys``) binds
-    unambiguously to that one source — trust it directly. An unqualified
+    A qualified reference binds unambiguously to that one source; one naming a
+    base table (absent from ``agg_map``) inherits nothing. An unqualified
     reference must NOT be resolved by matching the column's *name* against
     any joined source: a join used only for filtering can carry an unrelated
     column that happens to share a name with a genuinely aggregate one
@@ -446,14 +451,11 @@ def _column_inherits_aggregate(
     not silently propagate as if it were unambiguous. Sources that agree via
     different functions report the first source's.
     """
-    # source_keys.values() are, by construction, all agg_map keys — direct
-    # indexing throughout, not .get(..., {}), matching _resolve_unqualified_
-    # agg_source's reasoning above.
-    if ref and ref in source_keys:
-        return agg_map[source_keys[ref]].get(col_name)
-    containing = [s for s in source_keys.values() if col_name in agg_map[s]]
-    if containing and all(agg_map[s][col_name] for s in containing):
-        return agg_map[containing[0]][col_name]
+    if ref:
+        return agg_map[ref].get(col_name) if ref in agg_map else None
+    containing = [outputs for outputs in agg_map.values() if col_name in outputs]
+    if containing and all(outputs[col_name] for outputs in containing):
+        return containing[0][col_name]
     return None
 
 
@@ -464,46 +466,28 @@ def _inherit_aggregate_lineage(
 ) -> None:
     """Propagate aggregate-derived status through pass-through columns.
 
-    When a CTE or subquery selects a column from an upstream source that
-    is already in ``agg_map``, and the column is not wrapped in an
-    aggregate function, it inherits the upstream aggregate status.
+    When a CTE or subquery selects a column from an upstream source in
+    ``agg_map``, and the column is not wrapped in an aggregate function, it
+    inherits the upstream aggregate status.
 
     Limitations:
     - ``SELECT *`` pass-throughs are not tracked (same as ``_select_output_columns``).
     """
-    source_keys = _resolve_known_sources(select, agg_map)
-    if not source_keys:
-        return
-
     for expr in select.expressions:
-        if isinstance(expr, exp.Column):
-            col_name = expr.name.lower()
-            # Already marked as aggregate by _select_output_columns — skip
-            if outputs.get(col_name):
-                continue
-            ref = (expr.table or "").lower()
-            if inherited := _column_inherits_aggregate(
-                col_name, ref, source_keys, agg_map
-            ):
-                outputs[col_name] = inherited
-        elif isinstance(expr, exp.Alias):
-            inner = expr.this
-            alias_name = expr.alias.lower()
-            if outputs.get(alias_name):
-                continue
-            # Check if the inner expression is a simple column reference
-            if isinstance(inner, exp.Column):
-                col_name = inner.name.lower()
-                ref = (inner.table or "").lower()
-                if inherited := _column_inherits_aggregate(
-                    col_name, ref, source_keys, agg_map
-                ):
-                    outputs[alias_name] = inherited
+        column = expr.this if isinstance(expr, exp.Alias) else expr
+        if not isinstance(column, exp.Column):
+            continue
+        out_name = expr.alias_or_name.lower()
+        # Already marked as aggregate by _select_output_columns — skip
+        if outputs.get(out_name):
+            continue
+        if inherited := _column_inherits_aggregate(
+            column.name.lower(), column.table.lower(), agg_map
+        ):
+            outputs[out_name] = inherited
 
 
-def _detect_reaggregation(
-    select: exp.Select, parsed: exp.Expression
-) -> list[QueryDiagnostic]:
+def _detect_reaggregation(select: exp.Select) -> list[QueryDiagnostic]:
     """Detect re-aggregation: a grouping-dependent aggregate over an aggregate.
 
     Uses propagation of aggregate lineage through subqueries and CTEs to
@@ -511,12 +495,16 @@ def _detect_reaggregation(
     them, then checks whether the outer query applies a non-composable
     aggregate to those columns.
     """
-    agg_map = _propagate_aggregate_columns(parsed)
-    if not agg_map:
+    try:
+        scope = build_scope(select)
+        if scope is None:
+            return []
+        agg_map = _propagate_aggregate_columns(scope, {})
+        labels = _source_labels(scope)
+    except sqlglot.errors.OptimizeError:
+        # Scope resolution raises lazily, e.g. on a name used twice in one FROM.
         return []
-
-    source_names = _resolve_known_sources(select, agg_map)
-    if not source_names:
+    if not agg_map:
         return []
 
     # Find aggregate functions in the outer SELECT and HAVING
@@ -535,24 +523,23 @@ def _detect_reaggregation(
         for col in call.find_all(exp.Column):
             col_name = col.name.lower()
             # Try to resolve which source this column comes from
-            table_ref = (col.table or "").lower()
-            if table_ref and table_ref in source_names:
-                # Qualified column — resolve to the specific source
-                candidate_sources = [source_names[table_ref]]
+            table_ref = col.table.lower()
+            if table_ref:
+                # Qualified column — a base table's column is no aggregate
+                if table_ref not in agg_map:
+                    continue
+                candidate_sources = [table_ref]
             else:
                 # Unqualified column — only flag if aggregate-derived in ALL
                 # sources that contain it (ambiguous ownership → skip)
-                candidate_sources = list(source_names.values())
-                containing = [
-                    s for s in candidate_sources if col_name in agg_map.get(s, {})
-                ]
+                containing = [s for s in agg_map if col_name in agg_map[s]]
                 if not containing or not all(agg_map[s][col_name] for s in containing):
                     continue
                 candidate_sources = containing
 
             for src_name in candidate_sources:
                 inner_type = agg_map[src_name].get(col_name)
-                key = (src_name, col_name, outer_type, is_distinct)
+                key = (labels[src_name], col_name, outer_type, is_distinct)
                 if (
                     inner_type
                     and key not in seen
@@ -577,7 +564,7 @@ def _detect_reaggregation(
                             ),
                             detail=(
                                 f"Column '{col.name}' is produced by "
-                                f"{inner_func} in source '{src_name}'. "
+                                f"{inner_func} in source '{labels[src_name]}'. "
                                 f"{outer_func} of it depends on how the rows "
                                 f"were grouped, so the result is likely wrong."
                             ),
@@ -895,27 +882,38 @@ def validate_query(
     if suppress:
         suppressed_codes.update(suppress)
 
-    try:
-        dialect = require_sqlglot_dialect(dialect)
-        parsed = sqlglot.parse_one(sql, read=dialect)
-    except sqlglot.errors.ParseError as e:
+    dialect = require_sqlglot_dialect(dialect)
+    nodes: dict[str, str] = {}
+    statements = parse_sql_statements(name_dbt_nodes(sql, nodes), dialect)
+    # Only a sqlglot/Jinja parse failure is an error; any other refusal means
+    # the SQL cannot be analyzed, not that it is wrong.
+    if isinstance(statements, str) and not statements.startswith(PARSE_FAILURE_PREFIX):
+        return ([], []) if return_suppressed else []
+    if isinstance(statements, str):
+        reason = statements.removeprefix(PARSE_FAILURE_PREFIX)
         result = [
-            QueryDiagnostic(
-                code=WARN_PARSE_ERROR.code,
-                severity="error",
-                message=f"SQL parse error: {e}",
+            _unmask(
+                QueryDiagnostic(
+                    code=WARN_PARSE_ERROR.code,
+                    severity="error",
+                    message=f"SQL parse error: {reason}",
+                ),
+                nodes,
             )
         ]
         return (result, []) if return_suppressed else result
 
+    # Only a lone SELECT is validated: DESCRIBE, PRAGMA, VALUES and multiple
+    # statements are valid SQL with nothing to report.
+    parsed = statements[0][0] if len(statements[0]) == 1 else None
     if not isinstance(parsed, exp.Select):
-        # Only validate SELECT statements for now
         return ([], []) if return_suppressed else []
 
     diags: list[QueryDiagnostic] = []
     diags.extend(_detect_missing_join_predicates(parsed))
-    diags.extend(_detect_reaggregation(parsed, parsed))
+    diags.extend(_detect_reaggregation(fold_relation_names(parsed.copy())))
     diags.extend(_detect_date_as_text(parsed, x_columns, dialect))
+    diags = [_unmask(d, nodes) for d in diags]
 
     active, suppressed_diags = _apply_suppression(diags, suppressed_codes)
     if return_suppressed:

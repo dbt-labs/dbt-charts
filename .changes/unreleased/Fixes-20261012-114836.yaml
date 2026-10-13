@@ -1,0 +1,3 @@
+kind: Fixes
+body: A query written inside a chart now reads an inline file `source:` when the project declares no `sources:`.
+time: 2026-10-12T11:48:36.369625-07:00

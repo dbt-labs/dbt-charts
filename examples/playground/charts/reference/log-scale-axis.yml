@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Log Scale Axis
 notes: |
   Genuinely log-shaped data (world population, a Falcon 9 payload-mass

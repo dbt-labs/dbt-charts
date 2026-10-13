@@ -182,10 +182,10 @@ def test_child_axis_explicit_value_wins_over_cascade():
     """An explicit value in axis_x beats the cascaded value from axis."""
     base = get_theme_style("clarity")
     axis_patch = base.charts.axis.model_copy(
-        update={"grid": base.charts.axis.grid.model_copy(update={"color": "#parent"})}
+        update={"grid": base.charts.axis.grid.model_copy(update={"color": "#d0e458"})}
     )
     axis_x_patch = base.charts.axis_x.model_copy(
-        update={"grid": base.charts.axis_x.grid.model_copy(update={"color": "#child"})}
+        update={"grid": base.charts.axis_x.grid.model_copy(update={"color": "#1b7d57"})}
     )
     patched = base.model_copy(
         update={
@@ -198,7 +198,7 @@ def test_child_axis_explicit_value_wins_over_cascade():
     emitted = resolved_axis_style(
         resolved, "axis_x", "ordinal", chart_type="", label_authored=False
     )
-    assert emitted.grid.color == "#child"
+    assert emitted.grid.color == "#1b7d57"
 
 
 def test_axis_line_visible_cascades():

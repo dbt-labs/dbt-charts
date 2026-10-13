@@ -328,12 +328,12 @@ def test_resolve_style_font_cascade(model_copy_at):
     # Null out the axis label font color so cascade has room to fill it.
     base = get_theme_style()
     seed = model_copy_at(
-        model_copy_at(base, "font.color", "#custom"),
+        model_copy_at(base, "font.color", "#8b9035"),
         "charts.axis.labels.font.color",
         None,
     )
     ctx = resolve_chart_style_context(seed)
-    assert ctx.axis.labels.font.color == "#custom"
+    assert ctx.axis.labels.font.color == "#8b9035"
 
 
 def test_resolve_style_font_override_respected():
@@ -342,14 +342,14 @@ def test_resolve_style_font_override_respected():
     from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 
     base = get_theme_style().model_copy(
-        update={"font": get_theme_style().font.model_copy(update={"color": "#root"})}
+        update={"font": get_theme_style().font.model_copy(update={"color": "#63a9f0"})}
     )
     patch = StylePatch.model_validate(
-        {"charts": {"axis": {"labels": {"font": {"color": "#axis"}}}}}
+        {"charts": {"axis": {"labels": {"font": {"color": "#433169"}}}}}
     )
     rs, ctx = resolve_style_and_context(base, patch)
-    assert ctx.axis.labels.font.color == "#axis"
-    assert rs.font.color == "#root"
+    assert ctx.axis.labels.font.color == "#433169"
+    assert rs.font.color == "#63a9f0"
 
 
 # =============================================================================
@@ -631,12 +631,12 @@ def test_cascade_root_to_charts_font(model_copy_at):
 
     base = get_theme_style()
     seed = model_copy_at(
-        model_copy_at(base, "font.color", "#cascade"),
+        model_copy_at(base, "font.color", "#492290"),
         "charts.axis.labels.font.color",
         None,
     )
     ctx = resolve_chart_style_context(seed)
-    assert ctx.axis.labels.font.color == "#cascade"
+    assert ctx.axis.labels.font.color == "#492290"
 
 
 def test_cascade_charts_font_intermediate_override(model_copy_at):
@@ -648,9 +648,9 @@ def test_cascade_charts_font_intermediate_override(model_copy_at):
     seed = model_copy_at(
         model_copy_at(
             model_copy_at(
-                model_copy_at(base, "font.color", "#root"),
+                model_copy_at(base, "font.color", "#63a9f0"),
                 "charts.font",
-                FontStyle(color="#charts"),
+                FontStyle(color="#cc1889"),
             ),
             "charts.axis.labels.font.color",
             None,
@@ -659,9 +659,9 @@ def test_cascade_charts_font_intermediate_override(model_copy_at):
         None,
     )
     rs, ctx = resolve_style_and_context(seed)
-    assert ctx.axis.labels.font.color == "#charts"
-    assert ctx.legend.label.font.color == "#charts"
-    assert rs.font.color == "#root"
+    assert ctx.axis.labels.font.color == "#cc1889"
+    assert ctx.legend.label.font.color == "#cc1889"
+    assert rs.font.color == "#63a9f0"
 
 
 def test_cascade_root_to_kpi_font():
@@ -740,12 +740,12 @@ def test_cascade_charts_font_to_spark_bar():
     seed = base.model_copy(
         update={
             "charts": base.charts.model_copy(
-                update={"font": FontStyle(color="#spark-bar")}
+                update={"font": FontStyle(color="#c09708")}
             )
         }
     )
     ctx = resolve_chart_style_context(seed)
-    assert ctx.spark_bar.font.color == "#spark-bar"
+    assert ctx.spark_bar.font.color == "#c09708"
 
 
 # =============================================================================
@@ -757,12 +757,12 @@ def test_cascade_subtitle_font(model_copy_at):
     """title.subtitle.font inherits from root when unset."""
     base = get_theme_style()
     seed = model_copy_at(
-        model_copy_at(base, "font.color", "#root"),
+        model_copy_at(base, "font.color", "#63a9f0"),
         "title.subtitle.font.color",
         None,
     )
     cascaded = apply_inherit(seed, get_inherit_graph())
-    assert cascaded.title.subtitle.font.color == "#root"
+    assert cascaded.title.subtitle.font.color == "#63a9f0"
 
 
 def test_cascade_charts_callout_fonts(model_copy_at):
@@ -772,7 +772,7 @@ def test_cascade_charts_callout_fonts(model_copy_at):
 
     base = get_theme_style()
     seed = model_copy_at(
-        base, "charts.font", FontStyle(family="ChartsFont", color="#charts")
+        base, "charts.font", FontStyle(family="ChartsFont", color="#cc1889")
     )
     cascaded = apply_inherit(seed, get_inherit_graph())
     assert cascaded.charts.callout.title.font.color == "by_tone"
@@ -785,12 +785,12 @@ def test_cascade_placeholder_overlay_font(model_copy_at):
     """placeholder.overlay.font inherits from root when unset."""
     base = get_theme_style()
     seed = model_copy_at(
-        model_copy_at(base, "font.color", "#root"),
+        model_copy_at(base, "font.color", "#63a9f0"),
         "placeholder.overlay.font.color",
         None,
     )
     cascaded = apply_inherit(seed, get_inherit_graph())
-    assert cascaded.placeholder.overlay.font.color == "#root"
+    assert cascaded.placeholder.overlay.font.color == "#63a9f0"
 
 
 def test_cascade_charts_label_font(model_copy_at):
@@ -802,12 +802,12 @@ def test_cascade_charts_label_font(model_copy_at):
 
     base = get_theme_style()
     seed = model_copy_at(
-        model_copy_at(base, "charts.font", FontStyle(color="#charts")),
+        model_copy_at(base, "charts.font", FontStyle(color="#cc1889")),
         "charts.marks.text.font.color",
         None,
     )
     cascaded = apply_inherit(seed, get_inherit_graph())
-    assert cascaded.charts.marks.text.font.color == "#charts"
+    assert cascaded.charts.marks.text.font.color == "#cc1889"
 
 
 def test_cascade_charts_table_fonts():
@@ -855,11 +855,11 @@ def test_cascade_layout_fonts():
     """layout.tabs.font and layout.details.font cascade from root."""
     style = get_theme_style()
     base = style.model_copy(
-        update={"font": style.font.model_copy(update={"color": "#root"})}
+        update={"font": style.font.model_copy(update={"color": "#63a9f0"})}
     )
     cascaded = apply_inherit(base, get_inherit_graph())
-    assert cascaded.layout.tabs.font.color == "#root"
-    assert cascaded.layout.details.font.color == "#root"
+    assert cascaded.layout.tabs.font.color == "#63a9f0"
+    assert cascaded.layout.details.font.color == "#63a9f0"
 
 
 # =============================================================================
@@ -924,11 +924,11 @@ def test_resolved_charts_callout_style_padding_from_theme():
     assert ctx.callout.section_gap == 5.0
 
 
-def test_render_callout_svg_uses_inline_spacing_from_style():
+def test_callout_card_uses_inline_spacing_from_style():
     """Inline callout spacing must come from resolved style, not renderer constants."""
     from dbt_charts.core.compile.models.style.theme import PaddingStyle
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
-    from dbt_charts.core.render.chart.callout import render_callout_svg
+    from dbt_charts.core.render.engine import render_callout_card
 
     base = get_theme_style()
     tight_seed = base.model_copy(
@@ -966,19 +966,19 @@ def test_render_callout_svg_uses_inline_spacing_from_style():
         }
     )
     loose_ctx = resolve_chart_style_context(loose_seed)
-    tight_svg = render_callout_svg(
+    tight_svg = render_callout_card(
         title="Test chart",
         message="some callout message",
         width=240,
-        callout_style=tight_ctx.callout_error,
-        base_dir=None,
+        style=tight_ctx.callout_error,
+        chart_id="callout",
     )
-    loose_svg = render_callout_svg(
+    loose_svg = render_callout_card(
         title="Test chart",
         message="some callout message",
         width=240,
-        callout_style=loose_ctx.callout_error,
-        base_dir=None,
+        style=loose_ctx.callout_error,
+        chart_id="callout",
     )
 
     def _message_y(svg: str) -> float:
@@ -1006,13 +1006,3 @@ def test_resolved_charts_style_has_spark():
     ctx = resolve_chart_style_context(get_theme_style())
     assert isinstance(ctx.spark, SparkStyle)
     assert ctx.spark.color is not None  # filled by token cascade
-
-
-def test_render_spark_uses_resolved_style_color():
-    """render_spark uses resolved_style.spark.color instead of the global get_config()."""
-    from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.chart.spark import render_spark_line
-
-    rs = resolve_style(get_theme_style())
-    svg = render_spark_line([1, 2, 3], resolved_style=rs.chart_defaults)
-    assert rs.chart_defaults.spark.color in svg

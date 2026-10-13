@@ -1568,7 +1568,9 @@ class TestAspectRatioDrivenSizing:
         expected_ratio = float(get_theme_style().charts.aspect_ratio)  # 1.5
 
         chart = self._chart("bar")
-        width = 600.0
+        # 480 / 1.5 = 320 is below max_height and is not default_chart_height,
+        # so the assertion fails if either of those takes over.
+        width = 480.0
         height = get_chart_content_height(
             chart,
             width=width,
@@ -1616,150 +1618,73 @@ class TestAspectRatioDrivenSizing:
         ctx = resolve_chart_style_context(get_theme_style())
         return ctx.table, ctx
 
-    def _expected_title_height(self, chart, tc, width: float = 800.0) -> int:
-        """Expected title-block height — calls the production helper.
+    def _table_height(self, chart, row_count: int) -> float:
+        """The height the sizer allocates `chart` over `row_count` rows."""
+        from dbt_charts.core.compile.resolve import resolve
+        from dbt_charts.core.render.layout_sizing import _get_table_height_from_data
 
-        These pagination tests pin page_rows selection across default /
-        override / inherit modes; the title-block term cancels out as a
-        constant. The sizer/renderer cross-check lives in
-        `test_data_aware_table_height_includes_subtitle_space`.
-        """
-        from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
-        from dbt_charts.core.render.chart.table import compute_table_title_block_layout
+        rows = [{"name": f"row{i}"} for i in range(row_count)]
 
-        _, charts_resolved = self._get_table_style_defaults()
-        return compute_table_title_block_layout(
-            chart_title=chart.title,
-            chart_subtitle=chart.subtitle,
-            table_width=width,
-            tc=tc,
-            padding=int(tc.outer_padding),
-            title_style=charts_resolved.title,
-            card_padding=float(resolve_style(get_theme_style()).frame.card_padding),
-            title_font=resolve_title_font(charts_resolved, width),
-        ).height
+        class _Executor:
+            @staticmethod
+            def execute_chart(chart, variables):
+                return rows
+
+        _rs, _ctx = resolve_style_and_context(get_theme_style())
+        resolved = resolve(chart, rows, _ctx)
+        height = _get_table_height_from_data(
+            chart,
+            resolved,
+            _Executor(),
+            {},
+            card_padding=float(_rs.frame.card_padding),
+            board_style=_rs,
+        )
+        assert height is not None
+        return height
+
+    def _paged_height(self, chart, page_rows: int) -> float:
+        """A multi-page table over 100 rows: the height of its first page, as an
+        unpaginated table of `page_rows` rows, plus the control bar."""
+        from dbt_charts.core.render.sizing import TABLE_PAGINATION_CONTROL_HEIGHT
+
+        unpaginated = self._chart(
+            "table", title="Paged Table", style={"pagination": {"enabled": False}}
+        )
+        assert self._table_height(chart, 100) == (
+            self._table_height(unpaginated, page_rows) + TABLE_PAGINATION_CONTROL_HEIGHT
+        )
 
     def test_data_aware_table_height_uses_default_pagination(self):
         """Auto-sized tables should reserve space for the paginated row count."""
-        from dbt_charts.core.compile.resolve import resolve
-        from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
-        from dbt_charts.core.render.layout_sizing import _get_table_height_from_data
-
-        class _Executor:
-            @staticmethod
-            def execute_chart(chart, variables):
-                return [{"name": f"row{i}"} for i in range(100)]
-
-        chart = self._chart("table", title="Paged Table")
-        _rs, _ctx = resolve_style_and_context(get_theme_style())
-        resolved = resolve(chart, [], _ctx)
-        height = _get_table_height_from_data(
-            chart,
-            resolved,
-            _Executor(),
-            {},
-            card_padding=float(_rs.frame.card_padding),
-            board_style=_rs,
-        )
-
-        tc, charts_style = self._get_table_style_defaults()
+        _, charts_style = self._get_table_style_defaults()
         assert charts_style.pagination is not None
-        row_height = int(tc.row.height)
-        header_body_gap = int(row_height * 0.25)
-        header_height = int(tc.header.height)  # the short header fits one line
-        expected = (
-            self._expected_title_height(chart, tc)
-            + header_height
-            + header_body_gap
-            + (int(charts_style.pagination.page_rows) * row_height)
-            + int(tc.outer_padding)
-            + int(tc.bottom_padding)
-            + _PAGINATION_CONTROL_HEIGHT  # multi-page tables include controls
+        self._paged_height(
+            self._chart("table", title="Paged Table"),
+            int(charts_style.pagination.page_rows),
         )
-        assert height == expected
 
     def test_data_aware_table_height_respects_chart_pagination_override(self):
         """Chart-level pagination should override the default page size in layout sizing."""
-        from dbt_charts.core.compile.resolve import resolve
-        from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
-        from dbt_charts.core.render.layout_sizing import _get_table_height_from_data
-
-        class _Executor:
-            @staticmethod
-            def execute_chart(chart, variables):
-                return [{"name": f"row{i}"} for i in range(100)]
-
-        chart = self._chart(
-            "table",
-            title="Paged Table",
-            style={"pagination": {"enabled": True, "page_rows": 5}},
+        self._paged_height(
+            self._chart(
+                "table",
+                title="Paged Table",
+                style={"pagination": {"enabled": True, "page_rows": 5}},
+            ),
+            5,
         )
-        _rs, _ctx = resolve_style_and_context(get_theme_style())
-        resolved = resolve(chart, [], _ctx)
-        height = _get_table_height_from_data(
-            chart,
-            resolved,
-            _Executor(),
-            {},
-            card_padding=float(_rs.frame.card_padding),
-            board_style=_rs,
-        )
-
-        tc, _ = self._get_table_style_defaults()
-        row_height = int(tc.row.height)
-        header_body_gap = int(row_height * 0.25)
-        header_height = int(tc.header.height)  # the short header fits one line
-        expected = (
-            self._expected_title_height(chart, tc)
-            + header_height
-            + header_body_gap
-            + (5 * row_height)
-            + int(tc.outer_padding)
-            + int(tc.bottom_padding)
-            + _PAGINATION_CONTROL_HEIGHT
-        )
-        assert height == expected
 
     def test_data_aware_table_height_chart_pagination_inherits_default_page_rows(self):
         """Enabled chart pagination without page_rows should inherit the default size."""
-        from dbt_charts.core.compile.resolve import resolve
-        from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
-        from dbt_charts.core.render.layout_sizing import _get_table_height_from_data
-
-        class _Executor:
-            @staticmethod
-            def execute_chart(chart, variables):
-                return [{"name": f"row{i}"} for i in range(100)]
-
-        chart = self._chart(
-            "table", title="Paged Table", style={"pagination": {"enabled": True}}
-        )
-        _rs, _ctx = resolve_style_and_context(get_theme_style())
-        resolved = resolve(chart, [], _ctx)
-        height = _get_table_height_from_data(
-            chart,
-            resolved,
-            _Executor(),
-            {},
-            card_padding=float(_rs.frame.card_padding),
-            board_style=_rs,
-        )
-
-        tc, charts_style = self._get_table_style_defaults()
+        _, charts_style = self._get_table_style_defaults()
         assert charts_style.pagination is not None
-        row_height = int(tc.row.height)
-        header_body_gap = int(row_height * 0.25)
-        header_height = int(tc.header.height)  # the short header fits one line
-        expected = (
-            self._expected_title_height(chart, tc)
-            + header_height
-            + header_body_gap
-            + (int(charts_style.pagination.page_rows) * row_height)
-            + int(tc.outer_padding)
-            + int(tc.bottom_padding)
-            + _PAGINATION_CONTROL_HEIGHT
+        self._paged_height(
+            self._chart(
+                "table", title="Paged Table", style={"pagination": {"enabled": True}}
+            ),
+            int(charts_style.pagination.page_rows),
         )
-        assert height == expected
 
     def test_data_aware_table_height_includes_header_body_gap(self):
         """Data-aware height must include the header-to-data gap to prevent bottom clipping."""
@@ -1773,7 +1698,7 @@ class TestAspectRatioDrivenSizing:
 
         chart = self._chart("table")  # no title, no pagination
         _rs, _ctx = resolve_style_and_context(get_theme_style())
-        resolved = resolve(chart, [], _ctx)
+        resolved = resolve(chart, _Executor.execute_chart(chart, {}), _ctx)
         height = _get_table_height_from_data(
             chart,
             resolved,
@@ -1803,7 +1728,7 @@ class TestAspectRatioDrivenSizing:
         reserve more chrome than `tc.title.height` when a subtitle is present.
 
         Regression: the sizer used `int(tc.title.height)` directly, but the
-        renderer (table.py) expanded the title block to fit subtitle text. The
+        renderer expanded the title block to fit subtitle text. The
         slot ended up too short by ~one row, and the renderer truncated the last
         data row with a "+ N more rows" indicator (or paginated unexpectedly).
 
@@ -1839,8 +1764,8 @@ class TestAspectRatioDrivenSizing:
             style={"pagination": {"enabled": False}},
         )
         _resolved, _ctx = resolve_style_and_context(get_theme_style())
-        resolved_no_subtitle = resolve(chart_no_subtitle, [], _ctx, width=560.0)
-        resolved_with_subtitle = resolve(chart_with_subtitle, [], _ctx, width=560.0)
+        resolved_no_subtitle = resolve(chart_no_subtitle, _DATA, _ctx, width=560.0)
+        resolved_with_subtitle = resolve(chart_with_subtitle, _DATA, _ctx, width=560.0)
         height_no_subtitle = _get_table_height_from_data(
             chart_no_subtitle,
             resolved_no_subtitle,
@@ -1902,7 +1827,9 @@ class TestAspectRatioDrivenSizing:
         assert pie_ratio > 0, "pie should have per-type aspect_ratio in config"
 
         chart = self._chart("pie")
-        width = 400.0
+        # 250 / 1.0 = 250 is below max_height and is not default_chart_height,
+        # so the assertion fails if either of those takes over.
+        width = 250.0
         height = get_chart_content_height(
             chart,
             width=width,
@@ -1988,7 +1915,7 @@ class TestAspectRatioDrivenSizing:
     def test_aspect_height_respects_min_max(self):
         """Aspect-derived height is clamped to config min/max."""
         min_h = float(get_theme_style().charts.min_height)  # 150
-        max_h = float(get_theme_style().charts.max_height)  # 400
+        max_h = float(get_theme_style().charts.max_height)
 
         chart = self._chart("line")
         rs = resolve_style(get_theme_style())

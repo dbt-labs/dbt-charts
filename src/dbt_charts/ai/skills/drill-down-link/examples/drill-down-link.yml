@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Revenue by Region
 notes: >
   Drill-down link pattern — source board. Each bar links to a per-region detail

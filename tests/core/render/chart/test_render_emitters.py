@@ -666,6 +666,7 @@ def test_line_emit_point_overlay_layers_when_point_size_set() -> None:
             font_weight="400",
             font_style="normal",
             dark_companion_palette=(),
+            pin_companions=(),
             gap_px=18.2,
         ),
         line_mark=ResolvedLineMarkStyle(

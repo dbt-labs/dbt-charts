@@ -9,6 +9,7 @@ from dbt_charts.core.compile.config import get_config
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import (
     column_format,
+    reject_native,
 )
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -58,6 +59,9 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 )
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_GEOSHAPE_SHADING_WITHOUT_LOOKUP,
+)
 
 __all__ = [
     "_resolve_geo_projection",
@@ -262,6 +266,13 @@ def _geoshape_kwargs(
     # --- Choropleth fields ---
     lookup_field = normalized.lookup
     value_field = _resolve_choropleth_value_field(normalized, channels)
+    if value_field is not None and lookup_field is None:
+        raise CompilationError.from_code(
+            ERR_GEOSHAPE_SHADING_WITHOUT_LOOKUP,
+            field_path=f"charts.{normalized.id}.lookup",
+            value_field=value_field,
+            geo_join_key=fields.geo_join_key,
+        )
 
     return {
         **_geo_kwargs(normalized, chart_style_context, display_text),
@@ -359,11 +370,14 @@ def _resolve_geoshape(
         style=ResolvedGeoshapeStyle(
             geoshape=_with_baked_color_gradient(geoshape),
             scatter=chart_style_context.scatter,
-            tooltip_format=column_format(
-                "number",
-                chart_style_context.formats,
-                chart_style_context.tooltip.format,
-                values=tooltip_format_values,
+            tooltip_format=reject_native(
+                column_format(
+                    "number",
+                    chart_style_context.formats,
+                    chart_style_context.tooltip.format,
+                    values=tooltip_format_values,
+                ),
+                "style.tooltip.format",
             ),
             title_font=_tf,
         ),
@@ -500,11 +514,14 @@ def _resolve_point_map(
             single_series_fill=_effective_single_series_fill(
                 chart_style_context, primary
             ),
-            tooltip_format=column_format(
-                "number",
-                chart_style_context.formats,
-                chart_style_context.tooltip.format,
-                values=tooltip_format_values,
+            tooltip_format=reject_native(
+                column_format(
+                    "number",
+                    chart_style_context.formats,
+                    chart_style_context.tooltip.format,
+                    values=tooltip_format_values,
+                ),
+                "style.tooltip.format",
             ),
             title_font=_tf,
         ),

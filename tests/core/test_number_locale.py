@@ -18,7 +18,8 @@ from ._svg_render import render_board_to_svg
 _BOARD = """
 title: Locale
 regional:
-  locale: fr-FR
+  locale:
+    number: fr-FR
 queries:
   q:
     type: values
@@ -77,7 +78,9 @@ def test_unknown_locale_is_rejected() -> None:
 
 
 def test_a_money_name_takes_the_locales_separators_and_the_boards_currency() -> None:
-    board = _BOARD.replace("  locale: fr-FR\n", "  locale: fr-FR\n  currency: EUR\n")
+    board = _BOARD.replace(
+        "    number: fr-FR\n", "    number: fr-FR\n  currency: EUR\n"
+    )
     svg = render_board_to_svg(board.replace('",.2f"', "currency_full"))
     # A table column declares its unit once: the currency leads.
     assert ">€<" in svg and ">1\xa0234\xa0567,50<" in svg
@@ -105,7 +108,9 @@ def test_the_locale_reaches_text_outputs(fmt: str) -> None:
 
 
 def test_an_anchored_currency_prints_once_in_text() -> None:
-    board = _BOARD.replace("  locale: fr-FR\n", "  locale: fr-FR\n  currency: EUR\n")
+    board = _BOARD.replace(
+        "    number: fr-FR\n", "    number: fr-FR\n  currency: EUR\n"
+    )
     board = board.replace('format: ",.0f"', "format: currency")
     output = _render_as(board, "text")
     # Prose repeats the unit: EUR follows the digits, never leads them too.
@@ -115,7 +120,8 @@ def test_an_anchored_currency_prints_once_in_text() -> None:
 _MAGNITUDE_BOARD = """
 title: Magnitudes
 regional:
-  locale: de-DE
+  locale:
+    number: de-DE
 queries:
   q:
     type: values
@@ -152,7 +158,8 @@ def test_an_anchored_table_column_keeps_a_word_on_every_row() -> None:
     board = """
 title: Anchors
 regional:
-  locale: es-ES
+  locale:
+    number: es-ES
 queries:
   q:
     type: values
@@ -178,7 +185,8 @@ rows:
 _BILLIONS_BOARD = """
 title: Billions
 regional:
-  locale: LOCALE
+  locale:
+    number: LOCALE
 queries:
   q:
     type: values
@@ -206,14 +214,14 @@ def test_a_long_locale_word_renders_on_an_axis(locale: str) -> None:
 
 def test_a_custom_locale_paints_its_own_words() -> None:
     board = _MAGNITUDE_BOARD.replace(
-        "  locale: de-DE\n",
-        "  locale:\n"
-        '    decimal: ","\n'
-        '    thousands: "."\n'
-        "    grouping: [3]\n"
-        '    currency: ["", " €"]\n'
-        '    analytic: [" Tsd", " Mn", " Mrd", " Bn"]\n'
-        '    narrative: ["tsd", "mio", "mrd", "bio"]\n',
+        "    number: de-DE\n",
+        "    number:\n"
+        '      decimal: ","\n'
+        '      thousands: "."\n'
+        "      grouping: [3]\n"
+        '      currency: ["", " €"]\n'
+        '      analytic: [" Tsd", " Mn", " Mrd", " Bn"]\n'
+        '      narrative: ["tsd", "mio", "mrd", "bio"]\n',
     )
     texts = re.findall(r">([^<>]+)<", render_board_to_svg(board))
     assert "1mio" in texts  # Vega axis tick that repeats its unit

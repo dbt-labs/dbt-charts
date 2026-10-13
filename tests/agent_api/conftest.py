@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from dbt_charts.agent_api.validate import ValidateResult, validate
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.project import Project
@@ -34,3 +35,15 @@ def empty_project(
     but do not exercise project-file discovery.
     """
     return local_project(tmp_path)
+
+
+@pytest.fixture
+def validate_text() -> Callable[..., ValidateResult]:
+    """Validate board YAML text by path: write it into the project, then ``validate``."""
+
+    def _validate_text(yaml_content: str, *, project: Project) -> ValidateResult:
+        relpath = "charts/content_under_test.yml"
+        project.write_text(relpath, yaml_content)
+        return validate(Path(relpath), project=project)
+
+    return _validate_text

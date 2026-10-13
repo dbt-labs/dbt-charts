@@ -181,7 +181,8 @@ class TestKpiRenderingWithConditionalFormatting:
         """KPI card background is set from a matching rule in the unified block."""
         from dbt_charts.core.compile.models.chart.normalized import KpiChart
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         chart = KpiChart(
             id="kpi1",
@@ -211,7 +212,8 @@ class TestKpiRenderingWithConditionalFormatting:
     def test_kpi_font_color_from_block(self):
         """KPI text color is set from ``font.color`` in the rule."""
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         chart = KpiChart(
             id="kpi_color",

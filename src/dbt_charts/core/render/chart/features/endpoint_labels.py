@@ -941,12 +941,14 @@ class EndpointLabelFeature:
             chart, (ResolvedLineChart, ResolvedAreaChart, ResolvedBarChart)
         )
         sl = chart.style.series_label
-        # A bound value's ink is its SLOT's companion, never its fill's — an
-        # authored literal fill sits outside the palette, so the fill-to-index
-        # lookup below cannot find its companion and would hand the label the
-        # fill itself.
+        pin_companions = dict(sl.pin_companions)
         dark_companion_range = (
-            [ink_at(color_scale, s, sl.dark_companion_palette) for s in color_domain]
+            [
+                pin_companions[color_scale.overrides[s]]
+                if s in color_scale.overrides
+                else ink_at(color_scale, s, sl.dark_companion_palette)
+                for s in color_domain
+            ]
             if color_scale is not None and palette
             else [
                 companion_color_for_fill(fill, palette, sl.dark_companion_palette)

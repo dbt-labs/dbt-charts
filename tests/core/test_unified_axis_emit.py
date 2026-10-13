@@ -174,17 +174,17 @@ def test_chart_local_axis_quantitative_at_encoding_not_config():
     patch = BarChartStylePatch(
         orientation="vertical",
         axis_quantitative=QuantitativeAxisStylePatch(
-            grid=BaseAxisGridStylePatch(color="#quant")
+            grid=BaseAxisGridStylePatch(color="#ee8570")
         ),
     )
     spec = _spec(style=patch)
     # Must NOT appear in config
     assert (
-        spec.get("config", {}).get("axisQuantitative", {}).get("gridColor") != "#quant"
+        spec.get("config", {}).get("axisQuantitative", {}).get("gridColor") != "#ee8570"
     )
     # Must appear in encoding.y (rev is quantitative)
     y_axis = spec.get("encoding", {}).get("y", {}).get("axis", {})
-    assert y_axis.get("gridColor") == "#quant", (
+    assert y_axis.get("gridColor") == "#ee8570", (
         f"expected gridColor in y.axis; got {y_axis}"
     )
 
@@ -195,13 +195,13 @@ def test_chart_local_axis_band_at_encoding_not_config():
 
     patch = BarChartStylePatch(
         orientation="vertical",
-        axis_band=BandAxisStylePatch(grid=BaseAxisGridStylePatch(color="#band")),
+        axis_band=BandAxisStylePatch(grid=BaseAxisGridStylePatch(color="#574ff4")),
     )
     spec = _spec(style=patch)
-    assert spec.get("config", {}).get("axisBand", {}).get("gridColor") != "#band"
+    assert spec.get("config", {}).get("axisBand", {}).get("gridColor") != "#574ff4"
     # Categorical x axis (month is ordinal/nominal) should get axis_band
     x_axis = spec.get("encoding", {}).get("x", {}).get("axis", {})
-    assert x_axis.get("gridColor") == "#band", (
+    assert x_axis.get("gridColor") == "#574ff4", (
         f"expected gridColor in x.axis; got {x_axis}"
     )
 
@@ -213,13 +213,13 @@ def test_chart_local_axis_y_wins_over_axis_quantitative():
     patch = BarChartStylePatch(
         orientation="vertical",
         axis_quantitative=QuantitativeAxisStylePatch(
-            grid=BaseAxisGridStylePatch(color="#quant")
+            grid=BaseAxisGridStylePatch(color="#ee8570")
         ),
-        axis_y=AxisYStylePatch(grid=BaseAxisGridStylePatch(color="#channel")),
+        axis_y=AxisYStylePatch(grid=BaseAxisGridStylePatch(color="#c485d2")),
     )
     spec = _spec(style=patch)
     y_axis = spec.get("encoding", {}).get("y", {}).get("axis", {})
-    assert y_axis.get("gridColor") == "#channel", (
+    assert y_axis.get("gridColor") == "#c485d2", (
         f"axis_y must win over axis_quantitative; got {y_axis}"
     )
 
@@ -230,14 +230,14 @@ def test_chart_local_axis_quantitative_wins_over_chart_local_global():
 
     patch = BarChartStylePatch(
         orientation="vertical",
-        axis_x=AxisXStylePatch(grid=BaseAxisGridStylePatch(color="#x")),
+        axis_x=AxisXStylePatch(grid=BaseAxisGridStylePatch(color="#9dd4e4")),
         axis_quantitative=QuantitativeAxisStylePatch(
-            grid=BaseAxisGridStylePatch(color="#quant")
+            grid=BaseAxisGridStylePatch(color="#ee8570")
         ),
     )
     spec = _spec(style=patch)
     y_axis = spec.get("encoding", {}).get("y", {}).get("axis", {})
-    assert y_axis.get("gridColor") == "#quant", (
+    assert y_axis.get("gridColor") == "#ee8570", (
         f"axis_quantitative must take precedence for quantitative y axis; got {y_axis}"
     )
 

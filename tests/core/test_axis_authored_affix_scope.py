@@ -236,24 +236,6 @@ def _svg(spec) -> str:  # type-state: explicit_any — vl_convert's own dict bou
     return result
 
 
-def test_labels_expr_wins_over_a_chart_wide_number_format_affix():
-    """The user's ruling: an authored labels.expr always wins over the axis's effective
-    format, rendered exactly as written with no composed affix.
-    """
-    ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
-    style = LineChartStylePatch(
-        number_format=FormatConfig(spec=",.0f", prefix="EUR "),
-        axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(expr="datum.label + ' /mo'")),
-    )
-    spec = _render_line_with_style(ctx, style)
-    y_axis = spec["encoding"]["y"]["axis"]
-    assert y_axis["labelExpr"] == "datum.label + ' /mo'"
-    assert y_axis["format"] == ",.0f"  # kept for Vega's own ARIA axis description
-    svg = _svg(spec)
-    assert "100,000 /mo" in svg, svg
-    assert "EUR 100,000" in svg, svg
-
-
 def test_labels_expr_wins_over_an_alias_spelling_of_the_same_affix():
     """Same precedence, chart-wide format authored via a style.formats alias name."""
     ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
@@ -261,8 +243,9 @@ def test_labels_expr_wins_over_an_alias_spelling_of_the_same_affix():
         ctx, formats={"eur": FormatConfig(spec=",.0f", prefix="EUR ")}
     )
     style = LineChartStylePatch(
-        number_format="eur",
-        axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(expr="datum.label + ' /mo'")),
+        axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format="eur", expr="datum.label + ' /mo'")
+        ),
     )
     spec = _render_line_with_style(ctx, style)
     y_axis = spec["encoding"]["y"]["axis"]
@@ -297,9 +280,11 @@ def test_labels_expr_can_write_the_symbol_in_directly():
     """
     ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
     style = LineChartStylePatch(
-        number_format=FormatConfig(spec=",.0f", prefix="EUR "),
         axis_y=AxisYStylePatch(
-            labels=AxisLabelStylePatch(expr="'EUR ' + datum.label + ' /mo'")
+            labels=AxisLabelStylePatch(
+                format=FormatConfig(spec=",.0f", prefix="EUR "),
+                expr="'EUR ' + datum.label + ' /mo'",
+            )
         ),
     )
     spec = _render_line_with_style(ctx, style)

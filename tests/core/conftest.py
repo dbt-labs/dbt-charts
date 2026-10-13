@@ -49,6 +49,7 @@ def _series_label() -> ResolvedSeriesLabelStyle:
         font_weight="400",
         font_style="normal",
         dark_companion_palette=(),
+        pin_companions=(),
         gap_px=18.2,
     )
 

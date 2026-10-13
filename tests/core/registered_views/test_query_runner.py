@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -511,7 +511,7 @@ class _FakeCache:
         # Aware UTC, matching the backend contract: a real backend never
         # hands CacheHit/CachedQueryFailure a naive timestamp, so a fake
         # that did would be testing a shape production cannot produce.
-        self._now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
+        self._now: Callable[[], datetime] = lambda: datetime.now(UTC)
 
     def get(
         self,
@@ -647,7 +647,7 @@ class TestRunRegistryQueriesCache:
         cache = _FakeCache()
 
         # First call — populate cache; clock is at t=0 (datetime.now())
-        t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
         cache._now = lambda: t0
         run_registry_queries(view, path_params, registry, cache=cache)
 

@@ -91,7 +91,7 @@ class TestLineChartNumberFormatFlowsThroughResolve:
             x="month",
             y="val",
             style=LineChartStylePatch.model_validate(
-                {"number_format": "percent_whole"}
+                {"axis_y": {"labels": {"format": "percent_whole"}}}
             ),
         )
         data = [
@@ -106,7 +106,7 @@ class TestLineChartNumberFormatFlowsThroughResolve:
         ay_vl = axis_to_vl(resolved.style.axis_y)
         fmt = ay_vl.get("format")
         assert fmt == ".0%", (
-            f"Expected axis.format='.0%' from number_format=percent_whole, "
+            f"Expected axis.format='.0%' from axis_y={'labels': {'format': percent_whole}}, "
             f"got {fmt!r}. style.number_format must flow through _resolve_line "
             "into the y-axis format, not just into the resolved style label."
         )

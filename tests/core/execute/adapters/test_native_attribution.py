@@ -39,11 +39,6 @@ class TestPerWarehouseShape:
         value = native_attribution_credential("databricks")["query_tags"]
         assert json.loads(str(value))["app"] == "dbt-charts"
 
-    def test_trino_takes_a_list_of_client_tags(self) -> None:
-        value = native_attribution_credential("trino")["client_tags"]
-        assert "app=dbt-charts" in value
-        assert "dbt_charts_surface=serve" in value
-
     def test_postgres_takes_a_bare_name(self) -> None:
         """application_name caps near 63 bytes — JSON does not fit."""
         assert native_attribution_credential("postgres") == {

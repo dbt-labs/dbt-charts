@@ -1,0 +1,3 @@
+kind: Fixes
+body: A table too wide for its slot no longer paints over the chart beside it; it is clipped at the slot edge and still warns.
+time: 2026-10-09T23:37:03.779633-07:00

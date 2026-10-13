@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import pytest
 
@@ -29,7 +29,13 @@ class _NonFilesystemProject(Project):
     def exists(self, relpath: str) -> bool:
         return False
 
-    def iter_files(self, under: str, *, recursive: bool) -> Iterator[str]:
+    def iter_files(
+        self,
+        under: str,
+        *,
+        recursive: bool,
+        onerror: Callable[[str, OSError], None] | None = None,
+    ) -> Iterator[str]:
         return iter(())
 
     def iter_dir(self, under: str) -> Iterator[ProjectPath | ProjectDirectory]:

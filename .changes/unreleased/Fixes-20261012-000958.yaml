@@ -1,0 +1,3 @@
+kind: Fixes
+body: Cloud setup advice names the file-source route for unmapped sources, and `dct cloud render` says when no board is waiting for a first render.
+time: 2026-10-12T00:09:58.847614-07:00

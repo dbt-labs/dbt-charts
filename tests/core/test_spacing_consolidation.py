@@ -53,36 +53,6 @@ class TestSparkStyleSpacingValues:
         assert overridden.padding.left == 77.0
         assert overridden.padding.top == 99.0
 
-    def test_spark_plot_area_uses_correct_padding(self):
-        """Spark plot uses horizontal padding for x, vertical for y.
-
-        width=80, padding.left=2, padding.right=2 → plot_width=76
-        First point x=padding.left=2.0; last x=2.0+76=78.0.
-        Before fix (scalar 4): first x=4.0, last x=76.0 (plot_width=72).
-        """
-        from dbt_charts.core.compile.models.primitives import SpacingValues
-        from dbt_charts.core.render.chart.spark import _normalize_points
-
-        effective = resolve_chart_style_context(get_theme_style())
-        padding = SpacingValues(top=4.0, right=2.0, bottom=4.0, left=2.0)
-        norm = _normalize_points(
-            [1.0, 2.0, 3.0, 2.0, 1.0],
-            width=80,
-            height=24,
-            spark_style=effective.spark,
-            padding=padding,
-        )
-        # plot_width = 80 - (left + right) = 80 - 4 = 76
-        assert norm.plot_width == 76.0
-        # First point x = padding.left = 2.0
-        assert norm.points[0].startswith("2.0,"), (
-            f"Expected first point x=2.0, got {norm.points[0]}"
-        )
-        # Last point x = padding.left + plot_width = 2 + 76 = 78.0
-        assert norm.points[-1].startswith("78.0,"), (
-            f"Expected last point x=78.0, got {norm.points[-1]}"
-        )
-
 
 # ==========================================================================
 # SparkColumnsStyle — scalar (only padding_y existed, no x equivalent)
@@ -175,7 +145,7 @@ class TestOldTableStyleSinglePadding:
 
 
 # ==========================================================================
-# table.py — no duplicate padding locals
+# table — no duplicate padding locals
 # ==========================================================================
 
 
@@ -186,7 +156,8 @@ class TestTableRendererNoDuplicatePaddingLocals:
 
         from dbt_charts.core.compile.models.chart.normalized import TableChart
         from dbt_charts.core.compile.models.style.theme import PaddingStyle
-        from dbt_charts.core.render.chart.table import render_table_svg
+
+        from ._engine_render import render_table_svg
 
         rs = resolve_style(get_theme_style())
         ctx = resolve_chart_style_context(get_theme_style())
@@ -197,7 +168,7 @@ class TestTableRendererNoDuplicatePaddingLocals:
         )
         chart = resolve(
             TableChart(id="test", type="table"),
-            [],
+            [{"a": "hello"}],
             chart_style_context=custom_ctx,
         )
         svg = render_table_svg(

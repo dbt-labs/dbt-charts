@@ -28,7 +28,6 @@ from dbt_charts.core.compile.models.chart.normalized import (
 )
 from dbt_charts.core.compile.models.primitives import (
     AuthoredFormat,
-    FormatConfig,
     FormatTable,
 )
 from dbt_charts.core.compile.models.style.authored import ChartStylePatch
@@ -51,6 +50,7 @@ from dbt_charts.core.compile.resolve.style.tokens import (
     _resolve_color_tokens,
 )
 from dbt_charts.core.text.format_d3 import is_time_format
+from dbt_charts.core.text.predefined_formats import PREDEFINED_TEXT_NAMES
 
 # Family sub-patch keys in author-precedence order.  The cascade reads global
 # fields (palette, background, …) from the FIRST non-null sub-patch.
@@ -116,47 +116,8 @@ def _family_field_patch(
     )  # type-state: silent_fallback — family is a per-family style union; not every member (e.g. ResolvedCalloutStyle) carries every cascade field
 
 
-# The families that carry axes (and so `number_format` / `time_format`).
+# The families that carry axes.
 CartesianFamilyChart = BarChart | LineChart | AreaChart | ScatterChart | HeatmapChart
-
-
-def chart_authored_axis_format(
-    chart: CartesianFamilyChart, channel_type: str
-) -> AuthoredFormat | None:
-    """Return the chart-level axis-format fallback for one channel, or None.
-
-    Precedence: style.number_format (quantitative) / style.time_format
-    (temporal) → chart.format (quantitative only). Returns None for
-    nominal/ordinal channels (no format concept applies) and for
-    non-cartesian families (kpi, pie, … have no
-    number_format/time_format/chart.format at all).
-
-    ``chart.format`` is a measure-axis (quantitative) shortcut only — it must
-    never apply to a temporal axis. A d3 numeric format string baked onto a
-    temporal axis breaks the smart month/year cadence labelExpr downstream
-    (VL renders a temporal encoding with a numeric format spec, producing
-    garbage tick labels). ``style.time_format`` is the only legitimate
-    temporal-axis fallback.
-
-    An explicit ``style.axis_x``/``axis_y``/``axis_quantitative.labels.format``
-    override is NOT read here — those apply as later cascade layers inside
-    ``resolved_axis_style()`` and win over this fallback automatically; folding
-    them in here too would just duplicate that merge.
-
-    Returns the raw authored value (a spec string or a ``FormatConfig``).
-    """
-    if channel_type not in ("quantitative", "temporal"):
-        return None
-    primary = chart.style
-    if channel_type == "temporal":
-        if primary is not None and isinstance(primary.time_format, str):
-            return primary.time_format
-        return None
-    if primary is not None and isinstance(primary.number_format, (str, FormatConfig)):
-        return primary.number_format
-    if isinstance(chart.format, (str, FormatConfig)):
-        return chart.format
-    return None
 
 
 def declared_column_format(
@@ -165,17 +126,25 @@ def declared_column_format(
     formats: FormatTable | None,
     *,
     time: bool,
+    text: bool = False,
 ) -> str | None:
     """The format name the chart's query declares for ``columns``, when it is of
     the asked kind (a time format for ``time``, else a number format).
+
+    A text name (``email``, ``url``) is of no numeric or date kind: it comes
+    back only for a destination that links text (``text=True``, the KPI), and
+    is no format at all to an axis or label.
 
     A number format on a date axis would paint garbage, and a time format has
     nothing to say about a number, so the other kind is no format at all.
     """
     name = declared_format(chart.query.formats if chart.query else None, columns)
-    if name is None or is_time_format(resolve_format(name, formats)) != time:
+    if name is None:
         return None
-    return name
+    resolved = resolve_format(name, formats)
+    if resolved in PREDEFINED_TEXT_NAMES:
+        return name if text else None
+    return None if is_time_format(resolved) != time else name
 
 
 def axis_layer_format(
@@ -183,27 +152,19 @@ def axis_layer_format(
     channel_type: str,
     columns: str | list[str] | None,
     formats: FormatTable | None,
-    *,
-    dimension: bool,
 ) -> AuthoredFormat | None:
-    """The axis cascade's chart-level layer: the column's declared format, else
-    the chart-wide ``number_format`` / ``time_format`` / ``format``.
+    """The axis cascade's column layer: the format the chart's query declares for
+    the axis column.
 
     The cascade merges board-level axis formats below this layer and the chart's
     own ``axis_*.labels.format`` above it, which is where the column belongs.
-    A dimension axis takes no measure format, and a band axis prints its
-    category text as it is, so it takes none at all.
+    A band axis prints its category text as it is, so it takes no format.
     """
     if channel_type not in ("quantitative", "temporal"):
         return None
-    declared = declared_column_format(
+    return declared_column_format(
         chart, columns, formats, time=channel_type == "temporal"
     )
-    if declared is not None:
-        return declared
-    if dimension and channel_type != "temporal":
-        return None
-    return chart_authored_axis_format(chart, channel_type)
 
 
 def build_chart_style_context(
@@ -212,9 +173,8 @@ def build_chart_style_context(
 ) -> ChartStyleContext:
     """Build the fully-merged ChartStyleContext for a single chart.
 
-    Fast path: chart has no local style overrides, no per-family theme patches
-    for chart_type, and no chart-level number format → return the board context
-    unchanged.
+    Fast path: chart has no local style overrides and no per-family theme patches
+    for chart_type → return the board context unchanged.
 
     Merge path: apply chart.style on top of the board context.
 
@@ -232,11 +192,10 @@ def build_chart_style_context(
     same emoji fallback that board-level fonts get — consistent resolution, not
     a special case.
 
-    Chart-level number/time format (``chart.format`` / ``style.number_format`` /
-    ``style.time_format``) is NOT handled here — it is folded directly into the
-    per-axis resolution in ``resolved_axis_style()`` (via its
-    ``chart_fallback_format`` parameter, fed by ``chart_authored_axis_format()``),
-    so ``axis_x``/``axis_y``.format is already correct once baked. Value-label
+    A column's declared format is NOT handled here — it is folded directly into
+    the per-axis resolution in ``resolved_axis_style()`` (via its
+    ``column_layer_format`` parameter, fed by ``axis_layer_format()``), so
+    ``axis_x``/``axis_y``.format is already correct once baked. Value-label
     format falls back to that same baked axis format at chart-resolve time
     (``_marks.py``), not via an inherit-graph edge from ``axis_quantitative``.
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from functools import cached_property
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from posixpath import normpath
@@ -27,10 +27,6 @@ CHARTS_SUBDIR = "charts"
 # published boards-and-packages guide).
 DBT_PACKAGES_SUBDIR = "dbt_packages"
 
-
-# The pre-rename spelling hosts still answer READS from when a project has no
-# charts/ tree. Never written, never advertised.
-FACES_FALLBACK_SUBDIR = "faces"
 
 # Cascade fragments are project inputs, not standalone dashboards.
 META_FILENAMES: frozenset[str] = frozenset({"meta.yaml", "meta.yml"})
@@ -757,13 +753,24 @@ class Project(ABC):
         return self
 
     @abstractmethod
-    def iter_files(self, under: str, *, recursive: bool) -> Iterator[str]:
+    def iter_files(
+        self,
+        under: str,
+        *,
+        recursive: bool,
+        onerror: Callable[[str, OSError], None] | None = None,
+    ) -> Iterator[str]:
         """Yield project-relative paths of ALL files under *under*, sorted.
 
         *under* is a project-relative subtree (``"."`` means the whole project).
         Format-neutral: no suffix filter — callers own that. Yields nothing
         when the subtree does not exist. Paths are yielded in lexicographic
         order; deterministic diagnostics and stable build outputs rely on this.
+
+        ``onerror``, when given, is called with a project-relative path and
+        the ``OSError`` for a directory this implementation could not read
+        (a real-filesystem host only -- a git-blob-backed host has no such
+        failure mode and ignores it).
         """
 
     @abstractmethod
@@ -839,7 +846,11 @@ class Project(ABC):
         return hashlib.sha256(self.read_bytes(relpath)).hexdigest()[:16]
 
     def iter_boards(
-        self, *, under: str | None = None, recursive: bool = True
+        self,
+        *,
+        under: str | None = None,
+        recursive: bool = True,
+        onerror: Callable[[str, OSError], None] | None = None,
     ) -> Iterator[ProjectPath]:
         """Yield ProjectPath handles for candidate board files under *under*.
 
@@ -852,10 +863,12 @@ class Project(ABC):
         Applies board-suffix (BOARD_CANDIDATE_SUFFIXES) and underscore-prefix
         filters so callers only see plausible board files. Skips traversal-noise
         dirs via ``iter_files``. Yields nothing when a subtree does not exist.
+
+        ``onerror`` is forwarded to ``iter_files``.
         """
         roots = [under] if under is not None else [r.relpath for r in board_roots(self)]
         for root in roots:
-            for relpath in self.iter_files(root, recursive=recursive):
+            for relpath in self.iter_files(root, recursive=recursive, onerror=onerror):
                 if not is_board_candidate(relpath):
                     continue
                 yield ProjectPath(self, relpath)

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 # Hidden board: a reusable dark-brand style layer.
 #
 # The underscore prefix makes this board non-listable — it will not appear

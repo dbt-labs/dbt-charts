@@ -1,0 +1,3 @@
+kind: Fixes
+body: A table column on the board's default format now follows a style.formats name that points at another redefined name.
+time: 2026-10-11T13:49:35.536146-07:00

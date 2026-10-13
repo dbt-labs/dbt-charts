@@ -216,19 +216,14 @@ class TestSharedPromptComposition:
 class TestPromptGatedByAvailableTools:
     """build_dbt_charts_system_prompt drops prose for tools the surface lacks."""
 
-    def test_playground_tool_set_omits_search_boards_and_query_board(self) -> None:
+    def test_playground_tool_set_omits_search_boards(self) -> None:
         prompt = build_dbt_charts_system_prompt(
             "dashboard_design",
-            available_tools={
-                "render_board",
-                "validate_board",
-                "execute_query",
-            },
+            available_tools={"render_board", "execute_query"},
         )
 
         assert "search_boards" not in prompt
-        assert "query_board" not in prompt
-        assert "validate_board" in prompt
+        assert "render_board" in prompt
 
     def test_default_available_tools_none_keeps_search_boards(self) -> None:
         """No available_tools declared (CLI/MCP/full chat) — nothing is gated."""
@@ -387,7 +382,7 @@ class TestSkillsIndexPromptReferencesRealTools:
 
         tool_names = {tool["name"] for tool in AGENT_TOOLS}
         index = build_skills_index()
-        for referenced in ("get_skill", "search_skills", "list_skills"):
+        for referenced in ("get_skill", "list_skills"):
             assert referenced in tool_names
             assert referenced in index
 
@@ -455,7 +450,7 @@ class TestDashboardBuildSkill:
         without = load_shared_prompt(
             "board-build",
             surface="tool",
-            available_tools={"render_board", "validate_board"},
+            available_tools={"render_board"},
         )
 
         assert "read_file" not in without

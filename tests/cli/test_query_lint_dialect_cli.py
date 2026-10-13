@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from dbt_charts.cli.main import app
-from dbt_charts.core.execute.warehouse_check import WarehouseCheck, WarehouseCheckColumn
 
 runner = CliRunner()
 
@@ -63,45 +61,6 @@ def test_explicit_sqlserver_dialect_is_accepted(postgres_project: Path) -> None:
 
 def test_unknown_dialect_is_a_clear_error(postgres_project: Path) -> None:
     result = _query(postgres_project, "--validate", "--dialect", "nope")
-    assert result.exit_code == 1
-    assert "Unknown SQL dialect 'nope'" in result.output
-    assert not isinstance(result.exception, ValueError)
-
-
-@pytest.fixture
-def stub_warehouse_check(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dbt_charts.agent_api import describe_query as mod
-
-    def _check(
-        sql: str, *, source: str | None, adapter_registry: object
-    ) -> WarehouseCheck:
-        return WarehouseCheck(
-            status="valid",
-            adapter_type="postgres",
-            mechanism="dry-run",
-            columns_checked=True,
-            columns=[WarehouseCheckColumn(name="name", type="VARCHAR")],
-        )
-
-    monkeypatch.setattr(mod, "check_ad_hoc_query", _check)
-
-
-@pytest.mark.usefixtures("stub_warehouse_check")
-def test_describe_uses_source_dialect(postgres_project: Path) -> None:
-    result = _query(postgres_project, "--describe", "--json")
-    assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["success"] is True
-
-
-@pytest.mark.usefixtures("stub_warehouse_check")
-def test_validate_and_describe_use_source_dialect(postgres_project: Path) -> None:
-    result = _query(postgres_project, "--validate", "--describe", "--json")
-    assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["describe"]["success"] is True
-
-
-def test_unknown_dialect_is_a_clear_error_for_describe(postgres_project: Path) -> None:
-    result = _query(postgres_project, "--describe", "--dialect", "nope")
     assert result.exit_code == 1
     assert "Unknown SQL dialect 'nope'" in result.output
     assert not isinstance(result.exception, ValueError)

@@ -7,20 +7,19 @@ values. No bare dict[str, Any] in any return position. Tool/CLI callers use
 
 from __future__ import annotations
 
-import sys
 from functools import cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
-
-from dbt_charts.core.utils import YAML_LOADER
-
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing_extensions import Self
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_serializer,
+    model_validator,
+)
 
 from dbt_charts.agent_api._paths import resolve_board_or_error
 from dbt_charts.agent_api.query import (
@@ -38,6 +37,7 @@ from dbt_charts.core.project import (
     ProjectDirectory,
     ProjectPath,
 )
+from dbt_charts.core.utils import YAML_LOADER
 
 
 @cache
@@ -213,11 +213,25 @@ def list_boards(
     *under* ``None`` (the default) lists every board root — the host
     ``charts/`` plus every installed package's ``charts/``. Pass an explicit
     *under* to scope the listing to one subtree.
+
+    A directory the walk cannot enter (permission denied, most commonly)
+    is reported into ``skipped_files`` like any other unreadable entry --
+    without ``onerror`` wired to ``iter_boards``, that directory would
+    simply be invisible, and a caller (this function's own callers
+    included) would read "no boards" as "this project has none" rather
+    than "couldn't check".
     """
     dashboards: list[BoardSummary] = []
     skipped: list[SkippedFile] = []
 
-    for pf in project.iter_boards(under=under, recursive=recursive):
+    def _record_walk_error(relpath: str, exc: OSError) -> None:
+        skipped.append(
+            SkippedFile(file=ProjectPath(project, relpath), reason=f"Read error: {exc}")
+        )
+
+    for pf in project.iter_boards(
+        under=under, recursive=recursive, onerror=_record_walk_error
+    ):
         if not pf.is_yaml or pf.is_meta:
             continue
         try:
@@ -226,6 +240,25 @@ def list_boards(
                 skipped.append(SkippedFile(file=pf, reason="Not a YAML mapping"))
                 continue
             if not any(key in content for key in board_declaring_keys()):
+                continue
+            malformed = next(
+                (
+                    key
+                    for key in ("queries", "charts", "variables")
+                    if key in content and not isinstance(content[key], dict)
+                ),
+                None,
+            )
+            if malformed is not None:
+                skipped.append(
+                    SkippedFile(
+                        file=pf,
+                        reason=(
+                            f"{malformed}: must be a mapping, got "
+                            f"{type(content[malformed]).__name__}"
+                        ),
+                    )
+                )
                 continue
             stem = pf.stem
             dashboards.append(
@@ -240,8 +273,10 @@ def list_boards(
             )
         except yaml.YAMLError as e:
             skipped.append(SkippedFile(file=pf, reason=f"YAML parse error: {e}"))
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
             skipped.append(SkippedFile(file=pf, reason=f"Read error: {e}"))
+        except ValidationError as e:
+            skipped.append(SkippedFile(file=pf, reason=f"Invalid board content: {e}"))
 
     return ListBoardsResult(
         success=True,

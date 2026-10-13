@@ -72,6 +72,7 @@ from dbt_charts.core.compile.sql_guard import (
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BINDER_TYPE_MISMATCH,
     ERR_BINDER_UNKNOWN_COLUMN,
+    ERR_BINDER_UNKNOWN_RELATION,
     ERR_DBT_CALL_UNSUPPORTED,
     ERR_DBT_REF_UNKNOWN_NODE,
     ERR_DBT_SOURCE_UNKNOWN_TABLE,
@@ -80,7 +81,6 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_WAREHOUSE_RUNTIME,
 )
 from dbt_charts.core.diagnostics.execution import UnparseableSqlError
-from dbt_charts.core.execute.source_resolver import AD_HOC_QUERY_NAME
 from dbt_charts.core.execute.sql_translate import dialect_differs
 
 if TYPE_CHECKING:
@@ -395,48 +395,6 @@ def _resolve_dbt_fallback_type(
         return None, str(exc)
 
 
-def check_ad_hoc_query(
-    sql: str,
-    *,
-    source: str | None,
-    adapter_registry: AdapterRegistry,
-) -> WarehouseCheck:
-    """Warehouse-check a standalone SQL string that was never authored on a board.
-
-    ``warehouse_check`` composes ``{{ queries.X }}`` refs and board variables
-    against a board's own registry — an ad hoc query (e.g. ``describe_query``'s
-    column-schema lookup) has neither, so this synthesizes a minimal empty
-    board for it to resolve against and delegates to the same per-adapter
-    dispatch. Callers checking a query that *is* part of a board should call
-    ``warehouse_check`` directly with the real board instead of this.
-    """
-    from dbt_charts.core.compile.models.board.normalized import (
-        Board,
-        Layout,
-        LayoutType,
-    )
-    from dbt_charts.core.compile.models.primitives import DEFAULT_REGIONAL
-    from dbt_charts.core.compile.normalize.dispatch import compile_board_resolved_style
-
-    resolved_style, chart_style_context, _ = compile_board_resolved_style(
-        None, None, None, currency=DEFAULT_REGIONAL.currency
-    )
-    board = Board(
-        id=AD_HOC_QUERY_NAME,
-        layout=Layout(type=LayoutType.ROWS, items=[]),
-        resolved_style=resolved_style,
-        chart_style_context=chart_style_context,
-        level=0,
-    )
-    return warehouse_check(
-        SqlQuery(sql=sql, source=source),
-        board=board,
-        adapter_registry=adapter_registry,
-        query_name=AD_HOC_QUERY_NAME,
-        query_registry={},
-    )
-
-
 # The statement types a ``DESCRIBE`` prefix can lead. Everything else —
 # an authored DESCRIBE/SHOW/EXPLAIN, DDL, an opaque Command — turns into a
 # doubled or nonsensical statement under the prefix, which says nothing about
@@ -540,7 +498,7 @@ def _check_via_wrap(
     column schema and are read into ``columns``; EXPLAIN's are a plan nobody
     reads, so the check is validity-only, ``columns_checked`` stays False, and
     ``reason`` carries why — it is the whole detail a caller that wanted
-    columns (``describe_query``'s refusal) has to show.
+    columns has to show.
 
     Callers must have cleared :func:`_unwrappable_reason` first — that is what
     entitles this to read a failure of the wrapped statement as a verdict on
@@ -632,6 +590,7 @@ _QUERY_DEFECT_CODES = frozenset(
     {
         ERR_BINDER_TYPE_MISMATCH.code,
         ERR_BINDER_UNKNOWN_COLUMN.code,
+        ERR_BINDER_UNKNOWN_RELATION.code,
         ERR_DBT_CALL_UNSUPPORTED.code,
         ERR_DBT_REF_UNKNOWN_NODE.code,
         ERR_DBT_SOURCE_UNKNOWN_TABLE.code,

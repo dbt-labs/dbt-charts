@@ -268,7 +268,7 @@ class TestRegistryShape:
         warn_codes = REGISTRY.codes(level="warning")
         # Spot-check a few known warning codes from each home
         expected = {
-            "WARN-PIE-TOO-MANY-SEGMENTS",
+            "WARN-PIE-DOMINANT-SEGMENT",
             "WARN-REDUNDANT-ENCODING",
             "WARN-UNREFERENCED-CHART",
             "WARN-REAGGREGATION",
@@ -432,9 +432,6 @@ def _find_emitted_codes(root_dirs: list[Path]) -> set[str]:
         for py_file in root.rglob("*.py"):
             parts = py_file.parts
             if "tests" in parts or "test_" in py_file.name:
-                continue
-            # Generated list of every registered code: a mention, not an emit site.
-            if py_file.name == "schema_names.py":
                 continue
             if py_file.parent.name == "diagnostics" and (
                 py_file.name.startswith("codes_") or py_file.name in _DIAG_NON_EMITTERS

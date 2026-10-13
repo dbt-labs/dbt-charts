@@ -337,3 +337,36 @@ class TestBuildExtrasPanel:
         assert "No installer found" in text
         assert "pip install mcp" not in text
         assert "uv pip install" not in text
+
+
+class TestInstallExtrasQuiet:
+    @pytest.mark.parametrize("returncode", [0, 1])
+    def test_init_quiet_extras_install_prints_log_only_on_failure(
+        self, capsys: pytest.CaptureFixture[str], returncode: int
+    ) -> None:
+        import subprocess
+
+        from dbt_charts.cli._extras import install_extras
+
+        missing = [["mcp"], [] if returncode == 0 else ["mcp"]]
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=returncode, stdout="INSTALLER-LOG-LINE\n", stderr=""
+        )
+        with (
+            patch("dbt_charts.cli._extras._missing_packages", side_effect=missing),
+            patch("dbt_charts.cli._extras._resolve_installer", return_value="pip"),
+            patch(
+                "dbt_charts.cli._extras.subprocess.run", return_value=completed
+            ) as run,
+        ):
+            if returncode == 0:
+                install_extras("mcp", interactive=False)
+            else:
+                with pytest.raises(typer.Exit):
+                    install_extras("mcp", interactive=False)
+
+        assert run.call_args.kwargs["capture_output"] is True
+        captured = capsys.readouterr()
+        output = captured.out + captured.err
+        assert "Installing the mcp extra" in output
+        assert ("INSTALLER-LOG-LINE" in output) == (returncode != 0)

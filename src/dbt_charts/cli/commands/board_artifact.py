@@ -1,7 +1,8 @@
-"""artifact emit / artifact render commands — thin wrappers over dbt_charts.agent_api.board_artifact."""
+"""artifact emit / render / schema commands — thin wrappers over dbt_charts.agent_api.board_artifact."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import typer
@@ -34,7 +35,9 @@ def emit_board_command(
     recording_path = recording or boards_dir / f"{board_path.stem}.recording.json"
     variables = parse_kv_pairs(var or [], "--var")
 
-    with ProjectSession.from_project(project) as project_session:
+    with ProjectSession.from_project(
+        project, allow_mutating_methods=True
+    ) as project_session:
         result = project_session.emit_board(
             board_path,
             artifact_path,
@@ -88,3 +91,10 @@ def render_board_command(
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(result.svg, encoding="utf-8")
     console.print(f"Rendered {artifact_path} to {output}")
+
+
+def schema_command() -> None:
+    """Print the JSON Schema that board artifacts conform to."""
+    from dbt_charts.agent_api.board_artifact import board_artifact_schema
+
+    typer.echo(json.dumps(board_artifact_schema(), indent=2))

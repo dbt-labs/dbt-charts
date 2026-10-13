@@ -1,8 +1,8 @@
 """Prose and board titles ask the board for width, the way charts do.
 
 A board without an exact ``frame.width`` hugs what its items prefer: a prose
-block its one-line width capped at ``style.text.preferred_width``, a title its
-one-line width, bounded by the board's ``max_width``.
+block or title its one-line width capped at the readable measure
+(``style.text.column.max_chars`` characters).
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 
 from dbt_charts.core.compile import compile as compile_board
+from dbt_charts.core.compile.resolve.style.markdown_style import prose_measure
 from dbt_charts.core.compile.sizing import board_container_width, get_board_gap
 
 from .._svg_render import render_board_file
@@ -43,7 +44,7 @@ def _chrome(style: str = "") -> tuple[float, float, float]:
 
 def _prose_cap(style: str = "") -> float:
     result = compile_board(f"title: T\n{style}{_KPI}rows:\n  - c1\n")
-    return float(result.board.resolved_style.text.preferred_width)
+    return prose_measure(result.board.resolved_style)
 
 
 def test_a_paragraph_asks_for_the_theme_cap_not_the_board_max() -> None:
@@ -58,16 +59,17 @@ def test_a_short_caption_asks_only_for_its_own_width() -> None:
     assert caption < paragraph
 
 
-def test_the_cap_is_a_theme_setting() -> None:
-    style = "style:\n  text:\n    preferred_width: 300\n"
+def test_the_cap_follows_the_column_max_chars() -> None:
+    style = "style:\n  text:\n    column:\n      max_chars: 60\n"
     margin, pad, _ = _chrome(style)
+    assert _prose_cap(style) < _prose_cap()
     assert _width(f"rows:\n  - text: {_LONG}\n", style=style) == (
-        300 + 2 * pad + 2 * margin
+        _prose_cap(style) + 2 * pad + 2 * margin
     )
 
 
 def test_cols_of_prose_sum_their_widths_and_the_gap() -> None:
-    style = "style:\n  text:\n    preferred_width: 300\n"
+    style = "style:\n  text:\n    column:\n      max_chars: 60\n"
     margin, _, _ = _chrome(style)
     result = compile_board(
         f"title: T\n{style}{_KPI}cols:\n  - text: {_LONG}\n  - text: {_LONG}\n"
@@ -82,9 +84,10 @@ def test_a_long_title_widens_a_board_of_one_small_chart() -> None:
     assert _width("rows:\n  - c1\n", title=long_title) > _width("rows:\n  - c1\n")
 
 
-def test_a_title_is_bounded_by_the_board_max_width() -> None:
-    _, _, max_width = _chrome()
-    assert _width("rows:\n  - c1\n", title=f'"{_LONG}"') == max_width
+def test_a_title_asks_for_the_theme_cap_not_the_board_max() -> None:
+    margin, pad, max_width = _chrome()
+    width = _width("rows:\n  - c1\n", title=f'"{_LONG}"')
+    assert width == _prose_cap() + 2 * pad + 2 * margin < max_width
 
 
 def test_a_title_only_board_hugs_its_title() -> None:
@@ -277,3 +280,11 @@ def test_raw_blocks_count_as_text() -> None:
         "a {{ queries.q.one.v }} {% raw %}Supercalifragilisticexpialidocious{% endraw %}"
     )
     assert raw > plain
+
+
+def test_the_retired_text_preferred_width_is_rejected_by_name() -> None:
+    result = compile_board(
+        "title: T\ntext: Some prose.\nstyle:\n  text:\n    preferred_width: 300\n"
+    )
+    assert not result.success
+    assert any("preferred_width" in e.message for e in result.errors), result.errors

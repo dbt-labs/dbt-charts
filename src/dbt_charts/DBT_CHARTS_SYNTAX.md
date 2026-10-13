@@ -241,33 +241,17 @@ Top-level fields:
 | `chart_focus` | string | Render only this chart (with its variables) |
 | `details` | string \| object | Collapsible section: a bare summary string, or `{summary, expanded_title, expanded}` |
 | `id` | string | Explicit board ID (auto-generated from filename) |
-| `style` | object | Board-style block (see [Board style](#board-style)) |
+| `style` | object | Board-style block (see [Board style](#board-style) in `dct docs styling`) |
 | `width` | string \| int | Width when nested (`"50%"` or pixels) |
 | `height` | string \| int | Height when nested |
 | `visible` | bool \| string \| object | Render condition when nested as a layout item (see [Layout visibility](#layout-visibility-visible)) |
 | `theme` | string | Theme name (e.g. `clarity`, `paper`, `neon`) — sugar for `extends:`; inherited by nested boards |
-| `extends` | string \| list[string] | Board name(s)/path(s) or a built-in theme this board inherits from (see [Inheritance](#inheritance-extends-and-theme)) |
+| `extends` | string \| list[string] | Board name(s)/path(s) or a built-in theme this board inherits from (see [Inheritance](#inheritance-extends-and-theme) in `dct docs styling`) |
 | `auto_link` | bool | Auto-link table rows to their `/data/…/detail/` pages (default `false`). An explicit chart `link:` always wins; `link: false` on a chart suppresses its automatic link. |
 
 `board:` as a top-level key is rejected. Put board properties (title, rows, queries, …) directly at the YAML root.
 
-### Inheritance (`extends` and `theme`)
-
-A board can inherit from other boards or a built-in theme. `extends:` names one
-or more boards (by name or relative path) or a theme, low to high priority; the
-child's own keys win over everything it extends. A bare name is matched against
-the built-in themes first, then against a board at the *project root* — a path
-ref (`./_base.yaml`, anchored to the extending file's own directory) is the only
-form that reaches a board elsewhere, and the only form that resolves outside a
-project.
-
-```yaml-schema
-extends: [company_defaults, quarterly_base]
-title: "Q4 edition"
-```
-
-`theme: neon` is authoring sugar for `extends: neon` — setting both is an
-error; use one or the other.
+A markdown board (a `.md` file under `charts/`) is a document: its prose flows in one column (`style.text.column.max_number: 1`) unless its frontmatter `board:` block, a `meta.yml`, or an `extends:` template sets another value. YAML boards flow into as many columns as the width allows.
 
 ### Caching
 
@@ -334,6 +318,48 @@ There are two ways to override a data/inspector route for a given path:
 
 Both approaches work.  A board file wins without a redirect round-trip; an alias lets a board live anywhere and still capture a system-view URL.
 
+**See also:** `dct docs queries` (data layer), `dct docs charts` (display layer),
+`dct docs layout` (composition), `dct docs styling` (themes and `style:`),
+`dct docs cheatsheet` (one-page essentials).
+
+## Styling
+
+How a board looks: a theme, `extends:` layers, and `style:` overrides. `style:` is typed paint, not CSS.
+
+Built-in themes: `clarity` (default), `paper`, `vivid`, `stark`, and `neon` (the dark one). Switching is one line: `theme: paper`.
+
+Cascade, lowest to highest priority; each layer merges key by key, so an override names only the leaves it changes:
+
+1. The theme (`theme:`, or the last theme named anywhere in the `extends:` chain).
+2. Folder `meta.yml` defaults (`charts/meta.yml` applies to every board beneath it; `extends: ./_brand.yml` there brands a whole project).
+3. The board's own `extends:` layers, in list order.
+4. The board's own keys and `style:`.
+5. A chart's `style:`. Sparse: an omitted field inherits, `null` clears a nullable one.
+
+### What style cannot do
+
+- **No title band.** `style.title` has no `background`. Use a styled first `text:` row or a `type: callout` chart, and set its font color yourself: ink is not adjusted against the band.
+- **There is no light/dark switch.** A board does not follow `prefers-color-scheme`. A dark variant is a second board that extends the light one plus `neon`: `extends: [./sales.yml, neon]`. A hand-set dark `style.background` alone leaves marks, table stripes and axis labels in light-theme colors.
+- **No CSS.** `border-radius`, `margin-top` and other CSS keys are rejected. A chart's `height` sits at chart root, not under `style:`.
+
+### Inheritance (`extends` and `theme`)
+
+A board can inherit from other boards or a built-in theme. `extends:` names one
+or more boards (by name or relative path) or a theme, low to high priority; the
+child's own keys win over everything it extends. A bare name is matched against
+the built-in themes first, then against a board at the *project root* — a path
+ref (`./_base.yaml`, anchored to the extending file's own directory) is the only
+form that reaches a board elsewhere, and the only form that resolves outside a
+project.
+
+```yaml-schema
+extends: [company_defaults, quarterly_base]
+title: "Q4 edition"
+```
+
+`theme: neon` is authoring sugar for `extends: neon` — setting both is an
+error; use one or the other.
+
 ### Board style
 
 `style:` on a board, nested board, or layout section accepts a fixed set of keys — not arbitrary CSS:
@@ -362,7 +388,7 @@ style:
 
 CSS-only keys like `border-radius`, `border-left`, `margin-top` are not board-style fields and are rejected.
 
-#### Title heading levels
+### Title heading levels
 
 `style.title.level` controls the H-level (H1–H6) used for board and chart titles.
 
@@ -384,7 +410,7 @@ style:
 When set to an integer, it cascades to descendants: titled children render at
 `level + 1`, bare wrappers inherit the locked level unchanged.
 
-#### Named fonts
+### Named fonts
 
 Text is styled through seven named fonts under `style.fonts`: `heading`
 (board and chart titles, markdown `#` to `######`), `subtitle`, `body` (prose),
@@ -418,9 +444,6 @@ style:
 - A `font:` slot takes a bare name (`font: heading`), `{extends: <name>, ...overrides}`, or an inline block (`family`, `color`, `size`, `weight`, `style`, `decoration`, `case`, `line_height`). A bare string is always a font name, never a family.
 - A named slot replaces whatever a theme bound to it, so prefer editing the named font. The root `style.font` and `details.arrow.font` take no name; restyle base text with `fonts.body`.
 - A board's `fonts:` merge key by key with the theme's. An unknown name raises `ERR-FONT-UNKNOWN`; an `extends` cycle raises `ERR-FONT-REGISTRY`.
-
-**See also:** `dct docs queries` (data layer), `dct docs charts` (display layer),
-`dct docs layout` (composition), `dct docs cheatsheet` (one-page essentials).
 
 ## Sources
 
@@ -463,6 +486,8 @@ sources:
 ```
 
 Then in a board: `source: warehouse` at the root (default for every `sql` query) or per query (`queries.<name>.source`). Check a source before writing boards: `dct query warehouse 'SELECT 1'`.
+
+**Inside a dbt project, `sources:` is optional.** When `dbt_project.yml` sits at the project root and `dbt_charts.yml` declares no `sources:` (or does not exist), dbt charts adds one source named after the project's `profile:`, as if you had written `<profile>: {type: dbt_profile}`. Every SQL query that names no `source:` (query, board root, or `meta.yml`) runs against it. Declaring any `sources:` turns it off, and sourceless SQL is then an `ERR-SOURCE-NOT-NAMED` error; so is sourceless SQL outside a dbt project, or in a `dbt_project.yml` with no `profile:` (a dbt package).
 
 Types: `dbt_profile`, `postgres`, `snowflake`, `bigquery`, `redshift`, `trino`, `duckdb`, `sqlite`, `csv`, `json`, `parquet`, `http`.
 
@@ -550,17 +575,13 @@ Common fields (all query types):
 | Field | Description |
 |-------|-------------|
 | `notes` | Metadata sentence about the query, for AI search and context. Never drawn on the board. |
-| `formats` | `column: format name` map: how each column prints on every chart, table and KPI that shows it. A name is an engine format (`currency`, `percent`, `integer`, `year`, …) or a `style.formats` key; a d3 spec is rejected (`ERR-QUERY-FORMAT-SPEC`). Beats board-level slot formats and the chart-wide `number_format`/`time_format`; loses to a chart's own slot `format:` (KPI `value.format`, table column `format`, `axis_*.labels.format`). A key the query does not return is `ERR-QUERY-FORMAT-COLUMN-MISSING` |
+| `formats` | `column: format name` map: how each column prints on every chart, table and KPI that shows it. A name is an engine format (`currency`, `percent`, `integer`, `year`, …) or a `style.formats` key; a d3 spec is rejected (`ERR-QUERY-FORMAT-SPEC`). Beats board-level slot formats; loses to a chart's own slot `format:` (KPI `value.format`, table column `format`, `axis_*.labels.format`). A key the query does not return is `ERR-QUERY-FORMAT-COLUMN-MISSING` |
 | `source` | Source name (from `dbt_charts.yml`'s `sources:` registry), or an inline file path (`./data/x.csv`) for a single colocated CSV/JSON/Parquet. An inline connection dict (`{type: postgres, ...}`) is rejected — reference a named source instead. Not accepted on `http` queries. |
-| `target` | dbt target name (defaults to `dev`) |
 | `cache` | Result-cache override for this query — `5m`, `forever`, `true`, `false` — refines the board/source/project policy (see [Caching](#caching)) |
-| `filters` | Post-execution result filters |
-| `limit` | Maximum rows returned |
-| `pivot` | Table-rendering cross-tab hint: `{column, value}` |
 | `ignore` | Diagnostic codes to suppress (e.g. `["WARN-REAGGREGATION"]`) |
 
-SQL fields: `sql`, `setup_sql`.
-HTTP fields: `url`, `method`, `headers`, `params`, `body`, `json_path`.
+SQL fields: `sql`, `setup_sql`, `target` (dbt target name, defaults to `dev`).
+HTTP fields: `url`, `method`, `headers`, `params`, `body`, `json_path`, `limit`.
 dbt-model fields: `model`, `columns`.
 Inline-values fields: `columns`, `values` (or `rows` for record-shape).
 Schema fields: `schema`, `table`, `column`, `fields` (project result rows to exactly these keys, in this order).
@@ -676,7 +697,6 @@ charts:
 
     style:                    # Chart-local style patch (typed; not raw CSS) — paint only
       aspect_ratio: 2.0       # shape without a fixed size; height = width / aspect_ratio
-      number_format: ",.0f"   # D3 format string or named alias for axis/tooltip format
       # bar/area families also accept style.orientation and style.stack
 ```
 
@@ -773,11 +793,11 @@ All chart types accept the channels and style fields below — but each type rej
 | `support_table` | list | Attached mini-table on bar/line/area charts, above the plot by default (including those with `layers:`) — see [Composition](#composition) |
 | `spanners` | list | Flat `table` only: `[{label, columns: [...]}]` — a label centered over a run of adjacent columns in an extra header row. Columns must be adjacent in query order and in at most one spanner; not combinable with `rows`/`columns`/`values` pivot channels |
 | `height` | int \| float | Exact pixel height. Wins over `aspect_ratio` and theme defaults. Bypasses `min_height`/`max_height`. Not valid on `kpi`, `table`, `callout`, `spark_bar`. |
-| `aspect_ratio` | float | Chart shape: `height = width / aspect_ratio`. Theme default is `1.5`. Not valid on `kpi`, `table`, `callout`, `spark_bar`. |
-| `min_height` | float | Height floor for this chart only; overrides `style.charts.min_height`. Ignored when `height` is set. |
-| `max_height` | float | Height ceiling for this chart only; overrides `style.charts.max_height`. Ignored when `height` is set. |
+| `style.aspect_ratio` | float | Chart shape: `height = width / aspect_ratio`. Theme default is `1.5`. Not valid on `kpi`, `table`, `callout`, `spark_bar`. |
+| `style.min_height` | float | Height floor for this chart only; overrides `style.charts.min_height`. Ignored when `height` is set. |
+| `style.max_height` | float | Height ceiling for this chart only; overrides `style.charts.max_height`. Ignored when `height` is set. |
 
-`height` and `aspect_ratio` live at **chart root** — they are rejected under `style:`. `style:` is paint only (colors, fonts, marks).
+`height` lives at **chart root** and is rejected under `style:`; `aspect_ratio`, `min_height` and `max_height` live under `style:` and are rejected at chart root.
 
 KPI-only fields: `value`, `label`, `support`. KPI uses `label:` for the header text — `title:` is rejected on KPI charts. Chart-root `format:` / `formatter:` is rejected on all chart types. Use the family slot instead.
 
@@ -800,16 +820,16 @@ Put a number preset on an axis whose ticks can't carry it and the engine raises 
 | `scatter` over a genuinely numeric x, or its usual numeric y | quantitative — applies normally |
 | `scatter` over a categorical y (a dot plot) | band |
 
-A temporal x — `line`/`area`/`scatter` over dates, or a bar past 60 buckets — raises the same code; use a time token (`"%b %Y"`) or `style.time_format` there instead. A `heatmap` has no measure axis at all: both axes are grid dimensions and the value lives on the color channel, which carries no label format of its own, so a number preset on either axis — including its `y` — raises too. `style.axis_y.mirror.format` follows the same rule whenever the mirrored edge is categorical — a dot plot's y, and also a default-orientation (horizontal) bar, where the rotation puts the category on that edge. Every one of these used to render something wrong instead — look at the render only if you're debugging the diagnostic itself.
+A temporal x — `line`/`area`/`scatter` over dates, or a bar past 60 buckets — raises the same code; use a time token (`"%b %Y"`) there instead. A `heatmap` has no measure axis at all: both axes are grid dimensions and the value lives on the color channel, which carries no label format of its own, so a number preset on either axis — including its `y` — raises too. `style.axis_y.mirror.format` follows the same rule whenever the mirrored edge is categorical — a dot plot's y, and also a default-orientation (horizontal) bar, where the rotation puts the category on that edge. Every one of these used to render something wrong instead — look at the render only if you're debugging the diagnostic itself.
 
 The family slots:
 
 | Family | Format slot |
 |--------|-------------|
-| `line`, `bar`, `area`, `scatter` — the measure | `style.number_format` or `style.axis_y.labels.format` |
-| same — the dimension, when it is a date | `style.time_format`, or a time token on `style.axis_x.labels.format` (e.g. `"%b %Y"`) |
+| `line`, `bar`, `area`, `scatter` — the measure | `style.axis_y.labels.format`, or `formats:` on the query to format the column everywhere |
+| same — the dimension, when it is a date | reads by its grain with no key; a time token on `style.axis_x.labels.format` (e.g. `"%b %Y"`) shows another form |
 | same — the dimension, when it is a text category | no format applies |
-| same — the dimension, when its ticks are numbers | `style.axis_x.labels.format` — `number_format` never reaches the dimension axis |
+| same — the dimension, when its ticks are numbers | `style.axis_x.labels.format` — `axis_y` never reaches the dimension axis |
 | `heatmap` | no axis format applies — the value is on the color channel |
 | `kpi` value | `style.value.format` |
 | `kpi` support | `style.support.format` |
@@ -817,39 +837,51 @@ The family slots:
 
 #### Number format aliases
 
-`number_format`, `style.value.format`, table column `format`, and
+`style.axis_y.labels.format`, `style.value.format`, table column `format`, and
 `style.support.format` accept a D3 format string, a named alias (engine-owned
 specs shown), or an object with `spec`, `prefix`, `suffix` and `notation`
-keys (see "Currency and other affixes" below). The three *native* aliases at
-the bottom are Python-formatted and valid only in KPI value/support and
-table-cell `format` slots; `number_format` (a Vega-painted slot) rejects them
-with `ERR-FORMAT-NATIVE-IN-VEGA-SLOT`:
+keys (see "Currency and other affixes" below). The three `percent_number*` /
+`percentage_points_delta` aliases are native and Python-formatted: valid only
+in KPI value/support and table-cell `format` slots; an axis format (a
+Vega-painted slot) rejects them with `ERR-FORMAT-NATIVE-IN-VEGA-SLOT`.
+`duration` and `bytes` are native too but also carry a Vega form, so they paint
+on axes, value labels and tooltips as well as in a KPI or table:
 
 | Alias | Spec | Renders like |
 |-------|------|--------------|
 | `integer` | `,.0f` | `12,346` |
-| `number` | `.3~s` | Register depends on the slot: table cells render analytic `12.4 K`; KPI headline values and mark value labels render narrative `12.4k`; axis ticks compact only when the largest tick has ≥6 digits (below that the engine paints plain digits — `20,000`, no suffix). Also the engine fallback when no format is authored |
+| `number` | `.3~s` | Register depends on the slot: table cells render analytic `12.4K`; KPI headline values and mark value labels render narrative `12.4k`; axis ticks compact only when the largest tick has ≥6 digits (below that the engine paints plain digits — `20,000`, no suffix). Also the engine fallback when no format is authored |
 | `number_full` | `,.2f` | `12,345.68` — every digit at every magnitude |
-| `currency` | `$.3~s` | `12400` → `$12.4 K` (analytic default; narrative slots render `$12.4k`) |
+| `currency` | `$.3~s` | `12400` → `$12.4K` (analytic default; narrative slots render `$12.4k`) |
 | `currency_whole` | `$,.0f` | `$12,346` |
 | `currency_full` | `$,.2f` | `$12,345.68` — cents at every magnitude |
+| `compact` | `.2~s` | `12K`, `1.2M`, `1.2B` — two significant digits with the K/M/B suffix in every slot; below 1 it falls back to `number_full` |
+| `currency_compact` | `$.2~s` | `$12K`, `$1.2M` — `compact` with the currency symbol; below 1 it falls back to `currency_full` |
 | `percent` | `.1%` | `0.42` → `42.0%` — **multiplies by 100**; for a value that already IS a whole-number percent (`42`, `148.23`), use `percent_number` |
 | `percent_whole` | `.0%` | `0.42` → `42%` |
 | `percent_delta` | `+.1%` | `0.018` → `+1.8%` (ratio in, signed percent out) |
-| `percent_number` | native | `148.23` → `148.2%` (no multiplication; one decimal). Native — not valid in `number_format` |
-| `percent_number_delta` | native | `1.8` → `+1.8%`. Native — not valid in `number_format` |
-| `percentage_points_delta` | native | `1.8` → `+1.8 pts`. **Input is whole points, not a fraction**; a fraction delta (`0.018`) renders `+0.0 pts`, so multiply by 100 in the query. Native — not valid in `number_format` |
+| `percent_number` | native | `148.23` → `148.2%` (no multiplication; one decimal). Native — not valid in an axis format |
+| `percent_number_delta` | native | `1.8` → `+1.8%`. Native — not valid in an axis format |
+| `percentage_points_delta` | native | `1.8` → `+1.8 pts`. **Input is whole points, not a fraction**; a fraction delta (`0.018`) renders `+0.0 pts`, so multiply by 100 in the query. Native — not valid in an axis format |
 | `delta` | `+,d` | `+1,234` |
 | `year` | `d` | `2026` |
+| `id` | `d` | `1204331` — digits, no separator, never compacted; a text cell (`A-1204331`) passes through unchanged |
+| `duration` | native | seconds in → two largest units: `5025` → `1h 23m`, `45` → `45s`, `273600` → `3d 4h` (a zero lower unit is dropped: `3600` → `1h`) |
+| `bytes` | native | bytes in → decimal SI with a spaced unit at every magnitude: `1534000` → `1.53 MB`, `950` → `950 B`, `1000` → `1 kB` |
+| `latitude` | `.4~f` + `°` | `37.7749` → `37.7749°` (signed degrees; a whole degree prints `−33°`) |
+| `longitude` | `.4~f` + `°` | `-122.41942` → `−122.4194°` |
+| `rating` | `.1f` | `4.5` → `4.5` |
 
 #### Currency and other affixes
 
-`regional:` (board root, cascaded by `charts/meta.yml`, not by themes) sets how a board writes numbers, and the board's one currency: every money format and every `$` spec prints it. `locale` is a d3-format locale name (`fr-FR`, `de-CH`, ...), default `en-US`, or a full d3 locale definition (`decimal`, `thousands`, `grouping`, `currency: [prefix, suffix]`, optional `percent`, `minus`, and `analytic`/`narrative`: the extra-short and abbreviated thousand, million, billion, trillion suffixes, printed as written, default en-US's K/M/B/T after a non-breaking space and `["k", "mn", "bn", "trn"]`): separators, signs, magnitude suffixes (a named locale brings its own, `de-DE`: `M` analytic, `Mio.` narrative), and the currency template every `$` spec prints, the money names (`currency`, `currency_whole`, `currency_full`) included. `currency` is an ISO 4217 code (USD, EUR, GBP, JPY, CAD, AUD, CHF, SEK, NOK, DKK, INR, CNY, BRL, MXN) whose symbol replaces the locale's own at the locale's placement (`de-DE` + `USD`: `1.234,50 $`); unset, the locale's own currency prints. Repeated values keep the locale's side; a value that declares the currency once (anchored table column, support_table row, axis tick) leads with it (`€1,2 M`). `JPY` has no decimals. A nested board takes its root's `regional:` (`ERR-REGIONAL-NESTED-MISMATCH` otherwise).
+`regional:` (board root, cascaded by `charts/meta.yml`, not by themes) sets how a board writes numbers, and the board's one currency: every money format and every `$` spec prints it. `locale.number` is a d3-format locale name (`fr-FR`, `de-CH`, ...), default `en-US`, or a full d3 locale definition (`decimal`, `thousands`, `grouping`, `currency: [prefix, suffix]`, optional `percent`, `minus`, and `analytic`/`narrative`: the extra-short and abbreviated thousand, million, billion, trillion suffixes, printed as written, default en-US's K/M/B/T and `["k", "mn", "bn", "trn"]`): separators, signs, magnitude suffixes (a named locale brings its own, `de-DE`: `M` analytic, `Mio.` narrative), and the currency template every `$` spec prints, the money names (`currency`, `currency_whole`, `currency_full`) included. `locale.time` is a d3-time-format locale name (`de-DE`, `fr-FR`, `ja-JP`, ...), default `en-US`, or a full definition (`date_time`, `date`, `time`, `periods`, `days`, `short_days`, `months`, `short_months`, `week_start`): it names every month, weekday and AM/PM on the board (`de-DE`: `Mrz`) and sets the first day of a date picker's week (`de-DE`: Monday). The two locales are independent, so set both. `currency` is an ISO 4217 code (USD, EUR, GBP, JPY, CAD, AUD, CHF, SEK, NOK, DKK, INR, CNY, BRL, MXN) whose symbol replaces the locale's own at the locale's placement (`de-DE` + `USD`: `1.234,50 $`); unset, the locale's own currency prints. Repeated values keep the locale's side; a value that declares the currency once (anchored table column, support_table row, axis tick) leads with it (`€1,2 M`). `JPY` has no decimals. A nested board takes its root's `regional:` (`ERR-REGIONAL-NESTED-MISMATCH` otherwise).
 
 ```yaml
 regional:
-  locale: de-DE   # 1.234,50 €
-  currency: USD   # only to change the locale's own currency: 1.234,50 $
+  locale:
+    number: de-DE   # 1.234,50 €
+    time: de-DE     # Mrz, Okt
+  currency: USD     # only to change the locale's own currency: 1.234,50 $
 ```
 
 Any format slot above also accepts an object instead of a bare string, for
@@ -878,21 +910,30 @@ identically to writing the object inline.
 
 A board restyles an engine format everywhere by redefining its name in
 `style.formats` (`currency: "$,.0f"`, `number: ",.0f"`, `date_short: "%b %Y"`).
-Slots with no format of their own read it; `number_format`, `format:` and
-`labels.format` still win. A redefined name prints exactly its own spec at every
+Slots with no format of their own read it; a query's `formats:` and a slot's
+own `format:` still win. A redefined name prints exactly its own spec at every
 magnitude: no compaction, no trim, no switch to `currency_full` / `number_full`
 below 1. It must stay the same kind (`ERR-FORMAT-KIND-MISMATCH`).
 Pairing a prefix with a spec that already carries its own native `$`/`#`
 composes around it (a `$,.0f` spec with prefix `"US "` paints `US $154,500`),
 including a spec that is both SI-shaped and native-symbol-bearing (the
-`currency` preset, `$.3~s`, plus prefix `"US "` paints `US $12.4 M`).
+`currency` preset, `$.3~s`, plus prefix `"US "` paints `US $12.4M`).
 
 An authored `labels.expr` on an axis always wins over `labels.format`
 outright, object or string; it renders exactly as written, with no affix or
 notation composed in. Write the symbol into the expression itself (e.g.
 `"'EUR ' + datum.label"`) if you need one there.
 
-`time_format` takes D3 time specs or `date_short` (`%-d %b %Y` → `5 Mar 2026`).
+A date axis's `labels.format` takes D3 time specs or `date_short` (`%-d %b %Y` → `5 Mar 2026`). A date already reads by its grain, so set one only to show another form.
+
+A date axis labels by the grain it detects, and each grain has an engine name:
+`date_year`, `date_quarter`, `date_month`, `date_week` (days keep `date_short`).
+An engine grain name means the engine's own labels for that grain, so a slot
+naming one the board has not redefined raises
+`ERR-FORMAT-GRAIN-NAME-NOT-REDEFINED`; redefine the name in `style.formats` with
+a strftime spec to relabel that grain on every axis and tooltip header of the
+board (`date_month: "%b '%y"` reads `Jan '26`). An axis's own
+`labels.format` still wins.
 
 KPI content sits at the chart root (`value`, `label`, `glyph`, `support`); everything about how it looks sits under `style:`. `tone` at chart root is rejected: it lives only on `style.support.tone`, since the support row is the block it paints (the headline value stays neutral). Each slot paints with its own `font` (`style.value.font`, `style.value.affix.font`, `style.value.glyph.font`, `style.label.font`, `style.support.font`, `style.support.glyph.font`); `style.font` is the font they all start from. KPI fonts take no `line_height`: every slot is one line.
 
@@ -1168,13 +1209,14 @@ charts:
     x: month
     y: total
     style:
-      number_format: number           # compacts axis ticks only when the top tick has >=6 digits
       legend:
         visible: false                # hide the legend
       axis_x:
         labels:
           angle: -45                  # rotate crowded x labels
       axis_y:
+        labels:
+          format: number              # compacts axis ticks only when the top tick has >=6 digits
         grid:
           visible: false              # hide y gridlines
         scale:
@@ -1314,10 +1356,10 @@ Pin keys are the exact data values from your query results, case-sensitive —
 not a display label. A literal hex is accepted too. A pin naming a value no
 chart on the render draws is skipped with `WARN-CATEGORY-COLOR-PIN-UNSEEN`
 rather than raising; two pins resolving to the same color is
-`ERR-CATEGORY-COLOR-PIN-DUPLICATE`; an authored field whose data has more
-distinct values than the palette has swatches raises
-`ERR-CATEGORY-COLOR-PALETTE-EXHAUSTED` (an unauthored field just declines to
-bind).
+`ERR-CATEGORY-COLOR-PIN-DUPLICATE`; an authored field with more unpinned
+values plus palette-color pins than the palette has swatches raises
+`ERR-CATEGORY-COLOR-PALETTE-EXHAUSTED`; pins to a variant or hex need no swatch
+(an unauthored field just declines to bind).
 
 ## Color
 

@@ -27,6 +27,7 @@ See also:
 import datetime
 import re
 from typing import Any
+from urllib.parse import quote, urlsplit
 
 from dbt_charts.core.compile.format import (
     column_format,
@@ -44,6 +45,7 @@ from dbt_charts.core.diagnostics.codes_render import (
     ERR_PERCENT_RANGE,
     ERR_TABLE_FORMAT_KIND_MISMATCH,
     ERR_TABLE_TEMPORAL_FORMAT_INVALID,
+    ERR_URL_VALUE_NOT_ABSOLUTE,
 )
 from dbt_charts.core.text.format_d3 import (
     NULL_DISPLAY,
@@ -62,6 +64,7 @@ from dbt_charts.core.text.format_d3 import (
 from dbt_charts.core.text.numeral_scale import SuffixMode, suffix_at_register
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_NATIVE,
+    PREDEFINED_TEXT_NAMES,
     PredefinedNumberFormat,
 )
 from dbt_charts.core.utils import is_date_like
@@ -155,7 +158,7 @@ def format_value(
     format_spec = parts.spec
     prefix, suffix = parts.prefix, parts.suffix
     if format_spec in PREDEFINED_NATIVE:
-        number, unit = PREDEFINED_NATIVE[format_spec](value)
+        number, unit = PREDEFINED_NATIVE[format_spec].python(value)
         return f"{prefix}{number}{unit}{suffix}"
     if value is not None:
         format_spec = sub_unit_spec_for_value(parts.raw, format_spec, value, formats)
@@ -255,6 +258,7 @@ def format_kpi_parts(
     _raw = parts.raw
     _is_house = parts.is_house
     format_spec = parts.spec
+    raise_if_format_cannot_print_number(format_spec)
     # Only when this row picks its own spec -- shared_scale has already baked
     # the column's one magnitude, so a per-row decision here would second-guess
     # that vote.
@@ -264,7 +268,7 @@ def format_kpi_parts(
     # Predefined native formatters bypass D3 and know their own unit; the
     # authored affix rides around number-and-unit.
     if format_spec in PREDEFINED_NATIVE:
-        number, unit = PREDEFINED_NATIVE[format_spec](value)
+        number, unit = PREDEFINED_NATIVE[format_spec].python(value)
         if sign_in_prefix:
             explicit_prefix, _, number = _sign_into_prefix(
                 explicit_prefix, "", number, parts.placement
@@ -339,7 +343,7 @@ def format_kpi_parts(
             # The suffix gets its own field even with no notation (native=True,
             # or the inline-d3 / user-alias path) so anchors-mode can suppress
             # it on non-first rows. Bare: the lane split carries the gap as
-            # geometry (kpi.py's dx="2"), not a string character.
+            # geometry (the KPI card's dx="2"), not a string character.
             suffixes = (
                 dict(zip(SI_LETTERS, SI_LETTERS, strict=True))
                 if native or effective_notation is None
@@ -454,13 +458,20 @@ def _validate_strftime_spec(format_spec: str) -> None:
         )
 
 
-def _raise_if_time_format_on_numeric(resolved: str) -> None:
-    """Raise ``ChartDataError`` when a resolved format is a strftime spec.
+def raise_if_format_cannot_print_number(resolved: str) -> None:
+    """Raise ``ChartDataError`` when a resolved format cannot print a number.
 
-    A strftime spec has no meaning against a numeric value; without this
-    check, ``format_value``/``format_d3`` forwards it straight into the
-    d3-format parser, which raises an opaque, uncoded parse error.
+    A strftime spec or a text name (``email``, ``url``) has no meaning against
+    a numeric value; without this check, ``format_value``/``format_d3``
+    forwards it straight into the d3-format parser, which raises an opaque,
+    uncoded parse error.
     """
+    if resolved in PREDEFINED_TEXT_NAMES:
+        raise ChartDataError.from_code(
+            ERR_TABLE_FORMAT_KIND_MISMATCH,
+            fmt=resolved,
+            remedy=f"`{resolved}` formats text, but this column holds numbers.",
+        )
     if is_time_format(resolved):
         raise ChartDataError.from_code(
             ERR_TABLE_FORMAT_KIND_MISMATCH,
@@ -470,6 +481,32 @@ def _raise_if_time_format_on_numeric(resolved: str) -> None:
                 "to use the theme default"
             ),
         )
+
+
+def text_format_link(
+    resolved: str,
+    value: Any,  # type-state: explicit_any — DB cell value
+    where: str,
+) -> str | None:
+    """The href a cell or KPI value links to under a text format, else ``None``.
+
+    A ``url`` value must be an absolute http(s) URL: a scheme-less
+    one would pass the href check as a board-relative link and land on the
+    wrong page.
+    """
+    if resolved not in PREDEFINED_TEXT_NAMES or value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if resolved == "email":
+        return f"mailto:{quote(text, safe='@')}"
+    parts = urlsplit(text)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        raise ChartDataError.from_code(
+            ERR_URL_VALUE_NOT_ABSOLUTE, where=where, value=text
+        )
+    return text
 
 
 def format_temporal_value(
@@ -492,10 +529,9 @@ def format_temporal_value(
 
     if isinstance(value, str):
         # Parse ISO string to a date/datetime so strftime works uniformly.
-        # fromisoformat() on 3.10 doesn't handle the "Z" suffix — normalize it first.
         # Space-separated Postgres timestamps ("YYYY-MM-DD HH:MM:SS") are normalized
         # to ISO T-separator before parsing.
-        stripped = value.strip().replace("Z", "+00:00")
+        stripped = value.strip()
         # Normalize space-separated timestamp to T-separator for fromisoformat().
         if len(stripped) > 10 and stripped[10] == " ":
             stripped = stripped[:10] + "T" + stripped[11:]
@@ -505,17 +541,13 @@ def format_temporal_value(
             # accepts date or datetime) so a time directive in format_spec sees
             # the real time, not midnight. Aware values still normalize to UTC.
             d: datetime.date | datetime.datetime = (
-                dt.astimezone(datetime.timezone.utc) if dt.tzinfo is not None else dt
+                dt.astimezone(datetime.UTC) if dt.tzinfo is not None else dt
             )
         else:
             d = datetime.date.fromisoformat(stripped[:10])
     elif isinstance(value, datetime.datetime):
         # Aware datetime: convert to UTC first to match ISO string behavior.
-        d = (
-            value.astimezone(datetime.timezone.utc)
-            if value.tzinfo is not None
-            else value
-        )
+        d = value.astimezone(datetime.UTC) if value.tzinfo is not None else value
     else:
         d = value
 
@@ -579,7 +611,7 @@ def format_table_cell_value(
     if isinstance(value, (int, float)):
         if format_config is not None:
             resolved = resolve_format(format_config, formats)
-            _raise_if_time_format_on_numeric(resolved)
+            raise_if_format_cannot_print_number(resolved)
             return format_value(value, format_config, formats)
         return format_value(value, default_number_format(), formats=formats)
 
@@ -598,7 +630,7 @@ def format_table_cell_value(
             # feeding a strftime spec into the numeric formatter.
             if is_date_like(value) and is_time_format(resolved):
                 return str(value)
-            _raise_if_time_format_on_numeric(resolved)
+            raise_if_format_cannot_print_number(resolved)
             try:
                 return format_value(numeric, format_config, formats)
             except (ValueError, TypeError):

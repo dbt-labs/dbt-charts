@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, TypeVar
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from dbt_charts.agent_api.boards import board_declaring_keys
 from dbt_charts.core.diagnostics import Diagnostic
@@ -20,12 +21,41 @@ from dbt_charts.core.project import (
 from dbt_charts.core.utils import YAML_LOADER
 
 MAX_SEARCH_LIMIT = 50
-#: Cap on named chart-title match reasons per hit — keeps match_reasons compact.
-MAX_CHART_MATCH_REASONS = 3
 DEFAULT_SEARCH_LIMIT = 10
 
 # Maintainer paths that must not appear in agent-facing search summaries.
 _INTERNAL_REF_RE = re.compile(r"\s*;?\s*see\s+ai_notes/\S+", re.IGNORECASE)
+
+
+_T = TypeVar("_T")
+
+
+def cursor_offset(cursor: str | None) -> int:
+    """Decode a ``next`` cursor to the offset it resumes at; ``None`` is the start."""
+    if cursor is None:
+        return 0
+    if not cursor.isdecimal():
+        raise ValueError(
+            f"{cursor!r} is not a cursor: pass the 'next' value from the "
+            "previous search_boards result unchanged"
+        )
+    return int(cursor)
+
+
+def paginate(
+    items: Sequence[_T], *, limit: int, cursor: str | None
+) -> tuple[list[_T], str | None]:
+    """One page of an already-sorted, already-filtered list, and the cursor to resume at.
+
+    The cursor is ``None`` on the last page. Every host pages through this one
+    function so a cursor means the same thing on the connector, in chat, and
+    over stdio.
+    """
+    if limit == 0:
+        return [], None  # a cursor here would resume at the same offset forever
+    start = cursor_offset(cursor)
+    end = start + limit
+    return list(items[start:end]), (str(end) if end < len(items) else None)
 
 
 def _agent_safe_summary(notes: str) -> str:
@@ -34,20 +64,37 @@ def _agent_safe_summary(notes: str) -> str:
 
 
 class SearchBoardsArgs(BaseModel):
-    """Search existing dashboards by keyword. Returns ranked results with match scores and reasons. Use to discover relevant dashboards and reuse validated query patterns before creating new ones. Each hit's `charts` list carries per-chart detail (id, title, type, query) parsed from the same board — a chart-title or chart-id match is called out in match_reasons (e.g. "chart-title: monthly_revenue"), so you can see which chart already answers the question without opening the file. Each hit carries two path forms, named for the coordinate system they resolve in: board_path (relative to charts/; a package board's carries a `<pkg>/` namespace prefix) for render_board(path=board_path, chart=<chart id>, ...), and file_path (relative to the project root) for read_file/write_file/edit_file. Reuse the matching field's value unchanged — do not convert between the two. Results may also include sample SQL and literal file paths from matching queries; reuse those exact paths instead of inventing new file globs."""
+    """Search existing dashboards by keyword, or list them all with an empty query. Returns ranked results with match scores and reasons (a listing is unscored, in path order, and pages with `cursor`/`next`). Use to discover relevant dashboards and reuse validated query patterns before creating new ones. Each hit's `charts` list carries per-chart detail (id, title, type, query) parsed from the same board, and `matched_charts` names every chart whose id or title matched the query — (board_path, chart id) is the address of a chart, so pass the pair to render_board(path=board_path, chart=<chart id>) or describe_board(path=file_path, chart=<chart id>) without opening the file. Each hit carries two path forms, named for the coordinate system they resolve in: board_path (relative to charts/; a package board's carries a `<pkg>/` namespace prefix) for render_board(path=board_path, chart=<chart id>, ...), and file_path (relative to the project root) for read_file/write_file/edit_file. Reuse the matching field's value unchanged — do not convert between the two. Results may also include sample SQL and literal file paths from matching queries; reuse those exact paths instead of inventing new file globs."""
 
     model_config = ConfigDict(extra="forbid")
 
     query: str = Field(
         ...,
-        description="Search query text (keywords to match against dashboard metadata)",
+        description=(
+            "Search query text (keywords to match against dashboard metadata). "
+            "Pass an empty string to list every board you can access instead "
+            "of searching."
+        ),
     )
     tags: list[str] | None = Field(
-        None, description="Filter results to dashboards with ALL of these tags"
+        default=None, description="Filter results to dashboards with ALL of these tags"
     )
     limit: int | None = Field(
-        None, description="Maximum results to return (default 10, max 50)"
+        default=None, description="Maximum results to return (default 10, max 50)"
     )
+    cursor: str | None = Field(
+        default=None,
+        description=(
+            "Pass the previous result's `next` value, unchanged, to get the "
+            "following page."
+        ),
+    )
+
+    @field_validator("cursor")
+    @classmethod
+    def _cursor_is_a_next_value(cls, cursor: str | None) -> str | None:
+        cursor_offset(cursor)
+        return cursor
 
 
 class ChartSearchEntry(BaseModel):
@@ -85,6 +132,12 @@ class BoardSearchHit(BaseModel):
     )
     query_names: list[str]
     charts: list[ChartSearchEntry]
+    matched_charts: list[str] = Field(
+        description=(
+            "Ids of the charts in `charts` whose id or title matched the query, "
+            "in board order. Empty when the board matched on other fields."
+        )
+    )
     sample_sql: str | None = None
     referenced_data_paths: list[str] = Field(
         description=(
@@ -102,6 +155,10 @@ class SearchResult(BaseModel):
     success: bool
     errors: list[Diagnostic]
     results: list[BoardSearchHit]
+    next: str | None = Field(
+        default=None,
+        description="Cursor for the next page; absent on the last page.",
+    )
 
 
 def search_boards(
@@ -110,24 +167,31 @@ def search_boards(
     *,
     tags: list[str] | None = None,
     limit: int = DEFAULT_SEARCH_LIMIT,
+    cursor: str | None = None,
 ) -> SearchResult:
-    """Search dashboards by keyword with ranked results.
+    """Search dashboards by keyword with ranked results, or list them all.
 
-    Searches ``charts/`` unconditionally. Truncates to ``limit`` (default 10,
-    max 50). Hosts with a per-principal access model (Cloud) must not truncate
-    before filtering — see ``search_boards_hits``.
+    An empty ``query`` lists every board by path instead of ranking. Searches
+    ``charts/`` unconditionally. Pages of ``limit`` (default 10, max 50) resume
+    at ``cursor``. Hosts with a per-principal access model (Cloud) must not
+    truncate before filtering — see ``search_boards_hits``.
     """
     limit = max(0, min(limit, MAX_SEARCH_LIMIT))
     if limit == 0:
         return SearchResult(success=True, errors=[], results=[])
-    hits = search_boards_hits(query, project, tags=tags)
-    return SearchResult(success=True, errors=[], results=hits[:limit])
+    page, next_cursor = paginate(
+        search_boards_hits(query, project, tags=tags), limit=limit, cursor=cursor
+    )
+    return SearchResult(success=True, errors=[], results=page, next=next_cursor)
 
 
 def search_boards_hits(
     query: str, project: Project, *, tags: list[str] | None = None
 ) -> list[BoardSearchHit]:
     """Score every indexed board against ``query``, sorted best-first, unlimited.
+
+    An empty ``query`` is a listing, not a search: every board, unscored
+    (``match_score`` 0), in path order.
 
     This layer has no principal concept (agent_api thin-wrapper rule), so it
     cannot itself decide which hits a caller may see. A host with access
@@ -138,11 +202,8 @@ def search_boards_hits(
     next few would get a false empty result.
     """
     query_stripped = query.strip()
-    if not query_stripped:
-        return []
-
     query_tokens = list(_tokenize(query_stripped))
-    if not query_tokens:
+    if query_stripped and not query_tokens:
         return []
 
     index = _build_index(project)
@@ -151,11 +212,13 @@ def search_boards_hits(
         required_tags = {t.lower() for t in tags}
         index = [e for e in index if required_tags.issubset(set(e["tags"]))]
 
-    scored: list[tuple[float, str, dict[str, Any], list[str]]] = []
+    scored: list[tuple[float, str, dict[str, Any], list[str], list[str]]] = []
     for entry in index:
-        score, reasons = _score_entry(entry, query_tokens)
-        if score > 0:
-            scored.append((score, entry["file_path"], entry, reasons))
+        score, reasons, matched_charts = (
+            _score_entry(entry, query_tokens) if query_stripped else (0.0, [], [])
+        )
+        if score > 0 or not query_stripped:
+            scored.append((score, entry["file_path"], entry, reasons, matched_charts))
 
     scored.sort(key=lambda x: (-x[0], x[1]))
 
@@ -169,10 +232,11 @@ def search_boards_hits(
             file_path=entry["file_path"],
             query_names=entry["query_names"],
             charts=[ChartSearchEntry(**c) for c in entry["charts"]],
+            matched_charts=matched_charts,
             sample_sql=(entry["sql_snippets"][0] if entry["sql_snippets"] else None),
             referenced_data_paths=_extract_file_paths(entry["sql_snippets"]),
         )
-        for score, _path, entry, reasons in scored
+        for score, _path, entry, reasons, matched_charts in scored
     ]
 
 
@@ -294,9 +358,11 @@ def _extract_file_paths(sql_snippets: list[str]) -> list[str]:
 
 def _score_entry(
     entry: dict[str, Any], query_tokens: list[str]
-) -> tuple[float, list[str]]:
+) -> tuple[float, list[str], list[str]]:
+    """Return (score, match reasons, ids of the charts that matched)."""
     score = 0.0
     reasons: list[str] = []
+    matched: set[str] = set()
 
     title_tokens = _tokenize(entry["title"])
     notes_tokens = _tokenize(entry["notes"])
@@ -327,12 +393,9 @@ def _score_entry(
         for chart_id, tokens in chart_tokens:
             if qt in tokens:
                 score += 2.0
-                reason = f"chart-title: {chart_id}"
-                # Reasons stay compact for agent token budgets: name at most
-                # MAX_CHART_MATCH_REASONS charts; further matches still score.
-                named = sum(1 for r in reasons if r.startswith("chart-title: "))
-                if reason not in reasons and named < MAX_CHART_MATCH_REASONS:
-                    reasons.append(reason)
+                matched.add(chart_id)
+                if "chart_match" not in reasons:
+                    reasons.append("chart_match")
 
         if qt in query_name_tokens:
             score += 1.0
@@ -344,4 +407,5 @@ def _score_entry(
             if "sql_match" not in reasons:
                 reasons.append("sql_match")
 
-    return score, reasons
+    matched_charts = [chart_id for chart_id, _ in chart_tokens if chart_id in matched]
+    return score, reasons, matched_charts

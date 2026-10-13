@@ -275,7 +275,7 @@ class TestAxisDecimalAlignment:
             prefix="",
             digit_spec=",.1~f",
             anchor_at_start=False,
-            reservation=compose_suffix_reservation(" M", font_family),
+            reservation=compose_suffix_reservation("M", font_family),
             decimal_pad_table=pad_table,
         )
         # exponent=6: scaled values are 1/1.5/2/2.5 -- exactly the alignment case
@@ -360,6 +360,7 @@ class TestDecimalPadTableFor:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         assert resolved["amount"].decimal_pad_table, (
@@ -372,62 +373,14 @@ class TestDecimalPadTableFor:
 
 class TestTableDecimalAlignment:
     """_compute_lane_positions and the row render must pad from decimal_pad_table
-    so lane width matches the painted text. Tests call into table.py directly
-    (deleting table.py:1449-1452 and 2311-2314 leaves these tests red).
+    so lane width matches the painted text.
     """
-
-    def test_compute_lane_positions_widens_for_padded_column(self) -> None:
-        """_compute_lane_positions must produce a wider number_x when the column
-        has a non-empty decimal_pad_table than when it does not.
-
-        Deleting table.py's decimal-pad guard (lines 1449-1452) leaves this
-        test red: the padded lane shrinks to the bare-string width.
-        """
-        from dbt_charts.core.compile.format import decimal_pad_table_for
-        from dbt_charts.core.compile.models.primitives import FontStyle
-        from dbt_charts.core.compile.models.style.resolved.table import (
-            ResolvedTableColumnConfig,
-        )
-        from dbt_charts.core.fonts import DBT_SANS_TABULAR_FONT_FAMILY
-        from dbt_charts.core.render.chart.table import _compute_lane_positions
-
-        font_family = DBT_SANS_TABULAR_FONT_FAMILY
-        fmt = ",.1~f"
-        pad_table = decimal_pad_table_for(fmt, font_family)
-        assert pad_table, "need non-empty pad_table for ,.1~f"
-
-        # 1000 (whole -> gets dot-pad) alongside 0.5 (fractional -> no pad).
-        # With padding: "1,000" grows by the dot_unit, making it wider.
-        # Without padding: "1,000" is bare, measuring shorter than "1,000" + pad.
-        rows = [{"amount": 1000.0}, {"amount": 0.5}]
-
-        def _lane(
-            pad: tuple[str, ...],
-        ) -> dict[str, tuple[float, float, float, float, float]]:
-            cfg = ResolvedTableColumnConfig(format=fmt, decimal_pad_table=pad)
-            return _compute_lane_positions(
-                rows=rows,
-                columns=["amount"],
-                column_configs={"amount": cfg},
-                col_widths={"amount": 300.0},
-                col_x_offsets=[0.0],
-                padding_x=16,
-                cell_pad=8,
-                cell_font=FontStyle(family=font_family, size=12.0),
-                column_when_rules={},
-            )
-
-        _, num_x_padded, *_ = _lane(pad_table)["amount"]
-        _, num_x_bare, *_ = _lane(())["amount"]
-        assert num_x_padded > num_x_bare, (
-            f"padded lane must be wider than bare: {num_x_padded} vs {num_x_bare}"
-        )
 
     def test_table_paint_appends_decimal_pad_to_whole_number_cell(self) -> None:
         """render_table_svg appends decimal pad to number_str for whole-number
         rows so they visually align with fractional rows.
 
-        Deleting table.py lines 2313-2315 leaves this test red: the whole-number
+        Dropping the decimal pad leaves this test red: the whole-number
         "1,000" tspan is rendered without padding and is shorter than the
         padded string.
         """
@@ -445,7 +398,8 @@ class TestTableDecimalAlignment:
             resolve_chart_style_context,
             resolve_style,
         )
-        from dbt_charts.core.render.chart.table import render_table_svg
+
+        from ._engine_render import render_table_svg
 
         data = [{"amount": 1000.0}, {"amount": 0.5}]
         theme = get_theme_style()
@@ -864,6 +818,7 @@ class TestDecimalPadForEdgeCases:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         assert resolved["amount"].decimal_pad_table == (), (
@@ -897,6 +852,7 @@ class TestDecimalPadForEdgeCases:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         assert resolved["amount"].decimal_pad_table, (
@@ -934,6 +890,7 @@ class TestDecimalPadForEdgeCases:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert resolved is not None
         assert resolved["amount"].decimal_pad_table, (

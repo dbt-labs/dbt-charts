@@ -397,6 +397,93 @@ rows:
         assert result.data[0]["country"] == "FR"
 
 
+_DATE_RANGE_BOARD = """
+source: db
+variables:
+  date_range:
+    input: daterange
+queries:
+  by_day:
+    sql: |
+      select count(*) as n
+      from (select date '2024-01-05' as created_at) t
+      where {{ filter_date_range('created_at', date_range) }}
+charts:
+  c:
+    query: by_day
+    type: table
+rows:
+  - c
+"""
+
+
+class TestQueryBoardUnboundVariables:
+    """A variable declared without ``default:`` has nothing to bind unless the
+    caller passes it; the error must say so instead of a raw Jinja failure."""
+
+    def test_error_names_the_variable_its_input_and_what_to_pass(
+        self,
+        tmp_path: Path,
+        registry: AdapterRegistry,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        path = _write_board(tmp_path, _DATE_RANGE_BOARD)
+        result = query_board(
+            "by_day", path, local_project(tmp_path), adapter_registry=registry
+        )
+
+        assert result.success is False
+        [error] = result.errors
+        assert "Undefined variable" not in error
+        assert "'date_range'" in error
+        assert "daterange" in error
+        assert "default" in error
+        assert '["2024-01-01", "2024-01-31"]' in error
+        assert result.sql is not None
+
+    def test_passing_the_value_the_error_asks_for_runs_the_query(
+        self,
+        tmp_path: Path,
+        registry: AdapterRegistry,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        path = _write_board(tmp_path, _DATE_RANGE_BOARD)
+        result = query_board(
+            "by_day",
+            path,
+            local_project(tmp_path),
+            vars={"date_range": '["2024-01-01", "2024-01-31"]'},
+            adapter_registry=registry,
+        )
+
+        assert result.success is True
+        assert result.data == [{"n": 1}]
+
+    def test_a_declared_default_still_binds(
+        self,
+        tmp_path: Path,
+        registry: AdapterRegistry,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        board = _DATE_RANGE_BOARD.replace(
+            "    input: daterange\n",
+            "    input: daterange\n    default: ['2024-01-01', '2024-01-31']\n",
+        )
+        path = _write_board(tmp_path, board)
+        result = query_board(
+            "by_day", path, local_project(tmp_path), adapter_registry=registry
+        )
+
+        assert result.success is True
+        assert result.data == [{"n": 1}]
+
+
 class TestQueryBoardPathSecurity:
     def test_path_escape_rejected(
         self,
@@ -675,20 +762,6 @@ class TestVariableBinding:
         assert args.variables[0].name == "region"
         assert args.variables[0].value == "US"
 
-    def test_query_board_args_accepts_variable_bindings(self) -> None:
-        from dbt_charts.agent_api.query import QueryBoardArgs
-
-        args = QueryBoardArgs.model_validate(
-            {
-                "name": "revenue",
-                "path": "charts/rev.yml",
-                "vars": [{"name": "year", "value": 2024}],
-            }
-        )
-        assert args.vars is not None
-        assert args.vars[0].name == "year"
-        assert args.vars[0].value == 2024
-
     def test_execute_query_args_duplicate_variable_names_rejected(self) -> None:
         from pydantic import ValidationError
 
@@ -705,19 +778,16 @@ class TestVariableBinding:
                 }
             )
 
-    def test_query_board_args_duplicate_variable_names_rejected(self) -> None:
-        from pydantic import ValidationError
+    def test_execute_query_args_accept_a_named_board_query(self) -> None:
+        from dbt_charts.agent_api.query import ExecuteQueryArgs
 
-        from dbt_charts.agent_api.query import QueryBoardArgs
-
-        with pytest.raises(ValidationError, match="region"):
-            QueryBoardArgs.model_validate(
-                {
-                    "name": "revenue",
-                    "path": "charts/rev.yml",
-                    "vars": [
-                        {"name": "region", "value": "US"},
-                        {"name": "region", "value": "EU"},
-                    ],
-                }
-            )
+        args = ExecuteQueryArgs.model_validate(
+            {
+                "board": "charts/rev.yml",
+                "query": "revenue",
+                "variables": [{"name": "year", "value": 2024}],
+            }
+        )
+        assert args.sql is None
+        assert args.query == "revenue"
+        assert args.variables is not None and args.variables[0].value == 2024

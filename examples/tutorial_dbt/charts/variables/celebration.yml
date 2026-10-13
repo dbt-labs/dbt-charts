@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: "Fivetran + dbt Celebration"
 
 source: dbt_charts_examples
@@ -42,7 +43,7 @@ rows:
   # Header section with logos and wild styling
   - cols:
       - style:
-          background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
+          background: "#667eea"
           padding: 30
           border:
             radius: 15

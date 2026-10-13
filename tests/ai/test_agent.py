@@ -188,7 +188,7 @@ def test_svg_tool_result_is_compacted_in_model_conversation() -> None:
 def test_svg_under_a_non_data_key_is_also_elided_from_model() -> None:
     """A host override (e.g. Cloud's render_board merge) may carry pixel
     SVG under a key other than ``data`` (``data`` stays the agent's requested
-    semantic payload). ``_model_facing_result`` must elide SVG wherever it
+    semantic payload). ``_elide_svg`` must elide SVG wherever it
     appears, not just under ``data`` — a second, uninspected key is exactly
     how a ~100KB blob leaks into model context."""
     svg = "<svg xmlns='http://www.w3.org/2000/svg'>" + "x" * 500 + "</svg>"
@@ -212,6 +212,27 @@ def test_non_svg_tool_result_reaches_model_unchanged() -> None:
     )
     tool_msg = next(m for m in conversation if m.role == "tool")
     assert "title: Preview" in tool_msg.content
+
+
+def test_query_result_reaches_the_model_as_csv_within_the_byte_budget() -> None:
+    from dbt_charts.agent_api.query_csv import MODEL_RESULT_BYTE_BUDGET, with_csv
+
+    rows = [{"id": i, "body": '界😀"\\' * 400} for i in range(1000)]
+    payload = with_csv(
+        {
+            "success": True,
+            "columns": ["id", "body"],
+            "data": rows,
+            "row_count": 1000,
+            "truncated": False,
+        },
+        hint="Narrow it.",
+    )
+    conversation = _run_agent_capture_conversation(payload)
+    tool_msg = next(m for m in conversation if m.role == "tool")
+    assert len(tool_msg.content.encode("utf-8")) <= MODEL_RESULT_BYTE_BUDGET
+    assert '"data"' not in tool_msg.content
+    assert '"csv"' in tool_msg.content
 
 
 def test_identical_consecutive_calls_error_before_third_dispatch(
@@ -310,7 +331,7 @@ def test_interleaved_different_tool_resets_identical_counter(
     monkeypatch.setattr("dbt_charts.ai.agent.dispatch_tool_call", fake_dispatch)
 
     same = ToolCallEvent(id="1", name="render_board", arguments={"path": "rev.yaml"})
-    diff = ToolCallEvent(id="2", name="validate_board", arguments={"path": "rev.yaml"})
+    diff = ToolCallEvent(id="2", name="describe_board", arguments={"path": "rev.yaml"})
     client = MagicMock()
     # same, same, different, same, same — the 'same' counter never reaches 3 consecutively
     client.stream_with_tools.side_effect = [

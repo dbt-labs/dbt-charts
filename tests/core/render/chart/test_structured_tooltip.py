@@ -32,6 +32,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
 from dbt_charts.core.compile.models.style.authored import (
     AreaChartStylePatch,
     BarChartStylePatch,
+    PieChartStylePatch,
 )
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
@@ -180,14 +181,14 @@ def test_temporal_month_header_uses_friendly_format_not_raw_iso():
 
 
 def test_temporal_day_level_header_still_full_date():
-    """A genuine day-level ISO date header keeps full precision ("Feb 1, 2024")."""
+    """A genuine day-level ISO date header keeps full precision ("1 Feb 2024")."""
     chart = LineChart(id="t", type="line", x="day", y="revenue")
     data = [
         {"day": "2024-02-01", "revenue": 100.0},
         {"day": "2024-02-02", "revenue": 150.0},
     ]
     labels = _render(chart, data)
-    assert any(f"{ROLE_HEADER}Feb 1, 2024" in lb for lb in labels), labels
+    assert any(f"{ROLE_HEADER}1 Feb 2024" in lb for lb in labels), labels
 
 
 def test_bar_temporal_month_header_uses_friendly_format():
@@ -446,8 +447,8 @@ def test_stacked_bar_zero_carries_total_but_no_percent():
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
     assert "count: 5.5" in row, row
-    assert f"{ROLE_TOTAL}Total: 7.5" in row, row  # Mon: task 5.5 + pr 2.0
-    assert "Share" not in row, row
+    assert f"{ROLE_TOTAL}Σ: 7.5" in row, row  # Mon: task 5.5 + pr 2.0
+    assert "%: " not in row, row
 
 
 _SINGLE_SERIES_BAR_DATA = [
@@ -478,11 +479,11 @@ def test_normalize_stack_carries_percent_raw_and_total():
     row = next(
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
-    assert "Share: 73%" in row, row
+    assert "%: 73%" in row, row
     assert "count: 5.5" in row, row
-    assert f"{ROLE_TOTAL}Total: 7.5" in row, row
+    assert f"{ROLE_TOTAL}Σ: 7.5" in row, row
     # % leads, raw beneath, total last.
-    assert row.index("Share") < row.index("count") < row.index(f"{ROLE_TOTAL}Total")
+    assert row.index("%: ") < row.index("count") < row.index(f"{ROLE_TOTAL}Σ")
 
 
 def test_normalize_stack_share_row_keeps_its_own_percent_format():
@@ -503,16 +504,16 @@ def test_normalize_stack_share_row_keeps_its_own_percent_format():
         y="count",
         color="kind",
         style=BarChartStylePatch.model_validate(
-            {"stack": "normalize", "number_format": "percent_whole"}
+            {"stack": "normalize", "axis_y": {"labels": {"format": "percent_whole"}}}
         ),
     )
     labels = _render(chart, _STACKED_BAR_DATA)
     row = next(
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
-    assert "Share: 73%" in row, row
+    assert "%: 73%" in row, row
     assert "count: 550%" in row, row
-    assert f"{ROLE_TOTAL}Total: 750%" in row, row
+    assert f"{ROLE_TOTAL}Σ: 750%" in row, row
 
 
 def test_stacked_area_total_is_not_nan():
@@ -521,7 +522,7 @@ def test_stacked_area_total_is_not_nan():
     path from bar's `_translate_standard`. Regression: `_translate_layered`
     dropped `spec.transforms` entirely, so the group-total joinaggregate
     feeding this footer never ran and `__dct_group_total` stayed undefined,
-    rendering the footer as "Total: NaN" instead of the true sum."""
+    rendering the footer as "Σ: NaN" instead of the true sum."""
     chart = AreaChart(
         id="t",
         type="area",
@@ -534,7 +535,7 @@ def test_stacked_area_total_is_not_nan():
     row = next(
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
-    assert f"{ROLE_TOTAL}Total: 7.5" in row, row
+    assert f"{ROLE_TOTAL}Σ: 7.5" in row, row
     assert "NaN" not in row, row
 
 
@@ -552,7 +553,7 @@ def test_normalize_stack_total_is_the_true_group_sum_not_a_single_series():
     tue_total = next(
         lb for lb in labels if f"{ROLE_SERIES}pr" in lb and f"{ROLE_HEADER}Tue" in lb
     )
-    assert f"{ROLE_TOTAL}Total: 4.4" in tue_total, tue_total  # 3.3 + 1.1
+    assert f"{ROLE_TOTAL}Σ: 4.4" in tue_total, tue_total  # 3.3 + 1.1
 
 
 _COMBO_SINGLE_BASE_DATA = [
@@ -646,7 +647,7 @@ def test_combo_stacked_base_carries_total_never_folding_in_the_overlay():
     mon_task_row = next(
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
-    assert f"{ROLE_TOTAL}Total: 7.5" in mon_task_row, mon_task_row
+    assert f"{ROLE_TOTAL}Σ: 7.5" in mon_task_row, mon_task_row
     overlay_rows = [lb for lb in labels if "Target" in lb and "20" in lb]
     assert overlay_rows, labels
     assert not any(ROLE_TOTAL in lb for lb in overlay_rows), overlay_rows
@@ -787,12 +788,12 @@ def test_combo_normalized_stack_base_suppresses_percent_row():
         layers=[{"type": "line", "y": "target", "label": "Target"}],
     )
     labels = _render(chart, _COMBO_STACKED_BASE_DATA)
-    assert not any("Share" in lb for lb in labels), labels
+    assert not any("%: " in lb for lb in labels), labels
     mon_task_row = next(
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
     assert "count: 5.5" in mon_task_row, mon_task_row
-    assert f"{ROLE_TOTAL}Total: 7.5" in mon_task_row, mon_task_row
+    assert f"{ROLE_TOTAL}Σ: 7.5" in mon_task_row, mon_task_row
     overlay_rows = [lb for lb in labels if "Target" in lb and "20" in lb]
     assert overlay_rows, labels
 
@@ -912,7 +913,12 @@ _PIE_DATA = [
 
 def test_pie_header_and_value_present():
     chart = PieChart(
-        id="t", type="pie", theta="user_count", color="plan", total=ChartTotal()
+        id="t",
+        type="pie",
+        theta="user_count",
+        color="plan",
+        total=ChartTotal(),
+        style=PieChartStylePatch.model_validate({"inner_radius": 0.6}),
     )
     labels = _render(chart, _PIE_DATA)
     assert any(f"{ROLE_HEADER_SWATCHED}starter_monthly" in lb for lb in labels), labels
@@ -921,7 +927,12 @@ def test_pie_header_and_value_present():
 
 def test_pie_header_before_value():
     chart = PieChart(
-        id="t", type="pie", theta="user_count", color="plan", total=ChartTotal()
+        id="t",
+        type="pie",
+        theta="user_count",
+        color="plan",
+        total=ChartTotal(),
+        style=PieChartStylePatch.model_validate({"inner_radius": 0.6}),
     )
     labels = _render(chart, _PIE_DATA)
     row = next(lb for lb in labels if f"{ROLE_HEADER_SWATCHED}starter_monthly" in lb)
@@ -934,12 +945,10 @@ def test_pie_carries_percent_and_grand_total():
     chart = PieChart(id="t", type="pie", theta="user_count", color="plan")
     labels = _render(chart, _PIE_DATA)
     row = next(lb for lb in labels if f"{ROLE_HEADER_SWATCHED}starter_monthly" in lb)
-    assert "Share: 72%" in row, row
+    assert "%: 72%" in row, row
     assert "User Count: 8.5" in row, row
-    assert f"{ROLE_TOTAL}Total: 11.8" in row, row
-    assert (
-        row.index("Share") < row.index("User Count") < row.index(f"{ROLE_TOTAL}Total")
-    )
+    assert f"{ROLE_TOTAL}Σ: 11.8" in row, row
+    assert row.index("%: ") < row.index("User Count") < row.index(f"{ROLE_TOTAL}Σ")
 
 
 def test_pie_mutes_raw_count_and_total_but_not_the_share_lead():
@@ -951,9 +960,9 @@ def test_pie_mutes_raw_count_and_total_but_not_the_share_lead():
     row = next(lb for lb in labels if f"{ROLE_HEADER_SWATCHED}starter_monthly" in lb)
     # raw count and total are muted (MUTED prepended, composing with ROLE_TOTAL)
     assert f"{MUTED}User Count: 8.5" in row, row
-    assert f"{MUTED}{ROLE_TOTAL}Total: 11.8" in row, row
+    assert f"{MUTED}{ROLE_TOTAL}Σ: 11.8" in row, row
     # the share % lead and the header are NOT muted
-    assert f"{MUTED}Share" not in row, row
+    assert f"{MUTED}%: " not in row, row
     assert f"{MUTED}{ROLE_HEADER_SWATCHED}" not in row, row
 
 
@@ -1124,7 +1133,7 @@ def test_normalize_stack_with_negative_value_falls_back_to_raw_only():
     )
     labels = _render(chart, _NEGATIVE_STACK_DATA)
     assert labels, "expected at least one aria-label"
-    assert not any("Share" in lb for lb in labels), labels
+    assert not any("%: " in lb for lb in labels), labels
     assert not any(ROLE_TOTAL in lb for lb in labels), labels
     row = next(
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
@@ -1184,7 +1193,13 @@ def test_bar_sub_dollar_tooltip_paints_plain_digits_not_si_milli():
     """A bar with format: currency and sub-$1 values must not misread as SI
     milli in its tooltip -- $0.42 painting "$420m" is a nine-orders-of-
     magnitude misread, not a rounding nit (see resolve_format_parts_for_values)."""
-    chart = BarChart(id="t", type="bar", x="day_name", y="cents", format="currency")
+    chart = BarChart(
+        id="t",
+        type="bar",
+        x="day_name",
+        y="cents",
+        style={"axis_y": {"labels": {"format": "currency"}}},
+    )
     data = [
         {"day_name": "Mon", "cents": 0.42},
         {"day_name": "Tue", "cents": 0.25},
@@ -1197,7 +1212,13 @@ def test_bar_sub_dollar_tooltip_paints_plain_digits_not_si_milli():
 def test_line_at_or_above_one_keeps_si_spec_not_widened_by_the_vote():
     """A set with no sub-$1 member must keep its usual SI register -- the
     per-set vote only pulls a slot down when a member actually needs it."""
-    chart = LineChart(id="t", type="line", x="day_name", y="amount", format="currency")
+    chart = LineChart(
+        id="t",
+        type="line",
+        x="day_name",
+        y="amount",
+        style={"axis_y": {"labels": {"format": "currency"}}},
+    )
     data = [
         {"day_name": "Mon", "amount": 12.99},
         {"day_name": "Tue", "amount": 100.0},
@@ -1212,7 +1233,11 @@ def test_multi_metric_line_wide_y_list_votes_as_one_set():
     quantitative_channel_values's wide-list branch (a single str y field is
     covered by every other bar/line test here)."""
     chart = LineChart(
-        id="t", type="line", x="day", y=["big", "cents"], format="currency"
+        id="t",
+        type="line",
+        x="day",
+        y=["big", "cents"],
+        style={"axis_y": {"labels": {"format": "currency"}}},
     )
     data = [
         {"day": "Mon", "big": 100.0, "cents": 0.42},
@@ -1229,7 +1254,11 @@ def test_scatter_x_measure_votes_too_not_just_y():
     not a dimension. A sub-$1 x column must not misread as SI milli even
     when y never dips below $1."""
     chart = ScatterChart(
-        id="t", type="scatter", x="cpc", y="revenue", format="currency"
+        id="t",
+        type="scatter",
+        x="cpc",
+        y="revenue",
+        style={"axis_y": {"labels": {"format": "currency"}}},
     )
     data = [
         {"cpc": 0.42, "revenue": 100.0},
@@ -1299,7 +1328,7 @@ def test_tooltip_carries_the_same_affix_the_axis_paints():
         type="line",
         x="month",
         y="revenue",
-        style={"number_format": {"spec": ",.0f", "prefix": "EUR "}},
+        style={"axis_y": {"labels": {"format": {"spec": ",.0f", "prefix": "EUR "}}}},
     )
     labels = _render(chart, _SINGLE_SERIES_LINE_DATA)
     assert any("EUR 1,235" in lb for lb in labels), labels
@@ -1343,7 +1372,10 @@ def test_combo_overlay_layer_falls_through_to_base_tooltip_affix():
         y="count",
         color="kind",
         style=BarChartStylePatch.model_validate(
-            {"stack": "zero", "number_format": {"spec": ",.0f", "prefix": "EUR "}}
+            {
+                "stack": "zero",
+                "axis_y": {"labels": {"format": {"spec": ",.0f", "prefix": "EUR "}}},
+            }
         ),
         layers=[{"type": "line", "y": "target", "label": "Target"}],
     )

@@ -2,12 +2,12 @@
 core/diagnostics/codes_render.py for what this fires on.
 
 Tables are a custom SVG renderer, not Vega-Lite, so there is no spec to inspect.
-Instead the renderer records the overflow at the exact point it decides to widen
-past its slot into ``WarningContext.table_overflows`` (see
+Instead the renderer records the overflow at the exact point it decides the
+columns don't fit into ``WarningContext.table_overflows`` (see
 ``render/chart/table_overflow.py``). This detector is policy-only: it reads that
 captured state, so the warning fires on exactly what rendered — no second width
 computation to drift from the renderer's, and no magnitude threshold. The
-renderer's own widen boundary is the line: the table either fits its slot or it
+renderer's own clip boundary is the line: the table either fits its slot or it
 doesn't.
 """
 

@@ -287,6 +287,12 @@ class TestParseCssColor:
         with pytest.raises(InvalidColorError):
             parse_css_color("not-a-color")
 
+    def test_oklch_is_unreadable(self):
+        from dbt_charts.core.colors import parse_css_color
+
+        with pytest.raises(InvalidColorError):
+            parse_css_color("oklch(0.7 0.1 250)")
+
     def test_rgb_function_rejects_nan_channel(self):
         """`float()` parses "nan" without raising -- min(1.0, nan) then
         silently clamps it to 1.0 (rgb(nan,0,0) would otherwise become

@@ -15,7 +15,6 @@ from dbt_charts.core.compile.models.markers import (
 from dbt_charts.core.compile.resolve.style.inherit_graph import (
     build_inherit_graph,
     build_slot_graph,
-    flatten_inherit_chains,
 )
 
 # ── Fixture models ────────────────────────────────────────────────────────────
@@ -360,36 +359,6 @@ def test_style_slot_graph_is_compact():
     # No leaf-level entries
     assert "Style.charts.font.color" not in slot_graph
     assert "Style.title.font.size" not in slot_graph
-
-
-# ── flatten_inherit_chains ────────────────────────────────────────────────────
-
-
-def test_flatten_inherit_chains_two_hop():
-    """A→B→C chain: flatten produces (B, C) for A and (C,) for B."""
-    links = {"a.b": "a", "a": "root"}
-    flat = flatten_inherit_chains(links)
-    assert flat["a.b"] == ("a", "root")
-    assert flat["a"] == ("root",)
-
-
-def test_flatten_inherit_chains_single_hop():
-    """A→B: flatten produces (B,) for A."""
-    links = {"x": "y"}
-    flat = flatten_inherit_chains(links)
-    assert flat["x"] == ("y",)
-
-
-def test_flatten_inherit_chains_empty():
-    """Empty links produces empty result."""
-    assert flatten_inherit_chains({}) == {}
-
-
-def test_flatten_inherit_chains_root_node_not_in_links():
-    """Nodes that are targets but not entries in links are not in the output."""
-    links = {"a.b": "a"}
-    flat = flatten_inherit_chains(links)
-    assert "a" not in flat
 
 
 # ── Production Style ──────────────────────────────────────────────────────────

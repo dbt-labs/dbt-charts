@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from itertools import cycle
 from pathlib import Path
 from unittest.mock import Mock
@@ -74,12 +74,10 @@ def test_record_board_captures_rows_by_query(tmp_path: Path) -> None:
 def test_record_board_captures_variables_and_timestamp(tmp_path: Path) -> None:
     resolved, executor, variables = _build_executor(tmp_path)
 
-    before = datetime.now(timezone.utc)
     recording = record_board(resolved, executor, variables)
-    after = datetime.now(timezone.utc)
 
     assert recording.variables == variables
-    assert before <= recording.recorded_at <= after
+    assert recording.recorded_at == executor.rendered_at
 
 
 def test_record_board_provenance_empty_for_non_dbt_queries(tmp_path: Path) -> None:
@@ -203,7 +201,7 @@ def test_record_board_records_the_rows_resolve_saw_even_with_cache_off() -> None
 def test_board_recording_rejects_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         BoardRecording(
-            recorded_at=datetime.now(timezone.utc),
+            recorded_at=datetime.now(UTC),
             variables={},
             rows_by_query={},
             provenance={},

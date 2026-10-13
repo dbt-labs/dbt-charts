@@ -15,8 +15,6 @@ from contextvars import ContextVar
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
-import yaml
-
 from dbt_charts.core.compile.errors import CompilationError, ReferenceError
 from dbt_charts.core.compile.markdown_blocks import image_urls
 from dbt_charts.core.compile.migrations.migrations import (
@@ -24,6 +22,7 @@ from dbt_charts.core.compile.migrations.migrations import (
     prepare_board_mapping,
 )
 from dbt_charts.core.compile.models.board.patch import BoardPatch
+from dbt_charts.core.compile.parse.parser import load_yaml_text
 from dbt_charts.core.diagnostics.codes_compile import ERR_FILE_SOURCE_AMBIGUOUS
 from dbt_charts.core.diagnostics.codes_render import ERR_IMAGE_REF_UNRESOLVED
 from dbt_charts.core.utils import IMAGE_SUFFIXES
@@ -341,11 +340,14 @@ def read_section(
     migrated = None if memo is None else memo.get(path.relpath)
     if migrated is None:
         try:
-            raw = path.read_yaml()
-        except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
+            text = path.read_text()
+        except (OSError, UnicodeDecodeError) as e:
             raise CompilationError(
                 f"{ref!r}: failed to load {path.relpath}: {e}"
             ) from e
+        raw = load_yaml_text(
+            text, source=f"{path.relpath} (the file {ref!r} resolved to)"
+        )
         if not isinstance(raw, dict):
             raise ReferenceError(
                 ref, f"{path.relpath!r} — not a YAML mapping", ref_path

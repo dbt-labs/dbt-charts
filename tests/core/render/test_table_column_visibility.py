@@ -20,7 +20,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style_and_context,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
-from dbt_charts.core.render.chart.table import render_table_svg
+
+from .._engine_render import render_table_svg
 
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 _BOARD_RENDER_STYLE = resolve_style(get_theme_style())

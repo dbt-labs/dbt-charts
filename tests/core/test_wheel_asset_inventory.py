@@ -25,10 +25,9 @@ pytestmark = pytest.mark.xdist_group("dbt_charts_wheel")
 # Each tuple: (wheel path, reason this asset must be in the wheel).
 # The reason is rendered in the failure message, so keep it specific.
 EXPECTED_ASSETS: list[tuple[str, str]] = [
-    # Peer packages — top-level packages alongside `dbt-charts/`, mapped in via
-    # cross-tree entries in `[tool.hatch.build.targets.wheel.force-include]`.
-    # Pinning each `__init__.py` catches a regression where the force-include
-    # map loses an entry.
+    # Peer packages — top-level packages alongside `dbt-charts/`, added by
+    # `dbt-charts/_build_backend.py`. Pinning each `__init__.py` catches a
+    # regression where the backend loses one.
     ("d3_format/__init__.py", "peer d3-format library"),
     ("mdsvg/__init__.py", "peer markdown-svg renderer"),
     # Fonts and license files. Render paths load these by absolute path at
@@ -212,20 +211,6 @@ EXPECTED_ASSETS: list[tuple[str, str]] = [
         "dbt_charts/core/defaults/palettes/tone/info.yml",
         "default informational callout tone palette",
     ),
-    # `dct docs <generated topic>` — the three generated references `_loader.py`
-    # reads at runtime; keep all three pinned together.
-    (
-        "dbt_charts/agent_api/docs/yaml-reference.md",
-        "YAML reference wheel copy; served by `dct docs reference` and MCP",
-    ),
-    (
-        "dbt_charts/agent_api/docs/error-reference.md",
-        "error reference wheel copy; served by `dct docs error-reference`",
-    ),
-    (
-        "dbt_charts/agent_api/docs/warning-reference.md",
-        "warning reference wheel copy; served by `dct docs warning-reference`",
-    ),
     # AI surface — the agent loop and MCP load these at runtime.
     (
         "dbt_charts/ai/skills/board-build/SKILL.md",
@@ -257,5 +242,5 @@ def test_wheel_bundles_expected_asset(
         f"missing bundled asset: {wheel_path!r}\n"
         f"why this asset must be in the wheel: {reason}\n"
         "If the drop was intentional, remove the entry from EXPECTED_ASSETS; "
-        "otherwise re-add it to pyproject.toml's wheel packages/force-include."
+        "otherwise restore it in pyproject.toml's `[tool.maturin]` or `_build_backend.py`."
     )

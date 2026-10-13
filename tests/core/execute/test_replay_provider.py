@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -13,7 +13,7 @@ from dbt_charts.core.execute.replay_provider import (
     VariableMismatchError,
 )
 
-_RECORDED_AT = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+_RECORDED_AT = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
 
 
 def _provider(**kwargs: object) -> ReplayDataProvider:

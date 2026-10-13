@@ -1,0 +1,5 @@
+kind: Fixes
+body: A field whose values are all pinned to distinct colors no longer fails with `ERR-CATEGORY-COLOR-PALETTE-EXHAUSTED` when it has more values than palette swatches.
+time: 2026-10-12T10:06:45.694542-07:00
+custom:
+    DbtChartsIssue: "65"

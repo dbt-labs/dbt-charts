@@ -3,7 +3,7 @@
 Field descriptions enable:
 - Better IDE autocomplete tooltips in JSON Schema
 - AI understanding of field semantics
-- Auto-generation of apps/docs/docs/reference/yaml-reference.md via `just gen-yaml-reference`
+- The generated YAML field reference (`dct docs reference` and the docs site)
 
 Design: denylist approach — assert all model fields have descriptions,
 with explicit exemptions for fields intentionally left bare (e.g., private/internal
@@ -167,7 +167,7 @@ class TestInputTypeDescriptions:
 class TestDescriptionContent:
     """Descriptions are the agent's reference and the design panel's help text.
 
-    Presence is not the bar. `yaml-reference.md` is generated from these strings
+    Presence is not the bar. The YAML field reference is rendered from these strings
     and served to the agent by the MCP server; Cloud's design panel renders the
     same strings as its group tooltips (`DesignProperty.description` is "Field
     help from the schema"). A description that restates the cascade contract

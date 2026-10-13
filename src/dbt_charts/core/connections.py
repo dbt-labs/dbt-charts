@@ -32,6 +32,7 @@ WarehouseProbeError's docstring for the str(exc)/.detail contract.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Collection
 from typing import TYPE_CHECKING, Any
 
 from dbt_charts._install_hint import install_hint
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
         ResolvedSourceConfig,
         SourceConfig,
     )
+    from dbt_charts.core.dialects.base import SQLDialect
     from dbt_charts.core.execute.adapters.base import RowFetchLimit
     from dbt_charts.core.inspect.bulk_schema import SchemaTree
     from dbt_charts.core.inspect.relations import Relation
@@ -551,6 +553,53 @@ def bulk_schema_for_config(source_config: SourceConfig) -> SchemaTree:
         ``execution.max_rows``/``DCT_MAX_ROWS_CEILING`` ceiling — a partial
         tree would silently under-count, so it raises instead.
     """
+    from dbt_charts.core.inspect.bulk_schema import parse_bulk_schema_rows
+
+    rows = _bulk_rows_for_config(
+        source_config,
+        lambda dialect, scope: dialect.bulk_schema_sql(scope),
+        label="bulk_schema_for_config",
+        unit="column",
+    )
+    return parse_bulk_schema_rows(rows)
+
+
+def bulk_tables_for_config(
+    source_config: SourceConfig, schemas: Collection[str]
+) -> dict[str, list[str]]:
+    """Return source_config's table names by schema from a single warehouse query.
+
+    The tables-only sibling of :func:`bulk_schema_for_config`: it reads the
+    ``TABLES`` metadata view instead of ``COLUMNS``, so a warehouse with
+    millions of columns still lists within the row ceiling. Only
+    ``schemas`` are listed (compared case-insensitively on a dialect that folds
+    identifier case); an empty collection lists nothing and runs no query. Same
+    scope rules and failure contract (``NotImplementedError`` for a dialect without a bulk form,
+    ``RuntimeError`` for a driver error or a truncated result).
+    """
+    from dbt_charts.core.inspect.bulk_schema import parse_bulk_table_rows
+
+    if not schemas:
+        return {}
+    names = sorted(schemas)
+
+    def build_sql(dialect: SQLDialect, scope: str) -> str:
+        return dialect.bulk_tables_sql(scope, names)
+
+    rows = _bulk_rows_for_config(
+        source_config, build_sql, label="bulk_tables_for_config", unit="table"
+    )
+    return parse_bulk_table_rows(rows)
+
+
+def _bulk_rows_for_config(
+    source_config: SourceConfig,
+    build_sql: Callable[[SQLDialect, str], str],
+    *,
+    label: str,
+    unit: str,
+) -> list[dict[str, Any]]:  # type-state: explicit_any — warehouse row values
+    """Run a whole-source metadata query for *source_config* and return its rows."""
     # Function-local like every other dbt_charts import in this module: keeping
     # the module itself leaf-light is what lets `dbt_charts.cli.main` import
     # without eagerly loading core.compile (pinned by test_lazy_imports).
@@ -564,28 +613,27 @@ def bulk_schema_for_config(source_config: SourceConfig) -> SchemaTree:
         open_connection,
     )
     from dbt_charts.core.execute.drivers import is_driver_source
-    from dbt_charts.core.inspect.bulk_schema import (
-        bulk_schema_scope,
-        parse_bulk_schema_rows,
-    )
+    from dbt_charts.core.inspect.bulk_schema import bulk_schema_scope
 
     creds = source_config.model_dump(
         by_alias=True, exclude_unset=True, exclude_none=True
     )
     source_type = str(creds.get("type"))
     dialect = get_dialect(source_type)
-    sql = dialect.bulk_schema_sql(bulk_schema_scope(source_type, creds))
+    sql = build_sql(dialect, bulk_schema_scope(source_type, creds))
 
     # Same execution.max_rows/DCT_MAX_ROWS_CEILING guard as the registry path:
     # bound the driver fetch where the cursor supports it, post-slice otherwise,
-    # and raise rather than return a silently partial tree.
+    # and raise rather than return a silently partial result.
     row_limit = resolve_effective_row_limit(None)
     driver_limit = (
         row_limit.fetch_limit if dialect.cursor_supports_driver_limit else None
     )
 
     if is_driver_source(source_config):
-        return _bulk_schema_via_driver(source_config, sql, source_type, row_limit)
+        return _bulk_rows_via_driver(
+            source_config, sql, source_type, row_limit, label, unit
+        )
 
     try:
         # No macro context: this runs plain metadata SQL on every connection
@@ -593,39 +641,38 @@ def bulk_schema_for_config(source_config: SourceConfig) -> SchemaTree:
         # keeps the adapter (and its warehouse session) alive until a gen-GC
         # sweep.
         adapter = build_adapter(creds, register_macros=False)
-        with open_connection(adapter, "bulk_schema_for_config"):
+        with open_connection(adapter, label):
             _response, table = adapter.execute(
                 sql, auto_begin=False, fetch=True, limit=driver_limit
             )
         rows, truncated_reason = apply_row_limit_truncation(list(table.rows), row_limit)
-        tree = parse_bulk_schema_rows(
-            dict(zip(table.column_names, row, strict=True)) for row in rows
-        )
+        result_rows = [dict(zip(table.column_names, row, strict=True)) for row in rows]
     except (
         Exception  # noqa: BLE001 — normalize driver errors to RuntimeError
     ) as e:
-        raise RuntimeError(f"bulk_schema_for_config query failed: {e}") from e
+        raise RuntimeError(f"{label} query failed: {e}") from e
     if truncated_reason is not None:
         raise RuntimeError(
-            f"bulk_schema_for_config query for {source_type!r} was truncated to "
-            f"{row_limit.effective_limit} rows by {truncated_reason!r} — schema "
-            "tree is incomplete. Raise execution.max_rows or "
-            "DCT_MAX_ROWS_CEILING above the source's column count to fix this."
+            f"{label} query for {source_type!r} was truncated to "
+            f"{row_limit.effective_limit} rows by {truncated_reason!r} — result "
+            f"is incomplete. Raise execution.max_rows or "
+            f"DCT_MAX_ROWS_CEILING above the source's {unit} count to fix this."
         )
-    return tree
+    return result_rows
 
 
-def _bulk_schema_via_driver(
+def _bulk_rows_via_driver(
     source_config: ResolvedSourceConfig,
     sql: str,
     source_type: str,
     row_limit: RowFetchLimit,
-) -> SchemaTree:
-    """The driver-source arm of :func:`bulk_schema_for_config`, with its contract."""
+    label: str,
+    unit: str,
+) -> list[dict[str, Any]]:  # type-state: explicit_any — warehouse row values
+    """The driver-source arm of :func:`_bulk_rows_for_config`, with its contract."""
     from dbt_charts.core.diagnostics.base import DbtChartsError
     from dbt_charts.core.execute.drivers import open_driver
     from dbt_charts.core.execute.result import arrow_to_query_result
-    from dbt_charts.core.inspect.bulk_schema import parse_bulk_schema_rows
 
     try:
         connection = open_driver(source_config, None)
@@ -634,21 +681,20 @@ def _bulk_schema_via_driver(
         finally:
             connection.close()
         result = arrow_to_query_result(table, row_limit)
-        tree = parse_bulk_schema_rows(result.data)
     except DbtChartsError:
         raise
     except (
         Exception  # noqa: BLE001 — normalize driver errors to RuntimeError
     ) as e:
-        raise RuntimeError(f"bulk_schema_for_config query failed: {e}") from e
+        raise RuntimeError(f"{label} query failed: {e}") from e
     if result.truncated_reason is not None:
         raise RuntimeError(
-            f"bulk_schema_for_config query for {source_type!r} was truncated to "
+            f"{label} query for {source_type!r} was truncated to "
             f"{row_limit.effective_limit} rows by {result.truncated_reason!r} — "
-            "schema tree is incomplete. Raise execution.max_rows or "
-            "DCT_MAX_ROWS_CEILING above the source's column count to fix this."
+            f"result is incomplete. Raise execution.max_rows or "
+            f"DCT_MAX_ROWS_CEILING above the source's {unit} count to fix this."
         )
-    return tree
+    return list(result.data)
 
 
 def probe_relation_readability(

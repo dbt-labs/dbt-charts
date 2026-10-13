@@ -263,11 +263,11 @@ class TestYAxisOrientation:
             y=["revenue", "cost"],
             style=LineChartStylePatch(
                 axis_y=AxisYStylePatch(
+                    labels=AxisLabelStylePatch(format="$,.0f"),
                     scale=BaseScaleStylePatch(
                         continuous=ScaleContinuousStylePatch(zero=False)
-                    )
+                    ),
                 ),
-                number_format="$,.0f",
             ),
         )
         data = [{"month": "Jan", "revenue": 100, "cost": 50}]
@@ -398,10 +398,10 @@ class TestAxisYLabelAlignInvasion:
             x="month",
             y="revenue",
             style=LineChartStylePatch(
-                number_format=",.0f",  # raw literal spec -- predictable "30,000" content
                 axis_y=AxisYStylePatch(
                     position="right",
-                    labels=AxisLabelStylePatch(align="right"),
+                    # raw literal spec -- predictable "30,000" content
+                    labels=AxisLabelStylePatch(align="right", format=",.0f"),
                 ),
             ),
         )
@@ -718,10 +718,9 @@ class TestAxisYLabelAlignInvasion:
             x="month",
             y="revenue",
             style=LineChartStylePatch(
-                number_format="percent_number",
                 axis_y=AxisYStylePatch(
                     position="right",
-                    labels=AxisLabelStylePatch(align="right"),
+                    labels=AxisLabelStylePatch(align="right", format="percent_number"),
                 ),
             ),
         )
@@ -1192,7 +1191,9 @@ class TestChartFormatApplied:
             "bar",
             x="month",
             y="revenue",
-            style=BarChartStylePatch(orientation="vertical", number_format="$,.0f"),
+            style=BarChartStylePatch(
+                orientation="vertical", axis_y={"labels": {"format": "$,.0f"}}
+            ),
         )
         data = [{"month": "Jan", "revenue": 1000}, {"month": "Feb", "revenue": 2000}]
         _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -1205,7 +1206,7 @@ class TestChartFormatApplied:
             x="month",
             y="revenue",
             style=BarChartStylePatch(
-                orientation="vertical", number_format="currency_full"
+                orientation="vertical", axis_y={"labels": {"format": "currency_full"}}
             ),
         )
         data = [{"month": "Jan", "revenue": 1000}, {"month": "Feb", "revenue": 2000}]
@@ -1218,7 +1219,7 @@ class TestChartFormatApplied:
             "line",
             x="date",
             y="revenue",
-            style=LineChartStylePatch(number_format="$,.0f"),
+            style=LineChartStylePatch(axis_y={"labels": {"format": "$,.0f"}}),
         )
         data = [
             {"date": "2024-01-01", "revenue": 1000},
@@ -1233,7 +1234,9 @@ class TestChartFormatApplied:
             "bar",
             x="month",
             y="revenue",
-            style=BarChartStylePatch(orientation="vertical", number_format="$,.0f"),
+            style=BarChartStylePatch(
+                orientation="vertical", axis_y={"labels": {"format": "$,.0f"}}
+            ),
         )
         data = [{"month": "Jan", "revenue": 1000}, {"month": "Feb", "revenue": 2000}]
         _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -1262,7 +1265,9 @@ class TestChartFormatApplied:
             "bar",
             x="month",
             y="rev",
-            style=BarChartStylePatch(orientation="vertical", number_format="revenue"),
+            style=BarChartStylePatch(
+                orientation="vertical", axis_y={"labels": {"format": "revenue"}}
+            ),
         )
         data = [{"month": "Jan", "rev": 1_500_000}]
         resolved_chart = resolve(chart, data, chart_style_context=resolved_ctx)
@@ -1307,7 +1312,9 @@ class TestChartFormatApplied:
             "bar",
             x="month",
             y="cnt",
-            style=BarChartStylePatch(orientation="vertical", number_format="myalias"),
+            style=BarChartStylePatch(
+                orientation="vertical", axis_y={"labels": {"format": "myalias"}}
+            ),
         )
         chart_none = make_chart(
             "bar",

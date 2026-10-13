@@ -333,7 +333,7 @@ class HeatmapEmitter:
             # like every other family — wire the resolved legend style through
             # like bar/line/scatter/pie do. VL renders its native continuous
             # gradient legend for a quantitative field with no extra code.
-            apply_color_legend(enc, chart.legend)
+            apply_color_legend(enc, chart.legend, color_format=chart.color_format)
             # A genuinely categorical color field (string values, e.g. a
             # heatmap using `color:` to name which category occupies each
             # cell rather than a quantitative measure) is board-bound like

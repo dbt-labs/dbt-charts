@@ -20,6 +20,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style_and_context,
 )
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
 _DATA = [{"month": "Jan", "rev": 100}]
@@ -727,7 +728,8 @@ class TestKpiStyleCascade:
         import dataclasses
 
         from dbt_charts.core.compile.models.primitives import FontStyle
-        from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         compiled = get_theme_style()
         resolved, ctx = resolve_style_and_context(compiled)
@@ -750,5 +752,5 @@ class TestKpiStyleCascade:
             }
         )
 
-        with pytest.raises(ValueError, match="value.font is unresolved"):
+        with pytest.raises(ChartDataError, match="value.font is unresolved"):
             render_kpi_svg(patched_chart, data, board_style=resolved)

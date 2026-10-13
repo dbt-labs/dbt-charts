@@ -34,7 +34,7 @@ Error occurs
 
 ## YAML Validation Errors
 
-{{#if_tool validate_board}}These come from `{{ s_validate_board }}`. {{/if_tool}}The error message tells you exactly what's wrong.
+These come from `{{ s_render_board }}`. The error message tells you exactly what's wrong.
 
 ### "must have at least one layout"
 
@@ -133,7 +133,7 @@ Use `options.static` for static values, not `options.values`.
 
 ## SQL Execution Errors
 
-These come from any of: {{#if_tool query_board}}`{{ s_query_board }}`, {{/if_tool}}`{{ s_execute_query }}`, `{{ s_render_board }}`.
+These come from any of: `{{ s_execute_query }}`, `{{ s_execute_named_query }}`, `{{ s_render_board }}`.
 
 ### "table does not exist"
 
@@ -202,9 +202,8 @@ covered by a pattern below.
 When stuck, work through this in order:
 
 1. **Read the full error** — not just the first line. The details matter.
-{{#if_tool validate_board}}1. **Validate the YAML** — `{{ s_validate_board }}` catches structural issues before SQL runs.
-{{/if_tool}}1. **Test one query at a time** — {{#if_tool query_board}}`{{ s_query_board }}` for saved board queries, {{/if_tool}}`{{ s_execute_query }}` for raw SQL.
-1. **Check column names** — INFORMATION_SCHEMA via `{{ s_execute_query }}`{{#if_tool describe_query}}, or `{{ s_describe_query }}` to verify{{/if_tool}}.
+1. **Test one query at a time** — `{{ s_execute_named_query }}` for saved board queries, `{{ s_execute_query }}` for raw SQL.
+1. **Check column names** — INFORMATION_SCHEMA via `{{ s_execute_query }}`.
 1. **Simplify** — Remove charts until you find the one that's broken.
 1. **Re-render** — Confirm the fix visually.
 

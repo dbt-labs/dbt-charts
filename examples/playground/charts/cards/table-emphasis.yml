@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Table Emphasis
 notes: 'Conditional formatting, background scales, colored text, and threshold
   alerts. Design evaluation surface for table emphasis — heatmap fills, diverging

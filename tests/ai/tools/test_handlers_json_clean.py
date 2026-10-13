@@ -27,7 +27,7 @@ from dbt_charts.ai.tools import TOOL_HANDLERS
 
 # Tools whose handlers require a live warehouse adapter to run meaningfully.
 # Covered by the E2E lane against fixture projects with real data.
-_WAREHOUSE_ONLY: frozenset[str] = frozenset({"execute_query", "query_board"})
+_WAREHOUSE_ONLY: frozenset[str] = frozenset({"execute_query"})
 
 
 def _handler_args() -> dict[str, dict[str, Any]]:
@@ -36,9 +36,7 @@ def _handler_args() -> dict[str, dict[str, Any]]:
     JSON-cleanliness of the dict, not success.
     """
     return {
-        "validate_board": {"path": "nonexistent.yml"},
         "render_board": {"path": "nonexistent.yml"},
-        "describe_query": {"sql": "SELECT 1"},
         "search_boards": {"query": "anything"},
         "docs": {"topic": "yaml"},
         "describe_board": {"path": "nonexistent.yml"},
@@ -55,7 +53,6 @@ def _handler_args() -> dict[str, dict[str, Any]]:
         "delete_file": {"path": "nonexistent.yml"},
         "list_skills": {},
         "get_skill": {"name": "kpi-row"},
-        "search_skills": {"query": "kpi"},
         "list_diagnostic_codes": {},
         "get_diagnostic_code": {"code": "WARN-REDUNDANT-ENCODING"},
     }

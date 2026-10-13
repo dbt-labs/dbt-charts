@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -59,9 +60,13 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     inject_axis_numeral_expr,
     measure_axis_to_vl,
 )
+from dbt_charts.core.render.numeral_expr import numeral_vega_expr, vl_format_key
 from dbt_charts.core.render.utils import normalize_data_types
 from dbt_charts.core.text.case import field_display_text
 from dbt_charts.core.text.format_d3 import is_time_format
+from dbt_charts.core.text.predefined_formats import VEGA_ARMS
+
+_VALUE_TEXT_FIELD = "__value_text"
 
 
 def _wide_scatter_fold(
@@ -131,7 +136,7 @@ def _emit_wide_scatter(
         y_enc["scale"] = y_scale
     fmt = chart.style.tooltip_format
     if fmt.spec:
-        y_enc["format"] = fmt.spec
+        y_enc.update(vl_format_key(fmt.spec))
 
     # wide.color's own encoding-level "title" is deliberately null -- any
     # non-null value here leaks into the legend's own swatch heading, since
@@ -156,12 +161,28 @@ def _emit_wide_scatter(
         "type": "quantitative",
         "title": xy.y_title,
     }
-    if fmt.spec:
+    transforms = list(wide.transforms)
+    if fmt.spec in VEGA_ARMS:
+        # No `format` key can name a native; its text is calculated instead.
+        transforms.append(
+            {
+                "calculate": numeral_vega_expr(
+                    f"datum[{json.dumps(wide.value_field)}]", fmt.spec
+                ),
+                "as": _VALUE_TEXT_FIELD,
+            }
+        )
+        value_tooltip = {
+            "field": _VALUE_TEXT_FIELD,
+            "type": "nominal",
+            "title": xy.y_title,
+        }
+    elif fmt.spec:
         value_tooltip["format"] = fmt.spec
     tooltip.append(value_tooltip)
     tooltip.append({"field": wide.label_field, "type": "nominal", "title": "Series"})
 
-    return y_enc, wide.color, tooltip, wide.transforms
+    return y_enc, wide.color, tooltip, transforms
 
 
 @dataclass
@@ -277,6 +298,7 @@ class ScatterEmitter:
                     "scatter",
                     domain_values=x_domain,
                     panel_fields=tuple(axis.field for axis in dataset.axes),
+                    x_date_range=None,
                 )
                 x_type, x_axis, x_time_unit = x_res.vl_type, x_res.axis, x_res.time_unit
             x_scale = emit_resolved_scale_vl(ax.scale, include_x_only=True)
@@ -379,7 +401,7 @@ class ScatterEmitter:
             # categorical y coerces its category strings to NaN in the tooltip.
             fmt = chart.style.tooltip_format
             if fmt.spec and y_type == "quantitative":
-                y_enc["format"] = fmt.spec
+                y_enc.update(vl_format_key(fmt.spec))
 
             encoding["y"] = y_enc
 
@@ -399,7 +421,7 @@ class ScatterEmitter:
                     else None
                 )
                 enc = channel_to_encoding(color_ch, data, title=color_title)
-                apply_color_legend(enc, chart.legend)
+                apply_color_legend(enc, chart.legend, color_format=chart.color_format)
                 # A bound field still owes every value its board slot's
                 # color — VL's own alphabetical default range would
                 # otherwise paint this chart from its own local position,

@@ -19,6 +19,7 @@ from pydantic import (
     ValidationError,
 )
 
+from dbt_charts.core.compile.models.markers import Color, FontFamily
 from dbt_charts.core.compile.schema.introspection import (
     AuthorableModel,
     AuthorableSchema,
@@ -56,6 +57,12 @@ class _Bounds(BaseModel):
 class _PatternArm(BaseModel):
     model_config = ConfigDict(extra="forbid")
     gap: float | Annotated[str, StringConstraints(pattern=r"^\d+px$")] | None = None
+
+
+class _Faceted(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    paint: Annotated[str | None, Color()] = None
+    family: Annotated[str | None, FontFamily()] = None
 
 
 class _Sized(BaseModel):
@@ -172,6 +179,20 @@ _CASES: list[tuple[type[BaseModel], dict[str, Any]]] = [
     (_PatternArm, {"gap": 4}),
     (_PatternArm, {"gap": "4px"}),
     (_PatternArm, {"gap": "4em"}),
+    (_Faceted, {"paint": "#abc"}),
+    (_Faceted, {"paint": "red"}),
+    (_Faceted, {"paint": "dbt-grays.surface"}),
+    (_Faceted, {"paint": "oklch(0.7 0.1 250)"}),
+    (_Faceted, {"paint": ""}),
+    (_Faceted, {"paint": None}),
+    (_Faceted, {"paint": "url(x.png)"}),
+    (_Faceted, {"paint": "linear-gradient(red, blue)"}),
+    (_Faceted, {"paint": "{{ x }}"}),
+    (_Faceted, {"paint": "red;}"}),
+    (_Faceted, {"family": "Roboto, sans-serif"}),
+    (_Faceted, {"family": "Source Serif 4, serif"}),
+    (_Faceted, {"family": "a;b"}),
+    (_Faceted, {"family": "a{b}"}),
     (_Sized, {"ids": ["a"]}),
     (_Sized, {"ids": []}),
     (_Sized, {"frozen_ids": ["a"]}),

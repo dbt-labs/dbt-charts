@@ -78,7 +78,7 @@ class TestOtherTypes:
         table = pa.table(
             {
                 "t": pa.array(
-                    [dt.datetime(2024, 1, 1, 12, 0, tzinfo=dt.timezone.utc)],
+                    [dt.datetime(2024, 1, 1, 12, 0, tzinfo=dt.UTC)],
                     pa.timestamp("us", tz="UTC"),
                 )
             }

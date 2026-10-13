@@ -727,22 +727,6 @@ def measure_text_precise(
 _SEAM_CHARS = frozenset("_/.-?&=:")
 
 
-def _find_seam_break(
-    token: str, max_width: float, measure: Callable[[str], float]
-) -> int | None:
-    """Return the index after the longest seam-char-terminated prefix that fits max_width.
-
-    Scans left-to-right collecting the last seam position whose prefix fits, so
-    the first acceptable position is always the longest one.  Returns None when
-    no seam-terminated prefix fits within max_width.
-    """
-    best: int | None = None
-    for i, ch in enumerate(token):
-        if ch in _SEAM_CHARS and i > 0 and measure(token[: i + 1]) <= max_width:
-            best = i + 1
-    return best
-
-
 def split_token_precise(
     token: str,
     max_width: float,
@@ -750,8 +734,10 @@ def split_token_precise(
 ) -> list[str]:
     """Split a long token into pieces that fit within max_width.
 
-    Tries seam characters first (``_/.-?&=:``) then falls back to a
-    binary-search character break for tokens with no seam that fits.
+    Breaks after the last seam character (``_/.-?&=:``) that fits on the line,
+    else after the last cluster that fits. Widths are summed per cluster
+    instead of re-measuring prefixes, so this assumes ``measure`` is additive
+    over emoji clusters (no kerning).
 
     Args:
         token: The token to split.
@@ -764,29 +750,23 @@ def split_token_precise(
         return [token]
 
     pieces: list[str] = []
-    remaining = token
-    while remaining:
-        if measure(remaining) <= max_width:
-            pieces.append(remaining)
-            break
-        seam_pos = _find_seam_break(remaining, max_width, measure)
-        if seam_pos is not None:
-            pieces.append(remaining[:seam_pos])
-            remaining = remaining[seam_pos:]
-        else:
-            # No seam fits — fall back to binary-search character break
-            lo, hi = 1, len(remaining)
-            best = 1
-            while lo <= hi:
-                mid = (lo + hi) // 2
-                candidate = remaining[:mid]
-                if measure(candidate) <= max_width:
-                    best = mid
-                    lo = mid + 1
-                else:
-                    hi = mid - 1
-            pieces.append(remaining[:best])
-            remaining = remaining[best:]
+    start = 0
+    width = 0.0
+    seam = 0
+    seam_width = 0.0
+    i = 0
+    while i < len(token):
+        step = _emoji_cluster_length(token, i) or 1
+        cluster_width = measure(token[i : i + step])
+        while width + cluster_width > max_width and i > start:
+            cut, cut_width = (seam, seam_width) if seam > start else (i, width)
+            pieces.append(token[start:cut])
+            start, width, seam = cut, width - cut_width, cut
+        width += cluster_width
+        i += step
+        if token[i - 1] in _SEAM_CHARS and i - start > 1:
+            seam, seam_width = i, width
+    pieces.append(token[start:])
     return pieces
 
 

@@ -1,8 +1,8 @@
 """CLI tests for the expanded dct query dispatch (D10).
 
 Covers every cell of the dispatch matrix:
-  board-query execute, board-query --validate, board-query --describe,
-  raw-SQL execute, raw-SQL --validate, raw-SQL --describe, --file variants,
+  board-query execute, board-query --validate, raw-SQL execute,
+  raw-SQL --validate, --file variants,
   and every error case pinned in the Dispatch rule section of the task worksheet.
 """
 
@@ -145,31 +145,6 @@ class TestNamedQueryValidate:
             ],
         )
         assert result.exit_code == 1
-
-
-# ---------------------------------------------------------------------------
-# Board-query --describe
-# ---------------------------------------------------------------------------
-
-
-class TestNamedQueryDescribe:
-    def test_named_query_describe_json(self, project_dir: Path) -> None:
-        result = runner.invoke(
-            app,
-            [
-                "query",
-                str(project_dir / "test.yaml"),
-                "revenue",
-                "--project-dir",
-                str(project_dir),
-                "--describe",
-                "--json",
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        data = json.loads(result.output)
-        assert data["success"] is True
-        assert data["columns"][0]["name"] == "amount"
 
 
 # ---------------------------------------------------------------------------
@@ -327,52 +302,6 @@ class TestRawSqlValidate:
 
 
 # ---------------------------------------------------------------------------
-# Raw-SQL --describe (formerly dct describe-query)
-# ---------------------------------------------------------------------------
-
-
-class TestRawSqlDescribe:
-    def test_describe_json_shape(self, project_dir: Path) -> None:
-        from dbt_charts.agent_api.describe_query import DescribeQueryResult
-
-        result = runner.invoke(
-            app,
-            [
-                "query",
-                "db",
-                "SELECT 1 AS x",
-                "--describe",
-                "--project-dir",
-                str(project_dir),
-                "--json",
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        data = json.loads(result.output)
-        parsed = DescribeQueryResult.model_validate(data)
-        assert parsed.success is True
-        assert parsed.columns is not None
-        assert parsed.columns[0].name == "x"
-
-    def test_describe_parse_error_exits_nonzero(self, project_dir: Path) -> None:
-        result = runner.invoke(
-            app,
-            [
-                "query",
-                "db",
-                "SELECT * FROM",
-                "--describe",
-                "--project-dir",
-                str(project_dir),
-                "--json",
-            ],
-        )
-        assert result.exit_code != 0
-        data = json.loads(result.output)
-        assert data["success"] is False
-
-
-# ---------------------------------------------------------------------------
 # --file flag
 # ---------------------------------------------------------------------------
 
@@ -395,27 +324,6 @@ class TestFileFlag:
             ],
         )
         assert result.exit_code == 0
-
-    def test_file_describe(self, tmp_path: Path, project_dir: Path) -> None:
-        sql_file = tmp_path / "q.sql"
-        sql_file.write_text("SELECT 2 AS y")
-        result = runner.invoke(
-            app,
-            [
-                "query",
-                "db",
-                "--file",
-                str(sql_file),
-                "--describe",
-                "--project-dir",
-                str(project_dir),
-                "--json",
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        data = json.loads(result.output)
-        assert data["success"] is True
-        assert data["columns"][0]["name"] == "y"
 
     def test_file_execute(self, tmp_path: Path, project_dir: Path) -> None:
         sql_file = tmp_path / "q.sql"
@@ -594,8 +502,8 @@ class TestDispatchErrors:
         assert parsed.success is False
         assert len(parsed.errors) > 0
 
-    def test_file_describe_nonexistent_exits_one(self, project_dir: Path) -> None:
-        """--file + --describe against a non-existent path exits 1."""
+    def test_file_validate_nonexistent_exits_one(self, project_dir: Path) -> None:
+        """--file + --validate against a non-existent path exits 1."""
         result = runner.invoke(
             app,
             [
@@ -603,7 +511,7 @@ class TestDispatchErrors:
                 "db",
                 "--file",
                 "/nonexistent/q.sql",
-                "--describe",
+                "--validate",
                 "--project-dir",
                 str(project_dir),
             ],
@@ -637,56 +545,6 @@ class TestDispatchErrors:
         for d in data:
             assert None not in d.values(), d
 
-    def test_validate_and_describe_error_path_json_envelope(
-        self, project_dir: Path
-    ) -> None:
-        # When both --validate and --describe are set, validate gate runs first.
-        # Error path: emits {"validate": [...diags...]} — one parseable JSON object.
-        result = runner.invoke(
-            app,
-            [
-                "query",
-                "db",
-                "SELECT * FROM a, b",
-                "--validate",
-                "--describe",
-                "--project-dir",
-                str(project_dir),
-                "--json",
-            ],
-        )
-        assert result.exit_code == 1
-        data = json.loads(result.output)  # must be one parseable document
-        assert isinstance(data, dict)
-        assert "validate" in data
-        assert any(d["code"] == "WARN-MISSING-JOIN-PREDICATE" for d in data["validate"])
-        assert "describe" not in data  # describe skipped on error
-
-    def test_validate_and_describe_success_path_json_envelope(
-        self, project_dir: Path
-    ) -> None:
-        # Success path: emits {"validate": [...], "describe": {...}} — one parseable JSON.
-        result = runner.invoke(
-            app,
-            [
-                "query",
-                "db",
-                "SELECT 1 AS n",
-                "--validate",
-                "--describe",
-                "--project-dir",
-                str(project_dir),
-                "--json",
-            ],
-        )
-        assert result.exit_code == 0
-        data = json.loads(result.output)  # must be one parseable document
-        assert isinstance(data, dict)
-        assert "validate" in data
-        assert "describe" in data
-        assert isinstance(data["validate"], list)
-        assert isinstance(data["describe"], dict)
-
 
 # ---------------------------------------------------------------------------
 # Help text — recipe block must be present. The multiline `help=` on the
@@ -711,7 +569,6 @@ class TestHelpText:
             "dct query SOURCE 'SQL'",
             "dct query BOARD.yml REFERENCE",
             "dct query SOURCE 'SQL' --validate",
-            "dct query BOARD.yml REFERENCE --describe",
         ):
             assert form in lines, (
                 f"Recipe form {form!r} not on its own line. Full output:\n{text}"

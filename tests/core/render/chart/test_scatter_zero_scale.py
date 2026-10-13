@@ -70,12 +70,15 @@ def test_ratio_far_from_zero_sets_explicit_zero_false():
     assert scale["domainMin"] < min(row["y"] for row in _FAR_RATIO_DATA)
 
 
-def test_headroom_zero_still_sets_zero_false_with_no_domain_bounds():
+def test_headroom_zero_sets_zero_false_and_pins_only_the_top_at_the_data_max():
     style = ScatterChartStylePatch.model_validate(
         {"axis_y": {"scale": {"headroom": 0}}}
     )
     spec = _spec(_FAR_RATIO_DATA, style=style)
-    assert spec["encoding"]["y"]["scale"] == {"zero": False}
+    assert spec["encoding"]["y"]["scale"] == {
+        "zero": False,
+        "domainMax": max(row["y"] for row in _FAR_RATIO_DATA),
+    }
 
 
 def test_authored_domain_still_sets_zero_false_alongside_domain():

@@ -37,7 +37,6 @@ from dbt_charts.core.compile.models.style.theme import (
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
     CartesianFamilyChart,
-    chart_authored_axis_format,
     declared_column_format,
 )
 
@@ -90,12 +89,10 @@ def _measure_tooltip_format(
     """Resolve the chart-authored measure (y-axis) tooltip format, if any.
 
     Precedence, strongest first: the chart's own axis_y labels.format → the
-    query's declared format for the y column(s) → chart_authored_axis_format
-    (style.number_format / chart.format). Returns None when none is set, so
-    callers fall back to the board default tooltip format themselves.
+    query's declared format for the y column(s). Returns None when neither is
+    set, so callers fall back to the board default tooltip format themselves.
     ``y_channel_type`` matters for scatter, whose y can be nominal (dot plot) —
-    chart_authored_axis_format returns None for non-quantitative/temporal
-    channels, so a nominal y takes only its own column format.
+    a nominal y takes no declared format.
     ``values`` is every value this chart's own y measure(s) will paint,
     passed to the sub-$1 vote.
     """
@@ -110,12 +107,9 @@ def _measure_tooltip_format(
         if y_channel_type in ("quantitative", "temporal")
         else None
     )
-    wide = chart_authored_axis_format(normalized, y_channel_type)
-    if local is None and wide is None and declared is None:
+    if local is None and declared is None:
         return None
-    return column_format(
-        "number", formats, local, board=wide, column=declared, values=values
-    )
+    return column_format("number", formats, local, column=declared, values=values)
 
 
 _ResolvedLabelsT = TypeVar("_ResolvedLabelsT", bound=BaseModel)

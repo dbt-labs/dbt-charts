@@ -313,12 +313,10 @@ class TestAggregateSourceReachedViaCteInternalJoin:
     *different* scope than the select under analysis — never the select's
     own JOIN clauses, even when that select is itself a CTE body.
 
-    ``_direct_join_sources`` runs both on the outer query (where a CTE's
-    internal join must be excluded) and, via lineage propagation, on each
-    CTE body itself (where that CTE's own joins must be *included*). A
-    whole-ancestor-chain check can't tell these apart — a join inside a CTE
-    body has that CTE as an ancestor either way. Only a scope-relative check
-    (is this join directly in the select being analyzed?) gets both right.
+    The source lookup runs both on the outer query (where a CTE's internal
+    join must be excluded) and, via lineage propagation, on each CTE body
+    itself (where that CTE's own joins must be *included*). Only a
+    scope-relative walk gets both right.
     """
 
     def test_aggregate_joined_into_dimension_cte_then_reaggregated(self) -> None:
@@ -672,3 +670,185 @@ class TestReaggregationCLI:
         )
         parsed = json.loads(result.output)
         assert any(d["code"] == "WARN-REAGGREGATION" for d in parsed)
+
+
+class TestDbtTemplatedReaggregation:
+    """The lineage reads ref()/source() and Jinja through the shared SQL front end."""
+
+    def test_ref_source_under_a_cte(self) -> None:
+        sql = """
+            WITH monthly AS (
+                SELECT region, SUM(amount) AS total
+                FROM {{ ref('orders') }}
+                GROUP BY region
+            )
+            SELECT AVG(total) FROM monthly
+        """
+        assert _has_reaggregation(validate_query(sql))
+
+    def test_import_cte_named_like_its_model(self) -> None:
+        """The CTE body's ref() is the model; only later reads see the CTE."""
+        sql = """
+            WITH orders AS (SELECT * FROM {{ ref('orders') }}),
+            monthly AS (
+                SELECT region, SUM(amount) AS total FROM orders GROUP BY region
+            )
+            SELECT AVG(total) FROM monthly
+        """
+        assert _has_reaggregation(validate_query(sql))
+
+    def test_ref_named_like_a_cte_is_the_model(self) -> None:
+        """`{{ ref('orders') }}` after `WITH orders` is the model, whose `total`
+        is no aggregate."""
+        sql = """
+            WITH orders AS (
+                SELECT region, SUM(amount) AS total FROM main.raw GROUP BY region
+            )
+            SELECT AVG(total) FROM {{ ref('orders') }}
+        """
+        assert not _has_reaggregation(validate_query(sql))
+
+    def test_if_block_inside_one_query(self) -> None:
+        sql = """
+            SELECT AVG(total) FROM (
+                SELECT region, SUM(amount) AS total FROM main.orders
+                {% if only_eu %} WHERE region = 'eu' {% endif %}
+                GROUP BY region
+            ) sub
+        """
+        assert _has_reaggregation(validate_query(sql))
+
+    def test_templated_table_name_does_not_leak_a_placeholder(self) -> None:
+        diags = validate_query("SELECT * FROM main.orders, main.events_{{ env }}")
+        assert diags
+        assert all("__dct" not in d.message for d in diags)
+
+
+class TestScopeBoundReaggregation:
+    """Names bind the way the engine binds them, or nothing is reported."""
+
+    def test_cte_referenced_in_another_case(self) -> None:
+        sql = """
+            WITH Monthly AS (
+                SELECT region, SUM(amount) AS total FROM main.orders GROUP BY region
+            )
+            SELECT AVG(total) FROM monthly
+        """
+        assert _has_reaggregation(validate_query(sql))
+
+    def test_qualified_column_of_a_base_table_does_not_inherit_a_cte_aggregate(
+        self,
+    ) -> None:
+        sql = """
+            WITH monthly AS (
+                SELECT region, SUM(amount) AS total FROM main.orders GROUP BY region
+            ), mid AS (
+                SELECT m.region, o.total
+                FROM monthly m JOIN main.other o ON o.region = m.region
+            )
+            SELECT AVG(total) FROM mid
+        """
+        assert not _has_reaggregation(validate_query(sql))
+
+    def test_name_used_twice_in_a_from_does_not_raise(self) -> None:
+        sql = "SELECT COUNT(*) FROM s1.t JOIN s2.t ON s1.t.id = s2.t.id"
+        assert not _has_reaggregation(validate_query(sql))
+        assert not _has_reaggregation(validate_query("SELECT * FROM t, t"))
+
+    def test_set_operation_cte_is_not_tracked(self) -> None:
+        sql = """
+            WITH u AS (
+                SELECT SUM(a) AS total FROM main.x
+                UNION ALL
+                SELECT SUM(b) AS total FROM main.y
+            )
+            SELECT AVG(total) FROM u
+        """
+        assert not _has_reaggregation(validate_query(sql))
+
+    def test_detail_names_the_cte_not_its_alias(self) -> None:
+        sql = """
+            WITH monthly AS (
+                SELECT region, SUM(amount) AS total FROM main.orders GROUP BY region
+            )
+            SELECT AVG(m.total) FROM monthly m
+        """
+        (diag,) = [d for d in validate_query(sql) if d.code == "WARN-REAGGREGATION"]
+        assert "in source 'monthly'" in (diag.detail or "")
+
+    def test_one_cte_under_two_aliases_reports_once(self) -> None:
+        sql = """
+            WITH monthly AS (
+                SELECT region, SUM(amount) AS total FROM main.orders GROUP BY region
+            )
+            SELECT AVG(a.total), AVG(b.total)
+            FROM monthly a JOIN monthly b ON a.region = b.region
+        """
+        diags = [d for d in validate_query(sql) if d.code == "WARN-REAGGREGATION"]
+        assert len({d.message for d in diags}) == len(diags) == 1
+
+    def test_deep_self_joining_cte_chain_is_fast(self) -> None:
+        ctes = [
+            "c0 AS (SELECT region, SUM(amount) AS total FROM main.o GROUP BY region)"
+        ]
+        ctes += [
+            f"c{i} AS (SELECT p.region, p.total FROM c{i - 1} p"
+            f" JOIN c{i - 1} q ON p.region = q.region)"
+            for i in range(1, 25)
+        ]
+        sql = f"WITH {', '.join(ctes)} SELECT AVG(total) FROM c24"
+        assert _has_reaggregation(validate_query(sql))
+
+
+class TestNonSelectStatements:
+    """Valid SQL that is not a lone SELECT has nothing to report."""
+
+    def test_no_diagnostics(self) -> None:
+        for sql in (
+            "DESCRIBE orders",
+            "PRAGMA table_info('t')",
+            "SHOW TABLES",
+            "VALUES (1, 2)",
+            "SELECT 1; SELECT 2",
+        ):
+            assert validate_query(sql) == [], sql
+
+    def test_real_parse_error_keeps_its_message(self) -> None:
+        (diag,) = validate_query("SELECT FROM WHERE")
+        assert diag.code == "WARN-PARSE-ERROR"
+        assert diag.message.startswith("SQL parse error: ")
+        assert "could not be parsed" not in diag.message
+
+
+class TestRefusalsAndMasking:
+    def test_unanalyzable_valid_sql_is_not_a_parse_error(self) -> None:
+        """sqlglot drops the inner WITH here; the query runs, so nothing is wrong."""
+        sql = "WITH a AS (SELECT 1 AS x) (WITH a AS (SELECT 2 AS x) SELECT x FROM a)"
+        assert validate_query(sql) == []
+
+    def test_templated_names_never_leak_into_any_diagnostic_text(self) -> None:
+        for sql in (
+            "SELECT * FROM (SELECT * FROM a) {{ al }}, b",
+            "SELECT * FROM {{ ref('orders') }}, {{ source('raw', 'events') }}",
+            "SELECT AVG(s) FROM (SELECT d, SUM(x) AS s FROM t GROUP BY d)"
+            " AS q_{{ env }}",
+            "SELECT strftime({{ ref('t') }}.d, '%Y-%m') AS month FROM x",
+        ):
+            diags = validate_query(
+                sql, dialect="duckdb", x_columns=frozenset({"month"})
+            )
+            for d in diags:
+                text = " ".join(
+                    [d.message, d.detail or "", d.recommendation or "", *d.evidence]
+                )
+                assert "__dct" not in text, (sql, text)
+
+    def test_ref_is_spelled_as_authored(self) -> None:
+        diags = validate_query("SELECT * FROM {{ ref('orders') }}, b")
+        assert any("{{ ref('orders') }}" in d.message for d in diags)
+
+
+def test_parse_error_message_never_leaks_a_placeholder() -> None:
+    (diag,) = validate_query("SELECT x FROM {{ ref('t') }} WHERE (")
+    assert diag.code == "WARN-PARSE-ERROR"
+    assert "__dct" not in diag.message

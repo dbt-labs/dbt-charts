@@ -76,91 +76,12 @@ _COLUMNS = [
 class TestColumnsNeverExceedAvailableWidth:
     """All auto-columns fit inside available_width regardless of column type."""
 
-    def test_12_mixed_columns_fit_in_600px(self):
-        """12 mixed columns (numeric, date, text) must fit in 600px tile."""
-        from dbt_charts.core.render.chart.table_support import (
-            calculate_column_layout,
-        )
-
-        col_configs = {}
-        available_width = 600.0
-        _, _, actual_content_width = calculate_column_layout(
-            _COLUMNS,
-            col_configs,
-            available_width,
-        )
-
-        assert actual_content_width <= available_width, (
-            f"actual_content_width={actual_content_width:.1f}px exceeds "
-            f"available_width={available_width:.1f}px — "
-            f"sacred-column overflow bug: numeric/date columns must squish "
-            f"to fit rather than widening the SVG past the tile boundary."
-        )
-
-    def test_all_columns_sum_to_available_width(self):
-        """Column widths sum to exactly available_width when no explicit widths."""
-        from dbt_charts.core.render.chart.table_support import (
-            calculate_column_layout,
-        )
-
-        col_configs = {}
-        available_width = 600.0
-        col_widths, _, actual_content_width = calculate_column_layout(
-            _COLUMNS,
-            col_configs,
-            available_width,
-        )
-
-        assert abs(actual_content_width - available_width) <= 0.5, (
-            f"With no explicit widths, columns should fill available_width exactly. "
-            f"actual_content_width={actual_content_width:.1f}px, "
-            f"available_width={available_width:.1f}px"
-        )
-        # All columns get equal share
-        expected_per_col = available_width / len(_COLUMNS)
-        for col in _COLUMNS:
-            assert abs(col_widths[col] - expected_per_col) <= 0.5, (
-                f"Column '{col}' got {col_widths[col]:.1f}px, "
-                f"expected equal share {expected_per_col:.1f}px"
-            )
-
-    def test_explicit_width_honored_remainder_distributed_equally(self):
-        """Explicit column widths are honored; remainder is distributed equally."""
-        from dbt_charts.core.compile.models.chart.authored import (
-            TableColumnConfig,
-        )
-        from dbt_charts.core.render.chart.table_support import calculate_column_layout
-
-        # "name" gets explicit 200px, other 3 columns share the remaining 400px
-        columns = ["name", "amount", "close_date", "stage"]
-        col_configs = {
-            "name": TableColumnConfig(width=200),
-        }
-        available_width = 800.0
-        col_widths, _, actual_content_width = calculate_column_layout(
-            columns,
-            col_configs,
-            available_width,
-        )
-
-        assert col_widths["name"] == 200.0, (
-            f"Explicit width for 'name' must be exactly 200px, got {col_widths['name']:.1f}px"
-        )
-        expected_auto = (available_width - 200.0) / 3  # 200px each
-        for col in ("amount", "close_date", "stage"):
-            assert abs(col_widths[col] - expected_auto) <= 0.5, (
-                f"Auto column '{col}' got {col_widths[col]:.1f}px, "
-                f"expected {expected_auto:.1f}px"
-            )
-        assert abs(actual_content_width - available_width) <= 0.5
-
     def test_svg_width_matches_tile_width(self):
         """SVG outer rect must not exceed available_width for many-column table."""
         from dbt_charts.core.compile.models.chart.normalized import TableChart
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = TableChart(
             id="overflow_test",

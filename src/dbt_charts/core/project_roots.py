@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Collection
 from pathlib import Path  # noqa: TID251 — walks disk to find the project root
 
 import yaml
@@ -81,7 +82,10 @@ def find_dct_root(start: Path | None = None) -> Path | None:
 
 
 def _has_render_project_config(path: Path) -> bool:
-    """Return True when dbt_charts.yml contains render-relevant project config."""
+    """Return True when *path* is a render root: a dbt project, or one holding a
+    dbt_charts.yml with render-relevant config."""
+    if (path / "dbt_project.yml").exists():
+        return True
     config_path = path / PROJECT_CONFIG_NAME
     if not config_path.exists():
         return False
@@ -100,8 +104,8 @@ def find_project_root(
 ) -> Path:
     """Walk upward from ``start_dir`` to find the project root for a render request.
 
-    The project root is the nearest ancestor that contains a non-serve-only
-    ``dbt_charts.yml``.
+    The project root is the nearest ancestor that contains a ``dbt_project.yml``
+    or a non-serve-only ``dbt_charts.yml``.
 
     If ``boundary`` is None, walks until the filesystem root. If set, stops after
     processing the ``boundary`` directory (inclusive).
@@ -244,6 +248,27 @@ def resolve_dbt_project_dir(project_dir: Path, explicit: Path | None) -> Path:
     return project_dir
 
 
+def parse_dbt_project_profile(text: str) -> str | None:
+    """Return the ``profile:`` named by dbt_project.yml *text*, else None.
+
+    None means the text is not a mapping or sets no ``profile:``.
+
+    Raises:
+        ValueError: The text cannot be parsed, or ``profile:`` is not a
+            non-empty string. The message omits the file name; callers add it.
+    """
+    try:
+        dbt_config = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"not valid YAML: {exc}") from exc
+    if not isinstance(dbt_config, dict) or "profile" not in dbt_config:
+        return None
+    profile_name = dbt_config["profile"]
+    if not isinstance(profile_name, str) or not profile_name:
+        raise ValueError(f"`profile:` must be a non-empty string, got {profile_name!r}")
+    return profile_name
+
+
 def read_dbt_project_profile(project_dir: Path) -> str | None:
     """Return the ``profile:`` named by ``project_dir/dbt_project.yml``, else None.
 
@@ -257,18 +282,46 @@ def read_dbt_project_profile(project_dir: Path) -> str | None:
     if not dbt_project_path.exists():
         return None
     try:
-        dbt_config = yaml.safe_load(dbt_project_path.read_text(encoding="utf-8"))
-    except (yaml.YAMLError, OSError, UnicodeDecodeError) as exc:
+        return parse_dbt_project_profile(dbt_project_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
         raise ValueError(f"Cannot read {dbt_project_path}: {exc}") from exc
-    if not isinstance(dbt_config, dict) or "profile" not in dbt_config:
+
+
+def implicit_dbt_source(
+    declared_sources: Collection[str], dbt_project_yaml: str | None
+) -> tuple[str, dict[str, str]] | None:
+    """The one source a dbt project gets when it declares none, else None.
+
+    *declared_sources* are the names the project declares. The source is named
+    after the ``profile:`` in *dbt_project_yaml* and shaped ``{type: dbt_profile}``.
+    Declaring any source switches it off, so sourceless SQL keeps raising
+    ERR-SOURCE-NOT-NAMED where the author stated their sources. A
+    dbt_project.yml without a ``profile:`` (a dbt package) offers nothing to
+    name. Takes text, not a path, so Cloud — which reads dbt_project.yml from
+    git, not disk — asks the same question.
+
+    Raises:
+        CompilationError: ERR-SOURCE-CONFIG-INVALID when *dbt_project_yaml*
+            cannot be parsed or names a non-string profile.
+    """
+    if declared_sources or dbt_project_yaml is None:
         return None
-    profile_name = dbt_config["profile"]
-    if not isinstance(profile_name, str) or not profile_name:
-        raise ValueError(
-            f"{dbt_project_path}: `profile:` must be a non-empty string, "
-            f"got {profile_name!r}"
+    try:
+        profile = parse_dbt_project_profile(dbt_project_yaml)
+    except ValueError as exc:
+        # Lazy: the compile package is heavy; `dct` startup imports this module.
+        from dbt_charts.core.compile.errors import CompilationError
+        from dbt_charts.core.diagnostics.codes_compile import (
+            ERR_SOURCE_CONFIG_INVALID,
         )
-    return profile_name
+
+        raise CompilationError.from_code(
+            ERR_SOURCE_CONFIG_INVALID,
+            source_name="sources",
+            filename="dbt_project.yml",
+            detail=str(exc),
+        ) from exc
+    return None if profile is None else (profile, {"type": "dbt_profile"})
 
 
 def resolve_dbt_profile_name(explicit: str | None, project_dir: Path | None) -> str:

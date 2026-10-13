@@ -59,7 +59,8 @@ def _render_with_summary(make_chart, width: int = 600) -> str:
     """Render a table with a summary row, header fill, stripes, and summary rule."""
 
     from dbt_charts.core.compile.models.style.theme import TableRowStripeStyle
-    from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+
+    from ._engine_render import render_table_svg
 
     es = resolve_chart_style_context(get_theme_style())
     tc = es.table
@@ -89,7 +90,7 @@ def _render_with_summary(make_chart, width: int = 600) -> str:
         {"label": "Beta", "amount": 200, "kind": "data"},
         {"label": "Total", "amount": 300, "kind": "summary"},
     ]
-    chart = resolve(chart, [], chart_style_context=custom_ctx)
+    chart = resolve(chart, data, chart_style_context=custom_ctx)
     return render_table_svg(
         chart,
         data,
@@ -178,9 +179,8 @@ class TestContentEdgeAlignment:
         """
 
         from dbt_charts.core.compile.models.style.theme import TableRowStripeStyle
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         es = resolve_chart_style_context(get_theme_style())
         tc = es.table
@@ -209,7 +209,7 @@ class TestContentEdgeAlignment:
             {"label": "Gamma", "amount": 0.0},
             {"label": "Delta", "amount": -50.0},
         ]
-        chart = resolve(chart, [], chart_style_context=custom_ctx)
+        chart = resolve(chart, data, chart_style_context=custom_ctx)
         svg = render_table_svg(
             chart,
             data,
@@ -240,9 +240,7 @@ class TestContentEdgeAlignment:
         the rule right edge.
         """
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         es = resolve_chart_style_context(get_theme_style())
         tc = es.table
@@ -272,7 +270,7 @@ class TestContentEdgeAlignment:
             {"label": "X", "amount": 10},
             {"label": "Y", "amount": 20},
         ]
-        chart = resolve(chart, [], chart_style_context=custom_ctx)
+        chart = resolve(chart, data, chart_style_context=custom_ctx)
         svg = render_table_svg(
             chart,
             data,
@@ -324,9 +322,7 @@ class TestEdgeToEdgeFills:
         This test fails under old code.
         """
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         padding_x, cell_pad = self._padding_x_and_cell_pad()
         es = resolve_chart_style_context(get_theme_style())
@@ -349,7 +345,7 @@ class TestEdgeToEdgeFills:
             {"label": "Alpha", "amount": 100},
             {"label": "Beta", "amount": 200},
         ]
-        chart = resolve(chart, [], chart_style_context=custom_ctx)
+        chart = resolve(chart, data, chart_style_context=custom_ctx)
         svg = render_table_svg(
             chart,
             data,
@@ -373,9 +369,8 @@ class TestEdgeToEdgeFills:
         """Stripe left edge equals padding_x — no cell_pad inset."""
 
         from dbt_charts.core.compile.models.style.theme import TableRowStripeStyle
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         padding_x, cell_pad = self._padding_x_and_cell_pad()
         es = resolve_chart_style_context(get_theme_style())
@@ -400,7 +395,7 @@ class TestEdgeToEdgeFills:
             {"label": "Alpha", "amount": 100},
             {"label": "Beta", "amount": 200},
         ]
-        chart = resolve(chart, [], chart_style_context=custom_ctx)
+        chart = resolve(chart, data, chart_style_context=custom_ctx)
         svg = render_table_svg(
             chart,
             data,
@@ -426,9 +421,7 @@ class TestEdgeToEdgeFills:
         were inset by cell_pad while static fills were edge-to-edge — they
         differed by exactly cell_pad px. This test catches that regression.
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         # Render with a scale fill on a single column (x=None, y=None avoids
         # auto-injected x_field/y_field columns shifting offsets).
@@ -455,7 +448,7 @@ class TestEdgeToEdgeFills:
             {"score": 100},
             {"score": 0},
         ]  # row 0 = max → full red; row 1 = min → white
-        chart_scale = resolve(chart_scale, [], chart_style_context=_CTX)
+        chart_scale = resolve(chart_scale, data, chart_style_context=_CTX)
         svg_scale = render_table_svg(
             chart_scale,
             data,
@@ -483,7 +476,7 @@ class TestEdgeToEdgeFills:
                 }
             },
         )
-        chart_static = resolve(chart_static, [], chart_style_context=_CTX)
+        chart_static = resolve(chart_static, data, chart_style_context=_CTX)
         svg_static = render_table_svg(
             chart_static,
             data,
@@ -512,9 +505,7 @@ class TestEdgeToEdgeFills:
     def test_role_bg_starts_at_padding_x_not_inset(self, make_chart):
         """Per-role row background left edge equals padding_x — no cell_pad inset."""
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         padding_x, cell_pad = self._padding_x_and_cell_pad()
         es = resolve_chart_style_context(get_theme_style())
@@ -550,7 +541,7 @@ class TestEdgeToEdgeFills:
             {"label": "Alpha", "amount": 100, "kind": "data"},
             {"label": "Total", "amount": 100, "kind": "summary"},
         ]
-        chart = resolve(chart, [], chart_style_context=custom_ctx)
+        chart = resolve(chart, data, chart_style_context=custom_ctx)
         svg = render_table_svg(
             chart,
             data,

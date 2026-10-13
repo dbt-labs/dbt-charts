@@ -26,6 +26,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     HeatmapChart,
     PieChart,
 )
+from dbt_charts.core.compile.models.style.authored import PieChartStylePatch
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
@@ -172,6 +173,7 @@ def test_pie_with_total_no_duplicate_theta_in_aria_label():
         theta="user_count",
         color="plan",
         total=ChartTotal(),
+        style=PieChartStylePatch.model_validate({"inner_radius": 0.6}),
     )
     _rc = resolve(chart, _PIE_DATA, chart_style_context=_BOARD_STYLE)
     spec = generate_vega_lite_spec(chart, _PIE_DATA, width=400)
@@ -192,6 +194,7 @@ def test_pie_with_total_measure_formatted_in_aria_label():
         theta="user_count",
         color="plan",
         total=ChartTotal(),
+        style=PieChartStylePatch.model_validate({"inner_radius": 0.6}),
     )
     _rc = resolve(chart, _PIE_DATA, chart_style_context=_BOARD_STYLE)
     spec = generate_vega_lite_spec(chart, _PIE_DATA, width=400)

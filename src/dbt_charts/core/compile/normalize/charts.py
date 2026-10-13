@@ -573,8 +573,7 @@ def _build_cartesian(
 
     Only called for cartesian-family chart types (bar/histogram/line/area/
     scatter/heatmap), so authored_style — when set — is guaranteed to be a
-    cartesian style patch carrying aspect_ratio/min_height/max_height/
-    number_format/axis_y.
+    cartesian style patch carrying aspect_ratio/min_height/max_height/axis_y.
     """
     multiples = authored.multiples
     if (
@@ -593,9 +592,7 @@ def _build_cartesian(
         aspect_ratio = authored_style.aspect_ratio
         promo_min_height = authored_style.min_height
         promo_max_height = authored_style.max_height
-        if authored_style.number_format:
-            measure_format = authored_style.number_format
-        elif (
+        if (
             authored_style.axis_y is not None
             and authored_style.axis_y.labels is not None
             and authored_style.axis_y.labels.format

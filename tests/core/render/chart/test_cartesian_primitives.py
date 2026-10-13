@@ -105,6 +105,7 @@ def test_resolve_cartesian_x_returns_named_fields() -> None:
         chart_id="c1",
         mark_type="line",
         panel_fields=(),
+        x_date_range=None,
     )
     assert isinstance(result, CartesianXResolution)
     assert result.vl_type
@@ -385,7 +386,9 @@ class TestPinNormalizeAxisFormat:
         assert "labelExpr" in ay_vl
         pin_normalize_axis_format(ay_vl, ay)
         assert "labelExpr" not in ay_vl
-        assert ay_vl["format"] == PREDEFINED_SPECS[PredefinedNumberFormat.percent_whole]
+        assert (
+            ay_vl["format"] == PREDEFINED_SPECS[PredefinedNumberFormat.percent_whole].d3
+        )
 
     def test_keeps_an_authored_label_expr(self) -> None:
         """The pre-existing contract: an author's own `axis_y.labels.expr`
@@ -405,4 +408,6 @@ class TestPinNormalizeAxisFormat:
         ay_vl: dict[str, object] = {}
         pin_normalize_axis_format(ay_vl, ay)
         assert "labelExpr" not in ay_vl
-        assert ay_vl["format"] == PREDEFINED_SPECS[PredefinedNumberFormat.percent_whole]
+        assert (
+            ay_vl["format"] == PREDEFINED_SPECS[PredefinedNumberFormat.percent_whole].d3
+        )

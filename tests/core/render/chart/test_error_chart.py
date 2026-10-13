@@ -29,9 +29,9 @@ from dbt_charts.core.compile.resolve.style.palette import color as resolve_palet
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.project import Project
-from dbt_charts.core.render.chart.callout import render_callout_svg
 from dbt_charts.core.render.chart.rendering import render_chart_item
 from dbt_charts.core.render.chart.vega_lite import render_chart
+from dbt_charts.core.render.engine import render_callout_card
 from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
 from dbt_charts.core.render.svg_utils import extract_svg_dimensions
 
@@ -127,36 +127,14 @@ def test_explicit_callout_chart_renders_wrapped_message(make_chart) -> None:
     assert extract_svg_dimensions(svg).height > 60
 
 
-def test_explicit_callout_chart_raises_when_font_measurer_is_unavailable() -> None:
-    from dbt_charts.core import font_measure
-
-    original = font_measure._load_measurer
-    font_measure._load_measurer = lambda _font_path: (_ for _ in ()).throw(
-        RuntimeError("boom")
-    )
-    try:
-        with pytest.raises(RuntimeError, match="boom"):
-            render_callout_svg(
-                title="Explicit callout chart: long sentence should wrap across several lines",
-                message="Short message",
-                width=574,
-                callout_style=resolve_style(
-                    get_theme_style()
-                ).chart_defaults.callout_error,
-                base_dir=None,
-            )
-    finally:
-        font_measure._load_measurer = original
-
-
 def test_explicit_callout_chart_title_uses_full_width_budget() -> None:
     title = "Explicit callout chart: long sentence should wrap across several lines"
-    svg = render_callout_svg(
+    svg = render_callout_card(
         title=title,
         message="Short message",
         width=574,
-        callout_style=resolve_style(get_theme_style()).chart_defaults.callout_error,
-        base_dir=None,
+        style=resolve_style(get_theme_style()).chart_defaults.callout_error,
+        chart_id="callout",
     )
 
     assert f">{title}</text>" in svg
@@ -170,12 +148,12 @@ def test_explicit_callout_chart_message_does_not_emit_overflowing_line() -> None
         "multi-column layout, even when the sentence is long enough to force a more "
         "obvious wrap pattern than a short status message would."
     )
-    svg = render_callout_svg(
+    svg = render_callout_card(
         title="Explicit callout chart: long sentence should wrap across several lines",
         message=message,
         width=574,
-        callout_style=resolve_style(get_theme_style()).chart_defaults.callout_error,
-        base_dir=None,
+        style=resolve_style(get_theme_style()).chart_defaults.callout_error,
+        chart_id="callout",
     )
 
     # Message must be split into multiple <text> elements (wrapped), not emitted
@@ -297,7 +275,7 @@ rows:
     item = sized_board.layout.items[0]
 
     # Render without a title to match the YAML chart (which has no title:).
-    rendered = render_callout_svg(
+    rendered = render_callout_card(
         message=(
             "The renderer should use as much of the visible card width as it safely can, "
             "while still keeping the error block readable and visually balanced inside a "
@@ -305,8 +283,8 @@ rows:
             "obvious wrap pattern than a short status message would."
         ),
         width=item.width,
-        callout_style=board.chart_style_context.callout_error,
-        base_dir=None,
+        style=board.chart_style_context.callout_error,
+        chart_id="callout",
     )
 
     assert item.height == pytest.approx(extract_svg_dimensions(rendered).height)
@@ -448,8 +426,8 @@ def test_chart_patch_callout_requires_message() -> None:
         CalloutChart.model_validate({"type": "callout"})
 
 
-def test_render_callout_svg_reads_structural_style_from_charts_callout() -> None:
-    """render_callout_svg uses style.charts.callout for structural properties (font, padding)."""
+def test_callout_card_reads_structural_style_from_charts_callout() -> None:
+    """render_callout_card uses style.charts.callout for structural properties (font, padding)."""
     base = get_theme_style()
     seed = base.model_copy(
         update={
@@ -465,21 +443,67 @@ def test_render_callout_svg_reads_structural_style_from_charts_callout() -> None
     resolved = resolve_style(seed)
 
     default_resolved = resolve_style(get_theme_style())
-    svg_custom = render_callout_svg(
+    svg_custom = render_callout_card(
         title="Migration test",
         message="structural style must come from charts.callout",
         width=300,
-        callout_style=resolved.chart_defaults.callout_error,
-        base_dir=None,
+        style=resolved.chart_defaults.callout_error,
+        chart_id="callout",
     )
-    svg_default = render_callout_svg(
+    svg_default = render_callout_card(
         title="Migration test",
         message="structural style must come from charts.callout",
         width=300,
-        callout_style=default_resolved.chart_defaults.callout_error,
-        base_dir=None,
+        style=default_resolved.chart_defaults.callout_error,
+        chart_id="callout",
     )
     assert (
         extract_svg_dimensions(svg_custom).height
         > extract_svg_dimensions(svg_default).height
     )
+
+
+def test_vl_chart_error_tile_renders_through_engine_with_code_hint_and_doc_link(
+    make_chart, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dbt_charts import _engine
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError
+    from dbt_charts.core.diagnostics.codes_execute import ERR_DBT_MODEL_COLUMN_MISSING
+
+    engine_calls: list[str] = []
+    real_render = _engine.render_chart
+
+    def spy(payload: str) -> tuple[str, list[dict[str, object]], float | None]:
+        engine_calls.append(payload)
+        return real_render(payload)
+
+    monkeypatch.setattr(_engine, "render_chart", spy)
+    chart = make_chart("bar", x="region", y="revenue")
+    executor = MagicMock(spec=Executor)
+    executor.execute_query.side_effect = ChartDataError.from_code(
+        ERR_DBT_MODEL_COLUMN_MISSING,
+        query_name="q",
+        column_name="revenu",
+        model="orders",
+        available=["revenue", "region"],
+    )
+    rs, ctx = resolve_style_and_context(get_theme_style())
+
+    svg, _ = render_chart_item(
+        resolve(chart, [], chart_style_context=ctx),
+        executor,
+        variables={},
+        available_width=400,
+        available_height=300,
+        resolved_style=rs,
+        render_cache={},
+    )
+
+    assert len(engine_calls) == 1
+    assert "ERR-DBT-MODEL-COLUMN-MISSING" in svg
+    assert "Did you mean" in svg
+    assert (
+        "https://docs.dbtcharts.com/reference/errors/#err-dbt-model-column-missing"
+        in svg
+    )
+    assert "See the docs" in svg

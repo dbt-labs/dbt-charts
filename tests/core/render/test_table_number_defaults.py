@@ -26,16 +26,12 @@ _FORMATS = {"mine": ",.2f"}
 class TestUnformattedNumericDefault:
     def test_float_no_format_uses_si_default(self) -> None:
         # Was "452,342,060.87" (hardcoded ,.2f); now the predefined SI default.
-        assert (
-            format_table_cell_value(452342060.8737367, None, _FORMATS) == "452\u00a0M"
-        )
+        assert format_table_cell_value(452342060.8737367, None, _FORMATS) == "452M"
 
     def test_numeric_string_no_format_uses_si_default(self) -> None:
         # The str(value) passthrough bug: a numeric string with no column format
         # previously rendered at full precision. Now coerced + SI-formatted.
-        assert (
-            format_table_cell_value("452342060.8737367", None, _FORMATS) == "452\u00a0M"
-        )
+        assert format_table_cell_value("452342060.8737367", None, _FORMATS) == "452M"
 
     def test_fraction_default(self) -> None:
         assert format_table_cell_value(0.67109416775821, None, _FORMATS) == "0.67"
@@ -71,8 +67,8 @@ class TestUnformattedNumericDefault:
 
     def test_number_works_without_formats_dict(self) -> None:
         # "number" is predefined — no formats dict needed.
-        assert format_table_cell_value(452342060.0, None, None) == "452\u00a0M"
-        assert format_table_cell_value(452342060.0, None, {}) == "452\u00a0M"
+        assert format_table_cell_value(452342060.0, None, None) == "452M"
+        assert format_table_cell_value(452342060.0, None, {}) == "452M"
 
     def test_non_numeric_string_untouched(self) -> None:
         assert format_table_cell_value("Marketing", None, _FORMATS) == "Marketing"
@@ -87,4 +83,4 @@ class TestThemeCascadeSuppliesDefault:
         # "number" is predefined; themes need not include it in formats.
         # Stark has no formats dict but numeric defaults still work.
         assert get_theme_style("stark").formats is None
-        assert format_table_cell_value(452342060.0, None, None) == "452\u00a0M"
+        assert format_table_cell_value(452342060.0, None, None) == "452M"

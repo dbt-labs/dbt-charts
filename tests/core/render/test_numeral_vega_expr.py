@@ -23,13 +23,17 @@ from typing import get_args
 import pytest
 import vl_convert as vlc
 
-from dbt_charts.core.compile.models.primitives import NumberLocale, Regional
+from dbt_charts.core.compile.models.primitives import (
+    NumberLocale,
+    Regional,
+    RegionalLocale,
+)
 from dbt_charts.core.diagnostics.codes_render import ERR_NUMERAL_EXPR_EMPTY_SPEC
 from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.numeral_expr import Notation, numeral_vega_expr
 from dbt_charts.core.text.format_d3 import (
     format_d3,
-    number_locale_scope,
+    regional_scope,
     round_aware_spec,
 )
 
@@ -92,7 +96,10 @@ _LETTER_WORDS = NumberLocale.model_validate(
 @pytest.mark.parametrize("value", _TIER_VALUES)
 @pytest.mark.parametrize("notation", _NOTATIONS)
 def test_locale_words_match_format_d3(value: float, notation: Notation) -> None:
-    with number_locale_scope(Regional(locale=_LETTER_WORDS).format_locale):
+    regional = Regional(locale=RegionalLocale(number=_LETTER_WORDS))
+    with regional_scope(
+        regional.format_locale, regional.time_locale, regional.week_start
+    ):
         expr = numeral_vega_expr("datum.value", _SI_SPEC, notation=notation)
         expected = format_d3(value, _SI_SPEC, notation=notation)
     assert _render_via_vega(value, expr) == expected

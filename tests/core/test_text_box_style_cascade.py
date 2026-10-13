@@ -666,7 +666,7 @@ class TestBoldFontWeightCascade:
 
     def test_resolved_callout_bold_font_weight_from_theme_token(self) -> None:
         """ResolvedCalloutStyle.bold_font_weight is baked from text.bold.weight
-        at resolve time -- render/chart/callout.py builds its own mdsvg.Style
+        at resolve time -- the engine builds its own mdsvg.Style
         rather than going through get_compact_style(), so this is the one
         place that would silently miss the field if resolution ever dropped
         it."""

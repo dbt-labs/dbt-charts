@@ -43,7 +43,8 @@ def _styles() -> tuple[Any, Any]:
 
 def _render(chart_def: dict[str, Any]) -> str:
     from dbt_charts.core.compile.normalize.charts import normalize_chart
-    from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+    from ..._engine_render import render_kpi_svg
 
     board_rs, board_ctx = _styles()
     flat = normalize_chart("chart1", chart_def, _QUERY_REGISTRY, sources={})
@@ -69,7 +70,7 @@ def _text_x_values(svg: str) -> list[float]:
     """`x` of every positioned `<text>`/`<tspan>`, in document order.
 
     Includes `tspan` because multi-line labels carry their own absolute `x`
-    per line (`kpi.py` label-line emission) — a `text`-only pattern is blind
+    per line (the card's label-line emission) — a `text`-only pattern is blind
     to them, so a mis-placed second label line would assert nothing.
     """
     return [float(m) for m in re.findall(r'<(?:text|tspan) x="([^"]+)"', svg)]
@@ -157,7 +158,8 @@ def test_align_never_places_a_run_left_of_the_content_box(
     goes negative. This pins the edge instead.
     """
     from dbt_charts.core.compile.normalize.charts import normalize_chart
-    from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+    from ..._engine_render import render_kpi_svg
 
     rows = [{"revenue": 1_234_567_890, "delta": 0.12}]
     registry = {"q": ValuesQuery(rows=rows)}
@@ -190,7 +192,8 @@ def test_inline_bare_value_overflow_is_clamped(align: str) -> None:
     support cannot fall back, so it is the one shape that reaches it.
     """
     from dbt_charts.core.compile.normalize.charts import normalize_chart
-    from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+    from ..._engine_render import render_kpi_svg
 
     rows = [{"revenue": 1_234_567_890, "delta": 0.12}]
     registry = {"q": ValuesQuery(rows=rows)}
@@ -232,7 +235,8 @@ def test_align_is_all_or_nothing_across_the_card(align: str) -> None:
     choice, so the card must be internally consistent either way.
     """
     from dbt_charts.core.compile.normalize.charts import normalize_chart
-    from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+    from ..._engine_render import render_kpi_svg
 
     rows = [{"revenue": 7, "delta": 0.12}]
     registry = {"q": ValuesQuery(rows=rows)}

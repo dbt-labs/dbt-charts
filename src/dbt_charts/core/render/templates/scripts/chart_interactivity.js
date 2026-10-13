@@ -143,7 +143,7 @@
 
     /*{# Row cap for the x-unified bubble (grouped bar / stacked bar / aligned #}*/
     /*{# multi-series line): shows at most MAX_XUNIFIED_ROWS - 1 individual rows #}*/
-    /*{# plus one "+N more" remainder row (MAX_XUNIFIED_ROWS lines total). #}*/
+    /*{# plus one "+N" remainder row (MAX_XUNIFIED_ROWS lines total). #}*/
     const MAX_XUNIFIED_ROWS = 8;
     /*{# Past this many exact-identity matches the bubble would be unreadably #}*/
     /*{# tall -- fall back to the single-mark tooltip instead of expanding. #}*/
@@ -343,7 +343,7 @@
     }
 
     /*{# Splits matches into the rows to render individually and the rows to #}*/
-    /*{# fold into a "+N more" remainder -- always keeping the hovered mark's #}*/
+    /*{# fold into a "+N" remainder -- always keeping the hovered mark's #}*/
     /*{# own row visible, even when it would otherwise fall past the cap. #}*/
     function buildRowPlan(matches, hoveredMark) {
         if (matches.length <= MAX_XUNIFIED_ROWS) {
@@ -1231,17 +1231,17 @@
         return swatchCell + nameCell + pctCell + valueCell;
     }
 
-    /*{# "+N more" overflow row for the series folded out of view. It carries NO #}*/
+    /*{# "+N" overflow row for the series folded out of view. It carries NO #}*/
     /*{# value: the hidden rows are never summed here. Summing them client-side #}*/
     /*{# would fabricate a total for mixed-unit/combo families the emit layer never #}*/
     /*{# gated a total for -- the same no-fabrication rule the footer total follows #}*/
     /*{# via findTotalEntry -- and would be lossy regardless, since each row's value #}*/
     /*{# is an already-formatted display string (grouping separators and all). #}*/
     /*{# When a real group total exists it is shown by the footer total row below. #}*/
-    /*{# Fits the same grid as the data rows: name-column "+N more", value blank. #}*/
+    /*{# Fits the same grid as the data rows: name-column "+N", value blank. #}*/
     function xUnifiedRemainderRow(remainder, ts, hasPercent) {
         const swatchCell = xUnifiedCell('', '', '', true, false);
-        const nameCell = xUnifiedCell('+' + remainder.length + ' more', 'font-style:italic;color:' + ts.label.font.color + ';', '', false, false);
+        const nameCell = xUnifiedCell('+' + remainder.length, 'font-style:italic;color:' + ts.label.font.color + ';', '', false, false);
         const pctCell = hasPercent ? xUnifiedCell('', '', '', false, false) : '';
         const valueCell = xUnifiedCell('', '', '', false, true);
         return swatchCell + nameCell + pctCell + valueCell;
@@ -1301,7 +1301,7 @@
     /*{# already gates that to commensurable/additive families: normalized #}*/
     /*{# stacks, pie; this never computes a total itself for a family that has #}*/
     /*{# none). When a total exists, base-part rows (the ones carrying it) come #}*/
-    /*{# first, then the "+N more" remainder, then the Total footer, then any #}*/
+    /*{# first, then the "+N" remainder, then the Total footer, then any #}*/
     /*{# combo overlay/reference rows (e.g. a target line) LAST -- the Total is #}*/
     /*{# the buildup the overlay is compared against, so it must land between #}*/
     /*{# the parts and the overlay, never after it. When there's no total at all #}*/

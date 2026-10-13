@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import cache
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, ForwardRef, Union
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Union
 
 from pydantic import (
     BaseModel,
@@ -36,7 +36,7 @@ FontAlias = Annotated[str, Field(description="Name of a ``style.fonts`` entry.")
 
 
 class _PatchBase(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
 
 class FontSlotBase(_PatchBase):
@@ -191,10 +191,6 @@ def _make_patch_annotation(annotation: Any, *, is_recursive: bool) -> Any:
         # everything else falls to the `annotation | None` below.
         if _is_optional(annotation):
             return annotation
-    # ForwardRef participates in runtime model generation here; Python 3.10 cannot do
-    # `ForwardRef(...) | None`, so keep the explicit Union form for that narrow case.
-    if isinstance(annotation, ForwardRef):
-        return Union[annotation, None]  # noqa: UP007
     # Scalars, list[X], Union types without None, and (when non-recursive) BaseModel
     # subclasses all land here — just wrap with None.
     return annotation | None
@@ -243,8 +239,7 @@ def build_patch_model_ext(
             if not (is_recursive and m in PATCH_SHORTHAND.values())
         ]
         if metadata:
-            # Annotated[(T, m1, ...)] is the portable subscript form (3.10 to 3.13).
-            patch_annotation = Annotated[(patch_annotation, *metadata)]
+            patch_annotation = Annotated[patch_annotation, *metadata]
         fields[name] = (
             patch_annotation,
             Field(

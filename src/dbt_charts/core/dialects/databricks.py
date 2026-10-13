@@ -4,6 +4,7 @@ Databricks uses:
 - :param1, :param2 for named parameter placeholders
 """
 
+from collections.abc import Sequence
 from typing import Any
 
 from dbt_charts.core.dialects.base import SQLDialect
@@ -26,6 +27,7 @@ class DatabricksDialect(SQLDialect):
     """
 
     name = "databricks"
+    folds_identifier_case = True
     # Spark SQL string literals: use \ to escape special characters (' or \).
     # https://spark.apache.org/docs/latest/sql-ref-literals.html
     escapes_backslashes = True
@@ -71,6 +73,23 @@ class DatabricksDialect(SQLDialect):
             "ORDER BY table_schema, table_name, ordinal_position"
         )
 
+    def bulk_tables_sql(self, scope: str, schemas: Sequence[str]) -> str:
+        """Whole-catalog tables from Unity Catalog's information_schema."""
+        if scope.lower() == "hive_metastore":
+            raise NotImplementedError(
+                "bulk_tables_sql is not available for the 'hive_metastore' catalog"
+            )
+        catalog = f"{sql_identifier(scope, 'databricks')}." if scope else ""
+        condition = self.schema_condition(schemas, "table_schema")
+        extra = f"AND {condition} "
+        return (
+            "SELECT table_schema, table_name "
+            f"FROM {catalog}information_schema.tables "
+            "WHERE table_schema <> 'information_schema' "
+            f"{extra}"
+            "ORDER BY table_schema, table_name"
+        )
+
     def quote(self, identifier: str) -> str:
         """Backtick-quote an identifier — Spark SQL's only quoted form.
 
@@ -90,6 +109,7 @@ class SparkDialect(DatabricksDialect):
     name = "spark"
     cursor_supports_driver_limit = False
     bulk_schema_sql = SQLDialect.bulk_schema_sql
+    bulk_tables_sql = SQLDialect.bulk_tables_sql
 
     def namespace_probe_sql(
         self,

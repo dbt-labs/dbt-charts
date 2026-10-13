@@ -230,12 +230,7 @@ def _bake_cartesian_axes(
     is required.
 
     ``chart`` supplies each axis's Layer 10 via ``axis_layer_format()``: the
-    query's declared format for the axis column, else the chart-wide fallback
-    (``chart.format`` / ``style.number_format`` / ``style.time_format``).
-    axis_x is always the dimension axis (never the measure, even when its
-    channel type happens to be quantitative — e.g. a scatter's x column), so
-    its chart-wide fallback is ``style.time_format`` only; ``style.number_format``
-    / ``chart.format`` only ever reach axis_y.
+    query's declared format for the axis column.
 
     ``multiples`` / ``y`` are the small-multiples inputs. This is the ONE home
     for the multiples↔mirror interaction: it (a) supplies a default value for
@@ -259,12 +254,11 @@ def _bake_cartesian_axes(
         "axis_x",
         x_channel_type,
         _chart_type_axis_patch(chart_style_context, chart_type, "axis_x"),
-        chart_fallback_format=axis_layer_format(
+        column_layer_format=axis_layer_format(
             chart,
             x_channel_type,
             chart.x,
             chart_style_context.formats,
-            dimension=True,
         ),
         axis_overrides=axis_overrides,
         chart_type=chart_type,
@@ -275,12 +269,11 @@ def _bake_cartesian_axes(
         "axis_y",
         y_channel_type,
         _chart_type_axis_patch(chart_style_context, chart_type, "axis_y"),
-        chart_fallback_format=axis_layer_format(
+        column_layer_format=axis_layer_format(
             chart,
             y_channel_type,
             chart.y,
             chart_style_context.formats,
-            dimension=False,
         ),
         axis_overrides=axis_overrides,
         chart_type=chart_type,

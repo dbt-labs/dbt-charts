@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 # Color Palettes — Every dbt charts palette in one place.
 #
 # Compact index up top (name + swatch strip per palette, grouped by family),

@@ -582,7 +582,7 @@ charts:
 
         for chart_name, expected in (
             ("sectionless", "'sales/not_a_board.yml' — that file has no queries:"),
-            ("unparseable", "failed to load sales/broken.yml"),
+            ("unparseable", "Invalid YAML syntax in sales/broken.yml"),
             # A list/scalar top level parses fine and only fails on the
             # `queries:` lookup — as an AttributeError out of compile(),
             # not a diagnostic, unless the shape is checked at the read.

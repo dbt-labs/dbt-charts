@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+from dbt_charts.agent_api.validate import ValidateResult
 from dbt_charts.cli.filesystem_project import FilesystemProject
 
 _AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
@@ -602,17 +603,17 @@ class TestValidateBrokenMetaYamlTransitive:
         assert results[0].success is False
 
 
-class TestValidateContentInMemory:
-    """validate_content() validates unsaved YAML with no path on disk."""
+class TestValidateBoardText:
+    """Board YAML text, written to a project file and validated by path."""
 
-    def test_validate_content_checks_model_columns(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    def test_validate_text_checks_model_columns(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        validate_text: Callable[..., ValidateResult],
     ) -> None:
-        """The agent-facing arm (Playground, MCP validate_board) runs the
-        model-column drift check too."""
+        """Validation by path runs the model-column drift check."""
         import json
-
-        from dbt_charts.agent_api.validate import validate_content
 
         (tmp_path / "target").mkdir()
         (tmp_path / "target" / "manifest.json").write_text(
@@ -634,42 +635,35 @@ class TestValidateContentInMemory:
             "SELECT month, SUM(revenue) FROM orders GROUP BY 1",
             "SELECT month, SUM(gross) AS revenue FROM {{ ref('orders') }} GROUP BY 1",
         )
-        result = validate_content(board, project=local_project(tmp_path))
+        result = validate_text(board, project=local_project(tmp_path))
 
         assert result.success is False
         assert any(e.code == "ERR-DBT-MODEL-COLUMN-MISSING" for e in result.errors)
 
-    def test_validate_content_success_on_valid_yaml(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    def test_validate_text_success_on_valid_yaml(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        validate_text: Callable[..., ValidateResult],
     ) -> None:
-        from dbt_charts.agent_api.validate import validate_content
 
-        result = validate_content(_VALID_BOARD, project=local_project(tmp_path))
+        result = validate_text(_VALID_BOARD, project=local_project(tmp_path))
 
         assert result.success is True
         assert result.errors == []
 
-    def test_validate_content_returns_errors_for_unknown_chart_query(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    def test_validate_text_returns_errors_for_unknown_chart_query(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        validate_text: Callable[..., ValidateResult],
     ) -> None:
-        from dbt_charts.agent_api.validate import validate_content
 
-        result = validate_content(_MISSING_QUERY_BOARD, project=local_project(tmp_path))
+        result = validate_text(_MISSING_QUERY_BOARD, project=local_project(tmp_path))
 
         assert result.success is False
         assert len(result.errors) >= 1
         assert any("nonexistent_query" in e.message for e in result.errors)
-
-    def test_validate_content_does_not_touch_disk(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        """No file is written or read — proves it acts on unsaved content."""
-        from dbt_charts.agent_api.validate import validate_content
-
-        result = validate_content(_VALID_BOARD, project=local_project(tmp_path))
-
-        assert result.success is True
-        assert list(tmp_path.iterdir()) == []
 
 
 class TestValidateMetaYamlSingleFile:
@@ -1110,31 +1104,21 @@ class TestValidatePathsEmitsStructuralLintWarning:
         )
 
 
-class TestValidateContentEmitsStructuralLintWarning:
-    """validate_content() emits WARN-MISSING-JOIN-PREDICATE for in-memory YAML.
-
-    No file identity: _stamp_compile_result returns early when file is None, so
-    range is None by design — lint findings are present but carry no position.
-    """
+class TestValidateEmitsStructuralLintWarning:
+    """validate() emits WARN-MISSING-JOIN-PREDICATE for a board file."""
 
     def test_cartesian_join_produces_warn_missing_join_predicate(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        validate_text: Callable[..., ValidateResult],
     ) -> None:
-        from dbt_charts.agent_api.validate import validate_content
 
-        result = validate_content(
-            _CARTESIAN_JOIN_BOARD, project=local_project(tmp_path)
-        )
+        result = validate_text(_CARTESIAN_JOIN_BOARD, project=local_project(tmp_path))
 
         assert result.success is True, result.errors
         codes = [w.code for w in result.warnings]
         assert "WARN-MISSING-JOIN-PREDICATE" in codes, f"warnings: {codes}"
-        # range is None — no file identity on in-memory YAML
-        assert all(
-            w.range is None
-            for w in result.warnings
-            if w.code == "WARN-MISSING-JOIN-PREDICATE"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -1447,12 +1431,13 @@ rows:
 """
 
 
-def test_validate_content_names_the_successor_of_a_retired_key(
-    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+def test_validate_text_names_the_successor_of_a_retired_key(
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    validate_text: Callable[..., ValidateResult],
 ) -> None:
-    from dbt_charts.agent_api.validate import validate_content
 
-    result = validate_content(_RETIRED_KEY_MIXED_BOARD, project=local_project(tmp_path))
+    result = validate_text(_RETIRED_KEY_MIXED_BOARD, project=local_project(tmp_path))
 
     zero = next(e for e in result.errors if "Unknown field 'zero'" in e.message)
     assert zero.hint is not None
@@ -1462,12 +1447,11 @@ def test_validate_content_names_the_successor_of_a_retired_key(
     )
 
 
-def test_validate_content_honors_project_warnings_ignore(tmp_path: Path) -> None:
-    """The in-memory path (MCP, Playground) applies the same ``warnings.ignore``
-    as ``validate_paths``."""
+def test_validate_text_honors_project_warnings_ignore(
+    tmp_path: Path, validate_text: Callable[..., ValidateResult]
+) -> None:
+    """``validate`` applies the project's ``warnings.ignore``."""
     import json
-
-    from dbt_charts.agent_api.validate import validate_content
 
     (tmp_path / "target").mkdir()
     (tmp_path / "target" / "manifest.json").write_text(
@@ -1494,12 +1478,10 @@ def test_validate_content_honors_project_warnings_ignore(tmp_path: Path) -> None
 
     (tmp_path / "dbt_charts.yml").write_text("name: p\n")
     project = FilesystemProject(tmp_path)
-    assert code in [w.code for w in validate_content(board, project=project).warnings]
+    assert code in [w.code for w in validate_text(board, project=project).warnings]
 
     (tmp_path / "dbt_charts.yml").write_text(
         f"name: p\nwarnings:\n  ignore:\n    - {code}\n"
     )
     project = FilesystemProject(tmp_path)
-    assert code not in [
-        w.code for w in validate_content(board, project=project).warnings
-    ]
+    assert code not in [w.code for w in validate_text(board, project=project).warnings]

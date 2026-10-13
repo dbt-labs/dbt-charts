@@ -108,7 +108,7 @@ def column_impact(
                 )
             )
             continue
-        if result.board is None:
+        if not result.success:
             indeterminate.append(
                 ColumnImpactIndeterminate(
                     board=relpath,

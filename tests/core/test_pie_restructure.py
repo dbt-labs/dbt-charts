@@ -546,7 +546,7 @@ class TestTotalFormatResolution:
             color="cat",
             total=ChartTotal.model_validate({"label": "Total"}),
             style=PieChartStylePatch.model_validate(
-                {"total": {"value": {"format": "currency"}}}
+                {"inner_radius": 0.6, "total": {"value": {"format": "currency"}}}
             ),
             query=SqlQuery(sql="SELECT 1", source="src"),
             query_name="q",
@@ -589,7 +589,7 @@ class TestTotalFormatResolution:
             color="cat",
             total=ChartTotal(),
             style=PieChartStylePatch.model_validate(
-                {"total": {"value": {"format": "$,.2f"}}}
+                {"inner_radius": 0.6, "total": {"value": {"format": "$,.2f"}}}
             ),
             query=SqlQuery(sql="SELECT 1", source="src"),
             query_name="q",
@@ -640,7 +640,7 @@ class TestTotalFormatResolution:
             color="cat",
             total=ChartTotal.model_validate({"label": "Total"}),
             style=PieChartStylePatch.model_validate(
-                {"total": {"value": {"format": "currency"}}}
+                {"inner_radius": 0.6, "total": {"value": {"format": "currency"}}}
             ),
             query=SqlQuery(sql="SELECT 1", source="src"),
             query_name="q",
@@ -654,11 +654,11 @@ class TestTotalFormatResolution:
         value_layer = mapped.layers[1]
         assert (
             value_layer.encoding["text"].get("format")
-            == PREDEFINED_SPECS["currency_full"]
+            == PREDEFINED_SPECS["currency_full"].d3
         )
 
         # Slice tooltip: the theta encoding's format must match.
-        assert rc.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"]
+        assert rc.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"].d3
 
         import vl_convert as vlc
 
@@ -767,7 +767,10 @@ class TestTotalFormatConfig:
             color="cat",
             total=ChartTotal(),
             style=PieChartStylePatch.model_validate(
-                {"total": {"value": {"format": {"spec": ",.2s", "prefix": "▲ "}}}}
+                {
+                    "inner_radius": 0.6,
+                    "total": {"value": {"format": {"spec": ",.2s", "prefix": "▲ "}}},
+                }
             ),
             query=SqlQuery(sql="SELECT 1", source="src"),
             query_name="q",

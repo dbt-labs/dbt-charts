@@ -142,7 +142,12 @@ style:
     preferred_width: 600.0
     aspect_ratio: 1.5
     min_height: 150.0
-    max_height: 400.0
+    # The half-width height, not a round number: a rows -> cols split at
+    # frame.max_width gives each item (1200 - 2*36) / 2 = 564, and 564 / 1.5 =
+    # 376. A full-width chart caps there instead of running to 752, so it reads
+    # at its siblings' height. Pinned by TestFullWidthMatchesHalfWidth in
+    # test_chart_height_cascade.py — move aspect_ratio or frame and move this.
+    max_height: 376.0
     default_chart_height: 300.0
     default_table_height: 250.0
     label_usable_ratio: 0.8
@@ -352,13 +357,12 @@ style:
       text_baseline_offset: 4.0
       # No title_baseline_offset: the title baseline derives from the
       # resolved title font size (_TITLE_ASCENT_RATIO in
-      # render/chart/table.py), not a fixed pixel constant — see that
-      # module's docstring for why.
+      # render/title_band.py), not a fixed pixel constant.
       #
       # title_subtitle_gap is the one residual quantity Vega-Lite's title
       # layout doesn't expose a themeable equivalent for: it's whitespace
       # between the title's descent and the subtitle's ascent, combined with
-      # both font sizes in render/chart/table.py's _subtitle_baseline_below_title.
+      # both font sizes in the engine's table title band.
       # 3.3 is the midpoint of the range that reproduces Vega-Lite's emitted
       # title->subtitle baseline gap at all three width-tiered title sizes
       # typography.py can produce (11px, 14px, 18px) — not fitted to one size.
@@ -682,7 +686,7 @@ style:
       axis_x:
         grid:
           visible: false
-      # Histogram y-axis always shows "Count" (or authored label) — opt in to visible.
+      # Histogram y-axis always shows "#" (or authored label) — opt in to visible.
       axis_y:
         title:
           visible: true
@@ -978,8 +982,6 @@ style:
   text:
     font: body
     align: left
-    # A readable line length: the most a prose block asks a content-sized board for.
-    preferred_width: 600.0
     # Block margin values, in WHOLE line-height units.
     # paragraph_spacing = font_size × line_height × paragraph.margin_bottom
     # heading_margin_*_px = font_size × line_height × heading.margin_{top,bottom}

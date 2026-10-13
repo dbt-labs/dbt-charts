@@ -251,7 +251,8 @@ def test_literal_style_color_overrides_palette_mark_fill():
 def test_kpi_color_when():
     """KPI chart with conditional_formatting evaluates font.color rule against data row."""
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+    from ..._engine_render import render_kpi_svg
 
     _kpi_data = [{"revenue": 2_500_000}]
     chart = TypeAdapter(Chart).validate_python(
@@ -381,7 +382,8 @@ def test_gradient_domain_set_when_both_min_and_max():
 def test_table_conditional_formatting_flows_through_render_to_svg():
     """Table CF rules from the chart-level block apply at render time."""
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+
+    from ..._engine_render import render_table_svg
 
     _table_data = [
         {"region": "US", "arr": 1_200_000},
@@ -419,7 +421,8 @@ def test_table_conditional_formatting_flows_through_render_to_svg():
 def test_table_link_does_not_override_conditional_font_color():
     """Conditional font color is explicit data styling; link affordance adds underline."""
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+
+    from ..._engine_render import render_table_svg
 
     table_data = [{"region": "US", "arr": 1_200_000}]
     chart = TypeAdapter(Chart).validate_python(
@@ -462,7 +465,8 @@ def test_kpi_channel_overrides_style_font_color():
     style.color is gone."""
     from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+    from ..._engine_render import render_kpi_svg
 
     _kpi_data = [{"revenue": 3_000_000}]
     chart = TypeAdapter(Chart).validate_python(
@@ -500,11 +504,12 @@ def test_kpi_style_font_color_used_as_fallback():
 
     Renderer reads from resolved_style — never from a Patch. The chart-local
     font color is merged onto resolved_style.kpi.font.color by
-    build_chart_style_context (consumed by the KPI value-color cascade in kpi.py).
+    build_chart_style_context (consumed by the KPI card's value-color cascade).
     """
     from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+    from ..._engine_render import render_kpi_svg
 
     _kpi_data = [{"revenue": 3_000_000}]
     chart = KpiChart(
@@ -638,25 +643,11 @@ def test_link_template_with_color_channel():
 
 
 def test_kpi_gradient_color_csv_string_interpolates():
-    """KPI gradient color channel must interpolate when cell value is a numeric string.
+    """KPI gradient background must interpolate when the cell value is a numeric string.
 
-    CSV-loaded data arrives as str. The isinstance(cell_value, (int, float)) gate
-    in kpi.py must not short-circuit to null_color for valid numeric strings.
+    CSV-loaded data arrives as str; it must not short-circuit to the null color.
     """
-    from dbt_charts.core.compile.models.chart.authored import ScaleTargetConfig
-    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
-    from dbt_charts.core.render.chart.kpi import _evaluate_channel_for_row
+    from ..._engine_render import kpi_gradient_fill
 
-    ch = ResolvedStyleChannel(
-        channel="color",
-        mode="gradient",
-        data_field="score",
-        scale=ScaleTargetConfig(
-            palette=["#ffffff", "#0000ff"], min=0.0, max=100.0, null_color="#aaaaaa"
-        ),
-    )
-    # "50" is a CSV-string numeric — must produce an interpolated color, NOT null_color.
-    result = _evaluate_channel_for_row({"color": ch}, "color", {"score": "50"})
-    assert result is not None
-    assert result != "#aaaaaa", "CSV-string value fell through to null_color"
-    assert result.startswith("#")
+    fill = kpi_gradient_fill("50", ["#ffffff", "#0000ff"], 0.0, 100.0)
+    assert fill not in ("#ffffff", "#0000ff", "none")

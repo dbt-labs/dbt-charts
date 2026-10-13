@@ -44,7 +44,9 @@ class TestAspectRatioWithLayers:
 
     def test_bar_with_layers_uses_chart_aspect_ratio(self) -> None:
         """chart.aspect_ratio=2.0 → height = width / 2.0, regardless of layers."""
-        width = 800.0
+        # 480 / 2.0 = 240 is below max_height and is not default_chart_height,
+        # so the assertion fails if either of those takes over.
+        width = 480.0
         rs = _style()
         no_layers = BarChart(id="t", type="bar", aspect_ratio=2.0)
         with_layers = BarChart(
@@ -57,7 +59,7 @@ class TestAspectRatioWithLayers:
         assert h_with == pytest.approx(width / 2.0)
 
     def test_line_with_layers_uses_chart_aspect_ratio(self) -> None:
-        width = 600.0
+        width = 480.0
         rs = _style()
         no_layers = LineChart(id="t", type="line", aspect_ratio=1.5)
         with_layers = LineChart(
@@ -159,7 +161,7 @@ class TestDefaultHeightWithLayers:
     def test_bar_default_height_unchanged_by_layers(self) -> None:
         """Adding layers: to a plain bar chart must not change its default height."""
         rs = _style()
-        width = 576.0
+        width = 480.0
         no_layers = BarChart(id="t", type="bar")
         with_layers = BarChart(id="t", type="bar", layers=[_one_line_layer()])
         assert get_chart_content_height(
@@ -168,7 +170,7 @@ class TestDefaultHeightWithLayers:
 
     def test_line_default_height_unchanged_by_layers(self) -> None:
         rs = _style()
-        width = 576.0
+        width = 480.0
         no_layers = LineChart(id="t", type="line")
         with_layers = LineChart(id="t", type="line", layers=[_one_line_layer()])
         assert get_chart_content_height(
@@ -177,7 +179,7 @@ class TestDefaultHeightWithLayers:
 
     def test_area_default_height_unchanged_by_layers(self) -> None:
         rs = _style()
-        width = 576.0
+        width = 480.0
         no_layers = AreaChart(id="t", type="area")
         with_layers = AreaChart(id="t", type="area", layers=[_one_line_layer()])
         assert get_chart_content_height(

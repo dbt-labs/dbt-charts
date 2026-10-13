@@ -32,16 +32,6 @@ def collect_dbt_credential_contract() -> DbtCredentialContract:
     from dbt.adapters.postgres import PostgresCredentials
     from dbt.adapters.redshift import RedshiftCredentials
     from dbt.adapters.snowflake import SnowflakeCredentials
-    from dbt.adapters.trino.connections import (
-        TrinoCertificateCredentials,
-        TrinoGssapiCredentials,
-        TrinoJwtCredentials,
-        TrinoKerberosCredentials,
-        TrinoLdapCredentials,
-        TrinoNoneCredentials,
-        TrinoOauthConsoleCredentials,
-        TrinoOauthCredentials,
-    )
 
     return {
         "adapters": {
@@ -69,20 +59,6 @@ def collect_dbt_credential_contract() -> DbtCredentialContract:
                 "package": "dbt-snowflake",
                 "version": version("dbt-snowflake"),
                 "credentials": [_credential_contract(SnowflakeCredentials)],
-            },
-            "trino": {
-                "package": "dbt-trino",
-                "version": version("dbt-trino"),
-                "credentials": [
-                    _credential_contract(TrinoNoneCredentials),
-                    _credential_contract(TrinoCertificateCredentials),
-                    _credential_contract(TrinoLdapCredentials),
-                    _credential_contract(TrinoKerberosCredentials),
-                    _credential_contract(TrinoGssapiCredentials),
-                    _credential_contract(TrinoJwtCredentials),
-                    _credential_contract(TrinoOauthCredentials),
-                    _credential_contract(TrinoOauthConsoleCredentials),
-                ],
             },
         }
     }

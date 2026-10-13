@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Table Style Variants
 notes: 'Same data rendered under three explicit table style profiles. Each variant
   applies per-chart style overrides to demonstrate distinct table aesthetics

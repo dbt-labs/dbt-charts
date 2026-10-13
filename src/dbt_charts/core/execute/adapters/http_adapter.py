@@ -79,13 +79,18 @@ class HttpAdapter(BaseAdapter):
         >>> result = adapter.execute(query, {"token": "xyz"})
     """
 
-    def __init__(self, timeout: int = 30):
+    def __init__(self, timeout: int = 30, allow_mutating_methods: bool = False):
         """Initialize HTTP adapter.
 
         Args:
             timeout: Request timeout in seconds
+            allow_mutating_methods: Permit POST/PUT/PATCH/DELETE. Default-safe
+                (GET only): agent surfaces advertise their tools as read-only,
+                so only a human-driven host (``dct render``, ``dct serve``)
+                opts in.
         """
         self.timeout = timeout
+        self.allow_mutating_methods = allow_mutating_methods
 
     @property
     def supported_types(self) -> set[str]:
@@ -152,6 +157,12 @@ class HttpAdapter(BaseAdapter):
 
         except (ValueError, KeyError, TypeError) as e:
             return handle_adapter_error("HTTP query template resolution", e)
+
+        if not self.allow_mutating_methods and method != "GET":
+            return plain_error(
+                f"HTTP method {method} is not allowed: http sources may only "
+                "use GET here; mutating methods are disabled for this session."
+            )
 
         # Execute HTTP request
         try:

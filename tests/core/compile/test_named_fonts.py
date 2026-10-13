@@ -365,11 +365,9 @@ def test_root_font_rejects_extends() -> None:
 
 def _shipped_schema() -> dict[str, Any]:
     from dbt_charts.core.compile.schema.introspection import introspect
-    from dbt_charts.core.compile.schema.renderers.vscode_schema import (
-        render_vscode_schema,
-    )
+    from dbt_charts.core.compile.schema.renderers.json_schema import render_yaml_schema
 
-    return render_vscode_schema(introspect())
+    return render_yaml_schema(introspect())
 
 
 def _definition(schema: dict[str, Any], name: str) -> dict[str, Any]:

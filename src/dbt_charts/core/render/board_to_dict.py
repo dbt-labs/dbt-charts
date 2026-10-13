@@ -28,6 +28,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedKpiChart,
     ResolvedLineChart,
     ResolvedScatterChart,
+    ResolvedTableChart,
 )
 from dbt_charts.core.compile.models.primitives import (
     AUTHORED_FORMATS,
@@ -41,9 +42,9 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_KPI_NO_DATA
 from dbt_charts.core.execute.chart_resolution import (
-    collect_display_text_inputs,
-    collect_layer_datasets,
+    resolve_chart_with_runtime_inputs,
 )
+from dbt_charts.core.execute.column_formats import with_dbt_column_formats
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.boards import resolve_display_text_via
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
@@ -53,9 +54,15 @@ from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 #: of an Optional threaded through every layer.
 NO_ROW_CAP = sys.maxsize
 
+#: Rows shown in a table chart's unconditional text preview, and the columns
+#: listed by name before collapsing to a "+N more" tail: the text render's
+#: audience is agent context, so a wide table must not emit a 1000-byte line.
+TABLE_PREVIEW_ROW_CAP = 3
+MAX_TABLE_COLUMNS_SHOWN = 20
+
 #: Cartesian families whose value axis (y) carries a chart-authored
-#: number_format worth surfacing to the text formatter — narrows the
-#: discriminated Chart union so `.style.number_format` type-checks (KPI,
+#: format worth surfacing to the text formatter — narrows the
+#: discriminated Chart union so `.y` type-checks (KPI,
 #: table, and the other families don't declare that field). Histogram shares
 #: BarChart's normalized class; heatmap and layered are out of scope.
 _CARTESIAN_VALUE_AXIS_CLASSES = (BarChart, LineChart, AreaChart, ScatterChart)
@@ -251,17 +258,17 @@ def _kpi_text_parts(
 ) -> dict[str, str]:
     """Format a KPI's headline value and support line as the SVG renderer draws them.
 
-    Routes through kpi.py's own ``_resolve_value``/``_format_value_parts`` —
-    the canonical mapper the SVG renderer draws with — working from the live
+    Routes through ``kpi_value.py``, which formats a value with the same
+    ``format_kpi_parts`` the engine's KPI card mirrors — working from the live
     resolved model rather than its JSON-dumped form, so sub-unit money,
     temporal cells, and SI-compaction thresholds all agree with what the
     chart actually paints. A missing value/support column raises
     ``ChartDataError``, same as the render layer.
     """
-    from dbt_charts.core.render.chart.kpi import _resolve_value, kpi_value_text
+    from dbt_charts.core.render.chart.kpi_value import kpi_value_text, resolve_kpi_value
 
     chart_id = resolved.id
-    cell, _ = _resolve_value(resolved.value, row, chart_id)
+    cell = resolve_kpi_value(resolved.value, row, chart_id)
     display = kpi_value_text(
         cell,
         resolved.format,
@@ -279,7 +286,7 @@ def _kpi_text_parts(
     if support is not None:
         value_str = ""
         if support.value is not None:
-            s_cell, _ = _resolve_value(support.value, row, chart_id)
+            s_cell = resolve_kpi_value(support.value, row, chart_id)
             value_str = kpi_value_text(s_cell, support.format, chart_id, formats)
         glyph = support.glyph or ""  # type-state: silent_fallback — unauthored
         label = support.label or ""  # type-state: silent_fallback — unauthored
@@ -287,6 +294,34 @@ def _kpi_text_parts(
         if support_line:
             parts["support"] = support_line
     return parts
+
+
+def _table_text_rows(
+    resolved: ResolvedTableChart,
+    data: list[dict[str, Any]],  # type-state: explicit_any — query rows
+    formats: FormatTable | None,
+) -> list[dict[str, str]]:
+    """The preview rows of a table, each visible cell through its column's
+    format: the same formula the painted cell uses, so a missing format shows."""
+    from dbt_charts.core.compile.format_value import format_table_cell_value
+
+    shown = data[:TABLE_PREVIEW_ROW_CAP]
+    if resolved.columns is None:
+        names = list(shown[0]) if shown else []
+        fmts: dict[str, ResolvedFormat | None] = {}
+    else:
+        names = [n for n, c in resolved.columns.items() if c.visible is not False]
+        fmts = {n: c.format for n, c in resolved.columns.items()}
+    names = names[:MAX_TABLE_COLUMNS_SHOWN]
+    return [
+        {
+            n: format_table_cell_value(
+                row.get(n), fmt.authored if (fmt := fmts.get(n)) else None, formats
+            )
+            for n in names
+        }
+        for row in shown
+    ]
 
 
 def _render_chart_item(
@@ -297,6 +332,7 @@ def _render_chart_item(
     error_collector: list[Diagnostic] | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
     *,
+    filter_variables: frozenset[str],
     include_text_format: bool = False,
 ) -> dict[str, Any]:
     """Execute, resolve, and serialize a single chart item.
@@ -322,21 +358,21 @@ def _render_chart_item(
     one bad chart degrades to an error line, the rest of the text render
     survives.
     """
-    from dbt_charts.core.compile.resolve import resolve
     from dbt_charts.core.diagnostics.execution import ExecutionError
     from dbt_charts.core.render.errors import RenderError
 
     try:
         data = executor.execute_chart(chart, variables)
-        datasets = collect_layer_datasets(chart, data, executor, variables)
         # Resolve against the full result so data-aware resolution (auto type,
         # auto fields) is unaffected by the cap; only the emitted rows shrink.
-        resolved = resolve(
+        resolved = resolve_chart_with_runtime_inputs(
             chart,
             data,
-            chart_style_context=chart_style_context,
-            datasets=datasets,
-            display_text=collect_display_text_inputs(chart, executor, variables),
+            chart_style_context,
+            0.0,
+            executor,
+            variables,
+            filter_variables=filter_variables,
         )
         rows_truncated: dict[str, int] = {}
         if len(data) > max_rows_per_query:
@@ -389,6 +425,10 @@ def _render_chart_item(
                 item["kpi_text"] = _kpi_text_parts(
                     resolved, data[0], chart_style_context.formats
                 )
+            if isinstance(resolved, ResolvedTableChart):
+                item["table_text"] = _table_text_rows(
+                    resolved, data, chart_style_context.formats
+                )
         return item
     except (RenderError, ExecutionError, DbtChartsError) as e:
         diagnostic = stamp_chart_diagnostic(e, chart.id, chart.source_path)
@@ -418,6 +458,7 @@ def _render_board_items(
     error_collector: list[Diagnostic] | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
     *,
+    filter_variables: frozenset[str],
     include_text_format: bool = False,
 ) -> list[dict[str, Any]]:
     """Walk layout items and serialize each."""
@@ -432,6 +473,7 @@ def _render_board_items(
                     board.chart_style_context,
                     error_collector,
                     max_rows_per_query,
+                    filter_variables=filter_variables,
                     include_text_format=include_text_format,
                 )
             )
@@ -439,12 +481,13 @@ def _render_board_items(
             results.append(
                 {
                     "type": "board",
-                    "board": board_to_dict(
+                    "board": _board_to_dict(
                         item.board,
                         executor,
                         variables,
                         error_collector,
                         max_rows_per_query,
+                        filter_variables=filter_variables,
                         include_text_format=include_text_format,
                     ),
                 }
@@ -452,13 +495,14 @@ def _render_board_items(
     return results
 
 
-def board_to_dict(
+def _board_to_dict(
     board: Board,
     executor: Executor,
     variables: VariableValues,
     error_collector: list[Diagnostic] | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
     *,
+    filter_variables: frozenset[str],
     include_text_format: bool = False,
 ) -> dict[str, Any]:
     """Convert a board to a JSON-serializable dict.
@@ -494,6 +538,7 @@ def board_to_dict(
             variables,
             error_collector,
             max_rows_per_query,
+            filter_variables=filter_variables,
             include_text_format=include_text_format,
         ),
     }
@@ -508,3 +553,28 @@ def board_to_dict(
             for name, var in board.variables.items()
         }
     return result
+
+
+def board_to_dict(
+    board: Board,
+    executor: Executor,
+    variables: VariableValues,
+    error_collector: list[Diagnostic] | None = None,
+    max_rows_per_query: int = NO_ROW_CAP,
+    *,
+    include_text_format: bool = False,
+) -> dict[str, Any]:  # type-state: explicit_any — JSON-serializable board dict
+    """Convert a board to a JSON-serializable dict, widening each chart query's
+    formats by dbt lineage once for the whole tree first."""
+    declared_variables = frozenset(
+        board.variable_registry or {}  # type-state: silent_fallback — none declared
+    )
+    return _board_to_dict(
+        with_dbt_column_formats(board, executor, variables),
+        executor,
+        variables,
+        error_collector,
+        max_rows_per_query,
+        filter_variables=declared_variables,
+        include_text_format=include_text_format,
+    )

@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
-from dbt_charts.core.render.chart.table_support import resolve_header_overflow
 from dbt_charts.core.render.chart.title_overflow import (
     apply_title_overflow_to_spec,
     compute_title_limit,
@@ -326,37 +323,3 @@ class TestSubtitleOverflowPreprocessing:
         # truncate mode: result must end with ellipsis and fit on one line
         assert "\n" not in result
         assert result.endswith("…")
-
-
-class TestResolveHeaderOverflow:
-    @pytest.mark.parametrize(
-        ("promoted", "table_config", "expected"),
-        [
-            (
-                "wrap",
-                SimpleNamespace(
-                    header_overflow=None, header=SimpleNamespace(overflow="truncate")
-                ),
-                "wrap",
-            ),
-            (
-                None,
-                SimpleNamespace(
-                    header_overflow="truncate",
-                    header=SimpleNamespace(overflow="wrap-two"),
-                ),
-                "truncate",
-            ),
-            # Nothing authored: the theme's header.overflow is the floor. Column
-            # headers never fall through to the chart title's overflow mode.
-            (
-                None,
-                SimpleNamespace(
-                    header_overflow=None, header=SimpleNamespace(overflow="wrap")
-                ),
-                "wrap",
-            ),
-        ],
-    )
-    def test_resolution_cascade(self, promoted, table_config, expected):
-        assert resolve_header_overflow(table_config, promoted) == expected

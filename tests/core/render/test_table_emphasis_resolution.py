@@ -23,7 +23,6 @@ from dbt_charts.core.render.chart.table_support import (
     _parse_hex,
     compute_scale_domain,
     interpolate_scale_color,
-    resolve_cell_conditional_styles,
     resolve_hinge,
     resolve_palette_stops,
 )
@@ -801,36 +800,6 @@ class TestResolveCellConditionalStylesScaleCsvString:
             ),
         )
 
-    def test_string_value_produces_interpolated_bg(self) -> None:
-        col = self._make_col_config()
-        data = [{"amount": "50"}]
-        bg, _color, _fw, _fstyle, _fdecoration = resolve_cell_conditional_styles(
-            col, "50", data
-        )
-        # Must be a non-None hex color, not the column default (None).
-        assert bg is not None
-        assert bg.startswith("#")
-
-    def test_int_value_still_works(self) -> None:
-        col = self._make_col_config()
-        data = [{"amount": 50}]
-        bg, _, _, _, _ = resolve_cell_conditional_styles(col, 50, data)
-        assert bg is not None
-        assert bg.startswith("#")
-
-    def test_unparseable_string_skips_scale(self) -> None:
-        col = self._make_col_config()
-        data = [{"amount": "abc"}]
-        bg, _, _, _, _ = resolve_cell_conditional_styles(col, "abc", data)
-        # No scale applied → bg stays at column default (None).
-        assert bg is None
-
-    def test_bool_value_skips_scale(self) -> None:
-        col = self._make_col_config()
-        data = [{"amount": True}]
-        bg, _, _, _, _ = resolve_cell_conditional_styles(col, True, data)
-        assert bg is None
-
 
 # ---------------------------------------------------------------------------
 # 1B.6c: hinge + arm_mode wired through resolve_cell_conditional_styles
@@ -861,135 +830,6 @@ class TestResolveCellConditionalStylesDiverging:
             ),
         )
 
-    def test_diverging_at_min_returns_first_stop(self) -> None:
-        # In diverging mode on [-100,100] hinge=0: value=-100 (min) → negative arm extreme.
-        # Neg arm goes from neutral (#ffffff) to first stop (#ff0000).
-        # At min_val, distance=100, equal to neg_width=100 → t=1.0 → #ff0000.
-        col = self._make_div_col(arm_mode="asymmetric", hinge=0)
-        data = [{"val": -100}]
-        bg, _, _, _, _ = resolve_cell_conditional_styles(col, -100, data)
-        assert bg == "#ff0000", (
-            f"Diverging min_val must map to first palette stop; got {bg!r}"
-        )
-
-    def test_diverging_at_max_returns_last_stop(self) -> None:
-        # In diverging mode on [-100,100] hinge=0: value=100 → pos arm extreme (#0000ff).
-        col = self._make_div_col(arm_mode="asymmetric", hinge=0)
-        data = [{"val": 100}]
-        bg, _, _, _, _ = resolve_cell_conditional_styles(col, 100, data)
-        assert bg == "#0000ff", (
-            f"Diverging max_val must map to last palette stop; got {bg!r}"
-        )
-
-    def test_diverging_hinge_at_value_returns_neutral(self) -> None:
-        # The clearest diverging test: a value exactly at hinge must be the MIDDLE stop.
-        # Sequential mode on [-100,100]: value=0 → t=0.5 → also middle stop (#ffffff).
-        # This passes either way on a symmetric 3-stop palette — not distinguishing.
-        # Use an ASYMMETRIC domain to force a difference.
-        # Domain [-10, 100], hinge=0: sequential t = 10/110 ≈ 0.091 for value=0 (not neutral).
-        # Diverging: value=0 is at the hinge → MUST return neutral (#ffffff).
-        col_asym_domain = TableColumnConfig(
-            scale=ColumnScaleConfig(
-                background=ColumnScaleTargetConfig(
-                    palette=self._DIV_PALETTE,
-                    min=-10,
-                    max=100,
-                    hinge=0,
-                    arm_mode="asymmetric",
-                )
-            ),
-        )
-        data = [{"val": 0}]
-        bg, _, _, _, _ = resolve_cell_conditional_styles(col_asym_domain, 0, data)
-        # After fix: diverging → #ffffff (at hinge).
-        # Before fix: sequential on [-10,100] → t=10/110≈0.091 → slightly off red, NOT white.
-        assert bg == "#ffffff", (
-            f"Value at hinge on asymmetric domain must return neutral stop; got {bg!r}"
-        )
-
-    def test_asymmetric_vs_symmetric_differ_on_unequal_arms(self) -> None:
-        # Domain [-10, 100], hinge=0: neg arm is narrow (10 units), pos arm is wide (100).
-        # On value=-5 (midpoint of neg arm):
-        #   asymmetric: t = 5/100 = 0.05 (very subtle)
-        #   symmetric:  t = 5/10  = 0.5  (half palette)
-        # They must produce different interpolated colors.
-        col_asym = TableColumnConfig(
-            scale=ColumnScaleConfig(
-                background=ColumnScaleTargetConfig(
-                    palette=self._DIV_PALETTE,
-                    min=-10,
-                    max=100,
-                    hinge=0,
-                    arm_mode="asymmetric",
-                )
-            ),
-        )
-        col_sym = TableColumnConfig(
-            scale=ColumnScaleConfig(
-                background=ColumnScaleTargetConfig(
-                    palette=self._DIV_PALETTE,
-                    min=-10,
-                    max=100,
-                    hinge=0,
-                    arm_mode="symmetric",
-                )
-            ),
-        )
-        data = [{"val": -5}]
-        bg_asym, _, _, _, _ = resolve_cell_conditional_styles(col_asym, -5, data)
-        bg_sym, _, _, _, _ = resolve_cell_conditional_styles(col_sym, -5, data)
-        assert bg_asym is not None
-        assert bg_sym is not None
-        assert bg_asym != bg_sym, (
-            f"asymmetric ({bg_asym!r}) and symmetric ({bg_sym!r}) must differ "
-            "on shorter arm of unequal-domain diverging scale"
-        )
-
-    def test_col_format_percent_routes_auto_hinge(self) -> None:
-        # Domain [0.5, 2.0]: midpoint=1.25, percent-hinge=1.0 — they differ.
-        # With .0% format → hinge=1.0; value=0.75 → neg arm t=0.25 → #ffbfbf.
-        # Without this domain the two paths return the same hinge and the
-        # test passes whether col_format is wired through or not (theater).
-        col = TableColumnConfig(
-            scale=ColumnScaleConfig(
-                background=ColumnScaleTargetConfig(
-                    palette=self._DIV_PALETTE,
-                    min=0.5,
-                    max=2.0,
-                    hinge="auto",
-                )
-            ),
-        )
-        data = [{"val": 0.75}]
-        bg, _, _, _, _ = resolve_cell_conditional_styles(
-            col, 0.75, data, col_format=".0%"
-        )
-        # hinge=1.0, neg arm [0.5, 1.0], distance=0.25, denom=max(0.5,1.0)=1.0
-        # t=0.25 → lerp(#ffffff, #ff0000, 0.25) = #ffbfbf
-        assert bg == "#ffbfbf"
-
-    def test_col_format_none_auto_hinge_falls_to_midpoint(self) -> None:
-        # Domain [0.5, 2.0]: midpoint=1.25, percent-hinge=1.0.
-        # No col_format → hinge=1.25; value=0.75 → neg arm t=0.667 → #ff5555.
-        # Distinct from the percent path above, proving the two branches differ.
-        col = TableColumnConfig(
-            scale=ColumnScaleConfig(
-                background=ColumnScaleTargetConfig(
-                    palette=self._DIV_PALETTE,
-                    min=0.5,
-                    max=2.0,
-                    hinge="auto",
-                )
-            ),
-        )
-        data = [{"val": 0.75}]
-        bg, _, _, _, _ = resolve_cell_conditional_styles(
-            col, 0.75, data, col_format=None
-        )
-        # hinge=1.25, neg arm [0.5, 1.25], distance=0.5, denom=0.75
-        # t=0.6667 → lerp(#ffffff, #ff0000, 0.6667) = #ff5555
-        assert bg == "#ff5555"
-
 
 # ---------------------------------------------------------------------------
 # 1B.6c: summary/total row skip of scale fills
@@ -1011,65 +851,6 @@ class TestResolveCellConditionalStylesRowRole:
                 )
             ),
         )
-
-    def test_value_row_gets_scale_bg(self) -> None:
-        col = self._make_scale_col()
-        data = [{"val": 50}]
-        bg, _, _, _, _ = resolve_cell_conditional_styles(
-            col, 50, data, row_role="value"
-        )
-        assert bg is not None
-        assert bg != "#ffffff"  # not neutral/empty — some scale color applied
-
-    def test_summary_row_skips_scale_bg(self) -> None:
-        col = self._make_scale_col()
-        data = [{"val": 50}]
-        bg, _, _, _, _ = resolve_cell_conditional_styles(
-            col, 50, data, row_role="summary"
-        )
-        # Scale skipped → bg stays at column default (None from col_config.background).
-        assert bg is None
-
-    def test_total_row_skips_scale_bg(self) -> None:
-        col = self._make_scale_col()
-        data = [{"val": 50}]
-        bg, _, _, _, _ = resolve_cell_conditional_styles(
-            col, 50, data, row_role="total"
-        )
-        assert bg is None
-
-    def test_summary_row_with_when_rule_still_fires(self) -> None:
-        """when-rules must apply even on summary/total rows — they are author-specified."""
-        from dbt_charts.core.compile.models.chart.authored import (
-            ConditionalRule,
-        )
-
-        col = self._make_scale_col()
-        data = [{"val": 50}]
-        # A when rule: val > 40 → background red.
-        when_rule = ConditionalRule(gt=40, background="#ff0000")
-        bg, _, _, _, _ = resolve_cell_conditional_styles(
-            col, 50, data, when_rules=[when_rule], row_role="summary"
-        )
-        # Scale skipped but when fires.
-        assert bg == "#ff0000"
-
-    def test_scale_color_channel_also_skipped_on_summary(self) -> None:
-        """scale.color channel must also be skipped on summary rows."""
-        col = TableColumnConfig(
-            scale=ColumnScaleConfig(
-                color=ColumnScaleTargetConfig(
-                    palette=self._SCALE_PALETTE,
-                    min=0,
-                    max=100,
-                )
-            ),
-        )
-        data = [{"val": 50}]
-        _, color, _, _, _ = resolve_cell_conditional_styles(
-            col, 50, data, row_role="summary"
-        )
-        assert color is None
 
 
 # ---------------------------------------------------------------------------
@@ -1112,6 +893,7 @@ class TestWithResolvedScaleStops:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert result is not None
         bg = result["val"].scale.background
@@ -1152,6 +934,7 @@ class TestWithResolvedScaleStops:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert result is not None
         bg = result["val"].scale.background
@@ -1181,6 +964,7 @@ class TestWithResolvedScaleStops:
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
             declared=None,
+            filter_variables=frozenset(),
         )
         assert result is not None
         assert isinstance(result["val"], ResolvedTableColumnConfig)
@@ -1204,6 +988,7 @@ class TestWithResolvedScaleStops:
                 own_formats={n: c.format for n, c in (None or {}).items()},
                 defaults_format=None,
                 declared=None,
+                filter_variables=frozenset(),
             )
             is None
         )

@@ -19,7 +19,6 @@ from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.heatmap import ResolvedHeatmapChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
 from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
-from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedAxisStyle
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartRows
 from dbt_charts.core.compile.resolve.chart._wide_fields import wide_measure_fields
@@ -117,21 +116,10 @@ def _is_log_scale(axis: ResolvedAxisStyle) -> bool:
     return cont is not None and cont.type == "log"
 
 
-def _resolved_percent_format(
-    axis: ResolvedAxisStyle, chart_format: ResolvedFormat | None
-) -> bool:
-    """True when the resolved axis label format or the chart-level format is
-    percent-shaped.
-
-    Both spellings are equivalent authoring surfaces, so every caller must check
-    both: consulting ``chart_format`` alone disagrees with an axis-only percent
-    format and yields a duplicate rule at datum 1.
-    """
+def _resolved_percent_format(axis: ResolvedAxisStyle) -> bool:
+    """True when the resolved axis label format is percent-shaped."""
     ax_fmt = axis.labels.format
-    return bool(
-        (ax_fmt and "%" in ax_fmt.spec)
-        or (chart_format and chart_format.raw and "%" in chart_format.raw)
-    )
+    return bool(ax_fmt and "%" in ax_fmt.spec)
 
 
 def _zero_in_shared_domain(
@@ -340,9 +328,7 @@ class BaselineFeature:
             # Percent format: `_apply_unity` owns the single datum-1 rule, so
             # this only emits the datum-0 baseline (never both — that was the
             # duplicate-unity bug this carve-out exists to dedupe).
-            datums = (
-                (0,) if _resolved_percent_format(axis_style, chart.format) else (0, 1)
-            )
+            datums = (0,) if _resolved_percent_format(axis_style) else (0, 1)
             self._insert_top_rules(spec, chart, datums=datums)
             return
         if not chart_rows(chart, datasets).all_rows():
@@ -510,7 +496,7 @@ class BaselineFeature:
             else "y"
         )
         axis_style = chart.style.axis_y
-        if not _resolved_percent_format(axis_style, chart.format):
+        if not _resolved_percent_format(axis_style):
             return
         # grid.visible=False suppresses the unity rule (mirrors zero-rule gate).
         # rule_axis vs axis_style cascade-slot distinction: see
@@ -606,7 +592,7 @@ class BaselineFeature:
         axis_x = chart.style.axis_x
         if _is_log_scale(axis_x):
             return
-        if require_percent and not _resolved_percent_format(axis_x, None):
+        if require_percent and not _resolved_percent_format(axis_x):
             return
         # Both switches, and the blanket one is deliberate: a theme that hides
         # axis_x's gridlines entirely (bar and histogram do, by convention)

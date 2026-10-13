@@ -168,3 +168,18 @@ def test_a_board_that_fails_compile_is_indeterminate(tmp_path: Path) -> None:
     result = column_impact(project, column="customer_id")
     assert {h.board for h in result.hits} == {"charts/ok.yaml"}
     assert {i.board for i in result.indeterminate} == {"charts/broken.yaml"}
+
+
+def test_a_board_with_an_unquoted_colon_is_indeterminate_not_analyzed(
+    tmp_path: Path,
+) -> None:
+    project = _project(tmp_path, {})
+    (tmp_path / "charts" / "typo.yaml").write_text(
+        "title: Largest in 1950: rank\n"
+        + _board({"q": "SELECT customer_id FROM orders"}).split("\n", 1)[1]
+    )
+    result = column_impact(project, column="customer_id")
+    assert result.hits == []
+    (skipped,) = result.indeterminate
+    assert skipped.board == "charts/typo.yaml"
+    assert "does not compile" in skipped.reason

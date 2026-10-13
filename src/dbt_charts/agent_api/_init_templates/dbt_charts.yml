@@ -8,6 +8,10 @@
 # A board picks one with `source: <name>`; it never defines a connection
 # inline. Full list of types and fields: `dct docs sources`.
 #
+# Inside a dbt project, leaving sources: out is fine: SQL queries then run
+# against the connection of the profile named in dbt_project.yml. Declaring
+# any source turns that off, so name every source your boards use.
+#
 # sources:
 #   # A dbt project — credentials stay in dbt profiles.yml / env vars.
 #   analytics:

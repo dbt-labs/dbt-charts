@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from dbt_charts.core.diagnostics.diagnostic import Diagnostic
     from dbt_charts.core.text.case import CaseValue
     from mdsvg import Style
+    from mdsvg.fonts import FontFace
     from mdsvg.renderer import SVGRenderer
     from mdsvg.types import AnyBlock
 
@@ -385,6 +386,51 @@ def title_font_family(resolved_style: ResolvedStyle) -> str:
     return family
 
 
+# Readable line length, in characters (Bringhurst: 45-75 satisfactory).
+MAX_CHARS = 75
+
+
+# One sentence of ordinary English prose, used to calibrate character width.
+# OS/2 xAvgCharWidth averages over the whole glyph repertoire, so it runs wide.
+_PROSE_SAMPLE = (
+    "North America's primary issue is insufficient MQL supply, not a regional "
+    "Stage 0 target miss or a broad loss of selling capacity."
+)
+
+
+def _prose_char_ratio(face: FontFace) -> float:
+    """Mean character width of real prose, as a fraction of font size.
+
+    Measured from the same face the renderer paints with, so the width a column
+    is sized to and the width its lines are broken at agree.
+    """
+    from dbt_charts.core.font_measure import measurer_for_face
+
+    measurer = measurer_for_face(face)
+    return measurer.measure(_PROSE_SAMPLE, 1.0) / len(_PROSE_SAMPLE)
+
+
+def max_chars_to_px(face: FontFace, font_size: float, max_chars: int) -> float:
+    """Pixel width of a ``max_chars``-character readable measure for a face."""
+    return _prose_char_ratio(face) * font_size * max_chars
+
+
+def readable_measure(char_px: float, max_chars: int | None) -> float:
+    """The readable line length in px: ``max_chars`` (default ``MAX_CHARS``)
+    characters of ``char_px`` each."""
+    return (MAX_CHARS if max_chars is None else max_chars) * char_px
+
+
+def prose_measure(resolved_style: ResolvedStyle) -> float:
+    """The line length board prose wraps at and, with titles, asks its board for."""
+    from dbt_charts.core.font_measure import markdown_font_faces
+
+    style = get_compact_style(resolved_style)
+    fonts = markdown_font_faces(body_text_font_family(resolved_style), style)
+    char_px = max_chars_to_px(fonts.regular, float(style.base_font_size), 1)
+    return readable_measure(char_px, resolved_style.text.column.max_chars)
+
+
 def prose_content_widths(
     text: str,
     resolved_style: ResolvedStyle,
@@ -421,8 +467,24 @@ def prose_content_widths(
     )
     floor = renderer.min_content_width(blocks)
     if needs_data:
-        return floor, max(floor, float(resolved_style.text.preferred_width))
+        return floor, max(floor, prose_measure(resolved_style))
     return floor, renderer.max_content_width(blocks)
+
+
+def _title_measure(
+    title: str,
+    level: int,
+    resolved_style: ResolvedStyle,
+    variable_values: VariableValues,
+    base_dir: str | None,
+) -> tuple[SVGRenderer, list[AnyBlock]]:
+    """The title renderer and the blocks it draws."""
+    renderer, _ = title_renderer(resolved_style, level)
+    resolved_title = resolve_display_text(
+        title, variable_values, {}, resolved_style.chart_defaults.formats
+    )
+    blocks = title_blocks(title, resolved_title, level, resolved_style, base_dir, None)
+    return renderer, blocks
 
 
 def title_max_content_width(
@@ -439,13 +501,32 @@ def title_max_content_width(
     render, so it asks for the prose reading width, as board text does.
     """
     if text_needs_render_data(title):
-        return float(resolved_style.text.preferred_width)
-    renderer, _ = title_renderer(resolved_style, level)
-    resolved_title = resolve_display_text(
-        title, variable_values, {}, resolved_style.chart_defaults.formats
+        return prose_measure(resolved_style)
+    renderer, blocks = _title_measure(
+        title, level, resolved_style, variable_values, base_dir
     )
-    blocks = title_blocks(title, resolved_title, level, resolved_style, base_dir, None)
     return renderer.max_content_width(blocks)
+
+
+def title_min_content_width(
+    title: str,
+    level: int,
+    resolved_style: ResolvedStyle,
+    variable_values: VariableValues,
+    base_dir: str | None,
+) -> float:
+    """Width of a board title's widest word in the title's own font: the
+    narrowest it can draw without splitting a word.
+
+    A title that reads query data cannot be resolved without a render, so it
+    asks for the prose reading width, as ``title_max_content_width`` does.
+    """
+    if text_needs_render_data(title):
+        return prose_measure(resolved_style)
+    renderer, blocks = _title_measure(
+        title, level, resolved_style, variable_values, base_dir
+    )
+    return renderer.min_content_width(blocks)
 
 
 def title_renderer(

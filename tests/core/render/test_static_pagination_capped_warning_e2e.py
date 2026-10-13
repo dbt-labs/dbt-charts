@@ -1,13 +1,10 @@
-"""End-to-end: STATIC_PAGINATION_CAPPED surfaces from render() for a table
-whose static export exceeds the pre-render page cap.
+"""End-to-end: STATIC_PAGINATION_CAPPED surfaces from render() only when a
+static export is capped AND its in-file cap note could not be drawn.
 
-Proves the full seam — the table renderer records the real cap it hit, then
-renderer.py threads that capture into the WarningContext, and the detector's
-warning lands on RenderResult.warnings — that a table within the cap stays
-silent, and that a data format (json/text/yaml/data) reports the same
-warning as svg: every format draws the board before choosing what to emit,
-so the capture that feeds this detector is never empty just because the
-caller asked for data instead of svg.
+A capped export whose slot has room states the cap inside the file, so it
+stays silent; a slot too short for the note would otherwise lose every row
+past the cap with no signal at all. The text format states its own row and
+page counts and carries no static file, so it never warns.
 """
 
 from __future__ import annotations
@@ -15,9 +12,12 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 from dbt_charts.core.compile import compile
+from dbt_charts.core.compile.models.board.normalized import Board
+from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.execute import Executor
-from dbt_charts.core.render import render
-from dbt_charts.core.render.chart.table import _STATIC_MULTI_PAGE_MAX_PAGES
+from dbt_charts.core.render import RenderResult, render
+
+_STATIC_MULTI_PAGE_MAX_PAGES = 20
 
 
 def _rows(n: int) -> list[dict[str, object]]:
@@ -25,8 +25,10 @@ def _rows(n: int) -> list[dict[str, object]]:
 
 
 def _make_executor(
-    board: object, query_registry: object, rows: list[dict[str, object]]
-):
+    board: Board,
+    query_registry: dict[str, AnyQuery],
+    rows: list[dict[str, object]],
+) -> Executor:
     ok = Mock()
     ok.is_success = True
     ok.data = rows
@@ -55,51 +57,48 @@ queries:
     sql: SELECT * FROM t
     source: test_source
 rows:
-  - orgs
+  - {slot}orgs
 """
 
+# A 150px row cannot hold the cap note's band under the pager; a roomy
+# (auto-sized) slot can.
+_SHORT_SLOT = _BOARD.replace("{slot}", "height: 150\n    cols:\n      - ")
+_ROOMY_SLOT = _BOARD.replace("{slot}", "")
+_CODE = "WARN-STATIC-PAGINATION-CAPPED"
+_CAPPED_ROWS = (_STATIC_MULTI_PAGE_MAX_PAGES + 5) * 5  # page_rows=5
 
-def test_table_beyond_cap_warns() -> None:
-    """More real pages than the cap allows — the warning fires with both counts."""
-    result = compile(_BOARD)
+
+def _render(yaml_text: str, n_rows: int, fmt: str) -> RenderResult:
+    result = compile(yaml_text)
     assert result.success and result.board is not None, result.errors
-    n_rows = (_STATIC_MULTI_PAGE_MAX_PAGES + 5) * 5
     executor = _make_executor(result.board, result.query_registry, _rows(n_rows))
+    return render(result.board, executor, format=fmt)
 
-    render_result = render(result.board, executor, format="svg")
 
-    codes = {w.code for w in render_result.warnings}
-    assert "WARN-STATIC-PAGINATION-CAPPED" in codes
-    warning = next(
-        w for w in render_result.warnings if w.code == "WARN-STATIC-PAGINATION-CAPPED"
-    )
+def test_capped_table_in_a_slot_too_short_for_the_note_warns() -> None:
+    render_result = _render(_SHORT_SLOT, _CAPPED_ROWS, "svg")
+
+    assert "in this static export" not in str(render_result.output)
+    warning = next(w for w in render_result.warnings if w.code == _CODE)
     assert warning.chart == "orgs"
     assert warning.fix
     assert str(_STATIC_MULTI_PAGE_MAX_PAGES) in warning.message
 
 
-def test_table_within_cap_silent() -> None:
-    """A table whose real page count fits the cap stays quiet."""
-    result = compile(_BOARD)
-    assert result.success and result.board is not None, result.errors
-    executor = _make_executor(result.board, result.query_registry, _rows(20))
+def test_capped_table_whose_note_is_drawn_is_silent() -> None:
+    render_result = _render(_ROOMY_SLOT, _CAPPED_ROWS, "svg")
 
-    render_result = render(result.board, executor, format="svg")
-
-    codes = {w.code for w in render_result.warnings}
-    assert "WARN-STATIC-PAGINATION-CAPPED" not in codes
+    assert "in this static export" in str(render_result.output)
+    assert _CODE not in {w.code for w in render_result.warnings}
 
 
-def test_non_svg_format_reports_same_warning_as_svg() -> None:
-    """JSON output draws the board the same as svg, so it reports the same
-    page-cap warning — not the empty capture a data walk alone would produce.
-    """
-    result = compile(_BOARD)
-    assert result.success and result.board is not None, result.errors
-    n_rows = (_STATIC_MULTI_PAGE_MAX_PAGES + 5) * 5
-    executor = _make_executor(result.board, result.query_registry, _rows(n_rows))
+def test_text_render_of_a_capped_table_is_silent() -> None:
+    render_result = _render(_SHORT_SLOT, _CAPPED_ROWS, "text")
 
-    render_result = render(result.board, executor, format="json")
+    assert _CODE not in {w.code for w in render_result.warnings}
 
-    codes = {w.code for w in render_result.warnings}
-    assert "WARN-STATIC-PAGINATION-CAPPED" in codes
+
+def test_table_within_cap_is_silent() -> None:
+    render_result = _render(_SHORT_SLOT, 20, "svg")
+
+    assert _CODE not in {w.code for w in render_result.warnings}

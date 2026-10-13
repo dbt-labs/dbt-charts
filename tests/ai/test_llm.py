@@ -138,7 +138,7 @@ def test_normalized_openai_tools_carry_strict_flag() -> None:
     """normalize_openai_tools must set strict=True on every emitted tool.
 
     Once the open-keyed variables schema is removed, strict mode is valid for
-    all 13 tools. This pins that the flag is wired — a future revert silently
+    every tool. This pins that the flag is wired — a future revert silently
     killing it would fail here before reaching a live API call.
     """
     client, gateway = _make_client()
@@ -158,8 +158,8 @@ def test_normalized_openai_tools_satisfy_strict_mode_schema_rules() -> None:
     """Every first-party tool schema must satisfy OpenAI's strict-mode /
     Structured Outputs constraints, not just the `format` allowlist.
 
-    Generalizes the #7013 regression (`validate_board` / `render_board` /
-    `query_board` / `describe_board`'s `path: Path` fields serializing to
+    Generalizes the #7013 regression (`render_board` / `execute_query` /
+    `describe_board`'s `path: Path` fields serializing to
     `format: "path"`, which OpenAI validates before dispatching any call —
     400ing every chat request regardless of prompt) to the full ruleset a
     *different* violation would break identically and just as invisibly, via
@@ -187,6 +187,14 @@ def test_normalized_openai_tools_satisfy_strict_mode_schema_rules() -> None:
     assert not violations, "strict-mode schema violations found:\n" + "\n".join(
         violations
     )
+
+
+def test_normalized_openai_tools_drop_mcp_annotations() -> None:
+    """`annotations` is MCP wire metadata; the model-facing function payload
+    is built from an explicit key set, so it must never leak into it."""
+    assert all("annotations" in tool for tool in AGENT_TOOLS)
+    for tool in normalize_openai_tools(AGENT_TOOLS):
+        assert set(tool) == {"type", "strict", "name", "description", "parameters"}
 
 
 def test_normalize_does_not_mutate_the_canonical_tool_definitions() -> None:

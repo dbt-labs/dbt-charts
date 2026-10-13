@@ -127,7 +127,7 @@ def test_independent_scale_bakes_no_ladder_even_with_a_fixed_decimal_format(
             "type": chart_type,
             "x": "x",
             "y": "val",
-            "format": "integer",
+            "style": {"axis_y": {"labels": {"format": "integer"}}},
             "multiples": {"rows": "grp", "scale": "independent"},
             **extra_fields,
         }

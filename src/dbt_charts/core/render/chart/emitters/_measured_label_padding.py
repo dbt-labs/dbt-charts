@@ -75,6 +75,7 @@ from __future__ import annotations
 import math
 from decimal import Decimal
 
+from dbt_charts.core.compile.format_value import format_value
 from dbt_charts.core.compile.models.primitives import (
     ResolvedFormat,
     painted_sign_placement,
@@ -93,6 +94,7 @@ from dbt_charts.core.text.numeral_scale import (
     decimal_pad_for,
     with_symbol,
 )
+from dbt_charts.core.text.predefined_formats import VEGA_ARMS
 
 # Plausible spread of tick counts Vega-Lite's own axis layout might land on
 # when dbt charts hasn't baked explicit tick values. Not an attempt to predict
@@ -149,6 +151,8 @@ def quantitative_tick_labels(
 
     The plain case measures the affix as the composed ``labelExpr`` paints it.
     """
+    if fmt.spec in VEGA_ARMS:
+        return [format_value(v, fmt) for v in tick_values]
     format_spec = tick_label.format if tick_label is not None else fmt.spec
     if ruler is None:
         if tick_label is None:
@@ -319,6 +323,8 @@ def estimated_quantitative_tick_labels(
         candidates = _linear_tick_candidates(
             min(min(values), 0.0), max(max(values), 0.0)
         )
+    if fmt.spec in VEGA_ARMS:
+        return [format_value(v, fmt) for v in candidates]
     if tick_label is None or tick_label.si_format is None:
         if fmt.has_affix:
             return [

@@ -20,11 +20,9 @@ import so the compile layer can share its vocabulary.
 
 from __future__ import annotations
 
-import json
-
 from dbt.adapters.base.query_headers import MacroQueryStringSetter, _QueryComment
 
-from dbt_charts.core.attribution import current_attribution, engine_attribution
+from dbt_charts.core.attribution import attribution_payload
 
 
 class QueryHeader(MacroQueryStringSetter):
@@ -52,7 +50,7 @@ class QueryHeader(MacroQueryStringSetter):
 
         dbt-bigquery reads ``comment.query_comment`` off this to derive job labels.
         """
-        return _QueryComment(self._payload())
+        return _QueryComment(attribution_payload())
 
     @comment.setter
     def comment(self, value: _QueryComment) -> None:
@@ -71,7 +69,7 @@ class QueryHeader(MacroQueryStringSetter):
         """Prepend the payload as a leading block comment, or pass *sql* through."""
         if not self._emit_sql_comment:
             return sql
-        return f"/* {self._payload()} */\n{sql}"
+        return f"/* {attribution_payload()} */\n{sql}"
 
     def set(self, name: str, query_header_context: None) -> None:
         """No-op. dbt's ``connection_named`` opens every connection with this.
@@ -87,10 +85,3 @@ class QueryHeader(MacroQueryStringSetter):
 
     def reset(self) -> None:
         """No-op, for the same reason as :meth:`set` — nothing is stashed to clear."""
-
-    def _payload(self) -> str:
-        # Nothing here depends on merge order: `validate_attribution` has already
-        # rejected every engine-owned key at the compile boundary, so an authored
-        # pair can never collide with one. For `app` that guard is RESERVED_KEYS
-        # rather than the `dbt_charts_` prefix, since it sits outside the namespace.
-        return json.dumps({**engine_attribution(), **current_attribution()})

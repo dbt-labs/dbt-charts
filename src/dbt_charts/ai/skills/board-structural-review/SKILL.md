@@ -17,8 +17,7 @@ metadata:
 
 # Dashboard Structural Review
 
-Read the board's YAML{{#if_tool validate_board}}, run `{{ s_validate_board }}`,{{/if_tool}}
-then evaluate the design choices encoded in the YAML against a checklist.
+Read the board's YAML, then evaluate the design choices encoded in the YAML against a checklist.
 Produces a markdown findings list with severity tags. No rendering required —
 this is the cheap pass.
 
@@ -31,23 +30,13 @@ this is the cheap pass.
 
 ## When NOT to use
 
-{{#if_tool validate_board}}- Schema validation alone — `{{ s_validate_board }}`
-  is the right tool, this skill calls it
-{{/if_tool}}- Visual problems ("the legend is overlapping the title") — use
+- Visual problems ("the legend is overlapping the title") — use
   `{{ s_skill_name_visual_review }}`
 - Comparing two versions of a board — use `looker-compare-diff` pattern instead
 
 ## Protocol
 
-{{#if_tool validate_board}}1. **Validate.** Run `{{ s_validate_board }}`
-   on the board path:
-
-   {{ s_validate_example }}
-
-   If validation reports errors, surface them and stop — there's nothing to
-   review until the schema is valid.
-
-{{/if_tool}}1. **Read the board YAML** with the agent's file-reading tool.
+1. **Read the board YAML** with the agent's file-reading tool.
 
 1. **Evaluate against the checklist below.** For each finding, emit a row with
    severity, the YAML path or chart name, and a concrete fix.
@@ -98,7 +87,7 @@ this is the cheap pass.
 ### Formatting
 
 - [ ] No raw D3 format strings — use named presets (`currency`, not `"$,.2s"`)
-- [ ] Cartesian charts format the **measure** with `style.number_format` (or `style.axis_y.labels.format`) — `axis_y` is always the measure, even on a horizontal bar where it draws along the bottom. **Not** chart-root `format:`
+- [ ] A column prints the same on every chart that shows it, so its format lives on the query: `formats:` (`revenue: currency`). A chart sets `style.axis_y.labels.format` only for an exception — `axis_y` is always the measure, even on a horizontal bar where it draws along the bottom. **Not** chart-root `format:`, and there is no chart-wide format key
 - [ ] No number preset on a dimension axis, unless its ticks are themselves numbers. A band-scale dimension raises `ERR-LABEL-FORMAT-AXIS-MISMATCH`; a temporal one raises too — dates get no numeric-tick exemption. See *Which dimensions are band scales* below
 - [ ] `heatmap` has no measure axis — both axes are grid dimensions, the value is on the color channel. A number preset on either axis raises
 - [ ] `style.axis_y.mirror.format` raises the same way whenever the mirrored edge is categorical — a dot plot's y, and a horizontal bar's category edge
@@ -133,9 +122,11 @@ Every one of these raises now, including a temporal x (a bar past 60 buckets inc
 | `integer` | `",.0f"` | `1,234` |
 | `number` | `".3~s"` | `1.2M` |
 | `number_full` | `",.2f"` | `1,234.56` |
+| `compact` | `".2~s"` | `1.2M` |
 | `currency` | `"$.3~s"` | `$1.2M` |
 | `currency_whole` | `"$,.0f"` | `$1,234` |
 | `currency_full` | `"$,.2f"` | `$1,234.56` |
+| `currency_compact` | `"$.2~s"` | `$1.2M` |
 | `percent` | `".1%"` | `2.3%` |
 | `percent_whole` | `".0%"` | `2%` |
 | `percent_delta` | `"+.1%"` | `+2.3%` |
@@ -143,7 +134,7 @@ Every one of these raises now, including a temporal x (a bar past 60 buckets inc
 
 **Render-time format hints** (from `render_board` warnings — not compile-time auto-formatting)
 
-When no explicit format is set, render may warn that a column looks like currency or percent. Fix by adding the preset in the correct slot (`style.number_format` for the measure axis, `style.value.format`, or `style.columns.<col>.format`) — not chart-root `format:`, and not the dimension axis unless its ticks are themselves numbers.
+When no explicit format is set, render may warn that a column looks like currency or percent. Fix by naming the preset in the query's `formats:`, or in the correct slot (`style.axis_y.labels.format` for the measure axis, `style.value.format`, or `style.columns.<col>.format`) — not chart-root `format:`, and not the dimension axis unless its ticks are themselves numbers.
 
 - Column name matches `*_pct`, `*_rate`, `*_ratio`, `*_share`, `*_proportion` → likely wants `percent`
 - Column name matches `*revenue*`, `*amount*`, `*cost*`, `*price*`, `*spend*`, `*profit*`, `*fee*` → likely wants `currency_whole`
@@ -181,8 +172,7 @@ can short-circuit.
 
 | Mistake | Fix |
 |---|---|
-{{#if_tool validate_board}}| Returning "looks fine" without validating first | Always run `{{ s_validate_board }}` — if it fails, there's nothing to review |
-{{/if_tool}}| Padding findings with `nit`-level noise | Cap at 5 findings total; promote the most severe |
+| Padding findings with `nit`-level noise | Cap at 5 findings total; promote the most severe |
 | Emitting findings without a concrete fix | Every finding needs an actionable suggestion |
 | Inventing rules not in the checklist | Stay anchored to the checklist; if you discover a real gap, file a follow-up to extend the skill |
 

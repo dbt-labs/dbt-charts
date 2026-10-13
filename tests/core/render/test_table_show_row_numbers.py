@@ -99,10 +99,10 @@ class TestRowNumbersSchema:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_table(make_chart_fn: Any) -> Any:
+def _resolve_table(make_chart_fn: Any, data: Any) -> Any:
     """Return a base ResolvedTableChart with default style."""
     chart = make_chart_fn("table", x=None, y=None)
-    return resolve(chart, [], chart_style_context=_BOARD_STYLE)
+    return resolve(chart, data, chart_style_context=_BOARD_STYLE)
 
 
 def _modify_table(resolved: Any, **table_updates: Any) -> Any:
@@ -116,7 +116,11 @@ def _modify_table(resolved: Any, **table_updates: Any) -> Any:
 def _with_row_numbers(
     resolved: Any, pagination: Any = None, **row_numbers_kwargs: Any
 ) -> Any:
+    from dbt_charts.core.compile.models.style.authored import PaginationConfig
     from dbt_charts.core.compile.models.style.theme import TableRowNumbersStyle
+
+    if pagination is None:
+        pagination = PaginationConfig(enabled=False)
 
     return _modify_table(
         resolved,
@@ -150,16 +154,14 @@ def _row_number_text_values(svg: str) -> list[str]:
 class TestDefaultOff:
     def test_default_render_has_no_row_number_column(self, make_chart: Any) -> None:
         """Without row_numbers config, no leading '#' header appears."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         data = [
             {"company": "Apex", "revenue": 500},
             {"company": "Bright", "revenue": 600},
             {"company": "Cedar", "revenue": 700},
         ]
-        chart = _resolve_table(make_chart)
+        chart = _resolve_table(make_chart, data)
         svg = render_table_svg(
             chart,
             data,
@@ -182,16 +184,14 @@ class TestDefaultOff:
 
 class TestShowTrue:
     def test_show_renders_indices_one_two_three(self, make_chart: Any) -> None:
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         data = [
             {"company": "Apex", "revenue": 1000},
             {"company": "Bright", "revenue": 2000},
             {"company": "Cedar", "revenue": 3000},
         ]
-        chart = _with_row_numbers(_resolve_table(make_chart), visible=True)
+        chart = _with_row_numbers(_resolve_table(make_chart, data), visible=True)
         svg = render_table_svg(
             chart,
             data,
@@ -205,12 +205,10 @@ class TestShowTrue:
         assert "3" in rendered
 
     def test_default_header_is_hash(self, make_chart: Any) -> None:
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         data = [{"company": "Apex", "revenue": 1000}]
-        chart = _with_row_numbers(_resolve_table(make_chart), visible=True)
+        chart = _with_row_numbers(_resolve_table(make_chart, data), visible=True)
         svg = render_table_svg(
             chart,
             data,
@@ -221,13 +219,11 @@ class TestShowTrue:
         assert "#" in rendered
 
     def test_custom_header_text(self, make_chart: Any) -> None:
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         data = [{"company": "Apex", "revenue": 1000}]
         chart = _with_row_numbers(
-            _resolve_table(make_chart), visible=True, header="Row"
+            _resolve_table(make_chart, data), visible=True, header="Row"
         )
         svg = render_table_svg(
             chart,
@@ -241,12 +237,10 @@ class TestShowTrue:
 
     def test_default_align_is_right(self, make_chart: Any) -> None:
         """Default align=right -> the index cell uses text-anchor 'end'."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         data = [{"company": "Apex", "revenue": 1000}]
-        chart = _with_row_numbers(_resolve_table(make_chart), visible=True)
+        chart = _with_row_numbers(_resolve_table(make_chart, data), visible=True)
         svg = render_table_svg(
             chart,
             data,
@@ -259,13 +253,11 @@ class TestShowTrue:
 
     def test_align_left_uses_start_anchor(self, make_chart: Any) -> None:
         """align=left -> text-anchor 'start'."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         data = [{"company": "Apex", "revenue": 1000}]
         chart = _with_row_numbers(
-            _resolve_table(make_chart), visible=True, align="left"
+            _resolve_table(make_chart, data), visible=True, align="left"
         )
         svg = render_table_svg(
             chart,
@@ -305,13 +297,12 @@ class TestPaginationContinuity:
     def test_page_two_starts_at_eleven(self, make_chart: Any) -> None:
         """50 rows, page_rows=10: page 2 shows 11..20, never 1..10 again."""
         from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from .._engine_render import render_table_svg
 
         data = self._fifty_row_data()
         chart = _with_row_numbers(
-            _resolve_table(make_chart),
+            _resolve_table(make_chart, data),
             pagination=PaginationConfig(enabled=True, page_rows=10),
             visible=True,
         )
@@ -337,13 +328,12 @@ class TestPaginationContinuity:
     def test_page_five_last_page(self, make_chart: Any) -> None:
         """Page 5 of 50/10 shows 41..50."""
         from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from .._engine_render import render_table_svg
 
         data = self._fifty_row_data()
         chart = _with_row_numbers(
-            _resolve_table(make_chart),
+            _resolve_table(make_chart, data),
             pagination=PaginationConfig(enabled=True, page_rows=10),
             visible=True,
         )
@@ -370,14 +360,13 @@ class TestPaginationContinuity:
         should be wide enough for "200" not just "10".
         """
         from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from .._engine_render import render_table_svg
 
         data_big = [{"company": f"C{i:03d}", "revenue": i} for i in range(1, 201)]
         data_small = [{"company": f"C{i:03d}", "revenue": i} for i in range(1, 11)]
         chart = _with_row_numbers(
-            _resolve_table(make_chart),
+            _resolve_table(make_chart, data_big),
             pagination=PaginationConfig(enabled=True, page_rows=10),
             visible=True,
         )
@@ -418,9 +407,7 @@ class TestPaginationContinuity:
 
 class TestSummaryRowsBlank:
     def test_summary_row_shows_blank_row_number(self, make_chart: Any) -> None:
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         data = [
             {"company": "Apex", "revenue": 1000, "kind": "value"},
@@ -428,14 +415,15 @@ class TestSummaryRowsBlank:
             {"company": "Subtotal", "revenue": 3000, "kind": "summary"},
             {"company": "Total", "revenue": 3000, "kind": "total"},
         ]
+        from dbt_charts.core.compile.models.style.authored import PaginationConfig
         from dbt_charts.core.compile.models.style.theme import TableRowNumbersStyle
 
-        resolved_base = _resolve_table(make_chart)
+        resolved_base = _resolve_table(make_chart, data)
         chart = _modify_table(
             resolved_base,
             row_numbers=TableRowNumbersStyle(visible=True),
             row=resolved_base.style.table.row.model_copy(update={"role": "kind"}),
-            pagination=None,
+            pagination=PaginationConfig(enabled=False),
         )
         svg = render_table_svg(
             chart,
@@ -474,9 +462,7 @@ class TestWidthBudgeting:
         """Auto-sized columns at a tight width: adding row_numbers must NOT
         expand the SVG — the row-number width must come out of the
         data-column budget so elastic columns compress to absorb it."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         # 5 auto-sized columns in 300px. Without the budget fix the SVG grows
         # when row_numbers.visible=True because the synthetic column is tacked on
@@ -484,7 +470,7 @@ class TestWidthBudgeting:
         data = [{"a": 1.0, "b": 2.0, "c": 3.0, "d": 4.0, "e": 5.0}] * 5
         FIXED_WIDTH = 300
 
-        chart_off = _resolve_table(make_chart)
+        chart_off = _resolve_table(make_chart, data)
         svg_off = render_table_svg(
             chart_off,
             data,
@@ -492,7 +478,7 @@ class TestWidthBudgeting:
             board_style=resolve_style(get_theme_style()),
         )
 
-        chart_on = _with_row_numbers(_resolve_table(make_chart), visible=True)
+        chart_on = _with_row_numbers(_resolve_table(make_chart, data), visible=True)
         svg_on = render_table_svg(
             chart_on,
             data,
@@ -518,12 +504,11 @@ class TestConditionalFormattingIgnoresRowNumbers:
         """
         from dbt_charts.core.compile.models.chart.authored import ConditionalRule
         from dbt_charts.core.compile.resolve.style.board import resolve_style
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from .._engine_render import render_table_svg
 
         data = [{"company": "Apex", "revenue": 1000}]
-        chart = _with_row_numbers(_resolve_table(make_chart), visible=True)
+        chart = _with_row_numbers(_resolve_table(make_chart, data), visible=True)
 
         # Fabricate a CF block keyed by '#' with a rule that would fill red.
         # The renderer MUST NOT paint the row-number cell red.

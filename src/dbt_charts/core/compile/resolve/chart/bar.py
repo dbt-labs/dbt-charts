@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import date
 from typing import Literal
 
 from dbt_charts.core.compile.config import get_chart_rendering
@@ -628,6 +629,7 @@ def _resolve_bar(
     width: float,
     datasets: LayerDatasets,
     automatic_link_candidate: AutomaticLinkCandidate,
+    x_date_range: tuple[date, date] | None,
     display_text: ChartDisplayText = None,
 ) -> ResolvedBarChart:
     data = dataset.all_rows()
@@ -1213,6 +1215,7 @@ def _resolve_bar(
     return ResolvedBarChart(
         **bkw,
         **_ck,
+        x_date_range=x_date_range,
         wide_measures=wide_measures,
         chart_type="bar",
         y_start=normalized.y_start,

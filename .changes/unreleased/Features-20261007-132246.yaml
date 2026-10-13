@@ -1,0 +1,3 @@
+kind: Features
+body: The latest release's board JSON Schema is hosted at https://docs.dbtcharts.com/schema/board.json (each release also at /schema/<version>/board.json), and shipped boards name it in a `$schema` modeline so editors validate them.
+time: 2026-10-07T13:22:46.501128-07:00

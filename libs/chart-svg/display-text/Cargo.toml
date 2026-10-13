@@ -1,0 +1,7 @@
+[package]
+name = "display-text"
+version = "0.0.1"
+edition = "2021"
+description = "Display text derived from column names: core/utils.py::slug_to_text and core/text/case.py::field_title, shared by compile and chart-renderer."
+
+[dependencies]

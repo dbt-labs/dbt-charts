@@ -134,7 +134,7 @@ class TestKpiRendererWithStyleType:
     """KPI renderer works after kpi: Any → KpiStyle."""
 
     def test_kpi_renders_without_crash(self):
-        from dbt_charts.core.render.chart.kpi import render_kpi_svg
+        from ._engine_render import render_kpi_svg
 
         board_style = resolve_style(get_theme_style())
         board_context = resolve_chart_style_context(get_theme_style())
@@ -152,7 +152,7 @@ class TestKpiRendererWithStyleType:
         override is applied via ``dataclasses.replace`` on the non-Resolved
         ``ChartStyleContext`` — legal because it carries no Resolved prefix.
         """
-        from dbt_charts.core.render.chart.kpi import render_kpi_svg
+        from ._engine_render import render_kpi_svg
 
         board_style = resolve_style(get_theme_style())
         board_context = resolve_chart_style_context(get_theme_style())

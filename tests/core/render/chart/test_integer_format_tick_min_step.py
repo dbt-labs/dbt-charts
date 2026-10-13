@@ -25,6 +25,7 @@ from dbt_charts.core.compile.config import get_theme_style, reset_config
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import (
+    AxisLabelStylePatch,
     AxisTicksStylePatch,
     AxisYStylePatch,
     BarChartStylePatch,
@@ -94,7 +95,7 @@ charts:
     type: bar
     x: status
     y: ticket_count
-    style: {{orientation: {orientation}, number_format: integer}}
+    style: {{orientation: {orientation}, axis_y: {{labels: {{format: integer}}}}}}
 rows:
   - tickets_by_status
 """
@@ -126,7 +127,9 @@ def test_stark_theme_integer_format_no_duplicate_tick_labels() -> None:
 
 def test_baked_values_axis_carries_no_tick_min_step() -> None:
     axis = _resolved_y_axis(
-        BarChartStylePatch(orientation="vertical", number_format="integer")
+        BarChartStylePatch(
+            orientation="vertical", axis_y={"labels": {"format": "integer"}}
+        )
     )
     assert "values" in axis
     assert "tickMinStep" not in axis
@@ -144,8 +147,9 @@ charts:
     y: ticket_count
     style:
       orientation: vertical
-      number_format: integer
       axis_y:
+        labels:
+          format: integer
         scale:
           values: [0, 0.5, 1, 1.5, 2]
 rows:
@@ -194,8 +198,10 @@ def test_authored_ticks_count_ladder_respects_derived_min_step() -> None:
     axis = _resolved_y_axis(
         BarChartStylePatch(
             orientation="vertical",
-            number_format="integer",
-            axis_y=AxisYStylePatch(ticks=AxisTicksStylePatch(count=8)),
+            axis_y=AxisYStylePatch(
+                labels=AxisLabelStylePatch(format="integer"),
+                ticks=AxisTicksStylePatch(count=8),
+            ),
         )
     )
     assert axis["values"] == [0.0, 1.0, 2.0, 3.0], axis["values"]
@@ -247,7 +253,7 @@ charts:
     type: bar
     x: x
     y: y
-    style: {orientation: vertical, number_format: integer}
+    style: {orientation: vertical, axis_y: {labels: {format: integer}}}
 rows:
   - c
 """
@@ -275,7 +281,7 @@ def test_zero_anchored_sub_unit_domain_keeps_the_floored_ladder() -> None:
             "query": SqlQuery(sql="SELECT 1", source="src"),
             "query_name": "q",
             "style": BarChartStylePatch(
-                orientation="vertical", number_format="integer"
+                orientation="vertical", axis_y={"labels": {"format": "integer"}}
             ),
         }
     )
@@ -306,7 +312,7 @@ def test_zero_max_row_gets_the_same_mixed_sign_pin() -> None:
             "query": SqlQuery(sql="SELECT 1", source="src"),
             "query_name": "q",
             "style": BarChartStylePatch(
-                orientation="vertical", number_format="integer"
+                orientation="vertical", axis_y={"labels": {"format": "integer"}}
             ),
         }
     )
@@ -328,7 +334,10 @@ def _resolved_scale_for_family(
     channel's VL scale dict -- x for horizontal bar, y for every other
     family/orientation."""
     reset_config()
-    style: dict[str, Any] = {"number_format": "integer", **extra_style}
+    style: dict[str, Any] = {
+        **extra_style,
+        "axis_y": {"labels": {"format": "integer"}, **extra_style.get("axis_y", {})},
+    }
     if orientation is not None:
         style["orientation"] = orientation
     chart = TypeAdapter(Chart).validate_python(
@@ -387,8 +396,10 @@ def _stacked_bar_axis_values(rows: list[dict[str, str | float]]) -> list[Any] | 
             "style": {
                 "orientation": "vertical",
                 "stack": "zero",
-                "number_format": "integer",
-                "axis_y": {"scale": {"continuous": {"zero": True}}},
+                "axis_y": {
+                    "labels": {"format": "integer"},
+                    "scale": {"continuous": {"zero": True}},
+                },
             },
         }
     )
@@ -466,8 +477,10 @@ def test_stark_stacked_negative_rows_floor_via_tick_min_step() -> None:
             "style": {
                 "orientation": "vertical",
                 "stack": "zero",
-                "number_format": "integer",
-                "axis_y": {"scale": {"continuous": {"zero": True}}},
+                "axis_y": {
+                    "labels": {"format": "integer"},
+                    "scale": {"continuous": {"zero": True}},
+                },
             },
         }
     )
@@ -507,8 +520,9 @@ charts:
     style:
       orientation: vertical
       stack: zero
-      number_format: integer
       axis_y:
+        labels:
+          format: integer
         scale:
           continuous:
             zero: true
@@ -544,7 +558,7 @@ def test_dual_axis_layer_does_not_inherit_the_base_tick_min_step() -> None:
         query=SqlQuery(sql="SELECT 1", source="t"),
         query_name="q",
         variable_dependencies=set(),
-        format="currency_whole",
+        style={"axis_y": {"labels": {"format": "currency_whole"}}},
         layers=[
             LineLayer(
                 type="line",
@@ -585,7 +599,11 @@ def _spec_for(
             "y": "y",
             "query": SqlQuery(sql="SELECT 1", source="src"),
             "query_name": "q",
-            "style": {"orientation": "vertical", "number_format": "integer", **style},
+            "style": {
+                "orientation": "vertical",
+                **style,
+                "axis_y": {"labels": {"format": "integer"}, **style.get("axis_y", {})},
+            },
             **fields,
         }
     )
@@ -666,7 +684,9 @@ charts:
     style:
       orientation: vertical
       stack: normalize
-      number_format: integer
+      axis_y:
+        labels:
+          format: integer
 rows:
   - c
 """
@@ -686,8 +706,10 @@ def test_log_scale_axis_carries_no_tick_min_step() -> None:
             "query": SqlQuery(sql="SELECT 1", source="src"),
             "query_name": "q",
             "style": {
-                "number_format": "integer",
-                "axis_y": {"scale": {"continuous": {"type": "log"}}},
+                "axis_y": {
+                    "labels": {"format": "integer"},
+                    "scale": {"continuous": {"type": "log"}},
+                },
             },
         }
     )
@@ -712,7 +734,10 @@ def test_normalize_stack_resolves_no_tick_step(chart_type: str) -> None:
             "color": "series",
             "query": SqlQuery(sql="SELECT 1", source="src"),
             "query_name": "q",
-            "style": {"stack": "normalize", "number_format": "integer"},
+            "style": {
+                "stack": "normalize",
+                "axis_y": {"labels": {"format": "integer"}},
+            },
         }
     )
     rows = [
@@ -750,7 +775,7 @@ def test_histogram_count_axis_emits_the_resolved_tick_min_step() -> None:
             "x": "x",
             "query": SqlQuery(sql="SELECT 1", source="src"),
             "query_name": "q",
-            "style": {"number_format": "integer"},
+            "style": {"axis_y": {"labels": {"format": "integer"}}},
         }
     )
     rows = [{"x": v} for v in (1, 2, 2, 3, 5)]
@@ -772,7 +797,7 @@ def test_histogram_count_axis_never_ticks_between_counts() -> None:
             "x": "x",
             "query": SqlQuery(sql="SELECT 1", source="src"),
             "query_name": "q",
-            "style": {"number_format": "currency"},
+            "style": {"axis_y": {"labels": {"format": "currency"}}},
         }
     )
     rows = [{"x": v} for v in (0.3, 0.6, 0.9)]

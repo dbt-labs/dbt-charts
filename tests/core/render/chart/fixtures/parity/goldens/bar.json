@@ -128,7 +128,7 @@
         "domainColor": "#EDEFF2",
         "domainWidth": 1.0,
         "grid": false,
-        "gridColor": "#EDEFF2",
+        "gridColor": "#DFE1E5",
         "gridOpacity": 1.0,
         "gridWidth": 1.0,
         "labelAlign": "left",
@@ -142,7 +142,7 @@
         "labelSeparation": 16.0,
         "offset": 1.0,
         "orient": "left",
-        "tickColor": "#EDEFF2",
+        "tickColor": "#DFE1E5",
         "tickSize": 6.0,
         "tickWidth": 1.0,
         "ticks": false,
@@ -188,6 +188,7 @@
           "value": "#8A8C8F"
         },
         "description": null,
+        "size": null,
         "x": {
           "datum": 0,
           "type": "quantitative"

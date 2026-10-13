@@ -13,7 +13,7 @@ Threshold (``when``) rules are authored under the chart-level
 ``tests/core/test_conditional_formatting.py`` and
 ``tests/core/test_table_renderer_reads_cf_block.py``. This file focuses on
 the continuous ``scale`` encoding plus the interaction between ``scale``
-and block-sourced rules in ``resolve_cell_conditional_styles``.
+and block-sourced rules in the engine's table family.
 """
 
 import dataclasses
@@ -27,11 +27,9 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.models.chart.authored import (
     ColumnScaleConfig,
-    ConditionalRule,
     ScaleTargetConfig,
     TableColumnConfig,
 )
-from dbt_charts.core.compile.models.primitives import FontStyle
 from dbt_charts.core.compile.models.style.authored import ColumnScaleTargetConfig
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
@@ -41,7 +39,6 @@ from dbt_charts.core.compile.resolve.style.board import (
 from dbt_charts.core.render.chart.table_support import (
     compute_scale_domain,
     interpolate_scale_color,
-    resolve_cell_conditional_styles,
 )
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
@@ -231,126 +228,6 @@ class TestComputeScaleDomain:
 # ---------------------------------------------------------------------------
 
 
-class TestResolveCellConditionalStyles:
-    def test_base_only(self) -> None:
-        from dbt_charts.core.compile.models.primitives import FontStyle
-
-        col = TableColumnConfig(background="#eee", font=FontStyle(color="#111"))
-        bg, color, _fw, *_ = resolve_cell_conditional_styles(col, 50, [])
-        assert bg == "#eee"
-        assert color == "#111"
-
-    def test_scale_overrides_base(self) -> None:
-        col = TableColumnConfig(
-            background="#eee",
-            scale=ColumnScaleConfig(
-                background=ColumnScaleTargetConfig(
-                    palette=["#000000", "#ffffff"], min=0, max=100
-                )
-            ),
-        )
-        data = [{"x": 0}, {"x": 100}]
-        bg, _color, _fw, *_ = resolve_cell_conditional_styles(col, 50, data)
-        # Scale background should override base — approximately #808080
-        assert bg is not None
-        assert bg != "#eee"
-        r = int(bg[1:3], 16)
-        assert 126 <= r <= 130
-
-    def test_when_overrides_scale(self) -> None:
-        col = TableColumnConfig(
-            scale=ColumnScaleConfig(
-                background=ColumnScaleTargetConfig(
-                    palette=["#000000", "#ffffff"], min=0, max=100
-                )
-            ),
-        )
-        data = [{"x": 0}, {"x": 100}]
-        bg, _color, _fw, *_ = resolve_cell_conditional_styles(
-            col,
-            5,
-            data,
-            when_rules=[ConditionalRule(lt=10, background="#ff0000")],
-        )
-        assert bg == "#ff0000"  # when rule overrides scale
-
-    def test_scale_null_color(self) -> None:
-        col = TableColumnConfig(
-            scale=ColumnScaleConfig(
-                background=ColumnScaleTargetConfig(
-                    palette=["#000", "#fff"], min=0, max=100, null_color="#cccccc"
-                )
-            ),
-        )
-        bg, *_ = resolve_cell_conditional_styles(col, None, [])
-        assert bg == "#cccccc"
-
-    def test_scale_null_no_null_color(self) -> None:
-        """Null value with no null_color configured -> no scale background."""
-        col = TableColumnConfig(
-            scale=ColumnScaleConfig(
-                background=ColumnScaleTargetConfig(
-                    palette=["#000", "#fff"], min=0, max=100
-                )
-            ),
-        )
-        bg, *_ = resolve_cell_conditional_styles(col, None, [])
-        assert bg is None
-
-    def test_scale_color_target(self) -> None:
-        col = TableColumnConfig(
-            scale=ColumnScaleConfig(
-                color=ColumnScaleTargetConfig(
-                    palette=["#000000", "#ffffff"], min=0, max=100
-                )
-            ),
-        )
-        _, color, *_ = resolve_cell_conditional_styles(col, 100, [])
-        assert color == "#ffffff"
-
-    def test_full_spec_from_task(self) -> None:
-        """Scale + chart-level ``when`` rules interact per precedence."""
-        col = TableColumnConfig(
-            format="$,.0f",
-            scale=ColumnScaleConfig(
-                background=ColumnScaleTargetConfig(
-                    palette=["#fff7d6", "#f59e0b", "#92400e"],
-                    min=0,
-                    max=100000,
-                    null_color="#f3f4f6",
-                )
-            ),
-        )
-        when_rules = [
-            ConditionalRule(
-                lt=0,
-                background="#fee2e2",
-                font=FontStyle(color="#991b1b"),
-            ),
-        ]
-        data = [{"amount": 0}, {"amount": 100000}]
-
-        # Positive value: scale applies, when doesn't match
-        bg, _color, *_ = resolve_cell_conditional_styles(
-            col, 50000, data, when_rules=when_rules
-        )
-        assert bg is not None
-        assert bg != "#fee2e2"  # not the when-rule color
-
-        # Negative value: when rule overrides scale
-        bg2, color2, *_ = resolve_cell_conditional_styles(
-            col, -100, data, when_rules=when_rules
-        )
-        assert bg2 == "#fee2e2"
-        assert color2 == "#991b1b"
-
-        # Null value: scale null_color
-        bg3, *_ = resolve_cell_conditional_styles(
-            col, None, data, when_rules=when_rules
-        )
-        assert bg3 == "#f3f4f6"
-
-
 # ---------------------------------------------------------------------------
 # TableColumnConfig.scale parsing from an authored dict
 # ---------------------------------------------------------------------------
@@ -421,9 +298,7 @@ class TestParseColumnConfigsWithConditionals:
 class TestTableSVGWithConditionalFormatting:
     def test_scale_background_in_svg(self, make_chart) -> None:
         """Scale config produces fill rects in the rendered SVG."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -458,9 +333,7 @@ class TestTableSVGWithConditionalFormatting:
 
     def test_when_rule_in_svg(self, make_chart) -> None:
         """When rule from the chart-level block paints the expected background."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -574,9 +447,7 @@ class TestRowRuleZOrderAndFillAlignment:
         """
         import re
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         es = _resolved_style_with_row_rule(width=1.0)
         data = [
@@ -589,7 +460,7 @@ class TestRowRuleZOrderAndFillAlignment:
         chart = _apply_charts_table_style(
             resolve(
                 _scale_chart(make_chart),
-                [],
+                data,
                 chart_style_context=_BOARD_STYLE,
             ),
             es,
@@ -636,9 +507,7 @@ class TestRowRuleZOrderAndFillAlignment:
         """
         import re
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         es = _resolved_style_with_row_rule(width=1.0)
         row_height = int(es.table.row.height)
@@ -652,7 +521,7 @@ class TestRowRuleZOrderAndFillAlignment:
         chart = _apply_charts_table_style(
             resolve(
                 _scale_chart(make_chart),
-                [],
+                data,
                 chart_style_context=_BOARD_STYLE,
             ),
             es,
@@ -690,9 +559,8 @@ class TestRowRuleZOrderAndFillAlignment:
 
         # Force a stripe so we get a reference rect from _compute_content_span.
         from dbt_charts.core.compile.models.style.theme import TableRowStripeStyle
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from .._engine_render import render_table_svg
 
         es = resolve_chart_style_context(get_theme_style())
         tc = es.table
@@ -722,7 +590,7 @@ class TestRowRuleZOrderAndFillAlignment:
         chart = _apply_charts_table_style(
             resolve(
                 _scale_chart(make_chart),
-                [],
+                data,
                 chart_style_context=_BOARD_STYLE,
             ),
             es,
@@ -784,9 +652,7 @@ class TestRowRuleZOrderAndFillAlignment:
         """
         import re
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         # x=None, y=None: only the explicitly listed column exists.
         # This avoids auto-added x_field/y_field columns shifting col offsets.
@@ -806,7 +672,7 @@ class TestRowRuleZOrderAndFillAlignment:
         es = _resolved_style_with_row_rule(width=1.0)
         data = [{"val": 42}]
         chart = _apply_charts_table_style(
-            resolve(chart, [], chart_style_context=_BOARD_STYLE),
+            resolve(chart, data, chart_style_context=_BOARD_STYLE),
             es,
         )
         svg = render_table_svg(
@@ -844,9 +710,7 @@ class TestRowRuleZOrderAndFillAlignment:
         """
         import re
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         # Chart with scale fill on income, row_role column drives summary/total.
         chart = make_chart(
@@ -914,7 +778,7 @@ class TestRowRuleZOrderAndFillAlignment:
             {"income": 100000, "row_role": "total"},
         ]
         chart = _apply_charts_table_style(
-            resolve(chart, [], chart_style_context=_BOARD_STYLE),
+            resolve(chart, data, chart_style_context=_BOARD_STYLE),
             es,
         )
         svg = render_table_svg(
@@ -981,54 +845,6 @@ class TestRowRuleZOrderAndFillAlignment:
 # ---------------------------------------------------------------------------
 # Fix 1 regression: named string palette must not be char-iterated
 # ---------------------------------------------------------------------------
-
-
-class TestNamedPaletteCallerWiring:
-    """Verify resolve_cell_conditional_styles routes named palette strings through
-    resolve_palette_stops, not a raw char-iteration over the string."""
-
-    def test_named_palette_produces_valid_hex_in_resolve_cell_styles(self) -> None:
-        # A named palette string carries valid hex stops via
-        # ScaleTargetConfig.resolved_stops, baked at resolve time by
-        # compile/resolve/chart/_table.py's _with_resolved_scale_stops — this test
-        # fabricates that same baked value directly, since it exercises
-        # resolve_cell_conditional_styles below the resolver.
-        from dbt_charts.core.compile.models.style.resolved import (
-            ResolvedColumnScaleConfig,
-            ResolvedTableColumnConfig,
-        )
-        from dbt_charts.core.compile.models.style.resolved.table import (
-            ResolvedNamedPaletteColumnScaleTargetConfig,
-        )
-        from dbt_charts.core.compile.resolve.style.palette import (
-            palette as resolve_named_palette,
-        )
-
-        col = ResolvedTableColumnConfig(
-            scale=ResolvedColumnScaleConfig(
-                background=ResolvedNamedPaletteColumnScaleTargetConfig(
-                    palette="dbt-seq-blue",
-                    resolved_stops=tuple(resolve_named_palette("dbt-seq-blue")),
-                    min=0,
-                    max=100,
-                )
-            ),
-        )
-        data = [{"val": 0}, {"val": 100}]
-        bg_at_min, *_ = resolve_cell_conditional_styles(col, 0, data)
-        bg_at_max, *_ = resolve_cell_conditional_styles(col, 100, data)
-
-        # Both must be valid 7-char hex colors, not single-letter garbage.
-        assert bg_at_min is not None
-        assert bg_at_max is not None
-        assert bg_at_min.startswith("#") and len(bg_at_min) == 7, (
-            f"Expected 7-char hex, got {bg_at_min!r} — likely char-iteration bug"
-        )
-        assert bg_at_max.startswith("#") and len(bg_at_max) == 7, (
-            f"Expected 7-char hex, got {bg_at_max!r} — likely char-iteration bug"
-        )
-        # The two extremes should produce different colors (palette varies).
-        assert bg_at_min != bg_at_max
 
 
 class TestWcagTableInkCarve:
@@ -1111,7 +927,7 @@ class TestPivotColumnTotalRowStyling:
     def test_pivot_total_row_gets_double_rule_treatment(self, make_chart: Any) -> None:
         import re
 
-        from dbt_charts.core.render.chart.table import render_table_svg
+        from .._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -1171,7 +987,7 @@ class TestPivotColumnTotalRowStyling:
             },
         ]
         chart = _apply_charts_table_style(
-            resolve(chart, [], chart_style_context=_BOARD_STYLE),
+            resolve(chart, data, chart_style_context=_BOARD_STYLE),
             es,
         )
         svg = render_table_svg(
@@ -1203,13 +1019,12 @@ class TestPivotColumnTotalRowStyling:
         )
 
     def test_all_totals_role_column_never_renders(self, make_chart: Any) -> None:
-        """The role-strip guard (table.py's `columns = [c for c in columns if
-        c != row_role_spec]`) must keep the role column out of the rendered
+        """The role-strip guard must keep the role column out of the rendered
         header. Every wide row carries the marker, so this all-totals result —
         which collapses to a single merged wide row — is the tightest case: the
         role column is present on the only row there is, and the guard is what
         keeps it from rendering as a "Row Role" header."""
-        from dbt_charts.core.render.chart.table import render_table_svg
+        from .._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -1240,7 +1055,7 @@ class TestPivotColumnTotalRowStyling:
             },
         ]
         chart = _apply_charts_table_style(
-            resolve(chart, [], chart_style_context=_BOARD_STYLE),
+            resolve(chart, data, chart_style_context=_BOARD_STYLE),
             es,
         )
         svg = render_table_svg(
@@ -1262,7 +1077,7 @@ class TestPivotColumnTotalRowStyling:
         `row.role: _df_row_role` must also drop the role column from its derived
         headers, not render it as a "Row Role" column — pivot and flat must not
         diverge here."""
-        from dbt_charts.core.render.chart.table import render_table_svg
+        from .._engine_render import render_table_svg
 
         chart = make_chart("table", title="Flat With Roles")
 
@@ -1277,10 +1092,7 @@ class TestPivotColumnTotalRowStyling:
             {"region": "EU", "revenue": 90, "_df_row_role": "value"},
             {"region": "Total", "revenue": 190, "_df_row_role": "total"},
         ]
-        chart = _apply_charts_table_style(
-            resolve(chart, [], chart_style_context=_BOARD_STYLE),
-            es,
-        )
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,

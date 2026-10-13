@@ -1864,6 +1864,23 @@ class TestInlineFileSourceTwoAnchors:
         source_cfg = result.board.sources["data/orders.parquet"]
         assert source_cfg["files"] == {"orders": "data/orders.parquet"}
 
+    def test_chart_inline_query_registers_the_root_file_source(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = local_project(tmp_path)
+        (tmp_path / "data.csv").write_text("id\n1\n")
+        result = compile(
+            "source: data.csv\n"
+            "charts:\n"
+            "  c:\n"
+            "    type: table\n"
+            "    query:\n"
+            "      sql: select * from data\n",
+            base_dir=project.directory("."),
+        )
+        assert result.success, f"Compilation failed: {result.errors}"
+        assert result.board.sources["data.csv"]["files"] == {"data": "data.csv"}
+
     def test_board_relative_ref_still_works_from_nested_board_dir(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:

@@ -451,13 +451,15 @@ class TestThinShimLOCGuards:
             # through Project.
             ("ai/mcp/server.py", 308),
             # This guard flags scope creep; raise it only alongside real new
-            # domain logic (most recently: resolve_render_format, the
-            # include_raw_data->format mapping every dispatch site calls).
-            ("ai/tools/__init__.py", 409),
+            # domain logic (most recently: the ValidationError arm that
+            # renders a bad argument as one plain line).
+            ("ai/tools/__init__.py", 412),
             # This guard flags scope creep; raise it only alongside real new
             # domain logic (most recently: INCLUDE_RAW_DATA_PROPERTY and
-            # RENDER_BOARD's own include_raw_data/no-format shape).
-            ("ai/tool_schemas.py", 209),
+            # RENDER_BOARD's own include_raw_data/no-format shape). Raised
+            # 209→260 for the per-tool MCP annotations (title + hints), which
+            # are declarative data, not logic.
+            ("ai/tool_schemas.py", 260),
         ],
         ids=["server.py", "tools/__init__.py", "tool_schemas.py"],
     )
@@ -492,6 +494,22 @@ class TestMCPWireSurface:
         self, mcp_server, removed_tool: str
     ) -> None:
         assert removed_tool not in _tool_names(mcp_server)
+
+    def test_tools_list_carries_annotations_for_every_tool(self, mcp_server) -> None:
+        from dbt_charts.ai.tool_schemas import ALL_TOOLS
+
+        handler = mcp_server.request_handlers[ListToolsRequest]
+        result = asyncio.run(handler(None))
+        advertised = {
+            t.name: t.annotations.model_dump(exclude_none=True)
+            for t in result.root.tools
+            if t.annotations is not None
+        }
+        assert advertised == {t["name"]: t["annotations"] for t in ALL_TOOLS}
+        assert {n for n, a in advertised.items() if a["openWorldHint"]} == {
+            "render_board",
+            "execute_query",
+        }
 
     def test_render_board_schema_includes_as_link(self, mcp_server) -> None:
         handler = mcp_server.request_handlers[ListToolsRequest]
@@ -550,24 +568,23 @@ class TestMCPInputSchemaShape:
                 "execute_query",
                 {
                     "sql",
+                    "board",
+                    "query",
                     "variables",
                     "source",
-                    "limit",
                     "lenient_variables",
                     "description",
                 },
-                "sql",
+                None,
             ),
-            ("search_boards", {"query", "tags", "limit"}, "query"),
-            ("describe_board", {"path"}, "path"),
-            ("validate_board", {"path", "yaml_content"}, None),
+            ("search_boards", {"query", "tags", "limit", "cursor"}, "query"),
+            ("describe_board", {"path", "chart"}, "path"),
         ],
         ids=[
             "render_board",
             "execute_query",
             "search_boards",
             "describe_board",
-            "validate_board",
         ],
     )
     def test_tool_input_properties(

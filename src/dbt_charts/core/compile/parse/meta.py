@@ -22,11 +22,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-import yaml
-
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.parse.parser import load_yaml_text
 from dbt_charts.core.diagnostics.suppression import validate_suppression_codes
-from dbt_charts.core.utils import UniqueKeyLoader
 
 if TYPE_CHECKING:
     from dbt_charts.core.project import ProjectDirectory, ProjectPath
@@ -108,16 +106,10 @@ def load_meta_file(meta_path: ProjectPath) -> ParsedPatch:
         raise CompilationError(f"Meta file not found: {meta_path.relpath}")
 
     try:
-        # An empty file parses to None: a documented empty patch, not a
-        # fault. Excuse only that: a real non-mapping document (a bare
-        # scalar/list) still reaches and fails `_parse_meta_dict`'s
-        # isinstance check below, rather than being silently swallowed here.
-        raw_data = meta_path.read_yaml()
-        data = {} if raw_data is None else raw_data
-    except (yaml.YAMLError, OSError) as e:
-        raise CompilationError(f"Failed to parse {meta_path.relpath}: {e}") from e
-
-    return _parse_meta_dict(data, meta_path.relpath)
+        text = meta_path.read_text()
+    except OSError as e:
+        raise CompilationError(f"Failed to read {meta_path.relpath}: {e}") from e
+    return parse_meta_content(text, meta_path.relpath)
 
 
 def parse_meta_content(text: str, relpath: str) -> ParsedPatch:
@@ -125,14 +117,12 @@ def parse_meta_content(text: str, relpath: str) -> ParsedPatch:
     than a project file: for a caller validating unsaved editor-buffer
     content instead of what is on disk.
     """
-    try:
-        # See load_meta_file's identical, identically-reasoned fallback above.
-        raw_data = yaml.load(text, Loader=UniqueKeyLoader)
-        data = {} if raw_data is None else raw_data
-    except yaml.YAMLError as e:
-        raise CompilationError(f"Failed to parse {relpath}: {e}") from e
-
-    return _parse_meta_dict(data, relpath)
+    raw_data = load_yaml_text(text, source=relpath)
+    # An empty file parses to None: a documented empty patch, not a fault.
+    # Excuse only that: a real non-mapping document (a bare scalar/list) still
+    # reaches and fails `_parse_meta_dict`'s isinstance check, rather than being
+    # silently swallowed here.
+    return _parse_meta_dict({} if raw_data is None else raw_data, relpath)
 
 
 def find_meta_files(

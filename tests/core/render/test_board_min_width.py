@@ -16,6 +16,10 @@ import pytest
 from dbt_charts.core.compile import compile, focus_on_chart
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
+from dbt_charts.core.compile.resolve.style.markdown_style import (
+    prose_measure,
+    title_min_content_width,
+)
 from dbt_charts.core.compile.sizing import board_container_width, footer_text_width
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.executor import Executor
@@ -82,31 +86,27 @@ def _single_line(resolved: ResolvedBoard) -> float:
     )
 
 
-def test_title_sets_floor_and_stays_on_one_line(local_project) -> None:
-    resolved = _resolved(_TITLE + _QUIET + _QUERY + _TABLE + _ROWS, local_project)
-    chrome = 2 * resolved.page_padding + 2 * resolved.card_padding
-    assert resolved.width >= _single_line(resolved) + chrome
-    assert resolved.width < _single_line(resolved) + chrome + 12
-    inner = resolved.width - chrome
-    one_line = get_title_height(
+def _title_height(resolved: ResolvedBoard, width: float) -> float:
+    return get_title_height(
         resolved.title,
-        10_000,
+        width,
         {},
         level=resolved.level,
         resolved_style=resolved.style,
         base_dir=None,
     )
-    assert (
-        get_title_height(
-            resolved.title,
-            inner,
-            {},
-            level=resolved.level,
-            resolved_style=resolved.style,
-            base_dir=None,
-        )
-        == one_line
-    )
+
+
+def test_a_title_stays_on_one_line_on_a_board_authored_wide_enough(
+    local_project,
+) -> None:
+    wide = "style:\n  frame:\n    width: 900\n  footer:\n    visible: false\n"
+    wide += "  timestamp:\n    visible: false\n"
+    resolved = _resolved(_TITLE + wide + _QUERY + _TABLE + _ROWS, local_project)
+    chrome = 2 * resolved.page_padding + 2 * resolved.card_padding
+    inner = resolved.width - chrome
+    assert inner >= _single_line(resolved)
+    assert _title_height(resolved, inner) == _title_height(resolved, 10_000)
 
 
 def test_no_title_no_floor(local_project) -> None:
@@ -120,7 +120,9 @@ def test_title_longer_than_max_width_is_capped_and_wraps_at_words(
 ) -> None:
     words = ["supercalifragilistic"] * 12
     yaml = f"title: {' '.join(words)}\n" + _QUIET + _QUERY + _TABLE + _ROWS
-    assert _resolved(yaml, local_project).width == 1200
+    resolved = _resolved(yaml, local_project)
+    chrome = 2 * resolved.page_padding + 2 * resolved.card_padding
+    assert resolved.width == pytest.approx(prose_measure(resolved.style) + chrome)
     svg = _svg(yaml, local_project)
     pieces = re.findall(r"<tspan[^>]*>([^<]*)</tspan>", svg)
     heard = {
@@ -211,3 +213,50 @@ def test_focus_drops_the_board_title_width_floor(layout: str) -> None:
     focused = focus_on_chart(board, "k")
     assert focused.resolved_style.frame.width is None
     assert board_container_width(focused, focused.variable_defaults) < view_width
+
+
+_LONG_TITLE = "A board title of sixty-two characters, long enough to wrap!!"
+
+
+def test_long_title_wraps_at_the_reading_width_with_no_charts(local_project) -> None:
+    yaml = f"title: {_LONG_TITLE}\n" + _QUIET + "text: A short paragraph.\n"
+    resolved = _resolved(yaml, local_project)
+    chrome = 2 * resolved.page_padding + 2 * resolved.card_padding
+    inner = resolved.width - chrome
+    assert resolved.width <= prose_measure(resolved.style) + chrome
+    assert _single_line(resolved) > inner
+    assert _title_height(resolved, inner) > _title_height(resolved, 10_000)
+
+
+def test_long_title_and_prose_share_the_prose_measure(local_project) -> None:
+    body = " ".join(["Pipeline coverage held steady across every region."] * 12)
+    yaml = f"title: {_LONG_TITLE}\n" + _QUIET + f"text: {body}\n"
+    resolved = _resolved(yaml, local_project)
+    chrome = 2 * resolved.page_padding + 2 * resolved.card_padding
+    assert resolved.width - chrome == pytest.approx(prose_measure(resolved.style))
+
+
+_TWENTY_LINES = "\n\n".join(f"  Line {n} of prose." for n in range(20))
+
+
+def _columns(svg: str) -> int:
+    return len(
+        {0.0} | {float(m) for m in re.findall(r"translate\((\d[\d.]*), 0\)", svg)}
+    )
+
+
+def test_a_twenty_line_yaml_text_block_still_flows_into_columns(local_project) -> None:
+    wide = "style:\n  frame:\n    width: 1200\n"
+    yaml = wide + _QUIET.replace("style:\n", "", 1) + f"text: |\n{_TWENTY_LINES}\n"
+    assert _columns(_svg(yaml, local_project)) >= 2
+
+
+def test_a_title_word_wider_than_the_measure_widens_the_board(local_project) -> None:
+    word = "Supercalifragilisticexpialidocious" * 2
+    yaml = f"title: {word} and so on\n" + _QUIET + "text: x\n"
+    resolved = _resolved(yaml, local_project)
+    chrome = 2 * resolved.page_padding + 2 * resolved.card_padding
+    assert prose_measure(resolved.style) < resolved.width - chrome
+    assert resolved.width - chrome >= title_min_content_width(
+        word, 1, resolved.style, {}, None
+    )

@@ -50,7 +50,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     compose_axis_label_expr,
     inject_axis_numeral_expr,
 )
-from dbt_charts.core.text.predefined_formats import PREDEFINED_NATIVE_NAMES
+from dbt_charts.core.text.predefined_formats import PYTHON_ONLY_NATIVE_NAMES
 from dbt_charts.core.utils import (
     DEFAULT_VL_LABEL_LIMIT,
     cap_padding_to_label_limit,
@@ -263,12 +263,8 @@ class MirrorAxisFeature:
                 ghost_ruler = mirror.ruler
                 ghost_fmt = axis_y.labels.format
                 ghost_tick_label = axis_y.tick_label
-            # A PREDEFINED_NATIVE format name (e.g. "percent_number") bypasses
-            # d3 entirely -- quantitative_tick_labels/
-            # estimated_quantitative_tick_labels call d3_format() directly,
-            # which raises on a bare name like this. Same guard as
-            # vl_field_maps.py's measure_axis_to_vl.
-            if ghost_fmt is not None and ghost_fmt.spec in PREDEFINED_NATIVE_NAMES:
+            # d3_format() raises on a Python-only native's bare name.
+            if ghost_fmt is not None and ghost_fmt.spec in PYTHON_ONLY_NATIVE_NAMES:
                 ghost_fmt = None
             labels: list[str] = []
             if (
@@ -278,7 +274,7 @@ class MirrorAxisFeature:
             ):
                 if axis_y.tick_values:
                     labels = quantitative_tick_labels(
-                        tuple(axis_y.tick_values),
+                        axis_y.drawn_tick_values,
                         ghost_fmt,
                         ruler=ghost_ruler,
                         tick_label=ghost_tick_label,

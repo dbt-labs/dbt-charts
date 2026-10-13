@@ -103,13 +103,11 @@ class TestTableRowStyleRendering:
         """row.role column is used for role resolution — summary/total rows get medium weight."""
         import re
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         es = self._style_with_row(role="kind")
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, self._data_with_roles(), chart_style_context=es)
         svg = render_table_svg(
             chart,
             self._data_with_roles(),
@@ -125,9 +123,7 @@ class TestTableRowStyleRendering:
 
     def test_roles_total_font_weight(self, make_chart):
         """roles.total.font.weight overrides default summary weight for total rows."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         es = self._style_with_row(
@@ -137,7 +133,7 @@ class TestTableRowStyleRendering:
                 "total": {"font": {"weight": "700"}},
             },
         )
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, self._data_with_roles(), chart_style_context=es)
         svg = render_table_svg(
             chart,
             self._data_with_roles(),
@@ -151,9 +147,7 @@ class TestTableRowStyleRendering:
 
     def test_roles_total_background(self, make_chart):
         """roles.total.background renders a fill rect behind the total row."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         es = self._style_with_row(
@@ -162,7 +156,7 @@ class TestTableRowStyleRendering:
                 "total": {"background": "#F0F0F0"},
             },
         )
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, self._data_with_roles(), chart_style_context=es)
         svg = render_table_svg(
             chart,
             self._data_with_roles(),
@@ -173,9 +167,7 @@ class TestTableRowStyleRendering:
 
     def test_roles_summary_background(self, make_chart):
         """roles.summary.background renders a fill rect behind summary rows."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         es = self._style_with_row(
@@ -184,7 +176,7 @@ class TestTableRowStyleRendering:
                 "summary": {"background": "#E0E0FF"},
             },
         )
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, self._data_with_roles(), chart_style_context=es)
         svg = render_table_svg(
             chart,
             self._data_with_roles(),
@@ -195,9 +187,7 @@ class TestTableRowStyleRendering:
 
     def test_no_row_style_no_change(self, make_chart):
         """When row is omitted, rendering behaves identically to before."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         es = resolve_chart_style_context(get_theme_style())
@@ -206,7 +196,7 @@ class TestTableRowStyleRendering:
             {"company": "Bright", "revenue": 2000},
         ]
         # Should not crash; no role-based styling applied
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,
@@ -217,9 +207,7 @@ class TestTableRowStyleRendering:
 
     def test_row_rule_from_nested_style(self, make_chart):
         """row.divider.width and row.divider.color are used for body row dividers."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         es = self._style_with_row(rule={"width": 1, "color": "#FF0000"})
@@ -228,7 +216,7 @@ class TestTableRowStyleRendering:
             {"company": "Bright", "revenue": 2000},
             {"company": "Cedar", "revenue": 3000},
         ]
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,
@@ -239,21 +227,20 @@ class TestTableRowStyleRendering:
         assert "#FF0000" in svg
 
     def test_invalid_role_background_raises(self, make_chart):
-        """Invalid (non-hex) role background raises InvalidColorError, not silently dropped."""
+        """Invalid (non-hex) role background raises ERR-CSS-COLOR-INVALID-AT-RENDER, not silently dropped."""
         import pytest
 
-        from dbt_charts.core.colors import InvalidColorError
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from dbt_charts.core.diagnostics.chart_data import ChartDataError
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         es = self._style_with_row(
             role="kind",
             roles={"total": {"background": "not-a-color"}},
         )
-        chart = resolve(chart, [], chart_style_context=es)
-        with pytest.raises(InvalidColorError, match="Invalid color value"):
+        chart = resolve(chart, self._data_with_roles(), chart_style_context=es)
+        with pytest.raises(ChartDataError, match="not a valid CSS color"):
             render_table_svg(
                 chart,
                 self._data_with_roles(),
@@ -263,16 +250,14 @@ class TestTableRowStyleRendering:
 
     def test_invalid_role_font_weight_falls_back(self, make_chart):
         """Invalid font.weight in roles falls back to default 500."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         es = self._style_with_row(
             role="kind",
             roles={"total": {"font": {"weight": "bold-invalid"}}},
         )
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, self._data_with_roles(), chart_style_context=es)
         svg = render_table_svg(
             chart,
             self._data_with_roles(),
@@ -296,9 +281,7 @@ class TestMergePrecedence:
         """row.role is the sole role selector (flat row_role no longer exists)."""
         import re
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         es = resolve_chart_style_context(get_theme_style())
@@ -334,7 +317,7 @@ class TestMergePrecedence:
             {"company": "Apex", "revenue": 1000, "kind": "value"},
             {"company": "Total", "revenue": 1000, "kind": "total"},
         ]
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,
@@ -350,9 +333,8 @@ class TestMergePrecedence:
         import re
 
         from dbt_charts.core.compile.models.style.theme import TableRowStripeStyle
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         es = resolve_chart_style_context(get_theme_style())
@@ -367,7 +349,7 @@ class TestMergePrecedence:
             {"company": "Apex", "revenue": 1000},
             {"company": "Bright", "revenue": 2000},
         ]
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,

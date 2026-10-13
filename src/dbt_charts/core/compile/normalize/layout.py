@@ -5,8 +5,6 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
-import yaml
-
 if TYPE_CHECKING:
     from dbt_charts.core.project import ProjectDirectory
 
@@ -39,7 +37,6 @@ from dbt_charts.core.compile.normalize.charts import (
     generate_inline_chart_id,
     normalize_chart,
 )
-from dbt_charts.core.utils import UniqueKeyLoader
 
 # The enclosing board's own authoring path, threaded down so each item can name
 # its absolute position. Two distinguishable states, which is why this is
@@ -654,6 +651,7 @@ def _resolve_board_file_import(
         CompilationError: If file not found or invalid
     """
     from dbt_charts.core.compile.normalize.dispatch import normalize_board
+    from dbt_charts.core.compile.parse.parser import load_yaml_text
     from dbt_charts.core.compile.template.jinja import resolve_jinja_template
 
     # Resolve the file path (might contain Jinja templates for parameterized imports
@@ -667,15 +665,11 @@ def _resolve_board_file_import(
     # Load and parse the YAML file
     try:
         yaml_content = nested_path.read_text()
-        board_data = yaml.load(yaml_content, Loader=UniqueKeyLoader)
-    except yaml.YAMLError as e:
-        raise CompilationError(
-            f"Failed to parse board file '{resolved_path}': {e}"
-        ) from e
     except OSError as e:
         raise CompilationError(
             f"Failed to read board file '{resolved_path}': {e}"
         ) from e
+    board_data = load_yaml_text(yaml_content, source=nested_path.relpath)
 
     if not isinstance(board_data, dict):
         raise CompilationError(

@@ -25,6 +25,23 @@ def _resolve(
     return typer.confirm(prompt, default=default)
 
 
+def _resolve_editor(
+    flag: bool | None, found: bool, yes: bool, editor: str, flag_name: str
+) -> bool:
+    """Editor extensions change the user's editors, so an unattended run
+    (``--yes`` or no TTY) installs one only when its flag is passed."""
+    if flag is not None:
+        return flag
+    if not found:
+        return False
+    if yes or not sys.stdin.isatty():
+        typer.echo(f"  Skipped the {editor} extension; pass {flag_name} to install it.")
+        return False
+    return typer.confirm(
+        f"Install the dbt charts extension into {editor}?", default=True
+    )
+
+
 def _resolve_init_root(project_dir: Path | None, *, yes: bool) -> Path:
     """Choose the init root for the wizard without changing lower-level API defaults."""
     cwd = Path.cwd().resolve()
@@ -83,33 +100,10 @@ def run_wizard(
         default=True,
     )
 
-    # IDE detection — only prompt for IDEs found on PATH
     code_found = shutil.which("code") is not None
     cursor_found = shutil.which("cursor") is not None
-
-    if vscode is not None:
-        do_vscode = vscode
-    elif code_found:
-        do_vscode = _resolve(
-            None,
-            yes=yes,
-            prompt="Install the dbt charts extension into VS Code?",
-            default=True,
-        )
-    else:
-        do_vscode = False
-
-    if cursor is not None:
-        do_cursor = cursor
-    elif cursor_found:
-        do_cursor = _resolve(
-            None,
-            yes=yes,
-            prompt="Install the dbt charts extension into Cursor?",
-            default=True,
-        )
-    else:
-        do_cursor = False
+    do_vscode = _resolve_editor(vscode, code_found, yes, "VS Code", "--vscode")
+    do_cursor = _resolve_editor(cursor, cursor_found, yes, "Cursor", "--cursor")
 
     if not code_found and not cursor_found and vscode is None and cursor is None:
         typer.echo(

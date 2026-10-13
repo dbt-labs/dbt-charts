@@ -9,6 +9,7 @@ from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.renderer import render
 
 from ._board_utils import _default_chart_style_context, _default_resolved_style
+from ._svg_render import PINNED_RENDER_TIME
 
 
 def _make_executor(data: list[dict]) -> MagicMock:
@@ -19,8 +20,10 @@ def _make_executor(data: list[dict]) -> MagicMock:
     and the svg footer/timestamp code iterates this attribute directly.
     """
     executor = MagicMock(spec=Executor)
+    executor.render_with_range_filters.return_value = None
     executor.execute_chart.return_value = data
     executor.cache_hit_ats = []
+    executor.rendered_at = PINNED_RENDER_TIME
     return executor
 
 

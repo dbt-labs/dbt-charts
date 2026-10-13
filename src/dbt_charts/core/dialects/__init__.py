@@ -27,6 +27,7 @@ from dbt_charts.core.dialects.redshift import RedshiftDialect
 from dbt_charts.core.dialects.snowflake import SnowflakeDialect
 from dbt_charts.core.dialects.sqlite import SQLiteDialect
 from dbt_charts.core.dialects.sqlserver import SQLServerDialect
+from dbt_charts.core.dialects.trino import TrinoDialect
 
 # Singleton instances for each dialect
 _postgres_dialect = PostgresDialect()
@@ -42,6 +43,7 @@ _athena_dialect = AthenaDialect()
 _clickhouse_dialect = ClickHouseDialect()
 _sqlite_dialect = SQLiteDialect()
 _lakecompute_dialect = LakeComputeDialect()
+_trino_dialect = TrinoDialect()
 
 # Registry mapping profile types to dialect instances
 DIALECTS: dict[str, SQLDialect] = {
@@ -72,7 +74,8 @@ DIALECTS: dict[str, SQLDialect] = {
     # Athena
     "athena": _athena_dialect,
     "presto": _athena_dialect,
-    "trino": _athena_dialect,
+    # Trino (Athena's SQL on Trino's own client)
+    "trino": _trino_dialect,
     # ClickHouse
     "clickhouse": _clickhouse_dialect,
     # Lake compute (DuckDB's SQL over dbt's ADBC driver)
@@ -123,6 +126,7 @@ __all__ = [
     "PostgresDialect",
     "DuckDBDialect",
     "LakeComputeDialect",
+    "TrinoDialect",
     "SQLiteDialect",
     "MySQLDialect",
     "SnowflakeDialect",

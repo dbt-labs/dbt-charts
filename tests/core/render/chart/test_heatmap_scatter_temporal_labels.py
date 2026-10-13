@@ -195,10 +195,9 @@ def test_heatmap_weekly_domain_stays_chronological_not_alphabetized(
 
     order = _rendered_heatmap_column_order(spec)
     assert len(order) == 52
-    date_re = re.compile(r"Week of (\w+ \d+, \d{4})")
+    date_re = re.compile(r"\d+ \w+ \d{4}")
     rendered_dates = [
-        dt.datetime.strptime(date_re.search(d).group(1), "%b %d, %Y").date()
-        for d in order
+        dt.datetime.strptime(date_re.findall(d)[-1], "%d %b %Y").date() for d in order
     ]
     assert rendered_dates == sorted(rendered_dates), (
         "heatmap columns must read chronologically left-to-right, not "

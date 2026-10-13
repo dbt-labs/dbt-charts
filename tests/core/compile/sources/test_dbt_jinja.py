@@ -310,7 +310,7 @@ class TestFastPathEquivalence:
         check never fires and the walk recurses until it gives out.
 
         Do not restore an unconditional ``== doc`` here: dbt's own render
-        overflows at this depth on 3.10, so that assertion passes only on 3.12+.
+        overflows at this depth before 3.12, so that assertion passes only on 3.12+.
         What holds on every version is that the caller sees ``ValueError`` or a
         result — never ``RecursionError``, which is a ``RuntimeError`` and would
         sail past ``detection.py``'s guard on untrusted input.

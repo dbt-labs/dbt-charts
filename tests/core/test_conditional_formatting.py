@@ -391,9 +391,8 @@ class TestConditionalFormattingRendering:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -432,9 +431,8 @@ class TestConditionalFormattingRendering:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -462,9 +460,7 @@ class TestConditionalFormattingRendering:
         assert 'fill="#fee2e2"' not in svg
 
     def test_string_eq_conditional_formatting(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -495,9 +491,7 @@ class TestConditionalFormattingRendering:
         assert 'font-weight="bold"' in svg
 
     def test_conditional_font_weight_applied(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -520,9 +514,7 @@ class TestConditionalFormattingRendering:
 
     def test_multiple_columns_independent_rules(self, make_chart):
         """Each column's rules are evaluated independently."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -550,9 +542,8 @@ class TestConditionalFormattingRendering:
         from dbt_charts.core.compile.models.chart.authored import (
             TableColumnConfig,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -586,9 +577,7 @@ class TestConditionalFormattingRendering:
 
     def test_conditional_italic_renders_in_svg(self, make_chart):
         """font.style=italic emits font-style attribute on matching rows."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -620,9 +609,8 @@ class TestConditionalFormattingRendering:
         from dbt_charts.core.compile.resolve.style.tokens import (
             _resolve_one_color_token,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -650,9 +638,7 @@ class TestConditionalFormattingRendering:
 
     def test_conditional_strikethrough_renders_in_svg(self, make_chart):
         """font.decoration=line-through emits text-decoration on matching rows."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -685,9 +671,7 @@ class TestExtendedPredicatesTableRendering:
     """End-to-end render tests for the between/in/is_null/default predicates."""
 
     def test_between_highlights_only_in_range(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -710,9 +694,7 @@ class TestExtendedPredicatesTableRendering:
         assert svg.count('fill="#dcfce7"') == 1
 
     def test_between_matches_boundaries_inclusive(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -734,9 +716,7 @@ class TestExtendedPredicatesTableRendering:
         assert svg.count('fill="#dcfce7"') == 2
 
     def test_in_highlights_matching_values(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -771,9 +751,7 @@ class TestExtendedPredicatesTableRendering:
         assert svg.count('fill="#991b1b"') == 2
 
     def test_is_null_true_matches_null_cells(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -797,9 +775,7 @@ class TestExtendedPredicatesTableRendering:
         assert svg.count('fill="#e5e7eb"') == 1
 
     def test_is_null_false_matches_non_null_cells(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -824,9 +800,7 @@ class TestExtendedPredicatesTableRendering:
         assert svg.count('fill="#dcfce7"') == 2
 
     def test_default_fires_when_no_other_rule_matches(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -861,9 +835,7 @@ class TestExtendedPredicatesTableRendering:
         Last-match-wins still holds between non-default rules, but ``default``
         is treated specially: it skips if any non-default rule matched.
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -905,7 +877,8 @@ class TestExtendedPredicatesKpiRendering:
         path itself is a pre-existing KPI renderer limitation, orthogonal)."""
         from dbt_charts.core.compile.models.chart.normalized import KpiChart
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         chart = KpiChart(
             id="kpi_notnull",
@@ -931,7 +904,8 @@ class TestExtendedPredicatesKpiRendering:
 
     def test_kpi_default_applies_fallback_background(self):
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+        from ._engine_render import render_kpi_svg
 
         chart = KpiChart(
             id="kpi_default",

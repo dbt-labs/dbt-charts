@@ -160,11 +160,18 @@ def install_extras(extra: str, *, interactive: bool) -> None:
             raise typer.Exit(1)
 
     display_cmd = _installer_display_command(installer, missing)
-    try:
-        subprocess.check_call(_installer_command(installer, missing))
-    except subprocess.CalledProcessError as exc:
+    _console.print(f"Installing the {escape(extra)} extra…")
+    result = subprocess.run(
+        _installer_command(installer, missing),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        _console.print(result.stdout + result.stderr, markup=False, highlight=False)
         _console.print(f"[red]Install failed. Try manually:\n  {display_cmd}[/red]")
-        raise typer.Exit(1) from exc
+        raise typer.Exit(1)
     importlib.invalidate_caches()
     still_missing = _missing_packages(extra)
     if still_missing:

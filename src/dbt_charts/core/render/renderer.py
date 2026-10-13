@@ -73,7 +73,6 @@ from dbt_charts.core.render.chart.plot_width_floor_record import (
 from dbt_charts.core.render.chart.series_label_truncation import (
     collect_series_label_truncations,
 )
-from dbt_charts.core.render.chart.table import strip_pagination_chrome
 from dbt_charts.core.render.chart.table_overflow import (
     TableCramping,
     TableOverflow,
@@ -85,8 +84,8 @@ from dbt_charts.core.render.chart.table_page_squeeze import (
     collect_table_page_squeezes,
 )
 from dbt_charts.core.render.chart.table_static_pagination import (
-    StaticPaginationCap,
-    collect_static_pagination_caps,
+    StaticPagination,
+    collect_static_paginations,
 )
 from dbt_charts.core.render.chart.text_truncation import (
     TextTruncation,
@@ -112,13 +111,14 @@ from dbt_charts.core.render.font_selection import collect_painted_italic_familie
 from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.render_result import RenderResult
 from dbt_charts.core.render.sizing import resolve_active_tab_index
+from dbt_charts.core.render.svg_utils import strip_pagination_chrome
 from dbt_charts.core.render.thumbnail import cartoonize
 from dbt_charts.core.render.warnings import (
     WarningContext,
     registry as _warnings_registry,
     run_all,
 )
-from dbt_charts.core.text.format_d3 import number_locale_scope
+from dbt_charts.core.text.format_d3 import regional_scope
 from dbt_charts.core.utils import Rows
 
 # Formats whose payload is a layout-tree walk instead of the drawn svg — every
@@ -221,7 +221,7 @@ def _collect_render_warnings(
     table_overflows: dict[str, TableOverflow],
     table_crampings: dict[str, TableCramping],
     text_truncations: dict[str, list[TextTruncation]],
-    static_pagination_caps: dict[str, StaticPaginationCap],
+    static_paginations: dict[str, StaticPagination],
     table_page_squeezes: dict[str, TablePageSqueeze],
     endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow],
     x_domain_paint_orders: dict[str, XDomainPaintOrder],
@@ -389,7 +389,7 @@ def _collect_render_warnings(
         vega_specs=vega_specs,
         table_overflows=table_overflows,
         table_crampings=table_crampings,
-        static_pagination_caps=static_pagination_caps,
+        static_paginations=static_paginations,
         table_page_squeezes=table_page_squeezes,
         authored_chart_heights=authored_chart_heights,
         layout_chart_heights={
@@ -426,7 +426,11 @@ def render(
     max_rows_per_query: int = NO_ROW_CAP,
     **options: Any,
 ) -> RenderResult:
-    with number_locale_scope(board.regional.format_locale):
+    with regional_scope(
+        board.regional.format_locale,
+        board.regional.time_locale,
+        board.regional.week_start,
+    ):
         return _render(
             board,
             executor,
@@ -711,7 +715,7 @@ def _render(
         table_overflows: dict[str, TableOverflow],
         table_crampings: dict[str, TableCramping],
         text_truncations: dict[str, list[TextTruncation]],
-        static_pagination_caps: dict[str, StaticPaginationCap],
+        static_paginations: dict[str, StaticPagination],
         table_page_squeezes: dict[str, TablePageSqueeze],
         endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow],
         x_domain_paint_orders: dict[str, XDomainPaintOrder],
@@ -726,7 +730,7 @@ def _render(
             table_overflows,
             table_crampings,
             text_truncations,
-            static_pagination_caps,
+            static_paginations,
             table_page_squeezes,
             endpoint_label_gap_overflows,
             x_domain_paint_orders,
@@ -775,7 +779,7 @@ def _render(
     _table_overflows: dict[str, TableOverflow] = {}
     _table_crampings: dict[str, TableCramping] = {}
     _text_truncations: dict[str, list[TextTruncation]] = {}
-    _static_pagination_caps: dict[str, StaticPaginationCap] = {}
+    _static_paginations: dict[str, StaticPagination] = {}
     _table_page_squeezes: dict[str, TablePageSqueeze] = {}
     _endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow | None] = {}
     _x_domain_paint_orders: dict[str, XDomainPaintOrder] = {}
@@ -784,9 +788,9 @@ def _render(
     try:
         # Render the canonical SVG once; output formats only wrap or convert it.
         # The capture sinks record each table's real post-cascade column overflow,
-        # all text truncations, the static-export page cap, and any endpoint-label
-        # rail that couldn't fit its intended gap, so warnings can be finalized
-        # against what actually rendered.
+        # all text truncations, each table's static-export paging, and any
+        # endpoint-label rail that couldn't fit its intended gap, so warnings
+        # can be finalized against what actually rendered.
         grid_enabled = options.get("grid", False)
         margins_enabled = options.get("margins", False)
         # Interactivity is opt-in and only meaningful on a host that can re-run
@@ -813,7 +817,7 @@ def _render(
             collect_table_overflows() as _table_overflows,
             collect_table_crampings() as _table_crampings,
             collect_text_truncations() as _text_truncations,
-            collect_static_pagination_caps() as _static_pagination_caps,
+            collect_static_paginations() as _static_paginations,
             collect_table_page_squeezes() as _table_page_squeezes,
             collect_endpoint_label_gap_overflows() as _endpoint_label_gap_overflows,
             collect_x_domain_paint_orders() as _x_domain_paint_orders,
@@ -863,8 +867,8 @@ def _render(
         _reset_contexts()
 
     if board_error is None:
-        # The SVG render is done — finalize warnings against the real table overflow,
-        # text truncations, and static-pagination cap captured across both passes.
+        # The SVG render is done — finalize warnings against the real table overflow
+        # and text truncations captured across both passes.
         # The render pass (_text_truncations) wins per chart-id when both passes
         # record the same chart (e.g. spark_bar). All SVG-family outputs below derive
         # from this same svg_content, so they share this capture.
@@ -882,7 +886,9 @@ def _render(
             _table_overflows,
             _table_crampings,
             {**_sizing_truncations, **_text_truncations},
-            _static_pagination_caps,
+            # A data format ships no static file: its pagination is stated by
+            # the payload itself (the text format's row/page line).
+            {} if format in _DATA_FORMATS else _static_paginations,
             _table_page_squeezes,
             {
                 chart_id: overflow
@@ -933,6 +939,7 @@ def _render(
                     error_collector=_data_format_errors,
                     max_rows_per_query=max_rows_per_query,
                     include_data=(format == "text-data"),
+                    static_paginations=_static_paginations,
                 )
             else:
                 output = _data_format_renderer(format)(

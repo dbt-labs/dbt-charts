@@ -12,7 +12,14 @@ same walk:
 
 from __future__ import annotations
 
-from dbt_charts.core.compile import compile
+from collections.abc import Callable
+from pathlib import Path
+
+from dbt_charts.core.compile import compile, compile_file
+from dbt_charts.core.compile.compiler import CompileResult
+from dbt_charts.core.compile.config import reset_config
+from dbt_charts.core.diagnostics import Diagnostic
+from dbt_charts.core.project import Project
 
 _QUERIES_AND_CHARTS = """
 queries:
@@ -580,3 +587,156 @@ text: >
         assert w.range is not None
         # Not narrowed to a single line by a needle that could not be verified.
         assert w.range.columns is None
+
+
+# --- WARN-FORMAT-UNUSED-NAME -------------------------------------------------
+
+_FORMAT_BOARD = """
+title: T
+{style}
+queries:
+  q:
+    type: values
+{query_extra}    rows:
+      - {{month: 2026-01-01, revenue: 1234567}}
+charts:
+  c:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+{chart_extra}rows:
+  - c
+"""
+
+
+def _format_board(style: str, query_extra: str = "", chart_extra: str = "") -> str:
+    return _FORMAT_BOARD.format(
+        style=style, query_extra=query_extra, chart_extra=chart_extra
+    )
+
+
+def _unused(result: CompileResult) -> list[Diagnostic]:
+    return [w for w in result.warnings if w.code == "WARN-FORMAT-UNUSED-NAME"]
+
+
+_MINE = "style:\n  formats:\n    mine: ',.0f'"
+
+
+def test_unused_format_name_warns_once_and_suggests_the_engine_name() -> None:
+    result = compile(_format_board("style:\n  formats:\n    date_sho: '%b %Y'"))
+    assert result.success
+    (warning,) = _unused(result)
+    assert warning.path == "style.formats.date_sho"
+    assert "date_short" in warning.message
+
+
+def test_misspelled_date_name_lists_the_date_names() -> None:
+    result = compile(_format_board("style:\n  formats:\n    date: '%b %Y'"))
+    (warning,) = _unused(result)
+    assert "date_short" in warning.message
+
+
+def test_unused_name_with_no_engine_relative_gets_the_generic_message() -> None:
+    result = compile(_format_board("style:\n  formats:\n    default: ',.0f'"))
+    (warning,) = _unused(result)
+    assert "did you mean" not in warning.message.lower()
+
+
+def test_name_a_query_formats_column_uses_does_not_warn() -> None:
+    board = _format_board(_MINE, query_extra="    formats:\n      revenue: mine\n")
+    result = compile(board)
+    assert result.success
+    assert not _unused(result)
+
+
+def test_redefined_engine_name_does_not_warn() -> None:
+    result = compile(_format_board("style:\n  formats:\n    number: ',.0f'"))
+    assert not _unused(result)
+
+
+def test_inline_chart_query_formats_count_as_used() -> None:
+    board = f"""
+title: T
+{_MINE}
+charts:
+  c:
+    query:
+      type: values
+      formats:
+        revenue: mine
+      rows:
+        - {{month: 2026-01-01, revenue: 1234567}}
+    type: bar
+    x: month
+    y: revenue
+rows:
+  - c
+"""
+    result = compile(board)
+    assert result.success
+    assert not _unused(result)
+
+
+def test_text_format_filter_reference_counts_as_used() -> None:
+    board = _format_board(
+        _MINE, chart_extra="    title: \"{{ 1234 | format('mine') }}\"\n"
+    )
+    result = compile(board)
+    assert result.success
+    assert not _unused(result)
+
+
+def test_name_used_only_by_a_nested_board_counts_as_used() -> None:
+    board = f"""
+title: T
+{_MINE}
+rows:
+  - title: Inner
+    queries:
+      q:
+        type: values
+        formats:
+          revenue: mine
+        rows:
+          - {{month: 2026-01-01, revenue: 1234567}}
+    charts:
+      c:
+        query: q
+        type: bar
+        x: month
+        y: revenue
+    rows:
+      - c
+"""
+    result = compile(board)
+    assert result.success
+    assert not _unused(result)
+
+
+def _compile_under_meta(
+    tmp_path: Path, local_project: Callable[[Path], Project], board_style: str
+) -> CompileResult:
+    reset_config()
+    (tmp_path / "charts").mkdir()
+    (tmp_path / "charts/meta.yml").write_text(
+        "style:\n  formats:\n    shared: ',.0f'\n"
+    )
+    (tmp_path / "charts/board.yaml").write_text(_format_board(board_style))
+    project = local_project(tmp_path)
+    return compile_file(project.path("charts/board.yaml").read_board())
+
+
+def test_name_inherited_from_meta_yml_does_not_warn_in_a_sibling(
+    tmp_path: Path, local_project: Callable[[Path], Project]
+) -> None:
+    result = _compile_under_meta(tmp_path, local_project, "")
+    assert result.success
+    assert not _unused(result)
+
+
+def test_unused_name_defined_in_the_board_file_warns_under_meta(
+    tmp_path: Path, local_project: Callable[[Path], Project]
+) -> None:
+    result = _compile_under_meta(tmp_path, local_project, _MINE)
+    assert [w.path for w in _unused(result)] == ["style.formats.mine"]

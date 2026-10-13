@@ -58,7 +58,7 @@ class ContractModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-class ErrorCode(str, enum.Enum):
+class ErrorCode(enum.StrEnum):
     """The machine-readable half of every error response."""
 
     UNAUTHENTICATED = "unauthenticated"
@@ -514,7 +514,7 @@ class RenderResult(ContractModel):
     )
 
 
-class SetupStage(str, enum.Enum):
+class SetupStage(enum.StrEnum):
     """One step of the org setup state machine, in completion order.
 
     ``MISSING_PROJECT`` < ``UNSYNCED`` < ``UNTESTED_CONNECTION`` <
@@ -740,4 +740,195 @@ class OrgStatus(ContractModel):
     )
     projects: list[ProjectStatus] = Field(
         default_factory=list, description="Per-project setup state, sorted by slug."
+    )
+
+
+class AccessRow(ContractModel):
+    """One explicit board grant: who holds which role where."""
+
+    project: str = Field(description="Project slug.")
+    path: str = Field(
+        description="Where the grant is bound; blank is the project root."
+    )
+    principal: str = Field(
+        description=(
+            "The who, as `access grant --who` takes it: an email, a team slug,"
+            " `group:<id>`, or blank for the kind-only principals."
+        )
+    )
+    principal_type: str = Field(
+        description="user, group, external_group, all_members, or everyone."
+    )
+    principal_label: str = Field(description="The who, as the web page reads it.")
+    role: str = Field(description="Role key.")
+    capability: str = Field(description="What the role conveys, e.g. `Can view`.")
+    stops_inheriting: bool = Field(
+        description="Whether the path ignores grants on its parent folders."
+    )
+    effective_capability: str = Field(
+        description="What the grant actually conveys when limited; blank if as granted."
+    )
+    limit_reason: str = Field(description="Why the grant is limited; blank if not.")
+
+
+class AccessList(ContractModel):
+    grants: list[AccessRow] = Field(
+        default_factory=list, description="The explicit grants the filters keep."
+    )
+    boards_covered: int = Field(description="Boards these grants reach.")
+    public_count: int = Field(description="Grants to anyone with the link.")
+
+
+class AccessSource(ContractModel):
+    """A grant that reaches the subject."""
+
+    role: str = Field(description="What the grant lets them do, e.g. `Can view`.")
+    place: str = Field(description="Where it is bound, e.g. `finance/*`.")
+    how: str = Field(description="`directly`, or the wider principal it comes via.")
+
+
+class AccessCheck(ContractModel):
+    """Whether one who can open one path, and why."""
+
+    who: str = Field(description="The subject, as the web page labels it.")
+    project: str = Field(description="Project slug.")
+    path: str = Field(description="The path asked about; blank is the project root.")
+    allowed: bool = Field(description="Whether the subject can open the path.")
+    can_edit: bool = Field(description="Whether the subject can also edit it.")
+    capability: str = Field(description="The strongest capability, e.g. `Can view`.")
+    sources: list[AccessSource] = Field(
+        default_factory=list, description="The grants that reach the subject."
+    )
+    notes: list[str] = Field(
+        default_factory=list, description="Plain-language reasons behind the verdict."
+    )
+
+
+class AccessBoard(ContractModel):
+    project: str = Field(description="Project slug.")
+    board: str = Field(description="Board slug.")
+    capability: str = Field(description="What the member can do with it.")
+
+
+class MemberAccess(ContractModel):
+    """One member: profile plus what they can reach."""
+
+    email: str = Field(description="The member's account email.")
+    name: str = Field(description="Display name; empty if never set.")
+    role: str = Field(description="Membership role.")
+    joined_at: datetime = Field(description="When the membership was created.")
+    teams: list[str] = Field(description="Slugs of the teams they belong to.")
+    identity_groups: list[str] = Field(
+        description="Identity groups they belong to, as the web page labels them."
+    )
+    grants: list[AccessRow] = Field(
+        description="Explicit board grants that reach them, directly or via a team."
+    )
+    boards: list[AccessBoard] = Field(description="Every board they can open.")
+
+
+class AuditEntry(ContractModel):
+    """One authorization change."""
+
+    id: str = Field(description="The event's id.")
+    created_at: datetime = Field(description="When it happened.")
+    actor: str | None = Field(description="Who did it; null for the system.")
+    action: str = Field(description="The kind of change.")
+    project: str | None = Field(description="Project slug; null for org-wide changes.")
+    summary: str = Field(description="The change in one sentence.")
+
+
+class AuditList(ContractModel):
+    events: list[AuditEntry] = Field(
+        default_factory=list, description="Events, newest first."
+    )
+    next_page: int | None = Field(
+        description="Pass as `page` for the next batch; null on the last."
+    )
+
+
+class ActionResult(ContractModel):
+    """The answer to a change that has nothing else to return."""
+
+    message: str = Field(description="What happened, in one line.")
+
+
+class PublicProject(ContractModel):
+    slug: str = Field(description="Project slug.")
+    allow_public: bool = Field(description="Whether the project's public gate is on.")
+
+
+class PublicAccess(ContractModel):
+    """Both public gates and the grants they let through."""
+
+    org_allow_public: bool = Field(
+        description="Whether the organization's public gate is on."
+    )
+    projects: list[PublicProject] = Field(
+        default_factory=list, description="Each project's gate."
+    )
+    grants: list[AccessRow] = Field(
+        default_factory=list, description="Grants to anyone with the link."
+    )
+
+
+class TeamSummary(ContractModel):
+    slug: str = Field(description="Team slug.")
+    name: str = Field(description="Team name.")
+    description: str = Field(description="Team description; empty if none.")
+    members: list[str] = Field(description="Emails of the team's members.")
+
+
+class TeamList(ContractModel):
+    teams: list[TeamSummary] = Field(
+        default_factory=list, description="The organization's teams."
+    )
+
+
+class RoleSummary(ContractModel):
+    key: str = Field(description="Role key, as `--role` takes it.")
+    display_name: str = Field(description="Role name as the web pages read it.")
+    builtin: bool = Field(description="Whether the role ships with Cloud.")
+    entitlements: list[str] = Field(description="What the role allows.")
+
+
+class RoleList(ContractModel):
+    roles: list[RoleSummary] = Field(
+        default_factory=list, description="Built-in roles and the org's own."
+    )
+
+
+class IdentityGroupSummary(ContractModel):
+    id: str = Field(description="The group's id, as `--who group:<id>` takes it.")
+    provider: str = Field(description="The identity provider's issuer.")
+    name: str = Field(description="The group as the web pages label it.")
+    is_active: bool = Field(description="Whether the group contributes access.")
+    member_count: int = Field(description="Synced members.")
+
+
+class IdentityGroupList(ContractModel):
+    groups: list[IdentityGroupSummary] = Field(
+        default_factory=list, description="Groups synced from identity providers."
+    )
+
+
+class ConnectionAccessRow(ContractModel):
+    """One grant on a connection."""
+
+    principal: str = Field(description="The who, as `--who` takes it.")
+    principal_type: str = Field(
+        description="user, group, external_group, or all_members."
+    )
+    principal_label: str = Field(description="The who, as the web page reads it.")
+    role: str = Field(description="Role key; blank for the org default's No access.")
+    capability: str = Field(description="What the role conveys, e.g. `Can query`.")
+    effective_capability: str = Field(
+        description="What the grant actually conveys when limited; blank if as granted."
+    )
+    limit_reason: str = Field(description="Why the grant is limited; blank if not.")
+
+
+class ConnectionAccessList(ContractModel):
+    access: list[ConnectionAccessRow] = Field(
+        default_factory=list, description="Everyone with a grant on the connection."
     )

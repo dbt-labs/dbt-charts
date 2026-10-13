@@ -11,7 +11,7 @@ Covers:
   across separate executors *and* within one executor's in-memory memo.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
 
 import pytest
@@ -483,7 +483,7 @@ def _age_shared_entry(cache, board, names: tuple[str, str], hours: int) -> None:
     assert key == compute_cache_key(board.queries[right], {}, board.sources), (
         "the two queries must share a key — otherwise this test proves nothing"
     )
-    aged = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
+    aged = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
     cache.conn.execute(
         "UPDATE _query_outcomes SET written_at_utc = ? "
         "WHERE source_hash = ? AND query_hash = ? AND variables_hash = ?",

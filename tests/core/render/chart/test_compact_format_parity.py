@@ -62,7 +62,7 @@ def test_compact_vl_axis_format_is_d3_spec():
         x="month",
         y="revenue",
         style=BarChartStylePatch.model_validate(
-            {"orientation": "vertical", "number_format": "number"}
+            {"orientation": "vertical", "axis_y": {"labels": {"format": "number"}}}
         ),
     )
     _rc = resolve(chart, _DATA, chart_style_context=_BOARD_CTX)
@@ -102,7 +102,7 @@ def test_percent_vl_axis_format_lands_on_measure_x_for_horizontal_bar():
         x="month",
         y="revenue",
         style=BarChartStylePatch.model_validate(
-            {"orientation": "horizontal", "number_format": "pct"}
+            {"orientation": "horizontal", "axis_y": {"labels": {"format": "pct"}}}
         ),
     )
     rs, ctx = _resolved_style_with_formats(_FORMATS_PCT)
@@ -128,7 +128,7 @@ def test_percent_vl_axis_format_lands_on_measure_y_for_vertical_bar():
         x="month",
         y="revenue",
         style=BarChartStylePatch.model_validate(
-            {"orientation": "vertical", "number_format": "pct"}
+            {"orientation": "vertical", "axis_y": {"labels": {"format": "pct"}}}
         ),
     )
     rs, ctx = _resolved_style_with_formats(_FORMATS_PCT)

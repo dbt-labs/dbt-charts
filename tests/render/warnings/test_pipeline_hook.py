@@ -39,10 +39,10 @@ rows:
 """
 
 
-def _make_executor(board, query_registry):
+def _make_executor(board, query_registry, rows=None):
     ok = Mock()
     ok.is_success = True
-    ok.data = [{"category": "a", "value": 1}]
+    ok.data = rows if rows is not None else [{"category": "a", "value": 1}]
     ok.column_descriptions = None
     ok.resolved_relations = None
     ok.truncated_reason = None
@@ -61,6 +61,36 @@ def test_render_result_has_render_warnings_field_empty_by_default() -> None:
     executor = _make_executor(result.board, result.query_registry)
     render_result = render(result.board, executor, format="json")
     assert render_result.warnings == []
+
+
+def test_seven_slice_pie_with_no_dominant_slice_emits_no_pie_warning() -> None:
+    """A pie's slice count alone is not a defect: wheel-first labeling handles it."""
+    yaml_text = """
+title: Test
+charts:
+  p:
+    query: q
+    type: pie
+    theta: value
+    color: category
+queries:
+  q:
+    sql: SELECT 1
+    source: test_source
+rows:
+  - p
+"""
+    rows = [{"category": f"c{i}", "value": 10 + i} for i in range(7)]
+    result = compile(yaml_text)
+    assert result.success, result.errors
+    assert result.board is not None
+    executor = _make_executor(result.board, result.query_registry, rows)
+
+    render_result = render(result.board, executor, format="json")
+
+    assert [
+        w.code for w in render_result.warnings if w.code.startswith("WARN-PIE-")
+    ] == []
 
 
 def test_render_result_propagates_detector_warnings(

@@ -575,17 +575,19 @@ def _render_arc_attached_table(
         bump_padding_top,
         shift_artifact_title,
     )
-    from dbt_charts.core.render.chart.table import render_table_svg
+    from dbt_charts.core.render.engine import render_native
     from dbt_charts.core.render.svg_utils import extract_svg_dimensions
     from dbt_charts.core.render.title_band import vega_title_block_height
 
     assert chart.attached_table is not None
     assert chart.attached_table_placement != "none"
     assert chart.attached_heading_font is not None
-    table_svg = render_table_svg(
+    table_svg, _ = render_native(
         chart.attached_table,
         prepare_pie_render_rows(chart, data)[1],
         width=chart.attached_table_width,
+        height=0.0,
+        padding=None,
         board_style=resolved_style,
     )
     table_dims = extract_svg_dimensions(table_svg)

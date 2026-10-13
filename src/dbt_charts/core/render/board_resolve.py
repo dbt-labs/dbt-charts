@@ -30,7 +30,7 @@ from dbt_charts.core.render.board_variables import board_data_provider
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 from dbt_charts.core.render.conditions import item_is_drawn
 from dbt_charts.core.render.prose import plan_board_prose
-from dbt_charts.core.text.format_d3 import number_locale_scope
+from dbt_charts.core.text.format_d3 import regional_scope
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Layout, LayoutItem
@@ -66,6 +66,8 @@ def _resolve_chart_data_aware(
     executor: Executor,
     variables: VariableValues,
     width: float,
+    *,
+    filter_variables: frozenset[str],
 ) -> ResolvedChart:
     """Resolve a chart against its real, already-cached query rows.
 
@@ -105,7 +107,13 @@ def _resolve_chart_data_aware(
     query_name = chart.query_name
     data = executor.execute_query(query_name, variables) if query_name else []
     return resolve_chart_with_runtime_inputs(
-        chart, data, chart_style_context, width, executor, variables
+        chart,
+        data,
+        chart_style_context,
+        width,
+        executor,
+        variables,
+        filter_variables=filter_variables,
     )
 
 
@@ -283,7 +291,11 @@ def build_resolved_board(
     resolve_errors: dict[str, ChartResolveFailure] | EllipsisType = ...,
     authored_slot_heights: dict[str, float] | EllipsisType = ...,
 ) -> tuple[ResolvedBoard, RenderCache]:
-    with number_locale_scope(board.regional.format_locale):
+    with regional_scope(
+        board.regional.format_locale,
+        board.regional.time_locale,
+        board.regional.week_start,
+    ):
         return _build_resolved_board(
             board,
             executor,
@@ -340,6 +352,7 @@ def _build_resolved_board(
         plan_board_category_colors,
         with_category_colors,
     )
+    from dbt_charts.core.execute.column_formats import with_dbt_column_formats
     from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
 
     # Board-wide category colors, before anything resolves: a value's swatch is
@@ -347,6 +360,7 @@ def _build_resolved_board(
     board = with_category_colors(
         board, plan_board_category_colors(board, executor, variables)
     )
+    board = with_dbt_column_formats(board, executor, variables)
 
     # Each layout placement is resolved at its own final width. One authored
     # chart may appear in several slots whose finalized presentation differs.
@@ -382,6 +396,9 @@ def _build_resolved_board(
     )
     height = float(board.layout.height)
 
+    declared_variables = frozenset(
+        board.variable_registry or {}  # type-state: silent_fallback — none declared
+    )
     resolved_layout = _build_resolved_layout(
         board.layout,
         {},
@@ -390,6 +407,7 @@ def _build_resolved_board(
         chart_style_context=board.chart_style_context,
         variable_values=variables,
         executor=executor,
+        filter_variables=declared_variables,
         chart_variants=chart_variants,
         resolve_errors=chart_failures,
     )
@@ -432,6 +450,7 @@ def _build_resolved_layout(
     chart_style_context: ChartStyleContext,
     variable_values: VariableValues,
     executor: Executor,
+    filter_variables: frozenset[str],
     chart_variants: ResolvedChartVariants | EllipsisType = ...,
     resolve_errors: dict[str, ChartResolveFailure],
 ) -> ResolvedLayout:
@@ -451,6 +470,7 @@ def _build_resolved_layout(
             chart_style_context=chart_style_context,
             variable_values=variable_values,
             executor=executor,
+            filter_variables=filter_variables,
             chart_variants=chart_variants,
             resolve_errors=resolve_errors,
         )
@@ -495,6 +515,7 @@ def _resolve_layout_item(
     chart_style_context: ChartStyleContext,
     variable_values: VariableValues,
     executor: Executor,
+    filter_variables: frozenset[str],
     chart_variants: ResolvedChartVariants | EllipsisType = ...,
     resolve_errors: dict[str, ChartResolveFailure],
 ) -> ResolvedLayoutItem:
@@ -530,6 +551,7 @@ def _resolve_layout_item(
                             executor,
                             variable_values,
                             item.width,
+                            filter_variables=filter_variables,
                         )
                     except DbtChartsError as exc:
                         chart_error = ChartResolveFailure(
@@ -546,6 +568,7 @@ def _resolve_layout_item(
             chart_variants,
             variable_values=variable_values,
             executor=executor,
+            filter_variables=filter_variables,
             resolve_errors=resolve_errors,
         )
         if item.board
@@ -577,6 +600,7 @@ def _resolve_nested(
     *,
     variable_values: VariableValues,
     executor: Executor,
+    filter_variables: frozenset[str],
     resolve_errors: dict[str, ChartResolveFailure],
 ) -> ResolvedBoard:
     """Resolve a nested board using the pre-resolved charts from the root board.
@@ -597,6 +621,7 @@ def _resolve_nested(
         chart_style_context=board.chart_style_context,
         variable_values=variable_values,
         executor=executor,
+        filter_variables=filter_variables,
         chart_variants=chart_variants,
         resolve_errors=resolve_errors,
     )

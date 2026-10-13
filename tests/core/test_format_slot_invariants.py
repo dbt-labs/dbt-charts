@@ -54,9 +54,8 @@ def schema_format_fields() -> set[tuple[str, str]]:
 
 
 def _is_excluded(class_field: tuple[str, str]) -> bool:
-    # time_format is a strftime slot with no FormatConfig arm, so no affix
-    # shape reaches it; a query's `formats:` map takes names only, so none does.
-    return class_field[1] in ("time_format", "formats") or class_field[0].startswith(
+    # A query's `formats:` map takes names only, so no affix shape reaches it.
+    return class_field[1] == "formats" or class_field[0].startswith(
         _EXCLUDED_CLASS_PREFIXES
     )
 
@@ -281,16 +280,6 @@ def _marks_bar_total_label(shape: str, value: float) -> dict[str, Any]:
     return board
 
 
-def _number_format(shape: str, value: float) -> dict[str, Any]:
-    fmt, formats = _shape_value(shape)
-    chart: dict[str, Any] = {"type": "bar", "query": "q", "x": "channel", "y": "v"}
-    if fmt is not None:
-        _set_path(chart, ("style", "number_format"), fmt)
-    board = _board({"c": chart}, style_formats=formats)
-    board["queries"] = {"q": {"columns": ["channel", "v"], "values": [["A", value]]}}
-    return board
-
-
 def _kpi_value(shape: str, value: float) -> dict[str, Any]:
     fmt, formats = _shape_value(shape)
     chart: dict[str, Any] = {"type": "kpi", "query": "t", "value": "v", "label": "L"}
@@ -425,12 +414,12 @@ def _point_labels(shape: str, value: float) -> dict[str, Any]:
     return board
 
 
-def _line_number_format(shape: str, value: float) -> dict[str, Any]:
-    """``LineChartStyle.number_format``; not zero-anchored, so it needs ladder rows."""
+def _line_axis_y_labels(shape: str, value: float) -> dict[str, Any]:
+    """``LineChartStyle``'s ``axis_y.labels.format``; not zero-anchored, so it needs ladder rows."""
     fmt, formats = _shape_value(shape)
     chart: dict[str, Any] = {"type": "line", "query": "q", "x": "channel", "y": "v"}
     if fmt is not None:
-        _set_path(chart, ("style", "number_format"), fmt)
+        _set_path(chart, ("style", "axis_y", "labels", "format"), fmt)
     board = _board({"c": chart}, style_formats=formats)
     board["queries"] = {
         "q": {"columns": ["channel", "v"], "values": _line_ladder_rows(value)}
@@ -438,23 +427,23 @@ def _line_number_format(shape: str, value: float) -> dict[str, Any]:
     return board
 
 
-def _area_number_format(shape: str, value: float) -> dict[str, Any]:
-    """``AreaChartStyle.number_format``; zero-anchored like bar."""
+def _area_axis_y_labels(shape: str, value: float) -> dict[str, Any]:
+    """``AreaChartStyle``'s ``axis_y.labels.format``; zero-anchored like bar."""
     fmt, formats = _shape_value(shape)
     chart: dict[str, Any] = {"type": "area", "query": "q", "x": "channel", "y": "v"}
     if fmt is not None:
-        _set_path(chart, ("style", "number_format"), fmt)
+        _set_path(chart, ("style", "axis_y", "labels", "format"), fmt)
     board = _board({"c": chart}, style_formats=formats)
     board["queries"] = {"q": {"columns": ["channel", "v"], "values": [["A", value]]}}
     return board
 
 
-def _scatter_number_format(shape: str, value: float) -> dict[str, Any]:
-    """``ScatterChartStyle.number_format`` -- scatter's own y measure axis."""
+def _scatter_axis_y_labels(shape: str, value: float) -> dict[str, Any]:
+    """``ScatterChartStyle``'s ``axis_y.labels.format`` -- scatter's own y measure axis."""
     fmt, formats = _shape_value(shape)
     chart: dict[str, Any] = {"type": "scatter", "query": "q", "x": "v2", "y": "v"}
     if fmt is not None:
-        _set_path(chart, ("style", "number_format"), fmt)
+        _set_path(chart, ("style", "axis_y", "labels", "format"), fmt)
     board = _board({"c": chart}, style_formats=formats)
     rows = _line_ladder_rows(value)
     board["queries"] = {
@@ -466,37 +455,13 @@ def _scatter_number_format(shape: str, value: float) -> dict[str, Any]:
     return board
 
 
-def _heatmap_number_format(shape: str, value: float) -> dict[str, Any]:
-    """``HeatmapChartStyle.number_format`` -- feeds the color legend and per-cell
-    tooltip, not an axis (heatmap has no measure axis).
-    """
-    fmt, formats = _shape_value(shape)
-    chart: dict[str, Any] = {
-        "type": "heatmap",
-        "query": "q",
-        "x": "channel",
-        "y": "channel2",
-        "color": "v",
-    }
-    if fmt is not None:
-        _set_path(chart, ("style", "number_format"), fmt)
-    board = _board({"c": chart}, style_formats=formats)
-    board["queries"] = {
-        "q": {
-            "columns": ["channel", "channel2", "v"],
-            "values": [["A", "X", value]],
-        }
-    }
-    return board
-
-
-def _histogram_number_format(shape: str, value: float) -> dict[str, Any]:
-    """``HistogramChartStyle.number_format`` -- a histogram has no structured
+def _histogram_axis_y_labels(shape: str, value: float) -> dict[str, Any]:
+    """``HistogramChartStyle``'s ``axis_y.labels.format`` -- a histogram has no structured
     tooltip; ``NativeTooltipAffixFeature`` composes the affix on its card."""
     fmt, formats = _shape_value(shape)
     chart: dict[str, Any] = {"type": "histogram", "query": "q", "x": "v"}
     if fmt is not None:
-        _set_path(chart, ("style", "number_format"), fmt)
+        _set_path(chart, ("style", "axis_y", "labels", "format"), fmt)
     board = _board({"c": chart}, style_formats=formats)
     board["queries"] = {
         "q": {"columns": ["v"], "values": [[value], [value * 1.5], [value * 0.5]]}
@@ -570,18 +535,6 @@ SLOT_FIXTURES: dict[str, SlotFixture] = {
             exact_value=True,
         ),
         SlotFixture(
-            "style.number_format",
-            covers=(
-                ("BarChartStyle", "number_format"),
-                # _CartesianChartStyle is a private mixin -- never instantiated
-                # directly.
-                ("_CartesianChartStyle", "number_format"),
-            ),
-            bands=_ALL_BANDS,
-            build=_number_format,
-            tooltip_check=True,
-        ),
-        SlotFixture(
             "style.value.format",
             covers=(("KpiValueStyle", "format"),),
             bands=_ALL_BANDS,
@@ -650,37 +603,28 @@ SLOT_FIXTURES: dict[str, SlotFixture] = {
             exact_value=True,
         ),
         SlotFixture(
-            "style.number_format (line)",
-            covers=(("LineChartStyle", "number_format"),),
+            "style.axis_y.labels.format (line)",
+            covers=(),
             bands=_ALL_BANDS,
-            build=_line_number_format,
+            build=_line_axis_y_labels,
         ),
         SlotFixture(
-            "style.number_format (area)",
-            covers=(("AreaChartStyle", "number_format"),),
+            "style.axis_y.labels.format (area)",
+            covers=(),
             bands=_ALL_BANDS,
-            build=_area_number_format,
+            build=_area_axis_y_labels,
         ),
         SlotFixture(
-            "style.number_format (scatter)",
-            covers=(("ScatterChartStyle", "number_format"),),
+            "style.axis_y.labels.format (scatter)",
+            covers=(),
             bands=_ALL_BANDS,
-            build=_scatter_number_format,
+            build=_scatter_axis_y_labels,
         ),
         SlotFixture(
-            "style.number_format (heatmap)",
-            covers=(("HeatmapChartStyle", "number_format"),),
+            "style.axis_y.labels.format (histogram)",
+            covers=(),
             bands=_ALL_BANDS,
-            build=_heatmap_number_format,
-            # Heatmap's color legend/tooltip discards the affix (a native `$` spec too):
-            # no legend-labelExpr composition mechanism exists in the render tree.
-            checks_affix_paints=False,
-        ),
-        SlotFixture(
-            "style.number_format (histogram)",
-            covers=(("HistogramChartStyle", "number_format"),),
-            bands=_ALL_BANDS,
-            build=_histogram_number_format,
+            build=_histogram_axis_y_labels,
             # The format paints a row count, which is never negative.
             checks_sign=False,
         ),
@@ -813,10 +757,10 @@ def _check_preset_paints_house_digits(
     if (
         slot.id in _HOUSE_REGISTER_SLOTS
         and 0 < abs(value) < 1
-        and is_d3_si_spec(PREDEFINED_SPECS[preset])
+        and is_d3_si_spec(PREDEFINED_SPECS[preset].d3)
     ):
         # The house register prints a sub-1 value in digits, never milli.
-        text = format_d3(value, sub_unit_digit_format(PREDEFINED_SPECS[preset]))
+        text = format_d3(value, sub_unit_digit_format(PREDEFINED_SPECS[preset].d3))
     else:
         text = format_value(value, preset)
     expected = _numerals(text)
@@ -1369,9 +1313,7 @@ def test_support_table_currency_preset_at_or_above_one_still_compacts(
     build: Callable[[str, float], dict[str, Any]],
 ) -> None:
     svg = render_board_to_svg(_to_yaml(build("currency", BANDS["large"])))
-    assert any(
-        t.startswith(("$12.4M", "$12.4mn", "$12.4\u00a0M")) for t in _dollar_texts(svg)
-    )
+    assert any(t.startswith(("$12.4M", "$12.4mn")) for t in _dollar_texts(svg))
 
 
 @pytest.mark.parametrize("build", _SUPPORT_TABLE_BUILDERS, ids=lambda b: b.__name__)
@@ -1586,5 +1528,5 @@ def test_support_table_notation_alone_is_honored_like_with_a_prefix(
 
     notation_only = cells({"spec": ".3~s", "notation": "analytic"})
     with_prefix = cells({"spec": ".3~s", "notation": "analytic", "prefix": "€"})
-    assert "12.4\u00a0M" in notation_only, notation_only
-    assert "€12.4\u00a0M" in with_prefix, with_prefix
+    assert "12.4M" in notation_only, notation_only
+    assert "€12.4M" in with_prefix, with_prefix

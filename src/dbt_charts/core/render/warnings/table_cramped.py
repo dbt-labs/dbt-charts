@@ -9,8 +9,6 @@ second guess at it.
 
 from __future__ import annotations
 
-import math
-
 from dbt_charts.core.diagnostics import WARN_TABLE_CRAMPED, Diagnostic
 from dbt_charts.core.render.warnings.base import WarningContext
 
@@ -18,8 +16,6 @@ from dbt_charts.core.render.warnings.base import WarningContext
 def detect(ctx: WarningContext) -> list[Diagnostic]:
     """Return one warning per table whose columns wrapped under a width shortfall."""
     warnings: list[Diagnostic] = []
-    board_width = float(ctx.board_spec.width)
-
     for chart_id, cramping in ctx.table_crampings.items():
         # A table that paints past its slot is WARN-TABLE-COLUMNS-OVERFLOW's
         # case — the physical rung above this one. One defect, one warning.
@@ -42,30 +38,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         # whose grow-the-slot fix matches that cause.
         if shortfall < 1.0 or not cramping.wrapped_headers:
             continue
-        # Percentage-pinned columns take a fixed fraction of whatever budget
-        # exists, so scaling the raw shortfall would under-shoot on every
-        # paste-back. Solve instead for the budget where the absolute part of
-        # the demand fits into what the percentages leave over; at fraction 0
-        # this reduces to the plain shortfall. Fraction >= 1 means the pins
-        # alone exceed any budget — no board width can help.
-        fraction = cramping.relative_demand_fraction
-        if fraction >= 1.0:
-            continue
-        absolute_demand = cramping.required_width - fraction * cramping.available_width
-        needed_budget = absolute_demand / (1.0 - fraction)
-        # The needed growth is in the table's own column budget, and the table
-        # may hold only a fraction of the board (a cols/grid slot): growing
-        # the board by W grows the budget by roughly W * budget/board. Scaling
-        # by the inverse makes the suggestion clear the warning in one
-        # paste-back — it overshoots slightly when siblings have fixed widths,
-        # which still clears. Rounded up to the next 50 so the suggestion
-        # reads as a width strictly above the one already set.
-        growth = (
-            max(needed_budget - cramping.available_width, 0.0)
-            * board_width
-            / cramping.available_width
-        )
-        suggested = float(math.ceil((board_width + growth) / 50) * 50)
+        suggested = cramping.suggested_width
         fix = WARN_TABLE_CRAMPED.fix_template.format(suggested_width=suggested)
         warnings.append(
             Diagnostic.from_code(

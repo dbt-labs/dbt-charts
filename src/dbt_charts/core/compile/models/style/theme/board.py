@@ -39,7 +39,7 @@ VALID_FONT_WEIGHTS: frozenset[str] = frozenset(
     w for w in get_args(FontWeight) if isinstance(w, str)
 )
 
-# Pygments' built-in styles as of 2.18, the floor in pyproject.toml.
+# Pygments' built-in styles as of 2.21, the floor in pyproject.toml.
 PygmentsTheme = Literal[
     "abap",
     "algol",
@@ -69,6 +69,7 @@ PygmentsTheme = Literal[
     "monokai",
     "murphy",
     "native",
+    "night-owl",
     "nord",
     "nord-darker",
     "one-dark",
@@ -127,7 +128,8 @@ class TextColumnStyle(BaseModel):
     - ``max_number``: ceiling on the count. The renderer may still choose
       fewer, when the text is too short to fill them.
     - ``max_chars``: the measure, overriding the shipped default. It caps the
-      text inside a column; it never moves the column.
+      text inside a column and is the width prose and board titles ask their
+      board for; it never moves the column.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -148,7 +150,8 @@ class TextColumnStyle(BaseModel):
         gt=0,
         description=(
             "Column text width as a character count, overriding the shipped "
-            "measure. It caps the text inside a column; a column narrower "
+            "measure. It caps the text inside a column, and is the width prose "
+            "and board titles ask a content-sized board for; a column narrower "
             "than this limits the text first."
         ),
     )
@@ -455,12 +458,6 @@ class TextStyle(BaseModel):
     )
     align: Literal["left", "center", "right"] = Field(
         description="Text alignment for the board body-text block."
-    )
-    preferred_width: float = Field(
-        description=(
-            "Widest a prose block asks its board to hug, in px. A shorter text "
-            "asks only for its own one-line width."
-        )
     )
     paragraph: BlockMarginStyle = Field(
         description="Spacing above/below each paragraph block (in line-height units)."

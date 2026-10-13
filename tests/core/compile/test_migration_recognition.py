@@ -871,6 +871,30 @@ def test_migrate_yaml_text_stop_target_stamp_line_explains_itself() -> None:
     )
 
 
+def test_migrate_yaml_text_stamp_stays_below_a_schema_modeline() -> None:
+    """The language server honors a `$schema` modeline only before the first
+    key, so the stamp must land under it, never push it down."""
+    catalog = synthetic_catalog(
+        {
+            V1: flat_schema("old", "keep"),
+            V2: flat_schema("new", "keep", "_schema_version"),
+        }
+    )
+    registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
+    modeline = "# yaml-language-server: $schema=https://example.test/board.json"
+
+    capped = migrate_yaml_text(
+        f"{modeline}\nold: value\nkeep: k\n",
+        catalog=catalog,
+        registry=registry,
+        stop_target=V2,
+    )
+
+    lines = capped.splitlines()
+    assert lines[0] == modeline
+    assert lines[1].startswith(f'_schema_version: "{V2}"')
+
+
 def test_migrate_yaml_text_stop_target_never_downgrades_a_newer_stamp() -> None:
     """A well-formed, genuinely newer existing _schema_version must survive a
     real structural change untouched.

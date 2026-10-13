@@ -439,8 +439,9 @@ charts:
     assert "from source" in _plain(out.output)
 
 
-def test_hug_board_measures_a_data_title_at_the_text_preferred_width() -> None:
+def test_hug_board_measures_a_data_title_at_the_prose_measure() -> None:
     from dbt_charts.core.compile.resolve.style.markdown_style import (
+        prose_measure,
         title_max_content_width,
     )
 
@@ -454,7 +455,7 @@ def test_hug_board_measures_a_data_title_at_the_text_preferred_width() -> None:
     style = board.resolved_style
     assert title_max_content_width(
         board.title, board.level, style, {}, board.base_dir
-    ) == float(style.text.preferred_width)
+    ) == prose_measure(style)
 
 
 def test_chart_focus_width_ignores_a_data_title(

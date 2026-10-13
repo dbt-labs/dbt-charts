@@ -5,6 +5,7 @@ import faulthandler
 import importlib.util
 import io
 import logging
+import os
 import sys
 import webbrowser
 from collections.abc import Callable
@@ -22,8 +23,10 @@ from dbt_charts.agent_api import RenderFormat, set_surface
 from dbt_charts.agent_api._paths import (
     defaults_file_skip_diagnostics,
     empty_stdin_diagnostic,
+    find_dct_root,
     nothing_to_render_diagnostic,
     partition_defaults_files,
+    resolve_dbt_project_dir,
 )
 from dbt_charts.cli._console import is_plain_output
 from dbt_charts.cli._error_format import (
@@ -105,10 +108,10 @@ inspect_app = typer.Typer(
     rich_markup_mode=_RICH_MARKUP_MODE,
 )
 
-# Artifact subcommand app — `dct artifact emit` / `dct artifact render`
+# Artifact subcommand app — `dct artifact emit` / `render` / `schema`
 artifact_app = typer.Typer(
     name="artifact",
-    help="Emit a resolved-board artifact + recording, and render one back.",
+    help="Emit a resolved-board artifact + recording, render one back, or print its JSON Schema.",
     no_args_is_help=True,
     pretty_exceptions_show_locals=False,
     rich_markup_mode=_RICH_MARKUP_MODE,
@@ -199,6 +202,7 @@ def _panel_rank(panel: str) -> int:
 
 
 _COMMAND_PATH_KEY = "dct.command_path"
+_ARGS_KEY = "dct.args"
 
 
 class _RootHelpGroup(TyperGroup):
@@ -251,6 +255,7 @@ class _RootHelpGroup(TyperGroup):
         # The root callback runs after click has consumed argv, so the
         # subcommand path can only be resolved here.
         ctx.meta[_COMMAND_PATH_KEY] = command_path(self, args)
+        ctx.meta[_ARGS_KEY] = list(args)
         return super().parse_args(ctx, args)
 
     def format_help(self, ctx: Any, formatter: Any) -> None:
@@ -308,13 +313,15 @@ def init_default(
     vscode: Annotated[
         bool | None,
         typer.Option(
-            "--vscode/--no-vscode", help="Install dbt charts extension into VS Code"
+            "--vscode/--no-vscode",
+            help="Install dbt charts extension into VS Code (default: prompt on a TTY, skip under --yes or without a TTY)",
         ),
     ] = None,
     cursor: Annotated[
         bool | None,
         typer.Option(
-            "--cursor/--no-cursor", help="Install dbt charts extension into Cursor"
+            "--cursor/--no-cursor",
+            help="Install dbt charts extension into Cursor (default: prompt on a TTY, skip under --yes or without a TTY)",
         ),
     ] = None,
 ) -> None:
@@ -337,9 +344,10 @@ def init_default(
     Examples:
       dct init                        # Init with interactive wizard
       dct init --yes                  # Accept all defaults non-interactively
+      dct init --yes --vscode         # …and install the VS Code extension
       dct init --project-dir ./myrepo # Init in a specific directory
       dct init --force                # Re-scaffold, overwriting files
-      dct init --no-mcp --no-vscode   # Skip MCP and IDE extension
+      dct init --no-mcp --no-vscode --no-cursor  # Skip MCP and IDE extensions
     """
     if ctx.invoked_subcommand is not None:
         return
@@ -758,6 +766,16 @@ def describe(
             callback=cwd_first_all,
         ),
     ],
+    chart: Annotated[
+        str | None,
+        typer.Option(
+            "--chart",
+            help=(
+                "Describe one chart on the board: the queries it reads and the variables "
+                "it depends on. Takes exactly one board file."
+            ),
+        ),
+    ] = None,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Output as JSON"),
@@ -770,6 +788,7 @@ def describe(
     Compiles the board YAML and returns a structured summary without executing
     any queries. Use this for orientation when picking up an unfamiliar dashboard.
     Accepts multiple paths; each may be a file or a directory (walked recursively).
+    With --chart, describes a single chart on one board.
 
     \b
     Examples:
@@ -778,9 +797,15 @@ def describe(
       dct describe charts/sales.yml --project-dir ./myrepo
       dct describe charts/
       dct describe charts/*.yml --json | jq '.[] | select(.charts | length > 5)'
+      dct describe charts/sales.yml --chart revenue_kpi
     """
+    if chart is not None and len(paths) != 1:
+        raise typer.BadParameter(
+            "--chart takes exactly one board file", param_hint="--chart"
+        )
     describe_cmd.describe_command(
         paths,
+        chart=chart,
         json_output=json_output,
         project_dir=project_dir,
         dbt_project_dir=dbt_project_dir,
@@ -959,7 +984,7 @@ def render(
       dct render charts/sales.yml --no-warnings
       dct render charts/sales.yml --ignore-warning WARN-REDUNDANT-ENCODING
       dct render charts/sales.yml --allow-chart-errors
-      echo 'charts: {c: {query: {type: csv, file: data.csv}}}' | dct render - --format terminal
+      printf 'source: data.csv\\ncharts:\\n  c:\\n    type: table\\n    query: select * from data\\n' | dct render - --format terminal
     """
     if cache is not None and no_cache:
         raise typer.BadParameter(
@@ -1169,6 +1194,20 @@ def render_board(
         output=output,
         json_output=json_output,
     )
+
+
+@artifact_app.command("schema")
+def artifact_schema() -> None:
+    """Print the JSON Schema (draft 2020-12) that board artifacts conform to.
+
+    Every artifact `dct artifact emit` writes names this schema in its `$id`.
+    The schema matches the installed dct version.
+
+    \b
+    Examples:
+      dct artifact schema > board-resolved.schema.json
+    """
+    board_artifact_cmd.schema_command()
 
 
 @app.command("search", rich_help_panel="Dashboards")
@@ -1479,20 +1518,23 @@ def migrate(
     help="""\b
 SQL and named board queries — common forms:
   dct query SOURCE 'SQL'
+  dct query data/orders.csv 'SELECT * FROM orders'
   dct query BOARD.yml REFERENCE
   dct query SOURCE 'SQL' --validate
-  dct query BOARD.yml REFERENCE --describe
 
-The first operand is the query context: a data source name, or a board file
+The first operand is the query context: a data source name, a CSV/JSON/Parquet
+file path (table name = file stem, as a board's `source:`), or a board file
 (.yml, .yaml, .md, .markdown).
---file reads SQL from a file for source contexts.""",
+--file reads SQL from a file for source contexts.
+Results print as CSV under the same byte budget as the MCP execute_query tool;
+use SQL LIMIT to bound rows. --json returns up to 1,000 rows.""",
 )
 def query(
     context: Annotated[
         str | None,
         typer.Argument(
             metavar="CONTEXT",
-            help="Data source name, or board path",
+            help="Data source name, data file path, or board path",
         ),
     ] = None,
     query_text: Annotated[
@@ -1507,13 +1549,6 @@ def query(
         typer.Option(
             "--validate",
             help="Static SQL lint only (works for named queries and raw SQL)",
-        ),
-    ] = False,
-    describe: Annotated[
-        bool,
-        typer.Option(
-            "--describe",
-            help="Return column names and types (runs --validate gate first)",
         ),
     ] = False,
     file: Annotated[
@@ -1534,10 +1569,6 @@ def query(
         list[str] | None,
         typer.Option("--var", help="Variable override as key=value (repeatable)"),
     ] = None,
-    limit: Annotated[
-        int,
-        typer.Option("--limit", help="Max rows, execute path (default 20, max 1000)"),
-    ] = 20,
     show_suppressed: Annotated[
         bool,
         typer.Option("--show-suppressed", help="Include suppressed lint diagnostics"),
@@ -1555,11 +1586,9 @@ def query(
         context=context,
         query_text=query_text,
         validate=validate,
-        describe=describe,
         file=file,
         dialect=dialect,
         vars=variables or None,
-        limit=limit,
         show_suppressed=show_suppressed,
         json_output=json_output,
         project_dir=project_dir,
@@ -1741,26 +1770,17 @@ def skills(
             metavar="SKILL_NAME", help="Skill name to show (default: list all)"
         ),
     ] = None,
-    search: Annotated[
-        str | None,
-        typer.Option("--search", "-s", help="Search names, descriptions, and bodies"),
-    ] = None,
-    limit: Annotated[
-        int,
-        typer.Option("--limit", min=1, max=25, help="Max search hits (default 10)"),
-    ] = 10,
     as_json: Annotated[
         bool,
         typer.Option("--json", help="Output as JSON"),
     ] = False,
 ) -> None:
-    """List packaged agent skills, search them, or show one by name.
+    """List packaged agent skills, or show one by name.
 
     \b
     Modes:
       dct skills                  # List all skills (grouped: workflows + patterns)
       dct skills <name>           # Show the named skill body
-      dct skills -s "<query>"     # Search names, descriptions, and bodies
       dct skills --json           # Stable JSON for any of the above
 
     Skills are agent workflows and layout patterns. For YAML field reference,
@@ -1768,8 +1788,6 @@ def skills(
     """
     skills_cmd.skills_command(
         name=skill_name,
-        search=search,
-        limit=limit,
         as_json=as_json,
     )
 
@@ -1781,9 +1799,6 @@ app.add_typer(inspect_app, name="inspect", hidden=True)
 # Each plugin's ``register()`` callable mounts its subcommands onto Typer apps
 # (e.g. ``inspect_app``) before the app executes. Runs at import time so that
 # ``dct --help`` shows profiler commands when the private package is installed.
-# importlib.metadata is stdlib since Python 3.8; dbt-charts requires >=3.10, so
-# the outer try is unnecessary. Plugin load errors surface to the user rather
-# than being silently swallowed.
 from importlib.metadata import entry_points as _entry_points
 
 for _ep in _entry_points(group="dbt_charts.cli_plugins"):
@@ -1819,8 +1834,44 @@ def _never_fail(fn: Callable[..., None], *args: Any) -> None:
         fn(*args)
 
 
+def _option_path(args: list[str], option: str, envvar: str) -> Path | None:
+    """Read a subcommand's path option from raw argv or its env var.
+
+    The root callback runs before subcommand options are parsed, so telemetry
+    reads the two project-dir options itself. Flag wins over env and the last
+    occurrence wins, as in click.
+    """
+    value = os.environ.get(envvar)
+    for i, token in enumerate(args):
+        if token == "--":
+            break
+        if token == option and i + 1 < len(args):
+            value = args[i + 1]
+        elif token.startswith(f"{option}="):
+            value = token.removeprefix(f"{option}=")
+    return Path(value).resolve() if value else None
+
+
+def _targeted_dbt_project_dir(args: list[str]) -> Path:
+    """The directory whose dbt_project.yml carries consent and project identity."""
+    project_dir = _option_path(args, "--project-dir", "DCT_PROJECT_DIR")
+    if project_dir is None:
+        project_dir = find_dct_root() or Path.cwd()
+    return resolve_dbt_project_dir(
+        project_dir, _option_path(args, "--dbt-project-dir", "DBT_PROJECT_DIR")
+    )
+
+
 def _track_invocation(ctx: typer.Context, no_send: bool) -> None:
-    invocation = begin_invocation(ctx.meta[_COMMAND_PATH_KEY], no_send, Path.cwd())
+    try:
+        invocation = begin_invocation(
+            ctx.meta[_COMMAND_PATH_KEY],
+            no_send,
+            _targeted_dbt_project_dir(ctx.meta[_ARGS_KEY]),
+        )
+    except ValueError as exc:
+        print_warning(f"usage stats disabled: {exc}")
+        return
     if invocation is not None:
         ctx.call_on_close(lambda: _never_fail(invocation.end, sys.exc_info()[1]))
 

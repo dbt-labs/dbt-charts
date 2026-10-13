@@ -12,30 +12,12 @@ from dbt_charts.agent_api import skills as _api
 from dbt_charts.cli._console import dct_console
 from dbt_charts.cli._json_output import print_json_result
 
-err_console = dct_console(stderr=True)
-
 
 def skills_command(
     name: str | None = None,
-    search: str | None = None,
-    limit: int = 10,
     as_json: bool = False,
 ) -> None:
-    """List packaged agent skills, search them, or show one by name — selected from the input args."""
-    if name is not None and search is not None:
-        err_console.print(
-            "[red]Error:[/red] cannot combine a skill name with --search; use one or the other."
-        )
-        raise typer.Exit(1)
-
-    if search is not None:
-        result = _api.search_skills(search, limit=limit, surface="cli")
-        if as_json:
-            print_json_result(result)
-            return
-        _print_search_results(result)
-        return
-
+    """List packaged agent skills, or show one by name."""
     if name is None:
         listing = _api.list_skills(surface="cli")
         if as_json:
@@ -89,7 +71,6 @@ def _print_skills_table(result: _api.SkillList) -> None:
     )
     typer.echo("  dct docs           YAML syntax reference")
     typer.echo("")
-    typer.echo('Find a skill: dct skills -s "<query>"')
     typer.echo('YAML syntax:  dct docs -s "<query>"')
 
 
@@ -101,30 +82,6 @@ def _skill_table(skills: list[_api.Skill], name_width: int) -> Table:
         suffix = r"  [dim]\[scaffold][/dim]" if skill.has_examples else ""
         t.add_row(skill.name, f"{_first_sentence(skill.description)}{suffix}")
     return t
-
-
-def _print_search_results(result: _api.SkillSearchResult) -> None:
-    if not result.hits:
-        typer.echo(f'Agent skills — search results for "{result.query}"\n')
-        typer.echo(
-            'No skills matched. Try `dct skills -s "kpi"` or `dct skills` (full list).'
-        )
-        return
-
-    console = dct_console()
-    typer.echo(f'Agent skills — search results for "{result.query}"\n')
-    for hit in result.hits:
-        scaffold = r" \[scaffold]" if hit.has_examples else ""
-        console.print(
-            f"  [bold]{hit.name}[/bold] \\[{hit.kind}]{scaffold}  "
-            f"[dim]score {hit.score:.2f}[/dim]"
-        )
-        console.print(f"    {_first_sentence(hit.description)}")
-    typer.echo("")
-    typer.echo(
-        f"{len(result.hits)} matches. "
-        "Read one: `dct skills <name>` — copy the example YAML directly."
-    )
 
 
 def _first_sentence(text: str) -> str:

@@ -793,36 +793,6 @@ def test_fires_on_geoshape_nominal_choropleth_when_entry_matches_nothing() -> No
     assert "bogus" in warnings[0].message
 
 
-def test_silent_on_geoshape_with_no_lookup_field() -> None:
-    """geo.py's own choropleth gate is `data and chart.lookup_field and
-    (chart.value_field or color_ch is not None)` -- with no
-    `lookup_field` (legal: an author can set `value:` without
-    `lookup:`), the emitter falls through to a neutral-fill base map with
-    no legend and no domain at all, regardless of `value_field`. The
-    detector must check this full gate, not `value_field` alone, or it
-    warns against a domain the emitter never built."""
-    from dbt_charts.core.compile.models.chart.normalized.geoshape import GeoshapeChart
-    from dbt_charts.core.compile.models.style.authored.geoshape import (
-        GeoshapeChartStylePatch,
-    )
-
-    chart = GeoshapeChart(
-        id="geo1",
-        type="geoshape",
-        geo_source="fake-geo-source",
-        lookup=None,
-        value="tier",
-        style=GeoshapeChartStylePatch.model_validate(
-            {"legend": {"values": ["west", "bogus"]}}
-        ),
-    )
-    rows = [
-        {"state": "CA", "tier": "west"},
-        {"state": "TX", "tier": "south"},
-    ]
-    assert detector.detect(_ctx(chart, rows)) == []
-
-
 def test_silent_on_geoshape_when_every_entry_resolves() -> None:
     from dbt_charts.core.compile.models.chart.normalized.geoshape import GeoshapeChart
     from dbt_charts.core.compile.models.style.authored.geoshape import (

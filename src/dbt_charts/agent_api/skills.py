@@ -124,7 +124,7 @@ class Skill(BaseModel):
         description=(
             "Surface this body was rendered for. ``None`` on the raw parsed "
             "skill (macros still present); set by ``list_skills`` / "
-            "``get_skill`` / ``search_skills`` to the surface they rendered."
+            "``get_skill`` to the surface they rendered."
         ),
     )
     examples: list[SkillExample] = Field(
@@ -181,24 +181,6 @@ class SkillList(BaseModel):
     )
 
 
-class SkillSearchHit(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    description: str
-    kind: SkillKind
-    has_examples: bool
-    score: float
-
-
-class SkillSearchResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    success: bool = True
-    query: str
-    hits: list[SkillSearchHit] = Field(default_factory=list)
-
-
 class SkillNotFound(Exception): ...
 
 
@@ -206,15 +188,6 @@ class GetSkillArgs(BaseModel):
     """Input to get_skill: fetch one skill by name."""
 
     name: str = Field(..., description="Skill directory name (kebab-case)")
-
-
-class SearchSkillsArgs(BaseModel):
-    """Input to search_skills: substring search across names, descriptions, and bodies."""
-
-    query: str = Field(..., description="Substring query (case-insensitive)")
-    limit: int = Field(10, ge=1, le=25, description="Max hits to return")
-
-    model_config = ConfigDict(extra="forbid")
 
 
 def _parse_surfaces(value: object, label: str) -> frozenset[SkillSurface]:
@@ -403,9 +376,7 @@ def _parse_project_skill(project: Project, skill_md_relpath: str) -> Skill:
 
     ``Skill.body`` stores the RAW parsed body, undecorated — the
     guidance-not-authority disclaimer and size cap (``_format_authored_skill_body``)
-    are applied at render time (``_rendered_body``), not here, so
-    ``search_skills`` can score relevance against the real content instead of
-    every project skill's identical boilerplate disclaimer text.
+    are applied at render time (``_rendered_body``), not here.
     """
     directory_name = PurePosixPath(skill_md_relpath).parent.name
     parsed = _parse_skill_frontmatter(
@@ -530,11 +501,9 @@ def _rendered_body(
     a wheel-authoring convention for OUR built-in skills, keyed off
     ``surface_aliases.yaml`` — an outside author has no knowledge of it, and an
     innocuous body containing a ``{{ s_curve }}``-shaped token would raise
-    ``MissingSurfaceAlias`` and crash the whole list_skills/get_skill/
-    search_skills call for every skill (built-ins included), not just the
-    authored one. An authored skill's body is never macro-rendered; instead
-    ``_format_authored_skill_body`` wraps it here (not at parse time — see
-    ``_searchable_body`` for why the un-wrapped form matters too).
+    ``MissingSurfaceAlias`` and crash the whole list_skills/get_skill
+    call for every skill (built-ins included), not just the authored one. An authored skill's body is never macro-rendered; instead
+    ``_format_authored_skill_body`` wraps it here, not at parse time.
 
     ``available_tools`` only applies to the built-in path — an authored body
     was never written against the ``{{#if_tool}}`` convention.
@@ -544,21 +513,6 @@ def _rendered_body(
     return render_skill_body(
         skill.body, surface=surface, available_tools=available_tools
     )
-
-
-def _searchable_body(skill: Skill, surface: SkillSurface) -> str:
-    """Body text used ONLY for ``search_skills``' substring-match scoring.
-
-    Built-ins: the macro-rendered body, same as what's displayed (a stray
-    ``{{ s_key }}`` literal must never leak into ranking). Authored skills:
-    the RAW, un-wrapped body — ``_format_authored_skill_body``'s disclaimer is
-    identical boilerplate across every authored skill, so scoring against the
-    wrapped form would make an unrelated query like "policy" or "capability"
-    spuriously match every one of them.
-    """
-    if skill.source != "builtin":
-        return skill.body
-    return render_skill_body(skill.body, surface=surface)
 
 
 def _rendered_description(skill: Skill, surface: SkillSurface) -> str:
@@ -708,58 +662,3 @@ def skill_description(name: str, *, surface: SkillSurface = "tool") -> str:
     if skill is None or surface not in skill.surfaces:
         return ""
     return _rendered_description(skill, surface)
-
-
-def search_skills(
-    query: str,
-    *,
-    limit: int = 10,
-    surface: SkillSurface = "tool",
-    project: Project | None = None,
-    skill_dirs: tuple[str, ...] = PROJECT_SKILLS_DIRS,
-    extra_skill_files: tuple[str, ...] = (),
-    extra_skills: tuple[Skill, ...] = (),
-) -> SkillSearchResult:
-    """Substring search across name (1.0), description (0.8), and rendered body (0.5).
-
-    Honors the per-skill ``surfaces`` frontmatter — a skill that isn't exposed
-    on ``surface`` is invisible to search on that surface. Body matches use the
-    surface-rendered body so macro expansion doesn't leak macro suffixes into
-    relevance ranking. ``project`` and ``extra_skills`` are unioned in the same
-    way as ``list_skills``/``get_skill``.
-    """
-    q = query.strip().lower()
-    if not q:
-        raise ValueError("query must be a non-empty string")
-
-    merged, _errors = _merged_skills(
-        project,
-        skill_dirs=skill_dirs,
-        extra_skill_files=extra_skill_files,
-        extra_skills=extra_skills,
-    )
-    hits: list[SkillSearchHit] = []
-    for skill in merged.values():
-        if surface not in skill.surfaces:
-            continue
-        rendered_description = _rendered_description(skill, surface)
-        if q in skill.name.lower():
-            score = 1.0
-        elif q in rendered_description.lower():
-            score = 0.8
-        elif q in _searchable_body(skill, surface).lower():
-            score = 0.5
-        else:
-            continue
-        hits.append(
-            SkillSearchHit(
-                name=skill.name,
-                description=rendered_description,
-                kind=skill.kind,
-                has_examples=skill.has_examples,
-                score=score,
-            )
-        )
-
-    hits.sort(key=lambda h: (-h.score, h.name))
-    return SkillSearchResult(query=query, hits=hits[:limit])

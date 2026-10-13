@@ -335,7 +335,10 @@ def test_layer_own_axis_affix_composes_even_when_base_axis_already_did() -> None
             "labels": {"format": {"spec": ".0%", "suffix": " pts"}},
         },
     )
-    vl = _render_bar_with_layers([layer], format={"spec": ",.0f", "prefix": "€"})
+    vl = _render_bar_with_layers(
+        [layer],
+        style={"axis_y": {"labels": {"format": {"spec": ",.0f", "prefix": "€"}}}},
+    )
     right_axis = _find_layer_y_axis(vl, orient="right")
     assert right_axis is not None, "No right-orient y axis in VL output"
     expr = right_axis.get("labelExpr") or ""
@@ -378,7 +381,9 @@ def test_layer_axis_y_label_format_inline_d3_is_native() -> None:
         y="target",
         axis_y={"position": "right", "labels": {"format": ".2s"}},
     )
-    vl = _render_bar_with_layers([layer], format=".2s")
+    vl = _render_bar_with_layers(
+        [layer], style={"axis_y": {"labels": {"format": ".2s"}}}
+    )
     left_axis = _find_layer_y_axis(vl, orient="left")
     right_axis = _find_layer_y_axis(vl, orient="right")
     assert left_axis is not None and right_axis is not None
@@ -1084,7 +1089,10 @@ def test_layer_spec_less_affix_resolves_the_guarded_tick_label_and_tooltip() -> 
     assert resolved_layer.axis_y.tick_label.si_format == ".3~s"
     assert resolved_layer.axis_y.labels.format.prefix == "EUR "
     tooltip = resolved_layer.axis_y.tooltip_format
-    assert (tooltip.spec, tooltip.prefix) == (PREDEFINED_SPECS["number_full"], "EUR ")
+    assert (tooltip.spec, tooltip.prefix) == (
+        PREDEFINED_SPECS["number_full"].d3,
+        "EUR ",
+    )
 
 
 def test_layer_alias_to_a_preset_resolves_the_guarded_tick_label() -> None:
@@ -1208,6 +1216,7 @@ def test_right_axis_layer_votes_from_its_own_query_at_runtime() -> None:
         400,
         executor,
         {},
+        filter_variables=frozenset(),
     )
     assert resolved.layers[0].axis_y.tooltip_format.spec == "$,.2f"
     executor.execute_query.assert_called_once_with("goals", {})
@@ -1290,3 +1299,33 @@ def test_layer_tooltip_keeps_the_standalone_sign_placement(prefix, painted) -> N
         for a in re.findall(r'aria-label="([^"]*)"', vlc.vegalite_to_svg(vl))
     ]
     assert any(f"target: {painted}" in label for label in labels), labels
+
+
+# ── layer axis_y.title needs a split axis to land on ─────────────────────
+
+
+def _resolve_layer_axes(*layer_axes: dict[str, object]) -> None:
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+    from dbt_charts.core.compile.resolve import resolve
+
+    layers = [LineLayer(type="line", y="target", axis_y=a) for a in layer_axes]
+    resolve(_bar_normalized(layers=layers), _DATA, _default_board_style())
+
+
+def test_layer_axis_y_title_without_any_pinned_position_raises() -> None:
+    from dbt_charts.core.compile.errors import CompilationError
+
+    with pytest.raises(CompilationError) as exc_info:
+        _resolve_layer_axes({"title": "Target"})
+    assert exc_info.value.code is not None
+    assert exc_info.value.code.code == "ERR-LAYER-AXIS-TITLE-WITHOUT-POSITION"
+    assert "axis_y.position" in str(exc_info.value)
+
+
+def test_layer_axis_y_title_with_pinned_position_compiles() -> None:
+    _resolve_layer_axes({"title": "Target", "position": "right"})
+
+
+def test_layer_axis_y_title_compiles_when_another_layer_pins_a_side() -> None:
+    """The axis split is chart-wide: an unpinned layer's title still lands."""
+    _resolve_layer_axes({"position": "right"}, {"title": "Target"})

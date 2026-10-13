@@ -892,3 +892,25 @@ class TestPlaygroundUrlIgnoresEnv:
 
         assert "https://play.dbtcharts.com/?y=" in result
         assert "should-not-be-read" not in result
+
+
+def test_fence_sends_the_post_an_http_source_declares(tmp_path, monkeypatch):
+    """Docs authors write the fences, so the renderer keeps POST http sources."""
+    _patch_project_dir(monkeypatch, tmp_path)
+    source = (
+        "queries:\n  hits:\n    type: http\n"
+        "    url: https://api.example.com/search\n    method: POST\n"
+        "    json_path: $.hits\n"
+        "charts:\n  t:\n    query: hits\n    type: table\nrows:\n  - t\n"
+    )
+    response = MagicMock()
+    response.json.return_value = {"hits": [{"title": "a"}]}
+
+    with patch(
+        "dbt_charts.core.execute.adapters.http_adapter.httpx.Client"
+    ) as mock_client:
+        post = mock_client.return_value.__enter__.return_value.post
+        post.return_value = response
+        fence_dbt_charts(source, "dbt-charts", "dbt-charts", {}, None)
+
+    post.assert_called_once()

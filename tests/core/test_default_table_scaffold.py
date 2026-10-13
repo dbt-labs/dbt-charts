@@ -54,9 +54,8 @@ class TestDefaultTableScaffold:
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -77,7 +76,7 @@ class TestDefaultTableScaffold:
             charts = resolve_chart_style_context(get_theme_style())
             new_row = charts.table.row.model_copy(update={"role": role})
             new_table = charts.table.model_copy(update={"row": new_row})
-            resolved_chart = resolve(chart, [], chart_style_context=_BOARD_STYLE)
+            resolved_chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
             chart = resolved_chart.model_copy(
                 update={
                     "style": ResolvedTableStyle(

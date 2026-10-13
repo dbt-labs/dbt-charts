@@ -64,6 +64,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_ADAPTER_UNSUPPORTED_DUCKDB_FIELD,
     ERR_BINDER_TYPE_MISMATCH,
     ERR_BINDER_UNKNOWN_COLUMN,
+    ERR_BINDER_UNKNOWN_RELATION,
     ERR_DBT_PROJECT_NO_LOCAL_WAREHOUSE,
     ERR_WAREHOUSE_RUNTIME,
 )
@@ -198,11 +199,22 @@ def _classify_duckdb_error(
     )
 
 
+# "Catalog Error: Table with name x does not exist!" (also View and Schema); a
+# missing function is a catalog error too but not a missing relation.
+_DUCKDB_MISSING_RELATION = re.compile(
+    r"(Table|View|Schema) with name .* does not exist"
+)
+
+
 def duckdb_error_code(exc: Exception) -> ErrorCode:
     """The registered code for a DuckDB exception: the one mapping every DuckDB
     execution path (warehouse adapter, file-source engine) classifies through."""
     import duckdb
 
+    if isinstance(exc, duckdb.CatalogException) and _DUCKDB_MISSING_RELATION.search(
+        str(exc)
+    ):
+        return ERR_BINDER_UNKNOWN_RELATION
     if isinstance(exc, (duckdb.BinderException, duckdb.CatalogException)):
         return ERR_BINDER_UNKNOWN_COLUMN
     if isinstance(exc, duckdb.TypeMismatchException):

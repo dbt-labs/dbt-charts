@@ -20,6 +20,7 @@ from d3_format import format as _d3_format
 from dbt_charts.core.compile.format import (
     check_anchored_sign,
     column_format,
+    grain_format_specs,
     resolve_format_parts,
     tick_min_step_for_format,
 )
@@ -523,8 +524,8 @@ def build_resolved_axis(
         and (domain_max is ... or t <= domain_max)
     )
     anchor_at_start = ladder_anchor_at_start(drawn_ticks)
-    # Unbaked top edge: Vega fits it, so a positive rung may not be drawn;
-    # the ruler anchors on the magnitude extreme.
+    # An unbaked top edge leaves the drawn rungs unknown; the ruler anchors on
+    # the magnitude extreme instead.
     ruler_anchor_at_start = (
         anchor_at_start
         if domain_max is not ...
@@ -818,12 +819,14 @@ def build_resolved_axis(
             axis.fiscal_year_start_month if isinstance(axis, AxisXStyle) else 1
         ),
         tick_values=tick_values,
+        drawn_tick_values=drawn_ticks,
         ruler=ruler,
         tick_label=tick_label,
         domain_max=None if domain_max is ... else domain_max,
         domain_min=None if domain_min is ... else domain_min,
         is_quantitative=is_quantitative,
         zero_anchored=zero_anchored,
+        grain_formats=grain_format_specs(formats),
     )
 
 
@@ -887,7 +890,7 @@ def _merge_axis_cascade(
     channel_type: str,
     chart_type_axis_patch: AxisXStylePatch | AxisYStylePatch | None = None,
     *,
-    chart_fallback_format: AuthoredFormat | None = None,
+    column_layer_format: AuthoredFormat | None = None,
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     label_authored: bool,
@@ -901,7 +904,7 @@ def _merge_axis_cascade(
     channel_type: str,
     chart_type_axis_patch: AxisXStylePatch | AxisYStylePatch | None = None,
     *,
-    chart_fallback_format: AuthoredFormat | None = None,
+    column_layer_format: AuthoredFormat | None = None,
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     label_authored: bool,
@@ -914,7 +917,7 @@ def _merge_axis_cascade(
     channel_type: str,
     chart_type_axis_patch: AxisXStylePatch | AxisYStylePatch | None = None,
     *,
-    chart_fallback_format: AuthoredFormat | None = None,
+    column_layer_format: AuthoredFormat | None = None,
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     label_authored: bool,
@@ -1050,15 +1053,15 @@ def _merge_axis_cascade(
                 continue
             base = merge_onto_base(base, _cls.model_validate(_raw))
 
-    # Layer 10: chart-level format fallback (chart.format / style.number_format /
-    # style.time_format).  Sits after all board layers so chart-authored format
-    # beats the board, but before chart-local style.axis_* so those still win.
+    # Layer 10: the format the chart's query declares for the axis column. Sits
+    # after all board layers so a column's format beats the board's slot default,
+    # but before chart-local style.axis_* so a chart's own slot format still wins.
     # Merges the raw authored value; resolution happens once, after the cascade.
-    if chart_fallback_format is not None:
+    if column_layer_format is not None:
         base = merge_onto_base(
             base,
             BaseAxisStylePatch.model_validate(
-                {"labels": {"format": chart_fallback_format}}
+                {"labels": {"format": column_layer_format}}
             ),
         )
 
@@ -1099,7 +1102,7 @@ def resolved_axis_style(
     channel_type: str,
     chart_type_axis_patch: AxisXStylePatch | AxisYStylePatch | None = None,
     *,
-    chart_fallback_format: AuthoredFormat | None = None,
+    column_layer_format: AuthoredFormat | None = None,
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     label_authored: bool,
@@ -1122,7 +1125,7 @@ def resolved_axis_style(
       7.  board channel-specific           (charts_board_overrides.axis_x / axis_y)
       8.  board type-conditional           (charts_board_overrides.axis_quantitative)
       9.  board family re-apply            (charts_board_overrides.<chart_type>.axis*)
-      10. chart-level format fallback      (chart_fallback_format)
+      10. the axis column's declared format (column_layer_format)
       11. chart-local global               (effective.axis_overrides_global)
       12. chart-local type-conditional     (effective.axis_overrides_quantitative / _band)
       13. chart-local channel-specific     (effective.axis_overrides_{{x,y}}) — wins
@@ -1134,18 +1137,17 @@ def resolved_axis_style(
     fields means no risk of an inherited-not-authored value on one slot
     clobbering another slot's own deviation from the shared global.
 
-    ``chart_fallback_format`` (Layer 10) is ``chart.format`` /
-    ``style.number_format`` / ``style.time_format`` — the per-chart format
-    fallback computed by ``chart_authored_axis_format()``. It sits after all
-    board layers so a chart author's own format beats any board-level default,
-    while still losing to an explicit ``style.axis_x``/``axis_y``
-    ``.labels.format`` (layers 11-13) that the chart itself authors.
+    ``column_layer_format`` (Layer 10) is the format the chart's query declares for the
+    axis column, computed by ``axis_layer_format()``. It sits after all board
+    layers so a column's format beats any board-level slot default, while still
+    losing to an explicit ``style.axis_x``/``axis_y`` ``.labels.format``
+    (layers 11-13) that the chart itself authors.
 
     ``label_authored`` (Layer 5) is ``bool(chart.x_label)``/
     ``bool(chart.y_label)`` for the axis being merged — truthy, not
     ``is not None``, so a blank label forces no title — the same
     "synthesized default, beats the theme, loses to authored layers below"
-    shape as ``chart_fallback_format`` applies to format. An authored label
+    shape as ``column_layer_format``'s default for format. An authored label
     forces the axis title on over the theme's blanket suppression, but any
     later layer that itself sets ``title.visible`` — a board-level
     ``style.charts.axis*.title.visible`` (layers 6-9) or a chart-local
@@ -1176,7 +1178,7 @@ def resolved_axis_style(
         axis_name,
         channel_type,
         chart_type_axis_patch,
-        chart_fallback_format=chart_fallback_format,
+        column_layer_format=column_layer_format,
         axis_overrides=axis_overrides,
         chart_type=chart_type,
         label_authored=label_authored,

@@ -7,10 +7,10 @@ one. Putting it in either of those would make the other import a cycle.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class AITurnFailure(str, Enum):
+class AITurnFailure(StrEnum):
     """Why an AI turn ended without an answer.
 
     One closed vocabulary for a production turn and an eval case, so an offline

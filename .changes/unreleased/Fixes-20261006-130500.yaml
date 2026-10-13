@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'A geoshape with `value:` or `color:` but no `lookup:` now errors instead of drawing an unshaded map.'
+time: 2026-10-06T13:05:00.000000-07:00

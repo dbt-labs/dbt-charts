@@ -48,8 +48,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from collections import OrderedDict
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -75,6 +76,10 @@ RENDERER_VERSION = "3"
 # feel instant — and re-rendering one chart is cheap next to that.
 MAX_ENTRY_BYTES = 4 * 1024 * 1024
 
+# MemorySvgStore's total budget, in encoded bytes; least-recently-used entries go
+# first once it is exceeded.
+MEMORY_STORE_MAX_BYTES = 256 * 1024 * 1024
+
 
 @dataclass(frozen=True)
 class MintedSvg:
@@ -93,9 +98,8 @@ class MintedSvg:
 class RenderedSvgCache:
     """The render's SVG memo: an LRU dict over a host's optional ``loader``.
 
-    Nothing wires this by default — with no cache passed to ``render_board``
-    there is no ambient memo and every chart goes through vl-convert exactly as
-    before. With a cache but no ``loader`` it is a within-render memo only: two
+    A render with no memo bound goes through vl-convert for every chart. With a
+    cache but no ``loader`` it is a within-render memo only: two
     identical charts on one board share a render, nothing survives the process.
 
     A host that wants durability passes a ``loader`` and reads ``touched`` /
@@ -173,6 +177,40 @@ class RenderedSvgCache:
     def minted(self) -> tuple[MintedSvg, ...]:
         """Entries this render produced that did not come from the loader."""
         return tuple(self._minted.values())
+
+
+class MemorySvgStore:
+    """A process-lifetime, byte-bounded LRU a host hands each render's memo.
+
+    Each render gets its own `RenderedSvgCache` with ``loader=store.load`` and
+    calls ``store.save(memo.minted)`` afterwards. The memo is not thread-safe, so
+    it stays per-render; only this store is shared across concurrent renders.
+    """
+
+    def __init__(self, max_bytes: int = MEMORY_STORE_MAX_BYTES) -> None:
+        self._entries: OrderedDict[str, str] = OrderedDict()
+        self._max_bytes = max_bytes
+        self._bytes = 0
+        self._lock = threading.Lock()
+
+    def load(self, key: str) -> str | None:
+        with self._lock:
+            svg = self._entries.get(key)
+            if svg is not None:
+                self._entries.move_to_end(key)
+            return svg
+
+    def save(self, minted: Iterable[MintedSvg]) -> None:
+        with self._lock:
+            for entry in minted:
+                old = self._entries.pop(entry.key, None)
+                if old is not None:
+                    self._bytes -= len(old.encode())
+                self._entries[entry.key] = entry.svg
+                self._bytes += len(entry.svg.encode())
+            while self._bytes > self._max_bytes:
+                _, evicted = self._entries.popitem(last=False)
+                self._bytes -= len(evicted.encode())
 
 
 _active_cache: ContextVar[RenderedSvgCache | None] = ContextVar(

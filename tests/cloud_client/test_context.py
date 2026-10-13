@@ -17,6 +17,7 @@ from dbt_charts.cloud_client.config import CloudConfig
 from dbt_charts.cloud_client.context import (
     REFUSE_DEFAULT_CONNECT,
     REFUSE_DEFAULT_DESTRUCTIVE,
+    git_checkout_facts,
     git_remotes,
     repo_key,
     resolve_org,
@@ -89,6 +90,15 @@ class TestRepoKey:
 
     def test_a_non_github_remote_keeps_its_host(self) -> None:
         assert repo_key("https://gitlab.com/acme/marts.git") == "gitlab.com/acme/marts"
+
+    def test_an_unparseable_url_does_not_crash(self) -> None:
+        """`urlsplit` itself raises ValueError on some malformed input (a
+        stray `[` triggers its IPv6-bracket parsing) -- repo_key must stay
+        total, since a caller (repo_matches, via a project's stored
+        repo_label or this checkout's own origin) cannot control its input.
+        A value that cannot match any real "host/path" key is fine; a
+        crash is not."""
+        assert repo_key("https://user:p[ss@host/x") != "host/x"
 
 
 class TestResolveProject:
@@ -731,3 +741,332 @@ class TestPublishedToOutranksTheRepo:
             )
 
         assert str(tmp_path / "dbt_charts.yml") in str(caught.value)
+
+
+def _isolate_global_git_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point git's global/system config at empty files so a test's read of
+    the *effective* `user.email`/`user.name` never depends on whatever the
+    machine running the test happens to have configured."""
+    empty = tmp_path / "empty-gitconfig"
+    empty.write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(empty))
+
+
+class TestGitCheckoutFacts:
+    """`dct cloud status`'s local git facts -- zero network access, "as of
+    last fetch" ahead/behind, never a fetch of its own."""
+
+    def test_outside_a_repo_is_not_a_checkout(self, tmp_path: Path) -> None:
+        """An existing, non-repo directory -- exercises git's own "not a git
+        repository" answer, not the OSError path a nonexistent path would."""
+        facts = git_checkout_facts(tmp_path)
+        assert facts.is_repo is False
+        assert facts.read_error is None
+        assert facts.branch is None
+        assert facts.origin is None
+        assert facts.ahead is None
+        assert facts.behind is None
+
+    def test_a_directory_git_cannot_read_is_undetermined_not_false(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A `safe.directory` refusal (exit 128) is routine in containers and
+        bind mounts -- it must never collapse into "not a checkout": the
+        directory could well be a repo tied to a project."""
+
+        def fake_run(  # noqa: ANN001, ANN002, ANN003 -- matches subprocess.run's own loose signature
+            args, *a, **kw
+        ):
+            return subprocess.CompletedProcess(
+                args,
+                returncode=128,
+                stdout="",
+                stderr=(
+                    f"fatal: detected dubious ownership in repository at '{tmp_path}'\n"
+                ),
+            )
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        facts = git_checkout_facts(tmp_path)
+
+        assert facts.is_repo is None
+        assert facts.read_error is not None
+        assert "dubious ownership" in facts.read_error
+
+    def test_a_moved_worktree_is_undetermined_not_not_a_checkout(
+        self, tmp_path: Path
+    ) -> None:
+        """A `.git` FILE pointing at a missing gitdir (a moved or pruned
+        worktree, a broken submodule) makes git say "not a git repository:
+        <path>" -- WITHOUT the "(or any of the parent directories)" that
+        means genuinely no checkout. The two must not collapse to the same
+        answer: this one might well be tied to a project."""
+        (tmp_path / ".git").write_text("gitdir: /nonexistent/path/.git/worktrees/x\n")
+
+        facts = git_checkout_facts(tmp_path)
+
+        assert facts.is_repo is None
+        assert facts.read_error is not None
+
+    def test_a_non_utf8_global_git_identity_does_not_crash(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A Latin-1 byte in the user's GLOBAL ~/.gitconfig -- not a project
+        file -- must not take down every `status` call in every project.
+        `subprocess.run(text=True)` decodes strictly; git output itself is
+        not guaranteed UTF-8."""
+        global_config = tmp_path / "gitconfig"
+        global_config.write_bytes(b"[user]\n\tname = Jos\xe9\n\temail = a@b.c\n")
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+        monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(global_config))
+        repo = tmp_path / "work"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+
+        facts = git_checkout_facts(repo)
+
+        assert facts.is_repo is True
+        assert facts.identity_missing is False
+
+    def test_a_non_utf8_origin_url_does_not_crash(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _isolate_global_git_config(monkeypatch, tmp_path)
+        repo = tmp_path / "work"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        config_file = repo / ".git" / "config"
+        with config_file.open("ab") as f:
+            f.write(
+                b'[remote "origin"]\n\turl = https://host/caf\xe9\n\tfetch = +refs/*:refs/*\n'
+            )
+
+        facts = git_checkout_facts(repo)
+
+        assert facts.is_repo is True
+        assert facts.origin is not None
+
+    def test_branch_and_origin_with_no_upstream_tracking(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _isolate_global_git_config(monkeypatch, tmp_path)
+        repo = tmp_path / "work"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        subprocess.run(
+            ["git", "remote", "add", "origin", "https://github.com/acme/analytics.git"],
+            cwd=repo,
+            check=True,
+        )
+
+        facts = git_checkout_facts(repo)
+
+        assert facts.is_repo is True
+        assert facts.branch == "main"
+        assert facts.origin == "https://github.com/acme/analytics.git"
+        assert facts.ahead is None
+        assert facts.behind is None
+
+    def test_an_unborn_branch_has_no_commits(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A freshly `git init`-ed repo, nothing committed yet, reads
+        `ahead is None` the same as a real branch with no upstream tracking
+        -- `has_commits` is the field that tells the two apart, so a push
+        step is never named for a branch with nothing to push."""
+        _isolate_global_git_config(monkeypatch, tmp_path)
+        repo = tmp_path / "work"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+
+        facts = git_checkout_facts(repo)
+
+        assert facts.ahead is None
+        assert facts.has_commits is False
+
+    def test_a_committed_branch_has_commits(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _isolate_global_git_config(monkeypatch, tmp_path)
+        repo = tmp_path / "work"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        subprocess.run(["git", "config", "user.email", "a@b.c"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "A"], cwd=repo, check=True)
+        (repo / "f.txt").write_text("1")
+        subprocess.run(["git", "add", "f.txt"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "one"], cwd=repo, check=True)
+
+        facts = git_checkout_facts(repo)
+
+        assert facts.has_commits is True
+
+    def test_no_origin_remote_is_none_not_empty_string(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _isolate_global_git_config(monkeypatch, tmp_path)
+        repo = tmp_path / "work"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+
+        facts = git_checkout_facts(repo)
+
+        assert facts.is_repo is True
+        assert facts.origin is None
+
+    def test_detached_head_reports_branch_as_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _isolate_global_git_config(monkeypatch, tmp_path)
+        repo = tmp_path / "work"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        subprocess.run(["git", "config", "user.email", "a@b.c"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "A"], cwd=repo, check=True)
+        (repo / "f.txt").write_text("1")
+        subprocess.run(["git", "add", "f.txt"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "one"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "checkout", "-q", "--detach", "HEAD"], cwd=repo, check=True
+        )
+
+        facts = git_checkout_facts(repo)
+
+        assert facts.is_repo is True
+        assert facts.branch is None
+
+    def test_origin_userinfo_is_stripped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A GitHub App / CI token embedded in the remote URL
+        (`https://x-access-token:<token>@github.com/...`) must never reach a
+        printed line."""
+        _isolate_global_git_config(monkeypatch, tmp_path)
+        repo = tmp_path / "work"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        subprocess.run(
+            [
+                "git",
+                "remote",
+                "add",
+                "origin",
+                "https://x-access-token:s3cr3t-token@github.com/acme/analytics.git",
+            ],
+            cwd=repo,
+            check=True,
+        )
+
+        facts = git_checkout_facts(repo)
+
+        assert facts.origin == "https://github.com/acme/analytics.git"
+        assert "s3cr3t-token" not in facts.origin
+        assert "x-access-token" not in facts.origin
+
+    def test_scp_style_origin_is_left_alone(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _isolate_global_git_config(monkeypatch, tmp_path)
+        repo = tmp_path / "work"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        subprocess.run(
+            ["git", "remote", "add", "origin", "git@github.com:acme/analytics.git"],
+            cwd=repo,
+            check=True,
+        )
+
+        facts = git_checkout_facts(repo)
+
+        assert facts.origin == "git@github.com:acme/analytics.git"
+
+    def test_an_unparseable_origin_is_redacted_not_raised(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`urlsplit` raises ValueError on some malformed inputs (a stray
+        `[` triggers its IPv6-bracket parsing) -- a parser failure must
+        degrade to a redacted placeholder, never a crash, and never the
+        raw (potentially credential-bearing) URL."""
+        _isolate_global_git_config(monkeypatch, tmp_path)
+        repo = tmp_path / "work"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        subprocess.run(
+            [
+                "git",
+                "config",
+                "--local",
+                "remote.origin.url",
+                "https://user:p[ss@host/x",
+            ],
+            cwd=repo,
+            check=True,
+        )
+
+        facts = git_checkout_facts(repo)
+
+        assert facts.origin is not None
+        assert "p[ss" not in facts.origin
+        assert "user" not in facts.origin
+
+    def test_ahead_and_behind_are_as_of_last_fetch_not_current(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A commit landing on the remote after the last fetch must not move
+        `behind` -- the function reads local refs only and never fetches."""
+        _isolate_global_git_config(monkeypatch, tmp_path)
+        origin = tmp_path / "origin"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(origin)], check=True)
+        subprocess.run(["git", "config", "user.email", "a@b.c"], cwd=origin, check=True)
+        subprocess.run(["git", "config", "user.name", "A"], cwd=origin, check=True)
+        (origin / "f.txt").write_text("1")
+        subprocess.run(["git", "add", "f.txt"], cwd=origin, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "one"], cwd=origin, check=True)
+
+        work = tmp_path / "work"
+        subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True)
+        subprocess.run(["git", "config", "user.email", "a@b.c"], cwd=work, check=True)
+        subprocess.run(["git", "config", "user.name", "A"], cwd=work, check=True)
+        (work / "g.txt").write_text("1")
+        subprocess.run(["git", "add", "g.txt"], cwd=work, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "local"], cwd=work, check=True)
+
+        # A new commit lands on the remote after `work`'s last fetch.
+        (origin / "h.txt").write_text("1")
+        subprocess.run(["git", "add", "h.txt"], cwd=origin, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "remote-only"], cwd=origin, check=True
+        )
+
+        facts = git_checkout_facts(work)
+
+        assert (facts.ahead, facts.behind) == (1, 0)
+
+        subprocess.run(["git", "fetch", "-q"], cwd=work, check=True)
+        facts_after_fetch = git_checkout_facts(work)
+        assert (facts_after_fetch.ahead, facts_after_fetch.behind) == (1, 1)
+
+    def test_identity_missing_when_neither_is_set(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _isolate_global_git_config(monkeypatch, tmp_path)
+        repo = tmp_path / "work"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+
+        assert git_checkout_facts(repo).identity_missing is True
+
+    def test_identity_present_when_locally_configured(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _isolate_global_git_config(monkeypatch, tmp_path)
+        repo = tmp_path / "work"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        subprocess.run(["git", "config", "user.email", "a@b.c"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "A"], cwd=repo, check=True)
+
+        assert git_checkout_facts(repo).identity_missing is False
+
+    def test_identity_missing_when_only_one_of_the_two_is_set(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression guard: the check is `or`, not `and` -- a commit needs
+        BOTH user.email and user.name, so having only one set must still
+        report identity_missing."""
+        _isolate_global_git_config(monkeypatch, tmp_path)
+        repo = tmp_path / "work"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        subprocess.run(["git", "config", "user.email", "a@b.c"], cwd=repo, check=True)
+
+        assert git_checkout_facts(repo).identity_missing is True

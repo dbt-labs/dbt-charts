@@ -5,9 +5,8 @@ from __future__ import annotations
 import copy
 import json
 import os
-import sys
 from collections.abc import Iterator
-from typing import Any, Protocol
+from typing import Any, Protocol, assert_never
 
 from dbt_charts.ai.events import (
     ContentDelta,
@@ -35,11 +34,6 @@ from dbt_charts.ai.openai_gateway import (
     is_connection_fault,
 )
 from dbt_charts.ai.tool_schemas import ALL_TOOLS
-
-if sys.version_info >= (3, 11):
-    from typing import assert_never
-else:
-    from typing_extensions import assert_never
 
 DEFAULT_OPENAI_MODEL = "gpt-5.6-terra"
 

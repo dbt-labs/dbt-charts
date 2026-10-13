@@ -26,6 +26,7 @@ from .._board_utils import _default_chart_style_context, _default_resolved_style
 def _make_executor(data: list[dict[str, Any]]) -> MagicMock:
     executor = MagicMock(spec=Executor)
     executor.execute_chart.return_value = data
+    executor.render_with_range_filters.return_value = None
     return executor
 
 

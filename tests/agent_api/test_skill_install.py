@@ -50,7 +50,7 @@ def test_install_renders_cli_surface(install_root: Path) -> None:
     assert skill_md.exists()
     text = skill_md.read_text(encoding="utf-8")
     assert "{{ s_" not in text
-    assert "dct validate" in text or "dct check" in text
+    assert "dct render" in text
 
 
 def test_install_renders_sibling_names_dct_prefixed(install_root: Path) -> None:

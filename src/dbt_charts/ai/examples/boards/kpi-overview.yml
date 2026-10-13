@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Revenue Overview
 notes: |
   A complete four-part board: a KPI row across the top, a trend line and a

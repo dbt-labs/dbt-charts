@@ -20,9 +20,9 @@ from dbt_charts.core.compile.models.style.authored import (
 
 def test_chart_style_patch_accepts_compiled_title_style_patch():
     # font is FontStyle in the generated patch model; dict is coerced by Pydantic
-    patch = BarChartStylePatch(title=TitleStylePatch(font={"color": "#custom"}))
+    patch = BarChartStylePatch(title=TitleStylePatch(font={"color": "#c0ffee"}))
     assert patch.title is not None
-    assert patch.title.font.color == "#custom"
+    assert patch.title.font.color == "#c0ffee"
 
 
 def test_compiled_title_style_overflow_rejects_snake_case():

@@ -122,10 +122,9 @@ def run_init(
         # test_configured_trailer_advertises_every_tool_and_resource_family.
         # Update these strings when either registry changes.
         typer.echo(
-            "  MCP tools: describe_board, describe_query, docs, execute_query, "
+            "  MCP tools: describe_board, docs, execute_query, "
             "get_diagnostic_code, get_skill, list_diagnostic_codes, list_skills, "
-            "query_board, render_board, search_boards, search_skills, "
-            "validate_board"
+            "render_board, search_boards"
         )
         typer.echo(
             "  Resources: dct://boards, dct://board/{path}, "

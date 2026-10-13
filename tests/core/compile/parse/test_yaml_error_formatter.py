@@ -16,7 +16,6 @@ import pytest
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.parse.yaml_error_formatter import (
     get_valid_chart_types,
-    get_yaml_context,
     suggest_similar_value,
 )
 from dbt_charts.core.diagnostics import Diagnostic
@@ -68,61 +67,6 @@ class TestDynamicTypeExtraction:
         # Internal/future chart marks should not be advertised as authored YAML.
         assert "circle" not in chart_types
         assert "boxplot" not in chart_types
-
-
-class TestGetYamlContext:
-    """Tests for extracting YAML context around an error."""
-
-    def test_context_shows_surrounding_lines(self):
-        """Test context shows lines before and after the error."""
-        yaml_content = """title: My Dashboard
-queries:
-  sales:
-    sql: SELECT * FROM sales
-charts:
-  revenue:
-    type: bars
-    query: sales
-rows:
-  - revenue
-"""
-        context = get_yaml_context(yaml_content, 7, context_lines=2)
-
-        # Should show lines 5-9 (2 before, error line, 2 after)
-        assert "charts:" in context
-        assert "revenue:" in context
-        assert "type: bars" in context
-        assert "query: sales" in context
-
-    def test_context_at_start_of_file(self):
-        """Test context handles errors at the start of file."""
-        yaml_content = """title: My Dashboard
-rows: []
-"""
-        context = get_yaml_context(yaml_content, 1, context_lines=2)
-        assert "title:" in context
-
-    def test_context_marks_error_line(self):
-        """Test context clearly marks the error line."""
-        yaml_content = """title: My Dashboard
-queries:
-  sales:
-    sql: SELECT * FROM sales
-charts:
-  revenue:
-    type: bars
-    query: sales
-rows:
-  - revenue
-"""
-        context = get_yaml_context(yaml_content, 7, context_lines=2)
-
-        # The error line should be marked (e.g., with arrow or highlighting)
-        assert "type: bars" in context
-        # Should have some marker for the error line
-        assert (
-            "#" in context or "<--" in context or ">>>" in context or "^^^" in context
-        )
 
 
 class TestSuggestSimilarValue:
@@ -659,7 +603,7 @@ rows:
         assert "Did you mean 'visible'?" in error.hint
         assert "See: dct docs charts" in error.hint
 
-    def test_line_format_at_chart_root_points_at_style_number_format(self):
+    def test_line_format_at_chart_root_points_at_the_axis_slot(self):
         yaml_content = """title: Test
 queries:
   q1:
@@ -680,10 +624,11 @@ rows:
         assert not result.success
         err = next(e for e in result.errors if e.path.endswith("format"))
         assert err.hint is not None
-        assert "style.number_format" in err.hint
+        assert "style.axis_y.labels.format" in err.hint
+        assert "formats:" in err.hint
         assert "layered" not in err.hint
 
-    def test_line_formatter_at_chart_root_points_at_style_number_format(self):
+    def test_line_formatter_at_chart_root_points_at_the_axis_slot(self):
         yaml_content = """title: Test
 queries:
   q1:
@@ -704,7 +649,7 @@ rows:
         assert not result.success
         err = next(e for e in result.errors if e.path.endswith("formatter"))
         assert err.hint is not None
-        assert "style.number_format" in err.hint
+        assert "style.axis_y.labels.format" in err.hint
 
     @pytest.mark.parametrize("chart_id", ["axis_x", "axis_y"])
     def test_chart_root_format_hint_ignores_chart_id_named_after_an_axis(
@@ -712,7 +657,7 @@ rows:
     ):
         """A chart whose id happens to be ``axis_x``/``axis_y`` and authors a
         chart-root ``format:`` must still get the chart-root hint
-        (``style.number_format``), not an axis-specific hint. The axis lookup
+        (``style.axis_y.labels.format``), not an axis-specific hint. The axis lookup
         for this hint scans ``field_path`` for an ``axis_x``/``axis_y``
         segment; if that scan isn't bounded to the segments *under* the
         chart, it mistakes the chart's own id for an axis container."""
@@ -739,7 +684,7 @@ rows:
         assert not result.success
         err = next(e for e in result.errors if e.path.endswith("format"))
         assert err.hint is not None
-        assert "style.number_format" in err.hint
+        assert "style.axis_y.labels.format" in err.hint
         assert "style.axis_x.labels.format" not in err.hint
 
     @pytest.mark.parametrize(

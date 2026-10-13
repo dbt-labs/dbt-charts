@@ -112,19 +112,7 @@ def _to_sql_literal(value: Any, escaping: SQLDialect) -> str:
         return f"TIME '{value.isoformat()}'"
     if isinstance(value, bytes):
         return f"X'{value.hex()}'"
-    # String — escape so the value cannot terminate its own literal, in the one
-    # spelling the engine reads back as the value we were given. Where backslash
-    # is the escape character, that is `\'`: GoogleSQL and Spark SQL concatenate
-    # adjacent literals, so `''` there is not an escaped quote but the end of one
-    # literal and the start of another, and `'O''Brien'` compares against
-    # `OBrien`. Everywhere else `''` is the only documented escape.
-    #
-    # Backslashes are doubled first: doing it after the quote step would also
-    # double the escapes that step just introduced.
-    text = str(value)
-    if escaping.escapes_backslashes:
-        return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
-    return "'" + text.replace("'", "''") + "'"
+    return escaping.string_literal(str(value))
 
 
 def sql_string_literal(value: str, escaping: SQLDialect) -> str:

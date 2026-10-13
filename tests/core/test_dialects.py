@@ -578,9 +578,35 @@ class TestDialectRegistry:
         assert isinstance(dialect, AthenaDialect)
 
     def test_get_trino_alias(self) -> None:
-        """trino is an alias for athena."""
+        """trino renders Athena's SQL under its own name."""
         dialect = get_dialect("trino")
         assert isinstance(dialect, AthenaDialect)
+        assert dialect.name == "trino"
+
+    @pytest.mark.parametrize(
+        ("authored", "expected"),
+        [(None, 120), ("90s", 90), ("1.5m", 90), ("1h", 120), ("500ms", 1)],
+    )
+    def test_trino_keeps_the_stricter_query_cap(
+        self, authored: str | None, expected: int
+    ) -> None:
+        properties = {} if authored is None else {"query_max_run_time": authored}
+        creds = {"type": "trino", "session_properties": properties}
+        assert get_dialect("trino").resolve_timeout_seconds(creds, 120) == expected
+
+    def test_trino_refuses_a_cap_it_cannot_compare(self) -> None:
+        creds = {"type": "trino", "session_properties": {"query_max_run_time": "soon"}}
+        with pytest.raises(ValueError, match="Trino duration"):
+            get_dialect("trino").resolve_timeout_seconds(creds, 120)
+
+    def test_trino_recognizes_its_own_time_limit_error(self) -> None:
+        from trino.exceptions import TrinoQueryError
+
+        error = TrinoQueryError(
+            {"errorName": "EXCEEDED_TIME_LIMIT", "errorType": "INSUFFICIENT_RESOURCES"}
+        )
+        assert get_dialect("trino").is_statement_timeout_error(error)
+        assert not get_dialect("trino").is_statement_timeout_error(RuntimeError("x"))
 
     def test_get_clickhouse_dialect(self) -> None:
         """Get ClickHouse dialect."""

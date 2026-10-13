@@ -1,0 +1,19 @@
+[package]
+name = "mdsvg"
+version = "0.1.0"
+edition = "2021"
+description = "Rust transliteration of libs/markdown-svg (Python mdsvg): markdown -> SVG, ladder-first parity port."
+
+[[bin]]
+name = "mdsvg-cli"
+path = "src/bin/mdsvg_cli.rs"
+
+[dependencies]
+d3rs = { path = "../d3rs" }
+once_cell = "1"
+regex = "1"
+roxmltree = "0.20"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+sha2 = "0.10"
+ttf-parser = "0.25"

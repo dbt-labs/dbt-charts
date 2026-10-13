@@ -16,12 +16,12 @@ Dependencies:
 
 import html
 import re
-from datetime import datetime, timezone
+from datetime import UTC
 from typing import TYPE_CHECKING, Literal
 
 from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
 from dbt_charts.core.diagnostics import Diagnostic
-from dbt_charts.core.text.format_d3 import number_locale_scope
+from dbt_charts.core.text.format_d3 import regional_scope
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
@@ -48,6 +48,7 @@ from dbt_charts.core.font_measure import (
 from dbt_charts.core.render.board_variables import (
     board_data_provider,
     board_variables,
+    root_board_width,
 )
 from dbt_charts.core.render.chart_interactivity import (
     hover_runtime_attributes,
@@ -1007,7 +1008,11 @@ def render_board_svg(
     error_collector: list[Diagnostic] | None = None,
     embed_fonts: bool = False,
 ) -> str:
-    with number_locale_scope(board.regional.format_locale):
+    with regional_scope(
+        board.regional.format_locale,
+        board.regional.time_locale,
+        board.regional.week_start,
+    ):
         return _render_board_svg(
             board,
             executor,
@@ -1243,7 +1248,11 @@ def _render_board_svg(
     # the one seam both the live render() pass and dct artifact render's
     # replay path (board_replay.py) share, so opening it here covers both
     # rather than at each caller.
-    with board_variables(variables), board_data_provider(executor):
+    with (
+        board_variables(variables),
+        board_data_provider(executor),
+        root_board_width(board.width),
+    ):
         layout_content, actual_layout_height = _render_layout(
             board,
             executor,
@@ -1358,7 +1367,7 @@ def _render_board_svg(
         ),
     )
 
-    render_time_utc = datetime.now(timezone.utc)
+    render_time_utc = executor.rendered_at.astimezone(UTC)
     render_timestamp_iso = render_time_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
     footer_x = total_width - page_padding
     footer_y = total_height - footer_style.y_offset
@@ -1389,7 +1398,7 @@ def _render_board_svg(
         cache_hit_ats = executor.cache_hit_ats
         data_as_of = min(cache_hit_ats) if cache_hit_ats else render_time_utc
         display_timestamp = portable_strftime(
-            data_as_of.astimezone(timezone.utc), timestamp_style.format
+            data_as_of.astimezone(UTC), timestamp_style.format
         )
         if timestamp_style.position == "top":
             timestamp_y = timestamp_style.y

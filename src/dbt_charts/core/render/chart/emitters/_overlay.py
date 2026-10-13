@@ -99,6 +99,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     inject_axis_numeral_expr,
 )
 from dbt_charts.core.render.chart.x_domain import rendered_x_domain
+from dbt_charts.core.render.numeral_expr import vl_format_key
 from dbt_charts.core.render.utils import (
     normalize_data_types,
     ordered_distinct_values,
@@ -378,6 +379,12 @@ def _same_x_vocabulary(base_values: list[Any], layer_values: list[Any]) -> bool:
     return not any(base_calendar) and not any(layer_calendar)
 
 
+def overlay_draws_bars(layers: tuple[ResolvedLayer, ...]) -> bool:
+    return any(
+        isinstance(layer, ResolvedBarLayer) and layer.y is not None for layer in layers
+    )
+
+
 def overlay_uses_band_step(layers: tuple[ResolvedLayer, ...]) -> bool:
     """True when any overlay layer draws the band-aware ``step`` curve.
 
@@ -619,13 +626,34 @@ def _paints_outside_domain(
     return math.isfinite(f) and not lo <= f <= hi
 
 
+def _baseline_outside_shared_domain(axis_y: ResolvedAxisStyle) -> bool:
+    """True iff the shared y-scale pins a domain that excludes the value-0
+    baseline a bar/area mark paints from.
+
+    A zoomed axis (data far from zero) is pinned well above 0, so an unclipped
+    bar/area layer paints from far below the plot — and ``autosize: fit``
+    shrinks the whole plot to fit that paint, collapsing it to a strip. Only a
+    pinned edge counts: an unpinned edge auto-fits to the marks and cannot
+    exclude 0 on its own.
+    """
+    authored = authored_measure_domain(axis_y)
+    lo, hi = (
+        (min(authored), max(authored))
+        if authored is not None
+        else (axis_y.domain_min, axis_y.domain_max)
+    )
+    return (lo is not None and lo > 0.0) or (hi is not None and hi < 0.0)
+
+
 def _clip_layer_marks(spec: ChartSpec) -> None:
     """Set ``clip: true`` on every mark ``spec`` paints, recursing into
     ``layers`` (a line/area layer's halo/fg/hover sub-specs).
 
-    Used only for a layer sharing a normalize base's pinned domain — ``[0, 1]``,
-    or the author's own wider/narrower pin — see ``render_cartesian_overlay``'s
-    ``base_stack_normalize`` docstring for why. A plain (non-wrapper) spec paints one mark; a
+    Used only for a layer whose paint can leave a shared pinned domain: values
+    outside a normalize base's ``[0, 1]`` (or the author's own pin) — see
+    ``render_cartesian_overlay``'s ``base_stack_normalize`` docstring — or a
+    bar/area baseline outside a zoomed scale (``_baseline_outside_shared_domain``).
+    A plain (non-wrapper) spec paints one mark; a
     wrapper (``mark == "layered"``, e.g. a line/area layer's own halo + fg +
     hover sub-layers) paints through ``layers`` instead and has nothing of
     its own to clip.
@@ -771,6 +799,7 @@ def _layer_tooltip_description(
     color_field: str | None,
     span_start: str | None,
     field_labels: Mapping[str, str],
+    grain_formats: Mapping[str, str],
 ) -> tuple[str, list[VLDict]]:
     """Build this overlay layer's own structured-tooltip description expr, and
     the transforms it reads.
@@ -815,13 +844,13 @@ def _layer_tooltip_description(
     ``StructuredTooltipFeature`` role computation.
 
     A bar layer with ``y_start`` (``span_start``) is named for its two ends
-    (``open to close``) and lists both plus their difference, as the base bar
+    (``open – close``) and lists both plus their difference, as the base bar
     does. (A base bar with y_start replaces every same-rows layer's
     description with one shared block; see ``StructuredTooltipFeature``.)
     """
     header: tuple[TooltipField, ...] = ()
     if "field" in x_enc:
-        header = (header_tooltip_field(x_enc["field"], "", rows),)
+        header = (header_tooltip_field(x_enc["field"], "", rows, grain_formats),)
     end = TooltipField(y_field, label, kind="quantitative", format=tooltip_format)
     values = [end]
     transforms: list[VLDict] = []
@@ -834,7 +863,7 @@ def _layer_tooltip_description(
             format=tooltip_format,
         )
         values, transforms = span_tooltip_rows(end, start, frozenset(), rows)
-        name = f"{start.title} to {label}"
+        name = f"{start.title} – {label}"
     if color_field is not None and series_row_promoted(color_field, rows):
         series = (
             TooltipField(color_field, color_field, kind="nominal", prefix=f"{name}: "),
@@ -1519,8 +1548,8 @@ def render_cartesian_overlay(
         # shared-scale layer cuts off an in-range value sitting right at the
         # domain edge (a label, or half a stroke width) and, for an authored
         # domain, would drop that layer's own corner radius for no reason.
-        layer_shares_normalize_domain = base_stack_normalize and layer_orients is None
-        if layer_shares_normalize_domain:
+        clip_layer = base_stack_normalize and layer_orients is None
+        if clip_layer:
             # An authored domain with no numeric arms (e.g. a "flip" string on
             # scale.continuous.domain) leaves this None even on a fully-baked
             # normalize chart -- the axis itself still renders that authored
@@ -1532,10 +1561,18 @@ def render_cartesian_overlay(
                 if authored_domain is not None
                 else (0.0, 1.0)
             )
-            layer_shares_normalize_domain = any(
+            clip_layer = any(
                 _paints_outside_domain(row.get(y_field), normalize_domain)
                 for row in rows_for_layer
             )
+        # A bar/area mark paints from the value-0 baseline, so on a zoomed
+        # shared scale it needs the same clip whatever its values are.
+        if (
+            not clip_layer
+            and layer_orients is None
+            and isinstance(layer, (ResolvedAreaLayer, ResolvedBarLayer))
+        ):
+            clip_layer = _baseline_outside_shared_domain(axis_y)
 
         # Per-layer y axis: dual-axis layers get their own orient + title.
         layer_axis_y = layer.axis_y
@@ -1628,6 +1665,7 @@ def render_cartesian_overlay(
                 layer.color,
                 layer.y_start if isinstance(layer, ResolvedBarLayer) else None,
                 field_labels,
+                axis_x.grain_formats,
             )
             if base_mark_type in _STRUCTURED_TOOLTIP_BASE_FAMILIES
             else ("", [])
@@ -1638,7 +1676,7 @@ def render_cartesian_overlay(
             "type": "quantitative",
             "title": label,
             "axis": layer_ay_vl,
-            "format": layer_value_format,
+            **vl_format_key(layer_value_format),
         }
         if layer_y_scale is not None:
             y_enc["scale"] = layer_y_scale
@@ -1795,7 +1833,7 @@ def render_cartesian_overlay(
                 step_band_present = True
             elif own_data is not None:
                 wrapper.data = own_data
-            if layer_shares_normalize_domain:
+            if clip_layer:
                 _clip_layer_marks(wrapper)
             vl_layers.append(wrapper)
             if layer_color_values:
@@ -1854,7 +1892,7 @@ def render_cartesian_overlay(
                 step_band_present = True
             elif own_data is not None:
                 wrapper.data = own_data
-            if layer_shares_normalize_domain:
+            if clip_layer:
                 _clip_layer_marks(wrapper)
             vl_layers.append(wrapper)
             if layer_color_values:
@@ -1892,7 +1930,7 @@ def render_cartesian_overlay(
                 ]
             if own_data is not None:
                 bar_spec.data = own_data
-            if layer_shares_normalize_domain:
+            if clip_layer:
                 _clip_layer_marks(bar_spec)
             vl_layers.append(bar_spec)
             if layer_color_values:
@@ -1915,7 +1953,7 @@ def render_cartesian_overlay(
                 scatter_spec.tooltip_description = layer_tooltip_description
             if own_data is not None:
                 scatter_spec.data = own_data
-            if layer_shares_normalize_domain:
+            if clip_layer:
                 _clip_layer_marks(scatter_spec)
             vl_layers.append(scatter_spec)
             circle_datums.update(layer_color_values)
@@ -1993,7 +2031,7 @@ def render_cartesian_overlay(
         ):
             if own_data is not None:
                 label_spec.data = own_data
-            if layer_shares_normalize_domain:
+            if clip_layer:
                 _clip_layer_marks(label_spec)
             vl_layers.append(label_spec)
 

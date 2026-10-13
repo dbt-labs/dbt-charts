@@ -59,7 +59,7 @@ from dbt_charts.core.compile.models.config import (
     is_mapping_like,
 )
 from dbt_charts.core.compile.models.primitives import HtmlPolicy
-from dbt_charts.core.compile.models.schema_names import ThemeName
+from dbt_charts.core.compile.models.schema_names import ThemeName, built_in_theme_stems
 from dbt_charts.core.compile.models.source import (
     parse_source_config,
     reject_credential_literals,
@@ -684,12 +684,7 @@ def _load_palettes() -> dict[str, Any]:
 @cache
 def list_built_in_themes() -> list[str]:
     """Return sorted stem names of all built-in unified themes."""
-    names = [
-        entry.name[: -len(".yaml")]
-        for entry in _built_in_unified_theme_dir.iterdir()
-        if entry.name.endswith(".yaml")
-    ]
-    return sorted(names)
+    return built_in_theme_stems(_built_in_unified_theme_dir)
 
 
 def user_facing_theme_names() -> list[str]:
@@ -700,9 +695,9 @@ def user_facing_theme_names() -> list[str]:
     this instead of each filtering list_built_in_themes() on their own. (The
     VS Code/engine-shipped JSON Schema's `theme`/`extends` enum arms arrive
     separately, via the SchemaSugar marker on AuthoredBoardInput in
-    authored.py — not through this function.) Backed by the generated
-    ThemeName Literal (private `_base` and diagnostic-only themes already
-    excluded at codegen time), not a second hand-maintained filter.
+    authored.py — not through this function.) Backed by the ThemeName
+    Literal (private `_base` and diagnostic-only themes already excluded),
+    not a second hand-maintained filter.
     """
     return sorted(get_args(ThemeName))
 
@@ -811,12 +806,25 @@ def load_project_sources(project: FilesystemProject) -> ProjectSourcesConfig:
     reasoning as ``get_project_cache_root``.
 
     ``sources.default`` is not supported at the project level; set
-    ``source: <name>`` on the board or folder ``meta.yml`` instead.
+    ``source: <name>`` on the board or folder ``meta.yml`` instead. A dbt project
+    that declares no sources gets the implicit one (``implicit_dbt_source``).
     """
     filename, sources_section = _dbt_charts_yml_mapping_section(project, "sources")
     normalized = _validate_sources_section(sources_section, filename)
     sources = _absolutize_source_paths(normalized, project)
-    return ProjectSourcesConfig(sources=sources)
+    # tach-ignore(pre-existing compile->project coupling — accepted debt)
+    from dbt_charts.core.project_roots import implicit_dbt_source
+
+    dbt_project_yaml = (
+        project.read_text("dbt_project.yml")
+        if project.exists("dbt_project.yml")
+        else None
+    )
+    implicit = implicit_dbt_source(sources, dbt_project_yaml)
+    if implicit is None:
+        return ProjectSourcesConfig(sources=sources)
+    name, entry = implicit
+    return ProjectSourcesConfig(sources={name: entry}, implicit_source=name)
 
 
 # The raw `sources:` YAML block (name -> untyped entry) and its normalized,
@@ -968,16 +976,20 @@ def get_project_warnings_ignore(project: Project) -> frozenset[str]:
 class ProjectSourcesConfig:
     """Project-level sources configuration.
 
-    A pure name→definition map. The project-level ``sources.default`` key
-    has been removed; per-board defaults come from ``source:`` on the board or
-    folder ``meta.yml``.
+    A name→definition map. The project-level ``sources.default`` key has been
+    removed; per-board defaults come from ``source:`` on the board or folder
+    ``meta.yml``. ``implicit_source`` names the one entry a dbt project got
+    without declaring it (``implicit_dbt_source``): the source sourceless SQL
+    runs against.
     """
 
     def __init__(
         self,
         sources: dict[str, dict[str, Any]] | None = None,
+        implicit_source: str | None = None,
     ):
         self.sources = sources or {}
+        self.implicit_source = implicit_source
 
 
 def _normalize_project_sources(

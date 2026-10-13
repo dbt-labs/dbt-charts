@@ -101,6 +101,10 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX,
 )
 from dbt_charts.core.font_measure import compose_decimal_units, get_font_measurer
+from dbt_charts.core.fonts import (
+    DBT_SANS_TABULAR_FONT_FAMILY,
+    SOURCE_SERIF_4_FONT_FAMILY,
+)
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.emitters._cartesian import (
@@ -117,7 +121,6 @@ from dbt_charts.core.render.chart.spec_builders import (
     bump_padding_right,
     bump_padding_top,
 )
-from dbt_charts.core.render.chart.table import _table_numeric_cell_font
 from dbt_charts.core.render.chart.text_truncation import record_text_truncation
 from dbt_charts.core.render.chart.time_unit_detect import (
     BUCKETED_CALENDAR_UNITS,
@@ -184,6 +187,14 @@ _AGG_OP_TO_VL: dict[ChartSupportTableAggregateOp, str] = {
 # formats). 80 px accommodates labels up to ~12 chars at 11 px Inter without
 # the label reaching visibly into the legend zone or over-shrinking the plot.
 _LABEL_STUB_LIMIT_PX = 80.0
+
+
+def _numeric_cell_font(font_family: str | None) -> str:
+    """The family a numeric cell is set in: a serif body keeps its serif, every
+    other body takes dbt Sans Tabular."""
+    if font_family and "Source Serif" in font_family:
+        return SOURCE_SERIF_4_FONT_FAMILY
+    return DBT_SANS_TABULAR_FONT_FAMILY
 
 
 def _strip_height(style: SupportTableStyle, n_rows: int) -> float:
@@ -2761,7 +2772,7 @@ def _compute_support_table_entry_dx(
     (aggregates are typically wider than any individual raw row).
 
     Mirrors the center-on-midpoint invariant of _compute_lane_positions
-    (table.py): the number lane is centered; decimals still align within it.
+    (the engine's table): the number lane is centered; decimals still align within it.
     """
     # dx centers the number column on the band midpoint (paired with the strip's
     # bandPosition:0.5 anchor). Applies to banded scales only: ordinal/nominal,
@@ -3416,7 +3427,7 @@ def _column_cell_layer(
         "mark": _text_mark_props(
             style,
             "right",
-            font_family_override=_table_numeric_cell_font(style.font.family),
+            font_family_override=_numeric_cell_font(style.font.family),
         ),
         "encoding": {
             "y": _shared_y_band_encoding(parent_y_enc),

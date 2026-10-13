@@ -34,8 +34,9 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_TABLE_TEMPORAL_FORMAT_INVALID
-from dbt_charts.core.render.chart.table import render_table_svg
 from dbt_charts.core.utils import is_date_like
+
+from .._engine_render import render_table_svg
 
 # The default format that must be present in stark.yaml as date_short.
 _DATE_SHORT_FORMAT = "%-d %b %Y"
@@ -51,7 +52,7 @@ class TestIsTemporalValue:
         assert is_temporal_value(datetime.datetime(2024, 1, 15, 13, 30, 0)) is True
 
     def test_datetime_aware_object(self) -> None:
-        aware = datetime.datetime(2024, 1, 15, 13, 30, 0, tzinfo=datetime.timezone.utc)
+        aware = datetime.datetime(2024, 1, 15, 13, 30, 0, tzinfo=datetime.UTC)
         assert is_temporal_value(aware) is True
 
     def test_iso_date_string(self) -> None:
@@ -190,7 +191,7 @@ class TestFormatTableCellValueTemporal:
         # Integer: not temporal — formats via the theme's number spec
         # (SI here), not the date path.
         result = format_table_cell_value(1234, None, {"date_short": _DATE_SHORT_FORMAT})
-        assert result == "1.23\u00a0K"
+        assert result == "1.23K"
 
     def test_single_digit_day_no_leading_zero(self) -> None:
         # %-d suppresses leading zero: "5 Jan 2024" not "05 Jan 2024"
@@ -404,7 +405,7 @@ def _render_table_svg(data: list[dict[str, object]], column_format: str) -> str:
 
 
 class TestTemporalFormatOnNumericColumnBoardLevel:
-    """format_table_cell_value's guard is bypassed by table.py's own direct
+    """format_table_cell_value's guard is bypassed by the table's own direct
     format_kpi_parts call in _compute_lane_positions (shared-scale/lane
     measurement, which scans every row, unlike measure_column_demands's
     50-row sample). This pins the board-level render path, not just the

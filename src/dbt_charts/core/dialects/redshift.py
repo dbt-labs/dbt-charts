@@ -12,6 +12,7 @@ class RedshiftDialect(PostgresDialect):
     """Redshift dialect — PostgreSQL, minus what the 8.0.2 fork predates."""
 
     name = "redshift"
+    folds_identifier_case = True
     # Declared rather than inherited, and the opposite of Postgres': the fork
     # predates standard-conforming strings. QUOTE_LITERAL "appropriately doubles
     # any embedded single quotation marks and backslashes", and LIKE's default

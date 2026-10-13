@@ -37,6 +37,7 @@ import contextlib
 import datetime as dt
 import json
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -52,6 +53,8 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     _affixed_digits_expr,
     sign_affixed_expr,
 )
+from dbt_charts.core.render.numeral_expr import numeral_vega_expr
+from dbt_charts.core.text.predefined_formats import VEGA_ARMS
 from dbt_charts.core.utils import coerce_numeric_cell
 
 # Zero-width Unicode "format" characters (general category Cf — the same
@@ -83,6 +86,8 @@ ROLE_ORDER = "‌"  # ZERO WIDTH NON-JOINER
 MUTED = "⁠"  # WORD JOINER
 # Brackets a value row's swatch color: SWATCH + "#hex" + SWATCH + label.
 SWATCH = "\u200b"  # ZERO WIDTH SPACE
+
+COUNT_TITLE = "#"
 
 
 _NO_FORMAT = ResolvedFormat(spec="")
@@ -169,7 +174,12 @@ def field_cardinality(field: str, data: ChartRenderData) -> int:
     return len({row[field] for row in data if row.get(field) is not None})
 
 
-def header_tooltip_field(field: str, title: str, data: ChartRenderData) -> TooltipField:
+def header_tooltip_field(
+    field: str,
+    title: str,
+    data: ChartRenderData,
+    grain_formats: Mapping[str, str],
+) -> TooltipField:
     """One identity field for ``field`` -- temporal (with detected grain) when
     the data is date-like, nominal otherwise.
 
@@ -196,7 +206,16 @@ def header_tooltip_field(field: str, title: str, data: ChartRenderData) -> Toolt
         except ValueError:
             time_unit = ""
     if field_type == "temporal" or time_unit != "":
-        return TooltipField(field, title, kind="temporal", time_unit=time_unit)
+        grain_spec = grain_formats.get(time_unit)
+        return TooltipField(
+            field,
+            title,
+            kind="temporal",
+            format=_NO_FORMAT
+            if grain_spec is None
+            else ResolvedFormat(spec=grain_spec),
+            time_unit=time_unit,
+        )
     return TooltipField(field, title, kind="nominal")
 
 
@@ -219,6 +238,8 @@ def format_quantitative_expr(value_expr: str, fmt: ResolvedFormat) -> str:
     expression."""
     if fmt.has_affix:
         return _affixed_digits_expr(value_expr, fmt.spec, fmt, anchored=False)
+    if fmt.spec in VEGA_ARMS:
+        return numeral_vega_expr(value_expr, fmt.spec)
     return f"format({value_expr}, {json.dumps(fmt.spec)})"
 
 
@@ -406,11 +427,10 @@ def span_tooltip_rows(
         e = f"datum[{json.dumps(end.field)}]"
         s = f"datum[{json.dumps(start.field)}]"
         magnitude = format_quantitative_expr(f"abs({e} - {s})", end.format)
+        fields = [TooltipField(_SPAN_DIFFERENCE_FIELD, "Δ")]
         if span_rises_only(rows, end.field, start.field):
-            fields = [TooltipField(_SPAN_DIFFERENCE_FIELD, "Range")]
             expr = magnitude
         else:
-            fields = [TooltipField(_SPAN_DIFFERENCE_FIELD, "Change")]
             expr = sign_affixed_expr(
                 f"({e} >= {s} ? '+' : '\\u2212')", magnitude, end.format
             )

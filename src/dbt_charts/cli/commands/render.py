@@ -245,7 +245,9 @@ def render_command(
         ) as cache,
         # from_project, not open(): the cache resolution above already needs the
         # project, and open() would build a second one from the same path.
-        ProjectSession.from_project(project, cache=cache) as project_session,
+        ProjectSession.from_project(
+            project, cache=cache, allow_mutating_methods=True
+        ) as project_session,
     ):
         # Boards-first path resolution lives at the agent_api boundary
         # (resolve_board_or_error) so the command stays thin; a missing board
@@ -348,7 +350,9 @@ def render_command_from_yaml(
         ) as cache,
         # from_project, not open(): the cache resolution above already needs the
         # project, and open() would build a second one from the same path.
-        ProjectSession.from_project(project, cache=cache) as project_session,
+        ProjectSession.from_project(
+            project, cache=cache, allow_mutating_methods=True
+        ) as project_session,
     ):
         # stdin content has no on-disk location — a pathless in-memory board,
         # no meta.yml cascade.

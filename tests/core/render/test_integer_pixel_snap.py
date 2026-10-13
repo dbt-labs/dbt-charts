@@ -243,7 +243,7 @@ rows:
 class TestSummaryRuleYIsInteger:
     """Summary-row rule rects (y_upper, y_lower, y_single) must have integer y.
 
-    The branches at table.py:1179-1201 compute y from ``row_y - line_h``.
+    The branches compute y from ``row_y - line_h``.
     Since row_y is snapped and line_h = max(1, int(summary_rule_width)) is
     integer, the result is always integer — this test binds that guarantee.
     """
@@ -262,9 +262,7 @@ class TestSummaryRuleYIsInteger:
     def test_summary_rule_y_is_integer(self, make_chart) -> None:
         import dataclasses
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         # Data with a mix of value rows and one summary row.
         data = [
@@ -329,9 +327,7 @@ class TestSummaryRuleYIsInteger:
     def test_table_svg_integer_dimensions_use_stable_string_form(
         self, make_chart
     ) -> None:
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         data = [{"name": "Alpha", "value": 10}]
         board_rs = resolve_style(get_theme_style())

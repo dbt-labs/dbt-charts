@@ -36,7 +36,7 @@ def test_normalize_stack_rules_are_hidden(make_chart) -> None:
 
 
 def test_percent_normalize_stack_announces_100_percent_not_nan(make_chart) -> None:
-    svg = _svg(make_chart, style={"number_format": "percent_whole"})
+    svg = _svg(make_chart, style={"axis_y": {"labels": {"format": "percent_whole"}}})
 
     rule_labels = re.findall(r'<line [^>]*aria-label="([^"]*)"[^>]*rule mark', svg)
     assert "value: 100%" in rule_labels

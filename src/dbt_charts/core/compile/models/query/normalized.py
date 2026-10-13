@@ -221,9 +221,8 @@ class SqlQuery(Query):
     # normalize_query injects the inherited board/meta default and raises
     # ERR-SOURCE-REQUIRED / -NOT-FOUND, so a board query that reaches
     # execution carries a registry-validated name. The field stays optional
-    # because the ad-hoc runtime-execution boundary (execute_query /
-    # describe_query with no `source`) legitimately constructs a sourceless
-    # query: locally it runs against the scratch DuckDB, and hosted surfaces
+    # because the ad-hoc runtime-execution boundary (execute_query with no
+    # `source`) legitimately constructs a sourceless query: locally it runs against the scratch DuckDB, and hosted surfaces
     # reject it in the guarded resolver (AllowlistedSourceResolver) — that is
     # the trust boundary, not this field's type.
     source: str | None = Field(

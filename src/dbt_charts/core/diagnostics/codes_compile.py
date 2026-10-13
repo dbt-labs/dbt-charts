@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dbt_charts.core.diagnostics.hints import (
+    suggest_close_chart,
     suggest_close_extends,
     suggest_close_format,
     suggest_close_palette,
@@ -45,6 +46,23 @@ ERR_UNKNOWN_QUERY = REGISTRY.register(
         ),
         summary="Fired when a chart's `query:` names a query that isn't declared under `queries:`.",
         docs_topic="queries",
+    )
+)
+
+ERR_UNKNOWN_CHART = REGISTRY.register(
+    ErrorCode(
+        code="ERR-UNKNOWN-CHART",
+        domain="compile",
+        title="Chart id is not on the board",
+        message_template="No chart {chart!r} on this board. Available charts: {available}.",
+        doc=(
+            "Fired when a caller addresses one chart by board path + chart id "
+            "(`dct render BOARD --chart ID`, `dct describe BOARD --chart ID`) and "
+            "the board declares no chart with that id."
+        ),
+        summary="Fired when a board path + chart id names a chart the board doesn't declare.",
+        docs_topic="charts",
+        hint_generator=suggest_close_chart,
     )
 )
 
@@ -569,6 +587,30 @@ ERR_AREA_ENCODING_SWAPPED = REGISTRY.register(
     )
 )
 
+ERR_LAYER_AXIS_TITLE_WITHOUT_POSITION = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LAYER-AXIS-TITLE-WITHOUT-POSITION",
+        domain="compile",
+        title="A layer's y-axis title has no axis of its own to land on",
+        message_template=(
+            "{field_path} sets a title, but no layer on this chart pins "
+            "`axis_y.position`, so every layer shares the base chart's y axis "
+            "and a layer title has nowhere to go. Pin `axis_y.position` on a "
+            "layer of a vertical base chart to give it its own axis, or drop "
+            "the layer `axis_y.title`."
+        ),
+        doc=(
+            "A layer's `axis_y.title` names that layer's own y axis. A layer "
+            "only gets its own axis when some layer pins `axis_y.position` to "
+            "a side; until then all layers share the base chart's axis, which "
+            "has a single title slot that several layers could claim. Pin a "
+            "side to split the axes, or remove the layer title."
+        ),
+        summary="Layer `axis_y.title` set on a chart whose layers share one y axis.",
+        docs_topic="charts",
+    )
+)
+
 ERR_LAYERS_AMBIGUOUS_Y_DOMAIN = REGISTRY.register(
     ErrorCode(
         code="ERR-LAYERS-AMBIGUOUS-Y-DOMAIN",
@@ -970,6 +1012,39 @@ ERR_EMPTY_YAML_DOCUMENT = REGISTRY.register(
     )
 )
 
+ERR_YAML_SYNTAX = REGISTRY.register(
+    ErrorCode(
+        code="ERR-YAML-SYNTAX",
+        domain="compile",
+        title="YAML syntax error",
+        message_template=(
+            "Invalid YAML syntax in {source}{where}: {problem}{quoted_line}"
+        ),
+        fix_template=(
+            "Fix the line quoted above. The usual cause is a string that contains "
+            "a colon followed by a space, or starts with a special character "
+            "(`*`, `&`, `!`, `%`, `@`, `[`, `{`): wrap the whole value in quotes, "
+            'for example `title: "Ten largest occupations in 1950: rank and '
+            'workers"`.'
+        ),
+        doc=(
+            "Fired when a board file, or a file it `extends:`, is not valid YAML. "
+            "The message names the file, the line and column, "
+            "and the offending line. The common authored mistake is an unquoted "
+            "colon inside a title or note, such as `title: Largest in 1950: "
+            "rank`, which YAML reads as a nested mapping; another is a flow "
+            "sequence holding an unquoted `[` (`palette: [category[2]]`; quote "
+            'it as `palette: ["category[2]"]`). For the colon the rest of the '
+            "report comes from a copy of the file with the line quoted (the "
+            "file is not changed and the board still does not render), so the "
+            "schema and query errors appear in the same pass; any other syntax "
+            "error is the only one reported until it is fixed."
+        ),
+        summary="Fired when a board file or an `extends:` file is not valid YAML.",
+        docs_topic="errors",
+    )
+)
+
 ERR_NOTHING_TO_RENDER = REGISTRY.register(
     ErrorCode(
         code="ERR-NOTHING-TO-RENDER",
@@ -1094,6 +1169,26 @@ ERR_UNKNOWN_THEME = REGISTRY.register(
     )
 )
 
+ERR_THEME_AND_EXTENDS = REGISTRY.register(
+    ErrorCode(
+        code="ERR-THEME-AND-EXTENDS",
+        domain="compile",
+        title="Board sets both theme: and extends:",
+        message_template=(
+            "Cannot set both 'theme: {theme}' and 'extends:'; 'theme:' is "
+            "shorthand for 'extends:'. Use one key: extends: {combined}"
+        ),
+        doc=(
+            "Fired when a board or board fragment authors both `theme:` and "
+            "`extends:`. `theme: X` is sugar for `extends: X`, so the two "
+            "would compete for one slot. List the theme first in `extends:`, "
+            "lowest priority, ahead of the boards it already extends."
+        ),
+        summary="Fired when a board authors both `theme:` and `extends:`.",
+        docs_topic="board",
+    )
+)
+
 ERR_EXTENDS_UNRESOLVED = REGISTRY.register(
     ErrorCode(
         code="ERR-EXTENDS-UNRESOLVED",
@@ -1149,14 +1244,14 @@ ERR_REGIONAL_NESTED_MISMATCH = REGISTRY.register(
         title="A nested board's regional differs from its root board's",
         message_template=(
             "{board} sets regional {authored}, but the board it is nested in uses "
-            "{root}. A board and everything nested in it write numbers one way; "
-            "remove the nested `regional:` or make it match."
+            "{root}. A board and everything nested in it write numbers and dates "
+            "one way; remove the nested `regional:` or make it match."
         ),
         doc=(
             "Fired when a nested board (inline or imported) authors a "
-            "`regional:` locale or currency that differs from the root board's. "
-            "One page reads numbers in one locale and one currency, so nested "
-            "boards take the root's `regional:`. Set it on the root board or in "
+            "`regional:` number locale, time locale or currency that differs "
+            "from the root board's. One page reads numbers and dates in one "
+            "locale and one currency, so nested boards take the root's `regional:`. Set it on the root board or in "
             "`charts/meta.yml`."
         ),
         summary="Fired when a nested board's `regional:` differs from its root's.",
@@ -1208,19 +1303,23 @@ ERR_FORMAT_NATIVE_IN_VEGA_SLOT = REGISTRY.register(
         # paints them 100x too large: the remedy names the division, never
         # ".1%" on its own.
         message_template=(
-            "Format {spec!r} at {field_path} is a Python-only native formatter "
-            "and cannot be used in Vega-rendered slots (axis labels, mark value "
-            "labels, number_format, time_format, support_table). Move it to a "
-            "KPI value or table cell, or transform the value in the query to "
-            "match a plain d3 spec (for a whole-number percent, divide by 100 "
-            'and then use a d3 percent spec such as ".1%"). Valid alternatives: '
+            "Format {spec!r} at {field_path} is a native formatter with no Vega "
+            "arm and cannot be used in Vega-rendered slots (axis labels, mark value "
+            "labels, support_table, heatmap and map "
+            "tooltips). Move it to a "
+            "table cell (or a KPI value, for the percent "
+            "names), or transform the value in the query to match a plain d3 "
+            "spec (for a whole-number percent, divide by 100 and then use a d3 "
+            'percent spec such as ".1%"). Valid alternatives: '
             "{available}."
         ),
         doc=(
-            "Fired when `percent_number`, `percent_number_delta`, or "
-            "`percentage_points_delta` appears in a Vega-rendered format slot "
-            "such as an axis label, mark value-label format, number_format, "
-            "time_format, or support_table format. These names bypass d3 entirely "
+            "Fired when a native name appears in a Vega-rendered format slot "
+            "it cannot paint: `percent_number`, `percent_number_delta` and "
+            "`percentage_points_delta` anywhere Vega paints (axis label, mark "
+            "value-label format), and every native "
+            "(`duration` and `bytes` too) in a support_table format or a heatmap "
+            "or map tooltip. These names bypass d3 entirely "
             "and are only valid in Python-rendered slots (KPI headline and table "
             "cells). To keep the value in a Vega-rendered slot, transform it in "
             "the query to match a plain d3 spec: for a whole-number percent, "
@@ -1235,29 +1334,69 @@ ERR_FORMAT_KIND_MISMATCH = REGISTRY.register(
     ErrorCode(
         code="ERR-FORMAT-KIND-MISMATCH",
         domain="compile",
-        title="Predefined format name is the wrong kind for this slot",
+        title="A redefined format name has the wrong kind",
         message_template=(
-            "Format {spec!r} at {field_path} is not a {kind} format. This slot "
-            "takes only the {kind} half of the engine's vocabulary: {available}. "
+            "Format {spec!r} at {field_path} is not a {kind} format. This name "
+            "takes only a {kind} spec; the engine's {kind} names are: {available}. "
             "{escape_hatch}"
         ),
         doc=(
-            "Fired when a predefined format name from one half of the vocabulary "
-            "lands in a slot that takes the other. `number_format` feeds a "
-            "quantitative axis and `time_format` a temporal one, so each accepts "
-            "only its own names; `time_format: currency` resolves to the d3 "
-            "number spec `$.3~s`, which Vega bakes onto a date axis as garbage "
-            "tick labels rather than failing. Use `date_short` or a strftime "
-            "spec (`%b %Y`) for `time_format`; use a number name (`currency`, "
-            "`number`, `percent`) or a d3 spec for `number_format`. A plain "
-            "`format:` slot is judged by the column it paints and takes either."
+            "Fired when `style.formats` redefines an engine format name as a "
+            "spec of the other kind: a number name (`currency`, `percent`) "
+            "must stay a number spec and a date name (`date_short`) a strftime "
+            "spec, because every slot that reads the name expects its kind. A "
+            "number spec baked onto a date axis paints garbage tick labels "
+            "rather than failing. A plain `format:` slot is judged by the "
+            "column it paints and takes either."
         ),
-        summary="Number format name in a time slot, or a time name in a number slot.",
+        summary="An engine format name redefined as a spec of the other kind.",
         docs_topic="charts",
         # No hint_generator: only an exact predefined name from the other half
         # reaches this raise, so the input domain is the vocabulary itself and no
         # member of it is a near-miss for the other half. The message names the
         # legal values outright instead.
+    )
+)
+
+ERR_FORMAT_TEXT_IN_VEGA_SLOT = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FORMAT-TEXT-IN-VEGA-SLOT",
+        domain="compile",
+        title="Text format name used in a Vega-rendered format slot",
+        message_template=(
+            "Format {spec!r} at {field_path} is a text format and cannot be used "
+            "in Vega-rendered slots (axis labels, mark value labels, "
+            "support_table). Use it on a table column or KPI value; a number or "
+            "date slot takes a number or time name or a d3 spec."
+        ),
+        doc=(
+            "Fired when `email` or `url` appears in a slot Vega paints. They "
+            "name text a table cell or KPI value links, and have no number or "
+            "date spec for Vega to apply."
+        ),
+        summary="`email` / `url` is not a number or time format for a Vega slot.",
+        docs_topic="charts",
+    )
+)
+
+ERR_FORMAT_TEXT_REDEFINED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FORMAT-TEXT-REDEFINED",
+        domain="compile",
+        title="A text format name cannot be redefined",
+        message_template=(
+            "`{field_path}` redefines the engine's text format {name!r}. "
+            "{name!r} is a text format with no spec; it cannot be redefined."
+        ),
+        doc=(
+            "Fired when `style.formats` has a key named `email` or `url`. Those "
+            "names format a value as itself and mark the column as an email "
+            "address or a web URL, so a table cell or KPI value can link it. "
+            "They carry no spec for an alias to replace. Pick another alias "
+            "name for your own spec."
+        ),
+        summary="`style.formats.email` / `style.formats.url` cannot be redefined.",
+        docs_topic="charts",
     )
 )
 
@@ -1314,22 +1453,46 @@ ERR_FORMAT_AFFIX_TIME_UNSUPPORTED = REGISTRY.register(
         title="A FormatConfig prefix/suffix/notation is a number-format feature only",
         message_template=(
             "Format at {field_path} combines a prefix/suffix/notation with "
-            "time-format spec {spec!r}. A temporal axis and `time_format` "
-            "paint through a date formatter that has no place for an affix. "
+            "time-format spec {spec!r}. A temporal axis "
+            "paints through a date formatter that has no place for an affix. "
             "Drop the prefix/suffix/notation, or move a prefix/suffix to a "
-            "number_format slot, a KPI value, or a table column; notation "
+            "number slot, a KPI value, or a table column; notation "
             "never applies to a date."
         ),
         doc=(
             "A prefix, suffix or notation next to a strftime spec ('%b %Y') "
-            "is rejected on `time_format` and on a temporal axis's format: "
-            "those paint through a date formatter, which has no place for an "
-            "affix. Author a prefix/suffix on a number slot (`number_format`), "
+            "is rejected on a temporal axis's format: "
+            "it paints through a date formatter, which has no place for an "
+            "affix. Author a prefix/suffix on a number slot (`axis_y.labels.format`), "
             "or on a KPI value or table column format, which paint it around "
             "the date (`FY Jan 2026`). `notation` only affects an SI number "
             "spec; it does nothing to a date anywhere, so drop it."
         ),
         summary="FormatConfig affix on a time-format spec.",
+        docs_topic="charts",
+    )
+)
+
+ERR_FORMAT_GRAIN_NAME_NOT_REDEFINED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FORMAT-GRAIN-NAME-NOT-REDEFINED",
+        domain="compile",
+        title="An engine date grain name used as a format without being redefined",
+        message_template=(
+            "Format {spec!r} at {field_path} names the engine's own {spec} "
+            "axis labels, which only a date axis that detects that grain can "
+            "paint. Redefine it in `style.formats` with a strftime spec "
+            '(`{spec}: "%b %Y"`) to relabel that grain across the board, '
+            "or use a strftime spec here."
+        ),
+        doc=(
+            "`date_year`, `date_quarter`, `date_month` and `date_week` mean the "
+            "engine's own labels for a grain, which no single format expresses. "
+            "They only take effect once a board redefines one in "
+            "`style.formats`; used in a slot without that, the name would "
+            "silently print something else, so it is rejected."
+        ),
+        summary="Engine date grain name used in a slot without being redefined.",
         docs_topic="charts",
     )
 )
@@ -1380,6 +1543,73 @@ ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX = REGISTRY.register(
     )
 )
 
+ERR_GEOSHAPE_SHADING_WITHOUT_LOOKUP = REGISTRY.register(
+    ErrorCode(
+        code="ERR-GEOSHAPE-SHADING-WITHOUT-LOOKUP",
+        domain="compile",
+        title="A geoshape shades from a column but has no lookup",
+        message_template=(
+            "Geoshape shades from column {value_field!r}, but {field_path} is "
+            "not set, so nothing joins the data to the map. Set `lookup:` to "
+            "the data column that matches the geo source's {geo_join_key!r} key."
+        ),
+        doc=(
+            "A choropleth shades each region by joining a data column to the "
+            "geo source's key property. `value:` (or a data-driven `color:`) "
+            "without `lookup:` has nothing to join on and would render an "
+            "unshaded base map. Set `lookup:` to the column holding the region "
+            "identifiers, or drop `value:`/`color:` to draw a plain base map."
+        ),
+        summary="Geoshape `value:`/`color:` set without `lookup:`.",
+        docs_topic="charts",
+    )
+)
+
+ERR_BAR_ZERO_BASELINE_CROPPED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BAR-ZERO-BASELINE-CROPPED",
+        domain="compile",
+        title="A bar chart cannot drop its zero baseline",
+        message_template=(
+            "Chart {chart_id!r} sets {field_path} to false, but a bar's length "
+            "is measured from zero, so a bar cropped away from it misstates "
+            "the quantity (and paints nothing). Remove axis_y.scale.continuous."
+            "zero, or use `type: line` to zoom into a range."
+        ),
+        doc=(
+            "A bar encodes its value as length from the zero baseline, so "
+            "`style.axis_y.scale.continuous.zero: false` on a bar chart would "
+            "crop the bars and misstate the values. Remove the key to keep "
+            "the zero baseline, or use `type: line` for a zoomed range. A "
+            "floating bar (`y_start:`) has no zero baseline and is exempt."
+        ),
+        summary="`zero: false` on a bar chart without `y_start`.",
+        docs_topic="charts",
+    )
+)
+
+ERR_PIE_TOTAL_WITHOUT_HOLE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-PIE-TOTAL-WITHOUT-HOLE",
+        domain="compile",
+        title="A pie total needs a donut hole to sit in",
+        message_template=(
+            "{field_path} is set, but this pie has no hole, so the total would "
+            "print over the wedges. Set `style.inner_radius` above 0 to make it "
+            "a donut, or remove `total:`."
+        ),
+        doc=(
+            "`total:` draws the sum of the slice values at the center of the "
+            "chart, which is the hole of a donut. A solid pie has no hole, so "
+            "the text would overlap the wedges. Set `style.inner_radius` above "
+            "0, use `type: donut`, or remove `total:` (`total.visible: false` "
+            "is accepted on a solid pie)."
+        ),
+        summary="Pie `total:` authored on a chart with no hole.",
+        docs_topic="charts",
+    )
+)
+
 ERR_FORMAT_ALIAS_CYCLE = REGISTRY.register(
     ErrorCode(
         code="ERR-FORMAT-ALIAS-CYCLE",
@@ -1426,7 +1656,7 @@ ERR_FORMAT_TIME_DIRECTIVE_UNSUPPORTED = REGISTRY.register(
     ErrorCode(
         code="ERR-FORMAT-TIME-DIRECTIVE-UNSUPPORTED",
         domain="compile",
-        title="strftime directive in a Vega-rendered time_format cannot be measured",
+        title="strftime directive in a Vega-rendered time format cannot be measured",
         message_template=(
             "Format {spec!r} at {field_path} uses {directives}, which dbt "
             "Charts cannot render identically to what Vega paints on the "
@@ -1439,16 +1669,12 @@ ERR_FORMAT_TIME_DIRECTIVE_UNSUPPORTED = REGISTRY.register(
             "label overlaps its neighbor. Supported directives: {available}."
         ),
         doc=(
-            "Fired when an authored `time_format` (or another Vega-painted "
-            "time slot: axis labels) uses a strftime directive dbt Charts "
+            "Fired when an authored Vega-painted "
+            "time slot (an axis `labels.format`) uses a strftime directive dbt Charts "
             "cannot render byte-identical to what Vega's `utcFormat` "
             "paints. `%C`/`%k`/`%l`/`%z` and most other letters are not "
             "d3-time-format grammar at all -- Vega paints the literal "
-            "letter, not a computed value. `%c`/`%x`/`%X` are real d3 "
-            "directives whose Python rendering diverges (locale-composite "
-            "output through the host's C locale, not d3's UTC/en-US "
-            "output); use `%-m/%-d/%Y` for `%x`, `%-I:%M:%S %p` for `%X`, "
-            "or `%-m/%-d/%Y, %-I:%M:%S %p` for `%c`. `%Z` is real d3 grammar "
+            "letter, not a computed value. `%Z` is real d3 grammar "
             "too but empty on "
             "a naive datetime, unlike d3's `+0000`-style offset. `%s` is "
             "real d3 grammar but Python's value follows the host's local "
@@ -1459,7 +1685,7 @@ ERR_FORMAT_TIME_DIRECTIVE_UNSUPPORTED = REGISTRY.register(
             "directly, so no measure-vs-paint divergence is possible "
             "there."
         ),
-        summary="A time_format directive Vega paints differently than dbt Charts measures.",
+        summary="A time-format directive Vega paints differently than dbt Charts measures.",
         docs_topic="charts",
     )
 )
@@ -1716,10 +1942,22 @@ ERR_AXIS_COLUMN_REQUIRES_TABULAR_FONT = REGISTRY.register(
             "Chart {chart_id!r}: axis label font {family!r} does not guarantee "
             "tabular figures, but its tick ladder compacts to a shared magnitude "
             "and forms a column; the digits only stack into a column when every "
-            "digit shares one advance, which a proportional board does not give, "
-            "so the column misaligns silently. Set a tabular family (e.g. 'dbt Sans "
-            "Tabular') on style.axis_y.labels.font.family for this chart, or on "
-            "charts.axis_quantitative.labels.font.family to cover every chart."
+            "digit shares one advance, which a proportional font does not give, "
+            "so the column would misalign silently. A quantitative axis takes "
+            "its label font from the `numeral` slot (style.fonts.numeral), any "
+            "other axis from the `label` slot (style.fonts.label); one of those "
+            "slots, or an axis override (style.axis_y.labels.font.family on this "
+            "chart, style.charts.axis_quantitative.labels.font.family on the "
+            "board), carries this family."
+        ),
+        fix_template=(
+            "Put the body typeface on `style.fonts.body` (and "
+            "`style.fonts.heading`), and leave `style.fonts.label` and "
+            "`style.fonts.numeral` on a tabular family (e.g. 'dbt Sans "
+            "Tabular'). To keep a different family on the axis itself, set a "
+            "tabular one on `style.axis_y.labels.font.family` for this chart, or "
+            "on `style.charts.axis_quantitative.labels.font.family` to cover "
+            "every chart."
         ),
         doc=(
             "Fired at resolve when a column-forming quantitative axis (a vertical "
@@ -1898,20 +2136,49 @@ ERR_CATEGORY_COLOR_PALETTE_EXHAUSTED = REGISTRY.register(
         domain="compile",
         title="An authored category_colors field has more values than the palette has swatches",
         message_template=(
-            "{value_count} values for `{field}`, but the board's categorical "
-            "palette has {swatch_count} swatches. Pick a wider palette, or "
-            "reduce the distinct count `style.charts.category_colors.{field}` "
-            "has to cover."
+            "{value_count} values for `{field}` need a palette swatch, but the "
+            "board's categorical palette has {swatch_count}. Pick a wider "
+            "palette, or pin the extra values in "
+            "`style.charts.category_colors.{field}` to a color outside it "
+            "(a variant like `category[3].light`, or a hex)."
         ),
         doc=(
             "Fired when an authored `style.charts.category_colors.<field>` "
-            "field has more distinct values than the board's categorical "
-            "palette has swatches. Two categories must never share a swatch, "
+            "field has more values needing a palette swatch (unpinned values "
+            "plus pins naming a palette color) than the board's categorical "
+            "palette has. Pins to a color outside the palette (a variant or "
+            "a hex) need no swatch. Two categories must never share a swatch, "
             "so an authored field raises instead of silently declining to "
             "bind (an unauthored field just declines). Pick a wider palette, "
-            "or reduce the distinct count the field has to cover."
+            "or pin the extra values to colors outside it."
         ),
         summary="Fired when an authored category_colors field outgrows the palette's swatch count.",
+        docs_topic="charts",
+    )
+)
+
+WARN_AREA_ZERO_BASELINE_CROPPED = REGISTRY.register(
+    WarningCode(
+        code="WARN-AREA-ZERO-BASELINE-CROPPED",
+        domain="compile",
+        title="An area chart's zero baseline is cropped",
+        message_template=(
+            "Chart {chart_id!r} sets axis_y.scale.continuous.zero to false, so "
+            "the area's fill starts above zero and overstates the change."
+        ),
+        fix_template=(
+            "Remove axis_y.scale.continuous.zero to keep the zero baseline, or "
+            "use `type: line` to zoom into a range. If the crop is deliberate, "
+            "add WARN-AREA-ZERO-BASELINE-CROPPED to the chart's warnings_ignore."
+        ),
+        summary="Fired when an area chart authors `zero: false` on its y axis.",
+        doc=(
+            "An area's fill encodes magnitude from the zero baseline, so "
+            "`style.axis_y.scale.continuous.zero: false` shows a cropped fill "
+            "that overstates change. A zoomed area is sometimes deliberate, so "
+            "this warns instead of failing and can be suppressed with "
+            "`warnings_ignore`."
+        ),
         docs_topic="charts",
     )
 )
@@ -1940,6 +2207,34 @@ WARN_AXIS_ALIGN_DISCARDED = REGISTRY.register(
             "format alias (percent, currency, etc.) on a right-edge quantitative axis. "
             "The alias forces label.align = 'right' for place-value alignment; the "
             "authored align value is silently discarded."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_FORMAT_UNUSED_NAME = REGISTRY.register(
+    WarningCode(
+        code="WARN-FORMAT-UNUSED-NAME",
+        domain="compile",
+        title="style.formats name is defined but nothing uses it",
+        message_template=(
+            "`style.formats.{name}` is defined but nothing uses it.{did_you_mean} "
+            "To restyle an engine format, redefine its name (`number`, `currency`, "
+            "`date_short`, ...)."
+        ),
+        fix_template=(
+            "Name it in a `format:` slot, redefine an engine name instead, or "
+            "delete it."
+        ),
+        summary="A style.formats name is defined in a board file that nothing uses.",
+        doc=(
+            "Fires at compile time for a name this board file's own "
+            "`style.formats` defines that no format slot on the board references "
+            "and that is not an engine format name. The engine's names are the "
+            "keys that restyle every chart (`number`, `currency`, `percent`, "
+            "`date_short`, ...). A name inherited from `meta.yml` or `extends` "
+            "never warns here, since a sibling board may use it. Emitted by "
+            "`compile/validate/board_warnings.py`."
         ),
         docs_topic="charts",
     )
@@ -2010,20 +2305,21 @@ ERR_VARIABLE_NAME_INVALID = REGISTRY.register(
     )
 )
 
-ERR_CHART_COLOR_TOKEN = REGISTRY.register(
+ERR_COLOR_TOKEN = REGISTRY.register(
     ErrorCode(
-        code="ERR-CHART-COLOR-TOKEN",
+        code="ERR-COLOR-TOKEN",
         domain="compile",
-        title="Chart style color token does not resolve",
-        message_template="Chart {chart_id!r}: {reason}",
+        title="Style color token does not resolve",
+        message_template="Color token in {scope} does not resolve: {reason}",
         doc=(
-            "Fired when a color in a chart's own `style:` block is a palette "
-            "token (`palette.slot`, `role[N]`) that no palette or theme role "
-            "resolves, such as a misspelled palette name or slot. The error "
-            "names the chart and the token; other charts on the board render "
-            "normally."
+            "Fired when a color in a `style:` block is a palette token "
+            "(`palette.slot`, `role.alias`, `role[N]`) that no palette or "
+            "theme role resolves: a misspelled palette, an alias or slot the "
+            "palette lacks, or a role the theme does not bind. A bad token in "
+            "a chart's own style names the chart, and other charts on the "
+            "board render normally; one in board style names the field."
         ),
-        summary="Fired when a chart-local style color token matches no palette or theme role.",
+        summary="Fired when a style color token matches no palette or theme role.",
         docs_topic="charts",
     )
 )

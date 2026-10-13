@@ -31,14 +31,19 @@ output.
 
 from __future__ import annotations
 
+import csv
+import json
 import os
+import re
 import sys
 import time
 import webbrowser
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, NoReturn
+from typing import Annotated, NoReturn, TypeVar
 
 import httpx
 import typer
@@ -46,9 +51,12 @@ from pydantic import BaseModel
 from rich.markup import escape
 from rich.table import Table
 
+from dbt_charts.agent_api._paths import find_dct_root
+from dbt_charts.agent_api.project_sources import DeclaredSource, read_project_sources
 from dbt_charts.cli._console import dct_console, is_plain_output
 from dbt_charts.cli._json_output import print_json_result as _print_json_result
 from dbt_charts.cli._parsing import parse_kv_pairs
+from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.cloud_client.client import (
     MIN_POLL_INTERVAL_SECONDS,
     PICK_POLL_SECONDS,
@@ -80,7 +88,10 @@ from dbt_charts.cloud_client.config import (
 from dbt_charts.cloud_client.context import (
     REFUSE_DEFAULT_CONNECT,
     REFUSE_DEFAULT_DESTRUCTIVE,
+    UNPARSEABLE_ORIGIN_PLACEHOLDER,
     CloudContext,
+    GitCheckoutFacts,
+    git_checkout_facts,
     git_remotes,
     repo_key,
     repo_matches,
@@ -90,30 +101,47 @@ from dbt_charts.cloud_client.context import (
 from dbt_charts.cloud_client.contract import (
     DBT_ROOT_OTHER,
     DBT_ROOT_REPO_ROOT,
+    AccessCheck,
+    AccessList,
+    AccessRow,
+    ActionResult,
+    AuditEntry,
+    AuditList,
     AuthorizationServerMetadata,
     BoardList,
     BoardSummary,
+    ConnectionAccessList,
     ConnectionList,
     DeleteResult,
     DeviceAuthorization,
     DeviceLoginStarted,
     GrantList,
+    IdentityGroupList,
     InvitationList,
     LoginResult,
+    MemberAccess,
     MemberList,
     OAuthToken,
     OrgList,
     OrgStatus,
     ProjectConnectStarted,
     ProjectList,
+    ProjectStatus,
     ProjectSummary,
+    PublicAccess,
     RepoPick,
+    RoleList,
+    SetupStage,
     SourceList,
+    TeamList,
     WhoAmI,
 )
 from dbt_charts.cloud_client.errors import (
     CloudError,
+    ContextUnresolved,
+    CredentialMissing,
     EnvCredentialActive,
+    InvalidCredential,
     NoPendingConnect,
     NoPendingLogin,
 )
@@ -124,6 +152,8 @@ from dbt_charts.cloud_client.published_to import (
     resolve_published_to,
     set_published_to,
 )
+
+M = TypeVar("M", bound=BaseModel)
 
 err_console = dct_console(stderr=True)
 
@@ -140,6 +170,7 @@ SECRET_FIELDS = frozenset(
         "private_key_passphrase",
         "token",
         "client_secret",
+        "jwt_token",
     }
 )
 
@@ -159,6 +190,22 @@ RefusingOrgOption = Annotated[
 ProjectOption = Annotated[
     str | None,
     typer.Option("--project", help="Project slug (default: inferred, then `use`)"),
+]
+RefusingProjectOption = Annotated[
+    str | None,
+    typer.Option(
+        "--project",
+        help="Project slug (inferred from this repo, else required;"
+        " never the `use` default)",
+    ),
+]
+# `status` never resolves a context from `--project` -- it narrows an
+# already-fetched OrgStatus's `projects` list to one slug, a display filter,
+# not the inferred-then-`use`-defaulted context every other verb's
+# `ProjectOption` documents.
+StatusProjectOption = Annotated[
+    str | None,
+    typer.Option("--project", help="Narrow the project rows to this slug"),
 ]
 HostOption = Annotated[
     str | None,
@@ -216,6 +263,23 @@ invite_app = typer.Typer(
 grant_app = typer.Typer(
     name="grant", help="Manage connector grants.", no_args_is_help=True
 )
+access_app = typer.Typer(name="access", help="Who can open what.", no_args_is_help=True)
+team_app = typer.Typer(name="team", help="Manage teams.", no_args_is_help=True)
+role_app = typer.Typer(
+    name="role", help="Manage custom access roles.", no_args_is_help=True
+)
+identity_app = typer.Typer(
+    name="identity", help="Identity-provider groups.", no_args_is_help=True
+)
+connection_access_app = typer.Typer(
+    name="access", help="Who can use a connection.", no_args_is_help=True
+)
+public_app = typer.Typer(
+    name="public", help="Public-access gates and public grants.", no_args_is_help=True
+)
+audit_app = typer.Typer(
+    name="audit", help="The authorization audit trail.", no_args_is_help=True
+)
 cloud_app.add_typer(org_app, name="org")
 cloud_app.add_typer(project_app, name="project")
 cloud_app.add_typer(connection_app, name="connection")
@@ -223,6 +287,13 @@ cloud_app.add_typer(source_app, name="source")
 cloud_app.add_typer(member_app, name="member")
 cloud_app.add_typer(invite_app, name="invite")
 cloud_app.add_typer(grant_app, name="grant")
+cloud_app.add_typer(access_app, name="access")
+cloud_app.add_typer(team_app, name="team")
+cloud_app.add_typer(role_app, name="role")
+cloud_app.add_typer(identity_app, name="identity")
+connection_app.add_typer(connection_access_app, name="access")
+cloud_app.add_typer(public_app, name="public")
+cloud_app.add_typer(audit_app, name="audit")
 
 
 # =============================================================================
@@ -244,7 +315,7 @@ def print_json_result(result: BaseModel) -> None:
 
 
 @contextmanager
-def _reporting(as_json: bool) -> Generator[None]:
+def _reporting(as_json: bool, error_exit: int = 1) -> Generator[None]:
     """Turn any CloudError raised inside into this CLI's one failure output.
 
     Every verb goes through here, including the ones that touch no network:
@@ -255,15 +326,19 @@ def _reporting(as_json: bool) -> Generator[None]:
     try:
         yield
     except CloudError as exc:
-        _fail(exc, as_json)
+        _fail(exc, as_json, error_exit)
 
 
 @contextmanager
 def _cloud(
-    host: str | None, as_json: bool
+    host: str | None, as_json: bool, error_exit: int = 1
 ) -> Generator[tuple[CloudClient, CloudConfig]]:
-    """An open client plus the stored config, with every failure formatted once."""
-    with _reporting(as_json):
+    """An open client plus the stored config, with every failure formatted once.
+
+    ``error_exit`` is the status a failure exits with; ``access check`` moves it
+    to 2 because 1 there means "denied".
+    """
+    with _reporting(as_json, error_exit):
         config = load_config()
         with client_from_config(config, host, transport=_oauth_transport()) as client:
             yield client, config
@@ -325,7 +400,7 @@ def _confirm_destructive(kind: str, coordinate: str, yes: bool) -> None:
         raise typer.Exit(1)
 
 
-def _fail(exc: CloudError, as_json: bool) -> NoReturn:
+def _fail(exc: CloudError, as_json: bool, exit_code: int = 1) -> NoReturn:
     """Report a failure in the shape the caller asked for, and exit non-zero."""
     if as_json:
         print_json_result(exc.as_api_error())
@@ -333,7 +408,7 @@ def _fail(exc: CloudError, as_json: bool) -> NoReturn:
         # soft_wrap: these messages carry paths, URLs, and `--org x --project y`
         # lines a reader copies — console wrapping would break them mid-token.
         err_console.print(f"[red]Error:[/red] {escape(str(exc))}", soft_wrap=True)
-    raise typer.Exit(1)
+    raise typer.Exit(exit_code)
 
 
 def _org(
@@ -653,48 +728,530 @@ def _published_here(
     return (published.org, published.project), None
 
 
+def _emit(lines: list[str], as_json: bool) -> None:
+    """Print *lines* where they belong for this output mode: stderr under
+    `--json` (stdout there is Cloud's own contract shape, nothing else),
+    stdout in human mode."""
+    console = err_console if as_json else dct_console()
+    for line in lines:
+        console.print(line, soft_wrap=True)
+
+
+def _checkout_git_lines(facts: GitCheckoutFacts) -> list[str]:
+    if facts.is_repo is None:
+        return [
+            "git: could not read this repository -- "
+            f"{escape(facts.read_error or 'unknown error')}"
+        ]
+    if not facts.is_repo:
+        return ["git: not a checkout"]
+    branch = escape(facts.branch) if facts.branch else "(detached HEAD)"
+    origin = escape(facts.origin) if facts.origin else "(no origin remote)"
+    if facts.ahead is None:
+        position = "no upstream tracking branch"
+    else:
+        position = f"{facts.ahead} ahead / {facts.behind} behind (as of last fetch)"
+    lines = [f"git: branch {branch}, origin {origin}, {position}"]
+    if facts.identity_missing:
+        lines.append(
+            "git identity: user.name or user.email is not set -- the first"
+            " commit will fail. Run: git config user.email you@example.com"
+            ' (and git config user.name "Your Name").'
+        )
+    return lines
+
+
+def _checkout_source_lines(
+    sources: list[DeclaredSource], error: str | None
+) -> list[str]:
+    if error:
+        return [f"sources: could not read {DBT_CHARTS_YML} -- {escape(error)}"]
+    if not sources:
+        return ["sources: none declared"]
+    described = ", ".join(
+        f"{escape(s.name)} ({escape(s.error) if s.error else escape(s.type) if s.type else 'unknown'})"
+        for s in sources
+    )
+    return [f"sources: {described}"]
+
+
+_MAX_SKIPPED_BOARDS_SHOWN = 3
+
+
+def _checkout_board_lines(project: FilesystemProject) -> list[str]:
+    """The "boards:" line -- names the first few skipped files and their
+    reasons, never just the count of the ones that parsed. `list_boards`
+    itself never raises for a malformed board or an unreadable directory:
+    both a per-file failure (a validation, encoding, or YAML error) and a
+    directory `os.walk` cannot enter are routed into `skipped_files`.
+
+    Capped at `_MAX_SKIPPED_BOARDS_SHOWN`, one line of reason each -- an
+    agent reads this section on every `status` call, and pydantic/YAML
+    error text can run to several lines and a URL.
+    """
+    # Lazy: agent_api.boards imports core.compile at its own top level,
+    # which `dct cloud` must not pull in at module-import time -- `cli.main`
+    # loads every command module eagerly to build the Typer tree.
+    from dbt_charts.agent_api.boards import list_boards
+
+    result = list_boards(project)
+    if not result.skipped_files:
+        return [f"boards: {result.count} found"]
+    shown = result.skipped_files[:_MAX_SKIPPED_BOARDS_SHOWN]
+    described = "; ".join(
+        f"{escape(sf.file.relpath)} ({escape(sf.reason.splitlines()[0])})"
+        for sf in shown
+    )
+    remaining = len(result.skipped_files) - len(shown)
+    if remaining:
+        described += f"; and {remaining} more: run dct validate"
+    return [
+        f"boards: {result.count} found, {len(result.skipped_files)} skipped: {described}"
+    ]
+
+
+def _local_checkout(
+    start: Path,
+) -> tuple[list[str], GitCheckoutFacts, list[DeclaredSource]]:
+    """This checkout's own facts -- path, git, boards, declared sources --
+    computed with zero network access, so `dct cloud status` reports them the
+    same before, during, or after signing in.
+
+    Returns the printable lines plus the two pieces of state
+    `_human_steps_ahead` also needs (the git facts and the declared
+    sources), so neither is computed twice.
+    """
+    lines = ["[bold]This checkout[/bold]"]
+    root = find_dct_root(start)
+    sources: list[DeclaredSource] = []
+    if root is None:
+        lines.append(
+            f"path: no {DBT_CHARTS_YML} found -- create {escape(str(start / DBT_CHARTS_YML))}"
+            " (an empty file is enough)."
+        )
+    else:
+        lines.append(f"path: {escape(str(root))}")
+        project = FilesystemProject(root)
+        lines.extend(_checkout_board_lines(project))
+        sources_result = read_project_sources(project)
+        sources = sources_result.sources
+        lines.extend(_checkout_source_lines(sources, sources_result.error))
+    git_facts = git_checkout_facts(start)
+    lines.extend(_checkout_git_lines(git_facts))
+    return lines, git_facts, sources
+
+
+@dataclass(frozen=True)
+class _CloudTie:
+    """The "cloud:" fact for the "This checkout" section, plus the two
+    pieces of state `_human_steps_ahead` derives from it."""
+
+    line: str | None
+    needs_project_connect: bool
+    tied_project: ProjectStatus | None
+
+
+def _cloud_tie_line(
+    client: CloudClient, org: str, status_result: OrgStatus, git_facts: GitCheckoutFacts
+) -> _CloudTie:
+    """Which of *org*'s projects this directory is tied to, by
+    ``published_to`` first then a git-remote match -- or that nothing ties
+    it, so the human knows a GitHub pick is still ahead.
+
+    An org with no projects yet (``missing_project``) IS the case a GitHub
+    pick is needed for -- it is reported as such (``needs_project_connect``
+    True) even though there is nothing to name a line about yet; the stage
+    table's own "Connect one" already covers the line. A failed project
+    listing degrades the same way (an advisory, not a status input) rather
+    than failing a status already in hand. Git state this probe could not
+    read (``git_facts.is_repo is None``) reports the tie as undetermined --
+    never asserted missing -- since the checkout might well be tied and this
+    command just cannot see it.
+    """
+    if not status_result.projects:
+        return _CloudTie(None, True, None)
+    here, _note = _published_here(client.host, Path.cwd())
+    if here is not None and here[0] == org:
+        project_slug = here[1]
+        tied = next((p for p in status_result.projects if p.slug == project_slug), None)
+        if tied is None:
+            return _CloudTie(
+                f"cloud: published_to records {escape(org)}/{escape(project_slug)},"
+                f" but that project is not in {escape(org)}'s project list",
+                False,
+                None,
+            )
+        return _CloudTie(
+            f"cloud: tied to {escape(org)}/{escape(project_slug)} (published_to)",
+            False,
+            tied,
+        )
+    if git_facts.is_repo is None:
+        return _CloudTie(
+            "cloud: undetermined -- git could not read this repository"
+            f" ({escape(git_facts.read_error or 'unknown error')})",
+            False,
+            None,
+        )
+    with suppress(CloudError):
+        matches = repo_matches(client, org, git_remotes(Path.cwd()))
+        if len(matches) == 1:
+            project_slug = matches[0][1]
+            tied = next(
+                (p for p in status_result.projects if p.slug == project_slug), None
+            )
+            return _CloudTie(
+                f"cloud: tied to {escape(org)}/{escape(project_slug)} (git remote match)",
+                False,
+                tied,
+            )
+        if matches:
+            names = ", ".join(escape(p) for _org, p in sorted(matches))
+            return _CloudTie(
+                f"cloud: tied to {escape(org)}'s projects {names} (git remote match)",
+                False,
+                None,
+            )
+        return _CloudTie(
+            f"cloud: not tied to any of {escape(org)}'s projects. If this"
+            " repository is not connected yet, connect it: dct cloud"
+            f" project connect --org {escape(org)}",
+            True,
+            None,
+        )
+    return _CloudTie(None, False, None)
+
+
+def _github_https_url(origin: str | None) -> str | None:
+    """*origin* as an https GitHub URL for `--git-url`, or None when it
+    isn't a github.com remote at all (ssh, scp-style, and https all
+    normalize through the same `repo_key` this checks against)."""
+    if origin is None:
+        return None
+    key = repo_key(origin)
+    if not key.startswith("github.com/"):
+        return None
+    return f"https://{key}.git"
+
+
+def _pick_step_line(git_facts: GitCheckoutFacts) -> str | None:
+    """The GitHub-connect line, or None when there is no origin to name at
+    all. `dct cloud` only ever connects a GitHub repository -- headlessly
+    via `--git-url` for a public one, or a browser pick otherwise; `status`
+    cannot know visibility, so both paths are named rather than assuming
+    the browser hop.
+
+    A non-`github.com` host is named, never asserted to be "not on GitHub"
+    outright: an SSH host alias (`git@github-work:acme/analytics.git`, a
+    `Host github-work` entry in `~/.ssh/config` pointing at github.com) reads
+    as host `github-work` here, and this probe has no way to resolve SSH
+    config -- claiming certainty either way would be exactly the "confident
+    wrong fact" this command must never print. The origin whose userinfo
+    could not even be parsed (`_strip_userinfo`'s placeholder) is named as
+    unreadable for the same reason: neither "on GitHub" nor "not on GitHub"
+    is a fact this probe actually has.
+    """
+    if git_facts.origin is None:
+        return None
+    if git_facts.origin == UNPARSEABLE_ORIGIN_PLACEHOLDER:
+        return (
+            "- this repository's origin could not be read, so dct cloud"
+            " cannot tell whether it connects to GitHub"
+        )
+    github_url = _github_https_url(git_facts.origin)
+    if github_url is not None:
+        return (
+            f"- connect this repository: dct cloud project connect --git-url"
+            f" {github_url} if it's public (no browser needed), otherwise pick"
+            " it in the browser: dct cloud project connect --start, then --wait"
+        )
+    key = repo_key(git_facts.origin)
+    host, _, path = key.partition("/")
+    if not host or not path:
+        return (
+            "- this repository's origin is not on GitHub; dct cloud only"
+            " connects GitHub repositories"
+        )
+    return (
+        f"- this repository's origin resolves to host {escape(host)}, not"
+        " github.com; dct cloud only connects GitHub repositories. If"
+        f" {escape(host)} is an SSH alias for github.com, connect with the"
+        " real URL instead: dct cloud project connect --git-url"
+        f" https://github.com/{escape(path)}.git"
+    )
+
+
+def _warehouse_step_line(
+    tied_project: ProjectStatus | None, local_sources: list[DeclaredSource]
+) -> str | None:
+    """The warehouse-related step for "Human steps ahead", or None.
+
+    Gated on the TIED project's own row when it can say something specific:
+    `tested_connection_count` is org-wide and caller-relative (see
+    `OrgStatus`'s own docstring), so it is never read here. A tied project
+    genuinely at UNTESTED_CONNECTION needs a connection created and tested;
+    UNMAPPED_SOURCES means a passing connection already exists and the
+    declared source(s) just need mapping to it -- two different actions,
+    not one. A tied project at MISSING_PROJECT/UNSYNCED, or with
+    `config_error` set, has not been read by Cloud yet, so its stage says
+    nothing about sources -- fall back to the local declared-source
+    heuristic, same as when no project is tied at all.
+    """
+    if tied_project is not None and not (
+        tied_project.stage in (SetupStage.MISSING_PROJECT, SetupStage.UNSYNCED)
+        or tied_project.config_error
+    ):
+        if tied_project.stage is SetupStage.UNTESTED_CONNECTION:
+            return (
+                "- create/test a warehouse connection: dct cloud connection create,"
+                " then dct cloud connection test"
+            )
+        if tied_project.stage is SetupStage.UNMAPPED_SOURCES:
+            return (
+                "- map the declared source(s) to a connection: dct cloud source map"
+                " <source> <connection>"
+            )
+        return None
+    if any(s.needs_connection for s in local_sources):
+        return (
+            "- create/test a warehouse connection: dct cloud connection create,"
+            " then dct cloud connection test"
+        )
+    return None
+
+
+def _push_step_line(git_facts: GitCheckoutFacts) -> str | None:
+    """The push step, or None. There must be a remote to push to; `ahead is
+    None` (no upstream tracking branch) is the strongest push signal of all
+    -- it means this branch may never have been pushed. `has_commits` gates
+    that case: an unborn branch (freshly `git init`, nothing committed yet)
+    also has no upstream, but there is nothing to push at all, so it must
+    not read the same as a real, unpublished branch."""
+    if not (
+        git_facts.is_repo is True
+        and git_facts.origin is not None
+        and git_facts.has_commits
+        and (git_facts.ahead is None or git_facts.ahead > 0)
+    ):
+        return None
+    if git_facts.ahead is None:
+        return (
+            "- push: this branch has no upstream tracking branch -- it may"
+            " never have been pushed"
+        )
+    return f"- push: {git_facts.ahead} local commit(s) not yet on the remote"
+
+
+def _human_steps_ahead(
+    *,
+    needs_project_connect: bool,
+    tied_project: ProjectStatus | None,
+    local_sources: list[DeclaredSource],
+    git_facts: GitCheckoutFacts,
+    show: bool,
+) -> list[str]:
+    """The human actions still required from here, once signed in and an
+    org has resolved -- what a reviewer-gated agent needs to collect
+    consent for once instead of discovering one refusal at a time.
+
+    ``show`` gates the whole list: false once every project is `done` with
+    nothing left broken (the caller passes `next_step is None` for that).
+    """
+    if not show:
+        return []
+    steps: list[str] = []
+    if needs_project_connect:
+        pick_line = _pick_step_line(git_facts)
+        if pick_line is not None:
+            steps.append(pick_line)
+    warehouse_line = _warehouse_step_line(tied_project, local_sources)
+    if warehouse_line is not None:
+        steps.append(warehouse_line)
+    push_line = _push_step_line(git_facts)
+    if push_line is not None:
+        steps.append(push_line)
+    if not steps:
+        return []
+    return ["[bold]Human steps ahead[/bold]", *steps]
+
+
+def _pre_login_steps(
+    git_facts: GitCheckoutFacts,
+    local_sources: list[DeclaredSource],
+    *,
+    locally_confirmed_tied: bool,
+) -> list[str]:
+    """Before login, only signing in and a push are locally certain --
+    whether a GitHub pick or a warehouse connection is still needed depends
+    on whether this checkout is already connected, which needs the network
+    to know. A teammate cloning an already-connected project must not be
+    told to redo work that is already done, so both are listed under a
+    separate, explicitly uncertain heading instead of asserted alongside
+    the certain ones. ``locally_confirmed_tied`` is the one exception: a
+    ``published_to`` record naming this host is itself a local, certain
+    fact, so it drops the pick line (not just from certain to possible).
+    """
+    lines = [
+        "[bold]Human steps ahead[/bold]",
+        "- sign in: dct cloud login --start, then dct cloud login --wait",
+    ]
+    push_line = _push_step_line(git_facts)
+    if push_line is not None:
+        lines.append(push_line)
+    possibly = [
+        line
+        for line in (
+            None if locally_confirmed_tied else _pick_step_line(git_facts),
+            _warehouse_step_line(None, local_sources),
+        )
+        if line is not None
+    ]
+    if possibly:
+        lines.append("Possibly (confirm after signing in):")
+        lines.extend(possibly)
+    return lines
+
+
+def _project_filtered(result: OrgStatus, org: str, project: str) -> OrgStatus:
+    """*result* narrowed to *project*'s row -- the same OrgStatus shape, just
+    a shorter `projects` list; `stage`/`next_step`/connection counts stay
+    org-wide truth, unchanged."""
+    matched = [p for p in result.projects if p.slug == project]
+    if not matched:
+        known = ", ".join(sorted(p.slug for p in result.projects)) or "none"
+        raise ContextUnresolved(f"No project {project!r} in {org}. Projects: {known}")
+    return result.model_copy(update={"projects": matched})
+
+
+def _has_credential(config: CloudConfig, host: str | None) -> bool:
+    """Whether a credential is available for `status`'s pre-login steps --
+    checked through the same seam `_cloud()` builds its real client from
+    (`client_from_config`), not `config.token` directly, so a test's faked
+    factory answers this consistently with the rest of the command. Never a
+    network call: `CloudClient.__init__` makes none."""
+    try:
+        with client_from_config(config, host):
+            return True
+    except (CredentialMissing, InvalidCredential):
+        return False
+
+
+# Undetermined git state -- no repo, no origin, nothing to read. Reused
+# wherever `_gather_local_checkout` cannot even attempt `git_checkout_facts`.
+_UNDETERMINED_GIT_FACTS = GitCheckoutFacts(
+    is_repo=None,
+    read_error=None,
+    branch=None,
+    origin=None,
+    ahead=None,
+    behind=None,
+    identity_missing=False,
+    has_commits=False,
+)
+
+_USERINFO_IN_TEXT = re.compile(r"(https?|ssh)://[^\s/@]+@")
+
+
+def _redact_userinfo_in_text(text: str) -> str:
+    """Strip `user:pass@`/`user@` before a host from anywhere in *text* --
+    the same concern `_strip_userinfo` exists for (cloud_client/context.py),
+    applied to a foreign exception's message rather than a known URL field:
+    the backstop below prints text it did not construct, so it must not
+    trust that text to be free of embedded credentials.
+    """
+    return _USERINFO_IN_TEXT.sub(lambda m: m.group(1) + "://", text)
+
+
+def _gather_local_checkout() -> tuple[
+    list[str], GitCheckoutFacts, list[DeclaredSource], Path
+]:
+    """This checkout's local section, total by construction.
+
+    The local section is advisory: gathering it must never be able to take
+    `status` down, no matter what this checkout contains. `_local_checkout`
+    and everything it calls (`list_boards`, `read_project_sources`,
+    `git_checkout_facts`) already handle their own documented failure
+    types with a specific, useful line; this is the one backstop for
+    anything they miss, so the Cloud half -- the org status, or the
+    ApiError contract under `--json` -- still prints regardless.
+    """
+    try:
+        cwd = Path.cwd()
+    except OSError:
+        # A path that (almost certainly) does not exist -- every downstream
+        # git/filesystem call already treats a nonexistent directory as
+        # "nothing here" safely (git_checkout_facts, find_dct_root,
+        # resolve_published_to all walk up or fail closed), so this needs
+        # no special-casing beyond the "path:" line itself.
+        return (
+            [
+                "[bold]This checkout[/bold]",
+                "path: undetermined -- the current directory no longer exists",
+            ],
+            _UNDETERMINED_GIT_FACTS,
+            [],
+            Path("/dct-status-unreadable-cwd"),
+        )
+    try:
+        checkout_lines, git_facts, local_sources = _local_checkout(cwd)
+    except Exception as exc:  # noqa: BLE001 — the local section is advisory and must never fail the command; every known failure type is handled by the narrow readers _local_checkout calls, this is the backstop for anything they miss
+        checkout_lines = [
+            "[bold]This checkout[/bold]",
+            "This checkout: could not be read"
+            f" ({type(exc).__name__}: {escape(_redact_userinfo_in_text(str(exc)))})",
+        ]
+        git_facts = _UNDETERMINED_GIT_FACTS
+        local_sources = []
+    return checkout_lines, git_facts, local_sources, cwd
+
+
 @cloud_app.command("status")
 def status(
-    org: OrgOption = None, host: HostOption = None, as_json: JsonOption = False
+    org: OrgOption = None,
+    project: StatusProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
 ) -> None:
-    """Readiness: what is set up in this org, and what it needs next."""
+    """Readiness: what is set up in this org, and what it needs next -- and,
+    always, this checkout's own facts (path, git, boards, declared sources)."""
+    checkout_lines, git_facts, local_sources, cwd = _gather_local_checkout()
+    _emit(checkout_lines, as_json)
+    # Inside _reporting: a malformed config.yml (bad YAML, an unknown key)
+    # must reach the user as the same clean error every other verb reports,
+    # not as a traceback with empty --json stdout -- load_config() itself
+    # can raise CloudConfigError, not just client_from_config downstream.
+    with _reporting(as_json):
+        pre_config = load_config()
+        if not _has_credential(pre_config, host):
+            here, _note = _published_here(host or pre_config.host, cwd)
+            _emit(
+                _pre_login_steps(
+                    git_facts, local_sources, locally_confirmed_tied=here is not None
+                ),
+                as_json,
+            )
     with _cloud(host, as_json) as (client, config):
         org_slug = _org(client, config, org)
         result = client.org_status(org_slug)
-        unconfirmed = _checkout_unconfirmed(client, org_slug, result)
+        tie = _cloud_tie_line(client, org_slug, result, git_facts)
+        if project:
+            result = _project_filtered(result, org_slug, project)
+    if tie.line:
+        _emit([tie.line], as_json)
     if as_json:
         print_json_result(result)
     else:
         _print_status(org_slug, result)
-    if unconfirmed:
-        # stderr in both modes: `--json` stdout is Cloud's own OrgStatus shape,
-        # and this is a fact about the local directory, not about the org.
-        err_console.print(
-            f"None of {escape(org_slug)}'s projects match this directory's"
-            " published_to or git remotes. If this repository is not connected"
-            " yet, the status above is for other projects -- connect it:"
-            f" dct cloud project connect --org {org_slug}",
-            soft_wrap=True,
-        )
-
-
-def _checkout_unconfirmed(
-    client: CloudClient, org: str, status_result: OrgStatus
-) -> bool:
-    """Whether nothing ties this directory to one of *org*'s projects.
-
-    False when the org has no projects yet: `status` already names
-    `project connect` as the next step then. An advisory, so a failed
-    project listing drops it rather than failing a status already in hand.
-    """
-    if not status_result.projects:
-        return False
-    here, _note = _published_here(client.host, Path.cwd())
-    if here is not None and here[0] == org:
-        return False
-    with suppress(CloudError):
-        return not repo_matches(client, org, git_remotes(Path.cwd()))
-    return False
+    _emit(
+        _human_steps_ahead(
+            needs_project_connect=tie.needs_project_connect,
+            tied_project=tie.tied_project,
+            local_sources=local_sources,
+            git_facts=git_facts,
+            show=result.next_step is not None,
+        ),
+        as_json,
+    )
 
 
 @cloud_app.command("orgs")
@@ -813,6 +1370,679 @@ def member_role(
         print_json_result(result)
         return
     typer.echo(f"{result.email} is now {result.role}.")
+
+
+@member_app.command("show")
+def member_show(
+    email: Annotated[str, typer.Argument(help="Member to show")],
+    org: OrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Show a member's profile and everything they can reach."""
+    with _cloud(host, as_json) as (client, config):
+        result = client.show_member(_org(client, config, org), email)
+    if as_json:
+        print_json_result(result)
+        return
+    _print_member_access(result)
+
+
+def _filters(**values: str | bool | None) -> dict[str, str]:
+    """Query parameters for the flags that were given; a flag left off is not
+    sent, so the server's own default applies."""
+    return {k: "true" if v is True else v for k, v in values.items() if v}
+
+
+@access_app.command("list")
+def access_list(
+    project: ProjectOption = None,
+    who: Annotated[
+        str | None,
+        typer.Option(
+            "--who", help="Grants that reach an email, a team slug, or group:<id>"
+        ),
+    ] = None,
+    role: Annotated[
+        str | None, typer.Option("--role", help="Only grants of this role key")
+    ] = None,
+    public: Annotated[
+        bool, typer.Option("--public", help="Only grants to anyone with the link")
+    ] = False,
+    org: OrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """List explicit board grants, narrowed like the Grants page."""
+    with _cloud(host, as_json) as (client, config):
+        result = client.list_access(
+            _org(client, config, org),
+            _filters(
+                project=project,
+                who=who,
+                role=role,
+                public=public,
+            ),
+        )
+    if as_json:
+        print_json_result(result)
+        return
+    _print_access(result)
+
+
+@access_app.command("check")
+def access_check(
+    who: Annotated[
+        str,
+        typer.Option("--who", help="An email, a team slug, or group:<id>"),
+    ],
+    path: Annotated[
+        str, typer.Option("--path", help="Board or folder path; blank is the root")
+    ] = "",
+    org: OrgOption = None,
+    project: ProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Can WHO open PATH, and why. Exits 0 if allowed, 1 if not, 2 on error."""
+    with _cloud(host, as_json, error_exit=2) as (client, config):
+        context = _context(client, config, org, project)
+        result = client.check_access(context.org, who, context.project, path)
+    if as_json:
+        print_json_result(result)
+    else:
+        _print_access_check(result)
+    raise typer.Exit(0 if result.allowed else 1)
+
+
+WhoOption = Annotated[
+    str, typer.Option("--who", help="An email, a team slug, or group:<id>")
+]
+PathOption = Annotated[
+    str, typer.Option("--path", help="Board or folder path; blank is the root")
+]
+
+
+def _access_change(
+    action: str,
+    fields: dict[str, str],
+    org: str | None,
+    project: str | None,
+    host: str | None,
+    as_json: bool,
+    destructive: bool = True,
+) -> None:
+    """Post one path write and print the server's one-line answer."""
+    with _cloud(host, as_json) as (client, config):
+        context = _context(
+            client,
+            config,
+            org,
+            project,
+            refuse_default=REFUSE_DEFAULT_DESTRUCTIVE if destructive else None,
+        )
+        result = client.change_access(
+            context.org, action, {"project": context.project, **fields}
+        )
+    if as_json:
+        print_json_result(result)
+        return
+    typer.echo(result.message)
+
+
+@access_app.command("grant")
+def access_grant(
+    who: WhoOption,
+    role: Annotated[str, typer.Option("--role", help="Role key, e.g. viewer")],
+    path: PathOption = "",
+    org: OrgOption = None,
+    project: ProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Give WHO a role at PATH."""
+    _access_change(
+        "",
+        {"who": who, "path": path, "role": role},
+        org=org,
+        project=project,
+        host=host,
+        as_json=as_json,
+        destructive=False,
+    )
+
+
+@access_app.command("revoke")
+def access_revoke(
+    who: WhoOption,
+    path: PathOption = "",
+    org: RefusingOrgOption = None,
+    project: RefusingProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Take back the grant WHO holds directly at PATH."""
+    _access_change(
+        "revoke",
+        {"who": who, "path": path},
+        org=org,
+        project=project,
+        host=host,
+        as_json=as_json,
+    )
+
+
+@access_app.command("remove-here")
+def access_remove_here(
+    who: WhoOption,
+    path: PathOption = "",
+    org: RefusingOrgOption = None,
+    project: RefusingProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Remove WHO's access at PATH, inherited access included."""
+    _access_change(
+        "remove-here",
+        {"who": who, "path": path},
+        org=org,
+        project=project,
+        host=host,
+        as_json=as_json,
+    )
+
+
+@access_app.command("restore")
+def access_restore(
+    who: WhoOption,
+    path: PathOption = "",
+    org: RefusingOrgOption = None,
+    project: RefusingProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Undo `remove-here`: let WHO's inherited access apply at PATH again."""
+    _access_change(
+        "restore",
+        {"who": who, "path": path},
+        org=org,
+        project=project,
+        host=host,
+        as_json=as_json,
+    )
+
+
+@access_app.command("inherit")
+def access_inherit(
+    path: PathOption = "",
+    org: RefusingOrgOption = None,
+    project: RefusingProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Make PATH inherit its parent folders' grants again."""
+    _access_change(
+        "inherit",
+        {"path": path},
+        org=org,
+        project=project,
+        host=host,
+        as_json=as_json,
+    )
+
+
+@access_app.command("stop-inheriting")
+def access_stop_inheriting(
+    path: PathOption = "",
+    org: RefusingOrgOption = None,
+    project: RefusingProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Keep who can open PATH now, and stop later parent changes reaching it."""
+    _access_change(
+        "stop-inheriting",
+        {"path": path},
+        org=org,
+        project=project,
+        host=host,
+        as_json=as_json,
+    )
+
+
+class GeneralAccessMode(StrEnum):
+    RESTRICTED = "restricted"
+    ORG = "org"
+    PUBLIC = "public"
+
+
+@access_app.command("general")
+def access_general(
+    mode: Annotated[
+        GeneralAccessMode,
+        typer.Argument(help="restricted, org (everyone in the org), or public"),
+    ],
+    path: PathOption = "",
+    org: RefusingOrgOption = None,
+    project: RefusingProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Choose who beyond the named grants can open PATH."""
+    _access_change(
+        "general",
+        {"mode": mode.value, "path": path},
+        org=org,
+        project=project,
+        host=host,
+        as_json=as_json,
+    )
+
+
+@public_app.command("list")
+def public_list(
+    org: OrgOption = None, host: HostOption = None, as_json: JsonOption = False
+) -> None:
+    """Show the public-access gates and every grant to anyone with the link."""
+    with _cloud(host, as_json) as (client, config):
+        result = client.list_public(_org(client, config, org))
+    if as_json:
+        print_json_result(result)
+        return
+    _print_public(result)
+
+
+GateProjectOption = Annotated[
+    str | None,
+    typer.Option(
+        "--project",
+        help="Flip this project's gate; without it, the organization's",
+    ),
+]
+
+
+def _public_gate(
+    allow: bool,
+    org: str | None,
+    project: str | None,
+    host: str | None,
+    as_json: bool,
+) -> None:
+    with _cloud(host, as_json) as (client, config):
+        org_slug = _org(client, config, org, refuse_default=REFUSE_DEFAULT_DESTRUCTIVE)
+        result = client.set_public(org_slug, project, allow=allow)
+    if as_json:
+        print_json_result(result)
+        return
+    typer.echo(result.message)
+
+
+@public_app.command("allow")
+def public_allow(
+    org: RefusingOrgOption = None,
+    project: GateProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Turn a public-access gate on (the org's, or one project's)."""
+    _public_gate(True, org=org, project=project, host=host, as_json=as_json)
+
+
+@public_app.command("disallow")
+def public_disallow(
+    org: RefusingOrgOption = None,
+    project: GateProjectOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Turn a public-access gate off (the org's, or one project's)."""
+    _public_gate(False, org=org, project=project, host=host, as_json=as_json)
+
+
+def _run_org(
+    host: str | None,
+    as_json: bool,
+    org: str | None,
+    call: Callable[[CloudClient, str], M],
+    show: Callable[[M], None],
+    destructive: bool = False,
+) -> None:
+    """One org-scoped call: resolve the org, call, print JSON or ``show``."""
+    with _cloud(host, as_json) as (client, config):
+        result = call(
+            client,
+            _org(
+                client,
+                config,
+                org,
+                refuse_default=REFUSE_DEFAULT_DESTRUCTIVE if destructive else None,
+            ),
+        )
+    if as_json:
+        print_json_result(result)
+        return
+    show(result)
+
+
+def _show_message(result: ActionResult | DeleteResult) -> None:
+    typer.echo(result.message)
+
+
+@team_app.command("list")
+def team_list(
+    org: OrgOption = None, host: HostOption = None, as_json: JsonOption = False
+) -> None:
+    """List teams and their members."""
+    _run_org(host, as_json, org, lambda c, o: c.list_teams(o), _print_teams)
+
+
+@team_app.command("create")
+def team_create(
+    name: Annotated[str, typer.Argument(help="Team name")],
+    description: Annotated[
+        str, typer.Option("--description", help="What the team is for")
+    ] = "",
+    org: OrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Create a team."""
+    _run_org(
+        host,
+        as_json,
+        org,
+        lambda c, o: c.create_team(o, name, description),
+        lambda team: typer.echo(f"Created team {team.slug}."),
+    )
+
+
+@team_app.command("delete")
+def team_delete(
+    team: Annotated[str, typer.Argument(help="Team slug")],
+    org: RefusingOrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Delete a team and revoke the access it held."""
+    _run_org(
+        host,
+        as_json,
+        org,
+        lambda c, o: c.delete_team(o, team),
+        _show_message,
+        destructive=True,
+    )
+
+
+MemberOption = Annotated[
+    str, typer.Option("--member", help="Email of an organization member")
+]
+
+
+@team_app.command("add")
+def team_add(
+    team: Annotated[str, typer.Argument(help="Team slug")],
+    member: MemberOption,
+    org: OrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Add an organization member to a team."""
+    _run_org(
+        host,
+        as_json,
+        org,
+        lambda c, o: c.change_team_member(o, team, member, add=True),
+        _show_message,
+    )
+
+
+@team_app.command("remove")
+def team_remove(
+    team: Annotated[str, typer.Argument(help="Team slug")],
+    member: MemberOption,
+    org: RefusingOrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Take a member off a team."""
+    _run_org(
+        host,
+        as_json,
+        org,
+        lambda c, o: c.change_team_member(o, team, member, add=False),
+        _show_message,
+        destructive=True,
+    )
+
+
+RoleNameOption = Annotated[str, typer.Option("--name", help="Role name")]
+EntitlementOption = Annotated[
+    list[str],
+    typer.Option(
+        "--entitlement",
+        help="What the role allows, repeatable (see `role list`)",
+    ),
+]
+
+
+@role_app.command("list")
+def role_list(
+    org: OrgOption = None, host: HostOption = None, as_json: JsonOption = False
+) -> None:
+    """List built-in roles and the organization's own."""
+    _run_org(host, as_json, org, lambda c, o: c.list_roles(o), _print_roles)
+
+
+@role_app.command("create")
+def role_create(
+    key: Annotated[str, typer.Argument(help="Role key, as `--role` takes it")],
+    name: RoleNameOption,
+    entitlement: EntitlementOption,
+    org: OrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Create a custom role."""
+    _run_org(
+        host,
+        as_json,
+        org,
+        lambda c, o: c.create_role(o, key, name, entitlement),
+        lambda role: typer.echo(f"Created role {role.key}."),
+    )
+
+
+@role_app.command("edit")
+def role_edit(
+    key: Annotated[str, typer.Argument(help="Custom role key")],
+    name: RoleNameOption,
+    entitlement: EntitlementOption,
+    org: OrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Replace a custom role's name and entitlements."""
+    _run_org(
+        host,
+        as_json,
+        org,
+        lambda c, o: c.edit_role(o, key, name, entitlement),
+        lambda role: typer.echo(f"Updated role {role.key}."),
+    )
+
+
+@role_app.command("archive")
+def role_archive(
+    key: Annotated[str, typer.Argument(help="Custom role key")],
+    org: RefusingOrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Archive a custom role; existing grants keep working."""
+    _run_org(
+        host,
+        as_json,
+        org,
+        lambda c, o: c.archive_role(o, key),
+        _show_message,
+        destructive=True,
+    )
+
+
+@identity_app.command("groups")
+def identity_groups(
+    provider: Annotated[
+        str | None, typer.Option("--provider", help="Only this provider's issuer")
+    ] = None,
+    org: OrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """List identity-provider groups. Read-only: the provider owns membership."""
+    _run_org(
+        host,
+        as_json,
+        org,
+        lambda c, o: c.list_identity_groups(o, _filters(provider=provider)),
+        _print_identity_groups,
+    )
+
+
+ConnectionArgument = Annotated[
+    str, typer.Argument(help="Connection slug, as `dct cloud connections` lists it")
+]
+
+
+@connection_access_app.command("list")
+def connection_access_list(
+    connection: ConnectionArgument,
+    org: OrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """List who holds a grant on a connection."""
+    _run_org(
+        host,
+        as_json,
+        org,
+        lambda c, o: c.list_connection_access(o, connection),
+        _print_connection_access,
+    )
+
+
+@connection_access_app.command("grant")
+def connection_access_grant(
+    connection: ConnectionArgument,
+    who: WhoOption,
+    role: Annotated[str, typer.Option("--role", help="Role key, e.g. editor")],
+    org: OrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Give WHO a role on a connection."""
+    _run_org(
+        host,
+        as_json,
+        org,
+        lambda c, o: c.change_connection_access(
+            o, connection, "", {"who": who, "role": role}
+        ),
+        _show_message,
+    )
+
+
+@connection_access_app.command("revoke")
+def connection_access_revoke(
+    connection: ConnectionArgument,
+    who: WhoOption,
+    org: RefusingOrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Take WHO's grant off a connection."""
+    _run_org(
+        host,
+        as_json,
+        org,
+        lambda c, o: c.change_connection_access(o, connection, "revoke", {"who": who}),
+        _show_message,
+        destructive=True,
+    )
+
+
+@audit_app.command("list")
+def audit_list(
+    since: Annotated[
+        str | None, typer.Option("--since", help="ISO 8601 time; later events only")
+    ] = None,
+    actor: Annotated[
+        str | None, typer.Option("--actor", help="Email of who made the change")
+    ] = None,
+    action: Annotated[
+        str | None,
+        typer.Option("--action", help="Kind of change, e.g. custom_role_changed"),
+    ] = None,
+    project: ProjectOption = None,
+    page: Annotated[int, typer.Option("--page", min=1, help="Page to show")] = 1,
+    limit: Annotated[
+        int, typer.Option("--limit", min=1, max=500, help="Events per page")
+    ] = 50,
+    org: OrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """List authorization changes, newest first."""
+    with _cloud(host, as_json) as (client, config):
+        result = client.list_audit(
+            _org(client, config, org),
+            {
+                **_filters(since=since, actor=actor, action=action, project=project),
+                "page": str(page),
+                "page_size": str(limit),
+            },
+        )
+    if as_json:
+        print_json_result(result)
+        return
+    _print_audit(result)
+
+
+class AuditFormat(StrEnum):
+    CSV = "csv"
+    JSON = "json"
+
+
+@audit_app.command("export")
+def audit_export(
+    format_: Annotated[
+        AuditFormat, typer.Option("--format", help="Output format")
+    ] = AuditFormat.JSON,
+    since: Annotated[
+        str | None, typer.Option("--since", help="ISO 8601 time; later events only")
+    ] = None,
+    actor: Annotated[
+        str | None, typer.Option("--actor", help="Email of who made the change")
+    ] = None,
+    action: Annotated[
+        str | None, typer.Option("--action", help="Kind of change")
+    ] = None,
+    project: ProjectOption = None,
+    org: OrgOption = None,
+    host: HostOption = None,
+) -> None:
+    """Write every matching event to stdout as CSV or JSON."""
+    with _cloud(host, as_json=False) as (client, config):
+        filters = _filters(since=since, actor=actor, action=action, project=project)
+        events = client.export_audit(_org(client, config, org), filters)
+    if format_ is AuditFormat.JSON:
+        typer.echo(json.dumps([e.model_dump(mode="json") for e in events], indent=2))
+        return
+    writer = csv.DictWriter(
+        sys.stdout, fieldnames=list(AuditEntry.model_fields), lineterminator="\n"
+    )
+    writer.writeheader()
+    writer.writerows(e.model_dump(mode="json") for e in events)
 
 
 @cloud_app.command("invites")
@@ -1100,7 +2330,10 @@ def _connect_next_step(org: str, project: ProjectSummary) -> str:
             f"dct cloud source map <source> <connection> --org {org} "
             f"--project {project.slug} ({project.unmapped_source_count} unmapped; "
             "dct cloud sources lists them). Sync only after mapping, or every "
-            "board renders without a source."
+            "board renders without a source. A source whose data lives in the "
+            "repo (CSV, JSON or Parquet, including an export of a local DuckDB "
+            "file) needs no connection: declare it as a file source in "
+            "dbt_charts.yml (`dct docs sources`), commit and push it, then sync."
         )
     return f"Next: dct cloud project sync --org {org} --project {project.slug}"
 
@@ -1259,6 +2492,14 @@ def project_sync(
         "RENDERED_AT and a new COMMIT once its re-render lands. Boards it "
         "did not change keep both, and are already serving the right content."
     )
+    if result.queued:
+        # Only when THIS call queued a sync -- one already in flight
+        # (`queued=False`) gets no fresh lag note, since this call started
+        # nothing new to wait on.
+        typer.echo(
+            "`dct cloud status` still reports unsynced until this sync"
+            " lands -- give it a few seconds and re-run it."
+        )
 
 
 @project_app.command("scaffold")
@@ -1606,6 +2847,13 @@ def render(
         return
     if force:
         typer.echo(f"Re-rendering {result.started} board(s).")
+    elif not (result.started or result.unrendered_remaining or result.blocked):
+        typer.echo(
+            "Nothing to start: no board is waiting for a first render (a sync "
+            "starts its own renders). A board whose last render failed is not "
+            "retried here: `dct cloud boards` shows each board's state, and "
+            "`dct cloud render --force` re-renders."
+        )
     else:
         typer.echo(
             f"Started {result.started} board render(s);"
@@ -1725,6 +2973,141 @@ def _print_members(result: MemberList) -> None:
     for member in result.members:
         table.add_row(member.email, member.name, member.role)
     dct_console().print(table)
+
+
+def _print_access_rows(rows: list[AccessRow]) -> None:
+    table = _table("PROJECT", "PATH", "WHO", "ROLE", "CAPABILITY")
+    for row in rows:
+        capability = row.capability
+        if row.limit_reason:
+            capability += (
+                f" (limited to {row.effective_capability}: {row.limit_reason})"
+            )
+        table.add_row(
+            row.project,
+            row.path or "(root)",
+            row.principal_label,
+            row.role,
+            capability + (" · stops inheriting" if row.stops_inheriting else ""),
+        )
+    dct_console().print(table)
+
+
+def _print_access(result: AccessList) -> None:
+    if not result.grants:
+        typer.echo("No grants match.")
+        return
+    _print_access_rows(result.grants)
+    typer.echo(
+        f"{len(result.grants)} grants reach {result.boards_covered} boards;"
+        f" {result.public_count} to anyone with the link."
+    )
+
+
+def _print_access_check(result: AccessCheck) -> None:
+    verdict = "Allowed" if result.allowed else "Denied"
+    typer.echo(
+        f"{verdict}: {result.who} on {result.project}:{result.path or '(root)'}"
+        f" -- {result.capability}"
+    )
+    for source in result.sources:
+        typer.echo(f"  {source.role} on {source.place}, {source.how}")
+    for note in result.notes:
+        typer.echo(f"  {note}")
+
+
+def _print_member_access(result: MemberAccess) -> None:
+    typer.echo(f"{result.name or result.email} <{result.email}> -- {result.role}")
+    typer.echo(f"Teams: {', '.join(result.teams) or 'none'}")
+    typer.echo(f"Identity groups: {', '.join(result.identity_groups) or 'none'}")
+    typer.echo("Grants:")
+    if result.grants:
+        _print_access_rows(result.grants)
+    else:
+        typer.echo("  none")
+    typer.echo(f"Boards they can open ({len(result.boards)}):")
+    for board in result.boards:
+        typer.echo(f"  {board.project}/{board.board}  {board.capability}")
+
+
+def _print_teams(result: TeamList) -> None:
+    if not result.teams:
+        typer.echo("No teams yet.")
+        return
+    table = _table("SLUG", "NAME", "MEMBERS")
+    for team in result.teams:
+        table.add_row(team.slug, team.name, ", ".join(team.members) or "-")
+    dct_console().print(table)
+
+
+def _print_roles(result: RoleList) -> None:
+    table = _table("KEY", "NAME", "KIND", "ENTITLEMENTS")
+    for role in result.roles:
+        table.add_row(
+            role.key,
+            role.display_name,
+            "built-in" if role.builtin else "custom",
+            ", ".join(role.entitlements),
+        )
+    dct_console().print(table)
+
+
+def _print_identity_groups(result: IdentityGroupList) -> None:
+    if not result.groups:
+        typer.echo("No identity groups.")
+        return
+    table = _table("ID", "GROUP", "PROVIDER", "MEMBERS", "ACTIVE")
+    for group in result.groups:
+        table.add_row(
+            group.id,
+            group.name,
+            group.provider,
+            str(group.member_count),
+            "yes" if group.is_active else "no",
+        )
+    dct_console().print(table)
+
+
+def _print_connection_access(result: ConnectionAccessList) -> None:
+    table = _table("WHO", "ROLE", "CAPABILITY")
+    for row in result.access:
+        capability = row.capability
+        if row.limit_reason:
+            capability += (
+                f" (limited to {row.effective_capability}: {row.limit_reason})"
+            )
+        table.add_row(row.principal_label, row.role or "-", capability)
+    dct_console().print(table)
+
+
+def _print_public(result: PublicAccess) -> None:
+    typer.echo(f"Organization gate: {'on' if result.org_allow_public else 'off'}")
+    table = _table("PROJECT", "GATE")
+    for project in result.projects:
+        table.add_row(project.slug, "on" if project.allow_public else "off")
+    dct_console().print(table)
+    typer.echo("Public grants:")
+    if result.grants:
+        _print_access_rows(result.grants)
+    else:
+        typer.echo("  none")
+
+
+def _print_audit(result: AuditList) -> None:
+    if not result.events:
+        typer.echo("No events.")
+        return
+    table = _table("TIME", "ACTOR", "PROJECT", "CHANGE")
+    for event in result.events:
+        table.add_row(
+            event.created_at.strftime("%Y-%m-%d %H:%M"),
+            event.actor or "system",
+            event.project or "-",
+            event.summary,
+        )
+    dct_console().print(table)
+    if result.next_page is not None:
+        typer.echo(f"More: --page {result.next_page}")
 
 
 def _print_invitations(result: InvitationList) -> None:

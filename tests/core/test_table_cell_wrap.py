@@ -62,7 +62,7 @@ def _has_ellipsis(svg: str) -> bool:
 
 
 def _render(chart, data, width):
-    from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+    from ._engine_render import render_table_svg
 
     return render_table_svg(
         resolve(chart, data, chart_style_context=_BOARD_STYLE),
@@ -188,9 +188,7 @@ class TestPaginatedAndHeightConstrained:
         # far more than 200px. Per-row heights must cap the slice.
         data = [{"description": _LONG_TEXT} for _ in range(10)]
         chart = resolve(_make_table(make_chart), data, chart_style_context=_BOARD_STYLE)
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         svg = render_table_svg(
             chart,
@@ -240,9 +238,7 @@ class TestPaginatedAndHeightConstrained:
         )
         chart = resolve(_raw_chart, data, chart_style_context=_BOARD_STYLE)
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         any_long_page_observed = False
         total_pages_seen = 0
@@ -318,9 +314,7 @@ class TestPaginatedAndHeightConstrained:
             chart_style_context=_BOARD_STYLE,
         )
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         indicator_ys: set[float] = set()
         for page in range(1, 30):
@@ -369,9 +363,7 @@ class TestPaginatedAndHeightConstrained:
             make_chart, style={"pagination": {"enabled": True, "page_rows": 5}}
         )
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         svg_wrap = render_table_svg(
             resolve(_raw, data_wrap, chart_style_context=_BOARD_STYLE),

@@ -7,9 +7,11 @@ one-line description per H2, then one entry per generated reference).
 `docs(topic="<slug>")` returns one slice. `docs(topic="all")` returns the
 syntax file plus the generated field reference — the unsliced read must not
 omit grammar keys only the reference documents. `docs(topic="reference")`
-returns the auto-generated field spec from yaml-reference.md.
+returns the field spec rendered from the compiler's models.
 `docs(topic="error-reference")` / `docs(topic="warning-reference")` return the
-auto-generated diagnostic references from error-reference.md / warning-reference.md.
+diagnostic references rendered from `diagnostics.REGISTRY`. The generated
+references are derived on first read, never shipped as files, so they cannot
+drift from the code they describe.
 `docs(search=...)` ranks H2/H3 units of the syntax file and the generated
 references with BM25.
 """
@@ -17,50 +19,38 @@ references with BM25.
 from __future__ import annotations
 
 import difflib
+import functools
 import importlib.resources
 import math
 import re
 from collections import Counter
 from itertools import zip_longest
-from typing import TYPE_CHECKING, Literal, NamedTuple
+from typing import Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.chart.authored import SUPPORTED_AUTHORED_CHART_TYPES
-
-if TYPE_CHECKING:
-    from importlib.abc import Traversable
+from dbt_charts.core.compile.schema import get_schema_for_prompt
+from dbt_charts.core.diagnostics.render_reference import render_reference
 
 _SYNTAX_FILE = importlib.resources.files("dbt_charts") / "DBT_CHARTS_SYNTAX.md"
-
-# Generated field spec ships inside the wheel at dbt_charts/agent_api/docs/yaml-reference.md.
-# Use importlib.resources so pip-installed users get the same file as editable installs.
-_REFERENCE_FILE = (
-    importlib.resources.files("dbt_charts.agent_api.docs") / "yaml-reference.md"
-)
-
-# Generated error/warning references ship inside the wheel at
-# dbt_charts/agent_api/docs/{error,warning}-reference.md.
-_ERROR_REFERENCE_FILE = (
-    importlib.resources.files("dbt_charts.agent_api.docs") / "error-reference.md"
-)
-_WARNING_REFERENCE_FILE = (
-    importlib.resources.files("dbt_charts.agent_api.docs") / "warning-reference.md"
-)
 
 _TOPIC_RE = re.compile(r"^[a-z0-9-]+$")
 _ALL_TOPIC = "all"
 _REFERENCE_TOPIC = "reference"
 _ERROR_REFERENCE_TOPIC = "error-reference"
 _WARNING_REFERENCE_TOPIC = "warning-reference"
-_DIAGNOSTIC_TOPICS = {_ERROR_REFERENCE_TOPIC, _WARNING_REFERENCE_TOPIC}
+_DIAGNOSTIC_LEVELS: dict[str, Literal["error", "warning"]] = {
+    _ERROR_REFERENCE_TOPIC: "error",
+    _WARNING_REFERENCE_TOPIC: "warning",
+}
 _CHARTS_TOPIC = "charts"
 
 DocsMode = Literal["index", "topic", "search"]
 
 
 class DocsCorpusMissingError(RuntimeError):
-    """A docs corpus file is unreachable. Indicates a broken wheel install."""
+    """The bundled syntax guide is unreachable. Indicates a broken wheel install."""
 
 
 class Topic(BaseModel):
@@ -154,39 +144,32 @@ def docs(
         try:
             return DocsResult(mode="search", search=_search(search, limit, topic))
         except DocsCorpusMissingError as exc:
-            # Same envelope every other mode returns for the same cause, so
-            # `--json` stays JSON on a broken install.
+            # An envelope, not a raise, so `--json` stays JSON on a broken install.
             return DocsResult(success=False, mode="search", errors=[str(exc)])
 
     if topic is None:
         return DocsResult(mode="index", topics=_topic_index())
 
-    generated_topics = _generated_topics()
-
     if topic == _ALL_TOPIC:
         # "Unsliced" has to mean it: the hand-authored guide alone omits every
         # grammar key only the generated field reference documents.
-        try:
-            reference = _read_generated(generated_topics[_REFERENCE_TOPIC])
-        except DocsCorpusMissingError as exc:
-            return DocsResult(success=False, mode="topic", errors=[str(exc)])
         return DocsResult(
             mode="topic",
             topic=Topic(
                 id=_ALL_TOPIC,
                 title="dbt charts YAML Syntax + Field Reference",
-                content=f"{read_full_text()}\n{reference}",
+                content=f"{read_full_text()}\n{_generated_text(_REFERENCE_TOPIC)}",
             ),
         )
 
-    if topic in generated_topics:
-        entry = generated_topics[topic]
-        try:
-            content = _read_generated(entry)
-        except DocsCorpusMissingError as exc:
-            return DocsResult(success=False, mode="topic", errors=[str(exc)])
+    if topic in _GENERATED_TOPICS:
         return DocsResult(
-            mode="topic", topic=Topic(id=topic, title=entry.title, content=content)
+            mode="topic",
+            topic=Topic(
+                id=topic,
+                title=_GENERATED_TOPICS[topic].title,
+                content=_generated_text(topic),
+            ),
         )
 
     if topic in SUPPORTED_AUTHORED_CHART_TYPES:
@@ -213,7 +196,9 @@ def docs(
     sections = _load_sections()
     if topic not in sections:
         all_topics = list(sections.keys())
-        close = difflib.get_close_matches(topic, all_topics, n=3, cutoff=0.4)
+        close = difflib.get_close_matches(topic, all_topics, n=3, cutoff=0.6) or list(
+            dict.fromkeys(hit.topic for hit in _search(topic, 3, None))
+        )
         hints = (
             [f"Did you mean: {', '.join(close)}"]
             if close
@@ -258,50 +243,35 @@ def slugify(heading: str) -> str:
 
 
 class _GeneratedTopic(NamedTuple):
-    """One auto-generated reference: where it lives and how to describe it."""
+    """How the topic index describes one generated reference."""
 
-    file: Traversable
     title: str
     description: str
-    missing_message: str
 
 
-def _generated_topics() -> dict[str, _GeneratedTopic]:
-    """``{topic: _GeneratedTopic}`` for the generated references.
-
-    Rebuilt on every call (not module-level) so tests that monkeypatch
-    _REFERENCE_FILE / _ERROR_REFERENCE_FILE / _WARNING_REFERENCE_FILE on
-    this module see their patched value — a frozen module-level dict would
-    keep the file reference bound at import time.
-    """
-    return {
-        _REFERENCE_TOPIC: _GeneratedTopic(
-            _REFERENCE_FILE,
-            "dbt charts YAML Field Reference (generated)",
-            "Every board field, generated from the compiler's own models.",
-            "yaml-reference.md not found inside the dbt_charts package. Regenerate with the repo's `gen-references`/`gen-yaml-reference` recipe and commit the result.",
-        ),
-        _ERROR_REFERENCE_TOPIC: _GeneratedTopic(
-            _ERROR_REFERENCE_FILE,
-            "dbt charts Error Reference (generated)",
-            "Every ERR- code, with what raises it and how to fix it.",
-            "error-reference.md is missing from the installed package.",
-        ),
-        _WARNING_REFERENCE_TOPIC: _GeneratedTopic(
-            _WARNING_REFERENCE_FILE,
-            "dbt charts Warning Reference (generated)",
-            "Every WARN- code, with what raises it and how to fix it.",
-            "warning-reference.md is missing from the installed package.",
-        ),
-    }
+_GENERATED_TOPICS = {
+    _REFERENCE_TOPIC: _GeneratedTopic(
+        "dbt charts YAML Field Reference (generated)",
+        "Every board field, generated from the compiler's own models.",
+    ),
+    _ERROR_REFERENCE_TOPIC: _GeneratedTopic(
+        "dbt charts Error Reference (generated)",
+        "Every ERR- code, with what raises it and how to fix it.",
+    ),
+    _WARNING_REFERENCE_TOPIC: _GeneratedTopic(
+        "dbt charts Warning Reference (generated)",
+        "Every WARN- code, with what raises it and how to fix it.",
+    ),
+}
 
 
-def _read_generated(topic: _GeneratedTopic) -> str:
-    """Read one generated reference, or raise — a missing file is a broken install."""
-    try:
-        return topic.file.read_text(encoding="utf-8")
-    except FileNotFoundError as exc:
-        raise DocsCorpusMissingError(topic.missing_message) from exc
+@functools.cache
+def _generated_text(topic: str) -> str:
+    """Render one generated reference; cached because search reads all three
+    on every call and the field reference walks every model."""
+    if topic == _REFERENCE_TOPIC:
+        return get_schema_for_prompt() + "\n"
+    return render_reference(_DIAGNOSTIC_LEVELS[topic], with_anchors=False)
 
 
 def _slice(text: str, marker: str) -> list[tuple[str, str]]:
@@ -366,7 +336,7 @@ def _topic_index() -> list[TopicEntry]:
         for slug, (title, body) in _load_sections().items()
     ] + [
         TopicEntry(id=slug, title=entry.title, description=entry.description)
-        for slug, entry in _generated_topics().items()
+        for slug, entry in _GENERATED_TOPICS.items()
     ]
 
 
@@ -402,11 +372,10 @@ def _units() -> list[_Unit]:
         for title, h2_body in _slice(read_full_text(), "## ")
         for section, body in _subsections(title, h2_body)
     ]
-    for topic, entry in _generated_topics().items():
-        text = _read_generated(entry)
+    for topic in _GENERATED_TOPICS:
         units.extend(
             _Unit(topic, title, section, body)
-            for title, h2_body in _slice(text, "## ")
+            for title, h2_body in _slice(_generated_text(topic), "## ")
             for section, body in _subsections(title, h2_body)
         )
     return units
@@ -423,11 +392,11 @@ def _subsections(title: str, h2_body: str) -> list[tuple[str, str]]:
 
 
 def _search_scopes() -> set[str]:
-    return set(_load_sections()) | set(_generated_topics())
+    return set(_load_sections()) | set(_GENERATED_TOPICS)
 
 
 def _source(unit: _Unit) -> str:
-    if unit.topic in _DIAGNOSTIC_TOPICS:
+    if unit.topic in _DIAGNOSTIC_LEVELS:
         return "diagnostics"
     return "reference" if unit.topic == _REFERENCE_TOPIC else "syntax"
 

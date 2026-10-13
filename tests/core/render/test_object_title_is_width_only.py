@@ -30,7 +30,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
     resolve_style_and_context,
 )
-from dbt_charts.core.render.chart.table import render_table_svg
+
+from .._engine_render import render_table_svg
 
 
 def _board_style():
@@ -144,8 +145,9 @@ class TestRendererTitleParityAcrossObjectTypes:
         (~720px → H2). The 576-vs-544 audit regression would surface here
         as a size mismatch between chart and table.
         """
-        from dbt_charts.core.render.chart.spark_bar import render_spark_bar_svg
         from dbt_charts.core.render.chart.vega_lite import render_chart
+
+        from .._engine_render import render_spark_bar_svg
 
         board_rs, board_ctx = resolve_style_and_context(get_theme_style())
         outer_width = 720.0

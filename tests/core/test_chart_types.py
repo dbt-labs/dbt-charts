@@ -201,9 +201,7 @@ class TestTableChart:
     """Tests for table chart SVG generation."""
 
     def test_table_renders_svg(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", title="Test Table")
         data = [
@@ -271,9 +269,7 @@ class TestTableChart:
         assert len(parsed["data"]) == 2
 
     def test_table_with_empty_data(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", title="Empty Table")
         chart = resolve(chart, [], chart_style_context=_BOARD_STYLE)
@@ -288,9 +284,7 @@ class TestTableChart:
         assert "No data" in svg
 
     def test_table_number_formatting(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table")
         data = [{"count": 1234567, "amount": 9876.54}]
@@ -309,9 +303,7 @@ class TestTableChart:
         assert "1,234,567" not in svg  # not full precision
 
     def test_table_truncates_rows(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table")
         data = [{"id": i, "value": i * 10} for i in range(50)]

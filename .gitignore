@@ -17,3 +17,7 @@ htmlcov/
 .coverage
 # just demo's scratch project (justfile's demo_dir)
 .demo/
+# Rust extension build outputs
+target/
+*.so
+*.pyd

@@ -34,9 +34,10 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     slice_mark_to_vl,
 )
 from dbt_charts.core.render.errors import RenderError
-from dbt_charts.core.render.numeral_expr import numeral_vega_expr
+from dbt_charts.core.render.numeral_expr import numeral_vega_expr, vl_format_key
 from dbt_charts.core.render.utils import font_style_to_mark, normalize_data_types
 from dbt_charts.core.text.case import field_display_text
+from dbt_charts.core.text.predefined_formats import VEGA_ARMS
 
 _ARC_TOTAL_FIELD = "__dbt_arc_total"
 # Composed text field for a center total with an affix a d3 spec cannot hold.
@@ -228,7 +229,7 @@ class PieEmitter:
             "title": field_display_text(chart.theta, chart.field_labels, legend_font),
         }
         if fmt.spec:
-            theta_enc["format"] = fmt.spec
+            theta_enc.update(vl_format_key(fmt.spec))
 
         arc_encoding = {"theta": theta_enc}
 
@@ -325,7 +326,9 @@ class PieEmitter:
                     {"calculate": calc, "as": _ARC_TOTAL_TEXT_FIELD}
                 )
                 value_enc["text"] = {"field": _ARC_TOTAL_TEXT_FIELD, "type": "nominal"}
-            elif total_fmt.notation is not None and total_fmt.spec:
+            elif total_fmt.spec and (
+                total_fmt.notation is not None or total_fmt.spec in VEGA_ARMS
+            ):
                 expr = numeral_vega_expr(
                     f"datum.{_ARC_TOTAL_FIELD}", total_fmt.spec, total_fmt.notation
                 )

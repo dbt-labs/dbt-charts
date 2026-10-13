@@ -33,7 +33,8 @@ def _make_wide_table(width: float) -> str:
     """
     from dbt_charts.core.compile.models.chart.normalized import TableChart
     from dbt_charts.core.compile.models.query.normalized import SqlQuery
-    from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+
+    from ._engine_render import render_table_svg
 
     chart = TableChart(
         id="test_cascade",
@@ -133,9 +134,8 @@ class TestNumericAutoWidth:
     def test_numeric_values_do_not_overlap_adjacent_columns(self):
         """Adjacent column text must not have overlapping x extents."""
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = TableChart(
             id="test_numeric_overlap",

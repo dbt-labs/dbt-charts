@@ -50,6 +50,7 @@ from dbt_charts.core.render.variables_resolve import (
     UNSET_SELECT_LABEL,
     read_only_unset_label,
 )
+from dbt_charts.core.text.format_d3 import active_time_locale, active_week_start
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -280,6 +281,16 @@ def _draw_control(
         if control.can_unset:
             label = read_only_unset_label(control.var_def, default_label)
             unset += f' data-dbt-unset-label="{escape_attr(label)}"'
+    time_locale = ""
+    if traits_of(box.input).ornament == "calendar" and controls_are_interactive():
+        locale = active_time_locale()
+        names = {
+            "months": locale["months"],
+            "days": locale["days"],
+            "shortDays": locale["shortDays"],
+            "weekStart": active_week_start(),
+        }
+        time_locale = f' data-dbt-time-locale="{escape_attr(json.dumps(names))}"'
     # The chrome draws the committed value; the options a host opens travel
     # with it, so a live board needs no second round trip for something the
     # render already resolved. Only a live board: the full domain of a filter is
@@ -292,7 +303,7 @@ def _draw_control(
     )
     return (
         f'<g data-dbt-variable="{escape_attr(box.name)}"{handle} '
-        f'data-dbt-input="{escape_attr(box.input)}"{checked}{disabled}{value_attr}{bounds}{unset}{options} '
+        f'data-dbt-input="{escape_attr(box.input)}"{checked}{disabled}{value_attr}{bounds}{unset}{time_locale}{options} '
         f'data-dbt-x="{px(x)}" data-dbt-y="{px(box.y)}" '
         f'data-dbt-width="{px(box.width)}" data-dbt-height="{px(box.height)}">'
         f"{''.join(parts)}</g>"

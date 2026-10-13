@@ -232,7 +232,7 @@ ERR_BAR_DUPLICATE_ROWS = REGISTRY.register(
     ErrorCode(
         code="ERR-BAR-DUPLICATE-ROWS",
         domain="render",
-        title="Bar chart data has duplicate rows that require aggregation",
+        title="Chart data has duplicate rows that require aggregation",
         message_template=(
             "{chart_type} chart {chart_id!r} requires pre-aggregated data "
             "with at most one row per plotted key ({field_list}). "
@@ -240,9 +240,9 @@ ERR_BAR_DUPLICATE_ROWS = REGISTRY.register(
             "Aggregate in the query before rendering."
         ),
         doc=(
-            "Fired when a bar, horizontal-bar, or grouped-bar chart receives data "
-            "with more than one row per plotted key. These chart types require "
-            "pre-aggregated data; aggregate in the query before rendering."
+            "Fired when a bar, line, or area chart receives data with more than "
+            "one row per plotted key. These chart types require pre-aggregated "
+            "data; aggregate in the query before rendering."
         ),
         docs_topic="charts",
     )
@@ -1949,9 +1949,10 @@ WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER = REGISTRY.register(
         ),
         fix_template="Set `{format_key}` to {suggestion} to match the field's meaning.",
         doc=(
-            "Fires when a chart's y-encoding field name looks like money or a "
-            "percentage but the chart's baked y-axis format is unfit to render "
-            "that kind. Detection is name-based: fields ending in _usd, _revenue, "
+            "Fires when a chart's y-encoding field, a KPI's headline or "
+            "support value, or a table column looks like money or a percentage "
+            "but its resolved format is unfit to render that kind (a KPI or "
+            "table column warns only when its values are numbers). Detection is name-based: fields ending in _usd, _revenue, "
             "_amount, _pct, _rate, etc. (or bare names like `share`, `mrr`) "
             "trigger when the resolved y-axis format is unfit for that kind. A "
             "percent-classified field needs a `%` in the resolved format or in an "
@@ -1966,11 +1967,13 @@ WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER = REGISTRY.register(
             "dollar spec (`$,.2f`), except for a currency-classified field "
             "whose trailing `_<code>` names a currency dbt Charts recognizes "
             "(`_eur`, `_gbp`): it suggests `,.2f` with `prefix: '€'` (that "
-            "currency's own symbol). Also fires on a visible table column with "
-            "no number format whose non-null values are all numbers between 0 "
-            "and 1, and not all exactly 0 or 1 (a flag): left unformatted it "
+            "currency's own symbol). A visible table column warns when it has no "
+            "number format and its name looks like money or a percentage, "
+            "or, whatever its name, its non-null values are all numbers between "
+            "0 and 1 and not all exactly 0 or 1 (a flag): left unformatted it "
             "renders as a bare fraction (0.4367 shows as `0.44`). The fix is to set "
-            "`style.columns.<name>.format`, e.g. `.1%`. Pivot measure columns "
+            "`style.columns.<name>.format`, e.g. `.1%`; a KPI takes "
+            "`style.value.format` or `style.support.format`. Pivot measure columns "
             "are not checked."
         ),
         docs_topic="charts",
@@ -2006,7 +2009,7 @@ WARN_NORMALIZE_PERCENT_FORMAT_READS_RAW_VALUE = REGISTRY.register(
             "every one of those reads the RAW column value. A count of 20 "
             "under a percent format therefore prints as `2000%`. Both "
             "authoring doors reach the same baked format and both fire: "
-            "`style.number_format` (or a chart's `format:`) and an authored "
+            "the query's `formats:` and an authored "
             "`style.axis_y.labels.format`. A chart whose measure is already a "
             "0..1 share, every group summing to about 1, is the honest case "
             "and never fires: there the raw value and the painted share are "
@@ -2049,28 +2052,6 @@ WARN_PIE_DOMINANT_SEGMENT = REGISTRY.register(
             "conveys a single value; the other slices are visually negligible. "
             "A near-single-value pie should be a KPI (the dominant share) plus a "
             "breakdown elsewhere."
-        ),
-        docs_topic="charts",
-    )
-)
-
-WARN_PIE_TOO_MANY_SEGMENTS = REGISTRY.register(
-    WarningCode(
-        code="WARN-PIE-TOO-MANY-SEGMENTS",
-        domain="render",
-        title="Pie has too many slices to read",
-        message_template=(
-            "Pie chart {chart_id!r} has {segment_count} segments; "
-            "angles are hard to compare past {max_segments} slices."
-        ),
-        fix_template=(
-            "Use a bar chart sorted by value, or group small segments into 'Other'."
-        ),
-        doc=(
-            "Fires on pie/donut charts whose query returns more segments than a "
-            "reader can compare by angle. Humans judge angle poorly past a handful "
-            "of slices; a pie with many segments is unreadable and should be a "
-            "sorted bar chart."
         ),
         docs_topic="charts",
     )
@@ -2331,23 +2312,25 @@ WARN_STATIC_PAGINATION_CAPPED = REGISTRY.register(
         title="Static export stopped short of every table page",
         message_template=(
             "Table {chart_id!r}: static export pre-rendered {rendered_pages} "
-            "of {total_pages} pages; rows past page {rendered_pages} are not "
-            "in this file."
+            "of {total_pages} pages ({page_rows} rows each, {total_rows} rows "
+            "total); rows past page {rendered_pages} are not in this file."
         ),
         fix_template=(
             "Reduce the row count, raise style.pagination.page_rows so fewer "
-            "pages are needed, or view the table on an interactive host (dct "
-            "serve, Cloud) instead of a static export."
+            "pages are needed, give the table a taller slot, or view it on an "
+            "interactive host (dct serve, Cloud) instead of a static export."
         ),
         doc=(
-            "Fires when a static export (dct render --format html/svg) has a "
-            "table with more pages than the renderer will pre-draw. A static "
-            "export ships no JS runtime that can ask a server for another "
-            "page, so every page's rows are pre-rendered into the artifact "
-            "as toggle groups; left uncapped, that makes file size scale with "
-            "total row count instead of page size. Past the cap, the "
-            "renderer stops pre-rendering; the artifact shows only the "
-            "first N pages, and states so in the exported file itself."
+            "Fires when a static export (dct render --format html/svg/png) has "
+            "a table with more pages than the renderer will pre-draw AND its "
+            "slot is too short for the note that says so inside the file. A "
+            "static export ships no JS runtime that can ask a server for "
+            "another page, so every page's rows are pre-rendered into the "
+            "artifact as toggle groups; left uncapped, that makes file size "
+            "scale with total row count instead of page size. Past the cap the "
+            "artifact shows only the first N pages. When the slot has room, "
+            "the file states the cap itself and nothing fires; the text format "
+            "states the page counts and never fires."
         ),
         docs_topic="charts",
     )
@@ -2370,9 +2353,8 @@ WARN_TABLE_COLUMNS_OVERFLOW = REGISTRY.register(
         doc=(
             "Fires when a table needs more width than the slot it was given. A "
             "table sizes each column to its minimum readable width; when those "
-            "widths sum past the available width, the renderer widens the whole "
-            "table past its slot, so in a dashboard it spills over its neighbor "
-            "or is clipped, printing columns on top of each other."
+            "widths sum past the available width, the renderer clips the table "
+            "at its slot's edge, so the columns past it are not shown."
         ),
         docs_topic="charts",
     )
@@ -2680,6 +2662,28 @@ WARN_KPI_LABEL_TRUNCATED = REGISTRY.register(
     )
 )
 
+WARN_KPI_SUPPORT_TRUNCATED = REGISTRY.register(
+    WarningCode(
+        code="WARN-KPI-SUPPORT-TRUNCATED",
+        domain="render",
+        title="KPI card support line was truncated",
+        message_template=(
+            "Chart {chart_id!r}: KPI support line was truncated: "
+            "the authored text {authored_text!r} did not fit within the "
+            "card at the available width."
+        ),
+        fix_template=(
+            "Shorten the support label, widen the card, or use a smaller font size."
+        ),
+        doc=(
+            "Fires when the KPI support explainer is cut with an ellipsis "
+            "because the support row is wider than the card. The glyph and "
+            "value stay whole; the message shows the full authored explainer."
+        ),
+        docs_topic="charts",
+    )
+)
+
 WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED = REGISTRY.register(
     WarningCode(
         code="WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED",
@@ -2800,7 +2804,7 @@ WARN_TABLE_TEXT_TRUNCATED = REGISTRY.register(
         domain="render",
         title="Table column header or cell text was truncated",
         message_template=(
-            "Chart {chart_id!r}: column {authored_field!r} has truncated text: "
+            "Chart {chart_id!r}: truncated text in column(s) {authored_field}: "
             "{truncation_count} value(s) were cut with an ellipsis."
         ),
         fix_template=(
@@ -2809,7 +2813,8 @@ WARN_TABLE_TEXT_TRUNCATED = REGISTRY.register(
         doc=(
             "Fires when a table column header or one or more cell values are "
             "clipped with an ellipsis because they exceed the column width. "
-            "One warning fires per column that has any truncation."
+            "One warning fires per table; each truncated column is a related "
+            "location."
         ),
         docs_topic="charts",
     )
@@ -3122,6 +3127,30 @@ ERR_TABLE_FORMAT_KIND_MISMATCH = REGISTRY.register(
             "time, so `dct validate` accepts either mismatch; this is "
             "caught per cell at render time instead, once the actual value "
             "kind is known."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_URL_VALUE_NOT_ABSOLUTE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-URL-VALUE-NOT-ABSOLUTE",
+        domain="render",
+        title="a `url` column holds a value that is not an absolute http(s) URL",
+        message_template=(
+            "{where} is formatted `url`, but row value {value!r} is not an "
+            "absolute http(s) URL."
+        ),
+        doc=(
+            "Fired when a column formatted `url` holds a value without an "
+            "`http://` or `https://` scheme, such as `www.example.com`. A "
+            "scheme-less value would link to a board-relative path and land on "
+            "the wrong page, so the render stops instead. Fix the value in the "
+            "query (for example `'https://' || host`), or drop `format: url`."
+        ),
+        summary=(
+            "Fired when a column formatted `url` holds a value without an "
+            "`http://` or `https://` scheme."
         ),
         docs_topic="charts",
     )

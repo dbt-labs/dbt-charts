@@ -27,6 +27,7 @@ def serve_command(*, project: FilesystemProject) -> None:
     """
     import asyncio
 
+    from dbt_charts.agent_api import set_surface
     from dbt_charts.agent_api.cache import project_cache_ctx
 
     # tach-ignore(cli->ai debt: route `dct mcp serve` via agent_api; burn-down task)
@@ -40,6 +41,8 @@ def serve_command(*, project: FilesystemProject) -> None:
     # the query text and the file version but never warehouse table state — so
     # a cache here serves pre-rebuild numbers for the life of the process.
     cache_env = os.getenv("DCT_CACHE_PATH")
+
+    set_surface("mcp")
 
     # Run the MCP server (stdio mode)
     # Note: We don't print anything to stdout as MCP uses it for communication

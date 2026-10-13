@@ -8,7 +8,7 @@ local templates against built-in versions.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path  # noqa: TID251 — local ejection-tracking manifest file
 from typing import TYPE_CHECKING, Any
@@ -27,7 +27,7 @@ def load_manifest(target_dir: Path, *, dbt_charts_version: str) -> dict[str, Any
         return {
             "schema_version": MANIFEST_SCHEMA_VERSION,
             "dbt_charts_version": dbt_charts_version,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
             "templates": {},
         }
     with manifest_path.open(encoding="utf-8") as f:

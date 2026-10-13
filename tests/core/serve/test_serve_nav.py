@@ -38,19 +38,75 @@ def _project(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_download_works_on_folder_index_board(tmp_path: Path) -> None:
-    """The download button on a folder-index board navigates to /dir/index.svg.
-    Verify that URL serves SVG (the URL suffix the nav.js generates for trailing-slash paths).
-    """
+@pytest.mark.parametrize(
+    ("page_url", "download_url"),
+    [
+        ("/a/", "/a.svg"),
+        ("/b/", "/b.svg"),
+        ("/", "/.svg"),
+    ],
+)
+def test_nav_download_url_serves_the_page_board(
+    tmp_path: Path, page_url: str, download_url: str
+) -> None:
+    """The download URL exports the board its page renders."""
+    boards = tmp_path / "charts"
+    (boards / "b").mkdir(parents=True)
+    (boards / "index.yml").write_text(_BOARD.replace("Overview", "Root"))
+    (boards / "a.yml").write_text(_BOARD.replace("Overview", "Plain"))
+    (boards / "b" / "index.yml").write_text(_BOARD.replace("Overview", "Folder"))
     with TestClient(
-        create_server(FilesystemProject(_project(tmp_path))),
+        create_server(FilesystemProject(tmp_path)),
         raise_server_exceptions=False,
     ) as client:
-        response = client.get("/support/index.svg")
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("image/svg+xml")
-    assert "attachment" in response.headers.get("content-disposition", "")
-    assert response.text.lstrip().startswith("<svg")
+        page = client.get(page_url)
+        download = client.get(download_url)
+    assert page.status_code == 200, page.text
+    assert download.status_code == 200, download.text
+    assert download.headers["content-type"].startswith("image/svg+xml")
+    assert "attachment" in download.headers.get("content-disposition", "")
+    page_title = {"/a/": "Plain", "/b/": "Folder", "/": "Root"}[page_url]
+    assert page_title in page.text
+    assert page_title in download.text
+
+
+def test_export_url_prefers_the_folder_index_over_a_same_named_board(
+    tmp_path: Path,
+) -> None:
+    boards = tmp_path / "charts"
+    (boards / "a").mkdir(parents=True)
+    (boards / "a.yml").write_text(_BOARD.replace("Overview", "Plain"))
+    (boards / "a" / "index.yml").write_text(_BOARD.replace("Overview", "Folder"))
+    with TestClient(
+        create_server(FilesystemProject(tmp_path)),
+        raise_server_exceptions=False,
+    ) as client:
+        page = client.get("/a/")
+        download = client.get("/a.svg")
+        index_download = client.get("/a/index.svg")
+    assert "Folder" in page.text
+    assert download.status_code == 200, download.text
+    assert "Folder" in download.text
+    assert "Plain" not in download.text
+    assert index_download.status_code == 200, index_download.text
+    assert "Folder" in index_download.text
+
+
+@pytest.mark.parametrize("download_url", ["/d.svg", "/.svg"])
+def test_export_url_of_a_directory_listing_is_404(
+    tmp_path: Path, download_url: str
+) -> None:
+    boards = tmp_path / "charts"
+    (boards / "d").mkdir(parents=True)
+    (boards / "d" / "tickets.yml").write_text(_BOARD)
+    (boards / "d.yml").write_text(_BOARD)
+    with TestClient(
+        create_server(FilesystemProject(tmp_path)),
+        raise_server_exceptions=False,
+    ) as client:
+        response = client.get(download_url)
+    assert response.status_code == 404
+    assert "//" not in response.json()["detail"]
 
 
 def test_served_board_includes_nav(tmp_path: Path) -> None:

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 # Product usage — a chart-heavy showcase board. Signups, sessions,
 # documents, templates, and signatures for Dundersign, authored data-honestly:
 # volume trends read from the mirrored serving rollup, and the sampled core

@@ -33,7 +33,7 @@ from __future__ import annotations
 import fnmatch
 import re
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from dbt_charts.cli.filesystem_project import (
@@ -77,7 +77,7 @@ def _schema_adapter_factory(cfg: dict[str, Any]) -> Any:
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _expand_targets(spec: str | None, candidates: list[str]) -> list[str]:

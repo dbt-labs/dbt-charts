@@ -14,7 +14,7 @@ Sites covered:
   chart/spark.render_spark_bar font_family param
   placeholder.apply_placeholder_opacity from resolved_style
   placeholder.add_placeholder_overlay from resolved_style
-  callout.render_callout_svg required resolved_style
+  engine.render_callout_card draws from the style it is given
   render_board_terminal resolved_style required (no global get_config() fallback)
 """
 
@@ -284,22 +284,6 @@ def test_g_render_title_uses_title_font_path_not_body(
 # =============================================================================
 
 
-def test_h_render_spark_bar_uses_font_param() -> None:
-    """render_spark_bar must use font: FontStyle param, not get_theme_style().font.family."""
-    from dbt_charts.core.compile.models.primitives import FontStyle
-    from dbt_charts.core.render.chart.spark import render_spark_bar
-
-    resolved_style = resolve_style(get_theme_style()).chart_defaults
-
-    svg = render_spark_bar(
-        50.0,
-        value_visible=True,
-        font=FontStyle(family="SentinelFontH"),
-        resolved_style=resolved_style,
-    )
-    assert "SentinelFontH" in svg
-
-
 # =============================================================================
 # J — placeholder.apply_placeholder_opacity
 # =============================================================================
@@ -367,19 +351,19 @@ def test_k_add_placeholder_overlay_uses_resolved_style() -> None:
 
 
 # =============================================================================
-# L — callout.render_callout_svg required resolved_style
+# L — engine.render_callout_card draws from the style it is given
 # =============================================================================
 
 
-def test_l_render_callout_svg_uses_resolved_style() -> None:
-    """render_callout_svg must use resolved_style, not the global get_config()."""
-    from dbt_charts.core.render.chart.callout import render_callout_svg
+def test_l_render_callout_card_uses_the_style_it_is_given() -> None:
+    """render_callout_card paints the given style's background, not a global default."""
+    from dbt_charts.core.render.engine import render_callout_card
 
-    # Should not raise — just verifying it runs using the given style.
-    svg = render_callout_svg(
+    style = resolve_style(get_theme_style()).chart_defaults.callout_error
+    svg = render_callout_card(
         message="test message",
         width=300.0,
-        callout_style=resolve_style(get_theme_style()).chart_defaults.callout_error,
-        base_dir=None,
+        style=style.model_copy(update={"background": "#123456"}),
+        chart_id="callout",
     )
-    assert "<svg" in svg
+    assert 'fill="#123456"' in svg

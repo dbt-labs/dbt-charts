@@ -172,6 +172,7 @@ def test_right_edge_house_alias_wired_through_full_resolve():
         width=800.0,
         datasets={},
         automatic_link_candidate=None,
+        x_date_range=None,
     )
     ay = resolved.style.axis_y
     assert ay.labels.align == "right"
@@ -206,6 +207,7 @@ def test_right_edge_theme_default_format_wired_through_full_resolve():
         width=800.0,
         datasets={},
         automatic_link_candidate=None,
+        x_date_range=None,
     )
     ay = resolved.style.axis_y
     assert ay.labels.format.spec == ".3~s"
@@ -238,6 +240,7 @@ def test_time_predefined_name_does_not_force_right_align_on_right_edge():
         width=800.0,
         datasets={},
         automatic_link_candidate=None,
+        x_date_range=None,
     )
     ay = resolved.style.axis_y
     assert ay.labels.format.raw == "date_short"
@@ -281,6 +284,7 @@ def test_vertical_bar_house_alias_forces_align_right():
         width=800.0,
         datasets={},
         automatic_link_candidate=None,
+        x_date_range=None,
     )
     assert resolved.style.axis_y.labels.align == "right"
 
@@ -322,6 +326,7 @@ def test_horizontal_bar_house_alias_does_not_force_align_right():
         width=800.0,
         datasets={},
         automatic_link_candidate=None,
+        x_date_range=None,
     )
     # Horizontal bar measure axis is edge=None, so no forced align.
     assert resolved.style.axis_y.labels.align != "right"
@@ -594,6 +599,7 @@ def test_horizontal_bar_explicit_right_position_does_not_force_align_right():
         width=800.0,
         datasets={},
         automatic_link_candidate=None,
+        x_date_range=None,
     )
     # Horizontal bar: ay_is_quantitative=False -> _force_right blocked even with
     # explicit position='right' and a house alias format.

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.board.normalized import (
     NO_TITLE_SHIFT,
     Board,
@@ -32,20 +33,18 @@ from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
 from dbt_charts.core.compile.models.chart.resolved.callout import ResolvedCalloutChart
 from dbt_charts.core.compile.models.chart.resolved.kpi import ResolvedKpiChart
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
-from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic, display_message
+from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.diagnostics.registry import REGISTRY
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 from dbt_charts.core.render.chart.spec_builders import additive_padding
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 from dbt_charts.core.render.errors import RenderError
-from dbt_charts.core.render.layout_sizing import RenderCache
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.primitives import BorderStyle
-    from dbt_charts.core.compile.models.style.resolved import ResolvedCalloutStyle
-from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.render.conditions import evaluate_visible
+from dbt_charts.core.render.engine import render_error_placard
+from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.svg_utils import (
     CardShadow,
     attr_name,
@@ -268,11 +267,12 @@ def _render_callout_block(
 
     return _wrap_rendered_chart_svg(
         ChartIdentity.from_resolved(chart),
-        _build_error_callout_svg(
+        render_error_placard(
             diagnostic,
-            available_width,
-            available_height,
-            resolved_style.chart_defaults.callout_error,
+            chart_id=chart.id,
+            width=available_width,
+            height=available_height,
+            style=resolved_style.chart_defaults.callout_error,
         ),
         outer_width=available_width,
         resolved_title=chart.id,
@@ -284,29 +284,6 @@ def _render_callout_block(
         # The placard draws at the full available size — no padding is baked
         # into it, so there is nothing for its box to sit outside of.
         ink_inset=_ZERO_PADDING,
-    )
-
-
-def _build_error_callout_svg(
-    diagnostic: Diagnostic,
-    width: float,
-    height: float,
-    callout_style: ResolvedCalloutStyle,
-) -> str:
-    """The error placard on its own — no chart, no wrapper, just the card."""
-    from dbt_charts.core.render.chart.callout import render_callout_svg
-
-    return render_callout_svg(
-        message=display_message(diagnostic),
-        width=width,
-        height=height,
-        title=_callout_error_title(diagnostic.code),
-        callout_style=callout_style,
-        base_dir=None,
-        code=diagnostic.code,
-        hint=diagnostic.hint,
-        doc_url=REGISTRY.get(diagnostic.code).doc_url,
-        markdown=False,  # runtime error text: identifiers/sql/tracebacks are not markdown
     )
 
 
@@ -329,11 +306,12 @@ def _render_chart_resolve_failure(
 
     return _wrap_rendered_chart_svg(
         failure.identity,
-        _build_error_callout_svg(
+        render_error_placard(
             failure.diagnostic,
-            available_width,
-            available_height,
-            resolved_style.chart_defaults.callout_error,
+            chart_id=failure.identity.id,
+            width=available_width,
+            height=available_height,
+            style=resolved_style.chart_defaults.callout_error,
         ),
         outer_width=available_width,
         resolved_title=failure.identity.id,
@@ -346,15 +324,6 @@ def _render_chart_resolve_failure(
         # into it, so there is nothing for its box to sit outside of.
         ink_inset=_ZERO_PADDING,
     )
-
-
-def _callout_error_title(code: str) -> str:
-    """The placard title is the registered diagnostic code's title — never a
-    hand-rolled generic label. REGISTRY.get raises on an unregistered code,
-    which cannot happen here: `code` came from exc.to_diagnostic(), which
-    already required exc.code to be a registered ErrorCode.
-    """
-    return REGISTRY.get(code).title
 
 
 def render_chart_item(
@@ -662,7 +631,7 @@ def _wrap_rendered_chart_svg(
     # Internal SVG-family renderers embed directly in the chart wrapper <g>;
     # extract their inner content to avoid a redundant nested <svg> viewport.
     # is_error_fallback marks the ChartDataError path, where the payload is a
-    # render_callout_svg card on top of any chart.type (including Vega).
+    # engine-drawn error placard on top of any chart.type (including Vega).
     # Vega/Vega-Lite output otherwise remains as a standalone nested <svg>.
     chart_type = identity.chart_type
     is_internal_svg = chart_type not in PAINTS_MARKS or is_error_fallback
@@ -684,11 +653,11 @@ def _wrap_rendered_chart_svg(
     # decision, so they travel as one value: a separate boolean beside the dict
     # would let the two disagree.
     if inset is not None:
-        # Width comes from the slot, never from `dims.width`: a table widened by
-        # column overflow (table.py) or a spark_bar clamped up to its min width
-        # renders past what it was given, and a box drawn from that reaches into
-        # the neighboring slot. Height is a genuine render-time fact — these
-        # families size to their content — so it does come from `dims`.
+        # Width comes from the slot, never from `dims.width`: a spark_bar
+        # clamped up to its min width renders past what it was given, and a box
+        # drawn from that reaches into the neighboring slot. Height is a genuine
+        # render-time fact — these families size to their content — so it does
+        # come from `dims`.
         inner_width = outer_width - inset["left"] - inset["right"]
         boundary = padded_authoring_content(
             chart_content, inner_width, dims.height, inset

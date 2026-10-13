@@ -537,3 +537,19 @@ def render_title(
     svg = renderer.render(blocks, width=width, padding=0.0)
     record_painted_faces(font_path_family, renderer.used_faces)
     return svg
+
+
+_PAGINATOR_GROUP_RE = re.compile(r'<g class="dbt-paginator".*?</g>', re.DOTALL)
+
+
+def strip_pagination_chrome(svg: str) -> str:
+    """Remove pagination controls from a rendered board SVG.
+
+    For a surface that can never run ``table_pagination.js`` — a raster
+    (PNG/PDF) or an SVG referenced via ``<img src>`` — the static-export
+    paginator would draw as pixels that look clickable but do nothing.
+    Rather than shipping that, the host strips the control before
+    rasterizing; the visible page's rows are untouched, so a table simply
+    shows its first page with no chrome — honest, not broken-looking.
+    """
+    return _PAGINATOR_GROUP_RE.sub("", svg)

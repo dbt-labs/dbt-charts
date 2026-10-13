@@ -15,7 +15,6 @@ from dbt_charts.core.compile.models.query.authored import (
 from dbt_charts.core.compile.models.refs import normalize_query_value
 from dbt_charts.core.compile.schema.introspection import introspect
 from dbt_charts.core.compile.schema.renderers.json_schema import render_yaml_schema
-from dbt_charts.core.compile.schema.renderers.vscode_schema import render_vscode_schema
 
 _ADAPTER: TypeAdapter[AuthoredQuery] = TypeAdapter(AuthoredQuery)
 
@@ -131,19 +130,6 @@ def test_strict_schema_and_runtime_accept_the_same_query_variants(
 
     AuthoredBoard.model_validate(board)
     _validate_board(render_yaml_schema(introspect()), board)
-
-
-@pytest.mark.parametrize("query", _REPRESENTATIVE_VALID_QUERIES)
-def test_vscode_schema_does_not_apply_variant_requirements_globally(
-    query: dict[str, object],
-) -> None:
-    board = {
-        "title": "Query schema parity",
-        "queries": {"sample": query},
-        "charts": {},
-    }
-
-    _validate_board(render_vscode_schema(introspect()), board)
 
 
 @pytest.mark.parametrize(

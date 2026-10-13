@@ -32,12 +32,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.render.chart.spark import (
-    render_spark,
-    render_spark_bar,
-    render_spark_columns,
-)
-from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+
+from ._engine_render import render_table_svg
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
@@ -49,72 +45,9 @@ _EFF = resolve_style(get_theme_style()).chart_defaults
 # ---------------------------------------------------------------------------
 
 
-class TestSparkBarRenderer:
-    """`spark.type: bar` — single horizontal bar, absolute magnitude, no track."""
-
-    def test_renders_single_bar(self) -> None:
-        svg = render_spark_bar(50, max_value=100, resolved_style=_EFF)
-        assert svg.startswith("<svg")
-        # exactly one fill rect (no background track)
-        assert svg.count("<rect") == 1
-
-    def test_width_proportional_to_value_over_max(self) -> None:
-        svg = render_spark_bar(50, max_value=100, width=100, resolved_style=_EFF)
-        # 50/100 == 50px
-        assert 'width="50.0"' in svg or 'width="50"' in svg
-
-
-class TestSparkBarNormalizeRenderer:
-    """`spark.type: bar-normalize` — single horizontal bar, scaled to max, track on."""
-
-    def test_renders_track_and_fill(self) -> None:
-        svg = render_spark_bar(75, max_value=100, normalize=True, resolved_style=_EFF)
-        assert svg.startswith("<svg")
-        # background track + fill rect
-        assert svg.count("<rect") == 2
-
-    def test_width_proportional_to_value_over_max(self) -> None:
-        svg = render_spark_bar(
-            50, max_value=200, normalize=True, width=100, resolved_style=_EFF
-        )
-        # 50/200 == 25% of width
-        assert 'width="25.0"' in svg
-
-
-class TestSparkColumnsRenderer:
-    """`spark.type: columns` — multi-value vertical bars."""
-
-    def test_renders_one_rect_per_value(self) -> None:
-        svg = render_spark_columns([10, 20, 30, 15, 25], resolved_style=_EFF)
-        assert svg.startswith("<svg")
-        assert svg.count("<rect") == 5
-
-    def test_single_value(self) -> None:
-        svg = render_spark_columns([42], resolved_style=_EFF)
-        assert svg.count("<rect") == 1
-
-
 # ---------------------------------------------------------------------------
 # Dispatcher tests
 # ---------------------------------------------------------------------------
-
-
-class TestRenderSparkDispatcher:
-    """`render_spark(spark_type=...)` routes the new variant names."""
-
-    def test_bar_routes_to_bar(self) -> None:
-        svg = render_spark(50, "bar", resolved_style=_EFF)
-        # bar = no background track, single fill rect
-        assert svg.count("<rect") == 1
-
-    def test_bar_normalize_routes_to_bar_with_track(self) -> None:
-        svg = render_spark(50, "bar-normalize", max=100, resolved_style=_EFF)
-        # bar-normalize = background track + fill
-        assert svg.count("<rect") == 2
-
-    def test_columns_routes_to_columns(self) -> None:
-        svg = render_spark([10, 20, 30], "columns", resolved_style=_EFF)
-        assert svg.count("<rect") == 3
 
 
 # ---------------------------------------------------------------------------

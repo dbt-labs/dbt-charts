@@ -1,0 +1,3 @@
+kind: Fixes
+body: '`dct init --yes` and runs without a terminal no longer install the VS Code or Cursor extension unless `--vscode` or `--cursor` is passed.'
+time: 2026-10-12T11:48:32.878391-07:00

@@ -35,7 +35,14 @@ from dbt_charts.core.compile.models.board.authored import (
     AUTHORED_BOARD_ADAPTER,
     AuthoredBoard,
 )
-from dbt_charts.core.utils import UniqueKeyLoader
+from dbt_charts.core.utils import BoardLoader, UniqueKeyLoader
+
+# This module only sees raw content, so the file is unknown here; the compiler
+# rebuilds the error with the real name, as it does for an empty document.
+UNNAMED_YAML_SOURCE = "the given YAML content"
+
+# The breaks libyaml counts a line on; a mark's ``line`` indexes this split.
+_YAML_BREAK_RE = re.compile(r"\r\n|[\n\r\x85\u2028\u2029]")
 
 
 def parse_yaml(content: str) -> AuthoredBoard:
@@ -108,7 +115,7 @@ def compose_yaml(content: str) -> yaml.Node:
     try:
         node = UniqueKeyLoader(content).get_single_node()
     except yaml.YAMLError as e:
-        raise _parse_error(e, content) from e
+        raise yaml_syntax_error(e, content, source=UNNAMED_YAML_SOURCE) from e
     if node is None:
         raise _empty_document_error()
     return node
@@ -131,7 +138,7 @@ def mapping_from_node(
     try:
         parsed_data = UniqueKeyLoader("").construct_object(node, deep=True)
     except yaml.YAMLError as e:
-        raise _parse_error(e, content) from e
+        raise yaml_syntax_error(e, content, source=UNNAMED_YAML_SOURCE) from e
 
     if parsed_data is None:
         raise _empty_document_error()
@@ -141,23 +148,110 @@ def mapping_from_node(
     return parsed_data
 
 
-def _parse_error(e: yaml.YAMLError, content: str) -> ParseError:
-    # problem_mark is the actual error position (e.g. where an unterminated
-    # flow sequence was found to be missing its close); it's only present
-    # on yaml.error.MarkedYAMLError, not the plain yaml.YAMLError base, so
-    # this is a genuine type-narrowing check on a third-party exception —
-    # not a guaranteed field we're being defensive about.
-    problem_mark = e.problem_mark if isinstance(e, yaml.error.MarkedYAMLError) else None
-    line_num = problem_mark.line + 1 if problem_mark is not None else None
-    column_num = problem_mark.column + 1 if problem_mark is not None else None
-    context = _get_yaml_context_for_error(content, line_num) if line_num else None
-    return ParseError(
-        f"Invalid YAML syntax: {e}",
-        line=line_num,
-        column=column_num,
-        context=context,
-        suggestion=_get_yaml_parse_suggestion(str(e)),
+def yaml_syntax_error(
+    e: yaml.YAMLError, content: str, *, source: str, note: str = ""
+) -> ParseError:
+    """The ``ERR-YAML-SYNTAX`` error for a PyYAML failure in ``content``.
+
+    ``source`` names the file in the message and ``note`` adds a closing
+    sentence after the quoted line. The position is read from
+    ``problem_mark`` (the actual error position, e.g. where an unterminated flow
+    sequence was found to be missing its close). It is only present on
+    ``yaml.error.MarkedYAMLError``, not the plain ``yaml.YAMLError`` base, so
+    this is a genuine type-narrowing check on a third-party exception.
+    """
+    from dbt_charts.core.diagnostics.codes_compile import ERR_YAML_SYNTAX
+
+    if not (isinstance(e, yaml.error.MarkedYAMLError) and e.problem_mark is not None):
+        return ParseError.from_code(
+            ERR_YAML_SYNTAX, source=source, where="", problem=str(e), quoted_line=""
+        )
+    line = e.problem_mark.line + 1
+    column = e.problem_mark.column + 1
+    lines = _YAML_BREAK_RE.split(content)
+    offending = lines[line - 1].strip() if line <= len(lines) else ""
+    return ParseError.from_code(
+        ERR_YAML_SYNTAX,
+        source=source,
+        where=f" at line {line}, column {column}",
+        problem=": ".join(part for part in (e.context, e.problem) if part),
+        quoted_line=(f"\n    {offending}" if offending else "")
+        + (f"\n{note}" if note else ""),
+        line=line,
+        column=column,
     )
+
+
+_MAPPING_VALUES_PROBLEM = "mapping values are not allowed in this context"
+_MAX_QUOTED_LINES = 4
+# `<indent>[- ]<key>: <value>`, the one line shape a quoted copy can repair.
+_KEY_VALUE_LINE_RE = re.compile(r"^(\s*(?:-\s+)*[A-Za-z_][\w-]*:[ \t]+)(\S.*)$")
+_COLON_SPACE_RE = re.compile(r":(?:\s|$)")
+
+
+def quote_colon_typos(content: str) -> tuple[str, list[ParseError]] | None:
+    """A copy of ``content`` with unquoted colon-space values double-quoted.
+
+    The typo is a plain scalar holding ``: `` (``title: Largest in 1950:
+    rank``), which YAML reads as a nested mapping. Returns the copy plus one
+    ``ERR-YAML-SYNTAX`` per quoted line (at most ``_MAX_QUOTED_LINES``), or
+    ``None`` when any failure is not such a line or the copy still fails. The
+    caller validates the copy for its diagnostics only; the authored text is
+    never rewritten.
+    """
+    # Every break is rewritten as "\n" in the copy: line numbers and columns
+    # are unchanged, and the repaired line never carries a stray "\r".
+    lines = _YAML_BREAK_RE.split(content)
+    errors: list[ParseError] = []
+    while True:
+        text = "\n".join(lines)
+        try:
+            UniqueKeyLoader(text).get_single_node()
+        except yaml.YAMLError as e:
+            # A positionless error (a control character's ReaderError) is not
+            # the typo; the caller reports its plain syntax error.
+            if (
+                not isinstance(e, yaml.error.MarkedYAMLError)
+                or e.problem != _MAPPING_VALUES_PROBLEM
+                or e.problem_mark is None
+                or len(errors) == _MAX_QUOTED_LINES
+            ):
+                return None
+            index = e.problem_mark.line
+            match = _KEY_VALUE_LINE_RE.match(lines[index])
+            if match is None or not _COLON_SPACE_RE.search(match[2]):
+                return None
+            note = (
+                "The rest of this report comes from the file with line "
+                f"{index + 1} quoted."
+            )
+            errors.append(
+                yaml_syntax_error(e, text, source=UNNAMED_YAML_SOURCE, note=note)
+            )
+            escaped = match[2].replace("\\", "\\\\").replace('"', '\\"')
+            lines[index] = f'{match[1]}"{escaped}"'
+        else:
+            return (text, errors) if errors else None
+
+
+def load_yaml_text(
+    content: str,
+    *,
+    source: str,
+    loader: type[BoardLoader] = UniqueKeyLoader,
+) -> Any:  # type-state: explicit_any — raw parsed YAML of any shape
+    """Parse a non-board authored file (meta, ``extends:`` fragment, import).
+
+    Raises ``ParseError`` (``ERR-YAML-SYNTAX``) naming ``source``. The position
+    stays in the message only: the diagnostic is stamped against the board being
+    compiled, and a line number in another file would underline the wrong line.
+    """
+    try:
+        return yaml.load(content, Loader=loader)  # noqa: S506 — repo loaders only
+    except yaml.YAMLError as e:
+        err = yaml_syntax_error(e, content, source=source)
+        err.line = err.column = None
+        raise err from e
 
 
 def _empty_document_error() -> ParseError:
@@ -207,53 +301,6 @@ def parse_mapping(parsed_data: dict[str, Any], content: str = "") -> AuthoredBoa
         raise ParseError(f"Board schema validation failed: {error_summary}") from e
     except (TypeError, ValueError) as e:
         raise ParseError(f"Failed to parse board structure: {e}") from e
-
-
-def _get_yaml_context_for_error(
-    content: str,
-    line_num: int,
-    context_lines: int = 2,
-) -> str:
-    """Get YAML context around an error line.
-
-    Args:
-        content: Full YAML content
-        line_num: Line number of the error (1-indexed)
-        context_lines: Number of lines to show before/after
-
-    Returns:
-        Formatted context string
-    """
-    from dbt_charts.core.compile.parse.yaml_error_formatter import get_yaml_context
-
-    return get_yaml_context(content, line_num, context_lines)
-
-
-def _get_yaml_parse_suggestion(error_msg: str) -> str | None:
-    """Get a helpful suggestion for a YAML parse error.
-
-    Args:
-        error_msg: The error message
-
-    Returns:
-        Suggestion string or None
-    """
-    error_lower = error_msg.lower()
-
-    if "indent" in error_lower:
-        return "💡 Check your indentation - YAML requires consistent spacing (typically 2 spaces)"
-    elif "expected" in error_lower and "block" in error_lower:
-        return "💡 This often happens with incorrect indentation or missing colons"
-    elif "mapping" in error_lower:
-        return "💡 Check for missing colons after key names or incorrect nesting"
-    elif "duplicate" in error_lower:
-        return "💡 You have duplicate keys - each key name must be unique at the same level"
-    elif "found character" in error_lower:
-        return (
-            "💡 Check for special characters that need quoting, or invalid YAML syntax"
-        )
-
-    return None
 
 
 _SQL_PREFIX_RE = re.compile(

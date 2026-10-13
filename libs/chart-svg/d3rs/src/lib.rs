@@ -1,0 +1,17 @@
+//! d3rs — spike-scoped Rust ports of the d3 functions dbt charts' pie family
+//! needs. One module per d3 module, ported from the upstream source, grown
+//! only as chart families demand functions, plus `py_float`, the
+//! numeric-parity primitive every port shares.
+
+pub mod arc;
+pub mod format;
+pub mod js_math;
+pub mod js_sort;
+pub mod path;
+pub mod pie;
+pub mod predefined_formats;
+pub mod py_float;
+pub mod sankey;
+pub mod sankey_circular;
+pub mod shape;
+pub mod ticks;

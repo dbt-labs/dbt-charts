@@ -100,8 +100,10 @@ def test_bar_currency_column_no_format_fires() -> None:
 
 
 def test_bar_currency_column_with_format_no_warning() -> None:
-    """Bar chart with y=revenue_usd and format=currency must not fire."""
-    chart = _make_chart(y="revenue_usd", format="currency")
+    """Bar chart with y=revenue_usd and an axis_y currency format must not fire."""
+    chart = _make_chart(
+        y="revenue_usd", style={"axis_y": {"labels": {"format": "currency"}}}
+    )
     ctx = _make_ctx(chart)
     assert detector.detect(ctx) == []
 
@@ -110,7 +112,10 @@ def test_bar_currency_column_with_authored_prefix_no_warning() -> None:
     """An authored FormatConfig prefix (e.g. a "€" euro sign) satisfies the check even
     though it never puts a "$" into the resolved d3 spec.
     """
-    chart = _make_chart(y="revenue_eur", format={"spec": ",.0f", "prefix": "€"})
+    chart = _make_chart(
+        y="revenue_eur",
+        style={"axis_y": {"labels": {"format": {"spec": ",.0f", "prefix": "€"}}}},
+    )
     ctx = _make_ctx(chart)
     assert detector.detect(ctx) == []
 
@@ -121,7 +126,10 @@ def test_bar_currency_column_with_authored_prefix_on_an_si_ladder_no_warning() -
     that clears ``labels.prefix`` and carries the affix on
     ``ruler.authored_prefix`` instead — the axis is labeled, this
     must not read as unlabeled just because the affix moved fields."""
-    chart = _make_chart(y="revenue_eur", format={"spec": ".3~s", "prefix": "€"})
+    chart = _make_chart(
+        y="revenue_eur",
+        style={"axis_y": {"labels": {"format": {"spec": ".3~s", "prefix": "€"}}}},
+    )
     rows = [
         {"month": m, "revenue_eur": v} for m, v in enumerate([1e6, 5e6, 12e6, 18e6])
     ]
@@ -285,16 +293,15 @@ def test_currency_field_with_unfit_percent_format_still_fires() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 8: A currency format supplied via whole-chart style.number_format suppresses
-#          the warning. number_format bakes into the resolved style.axis_y.format,
-#          so the detector sees the '$' — guards the docstring's baking claim.
+# Test 8: A currency format authored on style.axis_y.labels.format suppresses
+#          the warning: the detector reads the resolved axis format and sees the '$'.
 # ---------------------------------------------------------------------------
 
 
-def test_currency_field_with_number_format_no_warning() -> None:
-    """A currency y formatted via style.number_format must not fire."""
+def test_currency_field_with_axis_y_format_no_warning() -> None:
+    """A currency y formatted via style.axis_y.labels.format must not fire."""
     resolved = _resolve_authored(
-        'type: bar\nx: month\ny: revenue_usd\nstyle:\n  number_format: "$.2f"\n'
+        'type: bar\nx: month\ny: revenue_usd\nstyle:\n  axis_y:\n    labels:\n      format: "$.2f"\n'
     )
     board = make_test_resolved_board(charts={resolved.id: resolved})
     ctx = WarningContext(
@@ -348,7 +355,10 @@ def test_percent_field_with_currency_prefix_still_fires() -> None:
     """A percent-classified field authored with a currency prefix is still missing
     percent formatting.
     """
-    chart = _make_chart(y="margin_pct", format={"spec": ",.0f", "prefix": "€"})
+    chart = _make_chart(
+        y="margin_pct",
+        style={"axis_y": {"labels": {"format": {"spec": ",.0f", "prefix": "€"}}}},
+    )
     ctx = _make_ctx(chart)
     warnings = detector.detect(ctx)
 
@@ -361,7 +371,10 @@ def test_percent_field_with_an_authored_percent_suffix_no_warning() -> None:
     """A column already in percent points, labeled by an authored ``%`` suffix, is unit-
     labeled.
     """
-    chart = _make_chart(y="margin_pct", format={"spec": ",.1f", "suffix": "%"})
+    chart = _make_chart(
+        y="margin_pct",
+        style={"axis_y": {"labels": {"format": {"spec": ",.1f", "suffix": "%"}}}},
+    )
     ctx = _make_ctx(chart)
     assert detector.detect(ctx) == []
 
@@ -557,3 +570,105 @@ def test_table_numeric_string_fractions_fire() -> None:
     rows = [{"conv": "0.4367"}, {"conv": "0.1203"}]
     (w,) = detector.detect(_table_ctx(rows))
     assert w.field == "conv"
+
+
+# ---------------------------------------------------------------------------
+# KPI headline / support and table columns: name-based, same classifier as y
+# ---------------------------------------------------------------------------
+
+
+def _kpi_ctx(rows: list[dict[str, Any]], **kwargs: Any) -> WarningContext:
+    defaults = {k: v for k, v in _CHART_DEFAULTS.items() if k != "title"}
+    chart = TypeAdapter(Chart).validate_python({**defaults, "type": "kpi", **kwargs})
+    return _make_ctx(chart, rows=rows)
+
+
+def test_currency_warning_fires_for_a_kpi_value_with_no_format() -> None:
+    (w,) = detector.detect(_kpi_ctx([{"revenue": 14000000}], value="revenue"))
+    assert w.code == WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.code
+    assert w.chart == "c1"
+    assert w.field == "revenue"
+    assert w.path == "charts.c1.style.value.format"
+    assert "style.value.format" in (w.fix or "")
+    assert "KPI value" in w.message
+
+
+def test_percent_warning_fires_for_a_kpi_value_with_no_format() -> None:
+    (w,) = detector.detect(_kpi_ctx([{"win_rate": 0.3}], value="win_rate"))
+    assert "percent" in w.message
+
+
+@pytest.mark.parametrize("fmt", ["$,.0f", "currency_whole"])
+def test_currency_warning_silent_for_a_kpi_value_with_a_currency_format(
+    fmt: str,
+) -> None:
+    ctx = _kpi_ctx(
+        [{"revenue": 14000000}], value="revenue", style={"value": {"format": fmt}}
+    )
+    assert detector.detect(ctx) == []
+
+
+def test_kpi_value_without_a_currency_name_is_silent() -> None:
+    assert detector.detect(_kpi_ctx([{"orders": 118593}], value="orders")) == []
+
+
+def test_kpi_text_value_is_silent() -> None:
+    assert detector.detect(_kpi_ctx([{"revenue": "n/a"}], value="revenue")) == []
+
+
+def test_kpi_support_value_with_no_format_fires_once() -> None:
+    ctx = _kpi_ctx(
+        [{"orders": 5, "growth_pct": 0.05}],
+        value="orders",
+        support={"value": "growth_pct"},
+    )
+    (w,) = detector.detect(ctx)
+    assert w.field == "growth_pct"
+    assert w.path == "charts.c1.style.support.format"
+    assert "KPI support" in w.message
+
+
+def test_currency_warning_fires_for_a_table_column_with_no_format() -> None:
+    rows = [{"region": "a", "revenue": 1200000.5}, {"region": "b", "revenue": 3.0}]
+    (w,) = detector.detect(_table_ctx(rows))
+    assert w.field == "revenue"
+    assert w.path == "charts.c1.style.columns.revenue.format"
+    assert "currency" in w.message
+    assert w.message.endswith("but the table column has no format.")
+
+
+def test_table_percent_named_fraction_column_warns_once() -> None:
+    rows = [{"win_rate": 0.3}, {"win_rate": 0.45}]
+    (w,) = detector.detect(_table_ctx(rows))
+    assert w.field == "win_rate"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"style": {"columns": {"revenue": {"format": "$,.0f"}}}},
+        {"style": {"column_defaults": {"format": "$,.0f"}}},
+        {"style": {"columns": {"revenue": {"visible": False}}}},
+    ],
+)
+def test_table_named_column_silent_when_formatted_or_hidden(
+    kwargs: dict[str, Any],
+) -> None:
+    rows = [{"region": "a", "revenue": 1200000.5}]
+    assert detector.detect(_table_ctx(rows, **kwargs)) == []
+
+
+def test_table_named_column_with_text_values_is_silent() -> None:
+    rows = [{"revenue_tier": "high"}, {"revenue_tier": "low"}]
+    assert detector.detect(_table_ctx(rows)) == []
+
+
+@pytest.mark.parametrize("fmt", ["percent_delta", "$,.0f"])
+def test_kpi_support_change_with_either_kind_of_format_is_silent(fmt: str) -> None:
+    ctx = _kpi_ctx(
+        [{"orders": 5, "revenue_change": 0.05}],
+        value="orders",
+        support={"value": "revenue_change"},
+        style={"support": {"format": fmt}},
+    )
+    assert detector.detect(ctx) == []

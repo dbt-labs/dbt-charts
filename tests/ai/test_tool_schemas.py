@@ -13,8 +13,8 @@ from dbt_charts.ai.tool_schemas import (
     EXECUTE_QUERY,
     FILE_TOOLS,
     MOVE_FILE,
-    QUERY_BOARD,
     RENDER_BOARD,
+    SEARCH_BOARDS,
     SUGGEST_BOARD_PLACEMENT,
     subset_tool,
 )
@@ -72,18 +72,6 @@ class TestOpenAIStrictModeValidity:
             f"execute_query.variables must not be an open object, got: {variables_schema}"
         )
 
-    def test_query_board_vars_is_array(self) -> None:
-        schema = QUERY_BOARD["input_schema"]
-        vars_schema = schema["properties"]["vars"]
-        any_of = vars_schema.get("anyOf", [])
-        types_present = {s.get("type") for s in any_of}
-        assert "array" in types_present, (
-            f"query_board.vars should be an array type, got: {vars_schema}"
-        )
-        assert "object" not in types_present, (
-            f"query_board.vars must not be an open object, got: {vars_schema}"
-        )
-
 
 class TestSubsetTool:
     """subset_tool narrows a tool in the canonical shape, so a host that hides a
@@ -99,8 +87,8 @@ class TestSubsetTool:
         assert "include_raw_data" in RENDER_BOARD["input_schema"]["properties"]
 
     def test_drops_narrowed_out_required_entries(self) -> None:
-        narrowed = subset_tool(EXECUTE_QUERY, ["variables"])
-        assert "sql" in EXECUTE_QUERY["input_schema"]["required"]
+        narrowed = subset_tool(SEARCH_BOARDS, ["tags"])
+        assert "query" in SEARCH_BOARDS["input_schema"]["required"]
         assert narrowed["input_schema"]["required"] == []
 
     def test_unknown_property_raises(self) -> None:
@@ -226,3 +214,47 @@ class TestToStrictJsonSchema:
         }
         _to_strict_json_schema(schema, schema)
         assert set(schema.get("required", [])) == {"a", "b"}
+
+
+_WRITE_TOOLS = {"write_file", "edit_file", "move_file", "delete_file"}
+# Boards can declare http sources, so these reach arbitrary URLs (GET only).
+_OPEN_WORLD_TOOLS = {"render_board", "execute_query"}
+
+
+class TestToolAnnotations:
+    """MCP ToolAnnotations on every tool: hosts auto-approve on readOnlyHint
+    and Claude's connector directory requires a title plus read/destructive."""
+
+    @pytest.mark.parametrize("tool", [*ALL_TOOLS, *FILE_TOOLS], ids=lambda t: t["name"])
+    def test_read_write_split(self, tool: dict[str, Any]) -> None:
+        annotations = tool["annotations"]
+        assert annotations["title"].strip()
+        assert annotations["openWorldHint"] is (tool["name"] in _OPEN_WORLD_TOOLS)
+        if tool["name"] in _WRITE_TOOLS:
+            assert annotations["readOnlyHint"] is False
+            assert annotations["destructiveHint"] is True
+            assert annotations["idempotentHint"] is False
+        else:
+            assert annotations["readOnlyHint"] is True
+            assert annotations["destructiveHint"] is False
+            assert annotations["idempotentHint"] is True
+
+    def test_suggest_board_placement_is_an_idempotent_non_destructive_write(
+        self,
+    ) -> None:
+        annotations = SUGGEST_BOARD_PLACEMENT["annotations"]
+        assert annotations["title"].strip()
+        assert annotations["readOnlyHint"] is False
+        assert annotations["destructiveHint"] is False
+        assert annotations["idempotentHint"] is True
+
+    def test_subset_tool_keeps_annotations(self) -> None:
+        assert (
+            subset_tool(RENDER_BOARD, ["path"])["annotations"]
+            == RENDER_BOARD["annotations"]
+        )
+
+
+def test_execute_query_has_no_row_or_token_knobs() -> None:
+    properties = EXECUTE_QUERY["input_schema"]["properties"]
+    assert {"limit", "max_tokens", "include_raw_data"}.isdisjoint(properties)

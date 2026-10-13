@@ -8,5 +8,5 @@ than emit sites.
 """
 
 RETIRED_WARNING_CODES: frozenset[str] = frozenset(
-    {"WARN-ADJACENT-TEXT-ROWS", "WARN-FANOUT-RISK"}
+    {"WARN-ADJACENT-TEXT-ROWS", "WARN-FANOUT-RISK", "WARN-PIE-TOO-MANY-SEGMENTS"}
 )

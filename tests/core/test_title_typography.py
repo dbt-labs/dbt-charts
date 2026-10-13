@@ -12,6 +12,7 @@ Validates:
 from __future__ import annotations
 
 import dataclasses
+import html
 
 from dbt_charts.core.compile.config import (
     get_config,
@@ -29,7 +30,6 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.render.svg_utils import escape_attr
 
 _EFF = resolve_chart_style_context(get_theme_style())
 _BOARD_STYLE = resolve_style(get_theme_style())
@@ -429,7 +429,7 @@ class TestKpiTitleTypography:
     def test_kpi_label_uses_theme_label_font_size_at_every_width(self):
         """The KPI label renders at ``kpi.label.font.size`` (cascade-filled
         from kpi.font.size in stark.yaml) at every card width."""
-        from dbt_charts.core.render.chart.kpi import render_kpi_svg
+        from ._engine_render import render_kpi_svg
 
         charts = self._es()
         expected = int(charts.kpi.label.font.size)
@@ -454,7 +454,7 @@ class TestKpiTitleTypography:
         size and the theme's ``kpi.font.weight`` regardless of card width."""
         import re
 
-        from dbt_charts.core.render.chart.kpi import render_kpi_svg
+        from ._engine_render import render_kpi_svg
 
         eff = self._es()
         kpi = eff.kpi
@@ -518,9 +518,8 @@ class TestTableTitleTypography:
 
     def test_narrow_table_title_correct_size_sans(self):
         from dbt_charts.core.compile.resolve.style.typography import chart_title_spec
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         w = 400.0
         expected = chart_title_spec(w, chart_style_context=_EFF)[0]
@@ -536,23 +535,24 @@ class TestTableTitleTypography:
             board_style=resolve_style(get_theme_style()),
         )
         assert f'font-size="{expected}"' in svg
-        assert escape_attr(get_theme_style().font.family.split(",")[0].strip()) in svg
+        assert get_theme_style().font.family.split(",")[0].strip() in html.unescape(svg)
 
     def test_medium_table_title_uses_title_family(self):
         """Medium tier table title uses style.title.font.family (the title-slot family).
         Under default theme that resolves to sans; under editorial it resolves to serif.
         """
         from dbt_charts.core.compile.resolve.style.typography import chart_title_spec
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         w = 700.0
         expected_size = chart_title_spec(w, chart_style_context=_EFF)[0]
         title_family = (
             resolve_style(get_theme_style()).title.font.family.split(",")[0].strip()
         )
-        _chart = resolve(self._make_chart(), [], chart_style_context=_BOARD_CONTEXT)
+        _chart = resolve(
+            self._make_chart(), self._data, chart_style_context=_BOARD_CONTEXT
+        )
         svg = render_table_svg(
             _chart,
             self._data,
@@ -561,23 +561,24 @@ class TestTableTitleTypography:
         )
         assert f'font-size="{expected_size}"' in svg
         assert 'font-weight="500"' in svg
-        assert escape_attr(title_family) in svg
+        assert title_family in html.unescape(svg)
 
     def test_wide_table_title_uses_title_family(self):
         """Wide tier table title uses style.title.font.family (the title-slot family).
         Under default theme that resolves to sans; under editorial it resolves to serif.
         """
         from dbt_charts.core.compile.resolve.style.typography import chart_title_spec
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         w = 1152.0
         expected_size = chart_title_spec(w, chart_style_context=_EFF)[0]
         title_family = (
             resolve_style(get_theme_style()).title.font.family.split(",")[0].strip()
         )
-        _chart = resolve(self._make_chart(), [], chart_style_context=_BOARD_CONTEXT)
+        _chart = resolve(
+            self._make_chart(), self._data, chart_style_context=_BOARD_CONTEXT
+        )
         svg = render_table_svg(
             _chart,
             self._data,
@@ -586,7 +587,7 @@ class TestTableTitleTypography:
         )
         assert f'font-size="{expected_size}"' in svg
         assert 'font-weight="500"' in svg
-        assert escape_attr(title_family) in svg
+        assert title_family in html.unescape(svg)
 
 
 # ---------------------------------------------------------------------------
@@ -613,7 +614,8 @@ class TestSparkBarTitleTypography:
 
     def test_narrow_spark_bar_title_correct_size(self):
         from dbt_charts.core.compile.resolve.style.typography import chart_title_spec
-        from dbt_charts.core.render.chart.spark_bar import render_spark_bar_svg
+
+        from ._engine_render import render_spark_bar_svg
 
         w = 400.0
         expected = chart_title_spec(w, chart_style_context=_EFF)[0]
@@ -630,11 +632,11 @@ class TestSparkBarTitleTypography:
         )
         assert f'font-size="{expected}"' in svg
         assert 'font-weight="500"' in svg  # config default, no tier override
-        assert escape_attr(get_theme_style().font.family.split(",")[0].strip()) in svg
+        assert get_theme_style().font.family.split(",")[0].strip() in html.unescape(svg)
 
     def test_wide_spark_bar_title_uses_title_family(self):
         """Wide tier spark-bar title uses style.title.font.family."""
-        from dbt_charts.core.render.chart.spark_bar import render_spark_bar_svg
+        from ._engine_render import render_spark_bar_svg
 
         title_family = (
             resolve_style(get_theme_style()).title.font.family.split(",")[0].strip()
@@ -644,7 +646,7 @@ class TestSparkBarTitleTypography:
         svg = render_spark_bar_svg(
             _chart, self._data, width=w, board_style=_BOARD_STYLE
         )
-        assert escape_attr(title_family) in svg
+        assert title_family in html.unescape(svg)
 
 
 # ---------------------------------------------------------------------------

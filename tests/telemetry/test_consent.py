@@ -53,9 +53,39 @@ def test_project_without_flag_defaults_on(tmp_path: Path) -> None:
     assert _enabled(_project(tmp_path)) is True
 
 
-@pytest.mark.parametrize("value", ["0", "", "true"])
-def test_do_not_track_only_honors_one(tmp_path: Path, value: str) -> None:
+@pytest.mark.parametrize(
+    "value", ["1", "t", "true", "TRUE", "y", "yes", "on", "2", "anything"]
+)
+def test_do_not_track_fails_closed_on_any_non_falsy_value(
+    tmp_path: Path, value: str
+) -> None:
+    assert _enabled(tmp_path, DO_NOT_TRACK=value) is False
+
+
+@pytest.mark.parametrize("value", ["0", "", "false", "no", "off"])
+def test_do_not_track_falsy_values_leave_tracking_on(
+    tmp_path: Path, value: str
+) -> None:
     assert _enabled(tmp_path, DO_NOT_TRACK=value) is True
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("1", True),
+        ("t", True),
+        ("y", True),
+        ("on", True),
+        ("0", False),
+        ("f", False),
+        ("n", False),
+        ("off", False),
+    ],
+)
+def test_env_accepts_dbt_boolean_spellings(
+    tmp_path: Path, value: str, expected: bool
+) -> None:
+    assert _enabled(tmp_path, DBT_SEND_ANONYMOUS_USAGE_STATS=value) is expected
 
 
 def test_invalid_env_value_raises(tmp_path: Path) -> None:

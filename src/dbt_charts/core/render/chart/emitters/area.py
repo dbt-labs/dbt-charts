@@ -56,6 +56,7 @@ from dbt_charts.core.render.chart.emitters._layers import (
     sparse_band_transforms,
 )
 from dbt_charts.core.render.chart.emitters._overlay import (
+    overlay_draws_bars,
     overlay_uses_band_step,
     overlay_x_domain_values,
     render_cartesian_overlay,
@@ -131,6 +132,7 @@ def _normalize_area_data(
         "area",
         chart.style.area_mark.curve == BAND_STEP_CURVE,
         True,
+        chart.x_date_range,
     )
     if densified is not None:
         data = densified
@@ -190,7 +192,7 @@ def _apply_area_color_encoding(
     color_ch = chart.resolved_channels.get("color")
     if color_ch is not None:
         enc = channel_to_encoding(color_ch, data)
-        apply_color_legend(enc, chart.legend)
+        apply_color_legend(enc, chart.legend, color_format=chart.color_format)
         enc_type = enc.get("type")
         if categorical_color_encoding(color_ch, enc_type) and enc_type == "nominal":
             series, order = _area_spatial_order(
@@ -297,6 +299,8 @@ def _build_area_top_encoding(
             x_domain,
             reserved_width=resolve_endpoint_rail_span(chart, data, box.width),
             panel_fields=panel_fields,
+            x_date_range=chart.x_date_range,
+            overlay_bars=overlay_draws_bars(chart.layers),
         )
         if chart.x
         else CartesianXResolution("nominal", {}, {})
@@ -370,6 +374,7 @@ def _emit_multi_metric_area(
             "area",
             reserved_width=resolve_endpoint_rail_span(chart, data, box.width),
             panel_fields=panel_fields,
+            x_date_range=chart.x_date_range,
         )
         if chart.x
         else CartesianXResolution("nominal", {}, {})

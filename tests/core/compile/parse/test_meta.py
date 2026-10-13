@@ -183,7 +183,7 @@ class TestLoadMetaFile:
     ):
         (temp_project / "meta.yml").write_text("invalid: yaml: content: [")
         meta_file = local_project(temp_project).path("meta.yml")
-        with pytest.raises(CompilationError, match="Failed to parse"):
+        with pytest.raises(CompilationError, match="Invalid YAML syntax"):
             load_meta_file(meta_file)
 
     def test_non_mapping_raises(
@@ -233,7 +233,7 @@ class TestParseMetaContent:
         assert lint.ignore == []
 
     def test_invalid_yaml_raises(self):
-        with pytest.raises(CompilationError, match="Failed to parse"):
+        with pytest.raises(CompilationError, match="Invalid YAML syntax"):
             parse_meta_content("invalid: yaml: content: [", "meta.yml")
 
     def test_non_mapping_raises(self):

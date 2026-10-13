@@ -583,6 +583,43 @@ class TestGlobColumnConsistency:
         with pytest.raises(DbtChartsError, match="bonus"):
             mat.materialize_and_run(source, "SELECT * FROM reports", {}, "evals")
 
+    def test_mismatched_csv_columns_names_the_difference(
+        self, in_memory_project: Any
+    ) -> None:
+        project = in_memory_project(
+            Path("/test"),
+            {
+                "data/a/sales.csv": "region,amount\nNorth,100\n",
+                "data/b/sales.csv": "region,bonus\nSouth,5\n",
+            },
+        )
+        source = CsvSourceConfig(type="csv", files={"sales": "data/*/sales.csv"})
+        mat = _mat(project)
+
+        with pytest.raises(DbtChartsError) as excinfo:
+            mat.materialize_and_run(source, "SELECT * FROM sales", {}, "sales_source")
+        message = str(excinfo.value)
+        assert "Extra: ['bonus']" in message
+        assert "Missing: ['amount']" in message
+
+    def test_header_only_csv_shard_is_skipped(self, in_memory_project: Any) -> None:
+        """A shard with no rows contributes nothing, whatever its header says."""
+        project = in_memory_project(
+            Path("/test"),
+            {
+                "data/a/sales.csv": "region,amount\nNorth,100\n",
+                "data/b/sales.csv": "other,header\n",
+            },
+        )
+        source = CsvSourceConfig(type="csv", files={"sales": "data/*/sales.csv"})
+        mat = _mat(project)
+
+        rows = mat.materialize_and_run(
+            source, "SELECT region, amount FROM sales", {}, "sales_source"
+        )
+
+        assert rows == [{"region": "North", "amount": 100}]
+
     def test_matching_columns_succeeds(self, in_memory_project: Any) -> None:
         """Files with identical column sets union correctly."""
         project = in_memory_project(

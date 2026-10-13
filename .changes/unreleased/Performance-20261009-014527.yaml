@@ -1,0 +1,3 @@
+kind: Performance
+body: dct serve shows a loading state the moment you open another board, and revisiting a board skips redrawing charts that haven't changed.
+time: 2026-10-09T01:45:27.714093-07:00

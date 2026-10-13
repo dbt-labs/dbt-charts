@@ -23,6 +23,7 @@ from dbt_charts.core.render import (
 from dbt_charts.core.render.board_resolve import build_resolved_board_static
 
 from .._board_utils import make_test_board
+from .._svg_render import PINNED_RENDER_TIME
 from .test_partial_success import _compile_two_chart_board
 
 _GOOD = [{"value": 42}]
@@ -32,6 +33,7 @@ def _render(mock):
     board = _compile_two_chart_board()
     mock._query_errors = {}
     mock.cache_hit_ats = []
+    mock.rendered_at = PINNED_RENDER_TIME
     mock.is_cached.return_value = False
     with (
         patch.object(_renderer_mod, "execute_queries_parallel"),
@@ -136,6 +138,7 @@ def test_same_id_different_chart_walk_only_failure_is_not_suppressed(
     mock = MagicMock(spec=Executor)
     mock._query_errors = {}
     mock.cache_hit_ats = []
+    mock.rendered_at = PINNED_RENDER_TIME
     mock.is_cached.return_value = False
 
     draw_exc = QueryError("file missing", "q_a")

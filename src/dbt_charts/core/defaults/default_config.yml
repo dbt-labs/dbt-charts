@@ -156,12 +156,6 @@ chart_rendering:
     # correct answers.
     sparse_ceiling_px: 90.0
   kpi:
-    # Spacing between value baseline and the title block. Title and support
-    # form a fixed 3-line block at one consistent rhythm — see
-    # ``_resolve_kpi_layout`` in ``core/render/chart/kpi.py``. Inner edge
-    # padding (top/bottom/left/right) all derive from
-    # ``style.charts.kpi.content_padding`` for a unified inset.
-    minimum_title_value_gap: 14.0
     # An unformatted headline compacts to this spec once |value| reaches the
     # threshold (d3's first SI prefix, "k"). Below it ".2s" would round plain
     # digits to 2 significant figures (131 -> "130"), so the value keeps its
@@ -171,12 +165,6 @@ chart_rendering:
   spark_bar:
     title_height: 24.0
     title_baseline_y: 16.0
-    more_rows_font_size: 10.0
-    more_rows_offset_y: 12.0
-    more_rows_bottom_padding: 8.0
-    text_baseline_offset: 4.0
-    side_padding: 4.0
-    avg_char_width_px: 7.0
   step_band:
     # Fraction of the full band width the xOffset range insets to when a
     # band-aware `curve: step` is disconnected (`connect: false`), so adjacent

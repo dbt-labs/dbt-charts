@@ -383,6 +383,8 @@ class _CartesianChartFields(_SharedChartFields, _FieldLabelsField):
     Holds channel fields that only make sense on charts with x/y axes.
     """
 
+    model_config = ConfigDict(allow_inf_nan=False)
+
     # None = column not encoded.
     x: Annotated[
         str | None,
@@ -548,6 +550,8 @@ class BasemapConfig(BaseModel):
 class _GeoChartFields(_SharedChartFields, _FieldLabelsField):
     """Private base for geographic chart families (map/geoshape, point_map/bubble_map)."""
 
+    model_config = ConfigDict(allow_inf_nan=False)
+
     # None = no projection specified; renderer uses default.
     projection: Annotated[
         str | Projection | None,
@@ -631,6 +635,8 @@ class _RadialChartFields(_SharedChartFields, _FieldLabelsField):
 
     Holds channel fields that only make sense on arc charts with angular encoding.
     """
+
+    model_config = ConfigDict(allow_inf_nan=False)
 
     theta: Annotated[
         str,

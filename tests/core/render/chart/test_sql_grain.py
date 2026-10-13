@@ -7,6 +7,8 @@ Full-render, end-to-end auto-link integration tests (which exercise
 
 from __future__ import annotations
 
+import pytest
+
 
 class TestCteAliasMapUnit:
     """build_col_output_alias_map's CTE branch — unit-level, no adapter needed."""
@@ -81,7 +83,7 @@ class TestCteAliasMapUnit:
 
     def test_star_plus_explicit_alias_is_not_identity_safe(self) -> None:
         """Regression test: `SELECT *, ticket_number AS id` is not a bare
-        `SELECT *` — `_is_star_projection` must be strict, or the un-listed
+        `SELECT *` — the identity check must be strict, or the un-listed
         base `id` gets wrongly assumed identity-safe when `ticket_number`
         was actually aliased onto that same output name.
         """
@@ -107,9 +109,9 @@ class TestCteAliasMapUnit:
         """Regression test: `SELECT t.* FROM main.tickets t` is a qualified
         star, not a bare `*` — but with only one table in scope, `t.*` and
         `*` denote the exact same column set, so it must still be treated
-        as full pass-through. A stricter-than-necessary `_is_star_projection`
+        as full pass-through. A star check stricter than necessary
         (matching only `exp.Star`, not `exp.Column(this=exp.Star())`) would
-        wrongly fall through to `_project_col_map`, produce a useless
+        wrongly treat it as an explicit projection, produce a useless
         `{"*": "*"}` entry, and lose the auto-link entirely for this
         ordinary query shape — a real regression versus the pre-task
         behavior where every plain query got identity assumed.
@@ -211,7 +213,7 @@ class TestPlainQueryColOutputAliasMap:
     ) -> None:
         """Regression test: `SELECT id, UPPER(subject) AS id FROM t` has two
         projections both claiming output name `id` — one a bare column, the
-        other an expression. `_project_col_map`'s duplicate-output check
+        other an expression. The duplicate-output check
         used to only tally column-sourced projections toward the collision
         count, so an expression-aliased duplicate was invisible to it and
         the bare `id -> id` entry survived unexcluded — tracing `id` to
@@ -250,8 +252,8 @@ class TestPlainQueryColOutputAliasMap:
         """Known coverage gap, documented rather than silently regressed:
         `SELECT *, UPPER(subject) AS shout FROM t` (a star alongside an
         explicit projection, no CTE/JOIN) is not a bare `SELECT *`, so
-        `_is_star_projection` rejects it and the query falls through to
-        `_project_col_map`, which only traces bare-column projections — the
+        the identity check rejects it and the trace
+        only follows bare-column projections — the
         star itself is invisible to it. Every base column (e.g. `id`) is
         therefore untraced, not just the shadowed name, and
         `identity_safe_for_unlisted` is `False`.
@@ -274,11 +276,9 @@ class TestPlainQueryColOutputAliasMap:
         `SELECT t.*, t.id AS subject FROM main.tickets t` (`tickets` has
         columns `id, subject`) produces two `subject` output columns in the
         executed result — one from the star, one from the explicit alias —
-        but `_project_col_map`'s collision counter only tallies `exp.Alias`
-        and `exp.Column` projections; a star projection (`t.*`, parsed as
-        `Column(this=Star())`) contributes only the empty/useless name `""`,
-        so the columns it expands to are invisible to the counter and no
-        collision is flagged for `subject`.
+        but the collision counter tallies only listed projections; a star
+        over a table (`t.*`) lists none, so the columns it expands to are
+        invisible to the counter and no collision is flagged for `subject`.
 
         This is the same wrong-drill class the duplicate-output-name check
         exists to catch, reached through a shape the check cannot see —
@@ -293,7 +293,7 @@ class TestPlainQueryColOutputAliasMap:
         alias_map, identity_safe = build_col_output_alias_map(
             "SELECT t.*, t.id AS subject FROM main.tickets t"
         )
-        assert alias_map == {"*": "*", "id": "subject"}
+        assert alias_map == {"id": "subject"}
         assert identity_safe is False
 
 
@@ -365,3 +365,128 @@ class TestJoinColOutputAliasMap:
         )
         assert alias_map == {}
         assert identity_safe is False
+
+
+class TestScopeTracedColOutputAliasMap:
+    """Tracing follows the scope walk, so only what the SQL proves is mapped."""
+
+    @staticmethod
+    def _map(sql: str) -> tuple[dict[str, str], bool]:
+        from dbt_charts.core.render.chart.sql_grain import build_col_output_alias_map
+
+        return build_col_output_alias_map(sql)
+
+    def test_qualified_star_of_the_joined_side_is_not_identity(self) -> None:
+        """`c.*` carries customers' columns, not the spine's."""
+        assert self._map(
+            "SELECT c.* FROM main.orders o JOIN main.customers c ON o.cust_id = c.id"
+        ) == ({}, False)
+
+    def test_qualified_star_of_the_spine_across_a_join_proves_nothing(self) -> None:
+        assert self._map(
+            "SELECT o.* FROM main.orders o JOIN main.customers c ON o.cust_id = c.id"
+        ) == ({}, False)
+
+    def test_cte_referenced_in_another_case_is_still_the_cte(self) -> None:
+        """`FROM T` reads the CTE `t`; treating it as a base table would trace
+        `id` to itself when the CTE's `id` holds `ticket_number`."""
+        alias_map, identity_safe = self._map(
+            "WITH t AS (SELECT ticket_number AS id, subject FROM main.tickets)"
+            " SELECT id, subject FROM T"
+        )
+        assert alias_map == {"ticket_number": "id", "subject": "subject"}
+        assert identity_safe is False
+        assert self._map(
+            "WITH t AS (SELECT ticket_number AS id FROM main.tickets) SELECT * FROM T"
+        ) == ({"ticket_number": "id"}, False)
+
+    def test_qualifier_in_another_case_still_traces(self) -> None:
+        assert self._map("SELECT T.id FROM main.tickets AS t") == ({"id": "id"}, False)
+
+    def test_scope_binding_error_traces_nothing(self) -> None:
+        assert self._map("SELECT s1.t.id FROM s1.t JOIN s2.t ON s1.t.id = s2.t.id") == (
+            {},
+            False,
+        )
+
+    def test_if_else_fragment_still_traces(self) -> None:
+        alias_map, _ = self._map(
+            "SELECT id AS tid FROM main.tickets WHERE 1=1"
+            " {% if status %} AND s = 1 {% else %} AND x = 2 {% endif %}"
+        )
+        assert alias_map == {"id": "tid"}
+
+    def test_multi_cte_chain_is_traced(self) -> None:
+        alias_map, identity_safe = self._map(
+            "WITH a AS (SELECT id AS x, subject FROM main.t),"
+            " b AS (SELECT x AS y FROM a) SELECT y AS z FROM b"
+        )
+        assert alias_map == {"id": "z"}
+        assert identity_safe is False
+
+    def test_from_subquery_is_traced(self) -> None:
+        alias_map, _ = self._map(
+            "SELECT a AS z FROM (SELECT id AS a, subject FROM main.t) s"
+        )
+        assert alias_map == {"id": "z"}
+
+    def test_subquery_column_alias_list_traces_nothing(self) -> None:
+        assert self._map(
+            "SELECT * FROM (SELECT id, subject FROM main.t) AS s(subject, id)"
+        ) == ({}, False)
+
+    def test_star_over_cte_with_duplicate_names_excludes_them(self) -> None:
+        alias_map, _ = self._map(
+            "WITH c AS (SELECT id, ticket_number AS id, subject FROM main.t)"
+            " SELECT * FROM c"
+        )
+        assert alias_map == {"subject": "subject"}
+
+    def test_column_named_like_a_sibling_alias_is_not_traced(self) -> None:
+        """`x` in `SELECT id AS x, x AS y` may be the alias or a base column,
+        depending on the dialect; fail closed even where the old walker linked."""
+        alias_map, _ = self._map("SELECT id AS x, x AS y FROM main.t")
+        assert alias_map == {"id": "x"}
+
+
+class TestSelfNamedQualifier:
+    def test_cte_qualifier_naming_itself_traces_nothing(self) -> None:
+        """`payload.id` inside CTE `payload` may be a struct column; following it
+        to the CTE itself would recurse forever."""
+        from dbt_charts.core.render.chart.sql_grain import build_col_output_alias_map
+
+        assert build_col_output_alias_map(
+            "WITH payload AS (SELECT payload.id FROM main.events e)"
+            " SELECT id FROM payload"
+        ) == ({}, False)
+
+
+def test_recursion_overflow_traces_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dbt_charts.core.render.chart import sql_grain
+
+    def overflow(scope: object) -> None:
+        raise RecursionError
+
+    monkeypatch.setattr(sql_grain, "_outputs", overflow)
+    assert sql_grain.build_col_output_alias_map("SELECT id FROM main.t") == ({}, False)
+
+
+class TestColumnNameCaseAcrossLayers:
+    """Unquoted column names are case-insensitive, so a layer reads them so."""
+
+    def test_outer_column_in_another_case_reads_the_cte_column(self) -> None:
+        from dbt_charts.core.render.chart.sql_grain import build_col_output_alias_map
+
+        assert build_col_output_alias_map(
+            "WITH c AS (SELECT id FROM main.t) SELECT ID FROM c"
+        ) == ({"id": "ID"}, False)
+        assert build_col_output_alias_map(
+            "WITH c AS (SELECT id AS Tid FROM main.t) SELECT tid FROM c"
+        ) == ({"id": "tid"}, False)
+
+    def test_columns_differing_by_more_than_case_do_not_match(self) -> None:
+        from dbt_charts.core.render.chart.sql_grain import build_col_output_alias_map
+
+        assert build_col_output_alias_map(
+            "WITH c AS (SELECT id AS tid FROM main.t) SELECT t_id FROM c"
+        ) == ({}, False)

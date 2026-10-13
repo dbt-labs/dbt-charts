@@ -122,7 +122,9 @@ def test_css_color_injection_raises() -> None:
     assert exc_info.value.code.code == "ERR-CSS-COLOR-INVALID-AT-RENDER"
 
 
-_BAD_COLOR = "red; background-image:url(//evil)"
+# Shaped like a color but unreadable to the engine, so it passes compile and fails
+# at the style="..." sink.
+_BAD_COLOR = "oklch(0.7 0.1 250)"
 
 
 def test_table_cell_link_color_invalid_becomes_chart_error() -> None:

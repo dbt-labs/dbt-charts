@@ -6,6 +6,7 @@ Verifies that Executor.execute_query:
 - Respects force_refresh=True to clear and re-run
 """
 
+from datetime import UTC
 from unittest.mock import Mock
 
 import pytest
@@ -144,13 +145,13 @@ class TestCachedQueryFailureMessage:
     """CachedQueryFailure must preserve error_message in str() and args."""
 
     def test_str_returns_error_message(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         exc = CachedQueryFailure(
             error_class="RuntimeError",
             error_message="table not found",
             traceback="",
-            failed_at=datetime.now(timezone.utc),
+            failed_at=datetime.now(UTC),
         )
         assert str(exc) == "table not found"
         assert "table not found" in repr(exc)

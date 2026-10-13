@@ -13,7 +13,7 @@ then falls back to built-in templates with Jinja2 pre-processing.
 
 Example URLs:
 - /health
-- /inspect/model/?model=fct_orders&theme=dark
+- /inspect/model/?model=fct_orders
 - /inspect/numeric_column/?model=fct_orders&column=revenue
 - /sales/?region=West  (renders charts/sales.yml)
 """
@@ -27,6 +27,7 @@ import threading
 from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from datetime import datetime
 from importlib.resources import files
 from pathlib import Path, PurePosixPath  # noqa: TID251 — local dev server file serving
 from typing import TYPE_CHECKING, Any
@@ -65,6 +66,7 @@ from dbt_charts.core.execute.adapters.adapter_registry import (
     build_adapter_registry,
 )
 from dbt_charts.core.execute.cache_backend import QueryResultCache
+from dbt_charts.core.execute.executor import utc_now
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 from dbt_charts.core.fonts import get_fonts_dir
 from dbt_charts.core.inspect import INSPECT_TEMPLATES
@@ -96,6 +98,11 @@ from dbt_charts.core.registered_views.loader import load_builtin_registry
 from dbt_charts.core.registered_views.router import RouteRouter
 from dbt_charts.core.render.dir_context import lazy_dir_context
 from dbt_charts.core.render.nav import nav_context
+from dbt_charts.core.render.svg_cache import (
+    MemorySvgStore,
+    RenderedSvgCache,
+    svg_cache_scope,
+)
 from dbt_charts.core.serve.alias_index import AliasIndex, board_file_candidates
 from dbt_charts.core.serve.watcher import FileWatcher
 
@@ -299,7 +306,7 @@ def _directory_candidates(
     charts_dir: Path,
     clean_path: str,
     project: FilesystemProject,
-) -> list[tuple[Path, str]]:
+) -> list[Path]:
     """Build candidate directories to render for the request path.
 
     A ``clean_path`` whose leading segment matches an installed package's
@@ -308,17 +315,40 @@ def _directory_candidates(
     is a sibling subtree, not a child of the host ``charts/``. Root matching
     itself comes from ``board_directory_candidates`` (shared with the alias
     index's directory-listing check), so package-name matching is never
-    duplicated. ``listing_path`` (the tuple's second element) is always
-    *clean_path* verbatim, regardless of which root matched — the URL the
-    caller renders never changes shape across roots.
+    duplicated.
     """
     if clean_path.startswith(f"{CHARTS_SUBDIR}/"):
         return []
-    candidates: list[tuple[Path, str]] = []
+    candidates: list[Path] = []
     for root, rest in board_directory_candidates(clean_path, board_roots(project)):
         base = charts_dir if not root.namespace else project.root / root.relpath
-        candidates.append((base / rest if rest else base, clean_path))
+        candidates.append(base / rest if rest else base)
     return candidates
+
+
+def _resolve_directory_url(
+    project: FilesystemProject, clean_path: str
+) -> ProjectPath | Path | None:
+    """Resolve a directory-shaped URL: its index board, else the directory to list.
+
+    The root URL prefers the project-root index board. ``None`` means
+    *clean_path* names no directory, so it resolves as a board file.
+    """
+    if not clean_path:
+        root_index = _resolve_folder_index_board(project.directory())
+        if root_index is not None:
+            return root_index
+    for dir_path in _directory_candidates(project.charts_dir, clean_path, project):
+        _ensure_within_project(dir_path, project.root)
+        if dir_path.is_dir():
+            index_board = _resolve_folder_index_board(
+                project.directory_for_fspath(dir_path)
+            )
+            return index_board if index_board is not None else dir_path
+        # The root lists even before charts/ exists (list_dir_entries returns []).
+        if not clean_path:
+            return dir_path
+    return None
 
 
 def _resolve_board_file_path(project: Project, clean_path: str) -> ProjectPath:
@@ -576,6 +606,8 @@ def _render_board_file(
     variables: dict[str, Any],
     project: FilesystemProject,
     adapter_registry: AdapterRegistry,
+    svg_store: MemorySvgStore,
+    clock: Callable[[], datetime],
     serve_storage_prefix: str | None = None,
     max_workers: int | None = None,
     result_cache: QueryResultCache | None = None,
@@ -600,6 +632,7 @@ def _render_board_file(
             max_workers=max_workers,
             result_cache=result_cache,
             include_nav=include_nav,
+            clock=clock,
         )
 
     link_context = _build_link_context(
@@ -636,22 +669,26 @@ def _render_board_file(
         else ""
     )
 
-    result = render_dashboard(
-        board=board,
-        variables=variables,
-        project=project,
-        adapter_registry=adapter_registry,
-        format="html",
-        link_context=link_context,
-        url_mount_dir=url_mount_dir,
-        result_cache=result_cache,
-        max_workers=max_workers,
-        compile_result=compile_result,
-        chrome=nav_fragment,
-        livereload=True,
-        # A served board can re-run its queries, so it gets live controls.
-        controls=True,
-    )
+    svg_memo = RenderedSvgCache(loader=svg_store.load)
+    with svg_cache_scope(svg_memo):
+        result = render_dashboard(
+            board=board,
+            variables=variables,
+            project=project,
+            adapter_registry=adapter_registry,
+            format="html",
+            link_context=link_context,
+            url_mount_dir=url_mount_dir,
+            result_cache=result_cache,
+            max_workers=max_workers,
+            compile_result=compile_result,
+            chrome=nav_fragment,
+            livereload=True,
+            # A served board can re-run its queries, so it gets live controls.
+            controls=True,
+            clock=clock,
+        )
+    svg_store.save(svg_memo.minted)
 
     if result.status == "ok":
         data = result.data
@@ -689,6 +726,7 @@ def _render_board_download(
     variables: dict[str, Any],
     project: FilesystemProject,
     adapter_registry: AdapterRegistry,
+    clock: Callable[[], datetime],
     max_workers: int | None = None,
     result_cache: QueryResultCache | None = None,
     include_nav: bool = True,
@@ -708,6 +746,7 @@ def _render_board_download(
         format=fmt,
         result_cache=result_cache,
         max_workers=max_workers,
+        clock=clock,
     )
 
     file_fspath = project.root / file_path.relpath
@@ -894,6 +933,7 @@ def _render_directory_listing(
     url_path: str,
     project: Project,
     url_mount_dir: str,
+    clock: Callable[[], datetime],
     result_cache: QueryResultCache | None = None,
     include_nav: bool = True,
 ) -> HTMLResponse:
@@ -976,6 +1016,7 @@ def _render_directory_listing(
             chrome=nav_fragment,
             controls=True,
             builtin_variables=listing_variables,
+            clock=clock,
         )
         if result.status == "ok":
             data = result.data
@@ -1055,6 +1096,8 @@ def create_server(
     max_workers: int | None = None,
     no_cache: bool = False,
     cache_path: Path | None = None,
+    allow_mutating_methods: bool = False,
+    clock: Callable[[], datetime] = utc_now,
 ) -> FastAPI:
     """Create unified dbt charts server.
 
@@ -1072,6 +1115,9 @@ def create_server(
             the cache by the file source materializer, out of band from author SQL.
         duckdb_config: DuckDB config dict; defaults to enable_external_access when
             allow_external_access_in_readonly is True.
+        allow_mutating_methods: Let http sources use POST/PUT/PATCH/DELETE.
+            Only the human-run ``dct serve`` passes True; the embedded
+            preview behind agent sessions keeps GET only.
         no_cache: Skip the query-result cache entirely (Executor runs uncached).
             Explicit override — wins over the project's dbt_charts.yml cache: block.
         cache_path: Persist the query-result cache to this DuckDB file (created
@@ -1079,6 +1125,7 @@ def create_server(
             default) falls through to the project's cache: block (path: null
             there means the zero-config in-memory default). Ignored when
             no_cache=True.
+        clock: Every render's time source, handed to its ``Executor``.
 
     Returns:
         Configured FastAPI application
@@ -1099,6 +1146,7 @@ def create_server(
         return build_adapter_registry(
             project,
             read_only=read_only,
+            allow_mutating_methods=allow_mutating_methods,
             allow_external_access_in_readonly=allow_external_access_in_readonly,
             duckdb_config=duckdb_config,
             profile_type=dialect,
@@ -1162,6 +1210,7 @@ def create_server(
     # root, not charts_dir, which lives under it and need not exist yet.
     app.state.watcher = FileWatcher(str(core_project.root), cache_path=boot.path)
     app.state.registry_leases = RegistryLeases()
+    app.state.svg_store = MemorySvgStore()
     # Serializes concurrent registry / alias-index rebuilds.
     _refresh_lock = asyncio.Lock()
 
@@ -1379,7 +1428,6 @@ def create_server(
             /sales/?region=West → variables["region"] = "West"
         """
         clean_path = path.strip("/")
-        charts_dir = app.state.project.charts_dir
 
         if clean_path == CHARTS_SUBDIR or clean_path.startswith(f"{CHARTS_SUBDIR}/"):
             raise HTTPException(status_code=404, detail="Not found")
@@ -1388,7 +1436,17 @@ def create_server(
         for url_suffix, fmt in _URL_FORMAT_SUFFIXES.items():
             if clean_path.endswith(url_suffix):
                 base = clean_path[: -len(url_suffix)]
-                file_path = _resolve_board_file_path(app.state.project, base)
+                resolved = _resolve_directory_url(app.state.project, base)
+                if isinstance(resolved, Path):
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"No board at /{base}/" if base else "No board at /",
+                    )
+                file_path = (
+                    resolved
+                    if resolved is not None
+                    else _resolve_board_file_path(app.state.project, base)
+                )
                 raw_variables = variables_from_query_pairs(
                     request.query_params.multi_items()
                 )
@@ -1399,6 +1457,8 @@ def create_server(
                     adapter_registry=request.state.adapter_registry,
                     serve_storage_prefix=app.state.serve_storage_prefix,
                     max_workers=app.state.max_workers,
+                    svg_store=app.state.svg_store,
+                    clock=clock,
                     result_cache=app.state.result_cache,
                     download_format=fmt,
                     include_nav=app.state.server_nav,
@@ -1456,60 +1516,32 @@ def create_server(
             # the current plain list[str].
             return RedirectResponse(url=redirect_url, status_code=302)
 
-        # Prefer a project-level index board for the root URL before directory listing.
-        if not clean_path:
-            candidate = _resolve_folder_index_board(app.state.project.directory())
-            if candidate is not None:
-                return _render_board_file(
-                    candidate,
-                    variables,
-                    app.state.project,
-                    adapter_registry=request.state.adapter_registry,
-                    serve_storage_prefix=app.state.serve_storage_prefix,
-                    max_workers=app.state.max_workers,
-                    result_cache=app.state.result_cache,
-                    download_format=download_format,
-                    include_nav=app.state.server_nav,
-                )
-
-        # Directory listing for root or any directory.
-        # Before falling back to the listing, render the folder's index board if present.
-        # For the root URL, listing_path is "" and dir_path is charts_dir — serve the
-        # listing even when charts_dir doesn't exist yet (list_dir_entries returns []).
         project: FilesystemProject = app.state.project
-        for dir_path, listing_path in _directory_candidates(
-            charts_dir=charts_dir,
-            clean_path=clean_path,
-            project=project,
-        ):
-            _ensure_within_project(dir_path, project.root)
-            if dir_path.is_dir() or not listing_path:
-                dir_handle = project.directory_for_fspath(dir_path)
-                index_board = (
-                    _resolve_folder_index_board(dir_handle)
-                    if dir_path.is_dir()
-                    else None
-                )
-                if index_board is not None:
-                    return _render_board_file(
-                        index_board,
-                        variables,
-                        project,
-                        adapter_registry=request.state.adapter_registry,
-                        serve_storage_prefix=app.state.serve_storage_prefix,
-                        max_workers=app.state.max_workers,
-                        result_cache=app.state.result_cache,
-                        download_format=download_format,
-                        include_nav=app.state.server_nav,
-                    )
-                return _render_directory_listing(
-                    dir_handle,
-                    listing_path,
-                    project=project,
-                    url_mount_dir=_url_mount_dir(dir_path, project),
-                    result_cache=app.state.result_cache,
-                    include_nav=app.state.server_nav,
-                )
+        resolved = _resolve_directory_url(project, clean_path)
+        if isinstance(resolved, ProjectPath):
+            return _render_board_file(
+                resolved,
+                variables,
+                project,
+                adapter_registry=request.state.adapter_registry,
+                serve_storage_prefix=app.state.serve_storage_prefix,
+                max_workers=app.state.max_workers,
+                svg_store=app.state.svg_store,
+                clock=clock,
+                result_cache=app.state.result_cache,
+                download_format=download_format,
+                include_nav=app.state.server_nav,
+            )
+        if resolved is not None:
+            return _render_directory_listing(
+                project.directory_for_fspath(resolved),
+                clean_path,
+                project=project,
+                url_mount_dir=_url_mount_dir(resolved, project),
+                clock=clock,
+                result_cache=app.state.result_cache,
+                include_nav=app.state.server_nav,
+            )
 
         # Try the built-in registered-view router (data/inspector routes).
         # charts/ is always mounted at /; strip any serve_storage_prefix override
@@ -1571,6 +1603,8 @@ def create_server(
             adapter_registry=request.state.adapter_registry,
             serve_storage_prefix=app.state.serve_storage_prefix,
             max_workers=app.state.max_workers,
+            svg_store=app.state.svg_store,
+            clock=clock,
             result_cache=app.state.result_cache,
             download_format=download_format,
             include_nav=app.state.server_nav,

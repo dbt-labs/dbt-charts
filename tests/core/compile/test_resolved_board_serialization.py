@@ -57,6 +57,7 @@ def _compile_data_aware_board(
     board = result.board
 
     executor = MagicMock()
+    executor.render_with_range_filters.return_value = None
     executor.execute_query.side_effect = lambda name, variables: rows_by_query.get(
         name, []
     )

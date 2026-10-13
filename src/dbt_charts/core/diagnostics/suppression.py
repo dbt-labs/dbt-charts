@@ -36,8 +36,8 @@ def validate_suppression_codes(
 ) -> None:
     """Raise if any code isn't a registered WARN-* code — typo guard.
 
-    A typo'd suppression entry (``warnings_ignore: [WARN-PIE-TOO-MANY-SEGMENT]``,
-    missing the trailing S) matches nothing in ``partition()``'s plain set
+    A typo'd suppression entry (``warnings_ignore: [WARN-PIE-DOMINANT-SEGMEN]``,
+    missing the trailing T) matches nothing in ``partition()``'s plain set
     lookup — it silently suppresses no warnings, and the author believes the
     warning is off. Call this at every point suppression codes come in from
     YAML outside the typed board fields (project ``dbt_charts.yml

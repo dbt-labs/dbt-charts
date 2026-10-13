@@ -7,6 +7,7 @@ ClickHouse uses:
 
 import math
 import re
+from collections.abc import Sequence
 from typing import Any
 
 from dbt_charts.core.dialects.base import SQLDialect
@@ -168,4 +169,17 @@ class ClickHouseDialect(SQLDialect):
             "WHERE database NOT IN "
             "('system', 'INFORMATION_SCHEMA', 'information_schema') "
             "ORDER BY database, table, position"
+        )
+
+    def bulk_tables_sql(self, scope: str, schemas: Sequence[str]) -> str:
+        """Whole-server tables from ``system.tables``, user databases only."""
+        condition = self.schema_condition(schemas, "database")
+        extra = f"AND {condition} "
+        return (
+            "SELECT database AS table_schema, name AS table_name "
+            "FROM system.tables "
+            "WHERE database NOT IN "
+            "('system', 'INFORMATION_SCHEMA', 'information_schema') "
+            f"{extra}"
+            "ORDER BY database, name"
         )

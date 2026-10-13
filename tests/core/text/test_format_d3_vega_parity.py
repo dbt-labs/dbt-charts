@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import vl_convert as vlc
@@ -35,7 +35,7 @@ from dbt_charts.core.text.format_d3 import VEGA_SAFE_TIME_DIRECTIVES, portable_s
 
 _ARIA_LABEL_RE = re.compile(r'aria-label="label: (.*?)"')
 
-_EPOCH_UTC = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_EPOCH_UTC = datetime(1970, 1, 1, tzinfo=UTC)
 
 # A handful of UTC instants chosen to exercise both edges of every
 # directive's padding: single-digit vs. double-digit day/hour/month/minute/

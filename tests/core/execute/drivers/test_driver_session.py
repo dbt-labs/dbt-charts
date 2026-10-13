@@ -22,7 +22,7 @@ from dbt_charts.core.compile.config import get_execution_config
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import LakeComputeTokenSource
 from dbt_charts.core.diagnostics.codes_execute import (
-    ERR_BINDER_UNKNOWN_COLUMN,
+    ERR_BINDER_UNKNOWN_RELATION,
     ERR_WAREHOUSE_CONNECTION,
     ERR_WAREHOUSE_RESULT_WARNING,
     ERR_WAREHOUSE_RUNTIME,
@@ -195,7 +195,7 @@ def test_a_rejected_query_on_a_live_session_is_not_retried(adapter: SqlAdapter) 
     with _opened(connection) as opener:
         result = _run(adapter, _prepared())
     assert opener.call_count == 1
-    assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
+    assert result.error.code is ERR_BINDER_UNKNOWN_RELATION
     assert len(connection.statements) == 2  # the query, then the liveness probe
 
 

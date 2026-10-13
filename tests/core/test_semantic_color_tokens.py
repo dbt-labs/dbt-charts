@@ -96,9 +96,7 @@ def test_cascade_respects_explicit_spark_color():
                         update={
                             "spark": get_theme_style(
                                 get_default_theme_name()
-                            ).charts.table.spark.model_copy(
-                                update={"color": "#explicit"}
-                            )
+                            ).charts.table.spark.model_copy(update={"color": "#e2a330"})
                         }
                     )
                 }
@@ -106,7 +104,7 @@ def test_cascade_respects_explicit_spark_color():
         }
     )
     ctx = resolve_chart_style_context(base)
-    assert ctx.table.spark.color == "#explicit"
+    assert ctx.table.spark.color == "#e2a330"
 
 
 # =============================================================================
@@ -242,10 +240,10 @@ def test_explicit_spark_bar_color_overrides_accent_cascade():
 
     base = get_theme_style().model_copy(update={"accent": "#3b82f6"})
     patch = StylePatch.model_validate(
-        {"charts": {"spark_bar": {"bar": {"color": "#custom"}}}}
+        {"charts": {"spark_bar": {"bar": {"color": "#8b9035"}}}}
     )
     ctx = resolve_chart_style_context(base, patch)
-    assert ctx.spark_bar.bar.color == "#custom"
+    assert ctx.spark_bar.bar.color == "#8b9035"
 
 
 # =============================================================================
@@ -391,8 +389,8 @@ class TestCascadeWithThemeLoadedBase:
         patch = StylePatch.model_validate(
             {
                 "accent": "#ff0000",
-                "charts": {"spark_bar": {"bar": {"color": "#explicit"}}},
+                "charts": {"spark_bar": {"bar": {"color": "#e2a330"}}},
             }
         )
         ctx = resolve_chart_style_context(base, patch)
-        assert ctx.spark_bar.bar.color == "#explicit"
+        assert ctx.spark_bar.bar.color == "#e2a330"

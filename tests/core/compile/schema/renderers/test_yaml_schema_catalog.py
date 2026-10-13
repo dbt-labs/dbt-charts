@@ -474,11 +474,10 @@ def test_structural_schema_bytes_ignores_description_wording() -> None:
 def _perturb_descriptions(value: object) -> object:
     """Append text to every ``description`` string anywhere in *value*.
 
-    Deliberately blind recursion (unlike production's position-aware
-    ``_strip_node_description``): it targets every dict entry keyed
-    ``"description"`` whose value is a string, wherever nested, so this
-    fixture can't miss a real injection point the way a hand-built schema
-    could.
+    Blind recursion: any string under a ``"description"`` key changes, so
+    the fixture cannot miss a place the real schema puts one. A property
+    named ``description`` maps to a schema object, not a string, so it is
+    left alone.
     """
     if isinstance(value, dict):
         return {
@@ -518,6 +517,25 @@ def test_structural_schema_bytes_preserves_a_field_literally_named_description()
     new = {"type": "object", "properties": {"description": {"type": "integer"}}}
 
     assert structural_schema_bytes(old) != structural_schema_bytes(new)
+
+
+def test_structural_schema_bytes_ignores_a_union_arm_description() -> None:
+    def rows(arm_description: str) -> dict:
+        arm = {"type": "string", "description": arm_description}
+        nested = {"type": "object", "properties": {"description": {"type": "string"}}}
+        return {"properties": {"rows": {"items": {"anyOf": [arm, nested]}}}}
+
+    assert structural_schema_bytes(rows("a")) == structural_schema_bytes(rows("b"))
+
+
+def test_structural_schema_bytes_keeps_a_nested_field_named_description() -> None:
+    def branch(kind: str) -> dict:
+        nested = {"type": "object", "properties": {"description": {"type": kind}}}
+        return {"properties": {"x": {"anyOf": [nested]}}}
+
+    assert structural_schema_bytes(branch("string")) != structural_schema_bytes(
+        branch("integer")
+    )
 
 
 def test_structural_schema_bytes_detects_real_grammar_changes() -> None:

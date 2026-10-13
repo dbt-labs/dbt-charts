@@ -16,7 +16,8 @@ from dbt_charts.core.compile.models.style.authored import (
 )
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
-from dbt_charts.core.render.chart.table import render_table_svg
+
+from ..._engine_render import render_table_svg
 
 
 def _board_style() -> Any:
@@ -140,10 +141,9 @@ def test_v2_table_svg_column_defaults() -> None:
 
 
 def test_v2_table_svg_negative_numbers_never_use_ascii_hyphen() -> None:
-    """table.py's numeric-cell path always calls format_kpi_parts with
-    default_number=True, so format_spec is never empty and the bare-digit
-    fallback (a Python f-string, which would emit ASCII "-") is
-    unreachable — every negative cell goes through d3_format, which always
+    """The table's numeric-cell path always formats with a default number spec,
+    so the spec is never empty and the bare-digit fallback (which would emit
+    ASCII "-") is unreachable — every negative cell goes through d3_format, which always
     emits the real minus sign (U+2212). Covers both the theme-default (no
     explicit format:) and an explicit-format column."""
     data = [{"delta": -1234.5, "revenue": -47300}]

@@ -7,6 +7,7 @@ y-axis datasets, then passes those facts once into compile resolution.
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
+from datetime import date
 from types import EllipsisType, MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,8 @@ from dbt_charts.core.compile.resolve import (
 from dbt_charts.core.compile.template.display_text import DisplayTextInputs
 from dbt_charts.core.compile.template.query_result import QueryResult
 from dbt_charts.core.execute.cache_backend import CacheRows
+from dbt_charts.core.execute.column_formats import raise_column_format_error
+from dbt_charts.core.execute.date_range_axis import proven_range
 from dbt_charts.core.execute.executor import Executor
 
 if TYPE_CHECKING:
@@ -132,6 +135,27 @@ def collect_display_text_inputs(
     )
 
 
+def chart_x_date_range(
+    chart: Chart, executor: Executor, variables: VariableValues
+) -> tuple[date, date] | None:
+    """The range a bar/line/area chart's x column is proven filtered to, or None."""
+    if (
+        not isinstance(chart, (BarChart, LineChart, AreaChart))
+        or chart.x is None
+        or chart.query_name is None
+        or any(
+            layer.query is not None or layer.x not in (None, chart.x)
+            for layer in chart.layers
+        )
+    ):
+        return None
+    rendered = executor.render_with_range_filters(chart.query_name, variables)
+    if rendered is None:
+        return None
+    sql, dialect, filters = rendered
+    return proven_range(sql, dialect, chart.x, filters)
+
+
 def resolve_chart_with_runtime_inputs(
     chart: Chart,
     data: list[dict[str, Any]],
@@ -143,6 +167,8 @@ def resolve_chart_with_runtime_inputs(
     table_column_links: Mapping[str, str] = _EMPTY_TABLE_COLUMN_LINKS,
     table_column_rows: Sequence[Mapping[str, str]] = (),
     pie_title_font: ResolvedFontStyle | EllipsisType = ...,
+    *,
+    filter_variables: frozenset[str],
 ) -> ResolvedChart:
     """Gather shared-layer datasets, then construct one final chart.
 
@@ -156,6 +182,7 @@ def resolve_chart_with_runtime_inputs(
     chart gets, so pie's family-aware default (authored ``width:`` first)
     applies instead of a literal divide-by-zero width.
     """
+    raise_column_format_error(chart, executor)
     layer_datasets = collect_layer_datasets(chart, data, executor, variables)
     return resolve(
         chart,
@@ -167,5 +194,7 @@ def resolve_chart_with_runtime_inputs(
         table_column_links=table_column_links,
         table_column_rows=table_column_rows,
         pie_title_font=pie_title_font,
+        filter_variables=filter_variables,
         display_text=collect_display_text_inputs(chart, executor, variables),
+        x_date_range=chart_x_date_range(chart, executor, variables),
     )

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 # Marketing Command Center
 title: "Marketing Command Center"
 source: dbt_charts_examples

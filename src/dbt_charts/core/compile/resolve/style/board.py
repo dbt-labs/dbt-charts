@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel
 
+from dbt_charts.core.colors import BY_TONE
 from dbt_charts.core.compile.merge import merge_onto_base, merge_patches
 from dbt_charts.core.compile.models.primitives import (
     DEFAULT_REGIONAL,
@@ -216,9 +217,6 @@ def _build_resolved_legend(legend: LegendStyle) -> ResolvedLegendStyle:
             visible=legend.title.visible,
         ),
     )
-
-
-BY_TONE = "by_tone"
 
 
 def _build_resolved_callout_chart(

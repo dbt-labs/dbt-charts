@@ -22,6 +22,7 @@ from typing import Any
 
 import yaml
 
+from dbt_charts.core.compile.merge import deep_merge_dict
 from dbt_charts.core.utils import YAML_LOADER, UniqueKeyLoader
 
 _CHART_EMBED_RE = re.compile(r"^\s*\{\{\s*chart\s+(\w+)\s*\}\}\s*$", re.MULTILINE)
@@ -30,6 +31,28 @@ MARKDOWN_NOT_BOARD_MESSAGE = (
     "Not a dbt charts board file: markdown files outside charts/ must declare a "
     "top-level 'board:' key in their YAML frontmatter"
 )
+
+
+# Lowest priority: meta.yml, extends and frontmatter all override it.
+_DOCUMENT_STYLE: dict[str, Any] = {  # type-state: explicit_any — board YAML patch
+    "text": {"column": {"max_number": 1}}
+}
+
+
+def with_document_style(
+    board_data: dict[str, Any],  # type-state: explicit_any — authored board YAML
+) -> dict[str, Any]:  # type-state: explicit_any — authored board YAML
+    """*board_data* with ``_DOCUMENT_STYLE`` as its lowest-priority style layer,
+    beneath meta.yml, extends and frontmatter.
+
+    A ``style`` that is not a mapping is left for validation to report.
+    """
+    style = board_data.get("style")
+    if style is None:
+        style = {}
+    elif not isinstance(style, dict):
+        return board_data
+    return {**board_data, "style": deep_merge_dict(_DOCUMENT_STYLE, style)}
 
 
 def parse_chart_embeds(body: str) -> list[tuple[str, str]]:
@@ -83,7 +106,9 @@ def _extract_frontmatter(md_text: str) -> tuple[dict[str, Any], str]:
     if not fm_text.strip():
         return {}, body
 
-    fm = yaml.load(fm_text, Loader=UniqueKeyLoader)
+    # The blank first line stands for the opening `---`, so a YAML error's
+    # position is a line of the markdown file, not of the frontmatter block.
+    fm = yaml.load(f"\n{fm_text}", Loader=UniqueKeyLoader)
     if fm is None:
         return {}, body
     if not isinstance(fm, dict):

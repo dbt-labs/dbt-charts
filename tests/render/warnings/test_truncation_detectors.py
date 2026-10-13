@@ -16,6 +16,7 @@ from dbt_charts.core.diagnostics import (
     WARN_KPI_ALIGN_OVERFLOW,
     WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED,
     WARN_KPI_LABEL_TRUNCATED,
+    WARN_KPI_SUPPORT_TRUNCATED,
     WARN_SPARK_LABEL_TRUNCATED,
     WARN_SUPPORT_TABLE_CELL_OVERFLOW,
     WARN_TABLE_TEXT_TRUNCATED,
@@ -27,6 +28,7 @@ from dbt_charts.core.render.warnings import (
     kpi_align_overflow,
     kpi_inline_fallback,
     kpi_label_truncated,
+    kpi_support_truncated,
     spark_label_truncated,
     support_table_cell_overflow,
     table_text_truncated,
@@ -141,6 +143,38 @@ def test_kpi_label_detector_ignores_other_surfaces() -> None:
     assert kpi_label_truncated.detect(ctx) == []
 
 
+def test_kpi_support_detector_fires_on_support_truncation() -> None:
+    ctx = _ctx(
+        "k1",
+        [
+            TextTruncation(
+                surface="kpi_support",
+                authored_field="support.label",
+                authored_text="a long explainer",
+            )
+        ],
+    )
+    warnings = kpi_support_truncated.detect(ctx)
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert w.code == WARN_KPI_SUPPORT_TRUNCATED.code
+    assert w.chart == "k1"
+    assert "a long explainer" in w.message
+    assert w.path == "charts.k1.support.label"
+
+
+def test_kpi_support_detector_ignores_other_surfaces() -> None:
+    ctx = _ctx(
+        "k2",
+        [
+            TextTruncation(
+                surface="kpi_label", authored_field="label", authored_text="L"
+            )
+        ],
+    )
+    assert kpi_support_truncated.detect(ctx) == []
+
+
 # ── kpi_inline_fallback ───────────────────────────────────────────────────────
 
 
@@ -179,26 +213,6 @@ def test_kpi_inline_fallback_detector_ignores_other_surfaces() -> None:
 # ── table_text ────────────────────────────────────────────────────────────────
 
 
-def test_table_text_detector_fires_on_header_truncation() -> None:
-    ctx = _ctx(
-        "t1",
-        [
-            TextTruncation(
-                surface="table_header",
-                authored_field="revenue",
-                authored_text="Revenue Per Quarter",
-            )
-        ],
-    )
-    warnings = table_text_truncated.detect(ctx)
-    assert len(warnings) == 1
-    w = warnings[0]
-    assert w.code == WARN_TABLE_TEXT_TRUNCATED.code
-    assert w.chart == "t1"
-    assert "revenue" in w.message
-    assert w.path == "charts.t1.revenue"
-
-
 def test_table_text_detector_fires_on_cell_truncation() -> None:
     ctx = _ctx(
         "t2",
@@ -217,8 +231,8 @@ def test_table_text_detector_fires_on_cell_truncation() -> None:
     assert "description" in w.message
 
 
-def test_table_text_detector_deduplicates_per_column() -> None:
-    """Multiple cell truncations in the same column → one warning per column."""
+def test_table_text_detector_folds_columns_into_one_warning_per_table() -> None:
+    """One warning per table; each truncated column is a related location."""
     ctx = _ctx(
         "t3",
         [
@@ -240,9 +254,15 @@ def test_table_text_detector_deduplicates_per_column() -> None:
         ],
     )
     warnings = table_text_truncated.detect(ctx)
-    assert len(warnings) == 2
-    paths = {w.path for w in warnings}
-    assert paths == {"charts.t3.notes", "charts.t3.other"}
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert w.path == "charts.t3"
+    assert "column(s) notes, other:" in w.message
+    assert "3 value(s)" in w.message
+    assert [(r.path, r.message) for r in w.related] == [
+        ("charts.t3.style.columns.notes", "notes: 2 value(s) cut"),
+        ("charts.t3.style.columns.other", "other: 1 value(s) cut"),
+    ]
 
 
 def test_table_text_detector_ignores_other_surfaces() -> None:

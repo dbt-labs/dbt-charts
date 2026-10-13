@@ -8,7 +8,7 @@ rejected ``Decimal`` — it has been deleted; all call sites now use the canonic
 ``Decimal``. The fix also adds a ``math.isfinite`` guard to ``coerce_numeric_cell``
 so non-finite values return ``None`` across all call sites, unifying the null rule.
 
-Tests cover the non-finite guard and three render call sites.
+Tests cover the non-finite guard and the render call sites.
 """
 
 from __future__ import annotations
@@ -18,23 +18,14 @@ from decimal import Decimal
 import pytest
 
 from dbt_charts.core.compile.models.chart.authored import (
-    ColumnScaleConfig,
     ConditionalRule,
     ScaleTargetConfig,
-    TableColumnConfig,
     match_predicate,
 )
-from dbt_charts.core.compile.models.chart.resolved._channel import ResolvedStyleChannel
-from dbt_charts.core.compile.models.primitives import (
-    ScaleTargetConfig as PrimitivesScale,
-)
-from dbt_charts.core.compile.models.style.authored import ColumnScaleTargetConfig
-from dbt_charts.core.render.chart.kpi import _evaluate_channel_for_row
-from dbt_charts.core.render.chart.table_support import (
-    compute_scale_domain,
-    resolve_cell_conditional_styles,
-)
+from dbt_charts.core.render.chart.table_support import compute_scale_domain
 from dbt_charts.core.utils import coerce_numeric_cell
+
+from ._engine_render import kpi_gradient_fill
 
 # ---------------------------------------------------------------------------
 # coerce_numeric_cell unit tests — the non-finite guard
@@ -131,45 +122,14 @@ class TestComputeScaleDomainDecimal:
 
 
 # ---------------------------------------------------------------------------
-# Call site 3: table scale.background cell fill (resolve_cell_conditional_styles)
-# ---------------------------------------------------------------------------
-
-
-class TestResolveCellConditionalStylesDecimal:
-    def test_decimal_cell_gets_scale_fill(self) -> None:
-        """A Decimal cell value must produce a non-None background from a scale."""
-        col = TableColumnConfig(
-            scale=ColumnScaleConfig(
-                background=ColumnScaleTargetConfig(
-                    palette=["#000000", "#ffffff"], min=0, max=100
-                )
-            ),
-        )
-        bg, *_ = resolve_cell_conditional_styles(
-            col, Decimal("50"), data=[], col_name="amount"
-        )
-        assert bg is not None, "Decimal cell produced no scale background fill"
-
-
-# ---------------------------------------------------------------------------
-# Call site 4: KPI background.scale (_evaluate_channel_for_row, gradient mode)
+# Call site 3: KPI background.scale (_evaluate_channel_for_row, gradient mode)
 # ---------------------------------------------------------------------------
 
 
 class TestKpiBackgroundScaleDecimal:
-    def test_gradient_channel_returns_color_for_decimal(self) -> None:
-        """A Decimal row value must produce a gradient fill, not None/fallback."""
-        scale = PrimitivesScale(palette=["#000000", "#ffffff"], min=0, max=1)
-        ch = ResolvedStyleChannel(
-            channel="background", mode="gradient", data_field="rate", scale=scale
+    def test_gradient_fill_for_decimal(self) -> None:
+        """A Decimal value must produce an interpolated fill, not the null color."""
+        fill = kpi_gradient_fill(
+            Decimal("0.4583333333333333"), ["#000000", "#ffffff"], 0, 1
         )
-        row = {"rate": Decimal("0.4583333333333333")}
-        fallback = "#ffffff"
-
-        color = _evaluate_channel_for_row(
-            {"background": ch}, "background", row, fallback=fallback
-        )
-        assert color is not None, "KPI gradient returned None for Decimal row value"
-        assert color != fallback, (
-            "KPI gradient returned fallback — Decimal was not coerced"
-        )
+        assert fill not in ("#000000", "#ffffff", "none")

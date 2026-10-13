@@ -13,12 +13,16 @@ import pyarrow as pa
 import pytest
 
 from dbt_charts.core.compile.config import ProjectSourcesConfig
-from dbt_charts.core.compile.models.source import LakeComputeTokenSource
+from dbt_charts.core.compile.models.source import (
+    LakeComputeTokenSource,
+    TrinoSourceConfig,
+)
+from dbt_charts.core.connections import bulk_tables_for_config
 from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.inspect.resolver import LayeredSchemaResolver
 from dbt_charts.core.inspect.sources.driver import DriverSchemaSource
 
-from ..._fake_driver import fake_lakecompute_driver
+from ..._fake_driver import FakeDriverConnection, fake_lakecompute_driver
 from .test_resolver import _NonFilesystemProject
 
 _COLUMNS = pa.table(
@@ -33,6 +37,23 @@ _COLUMNS = pa.table(
 
 def _source() -> DriverSchemaSource:
     return DriverSchemaSource(LakeComputeTokenSource(type="lakecompute", token="t"))
+
+
+def test_a_trino_source_lists_its_catalog_through_information_schema() -> None:
+    config = TrinoSourceConfig.model_validate(
+        {"type": "trino", "host": "h", "catalog": "lake", "schema": "s", "user": "u"}
+    )
+    connection = FakeDriverConnection(_COLUMNS)
+    with patch(
+        "dbt_charts.core.execute.drivers.trino.open_trino", return_value=connection
+    ):
+        assert DriverSchemaSource(config).list_schemas() == {
+            "schemas": {"main": {}, "raw": {}}
+        }
+        bulk_tables_for_config(config, ["Main"])
+    assert "information_schema.columns" in connection.statements[0]
+    assert "information_schema.tables" in connection.statements[1]
+    assert "LOWER(table_schema) IN ('main')" in connection.statements[1]
 
 
 def test_schemas_come_from_the_bulk_tree() -> None:

@@ -7,7 +7,7 @@
 #   HIGH  #313233 (heading)       — titles, legend, table headers
 #   MID   #626366 (muted)         — category labels, axis titles, support text
 #   FAINT #D0D3D9 (grid-emphasis) — measure gridlines + their ticks, domain, borders
-#   +     #EDEFF2 (grid)          — category/time gridlines + their ticks, one step fainter
+#   +     #DFE1E5 (border)        — category/time gridlines + their ticks, one step fainter
 # The fifth stop exists because gridlines are not one job: at hairline width the
 # only way to sit the category grid behind the measure grid is contrast, so the
 # two split across rungs. Every other chrome role stays on the four tiers above.
@@ -47,16 +47,16 @@ style:
         color: *faint
       grid:
         # Category/time grid. Every gridline here is a hairline, so contrast
-        # carries the axis hierarchy that width cannot: this sits two rungs
+        # carries the axis hierarchy that width cannot: this sits one rung
         # closer to the canvas than the measure grid on axis_y below.
-        color: dbt-grays.grid
+        color: &category_grid dbt-grays.border
         width: 1
         threshold:
           color: &value dbt-grays.ink  # baseline anchors at max contrast
       ticks:
         # A tick and its gridline mark the same value; they read as one mark
         # crossing the axis line, so the tick takes the grid's rung above.
-        color: dbt-grays.grid
+        color: *category_grid
       labels:
         font:
           color: *mid              # category/time labels = MID

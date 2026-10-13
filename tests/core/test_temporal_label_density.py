@@ -375,15 +375,24 @@ class TestDateObjectEntries:
         # Same UTC-ms membership list as the ISO-string form: 2008-01-01 UTC.
         assert "1199145600000.0" in label_expr
 
-    def test_z_suffix_datetime_string_parses_on_all_python_versions(self):
-        """'...Z' is rejected by fromisoformat on 3.10 but accepted on 3.11+;
-        the parser normalizes it so one board renders identically on both."""
+    def test_z_suffix_datetime_string_parses(self):
+        """A '...Z' datetime string parses as UTC."""
         from dbt_charts.core.render.chart.time_unit_detect import (
             label_values_filter_expr,
         )
 
         expr = label_values_filter_expr(["2008-01-01T00:00:00Z"], "datum.label")
         assert "1199145600000.0" in expr
+
+    def test_z_suffix_date_only_string_is_rejected(self):
+        """'2024-01-01Z' is neither an ISO date nor an ISO datetime."""
+        from dbt_charts.core.render.chart.time_unit_detect import (
+            label_values_filter_expr,
+        )
+
+        with pytest.raises(ChartDataError) as excinfo:
+            label_values_filter_expr(["2024-01-01Z"], "datum.label")
+        assert excinfo.value.code.code == "ERR-LABEL-VALUES-INVALID-DATE"
 
     def test_datetime_objects_accepted(self):
         sparse = [dt.datetime(2008, 1, 1), dt.datetime(2025, 1, 1)]

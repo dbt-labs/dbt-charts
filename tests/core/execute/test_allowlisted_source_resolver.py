@@ -84,6 +84,44 @@ class TestAllowlistedSourceResolver:
             )
         assert exc_info.value.code == ERR_SOURCE_INLINE_FORBIDDEN
 
+    def test_resolves_a_board_level_file_source_from_an_inline_path_ref(self) -> None:
+        """A `source: data/x.parquet` ref compiles into `board.sources`; it is a
+        repo-relative path with no host or credential, so it resolves."""
+        from dbt_charts.core.compile.models.source import ParquetSourceConfig
+        from dbt_charts.core.execute.source_resolver import AllowlistedSourceResolver
+
+        result = AllowlistedSourceResolver().resolve(
+            authored="data/opps.parquet",
+            board_sources={
+                "data/opps.parquet": {
+                    "type": "parquet",
+                    "files": {"opps": "data/opps.parquet"},
+                }
+            },
+            project_sources=_project_sources(
+                examples_db={"type": "duckdb", "path": ":memory:"}
+            ),
+            dbt_context=None,
+        )
+
+        assert isinstance(result, ParquetSourceConfig)
+        assert result.files == {"opps": "data/opps.parquet"}
+
+    def test_board_level_file_source_still_enforces_the_path_rules(self) -> None:
+        """Resolving a board-declared file source runs the file config's own
+        validation, so a path escaping the project root is still refused."""
+        from dbt_charts.core.execute.source_resolver import AllowlistedSourceResolver
+
+        with pytest.raises(ValueError, match="would escape above the project root"):
+            AllowlistedSourceResolver().resolve(
+                authored="evil",
+                board_sources={
+                    "evil": {"type": "parquet", "files": {"x": "../../etc/x.parquet"}}
+                },
+                project_sources=_project_sources(),
+                dbt_context=None,
+            )
+
     def test_inline_rejection_does_not_leak_secret_values(self):
         """Inline-rejection error must not echo connection-parameter values.
 

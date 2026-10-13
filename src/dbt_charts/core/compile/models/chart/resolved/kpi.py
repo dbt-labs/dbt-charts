@@ -67,6 +67,14 @@ class ResolvedKpiChart(_BaseResolvedChartFields):
     variant: Literal["stacked", "inline", "compact"] = Field(
         description="Resolved `style.variant`; dispatches to a distinct SVG emit path.",
     )
+    text_link: str | None = Field(
+        default=None,
+        description=(
+            "Link an `email` / `url` headline format implies; None when the "
+            "format is not a text format or the chart has its own `link`. "
+            "Kept apart from `link`, which is authored."
+        ),
+    )
     format: ResolvedFormat | None = Field(
         default=None,
         description=(

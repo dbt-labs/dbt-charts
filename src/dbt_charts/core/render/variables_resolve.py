@@ -36,6 +36,7 @@ from dbt_charts.core.render.variable_input_refinement import (
 )
 from dbt_charts.core.render.variables_layout import ControlSpec
 from dbt_charts.core.text.case import inferred_display_name
+from dbt_charts.core.text.format_d3 import active_time_locale
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import VariableValues
@@ -335,7 +336,7 @@ def _daterange_is_unset(value: Any) -> bool:
         return False
     if len(value) != 2:
         return False
-    return value[0] in (None, "") or value[1] in (None, "")
+    return value[0] in (None, "") and value[1] in (None, "")
 
 
 def format_variable_display_value(
@@ -384,9 +385,12 @@ def format_variable_display_value(
             raise ValueError(
                 f"daterange variable expects exactly 2 elements, got {len(value)}"
             )
+        # One open end filters on the other alone, so the label names that end.
         start, end = value[0], value[1]
-        if start in (None, "") or end in (None, ""):
-            return read_only_unset_label(var_def, UNSET_DATERANGE_LABEL)
+        if start in (None, ""):
+            return f"Until {format_date_label(str(end))}"
+        if end in (None, ""):
+            return f"From {format_date_label(str(start))}"
         return format_daterange_label(str(start), str(end))
 
     if input_type == "checkbox":
@@ -424,24 +428,12 @@ def format_variable_display_value(
     raise ValueError(f"unsupported variable input type for display: {input_type!r}")
 
 
-_MONTHS_SHORT = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-]
+def _month(d: datetime.date) -> str:
+    return active_time_locale()["shortMonths"][d.month - 1]
 
 
 def _format_date(d: datetime.date) -> str:
-    return f"{d.day} {_MONTHS_SHORT[d.month - 1]} {d.year}"
+    return f"{d.day} {_month(d)} {d.year}"
 
 
 def format_date_label(iso: str) -> str:
@@ -459,8 +451,7 @@ def format_date_label(iso: str) -> str:
 def format_daterange_label(start_iso: str, end_iso: str) -> str:
     """Human-readable chip label from ISO date strings.
 
-    Mirrors JS formatRange() so the server-rendered initial label matches
-    what the client renders post-interaction. Falls back to raw ISO on parse error.
+    Falls back to raw ISO on parse error.
     """
     try:
         s = datetime.date.fromisoformat(start_iso)
@@ -469,12 +460,12 @@ def format_daterange_label(start_iso: str, end_iso: str) -> str:
         return f"{start_iso} – {end_iso}"
 
     def fmt_no_yr(d: datetime.date) -> str:
-        return f"{d.day} {_MONTHS_SHORT[d.month - 1]}"
+        return f"{d.day} {_month(d)}"
 
     if s == e:
         return _format_date(s)
     if s.year == e.year and s.month == e.month:
-        return f"{s.day}–{e.day} {_MONTHS_SHORT[s.month - 1]} {s.year}"
+        return f"{s.day}–{e.day} {_month(s)} {s.year}"
     if s.year == e.year:
         return f"{fmt_no_yr(s)} – {_format_date(e)}"
     return f"{_format_date(s)} – {_format_date(e)}"

@@ -147,11 +147,7 @@ Don't put a `title:` on every row. A section heading over already-labeled charts
 
 Skip this step when you are previewing ephemerally — see "Previewing vs. saving a board" above; your host decides the default. On hosts that offer the user a Save control over the rendered preview (the Cloud chat, for example), saving an unprompted preview is the user's click — don't write that file yourself. {{#if_tool write_file}}That default does not apply when the user explicitly asked you to save, copy, duplicate, move, or rename something: an explicit ask is your authorization on every host, so carry it out. {{/if_tool}}When saving applies, write the YAML to a **new** board under `charts/` (never silently fold into an existing one) with your normal file-edit mechanism.
 
-{{#if_tool validate_board}}Then validate it:
-
-{{ s_validate_example }}
-
-Fix any errors `{{ s_validate_board }}` reports, then re-run until it passes. {{/if_tool}}Confirm it renders with `{{ s_render_board }}` — a failed compile reports the same diagnostics validation would, so fix whatever it reports and re-render until it passes.
+Confirm it renders with `{{ s_render_board }}` — a failed compile reports the validation diagnostics, so fix whatever it reports and re-render until it passes.
 
 **YAML style:** write block style — one key per line. Avoid JSON-like inline flow maps (`{ type: bar, x: month }`); they read and diff worse than indented blocks. Inline arrays (`y: [revenue, cost]`) are fine.
 
@@ -172,13 +168,12 @@ Pass concrete values via the `variables` parameter when testing. When the query 
 | Tool | When | What It Catches |
 |------|------|-----------------|
 | `{{ s_execute_query }}` | While drafting raw SQL | SQL errors, missing tables, wrong column names |
-{{#if_tool validate_board}}| `{{ s_validate_board }}` | After every YAML edit | YAML schema errors, unknown fields, broken chart/query/layout references |
-{{/if_tool}}{{#if_tool query_board}}| `{{ s_query_board }}` | After saving YAML with named queries | Actual named-query columns and sample rows |
-{{/if_tool}}| `{{ s_render_board }}` | Before delivery | Query execution, render errors, layout issues, misleading visuals |
+| `{{ s_execute_named_query }}` | After saving YAML with named queries | Actual named-query columns and sample rows |
+| `{{ s_render_board }}` | After every YAML edit and before delivery | YAML schema errors, unknown fields, broken chart/query/layout references, query execution, render errors, layout issues, misleading visuals |
 
 These tools are fast. Use them after every change, not just at the end.
 
-`{{ s_render_board }}` also returns a `warnings` list alongside errors. Each has a stable code flagging either a **data** problem (all-null series, zero rows, a single temporal point, fan-out / re-aggregation) or a **design/visual** problem (a pie with too many slices, too many color or x categories, a missing currency/percent format, a mismatched shared y-axis). If `warnings` is non-empty, read each one and fix its cause — the query/data for data warnings, the **chart config** (chart type, encodings, formatting in the correct `style:` slot — see [Formatting Numbers](#formatting-numbers)) for design warnings — then re-render. Treat warnings like errors: don't deliver a dashboard while any remain unresolved (or say which one is a deliberate exception and why).
+`{{ s_render_board }}` also returns a `warnings` list alongside errors. Each has a stable code flagging either a **data** problem (all-null series, zero rows, a single temporal point, fan-out / re-aggregation) or a **design/visual** problem (a pie dominated by one slice, too many color or x categories, a missing currency/percent format, a mismatched shared y-axis). If `warnings` is non-empty, read each one and fix its cause — the query/data for data warnings, the **chart config** (chart type, encodings, formatting in the correct `style:` slot — see [Formatting Numbers](#formatting-numbers)) for design warnings — then re-render. Treat warnings like errors: don't deliver a dashboard while any remain unresolved (or say which one is a deliberate exception and why).
 
 ## Self-Review Before Delivering
 
@@ -186,7 +181,7 @@ Run the review skill as the final step before declaring the board done:
 
 - {{ s_review_pointer }}
 
-It orchestrates {{#if_tool validate_board}}structural ({{ s_validate_board }}) and {{/if_tool}}visual (PNG + vision) passes and returns a ranked findings list. Fix each `blocker`, then re-run the review. Rendering and validation are cached — the loop is cheap.
+It orchestrates structural and visual (PNG + vision) passes and returns a ranked findings list. Fix each `blocker`, then re-run the review. Rendering and validation are cached — the loop is cheap.
 
 ## Data Requirements Per Chart Type
 
@@ -199,7 +194,7 @@ queries:
       - [2025-01-01, 284000, 3.2]
       - [2025-02-01, 301000, 2.9]
 ```
-**Do not use `rows: [{col: val}, ...]`** — that format is not supported. `type: values` is optional and changes nothing; omit it.
+Record-shape `rows: [{col: val}, ...]` also works, but repeats every column name per row; prefer the columnar form. `type: values` is optional and changes nothing; omit it.
 
 Each chart type expects data in a specific shape. dbt charts validates this and errors fast — no silent magic.
 
@@ -225,9 +220,22 @@ Each chart type expects data in a specific shape. dbt charts validates this and 
 
 ## Formatting Numbers
 
-dbt charts does not auto-detect format from column names at compile time. Set formatting explicitly wherever the number type matters — **in the slot for that chart family**, not at chart root.
+dbt charts does not auto-detect format from column names at compile time. Set formatting explicitly wherever the number type matters. A column prints the same way on every chart that shows it, so say how it prints **once, on the query**:
+
+```yaml
+queries:
+  sales_by_month:
+    sql: SELECT month, won_amount, win_rate FROM ...
+    formats:
+      won_amount: currency_whole
+      win_rate: percent
+```
+
+A chart sets a format in its own slot only for an exception, and there is no chart-wide format key. One board-wide look is a redefinition of the engine name in `style.formats` (`currency: "$,.0f"`), not a key repeated on every chart. A date axis reads by its grain with no key at all.
 
 ### Where format goes
+
+When a chart needs its own format, put it **in the slot for that chart family**, not at chart root.
 
 `axis_x`/`axis_y` name the channel, not the visual edge: on every cartesian family the measure is `axis_y`, including a horizontal bar that draws it along the bottom. A number preset belongs on the measure.
 
@@ -248,14 +256,14 @@ Put a number preset on an axis whose ticks can't carry it and the engine raises 
 | `scatter` over a genuinely numeric x, or its usual numeric y | quantitative — applies normally |
 | `scatter` over a categorical y (a dot plot) | band |
 
-A temporal x — `line`/`area`/`scatter` over dates, or a bar past 60 buckets — raises the same code; use a time token (`"%b %Y"`) or `style.time_format` there instead. A `heatmap` has no measure axis at all: both axes are grid dimensions and the value lives on the color channel, which carries no label format of its own, so a number preset on either axis — including its `y` — raises too. `style.axis_y.mirror.format` follows the same rule whenever the mirrored edge is categorical — a dot plot's y, and also a default-orientation (horizontal) bar, where the rotation puts the category on that edge. Every one of these used to render something wrong instead of raising.
+A temporal x — `line`/`area`/`scatter` over dates, or a bar past 60 buckets — raises the same code; use a time token (`"%b %Y"`) there instead. A `heatmap` has no measure axis at all: both axes are grid dimensions and the value lives on the color channel, which carries no label format of its own, so a number preset on either axis — including its `y` — raises too. `style.axis_y.mirror.format` follows the same rule whenever the mirrored edge is categorical — a dot plot's y, and also a default-orientation (horizontal) bar, where the rotation puts the category on that edge. Every one of these used to render something wrong instead of raising.
 
 | Chart family | YAML slot | Example |
 |--------------|-----------|---------|
-| `line`, `bar`, `area`, `scatter` — the measure | `style.number_format` (or `style.axis_y.labels.format`) | `style.number_format: currency_whole` |
-| same — the dimension, when it is a **date** | `style.time_format`, or a time token on `style.axis_x.labels.format` | `style.axis_x.labels.format: "%b %Y"` |
+| `line`, `bar`, `area`, `scatter` — the measure | `style.axis_y.labels.format` | `style.axis_y.labels.format: currency_whole` |
+| same — the dimension, when it is a **date** | reads by its grain with no key; a time token on `style.axis_x.labels.format` shows another form | `style.axis_x.labels.format: "%b %Y"` |
 | same — the dimension, when it is a **category** | no format applies — the tick text *is* the label | — |
-| same — the dimension, when it is genuinely **numeric** (e.g. a scatter's x column) | `style.axis_x.labels.format` — `number_format` never reaches the dimension axis | `style.axis_x.labels.format: integer` |
+| same — the dimension, when it is genuinely **numeric** (e.g. a scatter's x column) | `style.axis_x.labels.format` — `axis_y` never reaches the dimension axis | `style.axis_x.labels.format: integer` |
 | `heatmap` | no axis format applies — the value is on the color channel | — |
 | `kpi` headline value | `style.value.format` | `style.value.format: currency_whole` |
 | `kpi` support delta | `style.support.format` | `style.support.format: percent_delta` |
@@ -273,7 +281,9 @@ charts:
     x: month
     y: won_amount
     style:
-      number_format: currency_whole
+      axis_y:
+        labels:
+          format: currency_whole
 ```
 
 Table example:
@@ -304,9 +314,11 @@ Named presets (prefer these over raw D3 strings):
 | `currency_whole` | `$1,234` | |
 | `currency` | `$1.2M` | compacts; the name to reach for on a dashboard |
 | `currency_full` | `$1,234.56` | cents at every magnitude |
+| `currency_compact` | `$1.2M` | two significant digits: `$45K`, `$1.2B`; analytic (K, M, B) in every slot, KPIs included |
 | `number` | `1.2M` | compacts; also the engine default when no format is set |
 | `number_full` | `1,234.56` | every digit at every magnitude |
-| `percent` | `2.3%` — input is decimal fraction (0.023) | line/bar/area/scatter via `style.number_format` |
+| `compact` | `1.2M` | two significant digits: `45K`, `1.2B`; analytic (K, M, B) in every slot, KPIs included |
+| `percent` | `2.3%` — input is decimal fraction (0.023) | line/bar/area/scatter via the query's `formats:` or `style.axis_y.labels.format` |
 | `percent_number` | `2.3%` — input is whole-number percent (2.3) | **KPI only** (`style.value.format`) |
 | `percent_delta` | `+2.3%` — input is decimal fraction | |
 | `percent_number_delta` | `+2.3%` — input is whole-number (2.3) | **KPI only** |
@@ -324,8 +336,8 @@ The `$` in these specs prints the board locale's currency: `$` in `en-US`, `€`
 | Building the entire dashboard in one pass | Build one chart at a time |
 | Writing SQL without checking column names | Check INFORMATION_SCHEMA via `{{ s_execute_query }}` first |
 | Hardcoding values during exploration | Use `{{ variables }}` from the start so the query cache survives |
-{{#if_tool validate_board}}| Skipping validation between changes | `{{ s_validate_board }}` after every YAML edit |
-{{/if_tool}}| Too many charts (>8) the user didn't ask for | Split into multiple dashboards |
+| Skipping the render between changes | `{{ s_render_board }}` after every YAML edit |
+| Too many charts (>8) the user didn't ask for | Split into multiple dashboards |
 | Using chart-type names as keys in layout | `table:` or `bar:` as keys cause parse errors — use descriptive names like `revenue_table` |
 | Referencing query names in layout | Layout references charts, not queries — create a chart that wraps the query |
 | KPI query returns multiple rows | Use `SUM()`/`COUNT()`/`AVG()` to aggregate to 1 row |
@@ -334,11 +346,10 @@ The `$` in these specs prints the board locale's currency: `$` in `en-US`, `€`
 | Writing raw D3 format strings (`"$,.2s"`, `".1%"`) | Use a named preset (`currency`, `percent`) — clearer and theme-consistent |
 | Scaling values for display in SQL (`/1000`, `_k`/`_m` columns) | Query in natural units; compacting is the chart format's job (`currency`) |
 | Writing a raw hex in a color slot (`color: "#4C78A8"`) | Author a palette token{{#if_tool docs}} — `{{ s_docs_color }}` —{{/if_tool}} or no color at all, and let the theme pick |
-| Putting `format:` on a line/bar/area/scatter chart | Use `style.number_format:` for the measure — chart-root `format:` is rejected on cartesian chart families |
-| Putting a number preset on `style.axis_x.labels.format` | `axis_x` is the dimension channel regardless of chart orientation. It raises `ERR-LABEL-FORMAT-AXIS-MISMATCH` on a band scale whose ticks are not already numbers, and on a temporal x too (dates get no exemption). Format the measure (`style.number_format` / `style.axis_y.labels.format`) instead — a number preset belongs on the dimension only when its ticks are themselves numbers |
+| Putting `format:` on a line/bar/area/scatter chart | Name the column in the query's `formats:`, or use `style.axis_y.labels.format:` for the measure — chart-root `format:` is rejected on cartesian chart families |
+| Putting a number preset on `style.axis_x.labels.format` | `axis_x` is the dimension channel regardless of chart orientation. It raises `ERR-LABEL-FORMAT-AXIS-MISMATCH` on a band scale whose ticks are not already numbers, and on a temporal x too (dates get no exemption). Format the measure (the query's `formats:` / `style.axis_y.labels.format`) instead — a number preset belongs on the dimension only when its ticks are themselves numbers |
 | Using `percent_number` or `percent_number_delta` on a line/bar/area chart | These are KPI-only — use `percent` or `percent_delta` instead (input must be decimal fraction 0–1) |
 | Nesting `columns`/`values` under `sql:` for inline data | `sql:` is a string — inline data lives directly under the query name: `queries.my_data.columns: [...]` and `queries.my_data.values: [[...]]` |
-| Using `type: values` + `rows:` for inline data | Not a valid query format — use `columns: [col1, col2]` + `values: [[row1val1, row1val2], ...]` directly under the query key |
 | Putting `layers:` on a non-cartesian chart type | `layers:` is only valid on `bar`, `line`, `area`, and `scatter` — use `y: [col1, col2]` on any of those for simple multi-series without overlay marks |
 
 ## Rationalizations to Resist

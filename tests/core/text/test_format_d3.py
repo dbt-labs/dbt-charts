@@ -118,7 +118,7 @@ def test_literal_percent_escape_unaffected() -> None:
 def test_modifiers_are_resolved_before_strftime_sees_them() -> None:
     """Pins the substitution itself, not just its rendering on this host's libc."""
     out = _apply_padding_modifiers(date(2024, 1, 3), "%-d %b %Y")
-    assert out == "3 %b %Y"
+    assert out == "3 Jan %Y"
     assert not re.search(r"%[-_0]", out)
 
 
@@ -252,7 +252,7 @@ def test_modifier_on_composite_directive_passes_through_unchanged() -> None:
     strftime already does, unmodified by this substitution.
     """
     d = datetime(2024, 1, 3, 0, 0, 0)
-    for fmt in ("%-T", "%_T", "%-X", "%-x", "%-D", "%-Z"):
+    for fmt in ("%-T", "%_T", "%-D", "%-Z"):
         assert portable_strftime(d, fmt) == d.strftime(fmt)
 
 
@@ -320,16 +320,14 @@ def test_epoch_millis_directive_on_date_only_is_midnight_utc() -> None:
 
 
 def test_unsupported_time_directives_flags_directives_vega_paints_differently() -> None:
-    """%Z/%c/%x/%X are real d3 grammar portable_strftime cannot render
-    identically (locale-composite or a Windows/naive-datetime divergence).
+    """%Z is real d3 grammar portable_strftime cannot render identically
+    (a naive-datetime divergence).
     """
     from dbt_charts.core.text.format_d3 import unsupported_time_directives
 
     assert unsupported_time_directives("%b %Y") == []
     assert unsupported_time_directives("%q %L %Q") == []
     assert unsupported_time_directives("%Z") == ["Z"]
-    assert unsupported_time_directives("%c") == ["c"]
-    assert unsupported_time_directives("%x %X") == ["X", "x"]
     assert unsupported_time_directives("%s") == ["s"]  # local-tz epoch seconds, not UTC
 
 

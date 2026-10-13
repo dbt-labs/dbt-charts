@@ -70,11 +70,12 @@ style:
         fill: dbt-creams.grid
     axis:
       grid:
-        color: dbt-creams.grid
+        # One rung quieter than the measure grid (axis_y below), never more.
+        color: &category_grid dbt-creams.border
         threshold:
           color: dbt-creams.subtitle
       ticks:
-        color: dbt-creams.grid
+        color: *category_grid
       line:
         color: dbt-creams.grid
       labels:

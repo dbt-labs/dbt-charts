@@ -144,6 +144,9 @@ def get_example(slug: str) -> ExampleDetail:
 
 def search_examples(query: str, *, limit: int = 10) -> ExampleSearchResult:
     """Substring search across slug (1.0), title/notes (0.8), YAML (0.5)."""
+    # Deferred: `dct` startup must not load the compiler.
+    from dbt_charts.core.compile.authoring.yaml_patch import MODELINE_PREFIX
+
     q = query.strip().lower()
     if not q:
         raise ValueError("query must be a non-empty string")
@@ -154,7 +157,11 @@ def search_examples(query: str, *, limit: int = 10) -> ExampleSearchResult:
             score = 1.0
         elif q in detail.title.lower() or q in detail.notes.lower():
             score = 0.8
-        elif q in detail.yaml.lower():
+        elif any(
+            q in line
+            for line in detail.yaml.lower().splitlines()
+            if not line.startswith(MODELINE_PREFIX)
+        ):
             score = 0.5
         else:
             continue

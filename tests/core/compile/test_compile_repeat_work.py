@@ -176,8 +176,9 @@ class TestBoardCascadeIsMemoizedPerCompile:
         ``gap: .inf`` board resolved to.
         """
         with board_style_cache():
+            # Authoring `.inf` is rejected, so build the patch past validation.
             infinite = compile_board_resolved_style(
-                StylePatch.model_validate({"gap": math.inf}), None, None
+                StylePatch.model_construct(gap=math.inf), None, None
             )
             unset = compile_board_resolved_style(
                 StylePatch.model_validate({"gap": None}), None, None

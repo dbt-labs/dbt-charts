@@ -71,8 +71,7 @@ def test_scale_type_temporal_with_iso_datetime_domain_ok():
 
 
 def test_scale_type_temporal_with_z_suffixed_utc_domain_ok():
-    """A trailing 'Z' UTC suffix must validate identically on Python 3.10
-    (where fromisoformat rejects it) and 3.11+ (where it parses)."""
+    """A trailing 'Z' UTC suffix validates as a temporal domain."""
     scale = ScaleContinuousStyle(
         type="temporal", domain=["1955-01-01T00:00:00Z", "2026-01-01T00:00:00Z"]
     )

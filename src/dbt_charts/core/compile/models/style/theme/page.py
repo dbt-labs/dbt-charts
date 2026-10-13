@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -148,7 +148,7 @@ class TimestampStyle(ConstrainedModel):
         detected behaviorally (the output shifts when the instant moves an hour),
         which catches %T/%R/%X/%-H that a directive scan would miss.
         """
-        probe = datetime(2001, 1, 1, 9, 30, tzinfo=timezone.utc)
+        probe = datetime(2001, 1, 1, 9, 30, tzinfo=UTC)
         shown = portable_strftime(probe, self.format)
         prints_clock = shown != portable_strftime(
             probe + timedelta(hours=1), self.format

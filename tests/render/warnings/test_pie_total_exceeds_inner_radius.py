@@ -101,21 +101,6 @@ def test_no_fire_when_total_fits() -> None:
     assert detector.detect(_make_ctx(chart, _WIDE_ROWS, 400, 300)) == []
 
 
-def test_no_fire_for_solid_pie() -> None:
-    """A solid pie (inner_radius=0) has no hole; skip the check."""
-    chart = PieChart(
-        id="c1",
-        type="pie",
-        query_name="q",
-        theta="amount",
-        style=PieChartStylePatch.model_validate(
-            {"inner_radius": 0.0, "total": {"value": {"format": "integer"}}}
-        ),
-        total=ChartTotal(visible=True),
-    )
-    assert detector.detect(_make_ctx(chart, _NARROW_ROWS, 88, 240)) == []
-
-
 def test_no_fire_when_total_none() -> None:
     chart = _make_donut(total_format=None)
     assert detector.detect(_make_ctx(chart, _NARROW_ROWS, 88, 240)) == []

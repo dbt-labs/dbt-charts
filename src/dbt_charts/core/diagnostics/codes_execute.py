@@ -286,9 +286,10 @@ ERR_SOURCE_NOT_NAMED = REGISTRY.register(
         ),
         doc=(
             "Fired when a SQL query reaches execution without naming a source. "
-            "There is no implicit source to fall back to: set `source:` on the "
-            "query, or once at the board root so every query inherits it, to one "
-            "of the available sources."
+            "Set `source:` on the query, or once at the board root so every "
+            "query inherits it, to one of the available sources. The only "
+            "fallback is a dbt project that declares no `sources:`, whose "
+            "implicit source is named after its dbt profile."
         ),
         docs_topic="queries",
     )
@@ -585,15 +586,34 @@ ERR_BINDER_UNKNOWN_COLUMN = REGISTRY.register(
     ErrorCode(
         code="ERR-BINDER-UNKNOWN-COLUMN",
         domain="execute",
-        title="Warehouse rejected an unknown column or table reference",
+        title="Warehouse rejected an unknown column reference",
         message_template=(
-            "Warehouse could not resolve a column or table reference: {detail}. "
-            "Check that all referenced columns and tables exist in the source."
+            "Warehouse could not resolve a column reference: {detail}. "
+            "Check that all referenced columns exist in the source."
         ),
         doc=(
-            "Fired when the warehouse reports that a column or table reference "
-            "could not be resolved during query binding. Check that all referenced "
-            "columns and tables exist in the source."
+            "Fired when the warehouse reports that a column reference could not "
+            "be resolved during query binding. Check that all referenced columns "
+            "exist in the source."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_BINDER_UNKNOWN_RELATION = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BINDER-UNKNOWN-RELATION",
+        domain="execute",
+        title="Warehouse reports a table or view does not exist",
+        message_template=(
+            "Warehouse could not find a table or view: {detail}. "
+            "Check that the relation exists and the connection can read it."
+        ),
+        doc=(
+            "Fired when the warehouse reports that a table, view or schema the "
+            "query names does not exist or is not visible to the connection. For a "
+            "ref() or source() the relation may have moved since the dbt "
+            "manifest was built."
         ),
         docs_topic="queries",
     )
@@ -797,9 +817,10 @@ ERR_DBT_TARGET_NEEDS_SOURCE = REGISTRY.register(
         ),
         doc=(
             "Fired when a query uses dbt Jinja such as `{{ ref() }}` with no "
-            "`source:`, and the dbt project's own target is lake compute. Such "
-            "a query would run through dbt Core against that target, and dbt "
-            "Core has no lake compute adapter. Declare a source that names the "
+            "`source:`, and the dbt project's own target is lake compute or "
+            "Trino. Such a query would run through dbt Core against that "
+            "target, and dbt Charts connects to those warehouses through a "
+            "driver rather than a dbt Core adapter. Declare a source that names the "
             "profile and target, and set `source:` on the query."
         ),
         docs_topic="queries",
@@ -842,6 +863,28 @@ ERR_DBT_REF_UNKNOWN_NODE = REGISTRY.register(
         ),
         docs_topic="queries",
         hint_generator=suggest_close_ref,
+    )
+)
+
+ERR_DBT_COLUMN_FORMAT_UNKNOWN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-DBT-COLUMN-FORMAT-UNKNOWN",
+        domain="execute",
+        title="A dbt column's meta.format names a format the board does not have",
+        message_template=(
+            "dbt {kind} {model!r} column {column!r} has meta.format {spec!r}, "
+            "which is neither an engine format nor defined in this board's "
+            "style.formats."
+        ),
+        doc=(
+            "Fired when a board query reads a dbt column whose "
+            "`config.meta.format` is not an engine format name and not a key in "
+            "the rendering board's merged `style.formats`. Fix the value in the "
+            "model's YAML, or define the name under the board's `style.formats`. "
+            "A column the board never reads is never checked."
+        ),
+        summary="A dbt column's meta.format names a format the board lacks.",
+        docs_topic="queries",
     )
 )
 

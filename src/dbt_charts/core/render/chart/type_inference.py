@@ -482,8 +482,8 @@ def gate_label_format(
     default names ``axis_y``, and following that advice anywhere else sends
     the author straight back into the failure this raises for. Temporal is
     the exception that needs NO caller remedy — the gate answers it with the
-    ``style.time_format`` text below, which is right on every family, so a
-    temporal call site passing ``remedy=None`` is correct rather than lazy.
+    time-spec text below, which is right on every family, so a temporal call
+    site passing ``remedy=None`` is correct rather than lazy.
     """
     if fmt is None or is_time_format(fmt.spec):
         return
@@ -509,8 +509,7 @@ def gate_label_format(
 
     default_remedy = (
         "This axis is temporal — d3's number grammar doesn't read over "
-        'dates. Author a time spec here (e.g. "%b %Y"), or set '
-        "style.time_format instead."
+        'dates. Author a time spec here (e.g. "%b %Y").'
         if vl_type == "temporal"
         else (
             "axis_x addresses the dimension channel — author the number "
@@ -763,6 +762,11 @@ def build_cartesian_x_encoding(
     _fmt = result.get("format")
     if isinstance(_fmt, str) and is_time_format(_fmt):
         authored_time_format = _fmt
+    # Keyed by the authored label grain, not `label_tu`: the cadence ladder
+    # promotes `label_tu` to year when months crowd.
+    grain_time_format = (
+        axis.grain_formats.get(authored_label_grain) if authored_label_grain else None
+    )
     if vl_type != "temporal" and authored_time_format is not None:
         # No bucketed cadence to gate against: keep the pre-existing
         # ungated routing, which is correct when every tick is meant to speak.
@@ -866,7 +870,7 @@ def build_cartesian_x_encoding(
                     )
                 ),
                 steep_tilt=steep_tilt,
-                authored_format=authored_time_format,
+                authored_format=authored_time_format or grain_time_format,
             )
             if smart_expr is not None:
                 result["labelExpr"] = smart_expr
@@ -945,6 +949,8 @@ def build_cartesian_x_encoding(
         # labels at all. The gate is only load-bearing where the tick set is
         # denser than the visible set, which is the ordinal branch's
         # `restores_ticks` above.
+        if grain_time_format is not None and "format" not in result:
+            result["format"] = grain_time_format
         if "labelExpr" not in result and "format" not in result:
             smart_expr_t = default_label_expr_for(
                 time_unit,

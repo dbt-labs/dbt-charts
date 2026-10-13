@@ -42,7 +42,7 @@ def compute_svg_text_fills(svg: str) -> dict[str, str]:
     """Resolve the winning `fill` for every <text> element in `svg`, keyed by
     its own direct text content.
 
-    Not a general CSS engine -- every rule callout.py emits is a single-class
+    Not a general CSS engine -- every rule the callout engine emits is a single-class
     selector already unique to its own declaration (content-addressed class
     renaming), and the one exception in these tests -- a hand-written
     stand-in for render/prose.py's bare `.md-text` rule -- is also a single

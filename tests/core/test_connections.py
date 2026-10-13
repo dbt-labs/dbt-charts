@@ -35,6 +35,7 @@ from dbt_charts.core.connections import (
     WarehouseUnreachableError,
     build_bigquery_client,
     bulk_schema_for_config,
+    bulk_tables_for_config,
     classify_connection_error,
     dataset_location,
     list_catalogs,
@@ -1417,3 +1418,110 @@ def test_test_connection_details_a_message_less_driver_exception_by_type_name(
 
     assert success is False
     assert exc.detail == "RuntimeError"
+
+
+# ── bulk_tables_for_config: the tables-only listing ──────────────────────────
+
+
+def test_bulk_tables_for_config_lists_table_names_by_schema(tmp_path: Path) -> None:
+    tables = bulk_tables_for_config(
+        _duckdb_with_two_schemas(tmp_path), ["sales", "marketing"]
+    )
+
+    assert tables["sales"] == ["orders"]
+    assert tables["marketing"] == ["campaigns"]
+
+
+def test_bulk_tables_for_config_propagates_not_implemented(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_config = _duckdb_with_two_schemas(tmp_path)
+
+    class _NoBulkFormDialect:
+        cursor_supports_driver_limit = False
+
+        def bulk_tables_sql(self, scope: str, schemas: object) -> str:
+            raise NotImplementedError("no bulk form")
+
+    monkeypatch.setattr(
+        "dbt_charts.core.dialects.get_dialect", lambda _type: _NoBulkFormDialect()
+    )
+    with pytest.raises(NotImplementedError):
+        bulk_tables_for_config(source_config, ["sales", "marketing"])
+
+
+def test_bulk_tables_for_config_normalizes_driver_errors_to_runtime_error(
+    tmp_path: Path,
+) -> None:
+    source_config = DuckDBSourceConfig(
+        type="duckdb", path=str(tmp_path / "missing_dir" / "wh.duckdb")
+    )
+    with pytest.raises(RuntimeError, match="bulk_tables_for_config query failed"):
+        bulk_tables_for_config(source_config, ["sales", "marketing"])
+
+
+def test_bulk_tables_for_config_raises_on_max_rows_truncation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "1")
+
+    with pytest.raises(RuntimeError, match="truncated.*table count"):
+        bulk_tables_for_config(
+            _duckdb_with_two_schemas(tmp_path), ["sales", "marketing"]
+        )
+
+
+def test_bulk_tables_for_config_reads_tables_not_columns_for_bigquery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from dbt_charts.core.compile.models.source import BigQuerySourceConfig
+
+    captured: dict[str, str] = {}
+
+    class _CapturingAdapter:
+        connections = SimpleNamespace(
+            get_thread_connection=lambda: SimpleNamespace(handle=object())
+        )
+
+        def connection_named(self, name: str):
+            from contextlib import nullcontext
+
+            return nullcontext()
+
+        def execute(self, sql: str, **kwargs: object):
+            captured["sql"] = sql
+            table = SimpleNamespace(
+                column_names=["table_schema", "table_name"],
+                rows=[("d", "t")],
+            )
+            return None, table
+
+    monkeypatch.setattr(
+        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+        lambda creds, **kwargs: _CapturingAdapter(),
+    )
+    tables = bulk_tables_for_config(
+        BigQuerySourceConfig(type="bigquery", project="p", dataset="d", location="US"),
+        ["d"],
+    )
+
+    assert tables == {"d": ["t"]}
+    assert "`region-us`.INFORMATION_SCHEMA.TABLES" in captured["sql"]
+
+
+def test_bulk_tables_for_config_lists_only_the_requested_schemas(
+    tmp_path: Path,
+) -> None:
+    source_config = _duckdb_with_two_schemas(tmp_path)
+
+    assert bulk_tables_for_config(source_config, ["SALES"]) == {"sales": ["orders"]}
+
+
+def test_bulk_tables_for_config_with_no_schemas_runs_no_query(tmp_path: Path) -> None:
+    missing = DuckDBSourceConfig(
+        type="duckdb", path=str(tmp_path / "missing_dir" / "wh.duckdb")
+    )
+
+    assert bulk_tables_for_config(missing, []) == {}

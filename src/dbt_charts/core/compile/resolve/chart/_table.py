@@ -15,6 +15,10 @@ from dbt_charts.core.compile.format import (
     declared_format,
     sub_unit_spec_for_value,
 )
+from dbt_charts.core.compile.format_value import (
+    raise_if_format_cannot_print_number,
+    text_format_link,
+)
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     TableChart,
@@ -25,6 +29,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
 from dbt_charts.core.compile.models.primitives import (
     AuthoredFormat,
     FormatTable,
+    ResolvedFormat,
 )
 from dbt_charts.core.compile.models.style.authored import (
     TableColumnConfig,
@@ -78,6 +83,7 @@ from dbt_charts.core.text.numeral_scale import (
     shared_scale_for_column,
     tier_distance,
 )
+from dbt_charts.core.text.predefined_formats import PREDEFINED_TEXT_NAMES
 from dbt_charts.core.utils import coerce_numeric_cell
 
 __all__ = [
@@ -280,6 +286,37 @@ def _unscaled_decimal_pad_table(
     return build_decimal_pad_table(max(fracs), digit_unit, dot_unit)
 
 
+# The engine fills a `{{ column | urlencode }}` template per row, and reads a
+# link that names a data column verbatim as that column's value.
+_EMAIL_LINK = "mailto:{{{{ {column} | urlencode }}}}"
+
+
+def _text_link_field(
+    name: str,
+    col: TableColumnConfig,
+    effective: ResolvedFormat,
+    rows: list[dict[str, Any]],  # type-state: explicit_any — rows are raw query output
+    filter_variables: frozenset[str],
+) -> dict[str, str]:
+    """The ``link`` an ``email`` / ``url`` column implies, or nothing.
+
+    Below every other cell link: a link the column already has (authored, or the
+    FK drill) and a filter link win. A number under a text format is an error
+    whichever link wins; a ``url`` value must be absolute only when it will link.
+    """
+    fmt = effective.raw
+    if fmt not in PREDEFINED_TEXT_NAMES:
+        return {}
+    values = [row.get(name) for row in rows]
+    if any(coerce_numeric_cell(value) is not None for value in values):
+        raise_if_format_cannot_print_number(fmt)
+    if col.link or name in filter_variables:
+        return {}
+    for value in values:
+        text_format_link(fmt, value, f"column {name!r}")
+    return {"link": _EMAIL_LINK.format(column=name) if fmt == "email" else name}
+
+
 def _with_resolved_scale_stops(
     columns: dict[str, TableColumnConfig] | None,
     text_color: str | None,
@@ -290,6 +327,7 @@ def _with_resolved_scale_stops(
     own_formats: Mapping[str, AuthoredFormat | None],
     defaults_format: AuthoredFormat | None,
     declared: Mapping[str, str] | None,
+    filter_variables: frozenset[str],
 ) -> dict[str, ResolvedTableColumnConfig] | None:
     """Construct ResolvedTableColumnConfig entries with baked scale stops.
 
@@ -333,6 +371,7 @@ def _with_resolved_scale_stops(
             board=defaults_format,
             column=declared_name,
         )
+        text_link = _text_link_field(name, col, _effective, rows, filter_variables)
         has_format = any(f is not None for f in (own, defaults_format, declared_name))
         _col_parts = _effective if has_format else None
         resolved_fmt = _effective.spec if has_format else ""
@@ -465,6 +504,7 @@ def _with_resolved_scale_stops(
                 {
                     **col.model_dump(exclude_none=True),
                     **({"format": _col_parts} if _col_parts is not None else {}),
+                    **text_link,
                     "decimal_pad_table": pad_table,
                     "shared_scale": shared_scale,
                 }
@@ -512,6 +552,7 @@ def _with_resolved_scale_stops(
         col_base["scale"] = resolved_scale.model_dump(exclude_unset=True)
         if _col_parts is not None:
             col_base["format"] = _col_parts
+        col_base.update(text_link)
         col_base["decimal_pad_table"] = pad_table
         col_base["shared_scale"] = shared_scale
         result[name] = ResolvedTableColumnConfig.model_validate(col_base)
@@ -546,6 +587,8 @@ def _resolve_table(
     table_column_rows: Sequence[Mapping[str, str]],
     display_text: ChartDisplayText = None,
     allow_shared_scale: bool = True,
+    *,
+    filter_variables: frozenset[str],
 ) -> ResolvedTableChart:
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
@@ -608,6 +651,7 @@ def _resolve_table(
             column_defaults_val.format if column_defaults_val is not None else None
         ),
         declared=normalized.query.formats if normalized.query else None,
+        filter_variables=filter_variables,
     )
     # The prefix lane paints apart from the signed digits (`€  −40`).
     for name, column in resolved_columns.items() if resolved_columns else ():

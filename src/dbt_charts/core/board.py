@@ -11,9 +11,8 @@ reach them via `dbt_charts.agent_api.boards` (the typed-verb surface).
 The implementation lives here — top-level under `core` rather than under
 `core/render/` — so `core.serve.server` can call it without inverting the
 layer stack, and so the `dbt_charts.core.render` function-vs-submodule name
-collision doesn't break `mock.patch("dbt_charts.core.X.board.Y")` on
-Python 3.10 (a real CI failure we hit when this module lived at
-`core/render/dashboard.py`).
+collision doesn't break `mock.patch("dbt_charts.core.X.board.Y")` (a real
+CI failure we hit when this module lived at `core/render/dashboard.py`).
 """
 
 from __future__ import annotations
@@ -55,6 +54,7 @@ from dbt_charts.core.diagnostics.suppression import partition as _partition_warn
 from dbt_charts.core.execute import ExecutionError, Executor
 from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.execute.cache_backend import QueryResultCache
+from dbt_charts.core.execute.executor import utc_now
 from dbt_charts.core.execute.file_source_materializer import (
     FileSourceMaterializer,
     resolve_local_file_materializer_factory,
@@ -302,6 +302,7 @@ def render_dashboard(
     file_materializer: FileSourceMaterializer | None = None,
     builtin_variables: VariableValues | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
+    clock: Callable[[], datetime] = utc_now,
     **render_options: Any,
 ) -> BoardRenderResult:
     """Validate, compile, and render a dbt charts dashboard.
@@ -321,6 +322,7 @@ def render_dashboard(
     ``builtin_variables`` overrides the dir-navigation variables ``render_dashboard``
     otherwise derives from ``board.path`` — pass it when the caller's anchor has its
     own directory-listing semantics.
+    ``clock`` is the render's time source, handed to its ``Executor``.
     """
     _warnings_ignore = project.warnings_ignore
 
@@ -431,8 +433,10 @@ def render_dashboard(
         # the available chart ids — never fall back to the full dashboard.
         try:
             compiled_board = focus_on_chart(compiled_board, chart)
-        except ValueError as exc:
-            return _input_error(str(exc))
+        except DbtChartsError as exc:
+            return BoardRenderResult(
+                status="failed", validation_errors=[exc.to_diagnostic()]
+            )
     if compiled_board is None:
         return BoardRenderResult(
             status="failed",
@@ -467,6 +471,7 @@ def render_dashboard(
             file_materializer_factory=resolve_local_file_materializer_factory(
                 project, file_materializer
             ),
+            clock=clock,
         )
         if scale is not None:
             render_options["scale"] = scale

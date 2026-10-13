@@ -33,7 +33,6 @@ from dbt_charts.core.execute.adapters.sql_adapter import PreparedSql
 from dbt_charts.core.execute.warehouse_check import (
     WarehouseCheckColumn,
     _strip_trailing_semicolon_for_script_join,
-    check_ad_hoc_query,
     warehouse_check,
 )
 
@@ -886,8 +885,8 @@ class TestWarehouseCheckExplain:
         assert result.adapter_type == adapter_type
         assert result.columns_checked is False
         assert result.columns == []
-        # The reason is the whole detail describe_query's refusal can show —
-        # an empty one renders "Cannot list columns without running the query: ."
+        # The reason is the whole detail a caller wanting columns can show,
+        # so an empty one would leave it nothing to say.
         assert "no result schema" in result.reason
 
     def test_sends_the_explain_prefixed_sql_with_no_limit(self):
@@ -1569,81 +1568,6 @@ class TestPrepareSqlThroughARealRegistry:
         ) == ("my-proj", "my-ds")
         assert job_config.dry_run is True
         assert job_config.use_query_cache is False
-
-
-class TestCheckAdHocQuery:
-    """check_ad_hoc_query — the no-board entry point ``describe_query`` uses.
-
-    Same dispatch as ``warehouse_check``, driven off a synthesized empty board
-    instead of a compiled one — there is no board behind a hand-typed SQL
-    string. Each case pins one adapter's row of the dispatch table so a
-    regression that quietly widens back to full execution fails here first.
-    """
-
-    def test_bigquery_dry_run_never_executes(self, fake_bigquery_client):
-        field = MagicMock()
-        field.name = "revenue"
-        field.field_type = "FLOAT"
-        fake_bigquery_client.query.return_value = SimpleNamespace(schema=[field])
-
-        result = check_ad_hoc_query(
-            "SELECT revenue FROM orders",
-            source="s",
-            adapter_registry=_bigquery_registry(),
-        )
-
-        assert result.status == "valid"
-        assert result.mechanism == "bigquery-dry-run"
-        assert result.columns_checked is True
-        assert result.columns == [WarehouseCheckColumn(name="revenue", type="FLOAT")]
-        assert fake_bigquery_client.query.call_args.kwargs["job_config"].dry_run is True
-
-    def test_bigquery_rejection_is_invalid(self, fake_bigquery_client):
-        fake_bigquery_client.query.side_effect = BadRequest("Syntax error near FORM")
-
-        result = check_ad_hoc_query(
-            "SELECT 1 FORM orders",
-            source="s",
-            adapter_registry=_bigquery_registry(),
-        )
-
-        assert result.status == "invalid"
-        assert "Syntax error" in result.error
-
-    def test_postgres_explain_checks_validity_only(self):
-        from dbt_charts.core.compile.models.source import parse_source_config
-
-        registry = MagicMock()
-        registry.resolve_query_source.return_value = parse_source_config(
-            {
-                "type": "postgres",
-                "host": "h",
-                "dbname": "d",
-                "user": "u",
-                "password": "p",
-            }
-        )
-        registry.execute.return_value = QueryResult(data=[{"QUERY PLAN": "Result"}])
-
-        result = check_ad_hoc_query("SELECT 1", source="s", adapter_registry=registry)
-
-        assert result.status == "valid"
-        assert result.mechanism == "EXPLAIN"
-        assert result.columns_checked is False
-        assert registry.execute.call_args.args[0].sql == "EXPLAIN SELECT 1"
-
-    def test_duckdb_describe_via_synthesized_board(self, tmp_path):
-        """DuckDB DESCRIBE still works with no real board behind the query."""
-        compiled, registry = _duckdb_project(tmp_path)
-
-        result = check_ad_hoc_query(
-            "SELECT a, b FROM t", source="testdb", adapter_registry=registry
-        )
-
-        assert result.status == "valid"
-        assert result.mechanism == "DESCRIBE"
-        assert result.columns_checked is True
-        assert {c.name for c in result.columns} == {"a", "b"}
 
 
 def test_dialect_query_is_unchecked_not_sent_untranslated(tmp_path: Path) -> None:

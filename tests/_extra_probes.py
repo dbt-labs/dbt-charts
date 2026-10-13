@@ -37,6 +37,12 @@ EXTRA_PROBES: dict[str, str] = {
         "import adbc_driver_manager, platformdirs, zstandard\n"
         "print('ok')\n"
     ),
+    "trino": (
+        "from dbt_charts.core.execute.drivers.trino import require_trino_extra\n"
+        "require_trino_extra()\n"
+        "import trino.dbapi\n"
+        "print('ok')\n"
+    ),
     "streamlit": (
         "from dbt_charts.integrations.streamlit import st_board\nprint('ok')\n"
     ),
@@ -51,7 +57,6 @@ EXTRA_PROBES_EXCUSED: dict[str, str] = {
     "databricks": "full dbt adapter + driver stack; install weight",
     "postgresql": "full dbt adapter + driver stack; install weight",
     "spark": "full dbt adapter + driver stack; install weight",
-    "trino": "full dbt adapter + driver stack; install weight",
     "athena": "full dbt adapter + driver stack; install weight",
     "clickhouse": "full dbt adapter + driver stack; install weight",
     "sqlserver": "full dbt adapter + driver stack; install weight",

@@ -44,22 +44,22 @@ _PRIMITIVES: dict[str, dict[str, Any]] = {
 
 
 def _schema_for_token(
-    token: str, patterns: dict[str, str]
+    token: str, keywords: dict[str, dict[str, str]]
 ) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
     """Map a single non-union type token to a JSON Schema dict.
 
-    `patterns` constrains primitive items of a list/dict token the same way it
-    constrains a top-level arm (`_map_type_repr`).
+    `keywords` annotates primitive items of a list/dict token the same way it
+    annotates a top-level arm (`_map_type_repr`).
     """
     if token in _PRIMITIVES:
         return _PRIMITIVES[token]
     if token.startswith(("list[", "set[", "frozenset[")):
         item_repr = token[token.index("[") + 1 : -1]
-        return _container_schema("array", "items", _map_type_repr(item_repr, patterns))
+        return _container_schema("array", "items", _map_type_repr(item_repr, keywords))
     if token.startswith("dict["):
         value_repr = ", ".join(_split_union(token[5:-1], ", ")[1:])
         return _container_schema(
-            "object", "additionalProperties", _map_type_repr(value_repr, patterns)
+            "object", "additionalProperties", _map_type_repr(value_repr, keywords)
         )
     return {}
 
@@ -136,20 +136,13 @@ def _array_schema(
 
 
 def _primitive_schema(
-    name: str, patterns: dict[str, str]
+    name: str, keywords: dict[str, dict[str, str]]
 ) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
-    """Map a primitive name to its JSON Schema dict, honoring a pattern constraint.
-
-    `_PRIMITIVES[name]` (e.g. {"type": "string"}) is the unconstrained shape;
-    `patterns` (SchemaField.extra_union_type_patterns) names the ones that
-    carry a regex constraint (VariableOrRef/ChartOrRef's cross-file-ref string
-    arm) — copy so mutating the pattern key never touches the shared _PRIMITIVES
-    dict other fields read from the same process-lifetime instance.
-    """
+    """Map a primitive name to its JSON Schema dict plus the arm's own
+    keywords (SchemaField.extra_union_type_keywords: `pattern`, `description`)."""
     schema = dict(_PRIMITIVES[name])
-    pattern = patterns.get(name)
-    if pattern is not None:
-        schema["pattern"] = pattern
+    if name in keywords:
+        schema.update(keywords[name])
     return schema
 
 
@@ -158,7 +151,7 @@ def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
     nullable = "None" in field.type_repr
 
     extra = [
-        _primitive_schema(t, field.extra_union_type_patterns)
+        _primitive_schema(t, field.extra_union_type_keywords)
         for t in field.extra_union_types
         if t in _PRIMITIVES
     ]
@@ -204,7 +197,7 @@ def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
         # arm (e.g. `ThemeName | str | list[str]`) — add its shape so it
         # isn't dropped from the anyOf, deduped on the mapped shape.
         for token in sibling_container_tokens(field.type_repr):
-            arm = _schema_for_token(token, field.extra_union_type_patterns)
+            arm = _schema_for_token(token, field.extra_union_type_keywords)
             if arm and arm not in branches:
                 branches.append(arm)
         if nullable:
@@ -280,15 +273,15 @@ def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
             all_branches.append({"type": "null"})
         return {"anyOf": all_branches} if len(all_branches) > 1 else all_branches[0]
 
-    return _map_type_repr(field.type_repr, field.extra_union_type_patterns)
+    return _map_type_repr(field.type_repr, field.extra_union_type_keywords)
 
 
 def _map_type_repr(
-    type_repr: str, patterns: dict[str, str]
+    type_repr: str, keywords: dict[str, dict[str, str]]
 ) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
     """Map a type_repr string to a JSON Schema type dict.
 
-    `patterns` (SchemaField.extra_union_type_patterns) constrains a top-level
+    `keywords` (SchemaField.extra_union_type_keywords) annotates a top-level
     primitive arm, e.g. the str arm of `float | <patterned str>`.
 
     An arm with no schema (`Any`, a model this IR does not walk) admits
@@ -298,9 +291,9 @@ def _map_type_repr(
     schemas: list[dict[str, Any]] = []  # type-state: explicit_any — see _ref
     for token in (t.strip() for t in _split_union(type_repr)):
         schema = (
-            _primitive_schema(token, patterns)
+            _primitive_schema(token, keywords)
             if token in _PRIMITIVES
-            else _schema_for_token(token, patterns)
+            else _schema_for_token(token, keywords)
         )
         if not schema:
             return {}

@@ -40,7 +40,7 @@ from dbt_charts.core.compile.models.markers import (
     Url,
 )
 from dbt_charts.core.compile.models.primitives import (
-    FontStyle,
+    ColumnFontStyle,
     FormatConfig,
     GlyphText,
     ScaleTargetConfig,
@@ -113,10 +113,14 @@ class TableColumnDefaultsConfig(BaseModel):
         default=None,
         description="How values are written in every column, unless a column sets its own.",
     )
-    background: Annotated[str | None, Color()] = Field(
-        default=None, description="Override cell background color (CSS color string)."
+    background: Annotated[str | None, Color(column_ref=True)] = Field(
+        default=None,
+        description=(
+            "Override cell background color (CSS color string), or a column ID: a "
+            "value matching a query column name uses that row's value."
+        ),
     )
-    font: FontStyle | None = Field(
+    font: ColumnFontStyle | None = Field(
         default=None,
         description="Override cell font style (size, weight, color, family).",
     )
@@ -147,13 +151,15 @@ _SPARK_RENAMED_AWAY: dict[str, str] = {
 class SparkConfig(BaseModel):
     """Configuration for spark charts (inline sparklines) in table columns."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     type: SparkTypeLiteral = Field(
         default="line",
         description="Spark chart type (line, area, bar, bar-normalize, column, columns).",
     )
-    color: str | None = Field(default=None, description="Color for the spark mark.")
+    color: Annotated[str | None, Color()] = Field(
+        default=None, description="Color for the spark mark."
+    )
     height: int | None = Field(
         default=None, gt=0, description="Spark chart height in pixels."
     )
@@ -328,7 +334,7 @@ class TableColumnConfig(ConstrainedModel):
         default=None,
         description="URL template for cell values (Jinja template with row fields available).",
     )
-    background: str | None = Field(
+    background: Annotated[str | None, Color(column_ref=True)] = Field(
         default=None,
         description=(
             "Cell background color (hex string, or 'transparent'/'none'), or a "
@@ -336,7 +342,7 @@ class TableColumnConfig(ConstrainedModel):
             "value in the named column instead of the literal string."
         ),
     )
-    font: FontStyle | None = Field(
+    font: ColumnFontStyle | None = Field(
         default=None,
         description=(
             "Cell font style overrides. `color` and `weight` resolve column-ID-"
@@ -352,7 +358,7 @@ class TableColumnConfig(ConstrainedModel):
         default=None,
         description="Text shown before every cell value; fills the same slot as format.prefix and wins over it.",
     )
-    glyph_color: str | None = Field(
+    glyph_color: Annotated[str | None, Color()] = Field(
         default=None, description="Color for the glyph. Requires glyph to be set."
     )
 

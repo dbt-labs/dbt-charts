@@ -2,7 +2,7 @@
 resolvable ``data-authored-kind`` leaf marker.
 
 This is the test that should have caught the table gap before it shipped
-(``table.py``'s title/subtitle runs painted no marker at all, so a table's
+(the table's title/subtitle runs painted no marker at all, so a table's
 title only ever selected the chart for the Design panel — inline edit never
 opened, unlike the same gesture on a bar chart). Building it surfaced two more
 instances of the identical gap, fixed alongside it: ``callout.py``'s title and

@@ -87,7 +87,13 @@ def _resolved_domain(chart, executor, variables) -> list | None:
     """Resolve with runtime inputs and return the final y-domain."""
     data = executor.execute_query("payloads", variables)
     resolved = resolve_chart_with_runtime_inputs(
-        chart, data, _board_style(), 600.0, executor, variables
+        chart,
+        data,
+        _board_style(),
+        600.0,
+        executor,
+        variables,
+        filter_variables=frozenset(),
     )
     scale = resolved.style.axis_y.scale
     if scale is None or scale.continuous is None:
@@ -126,6 +132,7 @@ WHERE orbit = '{{ orbit_pick }}'
             600.0,
             executor,
             {"orbit_pick": "LEO"},
+            filter_variables=frozenset(),
         )
 
 
@@ -164,6 +171,7 @@ WHERE orbit = '{{ orbit_pick }}'
             600.0,
             executor,
             {"orbit_pick": "LEO"},
+            filter_variables=frozenset(),
         )
 
 

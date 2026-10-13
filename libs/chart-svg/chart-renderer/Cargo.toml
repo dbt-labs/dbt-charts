@@ -1,0 +1,31 @@
+[package]
+name = "chart-renderer"
+version = "0.0.1"
+edition = "2021"
+description = "Spike: render dbt charts Resolved*Chart JSON payloads straight to SVG, no Vega-Lite, no JS runtime."
+
+[dependencies]
+base64 = "0.22"
+d3rs = { path = "../d3rs" }
+mdsvg = { path = "../mdsvg" }
+display-text = { path = "../display-text" }
+md-5 = "0.11.0"
+# Real (non-dev) dependency as of HIGH 3: `embed_fonts.rs`'s italic
+# detection ports `font_selection.py::italic_families_in`, five
+# non-trivial regexes read off the composed board's own painted markup —
+# genuinely multi-pattern, unlike every other crate module's own hand-rolled
+# single-literal scan (`board::find_brand_phrase`'s own doc explains why
+# those stay hand-rolled). `case.rs` compiles the `titlecase` library's own
+# `SMALL_*`, `SUBPHRASE`, `UC_ELSEWHERE` and `APOS_SECOND` patterns.
+regex = "1"
+quick-xml = "0.42"
+resvg = { version = "0.45", default-features = false, features = ["text", "raster-images"] }
+rustybuzz = "0.20"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+svg2pdf = "0.13"
+ttf-parser = "0.25"
+usvg = { version = "0.45", default-features = false, features = ["text"] }
+
+[dev-dependencies]
+roxmltree = "0.20"

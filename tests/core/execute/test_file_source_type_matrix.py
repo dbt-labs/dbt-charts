@@ -16,7 +16,7 @@ from __future__ import annotations
 import io
 import json
 from collections.abc import Callable
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -34,7 +34,7 @@ from dbt_charts.core.compile.models.source import (
 )
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 
-_UTC = timezone.utc
+_UTC = UTC
 
 # Every value is exactly representable as a double, so a DOUBLE cell's sum is
 # assertable without approx and reads the same as the DECIMAL cell's. Four

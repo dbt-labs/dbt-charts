@@ -17,7 +17,8 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
-from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+
+from ._engine_render import render_table_svg
 
 _RS, _CTX = resolve_style_and_context(get_theme_style())
 
@@ -53,7 +54,7 @@ def test_table_subtitle_font_size_reads_directly_from_theme():
     chart = _make_table_chart()
     data = [{"col": "A", "val": 1}]
 
-    chart = resolve(chart, [], chart_style_context=custom_ctx)
+    chart = resolve(chart, data, chart_style_context=custom_ctx)
     svg = render_table_svg(
         chart,
         data,
@@ -70,14 +71,16 @@ def test_table_subtitle_font_size_none_asserts():
     """Assert fires loudly when title.subtitle.font.size is None (cascade contract)."""
     import pytest
 
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError
+
     custom_ctx, custom_rs = _custom_board_with_subtitle_size(None)
 
     chart = _make_table_chart()
     data = [{"col": "A", "val": 1}]
-    chart = resolve(chart, [], chart_style_context=custom_ctx)
+    chart = resolve(chart, data, chart_style_context=custom_ctx)
 
     with pytest.raises(
-        AssertionError, match="theme must supply title.subtitle.font.size"
+        ChartDataError, match="theme must supply title.subtitle.font.size"
     ):
         render_table_svg(
             chart,

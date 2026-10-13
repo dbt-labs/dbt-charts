@@ -1,8 +1,8 @@
 """The data seam the post-resolve render path depends on.
 
-``render_board_svg`` and everything below it need only two operations from the
-execution layer: fetch a query's rows, and ask when the cache entries backing
-them were written. ``Executor`` provides both (and satisfies this Protocol
+``render_board_svg`` and everything below it need only three things from the
+execution layer: fetch a query's rows, ask when the cache entries backing them
+were written, and ask when this render happened. ``Executor`` provides both (and satisfies this Protocol
 structurally, with no changes of its own), but it is not the only possible
 provider: replaying a recorded board from a serialized artifact has rows on
 hand and no warehouse to reach.
@@ -66,5 +66,15 @@ class ChartDataProvider(Protocol):
 
         Empty means everything ran fresh. Render takes ``min()`` of these for the
         board's "data as of" stamp, falling back to render time when empty.
+        """
+        ...
+
+    @property
+    def rendered_at(self) -> datetime:
+        """The instant this render stands for, read once by the provider.
+
+        Render never reads a clock of its own: the same board over the same data
+        and the same ``rendered_at`` is the same bytes, so two renders compare
+        equal without stripping timestamps first.
         """
         ...

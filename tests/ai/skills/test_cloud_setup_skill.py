@@ -329,7 +329,7 @@ def test_collects_the_two_decisions_before_step_one(body: str) -> None:
 def test_done_is_checked_against_this_repository(body: str) -> None:
     """`status` is org-scoped: another project's `done` is not this repo's."""
     assert "org-scoped" in body
-    assert "git remote -v" in body
+    assert "belongs to other projects, not to this repository" in " ".join(body.split())
 
 
 def test_conditional_bigquery_binding_covers_tables(body: str) -> None:
@@ -341,3 +341,79 @@ def test_conditional_bigquery_binding_covers_tables(body: str) -> None:
 
 def test_revoking_the_bigquery_key_waits_for_the_connection(body: str) -> None:
     assert "never right after the test passes" in body
+
+
+def test_step3_decides_by_repository_visibility_not_gh(body: str) -> None:
+    """A sandboxed `gh` looks signed out, so it cannot decide the connect
+    path; an unauthenticated API read can, and it reads none of git's
+    credential sources (helpers, askpass, netrc, url rewrites)."""
+    step3 = " ".join(body[body.index("## Step 3") : body.index("## Step 4")].split())
+    assert "curl -q -fsS" in step3, "-q keeps a curlrc from authenticating"
+    assert "https://api.github.com/repos/<owner>/<repo>" in step3
+    assert "ls-remote" not in step3
+    assert "gh auth status" not in step3, "gh must not be the decision signal"
+    assert "DNS failure means" in step3
+    assert "no writable remote" in step3
+
+
+def test_a_refused_git_url_routes_to_the_app_flow(body: str) -> None:
+    step3 = " ".join(body[body.index("## Step 3") : body.index("## Step 4")].split())
+    assert "Couldn't authenticate to the repository" in step3
+    assert "the repository is private: take the App flow" in step3
+
+
+def test_before_you_start_leans_on_cloud_status_preflight(body: str) -> None:
+    """Checkout facts come from status, which runs before login. The
+    BigQuery check has to exercise the credential: `gcloud auth list` shows
+    an expired account as active."""
+    section = " ".join(
+        body[body.index("## Before you start") : body.index("## Step 1")].split()
+    )
+    assert "This checkout" in section
+    assert "it works before login, where it exits non-zero" in section
+    assert "gcloud auth print-access-token" in section
+    assert "gcloud auth list" in section
+    assert "shows an expired account as active" in section.lower()
+
+
+def test_bigquery_grant_covers_every_dataset_boards_reference(body: str) -> None:
+    """A connection test only proves the default dataset is readable.
+    A board querying a sibling dataset still renders `Access Denied`, so the
+    grant has to cover every dataset the boards' SQL names."""
+    step5 = body[body.index("## Step 5") : body.index("## Step 6")]
+    assert "not only the source's default one" in step5
+    assert "The render error names the table" in step5
+    assert "dct cloud render --force" in step5
+
+
+def test_bigquery_key_propagation_delay_before_retry(body: str) -> None:
+    """A new key can be rejected while it propagates; the retry needs the
+    key file, so the file outlives a failed create."""
+    step5 = " ".join(body[body.index("## Step 5") : body.index("## Step 6")].split())
+    assert "propagate" in step5
+    assert "keep the key file, wait, and run the same command once more" in step5
+    assert "before minting a second key" in step5
+    assert "delete the first key on GCP" in step5
+    assert "delete the file once `connection create` succeeds" in step5
+    assert "once the connection call reads it" not in step5
+
+
+def test_sandbox_note_covers_serve_bind_and_blocked_rebase(body: str) -> None:
+    """`dct serve` cannot bind a local port in some sandboxes, and a
+    sandbox that blocks `.git/rebase-merge` needs a temporary clone instead
+    of a force-push."""
+    section = " ".join(
+        body[body.index("## Sandbox note") : body.index("## Step 1")].split()
+    )
+    assert "operation not permitted" in section
+    assert "temporary clone" in section
+    assert "force-pushing" in section
+
+
+def test_sync_still_reads_unsynced_briefly(body: str) -> None:
+    """a `status` read right after `project sync` can still say
+    `unsynced` while the sync is queued -- that is not the sync doing
+    nothing, and syncing again does not make it move faster."""
+    step8 = body[body.index("## Step 8") :]
+    assert "is queued, not skipped" in step8
+    assert "Re-run `status` after a few seconds" in step8

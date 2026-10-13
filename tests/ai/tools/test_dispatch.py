@@ -11,6 +11,7 @@ import pytest
 from dbt_charts.agent_api import ProjectSession
 from dbt_charts.ai.context import DbtChartsAIContext
 from dbt_charts.ai.tools import TOOL_HANDLERS, dispatch_tool_call, handle_tool_call
+from dbt_charts.core.attribution import current_attribution
 
 from ..._paths import DBT_CHARTS_DIR
 
@@ -56,7 +57,7 @@ class TestDispatchToolCall:
 
         captured: dict[str, object] = {}
 
-        def fake_search_boards(query, project, *, tags=None, limit=10):
+        def fake_search_boards(query, project, *, tags=None, limit=10, cursor=None):
             from dbt_charts.agent_api.search import SearchResult
 
             captured["project"] = project
@@ -73,6 +74,27 @@ class TestDispatchToolCall:
         assert isinstance(captured["project"], FilesystemProject)
         assert captured["project"].root == tmp_path.resolve()
 
+    def test_dispatch_describe_board_forwards_chart(
+        self,
+        make_context: Callable[..., DbtChartsAIContext],
+        tmp_path: Path,
+    ) -> None:
+        (tmp_path / "sales.yml").write_text(
+            _INLINE_BOARD_YAML.replace(
+                "rows:\n",
+                "  other:\n    query: q\n    type: kpi\n    value: v\nrows:\n",
+            )
+        )
+        context = make_context(dashboards_directory=tmp_path)
+
+        result = dispatch_tool_call(
+            "describe_board", {"path": "sales.yml", "chart": "c"}, context=context
+        )
+
+        assert result["success"] is True, result
+        assert [c["name"] for c in result["charts"]] == ["c"]
+        assert "layout" not in result
+
     def test_dispatch_search_rejects_unknown_field(
         self, context: DbtChartsAIContext
     ) -> None:
@@ -84,6 +106,33 @@ class TestDispatchToolCall:
             context=context,
         )
         assert result["success"] is False
+
+    @pytest.mark.parametrize(
+        ("tool", "args", "expected"),
+        [
+            (
+                "search_boards",
+                {"query": "x", "project": "p1"},
+                "search_boards: project: is not an argument of this tool",
+            ),
+            (
+                "execute_query",
+                {"sql": "select 1", "variables": [{"name": "r", "value": None}]},
+                "execute_query: variables.0.value: got null, expected one of "
+                "str, int, float, bool",
+            ),
+        ],
+    )
+    def test_dispatch_reports_a_bad_argument_as_one_plain_line(
+        self,
+        context: DbtChartsAIContext,
+        tool: str,
+        args: dict[str, Any],
+        expected: str,
+    ) -> None:
+        result = dispatch_tool_call(tool, args, context=context)
+
+        assert result == {"success": False, "errors": [expected]}
 
     def test_dispatch_search_boards_subdir_returns_results(
         self,
@@ -114,6 +163,36 @@ class TestDispatchToolCall:
         assert len(result["results"]) == 1
         assert result["results"][0]["title"] == "Sales Dashboard"
 
+    def test_dispatch_search_boards_without_a_query_lists_and_pages(
+        self,
+        make_context: Callable[..., DbtChartsAIContext],
+        tmp_path: Path,
+    ) -> None:
+        """The shared handler lists on an empty query, so chat and stdio get the
+        same listing the connector does."""
+        from dbt_charts.agent_api import ProjectSession
+
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        for name in ("a", "b", "c"):
+            (boards / f"{name}.yml").write_text(f"title: Board {name}\nrows: []\n")
+
+        context = make_context(
+            project_session=ProjectSession.open(tmp_path, read_only=False)
+        )
+        first = dispatch_tool_call(
+            "search_boards", {"query": "", "limit": 2}, context=context
+        )
+        second = dispatch_tool_call(
+            "search_boards",
+            {"query": "", "limit": 2, "cursor": first["next"]},
+            context=context,
+        )
+
+        assert [h["title"] for h in first["results"]] == ["Board a", "Board b"]
+        assert [h["title"] for h in second["results"]] == ["Board c"]
+        assert "next" not in second
+
     def test_dispatch_routes_to_extra_handler(
         self, context: DbtChartsAIContext
     ) -> None:
@@ -138,6 +217,59 @@ class TestDispatchToolCall:
         assert result == {"ok": True}
         assert captured["args"] == {"x": 1}
         assert captured["ctx"] is context
+
+    def test_dispatch_attributes_warehouse_calls_to_the_tool(
+        self, context: DbtChartsAIContext
+    ) -> None:
+        """Every handler runs inside a `tool` scope that unwinds afterwards."""
+        seen: dict[str, str] = {}
+
+        def handle_host_only(
+            args: dict[str, Any], ctx: DbtChartsAIContext
+        ) -> dict[str, Any]:
+            seen.update(current_attribution())
+            return {"ok": True}
+
+        dispatch_tool_call(
+            "host_only_tool",
+            {},
+            context=context,
+            extra_handlers={"host_only_tool": handle_host_only},
+        )
+
+        assert seen["dbt_charts_tool"] == "host_only_tool"
+        assert "dbt_charts_tool" not in current_attribution()
+
+    def test_query_tool_header_carries_actor_client_and_tool(
+        self, monkeypatch: pytest.MonkeyPatch, context: DbtChartsAIContext
+    ) -> None:
+        """The label/comment payload built mid-dispatch, under an outer
+        actor/client scope, names the tool next to the actor and client, in
+        BigQuery's charset."""
+        import json
+        import re
+
+        from dbt_charts.core.attribution import attribute
+        from dbt_charts.core.execute.adapters.query_header import QueryHeader
+
+        built: dict[str, str] = {}
+
+        def handle_execute_query(
+            args: dict[str, Any], ctx: DbtChartsAIContext
+        ) -> dict[str, Any]:
+            comment = QueryHeader(True).comment.query_comment
+            assert comment is not None
+            built.update(json.loads(comment))
+            return {"success": True}
+
+        monkeypatch.setitem(TOOL_HANDLERS, "execute_query", handle_execute_query)
+        with attribute({"actor": "42", "client": "connector"}, {}):
+            dispatch_tool_call("execute_query", {}, context=context)
+
+        assert built["dbt_charts_actor"] == "42"
+        assert built["dbt_charts_client"] == "connector"
+        assert built["dbt_charts_tool"] == "execute_query"
+        assert re.fullmatch(r"[a-z0-9_-]{0,63}", built["dbt_charts_tool"])
 
     def test_dispatch_unknown_tool_not_in_extra_handlers_errors(
         self, context: DbtChartsAIContext
@@ -337,7 +469,7 @@ class TestAsLinkDispatch:
 
 # ---------------------------------------------------------------------------
 # FR-003: Every TOOL_HANDLERS entry exercised via dispatch_tool_call.
-# FR-010: Warehouse-dependent tools (execute_query, query_board) use CSV fixture.
+# FR-010: Warehouse-dependent tools (execute_query) use CSV fixture.
 # ---------------------------------------------------------------------------
 
 
@@ -353,15 +485,11 @@ def _project_scaffold_context(
     )
 
 
-# Happy-path args for each TOOL_HANDLERS entry. query_board needs the scaffold
-# fixture path injected; search_boards needs a safe tmp directory (the
-# default cwd may contain YAML files that fail list_dashboards).
+# Happy-path args for each TOOL_HANDLERS entry. search_boards needs a safe tmp
+# directory (the default cwd may contain YAML files that fail list_dashboards).
 _TOOL_HAPPY_PATH_ARGS: dict[str, dict[str, Any]] = {
-    "validate_board": {"path": "nonexistent.yml"},
     "render_board": {"yaml_content": _INLINE_BOARD_YAML},
     "execute_query": {"sql": "SELECT 1 AS x"},
-    "describe_query": {"sql": "SELECT 1 AS x"},
-    "query_board": {"name": "metrics"},  # "path" injected at test time
     "search_boards": {"query": "overview"},
     "docs": {"topic": "board"},
     "describe_board": {"path": "nonexistent.yml"},
@@ -375,7 +503,6 @@ _TOOL_HAPPY_PATH_ARGS: dict[str, dict[str, Any]] = {
     "delete_file": {"path": "nonexistent.yml"},
     "list_skills": {},
     "get_skill": {"name": "kpi-row"},
-    "search_skills": {"query": "kpi"},
     "list_diagnostic_codes": {},
     "get_diagnostic_code": {"code": "WARN-REDUNDANT-ENCODING"},
 }
@@ -401,19 +528,31 @@ class TestAllToolHandlersHappyPath:
     ) -> None:
         base_args = dict(_TOOL_HAPPY_PATH_ARGS[tool_name])
 
-        if tool_name == "query_board":
-            ctx = _project_scaffold_context(tmp_path)
-            base_args["path"] = str(tmp_path / "proj" / "charts" / "overview.yml")
-        else:
-            # File tools resolve against the session project (rooted at tmp_path);
-            # no model-supplied project_dir is trusted anymore.
-            ctx = make_context()
+        # File tools resolve against the session project (rooted at tmp_path);
+        # no model-supplied project_dir is trusted anymore.
+        ctx = make_context()
 
         result = dispatch_tool_call(tool_name, base_args, context=ctx)
 
         assert isinstance(result, dict), (
             f"{tool_name} returned {type(result).__name__}, expected dict"
         )
+
+    def test_execute_query_named_form_returns_rows(self, tmp_path: Path) -> None:
+        ctx = _project_scaffold_context(tmp_path)
+
+        result = dispatch_tool_call(
+            "execute_query",
+            {
+                "board": str(tmp_path / "proj" / "charts" / "overview.yml"),
+                "query": "metrics",
+            },
+            context=ctx,
+        )
+
+        assert result["success"] is True, result
+        assert result["name"] == "metrics"
+        assert result["data"]
 
     def test_all_tool_handlers_covered(self) -> None:
         """FR-015 guard: adding a tool to TOOL_HANDLERS forces a row here."""
@@ -429,7 +568,7 @@ class TestAllToolHandlersHappyPath:
 
 
 class TestProjectSkillsDispatch:
-    """list_skills/get_skill/search_skills union the calling project's own
+    """list_skills/get_skill union the calling project's own
     skills/ into the built-in registry — routed through ctx.project_session.project
     (the same branch-scoped seam Cloud's CloudManagedProject and the CLI's
     FilesystemProject both implement), never a bare filesystem read."""
@@ -556,19 +695,55 @@ class TestToolErrorEnvelopes:
             "not found" in e["message"].lower() for e in result["validation_errors"]
         )
 
-    def test_query_board_missing_required_args_returns_structured_envelope(
-        self, context: DbtChartsAIContext
+    @pytest.mark.parametrize(
+        ("args", "message"),
+        [
+            pytest.param(
+                {},
+                "execute_query: needs either 'sql', or both 'board' and 'query'",
+                id="neither-form",
+            ),
+            pytest.param(
+                {"board": "charts/x.yml"},
+                "execute_query: needs either 'sql', or both 'board' and 'query'",
+                id="board-without-query",
+            ),
+            pytest.param(
+                {"query": "revenue"},
+                "execute_query: needs either 'sql', or both 'board' and 'query'",
+                id="query-without-board",
+            ),
+            pytest.param(
+                {"sql": "SELECT 1", "board": "charts/x.yml", "query": "revenue"},
+                "execute_query: takes either 'sql' or 'board' + 'query', not both",
+                id="both-forms",
+            ),
+            *(
+                pytest.param(
+                    {"board": "charts/x.yml", "query": "revenue", **option},
+                    "execute_query: 'source', 'lenient_variables' and 'description' "
+                    "apply to 'sql' only; a board query names its own source",
+                    id=f"{name}-with-board-form",
+                )
+                for name, option in (
+                    ("source", {"source": "db"}),
+                    ("lenient_variables", {"lenient_variables": True}),
+                    ("description", {"description": "x"}),
+                )
+            ),
+        ],
+    )
+    def test_execute_query_form_mistakes_return_one_plain_line(
+        self, context: DbtChartsAIContext, args: dict[str, Any], message: str
     ) -> None:
-        """query_board with no required args returns the structured failure envelope.
+        """Exactly one of the two forms is required; a mistake is one plain line.
 
         Boundary contract: dispatch_tool_call catches pydantic.ValidationError so a
         malformed call surfaces as {"success": False, "errors": [...]} rather than
         leaking through handle_call_tool as an MCP transport error.
         """
-        result = dispatch_tool_call("query_board", {}, context=context)
-        assert isinstance(result, dict)
-        assert result.get("success") is False
-        assert isinstance(result.get("errors"), list) and result["errors"]
+        result = dispatch_tool_call("execute_query", args, context=context)
+        assert result == {"success": False, "errors": [message]}
 
     def test_get_skill_missing_required_args_returns_structured_envelope(
         self, context: DbtChartsAIContext
@@ -576,25 +751,28 @@ class TestToolErrorEnvelopes:
         """get_skill with no required args returns the structured failure envelope.
 
         Sibling coverage: pins the dispatch-boundary catch for every handler that
-        validates args via Pydantic, not just query_board.
+        validates args via Pydantic, not just execute_query.
         """
         result = dispatch_tool_call("get_skill", {}, context=context)
         assert isinstance(result, dict)
         assert result.get("success") is False
         assert isinstance(result.get("errors"), list) and result["errors"]
 
-    def test_query_board_valid_args_nonexistent_board_returns_structured_failure(
+    def test_execute_query_named_form_nonexistent_board_returns_structured_failure(
         self, tmp_path: Path, make_context: Callable[..., DbtChartsAIContext]
     ) -> None:
-        """query_board with valid-shape args but missing board → success=False + errors list.
+        """A named query on a missing board → success=False + errors list.
 
-        This is the FR-005 coverage for query_board: schema-valid input that fails
+        This is the FR-005 coverage for the named form: schema-valid input that fails
         downstream returns the structured envelope, not an exception.
         """
         ctx = make_context(dashboards_directory=tmp_path)
         result = dispatch_tool_call(
-            "query_board",
-            {"name": "revenue", "path": str(tmp_path / "nonexistent-board-xyz.yml")},
+            "execute_query",
+            {
+                "query": "revenue",
+                "board": str(tmp_path / "nonexistent-board-xyz.yml"),
+            },
             context=ctx,
         )
         assert result["success"] is False
@@ -617,30 +795,6 @@ class TestToolErrorEnvelopes:
         )
         assert result["success"] is False
         assert isinstance(result.get("errors"), list) and result["errors"]
-
-    def test_validate_board_neither_path_nor_content_returns_failure(
-        self, context: DbtChartsAIContext
-    ) -> None:
-        """validate_board with no path and no yaml_content → success=False + errors.
-
-        ValueError raised by validate_board() propagates to dispatch_tool_call's
-        central exception handler and is surfaced as a failure envelope.
-        """
-        result = dispatch_tool_call("validate_board", {}, context=context)
-        assert result["success"] is False
-        assert result.get("errors"), "expected at least one error"
-
-    def test_validate_board_both_path_and_content_returns_failure(
-        self, context: DbtChartsAIContext
-    ) -> None:
-        """validate_board with both path and yaml_content → success=False + errors."""
-        result = dispatch_tool_call(
-            "validate_board",
-            {"path": "some.yml", "yaml_content": "title: t\n"},
-            context=context,
-        )
-        assert result["success"] is False
-        assert result.get("errors"), "expected at least one error"
 
 
 class TestToolCallOutcome:
@@ -725,6 +879,95 @@ class TestDefaultSourceFallback:
         dispatch_tool_call("execute_query", {"sql": "SELECT 1"}, context=ctx)
 
         assert captured["source"] == "dundersign_db"
+
+    def test_execute_query_fetches_up_to_the_ceiling_and_rejects_limit(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        make_context: Callable[..., DbtChartsAIContext],
+    ) -> None:
+        from dbt_charts.agent_api.query import (
+            MAX_QUERY_LIMIT,
+            ExecuteQueryResult,
+            QueryBoardResult,
+        )
+
+        captured: dict[str, int] = {}
+
+        def fake_execute_query(
+            *, sql, variables=None, source=None, limit, adapter_registry
+        ):
+            captured["sql"] = limit
+            return ExecuteQueryResult(
+                success=True,
+                data=[],
+                columns=[],
+                errors=[],
+                row_count=0,
+                truncated=False,
+            )
+
+        def fake_query_board(*, name, path, project, vars, limit, adapter_registry):
+            captured["board"] = limit
+            return QueryBoardResult(success=True, name=name, path=path)
+
+        monkeypatch.setattr(
+            "dbt_charts.agent_api.query.execute_query", fake_execute_query
+        )
+        monkeypatch.setattr("dbt_charts.agent_api.query.query_board", fake_query_board)
+        ctx = make_context()
+
+        dispatch_tool_call("execute_query", {"sql": "SELECT 1"}, context=ctx)
+        dispatch_tool_call(
+            "execute_query", {"board": "charts/x.yml", "query": "q"}, context=ctx
+        )
+        assert captured == {"sql": MAX_QUERY_LIMIT, "board": MAX_QUERY_LIMIT}
+
+        rejected = dispatch_tool_call(
+            "execute_query", {"sql": "SELECT 1", "limit": 5}, context=ctx
+        )
+        assert rejected["success"] is False
+        assert "limit" in rejected["errors"][0]
+
+    def test_a_cut_result_names_the_way_to_narrow_for_each_form(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        make_context: Callable[..., DbtChartsAIContext],
+    ) -> None:
+        from dbt_charts.agent_api.query import ExecuteQueryResult, QueryBoardResult
+
+        rows = [{"body": "x" * 5000} for _ in range(100)]
+
+        def fake_execute_query(**_: object) -> ExecuteQueryResult:
+            return ExecuteQueryResult(
+                success=True,
+                data=rows,
+                columns=["body"],
+                errors=[],
+                row_count=100,
+                truncated=False,
+            )
+
+        def fake_query_board(*, name, path, **_: object) -> QueryBoardResult:
+            return QueryBoardResult(
+                success=True, name=name, path=path, columns=["body"], data=rows
+            )
+
+        monkeypatch.setattr(
+            "dbt_charts.agent_api.query.execute_query", fake_execute_query
+        )
+        monkeypatch.setattr("dbt_charts.agent_api.query.query_board", fake_query_board)
+        ctx = make_context()
+
+        sql = dispatch_tool_call("execute_query", {"sql": "SELECT 1"}, context=ctx)
+        board = dispatch_tool_call(
+            "execute_query", {"board": "charts/x.yml", "query": "q"}, context=ctx
+        )
+
+        assert sql["truncated"] is True
+        assert "LIMIT and OFFSET" in sql["notice"]
+        assert board["truncated"] is True
+        assert "board's variables" in board["notice"]
+        assert "LIMIT" not in board["notice"]
 
     def test_execute_query_explicit_source_wins_over_default(
         self,
@@ -1078,3 +1321,64 @@ class TestWriteFileNeverClobbersUnreadContent:
         assert result["success"] is False
         assert result["path"] == "../escape.yml"
         assert "error" in result
+
+
+class TestRenderBoardHttpSourcesAreReadOnly:
+    """render_board is advertised readOnlyHint=true, so on the stdio MCP
+    session an inline board with a mutating http source is refused, not sent."""
+
+    @pytest.fixture
+    def stdio_context(
+        self, make_context: Callable[..., DbtChartsAIContext], tmp_path: Path
+    ) -> DbtChartsAIContext:
+        """The session `dct mcp serve` opens (run_server's construction)."""
+        from dbt_charts.cli.filesystem_project import FilesystemProject
+        from dbt_charts.core.execute.adapters import LOCAL_AUTHORING_REGISTRY_KWARGS
+
+        return make_context(
+            project_session=ProjectSession.from_project(
+                FilesystemProject(tmp_path), **LOCAL_AUTHORING_REGISTRY_KWARGS
+            )
+        )
+
+    @staticmethod
+    def _http_board(method: str) -> str:
+        return (
+            "title: T\nqueries:\n  q:\n    type: http\n"
+            f"    url: https://api.example.com/x\n    method: {method}\n"
+            "charts:\n  c:\n    query: q\n    type: table\nrows:\n  - c\n"
+        )
+
+    @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])
+    def test_mutating_method_is_refused(
+        self, method: str, stdio_context: DbtChartsAIContext
+    ) -> None:
+        from unittest.mock import patch
+
+        with patch(
+            "dbt_charts.core.execute.adapters.http_adapter.httpx.Client"
+        ) as mock_client:
+            result = dispatch_tool_call(
+                "render_board",
+                {"yaml_content": self._http_board(method)},
+                context=stdio_context,
+            )
+        mock_client.assert_not_called()
+        assert method in json.dumps(result)
+        assert "disabled" in json.dumps(result)
+
+    def test_get_still_renders(self, stdio_context: DbtChartsAIContext) -> None:
+        from unittest.mock import MagicMock, patch
+
+        response = MagicMock()
+        response.json.return_value = [{"id": 1}]
+        with patch(
+            "dbt_charts.core.execute.adapters.http_adapter.httpx.Client"
+        ) as mock_client:
+            mock_client.return_value.__enter__.return_value.get.return_value = response
+            result = dispatch_tool_call(
+                "render_board",
+                {"yaml_content": self._http_board("GET")},
+                context=stdio_context,
+            )
+        assert result["status"] == "ok", result

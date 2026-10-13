@@ -39,7 +39,8 @@ def _render(style: dict[str, Any] | None) -> str:
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
     from dbt_charts.core.compile.normalize.charts import normalize_chart
     from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
-    from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+    from ..._engine_render import render_kpi_svg
 
     board_rs, board_ctx = resolve_style_and_context(
         get_theme_style(get_default_theme_name())

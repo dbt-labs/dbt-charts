@@ -8,7 +8,7 @@ belong in the OSS wheel: list, eject, validate.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -71,7 +71,7 @@ def eject_templates(
     manifest = load_manifest(target_dir, dbt_charts_version=__version__)
     manifest["schema_version"] = MANIFEST_SCHEMA_VERSION
     manifest["dbt_charts_version"] = __version__
-    manifest["generated_at"] = datetime.now(timezone.utc).isoformat()
+    manifest["generated_at"] = datetime.now(UTC).isoformat()
     manifest_templates = manifest.setdefault("templates", {})
 
     ejected: list[Path] = []
@@ -89,7 +89,7 @@ def eject_templates(
 
         manifest_templates[name] = {
             "filename": f"{name}.yml",
-            "ejected_at": datetime.now(timezone.utc).isoformat(),
+            "ejected_at": datetime.now(UTC).isoformat(),
             "source_version": __version__,
             "source_sha256": source_hash,
         }

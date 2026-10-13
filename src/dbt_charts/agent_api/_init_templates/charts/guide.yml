@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 # Starter board: a working board to copy from.
 #
 # The data is inline, so it renders before any warehouse is connected, and
@@ -20,11 +21,14 @@ variables:
 
 # Queries own the data: grain, aggregation, ordering. Charts only paint it.
 # `type: values` is inline rows; a `sql:` query against a `source:` replaces
-# it once you have a warehouse.
+# it once you have a warehouse. `formats:` says how a column prints on every
+# chart that shows it, so no chart restates it.
 queries:
   monthly_by_product:
     type: values
     columns: [month, product, revenue, orders]
+    formats:
+      revenue: currency
     values:
       - [2026-01-01, Enterprise, 239100, 60]
       - [2026-01-01, Team, 147700, 313]
@@ -48,6 +52,8 @@ queries:
   by_product:
     type: values
     columns: [product, revenue]
+    formats:
+      revenue: currency
     values:
       - [Enterprise, 1529200]
       - [Team, 944600]
@@ -101,8 +107,6 @@ charts:
     x: month
     y: revenue
     color: product
-    style:
-      number_format: currency
 
   revenue_by_product:
     type: bar
@@ -110,8 +114,6 @@ charts:
     title: Revenue by product
     x: product
     y: revenue
-    style:
-      number_format: currency
 
   monthly_detail:
     type: table

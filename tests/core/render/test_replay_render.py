@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -116,7 +116,7 @@ def test_board_renders_from_an_artifact_with_no_warehouse(tmp_path: Path) -> Non
     replayed_board = _ADAPTER.validate_json(artifact)
     replay = ReplayDataProvider(
         rows_by_query=recording,
-        recorded_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        recorded_at=datetime(2026, 8, 1, tzinfo=UTC),
         variables=variables,
     )
     replay_svg = render_board_svg(
@@ -164,7 +164,7 @@ def test_replayed_board_stamps_the_recording_time(tmp_path: Path) -> None:
         _ADAPTER.validate_json(_ADAPTER.dump_json(resolved, warnings="error")),
         ReplayDataProvider(
             rows_by_query=recording,
-            recorded_at=datetime(2019, 3, 4, 5, 6, tzinfo=timezone.utc),
+            recorded_at=datetime(2019, 3, 4, 5, 6, tzinfo=UTC),
             variables=variables,
         ),
         variables,
@@ -204,7 +204,7 @@ def test_replay_needs_no_adapter_registry(tmp_path: Path) -> None:
 
     replay = ReplayDataProvider(
         rows_by_query=recording,
-        recorded_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        recorded_at=datetime(2026, 8, 1, tzinfo=UTC),
         variables=variables,
     )
     svg = render_board_svg(

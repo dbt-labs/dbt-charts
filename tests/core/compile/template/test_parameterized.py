@@ -395,6 +395,30 @@ class TestFilterDateRangeHelper:
         assert "1=1" in result.sql
         assert result.params == []
 
+    @pytest.mark.parametrize(
+        ("date_range", "expected_sql", "expected_params"),
+        [
+            (["2025-10-01", None], "CAST(created_at AS DATE) >= $1", ["2025-10-01"]),
+            (["2025-10-01", ""], "CAST(created_at AS DATE) >= $1", ["2025-10-01"]),
+            ([None, "2026-10-04"], "CAST(created_at AS DATE) <= $1", ["2026-10-04"]),
+            ([None, None], "1=1", []),
+        ],
+    )
+    def test_date_range_open_bound(
+        self, date_range: list[str | None], expected_sql: str, expected_params: list
+    ) -> None:
+        """An open end leaves that side unbounded; the other bound still applies."""
+        template = (
+            "SELECT * FROM t WHERE {{ filter_date_range('created_at', date_range) }}"
+        )
+
+        result = render_parameterized(
+            template, {"date_range": date_range}, profile_type="postgres"
+        )
+
+        assert expected_sql in result.sql
+        assert result.params == expected_params
+
     def test_date_range_json_string(self):
         """Test date range from JSON string (URL parameters)."""
         template = (

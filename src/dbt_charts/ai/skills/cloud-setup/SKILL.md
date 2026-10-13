@@ -32,17 +32,28 @@ go.
 
 ## Get consent up front
 
-This run needs the user four times: approving `dct cloud login` (Step 1),
-picking the repository for the GitHub App (Step 3), agreeing that a read-only
-warehouse credential is minted and handed to Cloud (Step 5), and agreeing that
-dbt charts files are committed and pushed to this repository's default branch
-(Steps 4 and 8). The first two are browser clicks that arrive when they
-arrive. The last two are decisions: if the user's request did not already
-grant them, ask for both once, before Step 1.
+This run needs the user in the browser to approve `dct cloud login` (Step 1)
+and, for a private repository, to pick it for the GitHub App (Step 3);
+`dct cloud status` lists the human steps still ahead. Two things are
+decisions, not clicks: a read-only warehouse credential is minted and handed
+to Cloud (Step 5), and dbt charts files are committed and pushed to this
+repository's default branch (Steps 4 and 8). If the user's request did not
+already grant them, ask for both once, before Step 1.
 
 ## Before you start
 
-Confirm the tools and access exist before relying on them:
+Run `dct cloud status` first; it works before login, where it exits
+non-zero after printing. Its `This checkout`
+section reports this directory: the project root (or the `dbt_charts.yml` to
+create), the git branch, remote and how far ahead or behind it is, a
+`git identity:` line when `user.email` or `user.name` is unset, the board
+count, the declared sources and their types, and on the `cloud:` line which
+org and project the checkout is tied to. `status` itself is **org-scoped**:
+when `cloud:` says the checkout is not tied to the org, the stage printed
+below it belongs to other projects, not to this repository. `Human steps
+ahead` lists what still needs the user.
+
+Confirm what it can't tell you:
 
 - `dct --version` — dbt charts is installed. If not: `uv tool install dbt-charts`.
 - `gh auth status` — Cloud deploys from a **GitHub** repository, public or
@@ -50,24 +61,13 @@ Confirm the tools and access exist before relying on them:
   supported. `gh` is optional: it lets you pre-check admin rights on the repo
   (Step 3) and is how a repo that isn't on GitHub yet gets there (`gh repo
   create`). Offer `gh auth login` if it is installed but signed out.
-- `dct cloud status` needs a project directory only if you plan to resolve
-  org and project from context: it reads a `published_to:` key in the
-  nearest `dbt_charts.yml` first (written by a previous `project connect` in
-  this repo, and only when neither `--org` nor `--project` is passed), then
-  falls back to matching `git remote`. Run it from the repo you're
-  connecting once one exists.
-- **`status` is org-scoped, not repo-scoped.** Before trusting a `done`
-  report, confirm one of the org's projects is actually this directory:
-  compare `git remote -v`'s URL against the `REPOSITORY` column in
-  `dct cloud projects`. An org with an unrelated, already-finished project
-  reports `done` too — that is not this repository's setup. If this
-  directory isn't a git checkout, or has no remote yet, say so and name what
-  setup actually needs — a GitHub repository to push to — instead of
-  adopting the org's existing project.
-- Warehouse CLI detection, so you know which credential-minting path applies
-  later: `gcloud auth list` (BigQuery), `which snowsql` (Snowflake), `which
-  psql` (Postgres/Redshift). Missing tooling isn't fatal — it just means the
-  user supplies the credential instead of you minting one.
+- Warehouse CLI auth, so you know which credential-minting path applies
+  later — `status` reports a source's declared type, not whether your local
+  credential for it works. For BigQuery run `gcloud auth print-access-token`,
+  not `gcloud auth list`, which shows an expired account as active. If the
+  token print fails, the user has to sign in themselves. For Snowflake, `which snowsql`; for Postgres/Redshift,
+  `which psql`. Missing tooling isn't fatal — it just means the user
+  supplies the credential instead of you minting one.
 - **Where the data lives.** Cloud connection types are exactly
   `bigquery, postgresql, redshift, snowflake`. A `dbt_charts.yml` source of
   `type: duckdb` or `type: sqlite` (or a local `.duckdb` file with no project
@@ -111,6 +111,14 @@ network call may fail on DNS, and `gh`/`gcloud` may report missing or invalid
 credentials because the sandbox hides the host keyring and `~/.config` — not
 because the credential is actually gone. Re-run with network/host access
 before concluding otherwise.
+
+`dct serve` can fail to bind a local port in the same sandbox (`operation
+not permitted`) — skip the local preview there and verify the board against
+Cloud instead (the fetch in "When you're done").
+
+If a push is rejected because the remote moved and the sandbox blocks
+`git rebase` in place (`could not create .git/rebase-merge`), fetch and
+rebase in a temporary clone instead of force-pushing.
 
 ## Step 1: Authenticate
 
@@ -177,23 +185,37 @@ a non-admin lands on a refusal page with no way forward. If the check fails,
 tell the user up front whose account needs admin rights rather than sending
 them into a dead end.
 
+Decide by the repository's **visibility**, not by `gh`, which looks signed
+out under a sandboxed agent. GitHub's public API answers 200 only for a public repository, and reads none
+of git's credentials:
+
+```bash
+curl -q -fsS -o /dev/null https://api.github.com/repos/<owner>/<repo>
+```
+
+A DNS failure means "couldn't check," not "private": retry with network
+access first.
+
 Two paths, both naming the org from Step 2 with `--org <org>`:
 
-- **Public GitHub repo, with a working `gh` token**: connect headlessly with
-  `dct cloud project connect --org <org> --git-url
-  https://github.com/<owner>/<repo>`. No browser hop. A `--git-url`
-  connection can never use `dct cloud project scaffold` later — that verb
-  needs a GitHub-connected project.
-- **Otherwise**: connect without a URL. Take this path too when
-  `gh auth status` fails — without it you can't confirm the repo is public,
-  and Cloud rejects a private `--git-url`. `--start` prints an install/pick
-  URL and returns immediately, no backgrounding needed. `--start` and `--wait`
-  are one inseparable unit, not two steps split across other work: hand over
-  the URL, then immediately run `--wait` in the same turn, before Step 4 and
-  before any board authoring. The project does not exist in Cloud until
-  `--wait` completes — running `--start` and moving on leaves the connect
-  silently unfinished, and `dct cloud status` stays `missing_project` until
-  someone notices and re-runs `--wait`.
+- **Succeeds (public repo)**: connect headlessly with `dct cloud project
+  connect --org <org> --git-url https://github.com/<owner>/<repo>`. No
+  browser hop. A `--git-url` connection can never use `dct cloud project
+  scaffold` later — that verb needs a GitHub-connected project — and Cloud
+  can never push a board edited in its own UI back to it either: a
+  `--git-url` connection has no writable remote, so that edit stays in
+  Cloud's own copy of the repo. If `--git-url` is refused with `Couldn't
+  authenticate to the repository`, the repository is private: take the App
+  flow below.
+- **Fails, including a network failure that couldn't confirm public**:
+  connect without a URL, through the App flow. `--start` prints an
+  install/pick URL and returns immediately, no backgrounding needed.
+  `--start` and `--wait` are one inseparable unit, not two steps split
+  across other work: hand over the URL, then immediately run `--wait` in
+  the same turn, before Step 4 and before any board authoring. The project
+  does not exist in Cloud until `--wait` completes — running `--start` and
+  moving on leaves the connect silently unfinished, and `dct cloud status`
+  stays `missing_project` until someone notices and re-runs `--wait`.
 
   ```bash
   URL=$(dct cloud project connect --org <org> --start)
@@ -253,14 +275,14 @@ credential and no mapping — it resolves from the repo. Go straight to Step 7.
 `connections: 0` is the correct end state there, not an unfinished one.
 
 Mint the narrowest credential your own identity can, per provider, into a
-temp file you delete right after — never paste a secret into a command
+temp file you delete once the connection is saved — never paste a secret into a command
 argument (every credential field takes a file, stdin, or a named
 environment variable; a bare secret on argv sits in shell history and the
 process list, so the connect verb refuses it).
 
 | Warehouse | Minting | If you can't mint one |
 |---|---|---|
-| BigQuery | Create a service account scoped to the target dataset, grant it read access. If the dataset-level grant is blocked and you fall back to a project-level *conditional* binding, the condition must cover both the `Dataset` and `Table` resource types — `Dataset` alone renders `Access Denied` on the first board. Mint a JSON key into a temp file, delete the file once the connection call reads it. | Ask the user's admin to grant the IAM role, or to hand you a key. |
+| BigQuery | Create a service account scoped to the target dataset, grant it read access. Cover every dataset the boards' SQL names, not only the source's default one: a connection test passes against the default dataset while a board reading a sibling dataset renders `Access Denied`. The render error names the table; extend the grant and re-render with `dct cloud render --force`. If the dataset-level grant is blocked and you fall back to a project-level *conditional* binding, the condition must cover both the `Dataset` and `Table` resource types — `Dataset` alone renders `Access Denied` on the first board. Mint a JSON key into a temp file, delete the file once `connection create` succeeds. | Ask the user's admin to grant the IAM role, or to hand you a key. |
 | Snowflake | Generate a key pair, register the public half on a role-scoped user via `snowsql`, use the private key file. | Ask the user to type a password at a stdin prompt — never on the command line. |
 | Postgres / Redshift | If your own credentials allow it, create a read-only role via `psql` and use its password. | Ask the user to supply or approve a read-only credential. |
 
@@ -275,10 +297,18 @@ credential is rotated, never right after the test passes.
 
 Create the connection with the minted (or user-supplied) credential. The
 create call also tests it, and a test that fails outright saves nothing: the
-command exits non-zero and prints the warehouse's own error. Read that error,
-fix the cause it names, and re-run the same command rather than moving on; there
-is no leftover connection to delete first, and no need to invent a different
-alias.
+command exits non-zero and says what kind of failure it was (a rejected
+credential, a missing permission, a database it could not find), not the
+warehouse's raw text. Fix that cause and re-run the same command rather than
+moving on; there is no leftover connection to delete first, and no need to
+invent a different alias.
+
+A freshly minted BigQuery key can be rejected right after minting even
+though it is correct — the credential can take a minute or more to
+propagate through IAM. If `connection create` reports the credential
+rejected immediately after you minted it, keep the key file, wait, and run
+the same command once more before minting a second key. If you do mint a
+second, delete the first key on GCP (its `private_key_id` is in the key file).
 
 A test that could not finish in time is the exception, and it is not a
 credential problem. The warehouse may still be starting up, so nothing was
@@ -332,9 +362,9 @@ answer any admin-only verb gives them.
 map to has not passed its last test — it failed, or nobody has run it. Neither
 re-rendering nor `--force` clears it, because the connection is the problem:
 the `error` names the source, and names the connection and the exact test
-command when your token may list connections at all. It does not carry the
-warehouse's own error text: run that command to see it, and let it tell you
-what to fix — a rejected credential and an unreachable warehouse read the same
+command when your token may list connections at all. It does not say why
+the test failed: run that command to see what kind of failure it was, and let
+it tell you what to fix — a rejected credential and an unreachable warehouse read the same
 from here. Fix that, confirm with `dct cloud connection test <slug>`, then
 render. `dct cloud
 render` on such a project says so rather than reporting a bare count of zero.
@@ -350,6 +380,10 @@ watching the remote and waits for an hourly sweep. So after every push:
 ```bash
 dct cloud project sync
 ```
+
+`dct cloud status` can still read `unsynced` for a few seconds after this —
+the sync is queued, not skipped. Re-run `status` after a few seconds rather
+than running `project sync` again.
 
 Read `dct cloud boards` **before** the push, then again after the sync:
 

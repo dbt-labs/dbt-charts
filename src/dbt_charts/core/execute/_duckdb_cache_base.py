@@ -33,7 +33,7 @@ import logging
 import threading
 import traceback as tb_mod
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path  # noqa: TID251 — DuckDB cache file (DCT_CACHE_PATH)
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -205,7 +205,7 @@ def _utc_wall_clock() -> datetime:
     would be off by the machine's offset and, east of Greenwich, entries would
     read as future-dated and never expire.
     """
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _rows_from_result(
@@ -352,15 +352,15 @@ class _DuckDBResultCacheBase:
         # what Cloud's backend returns. Never `.replace(tzinfo=utc)` a
         # naive-*local* value — that shifts the reading by the machine's offset.
         if written_at_utc is not None:
-            written_at_utc = written_at_utc.replace(tzinfo=timezone.utc)
+            written_at_utc = written_at_utc.replace(tzinfo=UTC)
         if err_written_at is not None:
-            err_written_at = err_written_at.replace(tzinfo=timezone.utc)
+            err_written_at = err_written_at.replace(tzinfo=UTC)
         error = None
         # The error slot expires on the backend's retry window — a transient
         # warehouse blip must be re-tried in minutes however long this query is
         # willing to serve stale rows. 0 disables error caching outright.
         if err_written_at is not None and self.failure_ttl_seconds > 0:
-            elapsed = (datetime.now(timezone.utc) - err_written_at).total_seconds()
+            elapsed = (datetime.now(UTC) - err_written_at).total_seconds()
             if elapsed <= self.failure_ttl_seconds:
                 error = CachedQueryFailure(
                     error_class=err_class,

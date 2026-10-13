@@ -8,9 +8,15 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from d3_format import EN_US
+from d3_format import EN_US, LocaleDefinition
 from dbt_charts.core.compile.merge import deep_merge_dict
-from dbt_charts.core.text.format_d3 import active_format_locale, locale_definition
+from dbt_charts.core.text.format_d3 import (
+    EN_US_TIME,
+    TimeLocaleDefinition,
+    active_format_locale,
+    active_time_locale,
+    locale_definition,
+)
 
 # Internal field name for the calculate-transform output backing the href
 # click-interactivity encoding. Consumed by translate.py.
@@ -51,8 +57,14 @@ def apply_presentation_defaults(
     compiled = copy.deepcopy(effective_vega_config)
     # Stamped per render, not baked into the theme-memoized vega_config.
     locale = active_format_locale()
+    time_locale = active_time_locale()
+    locales: dict[str, LocaleDefinition | TimeLocaleDefinition] = {}
     if locale_definition(locale) != locale_definition(EN_US):
-        compiled["locale"] = {"number": locale_definition(locale)}
+        locales["number"] = locale_definition(locale)
+    if time_locale != EN_US_TIME:
+        locales["time"] = copy.deepcopy(time_locale)
+    if locales:
+        compiled["locale"] = locales
 
     result_spec["config"] = compiled
 

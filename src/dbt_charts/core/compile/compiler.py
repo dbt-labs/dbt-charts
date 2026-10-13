@@ -32,11 +32,12 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any, Literal
 
+import yaml
 from pydantic import ValidationError as PydanticValidationError
 
 from dbt_charts.core.compile.config import (
@@ -76,7 +77,9 @@ from dbt_charts.core.compile.models.refs import (
     ChartRef,
     QueryRef,
     VariableRef,
+    coerce_ref_string,
     normalize_query_value,
+    ref_or_inline,
 )
 from dbt_charts.core.compile.models.variable.authored import (
     Variable,
@@ -100,10 +103,13 @@ from dbt_charts.core.compile.parse.meta import (
     resolve_meta_lint,
 )
 from dbt_charts.core.compile.parse.parser import (
+    UNNAMED_YAML_SOURCE,
     load_yaml_mapping,
     looks_like_sql,
     parse_mapping,
     parse_yaml,
+    quote_colon_typos,
+    yaml_syntax_error,
 )
 from dbt_charts.core.compile.parse.source_map import (
     LiteralBlock,
@@ -128,12 +134,16 @@ from dbt_charts.core.compile.validate.dispatch import validate_board
 from dbt_charts.core.compile.validate.formats import validate_board_format_specs
 from dbt_charts.core.compile.validate.links import validate_board_links
 from dbt_charts.core.compile.validate.palettes import validate_board_palette_specs
+from dbt_charts.core.compile.validate.zero_baseline import (
+    validate_board_zero_baselines,
+)
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_EMPTY_YAML_DOCUMENT,
     ERR_TEXT_UNKNOWN_QUERY,
     ERR_UNKNOWN_QUERY,
+    ERR_YAML_SYNTAX,
     WARN_HTML_POLICY_CAPPED,
     WARN_SCHEMA_MIGRATED,
 )
@@ -274,6 +284,19 @@ def _set_reference_error_field_path(e: ReferenceError, authored: AuthoredBoard) 
         e.field_path = ".".join(e.ref_path)
 
 
+def _own_format_names(yaml_content: str) -> frozenset[str]:
+    """Names the board file's own text defines under ``style.formats``.
+
+    Read from the unmerged text so a name inherited through meta.yml or extends
+    is not judged here.
+    """
+    if not yaml_content:
+        return frozenset()
+    style = load_yaml_mapping(yaml_content).get("style")
+    formats = style.get("formats") if isinstance(style, dict) else None
+    return frozenset(formats) if isinstance(formats, dict) else frozenset()
+
+
 def compile_authored_board(
     authored: AuthoredBoard,
     base_dir: ProjectDirectory | None = None,
@@ -337,11 +360,16 @@ def compile_authored_board(
     # compiles composed/standalone content (e.g. the playground scratch endpoint,
     # which has no charts/meta.yml to inherit) may supply host_default_source as
     # the fallback default for that context.
-    default_source = authored.get_default_source() or host_default_source
-
+    # A dbt project that declares no sources supplies its implicit one last, so
+    # any default the author set still wins.
     sources_registry: dict[str, Any] = {}
+    implicit_source = None
     if project_sources is not None:
         sources_registry.update(project_sources.sources)
+        implicit_source = project_sources.implicit_source
+    default_source = (
+        authored.get_default_source() or host_default_source or implicit_source
+    )
 
     # ════════════════════════════════════════════════════════════════════
     # STEP 3b: Build Chart Registry (moved ahead of queries — Surface B's
@@ -486,7 +514,14 @@ def compile_authored_board(
     except CompilationError as e:
         return CompileResult(errors=[e.to_diagnostic(file=file)])
 
-    warnings.extend(detect_board_warnings(compiled))
+    # A cropped zero baseline: an error on a bar, a warning on an area (see
+    # validate/zero_baseline.py).
+    try:
+        warnings.extend(validate_board_zero_baselines(compiled))
+    except CompilationError as e:
+        return CompileResult(errors=[e.to_diagnostic(file=file)])
+
+    warnings.extend(detect_board_warnings(compiled, _own_format_names(_yaml_content)))
     authored_queries = authored.queries
     warnings.extend(
         _sql_parse_warnings(
@@ -571,7 +606,20 @@ def compile(
         try:
             board = parse_yaml(yaml_content)
         except ParseError as e:
-            result = _stamp_compile_result(
+            result = _compile_quoted_copy(
+                e,
+                yaml_content,
+                file,
+                lambda text: compile(
+                    text,
+                    options,
+                    base_dir=base_dir,
+                    project_sources=project_sources,
+                    project_cache=project_cache,
+                    host_default_source=host_default_source,
+                    file=file,
+                ),
+            ) or _stamp_compile_result(
                 CompileResult(
                     errors=_parse_error_to_diagnostics(e, yaml_content, file=file)
                 ),
@@ -624,10 +672,10 @@ def _parse_error_to_diagnostics(
     """Convert a ParseError into Diagnostics.
 
     When the cause is a PydanticValidationError, use the union-aware collapse to
-    produce Diagnostics from the raw Pydantic error list. An empty-document
-    error is rebuilt here with the file name filled in — parser.py raises it
-    from bare content, with no board identity to name. Every other parse error
-    (bad YAML syntax) produces one Diagnostic straight from ``e``.
+    produce Diagnostics from the raw Pydantic error list. Empty-document and
+    YAML-syntax errors are rebuilt here with the file name filled in —
+    parser.py raises them from bare content, with no board identity to name.
+    Every other parse error produces one Diagnostic straight from ``e``.
     """
     if isinstance(e.__cause__, PydanticValidationError):
         return format_validation_errors_structured(e.__cause__, yaml_content)
@@ -640,7 +688,50 @@ def _parse_error_to_diagnostics(
             or "the given YAML content",  # type-state: silent_fallback — see above
         )
         return [named.to_diagnostic(file=file)]
+    if (
+        e.code is ERR_YAML_SYNTAX
+        and file is not None
+        and e.fields["source"] == UNNAMED_YAML_SOURCE
+    ):
+        e = ParseError.from_code(ERR_YAML_SYNTAX, **{**e.fields, "source": file})
     return [e.to_diagnostic(file=file)]
+
+
+def _compile_quoted_copy(
+    e: ParseError,
+    yaml_content: str,
+    file: str | None,
+    compile_copy: Callable[[str], CompileResult],
+) -> CompileResult | None:
+    """Compile a copy of the board with its colon typos quoted.
+
+    The result leads with one ``ERR-YAML-SYNTAX`` per quoted line, reported
+    against the authored text. They stay errors, so the board still fails to
+    render: the copy only lets this pass report the schema and query errors
+    behind the typo. ``None`` when ``e`` is not such a typo.
+    """
+    if e.code is not ERR_YAML_SYNTAX:
+        return None
+    quoted = quote_colon_typos(yaml_content)
+    if quoted is None:
+        return None
+    copy, syntax_errors = quoted
+    syntax = _stamp_compile_result(
+        CompileResult(
+            errors=[
+                diagnostic
+                for error in syntax_errors
+                for diagnostic in _parse_error_to_diagnostics(
+                    error, yaml_content, file=file
+                )
+            ]
+        ),
+        yaml_content,
+        file,
+    )
+    result = compile_copy(copy)
+    result.errors[:0] = syntax.errors
+    return result
 
 
 def _compile_with_text(
@@ -930,10 +1021,11 @@ def _compile_file(
         MARKDOWN_NOT_BOARD_MESSAGE,
         is_markdown_board_content,
         markdown_to_yaml,
+        with_document_style,
     )
 
     # tach-ignore(pre-existing compile->project coupling — accepted debt)
-    from dbt_charts.core.project import CHARTS_SUBDIR
+    from dbt_charts.core.project import CHARTS_SUBDIR, InMemoryBoard
 
     if board_path.is_markdown:
         raw_text = board.content
@@ -952,6 +1044,14 @@ def _compile_file(
         try:
             yaml_content = markdown_to_yaml(
                 raw_text, metadata_table=markdown_metadata_table
+            )
+        except yaml.YAMLError as e:
+            return CompileResult(
+                errors=[
+                    yaml_syntax_error(e, raw_text, source=relpath).to_diagnostic(
+                        file=relpath
+                    )
+                ]
             )
         except (OSError, ValueError) as e:
             return CompileResult(
@@ -1020,9 +1120,26 @@ def _compile_file(
             if effective_theme is not None:
                 merged_board_data["extends"] = effective_theme
             board_data = merged_board_data
+        if board_path.is_markdown:
+            board_data = with_document_style(board_data)
         authored_board = parse_mapping(board_data, yaml_content)
     except ParseError as e:
-        return _stamp_compile_result(
+        quoted = (
+            None
+            if board_path.is_markdown
+            else _compile_quoted_copy(
+                e,
+                yaml_content,
+                relpath,
+                lambda text: _compile_file(
+                    InMemoryBoard(text, path=board_path),
+                    board_path,
+                    apply_meta,
+                    markdown_metadata_table=markdown_metadata_table,
+                ),
+            )
+        )
+        return quoted or _stamp_compile_result(
             CompileResult(
                 errors=_parse_error_to_diagnostics(e, yaml_content, file=relpath)
             ),
@@ -1748,27 +1865,42 @@ def _load_chart_ref_with_lexical_queries(
             onto a resolution failure so its `Diagnostic.range` can be
             resolved via the central source-map stamping.
     """
-    item_def, item_name, resolved_path, content = _resolve_ref_item(
-        chart_ref.ref, "charts", base_dir, yaml_path
-    )
-    file_dir = resolved_path.parent
-    if not isinstance(item_def, dict):
-        # Invalid, and left for downstream validation to report.
-        return RegisteredChart(item_def, file_dir)
     from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
 
-    # Wrapped as a board patch so pydantic's `loc` is board-rooted
-    # (`charts.<name>...`) — the formatter's key hints and the source map both
-    # resolve paths from the board root.
-    try:
-        BOARD_PATCH_ADAPTER.validate_python({"charts": {item_name: item_def}})
-    except PydanticValidationError as e:
-        raise FileValidationError.from_pydantic(
-            f"{chart_ref.ref!r}: schema error in {resolved_path.relpath}",
-            e,
-            resolved_path.read_text(),
-            resolved_path.relpath,
-        ) from e
+    # Queries scope to the file that finally defines the chart, not to any
+    # file a chained ref merely passes through.
+    hop_ref = chart_ref.ref
+    hop_dir = base_dir
+    visited: list[str] = []
+    while True:
+        item_def, item_name, resolved_path, content = _resolve_ref_item(
+            hop_ref, "charts", hop_dir, yaml_path
+        )
+        # Wrapped as a board patch so pydantic's `loc` is board-rooted
+        # (`charts.<name>...`) — the formatter's key hints and the source map
+        # both resolve paths from the board root.
+        try:
+            BOARD_PATCH_ADAPTER.validate_python({"charts": {item_name: item_def}})
+        except PydanticValidationError as e:
+            raise FileValidationError.from_pydantic(
+                f"{chart_ref.ref!r}: schema error in {resolved_path.relpath}",
+                e,
+                resolved_path.read_text(),
+                resolved_path.relpath,
+            ) from e
+        if ref_or_inline(item_def, ChartRef) == "@inline":
+            break
+        site = f"{resolved_path.relpath}.charts.{item_name}"
+        if site in visited:
+            raise ReferenceError(
+                chart_ref.ref,
+                "circular chart refs: " + " -> ".join([*visited, site]),
+                ref_path=yaml_path,
+            )
+        visited.append(site)
+        hop_ref = ChartRef.model_validate(coerce_ref_string(item_def)).ref
+        hop_dir = resolved_path.parent
+    file_dir = resolved_path.parent
 
     queries_section = content.get("queries")
     if not isinstance(queries_section, dict):

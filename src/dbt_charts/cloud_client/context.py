@@ -41,6 +41,10 @@ GITHUB_LABEL_PREFIX = "GitHub: "
 # `git@github.com:acme/analytics.git` — scp-style, which urlsplit cannot read.
 _SCP_REMOTE = re.compile(r"^[\w.+-]+@([^:/]+):(.+)$")
 _GIT_TIMEOUT_SECONDS = 10
+# `GitCheckoutFacts.origin`'s value when `_strip_userinfo` could not parse the
+# raw remote at all -- callers that print `origin` must recognize this exact
+# text rather than treat it as a real (if odd) URL.
+UNPARSEABLE_ORIGIN_PLACEHOLDER = "(origin URL could not be parsed, not shown)"
 
 
 @dataclass(frozen=True)
@@ -49,6 +53,36 @@ class CloudContext:
 
     org: str
     project: str
+
+
+def _git(args: list[str], start: Path) -> str | None:
+    """One read-only, local-only git subprocess call; ``None`` on any failure,
+    absent git, or a value git itself reports as unset. Never touches the
+    network -- every caller here passes a local-ref or config subcommand.
+
+    ``errors="replace"``: git output is not guaranteed UTF-8 (a Latin-1
+    ``user.name`` in the user's global, non-project ``~/.gitconfig`` is
+    common enough), and this probe must never crash on a byte it didn't
+    choose -- a substituted replacement character is a fine price for a
+    value this function only ever displays, never parses.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=start,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GIT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    value = completed.stdout.strip()
+    return value or None
 
 
 def git_remotes(start: Path) -> list[str]:
@@ -60,25 +94,157 @@ def git_remotes(start: Path) -> list[str]:
     ``--local`` is also what makes "not in a repository" a failure here instead
     of a read of the user's global config.
     """
-    try:
-        completed = subprocess.run(
-            ["git", "config", "--local", "--get-regexp", r"^remote\..*\.url$"],
-            cwd=start,
-            capture_output=True,
-            text=True,
-            timeout=_GIT_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return []
-    if completed.returncode != 0:
+    raw = _git(["config", "--local", "--get-regexp", r"^remote\..*\.url$"], start)
+    if raw is None:
         return []
     urls: list[str] = []
-    for line in completed.stdout.splitlines():
+    for line in raw.splitlines():
         _key, _, url = line.partition(" ")
         if url and url not in urls:
             urls.append(url)
     return urls
+
+
+def _strip_userinfo(url: str) -> str:
+    """*url* with any embedded credentials removed.
+
+    An https remote can carry `user:token@` (GitHub Apps and CI routinely
+    mint one); this must never reach a printed line. scp-style
+    (`git@host:path`) is left alone -- `urlsplit` cannot parse it, and its
+    leading `git@` is a fixed SSH login, not a secret (mirrors `repo_key`'s
+    own scp-vs-urlsplit split just below).
+
+    `urlsplit` itself raises `ValueError` on some malformed input (a stray
+    `[` triggers its IPv6-bracket parsing) -- exactly the shape most likely
+    to appear beside embedded userinfo, so a parse failure redacts the
+    whole value rather than risking the raw, unparsed URL reaching a
+    printed line.
+    """
+    if _SCP_REMOTE.match(url):
+        return url
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return UNPARSEABLE_ORIGIN_PLACEHOLDER
+    if "@" not in parsed.netloc:
+        return url
+    return parsed._replace(netloc=parsed.netloc.rpartition("@")[2]).geturl()
+
+
+@dataclass(frozen=True)
+class GitCheckoutFacts:
+    """Local git facts about the checkout `dct cloud status` runs from.
+
+    Every field is read from local refs and config only — never a fetch, so
+    ``ahead``/``behind`` are "as of last fetch", not current. ``origin`` never
+    carries embedded credentials (see ``_strip_userinfo``).
+
+    ``is_repo`` is tri-state: ``True``/``False`` when git could answer
+    outright, ``None`` when git refused to answer at all (``read_error``
+    then carries its message) -- e.g. a ``safe.directory`` refusal (exit
+    128), routine in containers and bind mounts. That case is not "not a
+    checkout": the directory might be a repo tied to a project, and this
+    probe just cannot see it, so callers must report it as undetermined,
+    never as false.
+
+    The other fields are ``None`` meaning unknowable rather than zero: a
+    detached HEAD (``branch``), no ``origin`` remote, or no upstream tracking
+    branch (``ahead``/``behind``, always both set or both unset together).
+
+    ``has_commits`` is ``False`` on a freshly-initialized repo whose branch
+    has never been committed to (an "unborn" branch) as well as when
+    ``is_repo`` is not ``True`` -- distinct from ``ahead is None``, which
+    also covers a repo with real commits that simply has no upstream
+    tracking branch yet. A push step needs the distinction: there is
+    nothing to push from an unborn branch, however "no upstream" that
+    branch's ``ahead`` reads.
+    """
+
+    is_repo: bool | None
+    read_error: str | None
+    branch: str | None
+    origin: str | None
+    ahead: int | None
+    behind: int | None
+    identity_missing: bool
+    has_commits: bool
+
+
+def _probe_repo(start: Path) -> tuple[bool | None, str | None]:
+    """(is_repo, read_error) -- see ``GitCheckoutFacts.is_repo``'s docstring
+    for what the tri-state means and why."""
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=start,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",  # see _git's docstring -- git output isn't guaranteed UTF-8
+            timeout=_GIT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, str(exc)
+    if completed.returncode == 0 and completed.stdout.strip() == "true":
+        return True, None
+    stderr = completed.stderr.strip()
+    # git's message for "no .git anywhere above here" -- the only shape that
+    # means genuinely not a checkout. A `.git` FILE pointing at a missing
+    # gitdir (a moved/pruned worktree, a broken submodule) says "not a git
+    # repository: <path>" WITHOUT this parenthetical, and must not collapse
+    # into the same False: the checkout might well be tied to a project and
+    # this probe just can't read it.
+    if "not a git repository (or any of the parent directories)" in stderr.lower():
+        return False, None
+    return None, stderr or f"git exited {completed.returncode}"
+
+
+def git_checkout_facts(start: Path) -> GitCheckoutFacts:
+    """This checkout's own git facts, for `dct cloud status`'s preflight
+    section -- computed with zero network access so the command works the
+    same whether or not the caller is signed in.
+    """
+    is_repo, read_error = _probe_repo(start)
+    if not is_repo:
+        return GitCheckoutFacts(
+            is_repo=is_repo,
+            read_error=read_error,
+            branch=None,
+            origin=None,
+            ahead=None,
+            behind=None,
+            identity_missing=False,
+            has_commits=False,
+        )
+    has_commits = _git(["rev-parse", "--verify", "-q", "HEAD"], start) is not None
+    branch = _git(["symbolic-ref", "--short", "-q", "HEAD"], start)
+    raw_origin = _git(["config", "--local", "--get", "remote.origin.url"], start)
+    origin = _strip_userinfo(raw_origin) if raw_origin is not None else None
+    ahead = behind = None
+    counts = _git(["rev-list", "--left-right", "--count", "HEAD...@{u}"], start)
+    if counts is not None:
+        left, _, right = counts.partition("\t")
+        if left.isdigit() and right.isdigit():
+            ahead, behind = int(left), int(right)
+    # Effective identity: resolves local -> global -> system, matching what a
+    # real `git commit` would use here. Deliberately NOT `--local` (unlike
+    # `git_remotes`'s `--local`-only read above) -- a global-only identity is
+    # a perfectly working setup this probe must not flag as missing.
+    identity_missing = (
+        _git(["config", "user.email"], start) is None
+        or _git(["config", "user.name"], start) is None
+    )
+    return GitCheckoutFacts(
+        is_repo=True,
+        read_error=None,
+        branch=branch,
+        origin=origin,
+        ahead=ahead,
+        behind=behind,
+        identity_missing=identity_missing,
+        has_commits=has_commits,
+    )
 
 
 def repo_key(url: str) -> str:
@@ -87,6 +253,13 @@ def repo_key(url: str) -> str:
     An ssh remote, an https remote with credentials in it, and the label the
     API reports for a project all describe the same repository; this is what
     makes them comparable.
+
+    Must stay total: a caller (``repo_matches``, over a project's stored
+    ``repo_label`` or this checkout's own origin) cannot control its input.
+    ``urlsplit`` itself raises ``ValueError`` on some malformed URLs (a
+    stray ``[`` triggers its IPv6-bracket parsing) -- that value simply
+    cannot match any real ``host/path`` key, which is what the fallback
+    below returns.
     """
     text = url.strip()
     if text.startswith(GITHUB_LABEL_PREFIX):
@@ -95,7 +268,10 @@ def repo_key(url: str) -> str:
     if scp:
         host, path = scp.group(1), scp.group(2)
     else:
-        parsed = urlsplit(text)
+        try:
+            parsed = urlsplit(text)
+        except ValueError:
+            return text.lower()
         host = parsed.netloc.rpartition("@")[2]
         path = parsed.path
     host = host.partition(":")[0].lower()

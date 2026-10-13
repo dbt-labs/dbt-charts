@@ -4,7 +4,7 @@ The shared chart wrapper (<g class="dbt-chart">) already owns sizing, metadata,
 and accessibility.  Internal renderers (kpi, spark_bar, table, callout) should
 embed their content directly inside that wrapper without adding a redundant
 standalone <svg> viewport. The same applies to the ChartDataError fallback
-path, which wraps any chart's callout card via render_callout_svg.
+path, which wraps any chart's callout card via render_callout_card.
 
 Vega/Vega-Lite charts are the only case that legitimately remains as a nested
 <svg> — they arrive as opaque scenegraphs and are not rewritten.
@@ -118,7 +118,7 @@ def test_callout_wrapper_carries_callout_class_and_id() -> None:
 # ChartDataError fallback on a Vega-family chart — no nested <svg>
 #
 # Regression: the unwrap decision can't key off the chart type alone, because
-# render_callout_svg is also invoked from the except ChartDataError path
+# render_callout_card is also invoked from the except ChartDataError path
 # in render_chart_item, where `chart` is still the original (e.g. "line")
 # chart. Without handling that, a bar/line chart that fails data validation
 # would render a nested callout <svg> inside <g class="dbt-chart">.

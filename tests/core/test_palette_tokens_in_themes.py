@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from dbt_charts.core.compile.config import (
     get_theme_style,
 )
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.style.theme import ChartsStyle
 from dbt_charts.core.compile.resolve.style.board import (
@@ -26,7 +27,6 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
 )
 from dbt_charts.core.compile.resolve.style.palette import (
-    UnknownColorError,
     color as resolve_palette_color,
     palette as resolve_palette,
     variant as category_variant,
@@ -118,7 +118,7 @@ class TestCategoryRoleBracketTokens:
         patch = StylePatch.model_validate(
             {"charts": {"marks": {"bar": {"border": {"color": "categry[2]"}}}}}
         )
-        with pytest.raises(UnknownColorError):
+        with pytest.raises(CompilationError, match="does not resolve"):
             resolve_chart_style_context(get_theme_style("stark"), patch)
 
     def test_table_row_stripe_color_token_resolves_to_hex(self):
@@ -157,7 +157,7 @@ class TestCategoryRoleBracketTokens:
                 }
             }
         )
-        with pytest.raises(UnknownColorError):
+        with pytest.raises(CompilationError, match="does not resolve"):
             resolve_chart_style_context(get_theme_style(), patch)
 
 

@@ -51,6 +51,7 @@ def _axis(
         ticks=ticks,
         scale=None,
         fiscal_year_start_month=1,
+        grain_formats={},
     )
 
 
@@ -118,6 +119,7 @@ def _axis_with_scale(
         ticks=ticks,
         tick_values=tick_values,
         fiscal_year_start_month=1,
+        grain_formats={},
     )
 
 

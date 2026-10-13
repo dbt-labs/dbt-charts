@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dbt_charts.core.text.format_d3 import LocaleName
+    from dbt_charts.core.text.format_d3 import NumberLocaleName
 
 MagnitudeWords = tuple[str, str, str, str]
 """Thousand, million, billion, trillion."""
@@ -37,7 +37,7 @@ _BY_LANGUAGE: dict[str, _Registers] = {
     "cs": (_nbsp("k", "M", "mld", "bil"), _nbsp("tis.", "mil.", "mld.", "bil.")),
     "da": (_nbsp("k", "M", "mia", "bio"), _nbsp("t", "mio.", "mia.", "bio.")),
     "de": (_nbsp("k", "M", "Mrd", "Bio"), _nbsp("Tsd.", "Mio.", "Mrd.", "Bio.")),
-    "en": (_nbsp("K", "M", "B", "T"), ("k", "mn", "bn", "trn")),
+    "en": (("K", "M", "B", "T"), ("k", "mn", "bn", "trn")),
     "es": _both(_nbsp("mil", "M", "mil\u00a0M", "B")),
     "fi": (_nbsp("k", "M", "mrd", "bilj"), _nbsp("t.", "milj.", "mrd.", "bilj.")),
     "fr": _both(_nbsp("k", "M", "Md", "Bn")),
@@ -68,7 +68,7 @@ _BY_REGION: dict[str, _Registers] = {
 }
 
 
-def magnitude_words(name: LocaleName) -> _Registers:
+def magnitude_words(name: NumberLocaleName) -> _Registers:
     """``name``'s analytic and narrative words."""
     if name in _BY_REGION:
         return _BY_REGION[name]

@@ -66,11 +66,12 @@ style:
           # orient, they don't compete with marks or the chart title.
           color: dbt-grays.subtitle
       grid:
-        color: dbt-grays.grid
+        # One rung quieter than the measure grid (axis_y below), never more.
+        color: &category_grid dbt-grays.border
         threshold:
           color: dbt-grays.subtitle
       ticks:
-        color: dbt-grays.grid
+        color: *category_grid
       line:
         color: dbt-grays.grid
     axis_y:

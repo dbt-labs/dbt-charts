@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from dbt_charts.core.compile.models.chart.authored import (
     PointMapChart as AuthoredPointMapChart,
 )
+from dbt_charts.core.render.chart.emitters._tooltip import COUNT_TITLE
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
 # ---------------------------------------------------------------------------
@@ -96,6 +97,7 @@ def test_collapse_emits_count_aggregate_on_size_channel(make_chart) -> None:
     size_enc = spec["encoding"]["size"]
     assert size_enc["aggregate"] == "count"
     assert "field" not in size_enc
+    assert size_enc["title"] == COUNT_TITLE
 
 
 def test_collapse_size_channel_is_area_proportional(make_chart) -> None:
@@ -132,7 +134,8 @@ def test_collapse_tooltip_shows_count_not_raw_columns(make_chart) -> None:
     tooltip_fields = spec["encoding"]["tooltip"]
     tooltip_field_names = {f.get("field") for f in tooltip_fields}
     assert "facility" not in tooltip_field_names
-    assert any(f.get("aggregate") == "count" for f in tooltip_fields)
+    (count,) = [f for f in tooltip_fields if f.get("aggregate") == "count"]
+    assert count["title"] == COUNT_TITLE
 
 
 def test_no_collapse_keeps_mark_level_size(make_chart) -> None:

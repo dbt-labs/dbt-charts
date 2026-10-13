@@ -1,6 +1,7 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.15,<2", "setuptools-scm>=8"]
+build-backend = "_build_backend"
+backend-path = ["."]
 
 # Duplicates a subset of the root [dependency-groups].dev: the root group
 # covers running the whole monorepo from the workspace root, but dbt-charts/
@@ -23,8 +24,10 @@ dev = [
     "dbt-postgres==1.10.0",  # PostgreSQL adapter tests
     "dbt-redshift==1.11.1",  # Redshift adapter tests
     "dbt-snowflake==1.11.5",  # Snowflake adapter tests
-    "dbt-trino==1.10.2",  # Trino adapter tests
-    "dbt-athena==1.10.2",  # Athena adapter tests
+    "trino==0.338.0",  # Trino driver tests
+    # Excluded on Windows: it pins mmh3<4.2, which has no cp313 Windows wheel
+    # and would compile from source (minutes); the Windows subset needs no Athena.
+    "dbt-athena==1.10.2; sys_platform != 'win32'",  # Athena adapter tests
     "dbt-clickhouse==1.10.3",  # ClickHouse adapter tests
     "dbt-sqlserver==1.11.0",  # SQL Server adapter tests (needs dbt-adapters>=1.24.1)
     "dbt-fabric==1.10.0",  # Fabric adapter tests
@@ -43,7 +46,6 @@ dev = [
     "mypy>=1.17",  # Type checking (see [tool.mypy] below)
     "types-pyyaml>=6.0",  # Type stubs for PyYAML (core/utils.py, core/compile/parse/source_map.py)
     "tach==0.35.3",  # Import-boundary enforcement; see tach.toml. Matches the root pin.
-    "tomli>=2.0.0",  # Pyright checks the py3.10 tomllib fallback import
     "vulture>=2.16",  # Dead-code finder; see [tool.vulture] below. Matches the root pin.
     "pyright==1.1.414",  # CI gate on rules mypy structurally can't catch; see oss/pyrightconfig.json. Matches the root pin.
 ]
@@ -53,7 +55,7 @@ name = "dbt-charts"
 dynamic = ["version"]
 description = "Declarative YAML around SQL for dbt-native dashboards: easy for agents to write, easy for humans to audit."
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.14"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [
@@ -65,7 +67,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -76,9 +77,8 @@ dependencies = [
     "pyyaml>=6.0",
     "pydantic>=2.0.0",
     "annotated-types>=0.4.0",
-    "typing_extensions>=4.5.0",
     # Backport of stdlib importlib.resources — as_file() gains directory support
-    # only in 3.12+; dbt_charts targets 3.10+. Used by
+    # only in 3.12+. Used by
     # core/fonts.py:get_fonts_dir() to materialize a persistent real directory
     # for foreign libs (StaticFiles, vl-convert, fontTools), and by
     # agent_api/init.py for the Traversable type of the template walk.
@@ -94,7 +94,7 @@ dependencies = [
     "fastapi>=0.100.0",
     "uvicorn>=0.23.0",
     "vl-convert-python>=1.9.0",
-    "pygments>=2.18.0",
+    "pygments>=2.21.0",
     "fonttools>=4.0",
     # plotext 6.0.0 reshaped its API and dropped the module-level functions
     # core/render/terminal_charts.py calls (clear_data, clear_figure, plotsize,
@@ -118,7 +118,6 @@ dependencies = [
     # a type checker.
     "pyarrow>=14.0.0",
     "tomli-w>=1.0.0",
-    'tomli>=2.0.0; python_version < "3.11"',
     # dbt_macro_loader.py and dbt_adapter_factory.py reach into dbt-internal
     # API (MacroParser, MacroManifest, FACTORY internals,
     # generate_runtime_macro_context) to bootstrap dbt manifests/macro
@@ -145,11 +144,13 @@ dependencies = [
     # declared without the [standard] extra) — load-bearing, not optional.
     "watchfiles>=1.1.1",
     "jsonschema>=4.0",
-    # mdsvg is a peer package built into the dbt_charts wheel (see the
-    # [tool.hatch.build.targets.wheel.force-include] entries below) rather
-    # than declared as a separate PyPI package, so its runtime dependency
-    # nh3 must be declared here explicitly.
+    # mdsvg is a peer package built into the dbt_charts wheel (see
+    # `_build_backend.py`) rather than declared as a separate PyPI package,
+    # so its runtime dependency nh3 must be declared here explicitly.
     "nh3>=0.3.3",
+    # 1.0.594 is the first dbt-protos release carrying events/charts.proto.
+    "dbt-protos>=1.0.594",
+    "dbtlabs-vortex>=0.2.0",
 ]
 
 [project.urls]
@@ -189,7 +190,7 @@ spark = [
 ]
 
 trino = [
-    "dbt-trino>=1.9,<2.0",
+    "trino>=0.334",
 ]
 
 athena = [
@@ -276,14 +277,10 @@ markers = [
     "docs_derived: computed from apps/docs/** content (e.g. DOCS_DIR); selected by docs.yml's docs lane, whose path filter — unlike the main test matrix — includes apps/docs/**",
 ]
 
-# uv's default rebuild cache keys (pyproject.toml/setup.py/setup.cfg) don't
-# cover src/dbt_charts either — that stays live because it's an editable
-# `packages` entry, resolved by a `.pth` redirect, not a cached build output.
-# The cross-tree force-included libs/d3-format/libs/markdown-svg source has
-# no such redirect (force-include always copies), so an edit there doesn't
-# invalidate the cached build on its own — `uv sync` would keep serving the
-# stale site-packages copy. Declaring their source globs here makes plain
-# `uv sync` pick up edits too.
+# uv's default rebuild cache keys cover only this project's own files. The
+# extension's Rust sources and the build backend live elsewhere, so a plain
+# `uv sync` would keep serving a stale `_engine` without these. (Python under
+# src/dbt_charts and the vendored libs is live through `.pth` redirects.)
 [tool.uv]
 # Dev/type-checking resolution only (type-only breaks — a *runtime* API break
 # is a published [project] bound instead, see plotext above). uv only honors
@@ -295,10 +292,10 @@ constraint-dependencies = [
     # Transitive only (duckdb's stub surface pulls it in) — no direct
     # import in src/dbt_charts needs it. numpy>=2.5 ships __init__.pyi with
     # unconditional PEP 695 `type` statements, which mypy cannot parse
-    # under python_version = "3.10" (that syntax needs 3.12+ regardless of
+    # under python_version = "3.11" (that syntax needs 3.12+ regardless of
     # the *running* interpreter) — dying before it checks a single file.
     # Capped at the last release before that stub change so `[tool.mypy]`
-    # below can target 3.10 without vendoring a numpy pin the rest of the
+    # below can target 3.11 without vendoring a numpy pin the rest of the
     # dependency tree doesn't otherwise need.
     "numpy<2.5",
     # A direct import (core/execute/{cache_composition,
@@ -326,12 +323,12 @@ constraint-dependencies = [
 ]
 cache-keys = [
     { file = "pyproject.toml" },
-    # `**/*` not `**/*.py`: force-include copies the whole tree, so a non-Python
-    # file moves the render without moving a .py-globbed key -- and the visual
-    # suite's freshness guard would then fire in CI with a remedy no runner can
-    # act on. See dbt-charts/tests/visual/freshness.py.
-    { file = "libs/d3-format/src/d3_format/**/*" },
-    { file = "libs/markdown-svg/src/mdsvg/**/*" },
+    { file = "_build_backend.py" },
+    { file = "libs/chart-svg/*/src/**/*" },
+    { file = "libs/chart-svg/*/assets/**/*" },
+    { file = "src/dbt_charts/core/defaults/palettes/tone/*.yml" },
+    { file = "libs/chart-svg/*/Cargo.toml" },
+    { file = "libs/chart-svg/python/Cargo.lock" },
 ]
 
 # Duplicates a subset of the root [tool.vulture]: the root config scans the
@@ -361,106 +358,38 @@ ignore_decorators = [
     "@server.call_tool",
 ]
 
-[tool.hatch.version]
-source = "vcs"
-
-[tool.hatch.version.raw-options]
-root = "."
-local_scheme = "no-local-version"
-# Filter tags at the git level so setuptools_scm only sees canonical
-# `dbt-charts-vX.Y.Z` semver tags for this package. Every workspace member
-# in this monorepo uses a self-describing tag prefix (`<pkg>-v<ver>`) so
-# there is no shared `v*` namespace to fight over. Without this filter,
-# the default `git describe --tags` would match sibling packages' tags
-# (e.g. `vscode-ext-v0.1.3` for the IDE extension) and the default
-# tag_regex would strip the prefix, polluting dbt-charts's computed version.
-#
-# setuptools_scm's default tag_regex already handles the `<prefix>-v`
-# shape — it strips the leading `dbt-charts-` and extracts `0.1.0` from
-# `dbt-charts-v0.1.0`, so no separate tag_regex override is needed here.
-# `release.yml`'s "Refuse non-semver release tags" step gates the same
-# shape on the author side.
-git_describe_command = [
-    "git",
-    "describe",
-    "--dirty",
-    "--tags",
-    "--long",
-    "--match",
-    "dbt-charts-v[0-9]*.[0-9]*.[0-9]*",
-]
-# Docker builds (`apps/cloud/Dockerfile`, `apps/docs/Dockerfile`,
-# `apps/playground/Dockerfile`) build the dbt-charts wheel without .git in
-# context (`.git` is `.dockerignore`d). T5's release pipeline will tag
-# real versions; this fallback keeps non-release builds from crashing.
-# Note: this is only honored when there is no git context at all (e.g.
-# building from a tarball with `.git/` missing). With git present but
-# zero matching tags, setuptools_scm falls back to its own bootstrap
-# state — `0.0.1.dev<N>` where N is total reachable commit count —
-# instead of using this string verbatim.
-fallback_version = "0.0.0"
-
-# Layout-coupled: package roots and exclude/force-include below reference
-# on-disk paths. Update in lock-step with any structural move of `src/dbt_charts/`
-# or the peer `d3_format`/`mdsvg` packages.
-[tool.hatch.build.targets.wheel]
-packages = ["src/dbt_charts"]
-# Markdown discipline: exclude all .md by default, then force-include the
-# runtime-loaded set. For directories with mixed .md + non-.md content that
-# all ships together (skills tree, _init_templates tree), exclude the whole
-# subtree from the package walk and force-include the directory so hatchling
-# doesn't double-write the non-.md siblings.
+# One native module: `dbt_charts._engine` is the PyO3 crate at
+# libs/chart-svg/python (cp311-abi3, one wheel per platform). The build backend
+# is `_build_backend.py`, a thin wrapper over maturin that adds the git-tag
+# version (maturin has none) and ships the vendored `mdsvg`/`d3_format` peer
+# packages (maturin cannot include paths outside this directory).
+[tool.maturin]
+manifest-path = "libs/chart-svg/python/Cargo.toml"
+module-name = "dbt_charts._engine"
+python-source = "src"
+features = ["pyo3/extension-module"]
+sbom = { rust = false }
+# Markdown shipped in the wheel is exactly what the runtime reads (skills,
+# prompts, the syntax guide); every other .md is dev context.
 exclude = [
-    "**/*.md",
-    "src/dbt_charts/ai/skills/**",
-    "src/dbt_charts/ai/prompts/**",
-    "src/dbt_charts/agent_api/_init_templates/**",
+    "**/AGENTS.md",
+    "**/CLAUDE.md",
+    "src/dbt_charts/core/inspect/*.md",
+    "src/dbt_charts/core/diagnostics/MESSAGING.md",
+    "src/dbt_charts/core/render/fonts/README.md",
 ]
-
-# `d3_format`/`mdsvg` (peer packages, not `dbt_charts` submodules) can't join
-# `packages` above: hatchling's `packages`/`only-include` hard-rejects any
-# path starting with `..` (`BuilderConfig.only_include` in
-# hatchling/builders/config.py), and a same-root symlink to reach them
-# checks out as a literal text file on an unprivileged Windows checkout —
-# hatchling's `packages` handling then silently ships that text file as the
-# "package" instead of erroring. `force-include` accepts cross-tree `../`
-# paths directly with no symlink needed, so both are force-included instead.
-# This previously needed a custom build hook to skip force-include on
-# editable builds, because `libs/markdown-svg`/`libs/d3-format` were ALSO
-# separate uv workspace members with their own live editable install —
-# hatchling's editable builder applies `force-include` too, and the
-# resulting frozen copy shadowed that other live install. Now that neither
-# library is a separate workspace member, there is no competing install left
-# to shadow; dbt-charts' own copy is the only one, so no hook is needed. The
-# trade-off: editing `libs/d3-format`/`libs/markdown-svg` source needs a
-# plain `uv sync` to show up in an editable dbt-charts install (force-include
-# always copies, for both wheel targets, unlike `src/dbt_charts` itself which
-# is a live-editable `packages` entry) — that `uv sync` alone is enough, and
-# does not need `--reinstall-package`, only because the `[tool.uv] cache-keys`
-# entries above extend uv's rebuild cache to those two source trees; uv's
-# default cache keys only cover this project's own files, so without that
-# declaration a plain `uv sync` would silently keep serving a stale copy.
-# An environment driven without `uv run` (a venv interpreter invoked directly,
-# an IDE test runner) never consults those cache keys at all, so the visual
-# suite additionally refuses to render from a copy that does not match the
-# checkout -- see `dbt-charts/tests/visual/freshness.py`.
-[tool.hatch.build.targets.wheel.force-include]
-# Runtime-loaded docs (read at runtime via importlib.resources / Path.read_text).
-"src/dbt_charts/DBT_CHARTS_SYNTAX.md" = "dbt_charts/DBT_CHARTS_SYNTAX.md"
-"src/dbt_charts/agent_api/docs/yaml-reference.md" = "dbt_charts/agent_api/docs/yaml-reference.md"
-"src/dbt_charts/agent_api/docs/error-reference.md" = "dbt_charts/agent_api/docs/error-reference.md"
-"src/dbt_charts/agent_api/docs/warning-reference.md" = "dbt_charts/agent_api/docs/warning-reference.md"
-# Whole-directory force-includes (paired with the matching `**` exclude above).
-"src/dbt_charts/agent_api/_init_templates" = "dbt_charts/agent_api/_init_templates"
-"src/dbt_charts/ai/skills" = "dbt_charts/ai/skills"
-"src/dbt_charts/ai/prompts" = "dbt_charts/ai/prompts"
-"libs/markdown-svg/src/mdsvg" = "mdsvg"
-"libs/d3-format/src/d3_format" = "d3_format"
+# The sdist rebuilds its wheel through the backend wrapper, which must ship.
+include = [
+    { path = "_build_backend.py", format = "sdist" },
+    { path = "libs/markdown-svg/src/mdsvg/**/*", format = "sdist" },
+    { path = "libs/d3-format/src/d3_format/**/*", format = "sdist" },
+]
 
 # Artifact-audit policy consumed by `.github/scripts/check_published_artifact.py`
 # (wired into the smoke-install job by T2).
 [tool.dbt_charts_boundary]
 allowed_roots = ["src/dbt_charts", "libs/markdown-svg/src/mdsvg", "libs/d3-format/src/d3_format"]
+native_extension = "dbt_charts/_engine"
 forbidden_name_substrings = ["us-west1-python.pkg.dev", "internal-eng@", "tasks/workstreams/", "ai_notes/"]
 forbidden_fixture_path_roots = ["tasks/", "apps/", "ai_notes/", ".claude/", ".agents/", ".cursor/"]
 forbidden_token_prefixes = ["ghp_", "github_pat_", "sk-", "sk-ant-", "AKIA", "BEGIN PRIVATE KEY"]
@@ -476,7 +405,7 @@ forbidden_content_regexes = [
     #       trigger fires when …")
     # Both bypass scrubbing if only one shape is gated. The paren regex
     # requires 2+ digits so the d3-library `(D3 format string)` phrasing
-    # in DBT_CHARTS_SYNTAX.md / yaml-reference.md doesn't false-fire; the
+    # in DBT_CHARTS_SYNTAX.md and model docstrings doesn't false-fire; the
     # hyphenated regex is anchored on `D-` + digits so plain alphanumeric
     # IDs (`ERR-001`, `node-1d-019`) don't collide.
     '\(D[0-9]{2,}\b',
@@ -563,7 +492,7 @@ allowed_external_imports = [
 transitively_required_dependencies = ["msgpack"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 namespace_packages = true
 warn_return_any = false
 warn_unused_configs = true
@@ -622,6 +551,7 @@ module = [
     "dbt_charts.core.execute.adapters.sql_adapter",
     "dbt_charts.core.execute.drivers.base",
     "dbt_charts.core.execute.drivers._cdn",
+    "dbt_charts.core.execute.drivers.trino",
 ]
 disallow_any_unimported = false
 disallow_untyped_calls = false

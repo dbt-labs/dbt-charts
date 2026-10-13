@@ -1,0 +1,3 @@
+kind: Performance
+body: Tables with long unspaced values such as URLs or snake_case identifiers wrap their cells many times faster.
+time: 2026-10-09T15:32:11.951006-07:00

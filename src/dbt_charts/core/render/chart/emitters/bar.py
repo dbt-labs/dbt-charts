@@ -43,6 +43,7 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
     multiples_scale_independent,
     nudge_band_scale_off_range_start,
     pin_normalize_axis_format,
+    pin_temporal_range,
     resolve_measure_y_scale,
     resolve_xy_titles,
     series_order_expression,
@@ -69,7 +70,10 @@ from dbt_charts.core.render.chart.emitters._overlay import (
     overlay_x_domain_values,
     render_cartesian_overlay,
 )
-from dbt_charts.core.render.chart.emitters._tooltip import field_cardinality
+from dbt_charts.core.render.chart.emitters._tooltip import (
+    COUNT_TITLE,
+    field_cardinality,
+)
 from dbt_charts.core.render.chart.emitters._wide import (
     FoldedMeasures,
     fold_wide_measures,
@@ -103,6 +107,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     measure_axis_to_vl,
 )
 from dbt_charts.core.render.chart.x_domain import vl_sort_op
+from dbt_charts.core.render.numeral_expr import vl_format_key
 from dbt_charts.core.render.utils import normalize_data_types
 from dbt_charts.core.text.case import field_display_text
 from dbt_charts.core.text.category_label import category_label_text
@@ -493,7 +498,7 @@ def _emit_histogram(
     y_enc: dict[str, Any] = {
         "aggregate": "count",
         "type": "quantitative",
-        "title": chart.y_label or "Count",
+        "title": chart.y_label or COUNT_TITLE,
         # Count aggregate: bar heights are computed by VL client-side, so
         # there is no data column to estimate a domain from — () keeps the
         # own-side-align guard's away-side fallback in effect for this axis.
@@ -528,7 +533,7 @@ def _emit_histogram(
             else None
         )
         enc = channel_to_encoding(color_ch, data, title=color_title)
-        apply_color_legend(enc, chart.legend)
+        apply_color_legend(enc, chart.legend, color_format=chart.color_format)
         enc_type = enc.get("type")
         if categorical_color_encoding(color_ch, enc_type) and enc_type == "nominal":
             series = distinct_series_values(data, color_field)
@@ -653,6 +658,7 @@ class BarEmitter:
             "bar",
             False,
             not is_horiz,
+            chart.x_date_range,
         )
         gap_fired = filled is not None
         if filled is not None:
@@ -1037,6 +1043,16 @@ def _emit_vertical(
         x_scale["padding"] = ax.scale.padding
     x_scale["paddingInner"] = bar_mark.padding
     x_scale.update(cartesian_x_scale_domain(ax.scale, x_vl_type, chart.id))
+    pin_temporal_range(
+        x_scale,
+        x_vl_type,
+        chart.x_date_range,
+        detected_tu,
+        data,
+        cat_field,
+        ax.fiscal_year_start_month,
+        spans_bucket=True,
+    )
     nudge_band_scale_off_range_start(x_scale, x_vl_type, ax_vl, band_doubled)
     if x_vl_type == "quantitative" or (
         x_vl_type == "temporal" and (detected_tu is None or detected_tu == "none")
@@ -1109,7 +1125,7 @@ def _emit_vertical(
         "type": chart.measure_type,
         "title": y_title,
         "axis": ay_vl,
-        "format": tooltip_format.spec,
+        **vl_format_key(tooltip_format.spec),
     }
 
     # tick_values are baked at resolve(); emitter reads them to build VL scale/axis.
@@ -1236,7 +1252,7 @@ def _emit_vertical(
         color_enc_type = enc.get(
             "type", "nominal"
         )  # type-state: silent_fallback — literal-mode enc has no "type" key
-        apply_color_legend(enc, chart.legend)
+        apply_color_legend(enc, chart.legend, color_format=chart.color_format)
         encoding["color"] = enc
         if chart.stack == "none":
             # grouped columns use xOffset; skip when color is 1:1 with x —
@@ -1564,7 +1580,7 @@ def _emit_horizontal(
         "title": x_title,
         "axis": ay_vl,
         "scale": x_enc_scale,
-        "format": tooltip_format.spec,
+        **vl_format_key(tooltip_format.spec),
     }
 
     if chart.stack == "normalize":
@@ -1759,7 +1775,7 @@ def _emit_horizontal(
         color_enc_type_h = enc.get(
             "type", "nominal"
         )  # type-state: silent_fallback — literal-mode enc has no "type" key
-        apply_color_legend(enc, chart.legend)
+        apply_color_legend(enc, chart.legend, color_format=chart.color_format)
         encoding["color"] = enc
         # stack="none" with a color channel → grouped columns (yOffset for horizontal).
         # Skip when color is 1:1 with x — that creates N solo sub-bands (thin bars).

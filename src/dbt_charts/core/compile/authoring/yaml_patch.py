@@ -39,6 +39,7 @@ _ITEM_KEY_RE = re.compile(r"^( *)- ([A-Za-z0-9_.\-]+):(?:[ \t]+(\S.*?))?[ \t]*$"
 # body under one is a scalar spelled over lines, not a nested mapping.
 _BLOCK_SCALAR_RE = re.compile(r"^[|>][0-9+-]{0,2}(?:[ \t]+#.*)?$")
 _DOC_MARKER = "---"
+MODELINE_PREFIX = "# yaml-language-server:"
 _NEW_BLOCK_INDENT = 2
 # Columns a `- ` prefix occupies; an item's keys are indented by exactly this
 # much relative to the dash.
@@ -514,8 +515,14 @@ def _apply_update(lines: list[str], path: str, value: ScalarLeaf | None) -> list
                     "item, but no block sequence was found at that position."
                 )
             insert_at = 0 if indent == 0 else tail
-            if indent == 0 and lines[:1] == [_DOC_MARKER]:
-                insert_at = 1
+            if indent == 0:
+                # The language server honors a `$schema` modeline only before
+                # the first key, so a new top-level key goes beneath it.
+                while insert_at < len(lines) and (
+                    (insert_at == 0 and lines[0] == _DOC_MARKER)
+                    or lines[insert_at].startswith(MODELINE_PREFIX)
+                ):
+                    insert_at += 1
             prefix = " " * indent
             if is_leaf:
                 new_line = f"{prefix}{segment}: {_format_scalar(value)}"

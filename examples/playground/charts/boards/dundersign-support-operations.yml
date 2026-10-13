@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Support operations
 notes: |
   Triage board for the support lead. Above-the-fold answers: what's in the

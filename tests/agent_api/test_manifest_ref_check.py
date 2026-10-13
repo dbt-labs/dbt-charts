@@ -1,13 +1,15 @@
-"""Integration tests for manifest-backed ref/source validation via validate_content."""
+"""Integration tests for manifest-backed ref/source validation via validate()."""
 
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from dbt_charts.agent_api.validate import ValidateResult
 from dbt_charts.cli.filesystem_project import FilesystemProject
 
 _MANIFEST_CONTENT = json.dumps(
@@ -79,11 +81,12 @@ def _project_without_manifest(tmp_path: Path) -> FilesystemProject:
     return FilesystemProject(tmp_path)
 
 
-def test_valid_ref_passes(tmp_path: Path) -> None:
-    from dbt_charts.agent_api.validate import validate_content
+def test_valid_ref_passes(
+    tmp_path: Path, validate_text: Callable[..., ValidateResult]
+) -> None:
 
     project = _project_with_manifest(tmp_path)
-    result = validate_content(_BOARD_WITH_VALID_REF, project=project)
+    result = validate_text(_BOARD_WITH_VALID_REF, project=project)
     manifest_errors = [e for e in result.errors if "ERR-DBT-REF" in e.code]
     manifest_warns = [
         w for w in result.warnings if w.code == "WARN-DBT-MANIFEST-MISSING"
@@ -92,29 +95,32 @@ def test_valid_ref_passes(tmp_path: Path) -> None:
     assert manifest_warns == []
 
 
-def test_unknown_ref_produces_error(tmp_path: Path) -> None:
-    from dbt_charts.agent_api.validate import validate_content
+def test_unknown_ref_produces_error(
+    tmp_path: Path, validate_text: Callable[..., ValidateResult]
+) -> None:
 
     project = _project_with_manifest(tmp_path)
-    result = validate_content(_BOARD_WITH_UNKNOWN_REF, project=project)
+    result = validate_text(_BOARD_WITH_UNKNOWN_REF, project=project)
     error_codes = [e.code for e in result.errors]
     assert "ERR-DBT-REF-UNKNOWN-NODE" in error_codes
 
 
-def test_unknown_source_produces_error(tmp_path: Path) -> None:
-    from dbt_charts.agent_api.validate import validate_content
+def test_unknown_source_produces_error(
+    tmp_path: Path, validate_text: Callable[..., ValidateResult]
+) -> None:
 
     project = _project_with_manifest(tmp_path)
-    result = validate_content(_BOARD_WITH_UNKNOWN_SOURCE, project=project)
+    result = validate_text(_BOARD_WITH_UNKNOWN_SOURCE, project=project)
     error_codes = [e.code for e in result.errors]
     assert "ERR-DBT-SOURCE-UNKNOWN-TABLE" in error_codes
 
 
-def test_missing_manifest_warns_once(tmp_path: Path) -> None:
-    from dbt_charts.agent_api.validate import validate_content
+def test_missing_manifest_warns_once(
+    tmp_path: Path, validate_text: Callable[..., ValidateResult]
+) -> None:
 
     project = _project_without_manifest(tmp_path)
-    result = validate_content(_BOARD_WITH_VALID_REF, project=project)
+    result = validate_text(_BOARD_WITH_VALID_REF, project=project)
     manifest_warns = [
         w for w in result.warnings if w.code == "WARN-DBT-MANIFEST-MISSING"
     ]
@@ -122,23 +128,25 @@ def test_missing_manifest_warns_once(tmp_path: Path) -> None:
     assert "looked for" in manifest_warns[0].message
 
 
-def test_no_refs_no_manifest_no_warning(tmp_path: Path) -> None:
-    from dbt_charts.agent_api.validate import validate_content
+def test_no_refs_no_manifest_no_warning(
+    tmp_path: Path, validate_text: Callable[..., ValidateResult]
+) -> None:
 
     project = _project_without_manifest(tmp_path)
-    result = validate_content(_BOARD_NO_REFS, project=project)
+    result = validate_text(_BOARD_NO_REFS, project=project)
     manifest_warns = [
         w for w in result.warnings if w.code == "WARN-DBT-MANIFEST-MISSING"
     ]
     assert manifest_warns == []
 
 
-def test_loader_not_called_when_no_refs(tmp_path: Path) -> None:
-    from dbt_charts.agent_api.validate import validate_content
+def test_loader_not_called_when_no_refs(
+    tmp_path: Path, validate_text: Callable[..., ValidateResult]
+) -> None:
 
     project = _project_without_manifest(tmp_path)
     with patch("dbt_charts.core.dbt_ref_check.load_manifest") as mock_load:
-        validate_content(_BOARD_NO_REFS, project=project)
+        validate_text(_BOARD_NO_REFS, project=project)
     mock_load.assert_not_called()
 
 
@@ -158,15 +166,16 @@ def test_file_based_validate_unknown_ref(tmp_path: Path) -> None:
     assert any(e.code == "ERR-DBT-REF-UNKNOWN-NODE" for e in result.errors)
 
 
-def test_corrupt_manifest_surfaces_as_diagnostic(tmp_path: Path) -> None:
-    from dbt_charts.agent_api.validate import validate_content
+def test_corrupt_manifest_surfaces_as_diagnostic(
+    tmp_path: Path, validate_text: Callable[..., ValidateResult]
+) -> None:
 
     (tmp_path / "charts").mkdir()
     (tmp_path / "target").mkdir()
     (tmp_path / "target" / "manifest.json").write_text("{bad json")
     project = FilesystemProject(tmp_path)
 
-    result = validate_content(_BOARD_WITH_VALID_REF, project=project)
+    result = validate_text(_BOARD_WITH_VALID_REF, project=project)
 
     # Must not raise — error must be in result.errors as a diagnostic
     assert any("ERR-DBT-MANIFEST-UNREADABLE" in e.code for e in result.errors)
@@ -220,15 +229,16 @@ def _project_with_prod_source(
     return FilesystemProject(tmp_path)
 
 
-def test_ref_validates_against_the_sources_target_path(tmp_path: Path) -> None:
-    from dbt_charts.agent_api.validate import validate_content
+def test_ref_validates_against_the_sources_target_path(
+    tmp_path: Path, validate_text: Callable[..., ValidateResult]
+) -> None:
 
     project = _project_with_prod_source(
         tmp_path, prod_manifest=_prod_manifest("fct_prod_only")
     )
 
-    ok = validate_content(_board_on("prod_wh", "fct_prod_only"), project=project)
-    stale = validate_content(_board_on("prod_wh", "fct_orders"), project=project)
+    ok = validate_text(_board_on("prod_wh", "fct_prod_only"), project=project)
+    stale = validate_text(_board_on("prod_wh", "fct_orders"), project=project)
 
     assert [e for e in ok.errors if "ERR-DBT" in e.code] == []
     assert [e.code for e in stale.errors if "ERR-DBT" in e.code] == [
@@ -236,12 +246,13 @@ def test_ref_validates_against_the_sources_target_path(tmp_path: Path) -> None:
     ]
 
 
-def test_missing_target_path_manifest_warns_naming_the_path(tmp_path: Path) -> None:
-    from dbt_charts.agent_api.validate import validate_content
+def test_missing_target_path_manifest_warns_naming_the_path(
+    tmp_path: Path, validate_text: Callable[..., ValidateResult]
+) -> None:
 
     project = _project_with_prod_source(tmp_path, prod_manifest=None)
 
-    result = validate_content(_board_on("prod_wh", "fct_orders"), project=project)
+    result = validate_text(_board_on("prod_wh", "fct_orders"), project=project)
 
     warns = [w for w in result.warnings if w.code == "WARN-DBT-MANIFEST-MISSING"]
     assert len(warns) == 1
@@ -249,10 +260,9 @@ def test_missing_target_path_manifest_warns_naming_the_path(tmp_path: Path) -> N
 
 
 def test_board_sources_resolve_target_path_ahead_of_the_project(
-    tmp_path: Path,
+    tmp_path: Path, validate_text: Callable[..., ValidateResult]
 ) -> None:
     """A board-level `sources:` entry shadows the project's, as at execution."""
-    from dbt_charts.agent_api.validate import validate_content
 
     project = _project_with_prod_source(
         tmp_path, prod_manifest=_prod_manifest("fct_prod_only")
@@ -265,15 +275,16 @@ def test_board_sources_resolve_target_path_ahead_of_the_project(
         "    target_path: target\n" + _board_on("prod_wh", "fct_orders")
     )
 
-    result = validate_content(board, project=project)
+    result = validate_text(board, project=project)
 
     assert [e for e in result.errors if "ERR-DBT" in e.code] == []
 
 
 def test_target_path_env_var_renders_as_execution_renders_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    validate_text: Callable[..., ValidateResult],
 ) -> None:
-    from dbt_charts.agent_api.validate import validate_content
 
     project = _project_with_prod_source(
         tmp_path, prod_manifest=_prod_manifest("fct_prod_only")
@@ -287,7 +298,7 @@ def test_target_path_env_var_renders_as_execution_renders_it(
     )
     monkeypatch.setenv("DCT_TEST_TARGET", "prod")
 
-    result = validate_content(_board_on("prod_wh", "fct_prod_only"), project=project)
+    result = validate_text(_board_on("prod_wh", "fct_prod_only"), project=project)
 
     assert [e for e in result.errors if "ERR-DBT" in e.code] == []
     assert [w for w in result.warnings if w.code == "WARN-DBT-MANIFEST-MISSING"] == []

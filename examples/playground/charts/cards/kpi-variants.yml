@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: KPI Variants
 notes: |
   Layout variants for the KPI card. Three rows, one variant each, four columns

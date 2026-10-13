@@ -14,8 +14,7 @@ exclude = ["**/__pycache__", "**/*.egg-info"]
 # Packages excluded from the allowlist check. Three categories:
 #
 # 1. Peer packages: shipped inside the wheel via
-#    [tool.hatch.build.targets.wheel.force-include] in dbt-charts/pyproject.toml,
-#    not declared as deps.
+#    `dbt-charts/_build_backend.py`, not declared as deps.
 #
 # 2. Optional-extra deps: declared under [project.optional-dependencies] but
 #    not in [project] dependencies, so tach's allowlist doesn't see them.
@@ -51,10 +50,6 @@ exclude = [
     "generate_schema",
     "nimble",
     "markdown",
-    # Python-version-dependent stdlib: tomllib is stdlib on 3.11+; the
-    # 3.10 path falls through to `import tomli as tomllib` (declared as
-    # the conditional `tomli; python_version < "3.11"` dep).
-    "tomllib",
     # Import-name vs PyPI-name skews. The PyPI package is declared in
     # dbt-charts/pyproject.toml; the importable top-level differs.
     #   vl-convert-python  → import vl_convert
@@ -81,6 +76,10 @@ exclude = [
     "adbc_driver_manager",
     "zstandard",
     "platformdirs",
+    # `trino` is declared in [project.optional-dependencies] trino, which tach
+    # does not read. Imported by `execute/drivers/trino.py`, loaded lazily by
+    # `open_driver` like the lake compute driver above.
+    "trino",
     # `google-cloud-bigquery` is declared in [project.optional-dependencies]
     # bigquery (tach 0.35.0 only reads [project] dependencies, not optional-deps).
     # Imported lazily in _SourcePool._ensure_connected when type==bigquery.
@@ -122,7 +121,7 @@ exclude = [
     # register guard.
     "tasks",
     # `nh3` is imported by the peer mdsvg package (built into the wheel via
-    # [tool.hatch.build.targets.wheel.force-include] in dbt-charts/pyproject.toml),
+    # `dbt-charts/_build_backend.py`),
     # not by dbt-charts/src/dbt_charts/ directly.
     # Declared in dbt-charts/pyproject.toml so pip-install pulls it as a
     # direct runtime dep of the bundled mdsvg.

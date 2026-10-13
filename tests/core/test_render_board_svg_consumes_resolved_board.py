@@ -14,6 +14,8 @@ import re
 from typing import Any
 from unittest.mock import MagicMock
 
+from ._svg_render import PINNED_RENDER_TIME
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -45,6 +47,7 @@ charts:
 
 def _make_executor() -> Any:
     exc = MagicMock()
+    exc.render_with_range_filters.return_value = None
     exc.execute_chart.return_value = [{"cat": "A", "val": 10}]
     exc.execute_batch.return_value = {}
     exc._query_errors = {}
@@ -53,6 +56,7 @@ def _make_executor() -> Any:
     # empty list until a persistent-cache hit occurs, which never happens
     # against this mock's adapter stand-in.
     exc.cache_hit_ats = []
+    exc.rendered_at = PINNED_RENDER_TIME
     return exc
 
 

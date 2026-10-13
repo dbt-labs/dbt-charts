@@ -24,10 +24,8 @@ from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
     BarChart,
     LineChart,
-    ScatterChart,
 )
 from dbt_charts.core.compile.models.chart.resolved import ResolvedBarStyle
-from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.style.authored import (
     AreaChartStylePatch,
     AxisLabelStylePatch,
@@ -1157,54 +1155,14 @@ class TestResolvedAxisStyleReturnType:
 _SAMPLE_DATA = [{"month": "Jan", "revenue": 100}]
 
 
-class TestChartFormatPropagation:
-    """chart.format / number_format / axis_y.labels.format must flow through build_chart_style_context.
+class TestAxisFormatPropagation:
+    """A chart's own ``axis_*.labels.format`` flows through the style cascade.
 
-    Regression: when a chart sets only chart.format (no style block), the fast path
-    in build_chart_style_context skips the per-chart inherit pass — leaving labels and
-    axis_quantitative on the stale board value.
-
-    Precedence fix (intentional behavior change): explicit style.axis_quantitative.format
-    must win over chart.format / number_format / axis_y.labels.format. Before this fix the
-    order was reversed — chart.format was injected on top of the authored patch.
+    The fast path in build_chart_style_context skips the per-chart inherit pass
+    for a chart with no style block, so the axis formats are baked at
+    axis-resolution time and these fixtures go through the full resolve()
+    pipeline.
     """
-
-    def test_chart_format_only_propagates_via_compile_path(self) -> None:
-        """chart.format with no style block flows through resolved_axis_style.
-
-        The chart-level format fallback (Layer 10) is baked at axis-resolution
-        time, not injected pre-cascade into axis_quantitative — so the fixture
-        must go through the full resolve() pipeline and assert on axis_y.labels.format.
-        """
-        board = _board()
-        chart = LineChart(id="t", type="line", format=",.0f")
-        resolved = resolve(chart, _SAMPLE_DATA, chart_style_context=board)
-        assert resolved.style.axis_y.labels.format.spec == ",.0f", (
-            f"axis_y.labels.format should be ',.0f' (from chart.format), "
-            f"got {resolved.style.axis_y.labels.format!r}"
-        )
-
-    def test_explicit_axis_quantitative_format_wins_over_chart_format(self) -> None:
-        """style.axis_quantitative.format beats chart.format (intentional precedence fix).
-
-        Current (pre-fix) behavior: chart.format=',.0f' overrides
-        style.axis_quantitative.format=',.2f' via the fmt_patch injection in _axes.py.
-        After fix: the explicit authored style wins.
-        """
-        from dbt_charts.core.compile.models.style.authored import (  # noqa: PLC0415
-            BarChartStylePatch,
-        )
-
-        board = _board()
-        patch = BarChartStylePatch.model_validate(
-            {"axis_quantitative": {"labels": {"format": ",.2f"}}}
-        )
-        chart = BarChart(id="t", type="bar", format=",.0f", style=patch)
-        resolved = resolve(chart, _SAMPLE_DATA, chart_style_context=board)
-        assert resolved.style.axis_y.labels.format.spec == ",.2f", (
-            f"explicit style.axis_quantitative.format=',.2f' should win over "
-            f"chart.format=',.0f', got {resolved.style.axis_y.labels.format!r}"
-        )
 
     @pytest.mark.parametrize(
         ("chart_cls", "style_cls", "chart_type"),
@@ -1215,15 +1173,10 @@ class TestChartFormatPropagation:
         ],
         ids=("bar", "line", "area"),
     )
-    def test_chart_number_format_beats_theme_family_axis_y_format(
+    def test_chart_axis_y_format_beats_theme_family_axis_y_format(
         self, chart_cls, style_cls, chart_type
     ) -> None:
-        """A chart's number_format outranks a theme-family axis format.
-
-        chart_fallback_format sits at Layer 10, after the theme chart-type patch
-        at Layer 4. A chart author's explicit format instruction therefore
-        wins over the theme's per-family axis_y default.
-        """
+        """A chart's own axis_y format outranks a theme-family axis format."""
         theme = get_theme_style()
         family = getattr(theme.charts, chart_type).model_copy(
             update={
@@ -1239,145 +1192,53 @@ class TestChartFormatPropagation:
                 }
             )
         )
-        style = style_cls.model_validate({"number_format": ",.0f"})
+        style = style_cls.model_validate({"axis_y": {"labels": {"format": ",.0f"}}})
         chart = chart_cls(id="t", type=chart_type, x="month", y="revenue", style=style)
 
         resolved = resolve(chart, _SAMPLE_DATA, chart_style_context=board)
 
         assert resolved.style.axis_y.labels.format.spec == ",.0f"
 
-    def test_chart_format_object_form_propagates_via_compile_path(self) -> None:
-        """chart.format as a FormatConfig object propagates like the string form.
-
-        chart.format accepts the documented object form (format: {spec: ...}) as
-        well as a plain D3 string. chart_authored_axis_format must not silently
-        drop the object form — resolve_format() already extracts FormatConfig.spec.
-        """
+    def test_axis_y_format_as_a_format_block_propagates(self) -> None:
         board = _board()
-        chart = LineChart(id="t", type="line", format=FormatConfig(spec=",.0f"))
-        resolved = resolve(chart, _SAMPLE_DATA, chart_style_context=board)
-        assert resolved.style.axis_y.labels.format.spec == ",.0f", (
-            f"axis_y.labels.format should be ',.0f' (from chart.format "
-            f"as a FormatConfig object), got {resolved.style.axis_y.labels.format!r}"
+        patch = LineChartStylePatch.model_validate(
+            {"axis_y": {"labels": {"format": {"spec": ",.0f"}}}}
         )
+        chart = LineChart(id="t", type="line", x="month", y="revenue", style=patch)
+        resolved = resolve(chart, _SAMPLE_DATA, chart_style_context=board)
+        assert resolved.style.axis_y.labels.format.spec == ",.0f"
 
-    def test_histogram_chart_format_propagates_to_measure_axis(self) -> None:
-        """Histogram picks up the chart.format Layer-10 fallback too.
-
-        _resolve_histogram feeds `normalized` (a BarChart) into the same
-        _bake_cartesian_axes() shared by bar/line/area/scatter, so a
-        histogram's chart.format now flows to its y-axis — a consistency
-        gain over the old per-chart-family fmt_patch code, not previously
-        pinned by a test.
-        """
+    def test_histogram_axis_y_format_propagates(self) -> None:
         board = _board()
-        chart = BarChart(id="t", type="histogram", x="price", format=",.2f")
+        patch = BarChartStylePatch.model_validate(
+            {"axis_y": {"labels": {"format": ",.2f"}}}
+        )
+        chart = BarChart(id="t", type="histogram", x="price", style=patch)
         resolved = resolve(
             chart, [{"price": 10.0}, {"price": 20.0}], chart_style_context=board
         )
-        assert resolved.style.axis_y.labels.format.spec == ",.2f", (
-            f"histogram axis_y.labels.format should be ',.2f' (from chart.format), "
-            f"got {resolved.style.axis_y.labels.format!r}"
-        )
+        assert resolved.style.axis_y.labels.format.spec == ",.2f"
 
-    def test_style_time_format_propagates_to_temporal_axis(self) -> None:
-        """style.time_format flows to axis_x.labels.format on a temporal x channel.
-
-        Mirrors the number_format case but for the temporal channel type —
-        chart_authored_axis_format() reads primary.time_format when
-        channel_type == "temporal" instead of primary.number_format.
-        """
-        from dbt_charts.core.compile.models.style.authored import (  # noqa: PLC0415
-            LineChartStylePatch,
-        )
-
+    def test_axis_x_format_reaches_a_temporal_axis(self) -> None:
         board = _board()
-        patch = LineChartStylePatch.model_validate({"time_format": "%b %Y"})
+        patch = LineChartStylePatch.model_validate(
+            {"axis_x": {"labels": {"format": "%b %Y"}}}
+        )
         chart = LineChart(id="t", type="line", x="month", y="revenue", style=patch)
         data = [{"month": "2024-01-01", "revenue": 100}]
         resolved = resolve(chart, data, chart_style_context=board)
-        assert resolved.style.axis_x.labels.format.spec == "%b %Y", (
-            f"axis_x.labels.format should be '%b %Y' (from style.time_format), "
-            f"got {resolved.style.axis_x.labels.format!r}"
-        )
+        assert resolved.style.axis_x.labels.format.spec == "%b %Y"
 
-    def test_chart_format_does_not_leak_onto_temporal_x_axis(self) -> None:
-        """chart.format is a measure (quantitative) format — must never apply
-        to a temporal x-axis.
-
-        Regression: chart_authored_axis_format() fell back to chart.format
-        for the temporal channel too (mirroring the quantitative case), so a
-        line chart with a real date x-column and a numeric chart.format got
-        that numeric d3-format baked onto its temporal x-axis — breaking the
-        smart month/year cadence labelExpr downstream. Only style.time_format
-        is a genuine temporal-axis fallback; chart.format must stay
-        quantitative-only.
-        """
-        board = _board()
-        chart = LineChart(id="t", type="line", x="month", y="revenue", format="$,.0f")
-        data = [{"month": "2024-01-01", "revenue": 100}]
-        resolved = resolve(chart, data, chart_style_context=board)
-        assert resolved.style.axis_x.labels.format is None, (
-            f"axis_x.labels.format should stay unset (chart.format must not leak "
-            f"onto the temporal x-axis), got {resolved.style.axis_x.labels.format!r}"
-        )
-        assert resolved.style.axis_y.labels.format.spec == "$,.0f", (
-            "chart.format should still apply to the quantitative y-axis"
-        )
-
-    def test_chart_format_does_not_leak_onto_quantitative_x_axis(self) -> None:
-        """chart.format / number_format is a measure (y) format — must never
-        apply to a quantitative x-axis either.
-
-        Regression: chart_authored_axis_format() returns style.number_format
-        for any quantitative channel, and _bake_cartesian_axes fed that same
-        fallback to axis_x whenever x is quantitative (e.g. scatter) — so a
-        scatter of ad_spend ($, x) vs conversions (count, y) stamped the $
-        number_format onto the count axis too. x is always the dimension axis
-        in dbt charts' cartesian model (never the measure), so the quantitative
-        fallback must be y-only, mirroring the temporal-x exclusion above.
-        """
-        from dbt_charts.core.compile.models.style.authored import (  # noqa: PLC0415
-            ScatterChartStylePatch,
-        )
-
-        board = _board()
-        patch = ScatterChartStylePatch.model_validate({"number_format": "$,.0f"})
-        chart = ScatterChart(
-            id="t", type="scatter", x="ad_spend", y="conversions", style=patch
-        )
-        data = [
-            {"ad_spend": 10.0, "conversions": 2},
-            {"ad_spend": 20.0, "conversions": 4},
-        ]
-        resolved = resolve(chart, data, chart_style_context=board)
-        assert resolved.style.axis_x.labels.format != "$,.0f", (
-            f"chart-authored number_format must not leak onto the quantitative "
-            f"x-axis (it stays on the theme's generic quantitative-axis "
-            f"default), got {resolved.style.axis_x.labels.format!r}"
-        )
-        assert resolved.style.axis_y.labels.format.spec == "$,.0f", (
-            "number_format should still apply to the quantitative y-axis"
-        )
-
-    def test_authored_label_format_wins_over_chart_format(self) -> None:
-        """style.marks.bar.labels.format keeps its authored value when chart.format is also set.
-
-        apply_inherit fill-if-None means an already-set labels.format is never overwritten
-        by the axis_quantitative inherit link. Lock-in test: must hold before and after
-        the single-pass cascade refactor.
-        """
-        from dbt_charts.core.compile.models.style.authored import (  # noqa: PLC0415
-            BarChartStylePatch,
-        )
-
+    def test_authored_mark_label_format_survives_the_cascade(self) -> None:
+        """An authored ``marks.bar.labels.format`` is never overwritten by the axis
+        inherit link."""
         board = _board()
         patch = BarChartStylePatch.model_validate(
-            {"marks": {"bar": {"labels": {"format": ".2%"}}}}
+            {
+                "axis_y": {"labels": {"format": ",.0f"}},
+                "marks": {"bar": {"labels": {"format": ".2%"}}},
+            }
         )
-        chart = BarChart(id="t", type="bar", format=",.0f", style=patch)
+        chart = BarChart(id="t", type="bar", style=patch)
         result = build_chart_style_context(board, chart)
-        assert result.bar.marks.bar.labels.format == ".2%", (
-            f"authored marks.bar.labels.format='.2%' should win over chart.format=',.0f', "
-            f"got {result.bar.marks.bar.labels.format!r}"
-        )
+        assert result.bar.marks.bar.labels.format == ".2%"

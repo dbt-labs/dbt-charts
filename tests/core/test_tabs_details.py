@@ -15,6 +15,7 @@ from dbt_charts.core.compile.normalize.dispatch import slugify
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 
 from ._board_utils import apply_static_layout
+from ._svg_render import PINNED_RENDER_TIME
 
 
 def _compile_and_build_executor(yaml_content, local_project):
@@ -586,6 +587,7 @@ tabs:
         # an empty list until a persistent-cache hit occurs, which never
         # happens against this mock's adapter stand-in.
         mock_executor.cache_hit_ats = []
+        mock_executor.rendered_at = PINNED_RENDER_TIME
 
         reset_config()
         resolved = resolve_board(result.board)
@@ -1841,11 +1843,13 @@ tabs:
         for a pie the user is actually looking at."""
         from dbt_charts.core.diagnostics import (
             WARN_CHART_TITLE_TRUNCATED,
-            WARN_PIE_TOO_MANY_SEGMENTS,
+            WARN_PIE_DOMINANT_SEGMENT,
         )
         from dbt_charts.core.render.renderer import render
 
-        segments = "\n".join(f"      - {{cat: c{i}, value: {i + 1}}}" for i in range(8))
+        segments = "\n".join(
+            f"      - {{cat: c{i}, value: {1000 if i == 0 else 1}}}" for i in range(8)
+        )
         yaml_content = f"""
 title: Test
 queries:
@@ -1880,9 +1884,9 @@ tabs:
         warning_keys = {(w.chart, w.code) for w in result.warnings}
         assert (
             "shared_pie",
-            WARN_PIE_TOO_MANY_SEGMENTS.code,
+            WARN_PIE_DOMINANT_SEGMENT.code,
         ) in warning_keys, (
-            "pie's own DATA detector (segment count) must fire regardless "
+            "pie's own DATA detector (dominant slice) must fire regardless "
             f"of which placement is judged: {result.warnings}"
         )
         assert (

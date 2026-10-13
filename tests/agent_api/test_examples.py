@@ -55,7 +55,7 @@ class TestGetExample:
         example = get_example("boards/kpi-overview")
         assert example.slug == "boards/kpi-overview"
         assert "charts:" in example.yaml
-        assert example.yaml.splitlines()[0].startswith("title:")
+        assert example.yaml.splitlines()[1].startswith("title:")
 
     def test_line_count_matches_yaml(self) -> None:
         example = get_example("boards/kpi-overview")
@@ -105,6 +105,9 @@ class TestSearchExamples:
             ("kpis/kpi-variants", 0.5),
             ("tables/table-style-variants", 0.5),
         ]
+
+    def test_schema_modeline_is_not_searched(self) -> None:
+        assert search_examples("yaml-language-server").hits == []
 
     def test_no_match_returns_empty(self) -> None:
         assert search_examples("zzzznotathing").hits == []

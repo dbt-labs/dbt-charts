@@ -561,8 +561,8 @@ def test_chart_patch_by_measure_no_color_required():
     )
 
 
-def test_support_table_entry_format_inherits_chart_format_at_normalize_time():
-    """After normalize_chart(), a source entry reading chart.y inherits style.number_format."""
+def test_support_table_entry_format_inherits_axis_y_format_at_normalize_time():
+    """After normalize_chart(), a source entry reading chart.y inherits style.axis_y.labels.format."""
     from dbt_charts.core.compile.models.chart.authored import ChartSupportTableSource
     from dbt_charts.core.compile.normalize.charts import normalize_chart
 
@@ -572,7 +572,7 @@ def test_support_table_entry_format_inherits_chart_format_at_normalize_time():
             "type": "bar",
             "x": "month",
             "y": "revenue",
-            "style": {"number_format": "~s"},
+            "style": {"axis_y": {"labels": {"format": "~s"}}},
             "query": {"sql": "SELECT 1", "source": "test"},
             "support_table": [{"source": "revenue"}, {"source": "count"}],
         },
@@ -585,7 +585,7 @@ def test_support_table_entry_format_inherits_chart_format_at_normalize_time():
     assert chart.support_table is not None
     entries = chart.support_table.entries
     assert isinstance(entries[0], ChartSupportTableSource)
-    assert entries[0].format == "~s", "measure entry must inherit style.number_format"
+    assert entries[0].format == "~s", "measure entry must inherit the y axis format"
     assert isinstance(entries[1], ChartSupportTableSource)
     assert entries[1].format is None, "non-measure entry must not inherit"
 

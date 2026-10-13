@@ -9,10 +9,10 @@ from pydantic import Field
 from dbt_charts.core.compile.models.chart.resolved._layer import ResolvedLayer
 from dbt_charts.core.compile.models.style.resolved import ResolvedAreaStyle
 
-from ._base import _CartesianResolvedChartFields
+from ._base import _DateAxisResolvedChartFields
 
 
-class ResolvedAreaChart(_CartesianResolvedChartFields):
+class ResolvedAreaChart(_DateAxisResolvedChartFields):
     """Render-ready area chart."""
 
     # Narrows base y from str | list[str] | None to str | None — area never

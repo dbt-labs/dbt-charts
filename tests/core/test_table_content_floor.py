@@ -66,51 +66,6 @@ def _make_table_chart(make_chart, style: dict | None = None):
 # ---------------------------------------------------------------------------
 
 
-class TestEqualDistribution:
-    """All auto-columns receive available_width / n_auto_cols."""
-
-    def test_three_auto_columns_get_equal_share(self):
-        from dbt_charts.core.render.chart.table_support import (
-            calculate_column_layout,
-        )
-
-        columns = ["label", "amount", "close_date"]
-        col_configs = {}
-        available_width = 300.0
-        col_widths, _, actual_w = calculate_column_layout(
-            columns,
-            col_configs,
-            available_width,
-        )
-
-        expected = available_width / 3
-        for col in columns:
-            assert abs(col_widths[col] - expected) <= 0.5, (
-                f"Column '{col}' got {col_widths[col]:.1f}px, "
-                f"expected equal share {expected:.1f}px"
-            )
-        assert abs(actual_w - available_width) <= 0.5
-
-    def test_actual_content_width_never_exceeds_available_width(self):
-        """actual_content_width <= available_width always, including numeric/date columns."""
-        from dbt_charts.core.render.chart.table_support import (
-            calculate_column_layout,
-        )
-
-        columns = ["d1", "d2", "d3", "d4", "d5"]
-        col_configs = {}
-        available_width = 200.0
-        _, _, actual_w = calculate_column_layout(
-            columns,
-            col_configs,
-            available_width,
-        )
-        assert actual_w <= available_width + 0.5, (
-            f"actual_content_width={actual_w:.1f}px exceeds "
-            f"available_width={available_width:.1f}px"
-        )
-
-
 # ---------------------------------------------------------------------------
 # Test 2: elastic columns truncate when squeezed
 # ---------------------------------------------------------------------------
@@ -121,9 +76,7 @@ class TestElasticColumnsTruncateWhenSqueezed:
 
     def test_elastic_text_shows_ellipsis_at_tight_width(self, make_chart):
         """At a very tight width with wrap disabled, elastic columns truncate with ellipsis."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = _make_table_chart(
             make_chart,
@@ -168,9 +121,7 @@ class TestSVGFitsTileBoundary:
 
     def test_svg_stays_at_available_width_with_date_columns(self, make_chart):
         """Many date columns in a narrow tile: SVG stays at tile width."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         data = [
             {
@@ -222,9 +173,7 @@ class TestNoTextOverflowAcrossWidths:
     @pytest.mark.parametrize("width", [300, 400, 500, 600, 800, 1120])
     def test_no_overflow_at_width(self, make_chart, width: int):
         """Every text element stays within its cell's content band."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = _make_table_chart(
             make_chart,
@@ -264,35 +213,3 @@ class TestNoTextOverflowAcrossWidths:
 # ---------------------------------------------------------------------------
 # Test 5: explicit width overrides are still honored
 # ---------------------------------------------------------------------------
-
-
-class TestExplicitWidthsHonored:
-    """Per-column explicit width: overrides are respected; remainder is equal-distributed."""
-
-    def test_explicit_width_column_and_auto_remainder(self):
-        """An explicit-width column takes its value; the rest get equal share."""
-        from dbt_charts.core.compile.models.chart.authored import (
-            TableColumnConfig,
-        )
-        from dbt_charts.core.render.chart.table_support import calculate_column_layout
-
-        columns = ["name", "amount", "date"]
-        col_configs = {"name": TableColumnConfig(width=200)}
-
-        available_width = 600.0
-        col_widths, _, actual_w = calculate_column_layout(
-            columns,
-            col_configs,
-            available_width,
-        )
-
-        assert col_widths["name"] == 200.0, (
-            f"Explicit width must be 200px, got {col_widths['name']:.1f}px"
-        )
-        expected_auto = (600.0 - 200.0) / 2  # 200px each
-        for col in ("amount", "date"):
-            assert abs(col_widths[col] - expected_auto) <= 0.5, (
-                f"Auto column '{col}' got {col_widths[col]:.1f}px, "
-                f"expected {expected_auto:.1f}px"
-            )
-        assert abs(actual_w - available_width) <= 0.5

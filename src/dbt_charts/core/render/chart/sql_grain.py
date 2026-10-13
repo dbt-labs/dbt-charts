@@ -13,7 +13,7 @@ Entry points:
   - ``resolve_join_spine(tree, adapter_registry)`` — resolve a JOIN query to
     its spine (schema, table) via FK-edge proof, or ``_BAIL``.
   - ``build_col_output_alias_map(sql)`` — map base column names to their
-    output names for the plain/single-CTE/JOIN shapes above, plus whether an
+    output names, traced through CTEs and subqueries, plus whether an
     unlisted column is still safe to assume identity for. See its docstring
     for the full contract: never assume an unlisted column shares its base
     name unless every relevant projection is a bare star.
@@ -22,7 +22,14 @@ Entry points:
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import TYPE_CHECKING
+
+import sqlglot.errors
+from sqlglot import exp
+from sqlglot.optimizer.scope import Scope, build_scope
+
+from dbt_charts.core.column_refs import fold_relation_names, resolve_source
 
 if TYPE_CHECKING:
     from sqlglot.expressions import Expression as _SqlglotExpression
@@ -302,273 +309,206 @@ def _join_predicate_matches_edge(
     return False
 
 
-def _is_star_projection(exprs: list[_SqlglotExpression]) -> bool:
-    """True when a SELECT's top-level projection list is *only* a bare `*`
-    or a single qualified `alias.*` — nothing else alongside it.
+# A base column: the physical table node and the column's name on it.
+_Leaf = tuple[exp.Table, str]
 
-    Every current caller uses this in a single-table-in-scope context (a CTE
-    body, a single-CTE's outer SELECT, or a plain query), where `alias.*` and
-    a bare `*` denote the exact same column set — so a qualified star is
-    just as safe to treat as full pass-through. (The one multi-table
-    context, a JOIN's outer projection, already treats *any* star sighting
-    here as "give up on identity" rather than "assume identity" — broadening
-    this check doesn't change that, it just avoids `_project_col_map`
-    recording a nonsense `{"*": "*"}` entry for `SELECT o.* FROM o JOIN c`.)
 
-    Strict on the "nothing else alongside it" part: `SELECT *, ticket_number
-    AS id FROM t` is not a pass-through — it has an explicit projection
-    sitting alongside the star, and treating it as fully star-shaped would
-    wrongly bless the un-listed base PK as identity-safe when a different
-    column was aliased onto that same output name. A star-plus-extra
-    projection falls through to `_project_col_map` instead, which excludes
-    the bare `Star` entry and traces only the explicit aliases — correctly
-    yielding no identity assumption for anything not explicitly proven.
-    """
-    from sqlglot import exp
-
-    if len(exprs) != 1:
-        return False
-    e = exprs[0]
-    return isinstance(e, exp.Star) or (
-        isinstance(e, exp.Column) and isinstance(e.this, exp.Star)
+def _is_star(node: exp.Expr) -> bool:
+    return isinstance(node, exp.Star) or (
+        isinstance(node, exp.Column) and isinstance(node.this, exp.Star)
     )
 
 
-def _project_col_map(
-    exprs: list[_SqlglotExpression], qualifier: str = ""
-) -> dict[str, str]:
-    """Build a ``source_col → output_col`` map from one SELECT's projections.
+def _selects(scope: Scope) -> list[exp.Expr]:
+    """A set operation has no projection list of its own to read."""
+    query = scope.expression
+    return query.selects if isinstance(query, exp.Select) else []
 
-    Only ``col`` and ``col AS alias`` shapes are captured; anything else
-    (expressions, function calls) is silently excluded — this function only
-    ever needs to prove where a *bare column* ends up, never to resolve
-    computed values.
 
-    When ``qualifier`` is given (non-empty — a real table alias is never
-    empty), only columns explicitly qualified by that table are included: a
-    bare/unqualified column, or one qualified by a *different* table, proves
-    nothing about whether ``qualifier``'s column of the same name is even
-    present in the output, so it's excluded rather than guessed. This is the
-    JOIN case, where more than one source table is in scope. Omitted
-    (default), every bare column is captured regardless of qualifier — the
-    single-CTE case, where exactly one source table is in scope so no
-    qualifier filtering is needed.
+def _selected(scope: Scope) -> list[exp.Table | Scope]:
+    return [source for _, source in scope.selected_sources.values()]
 
-    An output name claimed by more than one projection anywhere in ``exprs``
-    (not just the qualifier-matched ones — a collision with an unrelated
-    table's projection is just as real) is excluded from the map entirely:
-    the executed query has exactly one column under that name, and nothing
-    here can prove which projection's value actually survives into it
-    (e.g. ``SELECT id, ticket_number AS id FROM t`` — tracing "id" to
-    itself would be a guess, not a proof, once a second projection claims
-    the same output name). Duplicate-output detection counts *every*
-    aliased projection's output name — including expression-aliased ones
-    like ``UPPER(subject) AS id`` — not just column-sourced ones, since an
-    expression alias claims the output name just as validly as a bare
-    column does (``SELECT id, UPPER(subject) AS id FROM t`` must exclude
-    ``id`` too, even though only one of the two projections is traceable).
-    The collision tally is case-insensitive (``.casefold()``) — most engines
-    fold unquoted output column names to one canonical case, so ``SELECT id,
-    ticket_number AS ID FROM t`` collides in the executed result exactly
-    like a same-case duplicate would, even though the two output names are
-    spelled differently in the SQL.
+
+def _renamed_by_alias_list(scope: Scope) -> bool:
+    """``WITH t(a, b) AS (...)`` renames the body's columns by position."""
+    owner = scope.expression.parent
+    if not isinstance(owner, (exp.CTE, exp.Subquery)):
+        return False
+    alias = owner.args.get("alias")
+    return bool(alias and alias.columns)
+
+
+def _resolve(scope: Scope, qualifier: str) -> exp.Table | Scope | None:
+    """``resolve_source``, refusing a name that reads back the scope being traced.
+
+    ``WITH p AS (SELECT p.id FROM t) ...``: ``p`` there is a column's table
+    qualifier the engine may bind to a struct, not the CTE, and following it
+    would trace in circles.
     """
-    from collections import Counter
+    source = resolve_source(scope, qualifier)
+    enclosing: Scope | None = scope
+    while enclosing is not None:
+        if source is enclosing:
+            return None
+        enclosing = enclosing.parent
+    return source
 
-    from sqlglot import exp
 
-    # First pass: every projection's output name counts toward collision
-    # detection, whether or not it's a traceable bare-column source — an
-    # expression-aliased duplicate is just as ambiguous as a column-aliased
-    # one. Only column-sourced projections are collected as trace candidates.
-    output_counts: Counter[str] = Counter()
-    raw: list[tuple[str, str, bool]] = []
-    for col_expr in exprs:
-        if isinstance(col_expr, exp.Alias):
-            output_counts[col_expr.alias.casefold()] += 1
-            if isinstance(col_expr.this, exp.Column):
-                col = col_expr.this
-                raw.append(
-                    (col.name, col_expr.alias, not qualifier or col.table == qualifier)
-                )
-        elif isinstance(col_expr, exp.Column):
-            output_counts[col_expr.name.casefold()] += 1
-            raw.append(
-                (
-                    col_expr.name,
-                    col_expr.name,
-                    not qualifier or col_expr.table == qualifier,
-                )
-            )
+def _star_source(scope: Scope) -> exp.Table | Scope | None:
+    """The one relation the SELECT's single star expands, or None if unknowable."""
+    stars = [p for p in _selects(scope) if _is_star(p)]
+    if len(stars) != 1:
+        return None
+    if isinstance(stars[0], exp.Column) and stars[0].table:
+        return _resolve(scope, stars[0].table)
+    sources = _selected(scope)
+    return sources[0] if len(sources) == 1 else None
 
-    col_map: dict[str, str] = {}
-    for source, output, matches_qualifier in raw:
-        if not matches_qualifier:
+
+def _leaf(scope: Scope, projection: exp.Expr) -> _Leaf | None:
+    """The base column a bare-column projection reads, through CTEs and aliases."""
+    column = projection.this if isinstance(projection, exp.Alias) else projection
+    if not isinstance(column, exp.Column) or _is_star(column):
+        return None
+    if column.table:
+        source = _resolve(scope, column.table)
+    else:
+        # Dialects disagree on whether this names a sibling alias or a base column.
+        siblings = {
+            p.alias.casefold()
+            for p in _selects(scope)
+            if isinstance(p, exp.Alias) and p is not projection
+        }
+        sources = _selected(scope)
+        if column.name.casefold() in siblings or len(sources) != 1:
+            return None
+        source = sources[0]
+    if isinstance(source, exp.Table):
+        return source, column.name
+    return None if source is None else _lookup(source, column.name)
+
+
+def _outputs(scope: Scope) -> list[tuple[str, _Leaf | None]] | None:
+    """(output name, base column) per projection; None when names are unknowable.
+
+    A star over a CTE or subquery contributes that relation's own outputs; a
+    star over a table contributes nothing (its columns are not listed).
+    """
+    query = scope.expression
+    if not isinstance(query, exp.Select) or _renamed_by_alias_list(scope):
+        return None
+    outputs: list[tuple[str, _Leaf | None]] = []
+    for projection in query.selects:
+        if not _is_star(projection):
+            outputs.append((projection.alias_or_name, _leaf(scope, projection)))
             continue
-        if output_counts[output.casefold()] > 1:
-            continue  # ambiguous — another projection claims the same output name
-        col_map[source] = output
-    return col_map
+        source = _star_source(scope)
+        if source is None:
+            return None
+        if isinstance(source, Scope):
+            inner = _outputs(source)
+            if inner is None:
+                return None
+            outputs.extend(inner)
+    return outputs
 
 
-def _cte_col_output_alias_map(
-    tree: _SqlglotExpression, cte: _SqlglotExpression
-) -> tuple[dict[str, str], bool]:
-    """``build_col_output_alias_map``'s logic for a single-CTE-wrap query.
-
-    Only called after ``resolve_cte_spine`` has already resolved a location
-    for this exact SQL, which requires zero ``exp.Subquery`` nodes anywhere
-    in the tree — so ``cte.this`` is never itself wrapped in a ``Subquery``
-    here (that only happens for a redundant double-paren CTE body, which
-    ``resolve_cte_spine`` already bails on) — and no CTE column-alias list
-    (``WITH t(a, b) AS (...)``), which ``resolve_cte_spine`` also bails on.
-    The column-alias-list check is repeated here anyway (defense in depth):
-    this function's whole contract is "never trace a renaming layer this
-    module can't reason about," so it shouldn't rely solely on an upstream
-    caller having already checked.
-    """
-    from sqlglot import exp
-
-    cte_alias_node = cte.args.get("alias")
-    if isinstance(cte_alias_node, exp.TableAlias) and cte_alias_node.columns:
-        return {}, False
-
-    cte_body = cte.this
-
-    cte_is_star = _is_star_projection(cte_body.expressions)
-    outer_is_star = _is_star_projection(tree.expressions)
-
-    cte_map = {} if cte_is_star else _project_col_map(cte_body.expressions)
-    outer_map = {} if outer_is_star else _project_col_map(tree.expressions)
-
-    if cte_is_star and outer_is_star:
-        return {}, True  # Full SELECT * → SELECT * pass-through — identity.
-
-    # Compose: base → cte_output → outer_output.
-    result: dict[str, str] = {}
-    for base_col, cte_output in cte_map.items():
-        if cte_output in outer_map:
-            result[base_col] = outer_map[cte_output]
-        elif outer_is_star:
-            result[base_col] = cte_output
-        # else: the outer SELECT is explicit and doesn't mention cte_output —
-        # this base column is proven absent from the final output; omit it
-        # rather than guessing it passes through.
-
-    # The outer SELECT's own explicit projection — reachable only when the
-    # CTE body was itself a full `SELECT *` (cte_is_star), because only then
-    # does an outer_map key equal a *base table* column name. When the CTE
-    # body has its own explicit projection, outer_map keys are the CTE's own
-    # output names, not base columns — composing them here would mis-map a
-    # base column that happens to share that name (e.g. CTE aliases id -> a,
-    # and the base table separately has an unrelated column named a).
-    #
-    # Every entry here is proof the column is present in the output —
-    # whether renamed (`outer_output != cte_col`) or passed through
-    # unchanged (`outer_output == cte_col`); only recording renames would
-    # prove nothing about `WITH c AS (SELECT * FROM t) SELECT id, subject
-    # FROM c`'s `id`/`subject`, even though both provably appear in the
-    # output under their own names.
-    if cte_is_star:
-        for cte_col, outer_output in outer_map.items():
-            result[cte_col] = outer_output
-
-    identity_safe_for_unlisted = cte_is_star and outer_is_star
-    return result, identity_safe_for_unlisted
+def _lookup(scope: Scope, name: str) -> _Leaf | None:
+    """The base column behind output ``name`` of ``scope``; None if not provable."""
+    outputs = _outputs(scope)
+    if outputs is None:
+        return None
+    matches = [leaf for out, leaf in outputs if out.casefold() == name.casefold()]
+    if len(matches) > 1:
+        return None
+    if matches:
+        return matches[0]
+    # Not listed: only a star over one relation could carry it through.
+    source = _star_source(scope)
+    if isinstance(source, exp.Table):
+        return source, name
+    return None if source is None else _lookup(source, name)
 
 
-def _join_col_output_alias_map(tree: _SqlglotExpression) -> tuple[dict[str, str], bool]:
-    """``build_col_output_alias_map``'s logic for an FK-proven JOIN query.
+def _spine(scope: Scope) -> exp.Table | None:
+    """The table the query's first FROM entry reads, through CTEs and subqueries."""
+    from_ = scope.expression.args.get("from_")
+    if from_ is None:
+        return None
+    entry = scope.selected_sources.get(from_.this.alias_or_name)
+    if entry is None:
+        return None
+    source = entry[1]
+    return source if isinstance(source, exp.Table) else _spine(source)
 
-    Unlike the CTE case, a bare outer ``SELECT *`` across a join is never
-    treated as safe identity: two joined tables can share a column name (both
-    have ``id``), so which one survives in the output is statically
-    ambiguous — not just untraced. Only columns explicitly qualified by the
-    spine table's own alias are proof of anything; the caller never falls
-    back to identity for a JOIN query.
-    """
-    from sqlglot import exp
 
-    if _is_star_projection(tree.expressions):
-        return {}, False
-
-    from_clause = tree.args.get("from_")
-    if not isinstance(from_clause, exp.From) or not isinstance(
-        from_clause.this, exp.Table
+def _is_identity(scope: Scope) -> bool:
+    """Whether every layer down to the table is one bare star over one relation."""
+    selects = _selects(scope)
+    if (
+        _renamed_by_alias_list(scope)
+        or len(selects) != 1
+        or not _is_star(selects[0])
+        or len(_selected(scope)) != 1
     ):
-        return {}, False
-    spine_alias = from_clause.this.alias_or_name
-
-    return _project_col_map(tree.expressions, qualifier=spine_alias), False
+        return False
+    source = _star_source(scope)
+    return isinstance(source, exp.Table) or (
+        source is not None and _is_identity(source)
+    )
 
 
 def build_col_output_alias_map(sql: str) -> tuple[dict[str, str], bool]:
     """Map base table column names to their output aliases.
 
-    Handles the plain single-table shape, the single-CTE-wrap shape
-    (``resolve_cte_spine``), and the FK-proven JOIN shape
-    (``resolve_join_spine``) — every shape can trace its own SELECT list, so
-    every shape is subject to the same rule below. Any other, unrecognized
-    shape (multi-CTE, a CTE alongside a top-level JOIN, parse failure)
-    returns ``({}, False)`` — untraced, never assume identity for a shape
-    this function doesn't specifically understand.
+    The base table is the one the query's first FROM entry reads, followed
+    through CTEs and subqueries. Anything not provable traces nothing and
+    assumes no identity: a bare column that may be a sibling alias, a
+    positional CTE column list, a star across a join, duplicate output names.
 
     Returns ``(alias_map, identity_safe_for_unlisted)``:
 
     - ``alias_map`` maps ``base_column_name → output_column_name`` for every
-      column *provably* present in the final output under a traced name.
-    - ``identity_safe_for_unlisted`` is ``True`` only when the *entire*
-      relevant projection is an unqualified ``SELECT *`` — for a plain query,
-      its own SELECT list; for a single-CTE query, **both** the CTE body and
-      the outer SELECT. Only then is every base column *provably* passed
-      straight through, so a column absent from ``alias_map`` is still safe
-      to assume identity for. When ``False``, a column absent from
-      ``alias_map`` is **not** proven to appear in the output at all —
-      callers must not fall back to the base name; the caller has proven
-      nothing about that column and must drop it (no false drill), not guess.
-      ``_is_star_projection`` is strict on purpose: a projection with a star
-      *and* an explicit alias (``SELECT *, x AS id``) is not treated as
-      identity-safe — the explicit alias could shadow the sought key.
+      column *provably* present in the final output under a traced name. An
+      output name claimed by more than one projection (case-insensitively) is
+      excluded: nothing proves which value survives into it.
+    - ``identity_safe_for_unlisted`` is ``True`` only when every layer is a
+      lone ``*`` over a single relation, so every base column provably passes
+      straight through. When ``False``, a column absent from ``alias_map`` is
+      **not** proven to appear in the output at all — callers must drop it
+      (no false drill), never fall back to the base name. ``SELECT *, x AS id``
+      is not identity-safe: the alias could shadow the sought key.
 
-    This distinction is load-bearing: a naive "missing key → assume identity"
-    fallback silently resolves a sought PK to the wrong output column
-    whenever a query's projection renames something *else* onto that name —
-    e.g. ``WITH t AS (SELECT ticket_number AS id, subject FROM main.tickets)
-    SELECT * FROM t`` never selects the base ``id`` at all, so a blind
-    identity fallback for the sought PK ``id`` would silently resolve to the
-    CTE's *unrelated* ``id`` output column (which actually holds
-    ``ticket_number`` values) — a live drill to the wrong record. The
-    identical failure mode exists for ``SELECT c.id, c.name, o.amount FROM
-    orders o JOIN customers c ON o.cust_id = c.id`` — the spine is
-    ``orders``, but the output's only ``id`` column is ``customers.id``.
+    This distinction is load-bearing: ``WITH t AS (SELECT ticket_number AS id,
+    subject FROM main.tickets) SELECT * FROM t`` never selects the base ``id``,
+    so a blind identity fallback would drill to the wrong record. The same
+    holds for ``SELECT c.id, o.amount FROM orders o JOIN customers c ...`` —
+    the spine is ``orders``, but the output's only ``id`` is ``customers.id``.
 
-    See ``test_sql_grain.py`` for the full worked-example matrix (plain,
-    single-CTE, and JOIN shapes, star and explicit-projection variants).
+    See ``test_sql_grain.py`` for the worked-example matrix.
 
     Args:
         sql: Raw SQL string (Jinja tokens are stripped before parsing).
     """
-    from sqlglot import exp
-
-    tree = parse_sql(sql)
-    if tree is None:
+    query = parse_sql(sql)
+    if not isinstance(query, exp.Select) or (
+        query.find(exp.CTE) and query.find(exp.Join)
+    ):
         return {}, False
-
-    ctes = list(tree.find_all(exp.CTE))
-    has_joins = bool(list(tree.find_all(exp.Join)))
-
-    if not ctes and not has_joins:
-        # Plain single-table query — still has a renaming layer (its own
-        # SELECT list), so trace it exactly like the CTE/JOIN cases rather
-        # than blindly assuming identity for anything not a bare `SELECT *`.
-        if _is_star_projection(tree.expressions):
-            return {}, True
-        return _project_col_map(tree.expressions), False
-    if len(ctes) == 1 and not has_joins:
-        return _cte_col_output_alias_map(tree, ctes[0])
-    if has_joins and not ctes:
-        return _join_col_output_alias_map(tree)
-    # Any other shape (e.g. a CTE alongside a top-level JOIN, or multi-CTE) is
-    # untraced — never assume identity for an unrecognized shape, even if
-    # some other resolver happens to have proven a location for it.
-    return {}, False
+    try:
+        root = build_scope(fold_relation_names(query))
+        outputs = None if root is None else _outputs(root)
+        if root is None or outputs is None:
+            return {}, False
+        spine = _spine(root)
+        identity = _is_identity(root)
+    except (sqlglot.errors.OptimizeError, RecursionError):
+        # Scope resolution raises lazily, e.g. on a name used twice in one FROM.
+        return {}, False
+    claims = Counter(name.casefold() for name, _ in outputs if name)
+    alias_map = {
+        leaf[1]: name
+        for name, leaf in outputs
+        if leaf is not None and leaf[0] is spine and claims[name.casefold()] == 1
+    }
+    return alias_map, identity

@@ -15,6 +15,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from typing import Any, TypeVar
+from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -30,9 +31,15 @@ from dbt_charts.cloud_client.config import (
     save_config,
 )
 from dbt_charts.cloud_client.contract import (
+    AccessCheck,
+    AccessList,
+    ActionResult,
     ApiError,
+    AuditEntry,
+    AuditList,
     AuthorizationServerMetadata,
     BoardList,
+    ConnectionAccessList,
     ConnectionList,
     ConnectionTestResult,
     DeleteResult,
@@ -40,8 +47,10 @@ from dbt_charts.cloud_client.contract import (
     ErrorCode,
     GrantList,
     GrantRevokeResult,
+    IdentityGroupList,
     InvitationList,
     InviteResult,
+    MemberAccess,
     MemberList,
     MemberSummary,
     OAuthToken,
@@ -50,16 +59,22 @@ from dbt_charts.cloud_client.contract import (
     OrgSummary,
     ProjectList,
     ProjectSummary,
+    PublicAccess,
     RenderResult,
     RepoPick,
+    RoleList,
+    RoleSummary,
     SourceList,
     SyncResult,
+    TeamList,
+    TeamSummary,
 )
 from dbt_charts.cloud_client.errors import (
     ApiFailed,
     CredentialMissing,
     DeviceLoginFailed,
     InvalidCredential,
+    InvalidPathSegment,
     PickTimedOut,
     SessionExpired,
     SkewDirection,
@@ -90,6 +105,15 @@ DISCOVERY_PATH = "/.well-known/oauth-authorization-server"
 # RFC 8628's own backoff: a `slow_down` response widens the poll interval by
 # this many seconds, not to a server-chosen value.
 SLOW_DOWN_BACKOFF_SECONDS = 5.0
+
+
+def _seg(value: str) -> str:
+    """One URL path segment from user input (a slug, an email). httpx resolves
+    dot segments and splits on ``?``/``#`` before sending, so any of them would
+    send the request to another endpoint."""
+    if value in {".", ".."}:
+        raise InvalidPathSegment(value)
+    return quote(value, safe="")
 
 
 class CloudClient:
@@ -154,62 +178,211 @@ class CloudClient:
         )
 
     def org_status(self, org: str) -> OrgStatus:
-        return self._request("GET", f"/orgs/{org}/status", OrgStatus)
+        return self._request("GET", f"/orgs/{_seg(org)}/status", OrgStatus)
 
     def delete_org(self, org: str) -> DeleteResult:
-        return self._request("DELETE", f"/orgs/{org}", DeleteResult)
+        return self._request("DELETE", f"/orgs/{_seg(org)}", DeleteResult)
 
     # --- members and invitations --------------------------------------------
 
     def list_members(self, org: str) -> MemberList:
-        return self._request("GET", f"/orgs/{org}/members", MemberList)
+        return self._request("GET", f"/orgs/{_seg(org)}/members", MemberList)
 
     def invite_member(
         self, org: str, email: str, role: str | None = None
     ) -> InviteResult:
         return self._request(
             "POST",
-            f"/orgs/{org}/members",
+            f"/orgs/{_seg(org)}/members",
             InviteResult,
             payload={"emails": email, **({"role": role} if role else {})},
         )
 
     def remove_member(self, org: str, email: str) -> DeleteResult:
-        return self._request("DELETE", f"/orgs/{org}/members/{email}", DeleteResult)
+        return self._request(
+            "DELETE", f"/orgs/{_seg(org)}/members/{_seg(email)}", DeleteResult
+        )
 
     def set_member_role(self, org: str, email: str, role: str) -> MemberSummary:
         return self._request(
             "POST",
-            f"/orgs/{org}/members/{email}/role",
+            f"/orgs/{_seg(org)}/members/{_seg(email)}/role",
             MemberSummary,
             payload={"role": role},
         )
 
     def list_invitations(self, org: str) -> InvitationList:
-        return self._request("GET", f"/orgs/{org}/invitations", InvitationList)
+        return self._request("GET", f"/orgs/{_seg(org)}/invitations", InvitationList)
 
     def revoke_invitation(self, org: str, email: str) -> DeleteResult:
-        return self._request("DELETE", f"/orgs/{org}/invitations/{email}", DeleteResult)
+        return self._request(
+            "DELETE", f"/orgs/{_seg(org)}/invitations/{_seg(email)}", DeleteResult
+        )
 
     def resend_invitation(self, org: str, email: str) -> InviteResult:
         return self._request(
-            "POST", f"/orgs/{org}/invitations/{email}/resend", InviteResult
+            "POST", f"/orgs/{_seg(org)}/invitations/{_seg(email)}/resend", InviteResult
         )
 
     # --- connector grants ----------------------------------------------------
 
     def list_grants(self, org: str) -> GrantList:
-        return self._request("GET", f"/orgs/{org}/grants", GrantList)
+        return self._request("GET", f"/orgs/{_seg(org)}/grants", GrantList)
 
     def revoke_grant(self, org: str, grant_id: str) -> GrantRevokeResult:
         return self._request(
-            "DELETE", f"/orgs/{org}/grants/{grant_id}", GrantRevokeResult
+            "DELETE", f"/orgs/{_seg(org)}/grants/{_seg(grant_id)}", GrantRevokeResult
         )
+
+    # --- access and audit ----------------------------------------------------
+
+    def list_access(self, org: str, filters: dict[str, str]) -> AccessList:
+        """Explicit board grants; ``filters`` are the Grants page's query
+        parameters, blanks already dropped."""
+        return self._request(
+            "GET", f"/orgs/{_seg(org)}/access", AccessList, params=filters
+        )
+
+    def check_access(self, org: str, who: str, project: str, path: str) -> AccessCheck:
+        return self._request(
+            "GET",
+            f"/orgs/{_seg(org)}/access/check",
+            AccessCheck,
+            params={"who": who, "project": project, "path": path},
+        )
+
+    def change_access(
+        self, org: str, action: str, fields: dict[str, str]
+    ) -> ActionResult:
+        """A path write: ``grant`` (blank ``action``), or revoke, remove-here,
+        restore, inherit, stop-inheriting, general."""
+        path = f"/orgs/{_seg(org)}/access" + (f"/{action}" if action else "")
+        return self._request("POST", path, ActionResult, payload=fields)
+
+    def list_public(self, org: str) -> PublicAccess:
+        return self._request("GET", f"/orgs/{_seg(org)}/public", PublicAccess)
+
+    def set_public(self, org: str, project: str | None, *, allow: bool) -> ActionResult:
+        """Flip the org's public gate, or ``project``'s when one is named."""
+        path = f"/orgs/{_seg(org)}/public"
+        if project is not None:
+            path = f"/orgs/{_seg(org)}/projects/{_seg(project)}/public"
+        return self._request("POST", path, ActionResult, payload={"allow": allow})
+
+    def list_teams(self, org: str) -> TeamList:
+        return self._request("GET", f"/orgs/{_seg(org)}/teams", TeamList)
+
+    def create_team(self, org: str, name: str, description: str) -> TeamSummary:
+        return self._request(
+            "POST",
+            f"/orgs/{_seg(org)}/teams",
+            TeamSummary,
+            payload={"name": name, "description": description},
+        )
+
+    def delete_team(self, org: str, team: str) -> DeleteResult:
+        return self._request(
+            "DELETE", f"/orgs/{_seg(org)}/teams/{_seg(team)}", DeleteResult
+        )
+
+    def change_team_member(
+        self, org: str, team: str, email: str, *, add: bool
+    ) -> ActionResult:
+        return self._request(
+            "POST" if add else "DELETE",
+            f"/orgs/{_seg(org)}/teams/{_seg(team)}/members/{_seg(email)}",
+            ActionResult,
+        )
+
+    def list_roles(self, org: str) -> RoleList:
+        return self._request("GET", f"/orgs/{_seg(org)}/roles", RoleList)
+
+    def create_role(
+        self, org: str, key: str, display_name: str, entitlements: list[str]
+    ) -> RoleSummary:
+        return self._request(
+            "POST",
+            f"/orgs/{_seg(org)}/roles",
+            RoleSummary,
+            payload={
+                "key": key,
+                "display_name": display_name,
+                "entitlements": entitlements,
+            },
+        )
+
+    def edit_role(
+        self, org: str, key: str, display_name: str, entitlements: list[str]
+    ) -> RoleSummary:
+        return self._request(
+            "POST",
+            f"/orgs/{_seg(org)}/roles/{_seg(key)}",
+            RoleSummary,
+            payload={"display_name": display_name, "entitlements": entitlements},
+        )
+
+    def archive_role(self, org: str, key: str) -> DeleteResult:
+        return self._request(
+            "DELETE", f"/orgs/{_seg(org)}/roles/{_seg(key)}", DeleteResult
+        )
+
+    def list_identity_groups(
+        self, org: str, filters: dict[str, str]
+    ) -> IdentityGroupList:
+        return self._request(
+            "GET",
+            f"/orgs/{_seg(org)}/identity/groups",
+            IdentityGroupList,
+            params=filters,
+        )
+
+    def list_connection_access(self, org: str, connection: str) -> ConnectionAccessList:
+        return self._request(
+            "GET",
+            f"/orgs/{_seg(org)}/connections/{_seg(connection)}/access",
+            ConnectionAccessList,
+        )
+
+    def change_connection_access(
+        self, org: str, connection: str, action: str, fields: dict[str, str]
+    ) -> ActionResult:
+        """Grant (blank ``action``) or ``revoke`` a connection grant."""
+        path = f"/orgs/{_seg(org)}/connections/{_seg(connection)}/access"
+        return self._request(
+            "POST",
+            path + (f"/{action}" if action else ""),
+            ActionResult,
+            payload=fields,
+        )
+
+    def show_member(self, org: str, email: str) -> MemberAccess:
+        return self._request(
+            "GET", f"/orgs/{_seg(org)}/members/{_seg(email)}", MemberAccess
+        )
+
+    def list_audit(self, org: str, filters: dict[str, str]) -> AuditList:
+        """One page of the audit trail; ``filters`` are the audit query
+        parameters (``page`` included), blanks already dropped."""
+        return self._request(
+            "GET", f"/orgs/{_seg(org)}/audit", AuditList, params=filters
+        )
+
+    def export_audit(self, org: str, filters: dict[str, str]) -> list[AuditEntry]:
+        """Every audit event matching ``filters``, following all pages."""
+        events: list[AuditEntry] = []
+        page: int | None = 1
+        while page is not None:
+            batch = self.list_audit(
+                org, {**filters, "page": str(page), "page_size": "500"}
+            )
+            events += batch.events
+            page = batch.next_page
+        return events
 
     # --- projects ----------------------------------------------------------
 
     def list_projects(self, org: str) -> ProjectList:
-        return self._request("GET", f"/orgs/{org}/projects", ProjectList)
+        return self._request("GET", f"/orgs/{_seg(org)}/projects", ProjectList)
 
     def create_project(
         self,
@@ -227,7 +400,7 @@ class CloudClient:
         anonymous (public) repository, which is the server's contract too."""
         return self._request(
             "POST",
-            f"/orgs/{org}/projects",
+            f"/orgs/{_seg(org)}/projects",
             ProjectSummary,
             payload={
                 "name": name,
@@ -252,7 +425,7 @@ class CloudClient:
         """Finish the project the browser hop picked a repository for."""
         return self._request(
             "POST",
-            f"/orgs/{org}/projects/from-pick",
+            f"/orgs/{_seg(org)}/projects/from-pick",
             ProjectSummary,
             payload={
                 "name": name,
@@ -264,24 +437,30 @@ class CloudClient:
         )
 
     def sync_project(self, org: str, project: str) -> SyncResult:
-        return self._request("POST", f"/orgs/{org}/projects/{project}/sync", SyncResult)
+        return self._request(
+            "POST", f"/orgs/{_seg(org)}/projects/{_seg(project)}/sync", SyncResult
+        )
 
     def render_project(self, org: str, project: str, *, force: bool) -> RenderResult:
         """``force`` re-renders every board (``render/all``, a project-admin
         act); otherwise only boards with no render yet start."""
-        path = f"/orgs/{org}/projects/{project}/render"
+        path = f"/orgs/{_seg(org)}/projects/{_seg(project)}/render"
         return self._request("POST", path + "/all" if force else path, RenderResult)
 
     def delete_project(self, org: str, project: str) -> DeleteResult:
-        return self._request("DELETE", f"/orgs/{org}/projects/{project}", DeleteResult)
+        return self._request(
+            "DELETE", f"/orgs/{_seg(org)}/projects/{_seg(project)}", DeleteResult
+        )
 
     def scaffold_project(self, org: str, project: str) -> SyncResult:
         return self._request(
-            "POST", f"/orgs/{org}/projects/{project}/scaffold", SyncResult
+            "POST", f"/orgs/{_seg(org)}/projects/{_seg(project)}/scaffold", SyncResult
         )
 
     def list_boards(self, org: str, project: str) -> BoardList:
-        return self._request("GET", f"/orgs/{org}/projects/{project}/boards", BoardList)
+        return self._request(
+            "GET", f"/orgs/{_seg(org)}/projects/{_seg(project)}/boards", BoardList
+        )
 
     # --- the GitHub handoff ------------------------------------------------
 
@@ -291,7 +470,7 @@ class CloudClient:
         404s until there is one — "not yet" and "never" are the same answer, by
         design on the server's side.
         """
-        return self._request("GET", f"/orgs/{org}/github/pick", RepoPick)
+        return self._request("GET", f"/orgs/{_seg(org)}/github/pick", RepoPick)
 
     def wait_for_pick(
         self,
@@ -322,7 +501,7 @@ class CloudClient:
     # --- connections -------------------------------------------------------
 
     def list_connections(self, org: str) -> ConnectionList:
-        return self._request("GET", f"/orgs/{org}/connections", ConnectionList)
+        return self._request("GET", f"/orgs/{_seg(org)}/connections", ConnectionList)
 
     def create_connection(
         self, org: str, connection_type: str, fields: dict[str, str]
@@ -335,25 +514,27 @@ class CloudClient:
         """
         return self._request(
             "POST",
-            f"/orgs/{org}/connections",
+            f"/orgs/{_seg(org)}/connections",
             ConnectionTestResult,
             payload={"connection_type": connection_type, **fields},
         )
 
     def test_connection(self, org: str, connection: str) -> ConnectionTestResult:
         return self._request(
-            "POST", f"/orgs/{org}/connections/{connection}/test", ConnectionTestResult
+            "POST",
+            f"/orgs/{_seg(org)}/connections/{_seg(connection)}/test",
+            ConnectionTestResult,
         )
 
     def delete_connection(self, org: str, connection: str) -> DeleteResult:
         return self._request(
-            "DELETE", f"/orgs/{org}/connections/{connection}", DeleteResult
+            "DELETE", f"/orgs/{_seg(org)}/connections/{_seg(connection)}", DeleteResult
         )
 
     def refresh_connection_schema(self, org: str, connection: str) -> SyncResult:
         return self._request(
             "POST",
-            f"/orgs/{org}/connections/{connection}/schema-refresh",
+            f"/orgs/{_seg(org)}/connections/{_seg(connection)}/schema-refresh",
             SyncResult,
         )
 
@@ -361,7 +542,7 @@ class CloudClient:
 
     def list_sources(self, org: str, project: str) -> SourceList:
         return self._request(
-            "GET", f"/orgs/{org}/projects/{project}/sources", SourceList
+            "GET", f"/orgs/{_seg(org)}/projects/{_seg(project)}/sources", SourceList
         )
 
     def map_source(
@@ -378,7 +559,7 @@ class CloudClient:
         not the same request."""
         return self._request(
             "POST",
-            f"/orgs/{org}/projects/{project}/sources",
+            f"/orgs/{_seg(org)}/projects/{_seg(project)}/sources",
             SourceList,
             payload={
                 "name": name,
@@ -399,14 +580,16 @@ class CloudClient:
         path: str,
         model: type[M],
         payload: dict[str, Any] | None = None,
+        params: dict[str, str] | None = None,
     ) -> M:
         """One round trip. ``payload`` is an unvalidated JSON body by nature —
-        the server's forms are what decide whether its fields are right."""
-        response = self._send(method, path, payload)
+        the server's forms are what decide whether its fields are right;
+        ``params`` is the query string of a read."""
+        response = self._send(method, path, payload, params)
         if response.status_code == 401 and self._refresh is not None:
             self._token = self._refresh(self._token)
             self._http.headers["Authorization"] = f"Bearer {self._token}"
-            response = self._send(method, path, payload)
+            response = self._send(method, path, payload, params)
         url = str(response.request.url)
         if response.status_code >= 400:
             raise self._failure(response, url)
@@ -429,10 +612,14 @@ class CloudClient:
             ) from exc
 
     def _send(
-        self, method: str, path: str, payload: dict[str, Any] | None
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None,
+        params: dict[str, str] | None,
     ) -> httpx.Response:
         try:
-            return self._http.request(method, path, json=payload)
+            return self._http.request(method, path, json=payload, params=params)
         except httpx.HTTPError as exc:
             raise TransportFailed(self.host, exc) from exc
 

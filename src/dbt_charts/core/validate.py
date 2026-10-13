@@ -54,7 +54,7 @@ def validate_yaml(
             "errors": errors,
             "warnings": warnings,
             "error_summary": error_summary,
-            "has_board": result.board is not None,
+            "has_board": result.success,
         }
     except Exception as e:  # noqa: BLE001 — boundary: any compile exception → dict
         return {

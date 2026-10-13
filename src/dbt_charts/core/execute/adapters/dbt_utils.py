@@ -27,7 +27,7 @@ from dbt_charts.core.execute.dbt_jinja import (
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
-    from dbt_charts.core.dbt_manifest import RefIndex
+    from dbt_charts.core.dbt_manifest import RawTableFormats, RefIndex
     from dbt_charts.core.project import Project
 
 DBT_PROJECT_DB_NAMES = ["sample.duckdb", "dbt_charts_examples.duckdb", "dev.duckdb"]
@@ -109,9 +109,11 @@ class DbtRefResolver:
     `_compose_query_refs` that runs ahead of (and independently from) any
     adapter's own resolve-then-render.
 
-    ``resolve(sql, target_path)`` selects the manifest, with one index built
-    lazily per ``target_path``: a source's authored one picks the manifest its
-    target built, none picks dbt's default location.
+    ``resolve(sql, target_path)`` selects the manifest: a source's authored
+    ``target_path`` picks the manifest its target built, none picks dbt's
+    default location. The manifest's ``file_version`` is read on every call and
+    the index rebuilt when it changed, so a rewritten manifest is picked up by a
+    long-lived resolver.
 
     The manifest is the gate. SQL without dbt Jinja is returned untouched and
     reads no files; SQL with it and no manifest to resolve against raises
@@ -128,9 +130,9 @@ class DbtRefResolver:
                 there is nothing to resolve it against.
         """
         self._project = project
-        # Keyed by the authored target_path (None = dbt's default location);
-        # an index of None marks a manifest that does not exist.
-        self._indexes: dict[str | None, tuple[str, RefIndex | None]] = {}
+        # Keyed by the authored target_path (None = dbt's default location):
+        # the manifest version the index was built from, and the index.
+        self._indexes: dict[str | None, tuple[str, RefIndex]] = {}
         # One resolver is shared across the executor's worker threads; the
         # lock makes each first load atomic so a concurrent resolve() never
         # sees a path marked loaded with its index still unbuilt.
@@ -156,7 +158,7 @@ class DbtRefResolver:
         if not has_dbt_jinja(sql):
             return sql, []
 
-        relpath, index = self._index_for(target_path)
+        relpath, _version, index = self._snapshot(target_path)
         if index is None:
             raise ExecutionError.from_code(
                 ERR_DBT_MANIFEST_MISSING,
@@ -165,8 +167,24 @@ class DbtRefResolver:
             )
         return resolve_dbt_refs_with_provenance(sql, index, encode_relation)
 
-    def _index_for(self, target_path: str | None) -> tuple[str, "RefIndex | None"]:
-        """The manifest path and its ref/source index, built once per target_path."""
+    def column_formats(self, target_path: str | None) -> "RawTableFormats":
+        """``meta.format`` of the dbt columns that carry one, by ref/source name.
+
+        Read from the manifest ``target_path`` names (dbt's default location
+        when None); empty when there is no manifest.
+        """
+        index = self._snapshot(target_path)[2]
+        return index.formats if index is not None else {}
+
+    def manifest_version(self, target_path: str | None) -> str:
+        """The ``file_version`` of the manifest ``resolve`` would use now, ``""``
+        when there is none. Same load as ``resolve``, so a cache key built from it
+        names the manifest the resolution will read."""
+        return self._snapshot(target_path)[1]
+
+    def _snapshot(self, target_path: str | None) -> tuple[str, str, "RefIndex | None"]:
+        """The manifest path, its version and its ref/source index (``""`` and
+        None when the manifest does not exist)."""
         from dbt_charts.core.dbt_manifest import (  # noqa: PLC0415
             load_manifest,
             manifest_relpath,
@@ -174,14 +192,16 @@ class DbtRefResolver:
         )
 
         with self._load_lock:
-            if target_path not in self._indexes:
-                project = self._project
-                relpath = manifest_relpath(project, target_path)
-                loaded = (
-                    load_manifest(project, target_path) if project is not None else None
-                )
-                self._indexes[target_path] = (
-                    relpath,
-                    ref_index(loaded) if loaded is not None else None,
-                )
-            return self._indexes[target_path]
+            project = self._project
+            relpath = manifest_relpath(project, target_path)
+            loaded = (
+                load_manifest(project, target_path) if project is not None else None
+            )
+            if loaded is None:
+                self._indexes.pop(target_path, None)
+                return relpath, "", None
+            cached = self._indexes.get(target_path)
+            if cached is None or cached[0] != loaded.version:
+                cached = (loaded.version, ref_index(loaded))
+                self._indexes[target_path] = cached
+            return relpath, loaded.version, cached[1]

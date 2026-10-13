@@ -86,6 +86,27 @@ class TestFormatVariableDisplayValue:
             var, [start, end]
         ) == format_daterange_label(start, end)
 
+    def test_daterange_start_only_reads_from(self) -> None:
+        # The query applies the start bound alone, so the chip must not claim
+        # the board is unfiltered.
+        var = Variable(input="daterange", placeholder="Any time")
+        assert format_variable_display_value(var, ["2025-10-01", None]) == (
+            "From 1 Oct 2025"
+        )
+        assert format_variable_display_value(var, ["2025-10-01", ""]) == (
+            "From 1 Oct 2025"
+        )
+
+    def test_daterange_end_only_reads_until(self) -> None:
+        var = Variable(input="daterange")
+        assert format_variable_display_value(var, [None, "2026-10-04"]) == (
+            "Until 4 Oct 2026"
+        )
+
+    def test_daterange_both_ends_null_is_unset(self) -> None:
+        var = Variable(input="daterange")
+        assert format_variable_display_value(var, [None, None]) == "All dates"
+
     def test_daterange_malformed_raises(self) -> None:
         var = Variable(input="daterange")
         with pytest.raises(ValueError, match="exactly 2 elements"):

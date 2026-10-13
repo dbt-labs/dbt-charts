@@ -7,6 +7,7 @@ Validates that:
 """
 
 import pytest
+from fontTools.ttLib import TTFont
 
 from dbt_charts.core.compile.config import (
     get_theme_style,
@@ -17,6 +18,8 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.fonts import (
     DBT_SANS_TABULAR_FONT_FAMILY,
+    DBT_SANS_TABULAR_MEDIUM_FONT_FAMILY,
+    DBT_SANS_TABULAR_SEMIBOLD_FONT_FAMILY,
     DBT_SERIF_OLDSTYLE_PROPORTIONAL_FONT_FAMILY,
     DBT_SERIF_OLDSTYLE_TABULAR_FONT_FAMILY,
     INTER_VARIABLE_FONT_FAMILY,
@@ -271,6 +274,23 @@ class TestVendoredFontPaths:
 
     def test_dbt_sans_tabular_font_exists(self):
         assert get_face(DBT_SANS_TABULAR_FONT_FAMILY).measure_path.exists()
+
+    @pytest.mark.parametrize(
+        "family",
+        [
+            DBT_SANS_TABULAR_FONT_FAMILY,
+            DBT_SANS_TABULAR_MEDIUM_FONT_FAMILY,
+            DBT_SANS_TABULAR_SEMIBOLD_FONT_FAMILY,
+        ],
+    )
+    def test_dbt_sans_tabular_hyphen_is_proportional_and_figures_stay_tabular(
+        self, family: str
+    ):
+        font = TTFont(get_face(family).measure_path)
+        cmap = font.getBestCmap()
+        advance = {c: font["hmtx"][cmap[ord(c)]][0] for c in "0189-\u2212"}
+        assert advance["-"] < 0.8 * advance["0"]
+        assert len({advance[d] for d in "0189\u2212"}) == 1
 
     def test_dbt_serif_oldstyle_tabular_font_exists(self):
         assert get_face(DBT_SERIF_OLDSTYLE_TABULAR_FONT_FAMILY).measure_path.exists()

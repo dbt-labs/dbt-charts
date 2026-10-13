@@ -186,6 +186,16 @@ class PickTimedOut(CloudError):
         )
 
 
+class InvalidPathSegment(CloudError):
+    """A name typed for a URL path segment is ``.`` or ``..``, which httpx
+    resolves before sending, so the request would reach another endpoint."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.INVALID_REQUEST
+
+    def __init__(self, value: str) -> None:
+        super().__init__(f"{value!r} is not a name.")
+
+
 class ContextUnresolved(CloudError):
     """Which org or project this call is about could not be decided."""
 

@@ -16,6 +16,8 @@ from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.render.board_links import LinkContext
 from dbt_charts.core.render.svg_cache import (
+    MemorySvgStore,
+    MintedSvg,
     RenderedSvgCache,
     svg_cache_key,
     svg_cache_scope,
@@ -272,26 +274,12 @@ def test_whole_board_render_reuses_every_chart_the_second_time() -> None:
     Covers the sizing pass too — it renders each chart to measure true height, so
     a cache that only served the main pass would still call through here.
 
-    The board footer stamps wall-clock render time outside the cached chart
-    SVGs, so the clock is frozen — otherwise cold/warm pairs that straddle a
-    second boundary differ in that one byte and the equality flakes.
+    The render helper pins the clock, so cold and warm stamp the same time.
     """
-    from datetime import datetime, timezone
-
     from .._svg_render import render_board_to_svg
 
-    frozen_now = datetime(2026, 1, 1, tzinfo=timezone.utc)
-
-    class _FrozenDatetime(datetime):
-        @classmethod
-        def now(cls, tz=None):  # noqa: ANN001
-            return frozen_now if tz is None else frozen_now.astimezone(tz)
-
     cache = RenderedSvgCache()
-    with (
-        svg_cache_scope(cache),
-        mock.patch("dbt_charts.core.render.boards.datetime", _FrozenDatetime),
-    ):
+    with svg_cache_scope(cache):
         cold = render_board_to_svg()
         with mock.patch(
             "vl_convert.vegalite_to_svg", wraps=_real_vegalite_to_svg()
@@ -536,3 +524,17 @@ def test_an_evicted_mint_is_not_reported_for_writing_back() -> None:
     cache.put("second", "2", "c2")
 
     assert [e.key for e in cache.minted] == ["second"]
+
+
+def _minted(key: str, size: int) -> MintedSvg:
+    return MintedSvg(key=key, svg="x" * size, chart_id=key)
+
+
+def test_memory_store_evicts_least_recently_used_past_byte_budget() -> None:
+    store = MemorySvgStore(max_bytes=25)
+    store.save([_minted("a", 10), _minted("b", 10)])
+    assert store.load("a") is not None
+    store.save([_minted("c", 10)])
+    assert store.load("b") is None
+    assert store.load("a") is not None
+    assert store.load("c") is not None

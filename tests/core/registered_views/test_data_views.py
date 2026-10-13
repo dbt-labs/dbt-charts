@@ -286,30 +286,6 @@ class TestDataRootTemplate:
         # Should have a title
         assert "title" in authored or authored is not None
 
-    def test_data_root_source_link_resolves_per_row(self) -> None:
-        """Each source row must link to /data/<name>/ — a real interpolated link.
-
-        Regression: the link must be `{{ name }}` (which the cell-link renderer's
-        regex interpolates per row), NOT `{{ name | sql_identifier }}` — a filter
-        the regex does not match, which leaves the link a dead literal and breaks
-        the root page's only navigation.
-        """
-        from dbt_charts.core.registered_views.expander import expand_registered_view
-        from dbt_charts.core.registered_views.router import RouteMatch
-        from dbt_charts.core.render.chart.table_support import resolve_cell_link
-
-        views = {v.name: v for v in load_builtin_registry()}
-        match = RouteMatch(view=views["data_root"], path_params={})
-        authored = expand_registered_view(match, {})
-
-        link = authored.charts["source_list"].link
-        assert link is not None, "root source_list chart has no link"
-        resolved = resolve_cell_link(link, {"name": "wh"}, ["name"])
-        assert resolved == "/data/wh/", (
-            f"source link did not resolve to /data/wh/ (got {resolved!r}); "
-            f"link template was {link!r}"
-        )
-
     def test_data_root_lists_sources_end_to_end(self, tmp_path: Path) -> None:
         """GET /data/ returns 200 and lists the configured source through the
         real server — the happy-path symmetric to the unknown-source test."""

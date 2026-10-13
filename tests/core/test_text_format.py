@@ -13,6 +13,7 @@ from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.renderer import render
 
 from ._board_utils import _default_chart_style_context, _default_resolved_style
+from ._svg_render import PINNED_RENDER_TIME
 
 
 def _make_executor(data: list[dict]) -> MagicMock:
@@ -30,9 +31,11 @@ def _make_executor(data: list[dict]) -> MagicMock:
     WARN-QUERY-RETURNED-ZERO-ROWS into every test's text output.
     """
     executor = MagicMock(spec=Executor)
+    executor.render_with_range_filters.return_value = None
     executor.execute_chart.return_value = data
     executor.execute_query.return_value = data
     executor.cache_hit_ats = []
+    executor.rendered_at = PINNED_RENDER_TIME
     return executor
 
 
@@ -147,7 +150,7 @@ class TestTextFormat:
 
         result = render(board, executor, format="text").output
 
-        assert "revenue: 100–1.2\u00a0K" in result
+        assert "revenue: 100–1.2K" in result
 
     def test_numeric_x_shows_range(self, make_chart):
         """A numeric x column shows its min-max range, like y does."""
@@ -419,7 +422,7 @@ class TestTextFormat:
             "bar",
             x="month",
             y="revenue",
-            style={"number_format": "currency_whole"},
+            style={"axis_y": {"labels": {"format": "currency_whole"}}},
         )
         board = _make_board([chart])
         executor = _make_executor(data)
@@ -444,7 +447,7 @@ class TestTextFormat:
 
         result = render(board, executor, format="text").output
 
-        assert "revenue: 80\u00a0K–120\u00a0K" in result
+        assert "revenue: 80K–120K" in result
 
     def test_cartesian_numeric_range_line_chart_matches_bar_chart(self, make_chart):
         """The range formatter has no axis-ladder awareness, so a line
@@ -455,7 +458,10 @@ class TestTextFormat:
             {"month": "Feb", "revenue": 120},
         ]
         chart = make_chart(
-            "line", x="month", y="revenue", style={"number_format": "currency"}
+            "line",
+            x="month",
+            y="revenue",
+            style={"axis_y": {"labels": {"format": "currency"}}},
         )
         board = _make_board([chart])
         executor = _make_executor(data)
@@ -491,7 +497,10 @@ class TestTextFormat:
             {"month": "Feb", "revenue": 20},
         ]
         chart = make_chart(
-            "bar", x="month", y="revenue", style={"number_format": "currency"}
+            "bar",
+            x="month",
+            y="revenue",
+            style={"axis_y": {"labels": {"format": "currency"}}},
         )
         board = _make_board([chart])
         executor = _make_executor(data)
@@ -592,8 +601,8 @@ class TestTextFormat:
     def test_table_shows_row_preview(self, make_chart):
         """A table chart shows its first few rows as a compact markdown table."""
         data = [
-            {"account": "Acme", "revenue": 100000.0},
-            {"account": "Globex", "revenue": 250000.0},
+            {"account": "Acme", "total": 100000.0},
+            {"account": "Globex", "total": 250000.0},
         ]
         chart = make_chart("table")
         board = _make_board([chart])
@@ -602,8 +611,35 @@ class TestTextFormat:
         result = render(board, executor, format="text").output
 
         assert "Acme" in result
-        assert "100000" in result
+        assert "100K" in result
         assert "Globex" in result
+
+    def test_text_render_prints_table_cells_as_painted(self, make_chart):
+        """Row-preview cells go through the column's format, so a missing or
+        wrong format is visible in the text render."""
+        data = [
+            {"region": "EMEA", "revenue": 1200000.5, "ordered_on": "2026-01-01"},
+            {"region": "APAC", "revenue": 3400.0, "ordered_on": "2026-02-01"},
+        ]
+        chart = make_chart(
+            "table",
+            style={
+                "columns": {
+                    "revenue": {"format": "$,.0f"},
+                    "ordered_on": {"format": "%b %Y"},
+                }
+            },
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "$1,200,001" in result
+        assert "$3,400" in result
+        assert "Jan 2026" in result
+        assert "1200000.5" not in result
+        assert "2026-01-01" not in result
 
     def test_table_row_preview_caps_and_notes_truncation(self, make_chart):
         """A table wider than the preview cap shows a truncation note, not silence."""
@@ -617,6 +653,54 @@ class TestTextFormat:
         assert "Acct0" in result
         assert "Acct9" not in result
         assert "showing" in result.lower()
+
+    def test_paginated_table_past_the_static_cap_states_counts_without_warning(
+        self, make_chart
+    ):
+        """A table with more pages than a static export carries says so on its
+        own line, with the row, page-size and page counts; the author can do
+        nothing about the cap, so no warning is raised for it."""
+        data = [{"account": f"Acct{i}", "total": i} for i in range(1200)]
+        chart = make_chart(
+            "table", style={"pagination": {"enabled": True, "page_rows": 5}}
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        rendered = render(board, executor, format="text")
+
+        assert (
+            "- 1,200 rows, 5 a page, 240 pages; "
+            "the static file carries the first 20 pages"
+        ) in rendered.output
+        assert "STATIC-PAGINATION" not in rendered.output
+        assert [w.code for w in rendered.warnings] == []
+
+    def test_paginated_table_within_the_static_cap_states_it_carries_all(
+        self, make_chart
+    ):
+        data = [{"account": f"Acct{i}", "revenue": i} for i in range(60)]
+        chart = make_chart(
+            "table", style={"pagination": {"enabled": True, "page_rows": 5}}
+        )
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert (
+            "- 60 rows, 5 a page, 12 pages; the static file carries all 12 pages"
+        ) in result
+
+    def test_unpaginated_table_has_no_pagination_line(self, make_chart):
+        data = [{"account": f"Acct{i}", "revenue": i} for i in range(4)]
+        chart = make_chart("table")
+        board = _make_board([chart])
+        executor = _make_executor(data)
+
+        result = render(board, executor, format="text").output
+
+        assert "a page" not in result
 
     def test_table_hidden_column_omitted_from_summary(self, make_chart):
         """A style.columns visible: false column never reaches the text summary."""
@@ -635,6 +719,32 @@ class TestTextFormat:
 
 class TestTextFormatFormattingCorrectness:
     """Regression coverage for text-render formatting correctness and error isolation."""
+
+    def test_compact_formats_are_analytic_on_a_kpi(self, make_chart):
+        """The KPI slot defaults to the narrative register ("140 mn"); `compact`
+        and `currency_compact` carry the analytic one into every slot."""
+        kpi = make_chart(
+            "kpi",
+            value="amount",
+            x=None,
+            y=None,
+            style={"value": {"format": "compact"}},
+        )
+        money = make_chart(
+            "kpi",
+            value="amount",
+            x=None,
+            y=None,
+            style={"value": {"format": "currency_compact"}},
+        )
+        board = _make_board([kpi, money])
+        executor = _make_executor([{"amount": 140_093_000}])
+
+        result = render(board, executor, format="text").output
+
+        assert "- value: 140M" in result
+        assert "- value: $140M" in result
+        assert "mn" not in result
 
     def test_kpi_sub_unit_currency_not_multiplied(self, make_chart):
         """A sub-$1 KPI must not take the SI spec meant for $500m-scale values."""
@@ -661,7 +771,10 @@ class TestTextFormatFormattingCorrectness:
             {"month": "Feb", "revenue": 0.9},
         ]
         chart = make_chart(
-            "bar", x="month", y="revenue", style={"number_format": "currency"}
+            "bar",
+            x="month",
+            y="revenue",
+            style={"axis_y": {"labels": {"format": "currency"}}},
         )
         board = _make_board([chart])
         executor = _make_executor(data)
@@ -691,7 +804,7 @@ class TestTextFormatFormattingCorrectness:
         assert "[chart error:" not in result
 
     def test_cartesian_numeric_range_uses_axis_y_labels_format(self, make_chart):
-        """style.axis_y.labels.format also drives the range format, not just number_format."""
+        """style.axis_y.labels.format drives the text range format."""
         data = [
             {"month": "Jan", "revenue": 80},
             {"month": "Feb", "revenue": 120},
@@ -709,51 +822,6 @@ class TestTextFormatFormattingCorrectness:
 
         assert "$80" in result
         assert "$120" in result
-
-    def test_cartesian_axis_y_labels_format_wins_over_number_format(self) -> None:
-        """style.axis_y.labels.format outranks style.number_format for the text range.
-
-        Mirrors the axis cascade's own precedence (axis_cascade.py's 13-layer
-        order: chart-level number_format is Layer 10, chart-local
-        axis_y.labels.format is Layer 13 -- the later layer wins). Authors
-        both to different currencies on the same chart so only the correct
-        winner's formatting can satisfy the assertion.
-        """
-        from dbt_charts.core.compile import compile as compile_board
-
-        board_yaml = """\
-title: Probe
-charts:
-  c:
-    query: q
-    type: bar
-    x: month
-    y: revenue
-    style:
-      number_format: currency_full
-      axis_y:
-        labels:
-          format: currency_whole
-queries:
-  q:
-    sql: SELECT * FROM t
-    source: test_source
-rows:
-  - c
-"""
-        result = compile_board(board_yaml)
-        assert result.success and result.board is not None, result.errors
-
-        data = [
-            {"month": "Jan", "revenue": 80},
-            {"month": "Feb", "revenue": 120},
-        ]
-        executor = _make_compiled_executor(result, data)
-
-        output = render(result.board, executor, format="text").output
-
-        assert "revenue: $80–$120" in output
-        assert "$80.00" not in output
 
     def test_board_level_axis_quantitative_format_reaches_text_range(self) -> None:
         """A board-level style.charts.axis_quantitative.labels.format applies
@@ -856,7 +924,9 @@ charts:
     x: month
     y: revenue
     style:
-      number_format: eur
+      axis_y:
+        labels:
+          format: eur
 queries:
   q:
     sql: SELECT * FROM t
@@ -967,7 +1037,10 @@ rows:
             {"month": "Feb", "ratio": 31.2},
         ]
         chart = make_chart(
-            "bar", x="month", y="ratio", style={"number_format": "percent"}
+            "bar",
+            x="month",
+            y="ratio",
+            style={"axis_y": {"labels": {"format": "percent"}}},
         )
         board = _make_board([chart])
         executor = _make_executor(data)
@@ -1006,7 +1079,10 @@ rows:
             {"month": "Feb", "ratio": 31.2},
         ]
         chart = make_chart(
-            "bar", x="month", y="ratio", style={"number_format": "percent"}
+            "bar",
+            x="month",
+            y="ratio",
+            style={"axis_y": {"labels": {"format": "percent"}}},
         )
         board = _make_board([chart])
         executor = _make_executor(data)
@@ -1021,7 +1097,7 @@ rows:
         assert "format_aliases" not in item
 
     def test_kpi_headline_glyph_appears_in_text(self, make_chart):
-        """An authored headline glyph shows in text, matching chart/kpi.py's draw order."""
+        """An authored headline glyph shows in text, matching the KPI card's draw order."""
         data = [{"revenue": 210.0}]
         chart = make_chart("kpi", value="revenue", x=None, y=None, glyph="▲")
         board = _make_board([chart])
@@ -1054,7 +1130,7 @@ rows:
 
     def test_kpi_zero_rows_raises_chart_error(self, make_chart):
         """A KPI with no data errors that chart in text, matching the SVG
-        renderer's own guard (chart/kpi.py raises for the same case) --
+        renderer's own guard (the engine's KPI card refuses the same case) --
         not a silently empty KPI section.
         """
         data: list[dict] = []
@@ -1201,6 +1277,26 @@ class TestTextDataFormat:
         assert "showing" not in result.split("## Data", 1)[1]
         assert "m59" in result
 
+    def test_text_data_keeps_null_and_newline_cells_in_their_row(self, make_chart):
+        data = [{"month": "Jan", "revenue": None}, {"month": "a\nb", "revenue": 1}]
+        chart = make_chart("bar", x="month", y="revenue")
+        executor = _make_executor(data)
+
+        result = render(_make_board([chart]), executor, format="text-data").output
+        data_section = result.split("## Data", 1)[1]
+
+        assert "| Jan | null |" in data_section
+        assert "| a\\nb | 1 |" in data_section
+
+    def test_text_data_renders_a_ragged_row_with_a_null_cell(self, make_chart):
+        data = [{"month": "Jan", "revenue": 1}, {"month": "Feb"}]
+        chart = make_chart("bar", x="month", y="revenue")
+        executor = _make_executor(data)
+
+        result = render(_make_board([chart]), executor, format="text-data").output
+
+        assert "| Feb | null |" in result.split("## Data", 1)[1]
+
     def test_text_data_trims_float_noise_past_double_precision(self, make_chart):
         """Raw-precision noise (13356.399999999998, from float arithmetic)
         is trimmed, but real digits are not rounded away."""
@@ -1265,6 +1361,7 @@ def test_kpi_with_no_rows_stamps_no_data_code(make_chart):
         {},
         _default_chart_style_context(),
         collected,
+        filter_variables=frozenset(),
         include_text_format=True,
     )
     assert [d.code for d in collected] == [ERR_KPI_NO_DATA.code]

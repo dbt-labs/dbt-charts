@@ -53,3 +53,8 @@ def test_native_predefined_name_derives_nothing():
 
 def test_empty_format_derives_nothing():
     assert tick_min_step_for_format("") is None
+
+
+def test_duration_ticks_on_whole_seconds() -> None:
+    # A half-second tick would print as "1s" twice.
+    assert tick_min_step_for_format("duration") == 1.0

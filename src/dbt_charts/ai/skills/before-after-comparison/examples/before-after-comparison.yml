@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Q4 Budget vs Actual
 notes: Before-after comparison pattern — two series (current and baseline) on the same bar chart
 

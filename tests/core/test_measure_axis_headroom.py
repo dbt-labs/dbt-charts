@@ -176,6 +176,7 @@ def test_layer_query_widens_shared_y_domain() -> None:
         400,
         executor,
         {},
+        filter_variables=frozenset(),
     )
 
     assert resolved.style.axis_y.domain_max == pytest.approx(250.0 * (1 + _HEADROOM))
@@ -193,6 +194,7 @@ def test_right_axis_layer_query_does_not_widen_primary_y_domain() -> None:
         400,
         executor,
         {},
+        filter_variables=frozenset(),
     )
 
     assert resolved.style.axis_y.domain_max == pytest.approx(70.5 * (1 + _HEADROOM))
@@ -212,15 +214,14 @@ def test_supplied_datasets_must_cover_shared_layer_queries() -> None:
         )
 
 
-def test_bar_headroom_zero_disables_domain_max() -> None:
-    """headroom=0 restores the pre-headroom behavior exactly: no domainMax at
-    all (VL auto-fits, flush to the data max) — not a domainMax pinned to the
-    data max, which would be a new bound the author never asked for."""
+def test_bar_headroom_zero_pins_domain_max_at_the_data_max() -> None:
+    """headroom=0 pins domainMax exactly at the data max (no breathing room), so
+    the rungs Vega draws are known at resolve."""
     style = BarChartStylePatch(
         axis_y=AxisYStylePatch(scale=BaseScaleStylePatch(headroom=0.0))
     )
     scale = _y_scale("bar", _bar_data(_ROUND_MAX), style)
-    assert "domainMax" not in scale, scale
+    assert scale["domainMax"] == _ROUND_MAX, scale
 
 
 def test_bar_all_negative_data_emits_no_domain_max() -> None:

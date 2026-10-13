@@ -83,7 +83,6 @@ if TYPE_CHECKING:
     )
     from dbt_charts.core.compile.models.style.theme import TextStyle
     from dbt_charts.core.render.variables_layout import VariablesLayout
-    from mdsvg.fonts import FontFace
 
 from dbt_charts.core.compile.config import (
     get_chart_rendering,
@@ -235,7 +234,7 @@ def get_chart_content_height(
         # Static upper bound using max_bars. Render-first data-aware sizing
         # in layout_sizing.py overrides this with the actual natural height.
         # Includes title_height when chart.title is set to match the renderer's
-        # body + title addition (spark_bar.py:265-269).
+        # body + title addition (the engine's spark_bar).
         sb = resolved_style.chart_defaults.spark_bar
         body = sb.max_bars * (sb.bar.height + sb.bar.padding) + sb.bar.padding
         # SparkBarChart has title via _SharedChartFields; isinstance narrows for pyright.
@@ -339,33 +338,6 @@ def details_chrome_height(
     if not (item.details_variable and item.details_summary):
         return 0.0
     return float(resolved_style.layout.details.summary_height) + gap + card_gap
-
-
-# One sentence of ordinary English prose, used to calibrate character width.
-# OS/2 xAvgCharWidth averages over a font's whole glyph repertoire rather than
-# over letter frequency, so it runs well wide of real text -- enough to turn a
-# 66-character target into low eighties delivered.
-_PROSE_SAMPLE = (
-    "North America's primary issue is insufficient MQL supply, not a regional "
-    "Stage 0 target miss or a broad loss of selling capacity."
-)
-
-
-def _prose_char_ratio(face: FontFace) -> float:
-    """Mean character width of real prose, as a fraction of font size.
-
-    Measured from the same face the renderer paints with, so the width a column
-    is sized to and the width its lines are broken at agree.
-    """
-    from dbt_charts.core.font_measure import measurer_for_face
-
-    measurer = measurer_for_face(face)
-    return measurer.measure(_PROSE_SAMPLE, 1.0) / len(_PROSE_SAMPLE)
-
-
-def max_chars_to_px(face: FontFace, font_size: float, max_chars: int) -> float:
-    """Pixel width of a ``max_chars``-character readable measure for a face."""
-    return _prose_char_ratio(face) * font_size * max_chars
 
 
 def get_markdown_text_height(
@@ -493,6 +465,10 @@ def title_line_box(
 # ============================================================================
 # VARIABLE CONTROLS HEIGHT
 # ============================================================================
+
+# Height of a paginated table's control bar: the slack a table slot may grow by
+# before pagination chrome is worth reserving (the engine draws the bar itself).
+TABLE_PAGINATION_CONTROL_HEIGHT = 28
 
 # Minimum title column width when sharing a row with variables so titles never
 # collapse to zero when the variable strip is very wide.
@@ -973,9 +949,7 @@ def _table_row_slot_height(authored: float, content: float) -> float:
     larger shortfall keeps the ceiling — pagination is the honest answer once
     the overflow is real, not a rounding artifact of the authored value.
     """
-    from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
-
-    if content > authored and content - authored <= _PAGINATION_CONTROL_HEIGHT:
+    if content > authored and content - authored <= TABLE_PAGINATION_CONTROL_HEIGHT:
         return content
     return _clamp_to_authored_ceiling(authored, content)
 

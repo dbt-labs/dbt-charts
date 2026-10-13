@@ -12,6 +12,7 @@ execute — see ``execute/category_colors.py``.
 
 from __future__ import annotations
 
+import itertools
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
@@ -198,9 +199,10 @@ def plan_category_colors(
         unseen = {v: c for v, c in pinned.items() if v not in seatable}
         pinned = seatable
         domain = _domain_for(pinned, discovered[field])
-        if len(domain) > len(palette):
+        seats = _seats_needed(pinned, domain, palette)
+        if seats > len(palette):
             # Binding is an enhancement the engine volunteers; when the
-            # palette cannot seat every value it declines — the same way the
+            # palette cannot seat every value needing a swatch it declines — the same way the
             # two-chart threshold declines — rather than turning a board that
             # rendered fine before this feature existed into an error. Colors
             # staying distinct matters more than binding this one field.
@@ -211,7 +213,7 @@ def plan_category_colors(
             raise ChartDataError.from_code(
                 ERR_CATEGORY_COLOR_PALETTE_EXHAUSTED,
                 field=field,
-                value_count=len(domain),
+                value_count=seats,
                 swatch_count=len(palette),
             )
         scales[field] = _build_scale(field, pinned, domain, palette, unseen)
@@ -251,6 +253,19 @@ def _domain_for(pinned: Mapping[str, str], discovered: Sequence[str]) -> list[st
     return list(pinned) + [v for v in discovered if v not in pinned]
 
 
+def _seats_needed(
+    pinned: Mapping[str, str], domain: Sequence[str], palette: Sequence[str]
+) -> int:
+    """Palette swatches the field consumes: palette-member pins plus unpinned values.
+
+    A pin naming a color outside the palette paints its own literal, so it
+    needs no swatch.
+    """
+    in_palette = {color.casefold() for color in palette}
+    claimed = {c.casefold() for c in pinned.values() if c.casefold() in in_palette}
+    return len(claimed) + sum(1 for v in domain if v not in pinned)
+
+
 def _build_scale(
     field: str,
     pinned: Mapping[str, str],
@@ -263,12 +278,14 @@ def _build_scale(
     A pin naming a color the palette contains resolves to *that slot*, so a
     nested board repaints it from its own palette instead of being overpainted.
     A pin naming any other color is a literal the author chose: it lands in
-    ``overrides`` and still burns a slot, so nothing else claims the companion
-    ink that sits alongside it.
+    ``overrides`` and burns a free slot while one can be spared, so nothing
+    else claims the companion ink that sits alongside it. Once the free slots
+    are only enough for the unpinned values, an override shares a slot (and so
+    a companion ink) with another value.
     """
     # Two pins naming the same color (case-insensitively) would seat two
     # categories on one swatch — the one thing CategoryColorScale guarantees
-    # never happens, whether that color is a palette member (both claim the
+    # never happens to a fill, whether that color is a palette member (both claim the
     # same slot below) or an arbitrary literal (both would render the
     # identical override fill regardless of slot). An authored field is
     # explicit intent, so this raises rather than silently letting the
@@ -295,7 +312,9 @@ def _build_scale(
         value: slot_of_color.get(color.casefold()) for value, color in pinned.items()
     }
     claimed = {slot for slot in pinned_slots.values() if slot is not None}
-    free = (i for i in range(len(palette)) if i not in claimed)
+    free = iter([i for i in range(len(palette)) if i not in claimed])
+    spare = len(palette) - len(claimed) - sum(1 for v in domain if v not in pinned)
+    shared = itertools.cycle(range(len(palette)))
 
     slots: dict[str, int] = {}
     overrides: dict[str, str] = {}
@@ -304,7 +323,13 @@ def _build_scale(
         if slot is None:
             if value in pinned:
                 overrides[value] = pinned[value]
-            slot = next(free)
+                if spare > 0:
+                    spare -= 1
+                    slot = next(free)
+                else:
+                    slot = next(shared)
+            else:
+                slot = next(free)
         slots[value] = slot
     return CategoryColorScale(
         field=field, slots=slots, overrides=overrides, unseen_pins=unseen_pins

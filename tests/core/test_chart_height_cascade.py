@@ -14,15 +14,28 @@ import dataclasses
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.models.chart.normalized import BarChart, Chart
+from dbt_charts.core.compile.models.chart.normalized import (
+    AreaChart,
+    BarChart,
+    Chart,
+    LineChart,
+    ScatterChart,
+)
 from dbt_charts.core.render.sizing import get_chart_content_height
 
 from ._board_utils import _default_resolved_style
 
+_FAMILIES = {
+    "bar": BarChart,
+    "line": LineChart,
+    "area": AreaChart,
+    "scatter": ScatterChart,
+}
 
-def _make_bar_chart(**kwargs: object) -> Chart:
+
+def _make_chart(chart_type: str = "bar", **kwargs: object) -> Chart:
     """Minimal compiled Chart for sizing tests."""
-    return BarChart(id="c", type="bar", **kwargs)  # type: ignore[arg-type]
+    return _FAMILIES[chart_type](id="c", type=chart_type, **kwargs)  # type: ignore[arg-type]
 
 
 class TestChartRootHeightCascade:
@@ -30,7 +43,7 @@ class TestChartRootHeightCascade:
 
     def test_chart_height_wins_over_aspect_ratio_and_theme(self) -> None:
         """chart.height: 400 returns 400 regardless of width."""
-        chart = _make_bar_chart(height=400)
+        chart = _make_chart(height=400)
         h = get_chart_content_height(
             chart, width=1200.0, resolved_style=_default_resolved_style()
         )
@@ -38,7 +51,7 @@ class TestChartRootHeightCascade:
 
     def test_chart_height_wins_when_both_set(self) -> None:
         """When both chart.height and chart.aspect_ratio set, height wins."""
-        chart = _make_bar_chart(height=400, aspect_ratio=2.0)
+        chart = _make_chart(height=400, aspect_ratio=2.0)
         h = get_chart_content_height(
             chart, width=1200.0, resolved_style=_default_resolved_style()
         )
@@ -46,7 +59,7 @@ class TestChartRootHeightCascade:
 
     def test_chart_aspect_ratio_used_when_no_height(self) -> None:
         """chart.aspect_ratio: 2.0 with width=600 returns 300.0 (below max_height cap)."""
-        chart = _make_bar_chart(aspect_ratio=2.0)
+        chart = _make_chart(aspect_ratio=2.0)
         h = get_chart_content_height(
             chart, width=600.0, resolved_style=_default_resolved_style()
         )
@@ -56,7 +69,7 @@ class TestChartRootHeightCascade:
         """chart-root aspect_ratio height is clamped to theme max_height."""
 
         max_h = float(get_theme_style().charts.max_height)
-        chart = _make_bar_chart(aspect_ratio=2.0)
+        chart = _make_chart(aspect_ratio=2.0)
         h = get_chart_content_height(
             chart, width=1200.0, resolved_style=_default_resolved_style()
         )
@@ -64,7 +77,7 @@ class TestChartRootHeightCascade:
 
     def test_chart_aspect_ratio_with_different_width(self) -> None:
         """chart.aspect_ratio=3.0, width=900 → height=300."""
-        chart = _make_bar_chart(aspect_ratio=3.0)
+        chart = _make_chart(aspect_ratio=3.0)
         h = get_chart_content_height(
             chart, width=900.0, resolved_style=_default_resolved_style()
         )
@@ -73,7 +86,7 @@ class TestChartRootHeightCascade:
     def test_explicit_chart_height_bypasses_min_clamp(self) -> None:
         """chart.height is returned as-is; it bypasses theme min/max clamping."""
         # chart.height is an explicit author override — it wins unconditionally.
-        chart = _make_bar_chart(height=10)
+        chart = _make_chart(height=10)
         h = get_chart_content_height(
             chart, width=1200.0, resolved_style=_default_resolved_style()
         )
@@ -88,7 +101,7 @@ class TestChartRootHeightCascade:
         produce two different heights — proof the cascade (not a static default)
         is driving the result.
         """
-        chart = _make_bar_chart()
+        chart = _make_chart()
         h_narrow = get_chart_content_height(
             chart, width=400.0, resolved_style=_default_resolved_style()
         )
@@ -121,7 +134,7 @@ class TestChartHeightClampsCascadeFromResolvedStyle:
         # With width=1100 and default aspect_ratio ~2.0, unclamped height ≈ 550px.
         # Board max_height=100 should cap it.
         rs = self._resolved_style_with_clamps(min_height=60.0, max_height=100.0)
-        chart = _make_bar_chart(aspect_ratio=2.0)
+        chart = _make_chart(aspect_ratio=2.0)
         h = get_chart_content_height(chart, width=1100.0, resolved_style=rs)  # type: ignore[arg-type]
         assert h == pytest.approx(100.0)
 
@@ -129,7 +142,7 @@ class TestChartHeightClampsCascadeFromResolvedStyle:
         """Board-level style.charts.min_height: 200 raises floor when aspect height is tiny."""
         # width=100, aspect_ratio=2.0 → unclamped h = 50, below min_height=200.
         rs = self._resolved_style_with_clamps(min_height=200.0, max_height=800.0)
-        chart = _make_bar_chart(aspect_ratio=2.0)
+        chart = _make_chart(aspect_ratio=2.0)
         h = get_chart_content_height(chart, width=100.0, resolved_style=rs)  # type: ignore[arg-type]
         assert h == pytest.approx(200.0)
 
@@ -137,7 +150,7 @@ class TestChartHeightClampsCascadeFromResolvedStyle:
         """chart-root max_height: 200 overrides board max_height: 100 for this chart."""
         # Board says max=100, but chart says max=200; chart wins.
         rs = self._resolved_style_with_clamps(min_height=60.0, max_height=100.0)
-        chart = _make_bar_chart(aspect_ratio=2.0, max_height=200.0)
+        chart = _make_chart(aspect_ratio=2.0, max_height=200.0)
         h = get_chart_content_height(chart, width=1100.0, resolved_style=rs)  # type: ignore[arg-type]
         # Unclamped ≈ 550, capped at chart-root max_height=200.
         assert h == pytest.approx(200.0)
@@ -146,14 +159,14 @@ class TestChartHeightClampsCascadeFromResolvedStyle:
         """chart-root min_height: 300 overrides board min_height: 60 for this chart."""
         # Board says min=60, chart says min=300; with width=100, aspect h=50 < 300.
         rs = self._resolved_style_with_clamps(min_height=60.0, max_height=800.0)
-        chart = _make_bar_chart(aspect_ratio=2.0, min_height=300.0)
+        chart = _make_chart(aspect_ratio=2.0, min_height=300.0)
         h = get_chart_content_height(chart, width=100.0, resolved_style=rs)  # type: ignore[arg-type]
         assert h == pytest.approx(300.0)
 
     def test_explicit_height_still_bypasses_chart_root_min_max(self) -> None:
         """Explicit chart.height bypasses min/max clamping even when chart-root clamps set."""
         rs = self._resolved_style_with_clamps(min_height=200.0, max_height=300.0)
-        chart = _make_bar_chart(height=50, min_height=200.0, max_height=300.0)
+        chart = _make_chart(height=50, min_height=200.0, max_height=300.0)
         h = get_chart_content_height(chart, width=1200.0, resolved_style=rs)  # type: ignore[arg-type]
         # chart.height wins unconditionally — no clamping.
         assert h == pytest.approx(50.0)
@@ -178,8 +191,47 @@ class TestChartHeightAspectRatioCascadeFromResolvedStyle:
             base, chart_defaults=dataclasses.replace(base.chart_defaults, bar=new_bar)
         )
 
-        chart = _make_bar_chart()
+        chart = _make_chart()
         width = 900.0
         h = get_chart_content_height(chart, width=width, resolved_style=rs)  # type: ignore[arg-type]
         assert h == pytest.approx(width / distinctive_aspect)
         assert h != get_chart_content_height(chart, width=width, resolved_style=base)
+
+
+class TestFullWidthMatchesHalfWidth:
+    """The max_height cap is the half-width height, so wide and split read alike."""
+
+    @staticmethod
+    def _board_content_width() -> float:
+        frame = get_theme_style().frame
+        return float(frame.max_width) - 2 * float(frame.margin)
+
+    @pytest.mark.parametrize("chart_type", sorted(_FAMILIES))
+    def test_full_width_height_equals_half_width_height(self, chart_type: str) -> None:
+        """Cartesian families only.
+
+        pie/geoshape/point_map carry their own aspect ratio and are clamped at
+        both widths on a default frame, so they satisfy this by accident rather
+        than by the rule.
+        """
+        content_width = self._board_content_width()
+        chart = _make_chart(chart_type)
+        full = get_chart_content_height(
+            chart, width=content_width, resolved_style=_default_resolved_style()
+        )
+        half = get_chart_content_height(
+            chart, width=content_width / 2, resolved_style=_default_resolved_style()
+        )
+        assert full == pytest.approx(half)
+
+    def test_half_width_height_is_not_clamped(self) -> None:
+        """The equality is the aspect ratio meeting the cap, not both hitting it.
+
+        If max_height dropped below the half-width aspect height the two would
+        still match — but every chart on the board would be capped, which is a
+        different (and wrong) rule.
+        """
+        content_width = self._board_content_width()
+        style = _default_resolved_style()
+        aspect_height = (content_width / 2) / float(style.chart_defaults.aspect_ratio)
+        assert float(style.chart_defaults.max_height) == pytest.approx(aspect_height)

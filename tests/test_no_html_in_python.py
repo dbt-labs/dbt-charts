@@ -67,11 +67,6 @@ _ALLOWLIST: dict[Path, str] = {
     (_RENDER / "script_embedding.py").resolve(): (
         "SVG script embedding (<script> in SVG context)"
     ),
-    # WHY: the table SVG renderer injects a <style> block inside the <svg>
-    # element for link-hover CSS — SVG styling, not page-chrome HTML.
-    (_RENDER / "chart" / "table.py").resolve(): (
-        "SVG <style> element inside <svg> (link hover CSS)"
-    ),
     # WHY: font_selection reads finished markup to decide which boards an export
     # carries, so its <style> pattern matches markup rather than authoring any —
     # the CSS-rule scan is scoped to style blocks because an unscoped one walked
@@ -82,7 +77,7 @@ _ALLOWLIST: dict[Path, str] = {
     # WHY: _dedupe_repeated_style_rules matches an SVG <style> block mdsvg already
     # emitted and re-wraps a subset of its own lines in the same literal tags — it
     # never composes new markup, only drops already-rendered CSS lines. Same SVG
-    # <style> category as table.py/font_selection.py above, applied post-render.
+    # <style> category as font_selection.py above, applied post-render.
     (_RENDER / "boards.py").resolve(): (
         "SVG <style> element dedup (reads + re-wraps already-rendered CSS, not authored HTML)"
     ),

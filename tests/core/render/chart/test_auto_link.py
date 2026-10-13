@@ -723,7 +723,7 @@ charts:
         that name); a naive identity fallback would then assume the output's
         `id` column IS the base `id`, when it actually holds `ticket_number`
         values — a live drill to the wrong ticket. Fixed by tracking whether
-        each layer's projection is a bare `SELECT *` (`_is_star_projection`)
+        each layer's projection is a bare `SELECT *`
         so a column absent from the traced alias map is treated as *proven
         absent from the output*, not identity.
         """
@@ -2276,64 +2276,6 @@ class TestResolveAutoLinkStringKeys:
         )
 
 
-class TestResolveCellLinkUrlencode:
-    """resolve_cell_link percent-encodes {{ col | urlencode }} substitutions."""
-
-    def test_urlencode_filter_encodes_special_chars(self) -> None:
-        """{{ id | urlencode }} — special chars (@ / space &) are percent-encoded."""
-        from dbt_charts.core.render.chart.table_support import resolve_cell_link
-
-        link = "/data/dw/public/users/detail/?id={{ id | urlencode }}"
-        row = {"id": "user@example.com"}
-        result = resolve_cell_link(link, row, ["id"])
-        assert result == "/data/dw/public/users/detail/?id=user%40example.com"
-
-    def test_urlencode_filter_encodes_slash(self) -> None:
-        """Slash in a string id must be encoded."""
-        from dbt_charts.core.render.chart.table_support import resolve_cell_link
-
-        link = "/data/dw/public/items/detail/?id={{ id | urlencode }}"
-        row = {"id": "a/b/c"}
-        result = resolve_cell_link(link, row, ["id"])
-        assert result == "/data/dw/public/items/detail/?id=a%2Fb%2Fc"
-
-    def test_urlencode_filter_plain_string_no_special_chars(self) -> None:
-        """UUID-style value without special chars passes through cleanly."""
-        from dbt_charts.core.render.chart.table_support import resolve_cell_link
-
-        link = "/data/dw/public/users/detail/?id={{ id | urlencode }}"
-        row = {"id": "abc123-def456"}
-        result = resolve_cell_link(link, row, ["id"])
-        assert result == "/data/dw/public/users/detail/?id=abc123-def456"
-
-    def test_no_urlencode_filter_unchanged(self) -> None:
-        """{{ id }} without filter — still substitutes raw value (no change)."""
-        from dbt_charts.core.render.chart.table_support import resolve_cell_link
-
-        link = "/data/dw/analytics/orders/detail/?id={{ id }}"
-        row = {"id": 42}
-        result = resolve_cell_link(link, row, ["id"])
-        assert result == "/data/dw/analytics/orders/detail/?id=42"
-
-    def test_urlencode_filter_null_returns_none(self) -> None:
-        """NULL value with | urlencode — whole link returns None (same as without filter)."""
-        from dbt_charts.core.render.chart.table_support import resolve_cell_link
-
-        link = "/data/dw/public/users/detail/?id={{ id | urlencode }}"
-        row = {"id": None}
-        result = resolve_cell_link(link, row, ["id"])
-        assert result is None
-
-    def test_author_link_template_unaffected(self) -> None:
-        """Author-written link: templates without | urlencode are not double-encoded."""
-        from dbt_charts.core.render.chart.table_support import resolve_cell_link
-
-        link = "/custom/{{ slug }}/detail/"
-        row = {"slug": "hello-world"}
-        result = resolve_cell_link(link, row, ["slug"])
-        assert result == "/custom/hello-world/detail/"
-
-
 class TestAutoLinkStringKeyEndToEnd:
     """Integration: full render with a VARCHAR id emits percent-encoded cell hrefs."""
 
@@ -2397,26 +2339,6 @@ charts:
             "Expected percent-encoded href with user%40example.com. "
             f"First 3000 chars: {html[:3000]}"
         )
-
-
-class TestResolveCellLinkUnknownFilter:
-    """resolve_cell_link raises a coded ChartDataError for unrecognized filters."""
-
-    def test_unknown_filter_raises(self) -> None:
-        import pytest
-
-        from dbt_charts.core.diagnostics.chart_data import ChartDataError
-        from dbt_charts.core.diagnostics.codes_render import (
-            ERR_TABLE_LINK_FILTER_UNKNOWN,
-        )
-        from dbt_charts.core.render.chart.table_support import resolve_cell_link
-
-        link = "/data/dw/public/users/detail/?id={{ id | xss }}"
-        row = {"id": "abc"}
-        with pytest.raises(ChartDataError) as exc_info:
-            resolve_cell_link(link, row, ["id"])
-        assert exc_info.value.code is ERR_TABLE_LINK_FILTER_UNKNOWN
-        assert exc_info.value.fields == {"filter_name": "xss"}
 
 
 # ---------------------------------------------------------------------------
@@ -2563,51 +2485,6 @@ class TestResolveFkColumnLinks:
         )
         # Template value is {{ owner_id | urlencode }} (the FK cell)
         assert "{{ owner_id | urlencode }}" in links["owner_id"]
-
-
-class TestUrlencodeFilter:
-    """resolve_cell_link handles {{ col | urlencode }} filter syntax."""
-
-    def test_urlencode_filter_encodes_spaces(self) -> None:
-        from dbt_charts.core.render.chart.table_support import resolve_cell_link
-
-        link = "/data/db/crm/owner/detail/?id={{ owner_id | urlencode }}"
-        row = {"owner_id": "John Doe"}
-        result = resolve_cell_link(link, row, ["owner_id"])
-        assert result == "/data/db/crm/owner/detail/?id=John+Doe"
-
-    def test_urlencode_filter_encodes_special_chars(self) -> None:
-        from dbt_charts.core.render.chart.table_support import resolve_cell_link
-
-        link = "/data/db/crm/owner/detail/?id={{ owner_id | urlencode }}"
-        row = {"owner_id": "user@example.com"}
-        result = resolve_cell_link(link, row, ["owner_id"])
-        assert result == "/data/db/crm/owner/detail/?id=user%40example.com"
-
-    def test_urlencode_filter_with_numeric_value(self) -> None:
-        from dbt_charts.core.render.chart.table_support import resolve_cell_link
-
-        link = "/data/db/crm/owner/detail/?id={{ owner_id | urlencode }}"
-        row = {"owner_id": 42}
-        result = resolve_cell_link(link, row, ["owner_id"])
-        assert result == "/data/db/crm/owner/detail/?id=42"
-
-    def test_plain_template_still_works(self) -> None:
-        """Existing {{ col }} form without filter still resolves correctly."""
-        from dbt_charts.core.render.chart.table_support import resolve_cell_link
-
-        link = "/data/dw/main/orders/detail/?id={{ id }}"
-        row = {"id": 99}
-        result = resolve_cell_link(link, row, ["id"])
-        assert result == "/data/dw/main/orders/detail/?id=99"
-
-    def test_urlencode_none_value_returns_none(self) -> None:
-        from dbt_charts.core.render.chart.table_support import resolve_cell_link
-
-        link = "/data/db/crm/owner/detail/?id={{ owner_id | urlencode }}"
-        row = {"owner_id": None}
-        result = resolve_cell_link(link, row, ["owner_id"])
-        assert result is None
 
 
 class TestFkDrillExplicitLinkPrecedence:

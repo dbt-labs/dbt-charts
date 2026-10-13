@@ -114,6 +114,7 @@ def st_board(
     picked = st.session_state.get(frame_key, {}).get("variables", {})
     project_session = ProjectSession.from_project(
         project,
+        allow_mutating_methods=True,
         extra_adapters_factory=(
             (lambda: [SnowparkAdapter(session=session, project=project)])
             if session is not None

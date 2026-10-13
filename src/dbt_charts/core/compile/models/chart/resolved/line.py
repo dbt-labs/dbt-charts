@@ -9,10 +9,10 @@ from pydantic import Field
 from dbt_charts.core.compile.models.chart.resolved._layer import ResolvedLayer
 from dbt_charts.core.compile.models.style.resolved import ResolvedLineStyle
 
-from ._base import _CartesianResolvedChartFields
+from ._base import _DateAxisResolvedChartFields
 
 
-class ResolvedLineChart(_CartesianResolvedChartFields):
+class ResolvedLineChart(_DateAxisResolvedChartFields):
     """Render-ready line chart."""
 
     # Narrows base y from str | list[str] | None to str | None — line never

@@ -31,6 +31,10 @@ from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.format_value import format_value
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
+from dbt_charts.core.compile.models.style.authored import (
+    AxisLabelStylePatch,
+    AxisYStylePatch,
+)
 from dbt_charts.core.compile.models.style.resolved import ResolvedBarLabels
 from dbt_charts.core.compile.models.style.theme.marks import BarLabelsStyle
 from dbt_charts.core.compile.resolve.chart._axes import _bake_cartesian_axes
@@ -62,14 +66,15 @@ def _render_text_via_vega(value: float, format_spec: str) -> str:
 
 def _resolved_axis_y_for_format(format_spec: str) -> object:
     """Bake a real axis_y through the actual compile-resolve cascade with a
-    chart-authored ``format:`` — ``chart.format`` is the highest-priority
-    layer in the axis cascade (``_bake_cartesian_axes``/``style_cascade.py``
-    merges it after the theme's ``axis_quantitative`` default), so it
+    chart-authored ``axis_y.labels.format`` — a chart-local axis layer, so it
     survives to the resolved axis unlike a bare theme-level override."""
     chart_style_context = resolve_chart_style_context(get_theme_style("stark"))
-    chart = BarChart(id="fixture", type="bar", format=format_spec)
+    chart = BarChart(id="fixture", type="bar")
+    overrides = AxisOverrides(
+        y=AxisYStylePatch(labels=AxisLabelStylePatch(format=format_spec))
+    )
     baked = _bake_cartesian_axes(
-        chart_style_context, chart, "bar", "ordinal", "quantitative", AxisOverrides()
+        chart_style_context, chart, "bar", "ordinal", "quantitative", overrides
     )
     return build_resolved_axis(
         baked.y.style,

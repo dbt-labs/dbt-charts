@@ -11,8 +11,10 @@ import json
 from collections.abc import Callable
 from typing import Any, Literal
 
-import dbt_charts.agent_api.describe_query as _describe_query
+from pydantic import ValidationError
+
 from dbt_charts.agent_api import (
+    attribute,
     boards as _boards,
     files as _files,
     query as _query,
@@ -20,14 +22,12 @@ from dbt_charts.agent_api import (
     skills as _skills,
 )
 from dbt_charts.agent_api._paths import resolve_board_or_error
+from dbt_charts.agent_api.argument_errors import format_argument_error
 from dbt_charts.agent_api.query import (
     ExecuteQueryArgs as _ExecuteQueryArgs,
     variables_to_dict as _vars_to_dict,
 )
-from dbt_charts.agent_api.validate import (
-    ValidateBoardArgs as _ValidateBoardArgs,
-    validate_board as _validate_board_func,
-)
+from dbt_charts.agent_api.query_csv import BOARD_QUERY_HINT, SQL_QUERY_HINT, with_csv
 from dbt_charts.ai.context import DbtChartsAIContext
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.diagnostics import Diagnostic
@@ -88,40 +88,31 @@ def _handle_render(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, A
 
 def _handle_query(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, Any]:
     parsed = _ExecuteQueryArgs.model_validate(args)
-    return _query.execute_query(
-        sql=parsed.sql,
-        variables=(
-            _vars_to_dict(parsed.variables) if parsed.variables is not None else None
-        ),
-        source=parsed.source or ctx.default_source,
-        limit=parsed.limit or 50,
-        adapter_registry=ctx.project_session.adapter_registry,
-    ).model_dump(mode="json", exclude_none=True)
-
-
-def _handle_describe_query(
-    args: dict[str, Any], ctx: DbtChartsAIContext
-) -> dict[str, Any]:
-    return _describe_query.describe_query(
-        sql=args.get("sql", ""),
-        source=args.get("source"),
-        dialect=args.get("dialect"),
-        adapter_registry=ctx.project_session.adapter_registry,
-    ).model_dump(mode="json", exclude_none=True)
-
-
-def _handle_query_board(
-    args: dict[str, Any], ctx: DbtChartsAIContext
-) -> dict[str, Any]:
-    parsed = _query.QueryBoardArgs.model_validate(args)
-    return _query.query_board(
-        name=parsed.name,
-        path=parsed.path,
-        project=ctx.project_session.project,
-        vars=_vars_to_dict(parsed.vars) if parsed.vars is not None else None,
-        limit=parsed.limit,
-        adapter_registry=ctx.project_session.adapter_registry,
-    ).model_dump(mode="json", exclude_none=True)
+    variables = (
+        _vars_to_dict(parsed.variables) if parsed.variables is not None else None
+    )
+    if parsed.sql is None:
+        # _ExecuteQueryArgs guarantees the named form carries both halves.
+        assert parsed.board is not None and parsed.query is not None
+        result = _query.query_board(
+            name=parsed.query,
+            path=parsed.board,
+            project=ctx.project_session.project,
+            vars=variables,
+            limit=_query.MAX_QUERY_LIMIT,
+            adapter_registry=ctx.project_session.adapter_registry,
+        ).model_dump(mode="json", exclude_none=True)
+        hint = BOARD_QUERY_HINT
+    else:
+        result = _query.execute_query(
+            sql=parsed.sql,
+            variables=variables,
+            source=parsed.source or ctx.default_source,
+            limit=_query.MAX_QUERY_LIMIT,
+            adapter_registry=ctx.project_session.adapter_registry,
+        ).model_dump(mode="json", exclude_none=True)
+        hint = SQL_QUERY_HINT
+    return with_csv(result, hint=hint) if result["success"] else result
 
 
 def _handle_search(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, Any]:
@@ -131,14 +122,12 @@ def _handle_search(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, A
         if ctx.dashboards_directory is not None
         else ctx.project_session.project
     )
-    limit_kwargs: dict[str, Any] = (
-        {"limit": parsed.limit} if parsed.limit is not None else {}
-    )
     return _search.search_boards(
         parsed.query,
         project,
         tags=parsed.tags,
-        **limit_kwargs,
+        limit=_search.DEFAULT_SEARCH_LIMIT if parsed.limit is None else parsed.limit,
+        cursor=parsed.cursor,
     ).model_dump(mode="json", exclude_none=True)
 
 
@@ -159,10 +148,10 @@ def _handle_describe_board(
     from dbt_charts.agent_api.describe import DescribeBoardArgs, describe_board
 
     parsed = DescribeBoardArgs.model_validate(args)
-    return describe_board(
-        path=parsed.path,
-        project=ctx.project_session.project,
-    ).model_dump(mode="json", exclude_none=True)
+    project = ctx.project_session.project
+    return describe_board(parsed.path, project=project, chart=parsed.chart).model_dump(
+        mode="json", exclude_none=True
+    )
 
 
 def _handle_list_skills(
@@ -195,27 +184,6 @@ def _handle_get_skill(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str
             mode="json", exclude_none=True, exclude=_skills.SKILL_WIRE_EXCLUDE_FIELDS
         ),
     }
-
-
-def _handle_search_skills(
-    args: dict[str, Any], ctx: DbtChartsAIContext
-) -> dict[str, Any]:
-    parsed = _skills.SearchSkillsArgs.model_validate(args)
-    return _skills.search_skills(
-        parsed.query,
-        limit=parsed.limit,
-        surface="tool",
-        project=ctx.project_session.project,
-    ).model_dump(mode="json", exclude_none=True)
-
-
-def _handle_validate(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, Any]:
-    parsed = _ValidateBoardArgs.model_validate(args)
-    return _validate_board_func(
-        path=parsed.path,
-        yaml_content=parsed.yaml_content,
-        project=ctx.project_session.project,
-    ).model_dump(mode="json", exclude_none=True)
 
 
 def _handle_list_diagnostic_codes(
@@ -319,11 +287,8 @@ def _handle_grep_files(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[st
 
 
 TOOL_HANDLERS: dict[str, ToolHandler] = {
-    "validate_board": _handle_validate,
     "render_board": _handle_render,
     "execute_query": _handle_query,
-    "describe_query": _handle_describe_query,
-    "query_board": _handle_query_board,
     "search_boards": _handle_search,
     "docs": _handle_docs,
     "describe_board": _handle_describe_board,
@@ -336,7 +301,6 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "delete_file": _handle_delete_file,
     "list_skills": _handle_list_skills,
     "get_skill": _handle_get_skill,
-    "search_skills": _handle_search_skills,
     "list_diagnostic_codes": _handle_list_diagnostic_codes,
     "get_diagnostic_code": _handle_get_diagnostic_code,
 }
@@ -404,6 +368,9 @@ def dispatch_tool_call(
         return {"error": f"Unknown tool: {function_name}"}
     context.project_session.refresh()  # per-call refresh — MCP refresh policy
     try:
-        return handler(dict(function_args), context)
+        with attribute({"tool": function_name}, {}):
+            return handler(dict(function_args), context)
+    except ValidationError as exc:
+        return {"success": False, "errors": [format_argument_error(function_name, exc)]}
     except Exception as exc:  # noqa: BLE001 — last-resort catch at dispatch boundary
         return {"success": False, "errors": [str(exc)]}

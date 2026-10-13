@@ -78,6 +78,19 @@ def parse_bulk_schema_rows(rows: Iterable[_RawValues]) -> SchemaTree:
     return tree
 
 
+def parse_bulk_table_rows(rows: Iterable[_RawValues]) -> dict[str, list[str]]:
+    """Parse ``(table_schema, table_name)`` rows into table names by schema."""
+    tables: dict[str, list[str]] = {}
+    for row in rows:
+        lower = {str(k).lower(): v for k, v in row.items()}
+        schema_name = lower.get("table_schema")
+        table_name = lower.get("table_name")
+        if not schema_name or not table_name:
+            continue
+        tables.setdefault(str(schema_name), []).append(str(table_name))
+    return tables
+
+
 def bulk_schema(source: str, adapter_registry: AdapterRegistry) -> SchemaTree:
     """Return the whole source's schema tree from a single warehouse query.
 

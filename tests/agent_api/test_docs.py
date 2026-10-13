@@ -17,13 +17,13 @@ from dbt_charts.agent_api.docs import (
 
 
 @pytest.fixture(autouse=True)
-def patch_syntax_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def generated_refs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     """Point ``_SYNTAX_FILE`` at a controlled corpus and the three generated
-    reference files at empty files, for every test in this module.
+    references at empty text, for every test in this module.
 
-    Empty rather than absent: a missing generated file is a broken install and
-    now raises. The missing-file tests re-patch a path themselves; autouse
-    keeps the rest of the suite isolated from the wheel's real files.
+    A test puts reference text in the returned dict to bring it into the
+    corpus; autouse keeps the rest of the suite isolated from the real
+    generators.
     """
     fake = tmp_path / "DBT_CHARTS_SYNTAX.md"
     fake.write_text(
@@ -41,12 +41,11 @@ def patch_syntax_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import dbt_charts.agent_api.docs._loader as _loader
 
     monkeypatch.setattr(_loader, "_SYNTAX_FILE", fake)
-    # `all` and search also read the generated references; keep them out of the
-    # fixture corpus unless a test patches one in.
-    for name in ("_REFERENCE_FILE", "_ERROR_REFERENCE_FILE", "_WARNING_REFERENCE_FILE"):
-        empty = tmp_path / f"empty-{name}.md"
-        empty.write_text("")
-        monkeypatch.setattr(_loader, name, empty)
+    refs: dict[str, str] = dict.fromkeys(
+        ("reference", "error-reference", "warning-reference"), ""
+    )
+    monkeypatch.setattr(_loader, "_generated_text", refs.__getitem__)
+    return refs
 
 
 # ---------------------------------------------------------------------------
@@ -140,32 +139,19 @@ def test_docs_all_returns_whole_file() -> None:
     assert "## Layout" in result.topic.content
 
 
-def test_docs_all_includes_the_generated_field_reference(tmp_path: Path) -> None:
+def test_docs_all_includes_the_generated_field_reference(
+    generated_refs: dict[str, str],
+) -> None:
     """`all` is the unsliced read; a reader who greps it must find grammar keys
     that only the generated reference documents."""
-    import dbt_charts.agent_api.docs._loader as _loader
-
-    fake_ref = tmp_path / "yaml-reference.md"
-    fake_ref.write_text("# Generated\n\n## HoverEmphasisStyle\n\n`hover_emphasis`\n")
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(_loader, "_REFERENCE_FILE", fake_ref)
+    generated_refs["reference"] = (
+        "# Generated\n\n## HoverEmphasisStyle\n\n`hover_emphasis`\n"
+    )
     result = docs(topic="all")
-    monkeypatch.undo()
     assert result.success is True
     assert result.topic is not None
     assert "## Cheatsheet" in result.topic.content
     assert "hover_emphasis" in result.topic.content
-
-
-def test_docs_all_missing_reference_returns_error(tmp_path: Path) -> None:
-    import dbt_charts.agent_api.docs._loader as _loader
-
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(_loader, "_REFERENCE_FILE", tmp_path / "nonexistent.md")
-    result = docs(topic="all")
-    monkeypatch.undo()
-    assert result.success is False
-    assert any("gen-yaml-reference" in e for e in result.errors)
 
 
 def test_docs_cheatsheet_is_a_topic() -> None:
@@ -175,15 +161,9 @@ def test_docs_cheatsheet_is_a_topic() -> None:
     assert "essentials" in result.topic.content
 
 
-def test_docs_reference_returns_generated_spec(tmp_path: Path) -> None:
-    import dbt_charts.agent_api.docs._loader as _loader
-
-    fake_ref = tmp_path / "yaml-reference.md"
-    fake_ref.write_text("# Generated\n\n## Fields\n\nAll fields here.\n")
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(_loader, "_REFERENCE_FILE", fake_ref)
+def test_docs_reference_returns_generated_spec(generated_refs: dict[str, str]) -> None:
+    generated_refs["reference"] = "# Generated\n\n## Fields\n\nAll fields here.\n"
     result = docs(topic="reference")
-    monkeypatch.undo()
     assert result.success is True
     assert result.mode == "topic"
     assert result.topic is not None
@@ -191,28 +171,13 @@ def test_docs_reference_returns_generated_spec(tmp_path: Path) -> None:
     assert "Generated" in result.topic.content
 
 
-def test_docs_reference_missing_file_returns_error(tmp_path: Path) -> None:
-    import dbt_charts.agent_api.docs._loader as _loader
-
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(_loader, "_REFERENCE_FILE", tmp_path / "nonexistent.md")
-    result = docs(topic="reference")
-    monkeypatch.undo()
-    assert result.success is False
-    assert any("gen-yaml-reference" in e for e in result.errors)
-
-
-def test_docs_error_reference_returns_generated_spec(tmp_path: Path) -> None:
-    import dbt_charts.agent_api.docs._loader as _loader
-
-    fake_ref = tmp_path / "error-reference.md"
-    fake_ref.write_text(
+def test_docs_error_reference_returns_generated_spec(
+    generated_refs: dict[str, str],
+) -> None:
+    generated_refs["error-reference"] = (
         "# dbt charts Error Reference\n\n| Code | Domain |\n|---|---|\n"
     )
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(_loader, "_ERROR_REFERENCE_FILE", fake_ref)
     result = docs(topic="error-reference")
-    monkeypatch.undo()
     assert result.success is True
     assert result.mode == "topic"
     assert result.topic is not None
@@ -220,26 +185,13 @@ def test_docs_error_reference_returns_generated_spec(tmp_path: Path) -> None:
     assert "dbt charts Error Reference" in result.topic.content
 
 
-def test_docs_error_reference_missing_file_returns_error(tmp_path: Path) -> None:
-    import dbt_charts.agent_api.docs._loader as _loader
-
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(_loader, "_ERROR_REFERENCE_FILE", tmp_path / "nonexistent.md")
-    result = docs(topic="error-reference")
-    monkeypatch.undo()
-    assert result.success is False
-    assert any("error-reference.md is missing" in e for e in result.errors)
-
-
-def test_docs_warning_reference_returns_generated_spec(tmp_path: Path) -> None:
-    import dbt_charts.agent_api.docs._loader as _loader
-
-    fake_ref = tmp_path / "warning-reference.md"
-    fake_ref.write_text("# dbt charts Warning Reference\n\n### WARN-FOO\n")
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(_loader, "_WARNING_REFERENCE_FILE", fake_ref)
+def test_docs_warning_reference_returns_generated_spec(
+    generated_refs: dict[str, str],
+) -> None:
+    generated_refs["warning-reference"] = (
+        "# dbt charts Warning Reference\n\n### WARN-FOO\n"
+    )
     result = docs(topic="warning-reference")
-    monkeypatch.undo()
     assert result.success is True
     assert result.mode == "topic"
     assert result.topic is not None
@@ -247,22 +199,17 @@ def test_docs_warning_reference_returns_generated_spec(tmp_path: Path) -> None:
     assert "dbt charts Warning Reference" in result.topic.content
 
 
-def test_docs_warning_reference_missing_file_returns_error(tmp_path: Path) -> None:
-    import dbt_charts.agent_api.docs._loader as _loader
-
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(_loader, "_WARNING_REFERENCE_FILE", tmp_path / "nonexistent.md")
-    result = docs(topic="warning-reference")
-    monkeypatch.undo()
-    assert result.success is False
-    assert any("warning-reference.md is missing" in e for e in result.errors)
-
-
 def test_docs_unknown_topic_offers_close_match() -> None:
     result = docs(topic="char")
     assert result.success is False
     assert any("char" in e for e in result.errors)
     assert any("charts" in h for h in result.hints)
+
+
+def test_docs_unknown_topic_without_a_close_match_points_at_the_index() -> None:
+    result = docs(topic="theme")
+    assert result.success is False
+    assert result.hints == ["Run `dct docs` for the topic index"]
 
 
 @pytest.mark.parametrize(
@@ -364,16 +311,12 @@ def test_docs_search_title_match_outranks_body_mention() -> None:
 
 
 def test_docs_search_covers_generated_references(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    generated_refs: dict[str, str],
 ) -> None:
-    import dbt_charts.agent_api.docs._loader as _loader
-
-    reference = tmp_path / "yaml-reference.md"
-    reference.write_text(
+    generated_refs["reference"] = (
         "# dbt charts YAML Field Reference\n\n"
         "## BarChart\n\n| `tooltip` | bool | Show a hover tooltip on each bar |\n"
     )
-    monkeypatch.setattr(_loader, "_REFERENCE_FILE", reference)
     result = docs(search="tooltip")
     assert result.search[0].topic == "reference"
     assert result.search[0].section == "BarChart"
@@ -401,18 +344,12 @@ def test_docs_search_with_all_topic_is_unscoped() -> None:
     assert docs(topic="all", search="chart").search == docs(search="chart").search
 
 
-def test_docs_search_skips_heading_only_units(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_docs_search_skips_heading_only_units(generated_refs: dict[str, str]) -> None:
     """A bare domain header in a diagnostics reference has no prose to show;
     it must not spend a result slot on an empty body."""
-    import dbt_charts.agent_api.docs._loader as _loader
-
-    errors = tmp_path / "error-reference.md"
-    errors.write_text(
+    generated_refs["error-reference"] = (
         "## charts\n\n### ERR-CHARTS-X: charts broke\n\nA charts error.\n"
     )
-    monkeypatch.setattr(_loader, "_ERROR_REFERENCE_FILE", errors)
     hits = docs(search="charts", limit=10).search
     assert all(h.content for h in hits)
     assert [h.section for h in hits if h.topic == "error-reference"] == [
@@ -426,22 +363,38 @@ def test_docs_search_with_unknown_topic_errors() -> None:
     assert result.errors == ["Unknown topic: nope"]
 
 
-def test_docs_search_interleaves_sources(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_docs_search_interleaves_sources(generated_refs: dict[str, str]) -> None:
     """A tiny keyword-dense diagnostic entry out-scores both syntax hits on
     its own; interleaving still puts the best syntax hit first and the second
     syntax hit ahead of nothing but the diagnostic's turn."""
-    import dbt_charts.agent_api.docs._loader as _loader
-
-    warnings = tmp_path / "warning-reference.md"
-    warnings.write_text(
+    generated_refs["warning-reference"] = (
         "## charts\n\n### WARN-LEGEND-OVERFLOW: legend legend legend\n\nlegend\n"
     )
-    monkeypatch.setattr(_loader, "_WARNING_REFERENCE_FILE", warnings)
     hits = docs(search="legend").search
     assert [h.topic for h in hits] == ["charts", "warning-reference", "board"]
     assert hits[1].score > hits[0].score
+
+
+def test_generated_topics_serve_the_generators_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The references are derived when read, not shipped as files. MkDocs'
+    `{: #anchor }` attribute lists belong to the docs-site copy only; in
+    terminal output or an MCP resource they are literal noise."""
+    from dbt_charts.core.compile.schema import get_schema_for_prompt
+    from dbt_charts.core.diagnostics.render_reference import render_reference
+
+    monkeypatch.undo()
+    expected = {
+        "reference": get_schema_for_prompt() + "\n",
+        "error-reference": render_reference("error", with_anchors=False),
+        "warning-reference": render_reference("warning", with_anchors=False),
+    }
+    for topic, text in expected.items():
+        result = docs(topic=topic)
+        assert result.topic is not None, result.errors
+        assert result.topic.content == text
+        assert "{: #" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -458,19 +411,6 @@ def test_read_full_text_missing_file_raises(
     monkeypatch.setattr(_loader, "_SYNTAX_FILE", tmp_path / "nonexistent.md")
     with pytest.raises(DocsCorpusMissingError, match="source file missing"):
         read_full_text()
-
-
-def test_search_missing_generated_reference_errors(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A broken install must not silently search a thinner corpus."""
-    import dbt_charts.agent_api.docs._loader as _loader
-
-    monkeypatch.setattr(_loader, "_REFERENCE_FILE", tmp_path / "nonexistent.md")
-    result = docs(search="chart")
-    assert result.success is False
-    assert any("gen-yaml-reference" in e for e in result.errors)
-    assert result.search == []
 
 
 # ---------------------------------------------------------------------------

@@ -18,8 +18,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.render.chart import render_table_svg
-from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+from ._engine_render import render_kpi_svg, render_table_svg
 
 _OVERRIDE_POSITIVE = "#123456"
 

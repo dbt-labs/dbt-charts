@@ -102,6 +102,7 @@
                 .split(/\s+/).filter(function(c) { return c && c !== 'dbt-chart-loading'; }).join(' '));
         });
         document.querySelectorAll('.dbt-chart-spinner').forEach(function(s) { s.remove(); });
+        document.documentElement.classList.remove('dbt-page-loading');
     };
 
     /*{# A back/forward-cache restore resurrects the exact DOM the user #}*/
@@ -233,6 +234,8 @@
                 sessionStorage.setItem('__dfScrollY_' + window.location.pathname, String(window.scrollY));
                 sessionStorage.setItem(_MENU_OPEN_KEY + window.location.pathname, JSON.stringify(_openMenuNames()));
             } catch (e) { /*{# sessionStorage may be unavailable #}*/ }
+            document.documentElement.classList.add('dbt-page-loading');
+            _armNavigationCancelGuard();
             window.location.href = url.toString();
         }
     }
@@ -1227,11 +1230,12 @@
     /*{# back to `onNav` rather than redrawing itself, and the caller's own #}*/
     /*{# rebuild (which also repaints the footer) runs instead. #}*/
     function _buildCalendarGrid(calEl, viewMonth, onPickDay, onNav, onHoverDay) {
+        var names     = JSON.parse(calEl.getAttribute('data-dbt-time-locale'));
         var year      = viewMonth.getFullYear();
         var month     = viewMonth.getMonth();
         var firstDay  = new Date(year, month, 1);
-        var startWeek = firstDay.getDay();
-        var monthName = firstDay.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        var startWeek = (firstDay.getDay() - names.weekStart + 7) % 7;
+        var monthName = names.months[month] + ' ' + year;
         /*{# Per rebuild, not per bind: a popover opened after midnight in a #}*/
         /*{# long-lived tab must bold the actual today. #}*/
         var today = _startOfToday();
@@ -1271,7 +1275,7 @@
         var grid = document.createElement('div');
         grid.className = 'dbt-cal-grid';
 
-        ['S','M','T','W','T','F','S'].forEach(function(d) {
+        names.shortDays.slice(names.weekStart).concat(names.shortDays.slice(0, names.weekStart)).forEach(function(d) {
             var dow = document.createElement('div');
             dow.className = 'dbt-cal-dow';
             dow.textContent = d;
@@ -1290,9 +1294,8 @@
             if (isToday) cell.classList.add('dbt-today');
             cell.textContent = dt.getDate();
             cell.dataset.day = String(dt.getTime());
-            cell.setAttribute('aria-label', dt.toLocaleDateString('en-US', {
-                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-            }));
+            cell.setAttribute('aria-label', names.days[dt.getDay()] + ', ' +
+                dt.getDate() + ' ' + names.months[dt.getMonth()] + ' ' + dt.getFullYear());
             (function(cellEl, cellDate) {
                 cellEl.addEventListener('click', function() { onPickDay(cellDate); });
                 if (onHoverDay) {
@@ -1324,6 +1327,7 @@
 
         var calEl = document.createElement('div');
         calEl.className = 'dbt-calendar-area';
+        calEl.setAttribute('data-dbt-time-locale', el.getAttribute('data-dbt-time-locale'));
         popover.appendChild(calEl);
 
         document.body.appendChild(popover);
@@ -1334,14 +1338,15 @@
             /*{# writes back data-dbt-value) is reflected in the popover's state. #}*/
             var raw = el.getAttribute('data-dbt-value') || '';
             range = [null, null];
+            hoverDate = null;
             try {
                 var parsed = JSON.parse(raw);
                 if (Array.isArray(parsed) && parsed.length === 2) {
-                    var s = fromISO(String(parsed[0])), e = fromISO(String(parsed[1]));
-                    if (s && e) {
-                        range = [s, e];
-                        viewMonth = new Date(e.getFullYear(), e.getMonth(), 1);
-                    }
+                    /*{# One set end is a value too (the chip reads From/Until), #}*/
+                    /*{# so either end alone seeds the calendar. #}*/
+                    range = [fromISO(String(parsed[0])), fromISO(String(parsed[1]))];
+                    var shown = range[1] || range[0];
+                    if (shown) viewMonth = new Date(shown.getFullYear(), shown.getMonth(), 1);
                 }
             } catch (ex) {}
             rebuildCalendar();
@@ -1375,7 +1380,7 @@
                 function(dt) { pickDay(dt.getTime()); },
                 function(newMonth) { viewMonth = newMonth; rebuildCalendar(); },
                 function(dt) {
-                    if (range[0] && !range[1]) {
+                    if (Boolean(range[0]) !== Boolean(range[1])) {
                         hoverDate = new Date(dt.getTime());
                         paintCalendarState();
                     }
@@ -1425,10 +1430,11 @@
         function paintCalendarState() {
             var startTs    = range[0] && range[0].getTime();
             var endTs      = range[1] && range[1].getTime();
-            var previewing = startTs && !endTs && hoverDate;
+            var anchorTs   = startTs || endTs;
+            var previewing = Boolean(startTs) !== Boolean(endTs) && hoverDate;
             var hoverTs    = previewing && hoverDate.getTime();
-            var lo         = previewing ? Math.min(startTs, hoverTs) : null;
-            var hi         = previewing ? Math.max(startTs, hoverTs) : null;
+            var lo         = previewing ? Math.min(anchorTs, hoverTs) : null;
+            var hi         = previewing ? Math.max(anchorTs, hoverTs) : null;
 
             calEl.querySelectorAll('.dbt-cal-cell').forEach(function(c) {
                 var ts           = parseInt(c.dataset.day, 10);
@@ -1436,7 +1442,7 @@
                 var isEnd        = endTs   && ts === endTs;
                 var inRange      = startTs && endTs && ts > startTs && ts < endTs;
                 var inPreview    = previewing && ts > lo && ts < hi;
-                var isPreviewEnd = previewing && ts === hoverTs && ts !== startTs;
+                var isPreviewEnd = previewing && ts === hoverTs && ts !== anchorTs;
 
                 c.classList.toggle('dbt-selected',         Boolean(isStart || isEnd));
                 c.classList.toggle('dbt-range-start',      Boolean(isStart));
@@ -1452,7 +1458,10 @@
             if (dt.getMonth() !== viewMonth.getMonth()) {
                 viewMonth = new Date(dt.getFullYear(), dt.getMonth(), 1);
             }
-            if (!range[0] || range[1]) {
+            if (!range[0] && range[1]) {
+                /*{# An until-only value: a pick past the end makes the old end the start. #}*/
+                range = dt > range[1] ? [range[1], dt] : [dt, range[1]];
+            } else if (!range[0] || range[1]) {
                 /*{# First pick (or re-start after a completed pair). #}*/
                 range = [dt, null];
             } else if (dt < range[0]) {
@@ -1509,6 +1518,7 @@
 
         var calEl = document.createElement('div');
         calEl.className = 'dbt-calendar-area';
+        calEl.setAttribute('data-dbt-time-locale', el.getAttribute('data-dbt-time-locale'));
         popover.appendChild(calEl);
 
         document.body.appendChild(popover);

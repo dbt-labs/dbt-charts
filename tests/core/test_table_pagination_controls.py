@@ -26,8 +26,9 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
 from dbt_charts.core.render.controls import interactive_controls
+
+from ._engine_render import render_table_svg
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
@@ -58,269 +59,6 @@ def _find_active_page_text(svg: str, var_name: str) -> str:
     )
     assert m, f"active-page text for {var_name!r} not found"
     return m.group(0)
-
-
-class TestResolveVisibleRowsPaging:
-    """_resolve_visible_rows should respect the page parameter."""
-
-    def test_page_1_returns_first_page(self) -> None:
-        from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import _resolve_visible_rows
-
-        data = _make_data(50)
-        _, visible, _, _, _, _, _ = _resolve_visible_rows(
-            data,
-            height=None,
-            title_height=0,
-            header_height=30,
-            padding=10,
-            row_height=24,
-            bottom_padding=10,
-            pagination=PaginationConfig(enabled=True, page_rows=10),
-            page=1,
-        )
-        assert len(visible) == 10
-        assert visible[0]["name"] == "row_1"
-        assert visible[-1]["name"] == "row_10"
-
-    def test_page_2_returns_second_page(self) -> None:
-        from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import _resolve_visible_rows
-
-        data = _make_data(50)
-        _, visible, _, _, _, _, _ = _resolve_visible_rows(
-            data,
-            height=None,
-            title_height=0,
-            header_height=30,
-            padding=10,
-            row_height=24,
-            bottom_padding=10,
-            pagination=PaginationConfig(enabled=True, page_rows=10),
-            page=2,
-        )
-        assert len(visible) == 10
-        assert visible[0]["name"] == "row_11"
-        assert visible[-1]["name"] == "row_20"
-
-    def test_last_page_partial(self) -> None:
-        from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import _resolve_visible_rows
-
-        data = _make_data(25)
-        _, visible, _, _, _, _, _ = _resolve_visible_rows(
-            data,
-            height=None,
-            title_height=0,
-            header_height=30,
-            padding=10,
-            row_height=24,
-            bottom_padding=10,
-            pagination=PaginationConfig(enabled=True, page_rows=10),
-            page=3,
-        )
-        assert len(visible) == 5
-        assert visible[0]["name"] == "row_21"
-
-    def test_page_beyond_range_clamps_to_last(self) -> None:
-        from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import _resolve_visible_rows
-
-        data = _make_data(25)
-        _, visible, _, _, _, _, _ = _resolve_visible_rows(
-            data,
-            height=None,
-            title_height=0,
-            header_height=30,
-            padding=10,
-            row_height=24,
-            bottom_padding=10,
-            pagination=PaginationConfig(enabled=True, page_rows=10),
-            page=99,
-        )
-        # Should clamp to last page (page 3)
-        assert len(visible) == 5
-        assert visible[0]["name"] == "row_21"
-
-    def test_page_0_treated_as_page_1(self) -> None:
-        from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import _resolve_visible_rows
-
-        data = _make_data(50)
-        _, visible, _, _, _, _, _ = _resolve_visible_rows(
-            data,
-            height=None,
-            title_height=0,
-            header_height=30,
-            padding=10,
-            row_height=24,
-            bottom_padding=10,
-            pagination=PaginationConfig(enabled=True, page_rows=10),
-            page=0,
-        )
-        assert visible[0]["name"] == "row_1"
-
-    def test_grow_by_2_short_circuit_uniform_rows(self) -> None:
-        """When the slot fits 22 rows at natural height and overflow vs
-        page_rows=20 is within the grow-by-2 cap, render all 22 rows on one
-        page with no pagination chrome — even though len(data) > page_rows.
-
-        Regression for the case-(b) bug surfaced in playground proof:
-        the layout sizer allocated room for 22 rows but the renderer used to
-        cap at page_rows=20 anyway and emit pagination chrome over hidden
-        rows. The short-circuit at the top of ``_resolve_visible_rows``'s
-        bounded path now respects "rows fit in slot, overflow ≤ cap".
-        """
-        from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import _resolve_visible_rows
-
-        # Slot sized to fit exactly 22 rows + chrome at natural row_height=24:
-        #   title 0 + header 30 + header_body_gap int(24*.25)=6 + pad 10
-        #   + bottom 10 + 22*24=528 → total 584.
-        data = _make_data(22)
-        height_for_22 = 0 + 30 + 6 + 10 + 10 + 22 * 24
-
-        _, visible, total_pages, _, _, _, eff_row_h = _resolve_visible_rows(
-            data,
-            height=float(height_for_22),
-            title_height=0,
-            header_height=30,
-            padding=10,
-            row_height=24,
-            bottom_padding=10,
-            pagination=PaginationConfig(enabled=True, page_rows=20),
-            page=1,
-            row_heights=None,
-        )
-        assert len(visible) == 22, (
-            f"All 22 rows should fit on one page when slot accommodates them "
-            f"(grow-by-2 short-circuit); got {len(visible)} visible. If this "
-            f"fails, the bounded path is still capping at page_rows=20."
-        )
-        assert total_pages == 1, (
-            f"No pagination chrome expected for 22-row overflow within the "
-            f"grow-by-2 cap; got total_pages={total_pages}."
-        )
-        assert eff_row_h == 24, (
-            f"Row height should NOT be squeezed when slot already fits all "
-            f"rows at natural height; got {eff_row_h} (anti-dangle ran when "
-            f"it shouldn't have)."
-        )
-        assert visible[-1]["name"] == "row_22"
-
-    def test_grow_by_2_short_circuit_variable_rows(self) -> None:
-        """Same grow-by-2 short-circuit must fire when row_heights is passed
-        (wrapped or otherwise variable rows). The pre-fix renderer skipped
-        anti-dangle for non-None row_heights, so this branch had no
-        protection from the page_rows cap.
-        """
-        from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import _resolve_visible_rows
-
-        data = _make_data(22)
-        # Per-row heights matching the uniform case so we can reuse the math.
-        row_heights = [24] * 22
-        height_for_22 = 0 + 30 + 6 + 10 + 10 + sum(row_heights)
-
-        _, visible, total_pages, _, _, _, _ = _resolve_visible_rows(
-            data,
-            height=float(height_for_22),
-            title_height=0,
-            header_height=30,
-            padding=10,
-            row_height=24,
-            bottom_padding=10,
-            pagination=PaginationConfig(enabled=True, page_rows=20),
-            page=1,
-            row_heights=row_heights,
-        )
-        assert len(visible) == 22, (
-            f"Variable-row-heights short-circuit should render all 22 rows; "
-            f"got {len(visible)}."
-        )
-        assert total_pages == 1, (
-            f"Variable-row-heights short-circuit should produce one page; "
-            f"got {total_pages}."
-        )
-
-    def test_height_constrained_pages_no_row_skip(self) -> None:
-        """When height limits rows below page_rows, pages still cover all rows."""
-        from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import _resolve_visible_rows
-
-        data = _make_data(20)
-        # page_rows=10 but height only fits ~3 rows (120 - 30 - 10 - 10 = 70 / 24 = 2)
-        _, page1, total, _, _, _, _ = _resolve_visible_rows(
-            data,
-            height=120,
-            title_height=0,
-            header_height=30,
-            padding=10,
-            row_height=24,
-            bottom_padding=10,
-            pagination=PaginationConfig(enabled=True, page_rows=10),
-            page=1,
-        )
-        _, page2, _, _, _, _, _ = _resolve_visible_rows(
-            data,
-            height=120,
-            title_height=0,
-            header_height=30,
-            padding=10,
-            row_height=24,
-            bottom_padding=10,
-            pagination=PaginationConfig(enabled=True, page_rows=10),
-            page=2,
-        )
-        # Pages should be contiguous: page 2 starts where page 1 ended
-        assert page2[0]["name"] == f"row_{len(page1) + 1}"
-        # total_pages uses effective page size, not raw page_rows
-        assert total > 2  # 20 rows / ~2 per page = 10 pages, not 2
-
-    def test_height_constrained_reserves_space_for_controls(self) -> None:
-        """Explicit height subtracts pagination control space from available rows."""
-        from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import (
-            _PAGINATION_CONTROL_HEIGHT,
-            _resolve_visible_rows,
-        )
-
-        data = _make_data(50)
-        # Height large enough for ~10 data rows + header + padding + controls
-        explicit_height = 30 + 10 + 10 + (10 * 24) + _PAGINATION_CONTROL_HEIGHT
-        _, visible, total, _, _, _, _ = _resolve_visible_rows(
-            data,
-            height=explicit_height,
-            title_height=0,
-            header_height=30,
-            padding=10,
-            row_height=24,
-            bottom_padding=10,
-            pagination=PaginationConfig(enabled=True, page_rows=20),
-            page=1,
-        )
-        # With controls reserved, visible rows should be <= 10 (not 11)
-        assert len(visible) <= 10
-        assert total > 1
-
-    def test_no_page_defaults_to_first_page(self) -> None:
-        """Backward compat: omitting page gives page 1 behavior."""
-        from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import _resolve_visible_rows
-
-        data = _make_data(50)
-        _, visible, _, _, _, _, _ = _resolve_visible_rows(
-            data,
-            height=None,
-            title_height=0,
-            header_height=30,
-            padding=10,
-            row_height=24,
-            bottom_padding=10,
-            pagination=PaginationConfig(enabled=True, page_rows=10),
-        )
-        assert visible[0]["name"] == "row_1"
-        assert len(visible) == 10
 
 
 class TestAutoShrinkOverridesTruncationFooter:
@@ -357,32 +95,6 @@ class TestAutoShrinkOverridesTruncationFooter:
         assert "more rows" not in svg, (
             "auto-shrink path must replace the truncation footer when "
             "pagination is enabled"
-        )
-
-    def test_enabled_with_null_page_rows_auto_shrinks(self) -> None:
-        """``pagination.enabled: true`` with no page_rows must still auto-shrink
-        when the cell can't fit all rows. Previously the bounded path saw
-        ``page_rows is None`` and silently skipped pagination, leaking the
-        truncation footer despite pagination being enabled.
-        """
-        from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import _resolve_visible_rows
-
-        data = _make_data(30)
-        _, visible, total_pages, _, _, _, _ = _resolve_visible_rows(
-            data,
-            height=200,
-            title_height=0,
-            header_height=30,
-            padding=10,
-            row_height=24,
-            bottom_padding=10,
-            pagination=PaginationConfig(enabled=True, page_rows=None),
-        )
-        assert len(visible) < len(data), "cell can't fit 30 rows, must page"
-        assert total_pages > 1, (
-            "enabled=true with overflow must produce >1 page so the renderer "
-            "emits the paginator (not the truncation footer)"
         )
 
     def test_pagination_disabled_ignores_height_clamp_and_renders_all_rows(
@@ -793,113 +505,6 @@ class TestPaginationControlsInSvg:
         )
 
 
-class TestAntiDangleSqueeze:
-    """A 1-2 row trailing page: unbounded it grows; in a slot, rows squeeze."""
-
-    def test_unbounded_single_row_dangler_grows_to_one_page(self) -> None:
-        """8 rows with page_rows=7: unbounded, the dangler grows the table."""
-        from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import _resolve_visible_rows
-
-        data = _make_data(8)
-        row_height = 32
-        _, visible, total_pages, _, _, _, out_row_height = _resolve_visible_rows(
-            data,
-            height=None,
-            title_height=0,
-            header_height=30,
-            padding=10,
-            row_height=row_height,
-            bottom_padding=10,
-            pagination=PaginationConfig(enabled=True, page_rows=7),
-        )
-        assert total_pages == 1, f"expected 1 page, got {total_pages}"
-        assert len(visible) == 8, f"expected all 8 rows, got {len(visible)}"
-        assert out_row_height == row_height, "nothing bounds the height to squeeze"
-
-    def test_unbounded_large_overflow_does_not_collapse(self) -> None:
-        """20 rows with page_rows=7: 6-row overflow exceeds max_overflow=2, no collapse."""
-        from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import _resolve_visible_rows
-
-        data = _make_data(20)
-        row_height = 32
-        _, visible, total_pages, _, _, _, out_row_height = _resolve_visible_rows(
-            data,
-            height=None,
-            title_height=0,
-            header_height=30,
-            padding=10,
-            row_height=row_height,
-            bottom_padding=10,
-            pagination=PaginationConfig(enabled=True, page_rows=7),
-        )
-        assert total_pages > 1, "large overflow must NOT collapse"
-        assert out_row_height == row_height, (
-            "row_height must be unchanged when squeeze doesn't fire"
-        )
-
-    def test_squeeze_floor_respected_at_20px(self) -> None:
-        """Many rows in tight height: geometry forces squeeze below floor, pagination must hold."""
-        from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import (
-            _resolve_visible_rows,
-        )
-
-        # With row_height=24 and a very tight height, the geometry-driven
-        # squeezed value would drop below 20px.  The anti-dangle heuristic
-        # must refuse to fire and leave pagination intact.
-        data = _make_data(8)
-        row_height = 24
-        # height chosen so 7 rows fit at 24px, but squeezing to fit all 8
-        # would require 24 * (7/8) = 21px — just above the floor.
-        # To force a floor violation use a tighter height so geometry gives <20px.
-        # available ≈ 7 * row_height (no ctrl height because we probe without).
-        # We want available / len(data) < 20px → available < 160px → pick 150.
-        tight_available = 150
-        height = (
-            tight_available + 30 + int(24 * 0.25) + 10 + 10
-        )  # header_height + gap + padding + bottom
-        _, _, total_pages, _, _, _, out_row_height = _resolve_visible_rows(
-            data,
-            height=float(height),
-            title_height=0,
-            header_height=30,
-            padding=10,
-            row_height=row_height,
-            bottom_padding=10,
-            pagination=PaginationConfig(enabled=True, page_rows=7),
-        )
-        # The squeezed value would be below the floor, so collapse must NOT fire.
-        # total_pages > 1 proves pagination is the honest answer (squeeze gave up).
-        assert total_pages > 1, "floor should prevent collapse"
-        # row_height unchanged proves no squeeze occurred — floor blocked the fire.
-        assert out_row_height == row_height, (
-            "row_height must be unchanged when floor blocks squeeze"
-        )
-
-    def test_two_row_overflow_grows_at_boundary(self) -> None:
-        """14 rows with page_rows=12: a 2-row overflow (_PAGINATION_GROW_CAP) grows."""
-        from dbt_charts.core.compile.models.style.authored import PaginationConfig
-        from dbt_charts.core.render.chart.table import _resolve_visible_rows
-
-        data = _make_data(14)
-        row_height = 28
-        _, visible, total_pages, _, _, _, out_row_height = _resolve_visible_rows(
-            data,
-            height=None,
-            title_height=0,
-            header_height=30,
-            padding=10,
-            row_height=row_height,
-            bottom_padding=10,
-            pagination=PaginationConfig(enabled=True, page_rows=12),
-        )
-        assert total_pages == 1, "a 2-row overflow grows to a single page"
-        assert len(visible) == 14, f"all 14 rows must be visible, got {len(visible)}"
-        assert out_row_height == row_height, "nothing bounds the height to squeeze"
-
-
 class TestPaginationViewBoxContainment:
     """Pagination controls must render within the SVG viewBox.
 
@@ -934,9 +539,7 @@ class TestPaginationViewBoxContainment:
         allotted height only fits 11 rows + pagination. Pagination must
         appear and stay within viewBox.
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", id="ht_lim")
         chart.title = "Most Visited Museums"
@@ -973,9 +576,7 @@ class TestPaginationViewBoxContainment:
     def test_pagesize_limited_pagination_fits_in_viewbox(self, make_chart) -> None:
         """Page_size forces pagination (data > page_rows) — the case the old
         code handled. This guard prevents regression."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -1158,7 +759,8 @@ class TestStaticMultiPagePagination:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
-        from dbt_charts.core.render.chart.table import _STATIC_MULTI_PAGE_MAX_PAGES
+
+        _STATIC_MULTI_PAGE_MAX_PAGES = 20
 
         n_rows = (_STATIC_MULTI_PAGE_MAX_PAGES + 5) * 5
         chart = make_chart(
@@ -1199,7 +801,8 @@ class TestStaticMultiPagePagination:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
-        from dbt_charts.core.render.chart.table import _STATIC_MULTI_PAGE_MAX_PAGES
+
+        _STATIC_MULTI_PAGE_MAX_PAGES = 20
 
         n_rows = (_STATIC_MULTI_PAGE_MAX_PAGES + 5) * 5
         chart = make_chart(
@@ -1215,7 +818,7 @@ class TestStaticMultiPagePagination:
             chart, data, width=600, board_style=resolve_style(get_theme_style())
         )
 
-        from dbt_charts.core.render.chart.table import _PAGINATION_CAP_NOTE_HEIGHT
+        _PAGINATION_CAP_NOTE_HEIGHT = 20
 
         label_match = re.search(r'<text [^>]*?y="([\d.]+)"[^>]*>Rows ', svg)
         assert label_match, "row-range label not found"
@@ -1243,10 +846,9 @@ class TestStaticMultiPagePagination:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
-        from dbt_charts.core.render.chart.table import (
-            _PAGINATION_CAP_NOTE_HEIGHT,
-            _STATIC_MULTI_PAGE_MAX_PAGES,
-        )
+
+        _PAGINATION_CAP_NOTE_HEIGHT = 20
+        _STATIC_MULTI_PAGE_MAX_PAGES = 20
 
         page_rows = 5
         n_rows = (_STATIC_MULTI_PAGE_MAX_PAGES + 5) * page_rows  # 25 pages, cap=20
@@ -1296,9 +898,9 @@ class TestStaticMultiPagePagination:
 
         The note has one honest choice when its reserved band is squeezed out:
         not to paint. Clamping it upward instead stacks two muted strings on
-        one baseline -- the collision the band exists to prevent. The author
-        still learns of the truncation from WARN-STATIC-PAGINATION-CAPPED,
-        which does not depend on this line rendering.
+        one baseline -- the collision the band exists to prevent. The text
+        format states the page counts and the cap independently of this line
+        rendering.
 
         The sweep asserts BOTH outcomes actually occur. A version of this test
         that only skipped absent notes passed while executing zero assertions,
@@ -1307,10 +909,9 @@ class TestStaticMultiPagePagination:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
-        from dbt_charts.core.render.chart.table import (
-            _PAGINATION_CAP_NOTE_HEIGHT,
-            _STATIC_MULTI_PAGE_MAX_PAGES,
-        )
+
+        _PAGINATION_CAP_NOTE_HEIGHT = 20
+        _STATIC_MULTI_PAGE_MAX_PAGES = 20
 
         page_rows = 10
         n_rows = (_STATIC_MULTI_PAGE_MAX_PAGES + 5) * page_rows
@@ -1371,7 +972,8 @@ class TestStaticMultiPagePagination:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
-        from dbt_charts.core.render.chart.table import _STATIC_MULTI_PAGE_MAX_PAGES
+
+        _STATIC_MULTI_PAGE_MAX_PAGES = 20
 
         page_rows = 10
         n_rows = (_STATIC_MULTI_PAGE_MAX_PAGES + 5) * page_rows
@@ -1406,7 +1008,8 @@ class TestStaticMultiPagePagination:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
-        from dbt_charts.core.render.chart.table import _STATIC_MULTI_PAGE_MAX_PAGES
+
+        _STATIC_MULTI_PAGE_MAX_PAGES = 20
 
         n_rows = (_STATIC_MULTI_PAGE_MAX_PAGES + 5) * 5
         chart = make_chart(
@@ -1533,7 +1136,7 @@ class TestStripPaginationChrome:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
-        from dbt_charts.core.render.chart.table import strip_pagination_chrome
+        from dbt_charts.core.render.svg_utils import strip_pagination_chrome
 
         chart = make_chart(
             "table",
@@ -1567,7 +1170,7 @@ class TestStripPaginationChrome:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
-        from dbt_charts.core.render.chart.table import strip_pagination_chrome
+        from dbt_charts.core.render.svg_utils import strip_pagination_chrome
 
         chart = make_chart(
             "table",

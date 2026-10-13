@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import date
 from types import EllipsisType
 
 from dbt_charts.core.compile.errors import CompilationError
@@ -55,7 +56,7 @@ from dbt_charts.core.compile.resolve.chart.simple import (
 from dbt_charts.core.compile.resolve.style.fonts import expand_named_fonts
 from dbt_charts.core.compile.resolve.style.palette import UnknownColorError
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
-from dbt_charts.core.diagnostics.codes_compile import ERR_CHART_COLOR_TOKEN
+from dbt_charts.core.diagnostics.codes_compile import ERR_COLOR_TOKEN
 
 __all__ = [
     "resolve",
@@ -73,6 +74,8 @@ def resolve(
     table_column_rows: Sequence[Mapping[str, str]] = (),
     pie_title_font: ResolvedFontStyle | EllipsisType = ...,
     display_text: ChartDisplayText = None,
+    filter_variables: frozenset[str] = frozenset(),
+    x_date_range: tuple[date, date] | None = None,
 ) -> ResolvedChart:
     """Dispatch a normalized chart → ResolvedChart.
 
@@ -93,6 +96,8 @@ def resolve(
         table_column_links: Executor-derived FK-link candidates by column name.
         table_column_rows: Factual column metadata used to protect a single row
             identity key from receiving a per-column FK link.
+        filter_variables: Declared board variable names; a table column named
+            by one links to filter by it, which beats an `email`/`url` link.
         display_text: Variables and query results the chart's title, subtitle,
             label and message read. ``"raw"`` is the explicit no-data mode and keeps
             authored text literal. The default ``None`` is for text without Jinja
@@ -100,6 +105,8 @@ def resolve(
         pie_title_font: Title typography already finalized for a repeated pie chart.
             Placement-specific pie policy still uses ``width``; this preserves the
             chart-level title decision shared by every placement of that chart.
+        x_date_range: Calendar range the x column is proven filtered to; baked
+            onto bar/line/area charts.
 
     Returns:
         The matching ResolvedXxxChart instance with palette/dashes/channels populated.
@@ -132,6 +139,7 @@ def resolve(
                     effective_width,
                     datasets,
                     automatic_link_candidate,
+                    x_date_range,
                     display_text,
                 )
             case "histogram":
@@ -151,6 +159,7 @@ def resolve(
                     effective_width,
                     datasets,
                     automatic_link_candidate,
+                    x_date_range,
                     display_text,
                 )
             case "area":
@@ -161,6 +170,7 @@ def resolve(
                     effective_width,
                     datasets,
                     automatic_link_candidate,
+                    x_date_range,
                     display_text,
                 )
             case "scatter":
@@ -211,6 +221,7 @@ def resolve(
                     table_column_links,
                     table_column_rows,
                     display_text,
+                    filter_variables=filter_variables,
                 )
             case "geoshape" | "map":
                 return _resolve_geoshape(
@@ -250,5 +261,7 @@ def resolve(
         # resolves under one of these resolvers; naming the chart here keeps a
         # bad token from failing the whole board.
         raise CompilationError.from_code(
-            ERR_CHART_COLOR_TOKEN, chart_id=normalized.id, reason=str(exc)
+            ERR_COLOR_TOKEN,
+            scope=f"chart {normalized.id!r}",
+            reason=str(exc),
         ) from exc

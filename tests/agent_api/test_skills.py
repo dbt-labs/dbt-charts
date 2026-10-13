@@ -18,7 +18,6 @@ from dbt_charts.agent_api.skills import (
     SkillNotFound,
     get_skill,
     list_skills,
-    search_skills,
     skill_description,
 )
 from dbt_charts.ai.tools import TOOL_HANDLERS
@@ -103,13 +102,13 @@ class TestGetSkill:
         able to gate `{{#if_tool}}` blocks the same way."""
         without_write = get_skill(
             "board-build",
-            available_tools={"render_board", "validate_board"},
+            available_tools={"render_board"},
         )
         assert "write_file" not in without_write.body
 
         with_write = get_skill(
             "board-build",
-            available_tools={"render_board", "validate_board", "write_file"},
+            available_tools={"render_board", "write_file"},
         )
         assert "write_file" in with_write.body
 
@@ -180,18 +179,6 @@ class TestSkillDescription:
             == get_skill("board-build", surface="cli").description
         )
 
-    def test_search_skills_matches_description_only_via_macro_rendering(self) -> None:
-        """board-visual-review's raw frontmatter description embeds
-        `{{ s_skill_name_structural_review }}` inside a sentence found nowhere
-        in its body — the phrase below only exists once rendered. If
-        search_skills scores the raw, unrendered description, this hit is
-        unreachable even though the rendered text is what the agent reads."""
-        result = search_skills(
-            "data-shape problems (use board-structural-review)", surface="tool"
-        )
-
-        assert [hit.name for hit in result.hits] == ["board-visual-review"]
-
 
 def _write_project_skill(
     root: Path,
@@ -214,7 +201,7 @@ class TestProjectSkills:
     the same registry as built-ins — the skills half of the
     honor-project-agents-md-and-skills task. Labeled source="project" so the
     model (and Cloud UI) can tell them apart from built-ins; on-demand only
-    (list_skills/get_skill/search_skills), never inlined into the always-on
+    (list_skills/get_skill), never inlined into the always-on
     prompt prefix."""
 
     def test_project_skill_appears_in_list_skills(self, tmp_path: Path) -> None:
@@ -314,33 +301,6 @@ class TestProjectSkills:
         assert result.success
         assert any("broken" in error for error in result.errors)
         assert "broken" not in {s.name for s in result.skills}
-
-    def test_search_skills_finds_project_skill(self, tmp_path: Path) -> None:
-        _write_project_skill(
-            tmp_path,
-            "skills/my-metric",
-            name="my-metric",
-            description="Explains recognized ARR.",
-        )
-        project = FilesystemProject(tmp_path)
-
-        result = search_skills("recognized ARR", project=project)
-
-        assert any(hit.name == "my-metric" for hit in result.hits)
-
-    def test_search_skills_without_project_misses_project_skill(
-        self, tmp_path: Path
-    ) -> None:
-        _write_project_skill(
-            tmp_path,
-            "skills/my-metric",
-            name="my-metric",
-            description="Explains recognized ARR.",
-        )
-
-        result = search_skills("recognized ARR")
-
-        assert result.hits == []
 
     def test_project_skill_body_is_framed_as_guidance_not_authority(
         self, tmp_path: Path
@@ -457,53 +417,13 @@ class TestProjectSkills:
         assert "my-metric" in by_name
         assert "{{ s_totally_unknown_key }}" in by_name["my-metric"].description
 
-    def test_project_skill_body_with_macro_shaped_text_does_not_crash_search_skills(
-        self, tmp_path: Path
-    ) -> None:
-        """Search term matches only in the body (not name/description) so the
-        search actually reaches the body-render branch — a body-only match on
-        a name/description miss must not crash on macro-shaped text either."""
-        _write_project_skill(
-            tmp_path,
-            "skills/my-metric",
-            name="my-metric",
-            description="Project metric guidance.",
-            body="Use the {{ s_curve }} model to fit revenuegrowthonly.\n",
-        )
-        project = FilesystemProject(tmp_path)
-
-        result = search_skills("revenuegrowthonly", project=project)
-
-        assert any(hit.name == "my-metric" for hit in result.hits)
-
-    def test_search_does_not_match_the_disclaimer_boilerplate(
-        self, tmp_path: Path
-    ) -> None:
-        """_format_authored_skill_body prepends the same guidance-not-authority
-        disclaimer to every project skill ("...tool-use policy... capability
-        beyond..."). Search must score against the raw, undecorated body —
-        otherwise a query like "policy" or "capability" would spuriously
-        match every project skill via that identical boilerplate."""
-        _write_project_skill(
-            tmp_path,
-            "skills/my-metric",
-            name="my-metric",
-            description="Project metric guidance.",
-            body="Revenue is recognized ARR.\n",
-        )
-        project = FilesystemProject(tmp_path)
-
-        result = search_skills("capability", project=project)
-
-        assert "my-metric" not in {hit.name for hit in result.hits}
-
 
 class TestExtraSkillFiles:
     """A project may point at arbitrary extra files (Cloud's Chat Settings ->
     extra skill paths) to expose as on-demand skills, without hand-authoring
     SKILL.md frontmatter — the point is letting a project reuse an existing doc
     (a style guide, a glossary) as-is. Merged the same way as directory-scanned
-    project skills: unioned into list_skills/get_skill/search_skills, labeled
+    project skills: unioned into list_skills/get_skill, labeled
     source="project", framed as guidance-not-authority."""
 
     def test_extra_skill_file_appears_in_list_skills(self, tmp_path: Path) -> None:
@@ -579,16 +499,6 @@ class TestExtraSkillFiles:
         assert "Special guidance." in skill.body
         assert "not" in skill.body.lower()
         assert "polic" in skill.body.lower() or "authorit" in skill.body.lower()
-
-    def test_search_skills_finds_extra_skill_file(self, tmp_path: Path) -> None:
-        (tmp_path / "style-guide.md").write_text("Explains recognized ARR.\n")
-        project = FilesystemProject(tmp_path)
-
-        result = search_skills(
-            "recognized ARR", project=project, extra_skill_files=("style-guide.md",)
-        )
-
-        assert any(hit.name == "style-guide" for hit in result.hits)
 
     def test_empty_skill_dirs_skips_directory_scan_but_keeps_extra_skill_files(
         self, tmp_path: Path
@@ -894,14 +804,6 @@ class TestExtraSkills:
 
         assert "Do the personal thing." in skill.body
 
-    def test_extra_skill_findable_via_search_skills(self) -> None:
-        result = search_skills(
-            "weekly-status",
-            extra_skills=(_user_skill("weekly-status-report"),),
-        )
-
-        assert [h.name for h in result.hits] == ["weekly-status-report"]
-
     def test_directoryless_skill_serializes_directory_as_null(self) -> None:
         """A skill with no files must not name a path on the tool wire: for
         every other source that string is a real location, so a fabricated one
@@ -952,13 +854,6 @@ class TestExtraSkills:
 
         assert "truncated" in skill.body.lower()
         assert len(skill.body) < AUTHORED_SKILL_BODY_MAX_CHARS * 2
-
-    def test_search_does_not_match_the_disclaimer_boilerplate(self) -> None:
-        """Scoring runs against the raw body, so the shared wrapper text can't
-        make every personal skill match an unrelated query."""
-        result = search_skills("system policy", extra_skills=(_user_skill("solo"),))
-
-        assert "solo" not in {h.name for h in result.hits}
 
 
 # ---------------------------------------------------------------------------

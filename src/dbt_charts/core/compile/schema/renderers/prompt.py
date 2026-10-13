@@ -119,8 +119,8 @@ def _enum_str(values: list[str | int | bool]) -> str:
     """ "enum: ..." cell text, truncated past _ENUM_CELL_TRUNCATE_AT members.
 
     A long closed set (e.g. ScaleTargetConfig.palette's ~116 names) blown out
-    inline makes this doc's row unreadable and (agent_api/docs/yaml-reference.md
-    is served as an MCP resource) needlessly bloats agent context — the full
+    inline makes this doc's row unreadable and (the field reference is served
+    as an MCP resource) needlessly bloats agent context — the full
     machine-readable list lives in the JSON Schema, where completion actually
     reads it; the docs table only needs enough to show the shape.
     """
@@ -360,7 +360,7 @@ def render_prompt(schema: AuthorableSchema) -> str:
     order = _ordered_model_names(schema)
     path_map = _build_style_path_map(schema)
     parts = [
-        "# dbt charts YAML Schema Reference",
+        "# dbt Charts YAML Schema Reference",
         "",
         "Fields are optional unless they appear under a **Required** label.",
         "",

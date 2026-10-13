@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Top Products
 notes: Top-N with detail pattern — bar chart and table from the same query
 

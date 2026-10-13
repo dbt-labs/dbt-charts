@@ -108,7 +108,7 @@
   "encoding": {
     "description": {
       "value": {
-        "expr": "\"\\u2064\" + (datum[\"segment\"]) + '; ' + \"Share: \" + (format(datum[\"__dbt_pct\"], \".0%\")) + '; ' + \"\\u2060Revenue: \" + (format(datum[\"revenue\"], \",.2~f\")) + '; ' + \"\\u2060\\u2063Total: \" + (format(datum[\"__dbt_total\"], \",.2~f\"))"
+        "expr": "\"\\u2064\" + (datum[\"segment\"]) + '; ' + \"%: \" + (format(datum[\"__dbt_pct\"], \".0%\")) + '; ' + \"\\u2060Revenue: \" + (format(datum[\"revenue\"], \",.2~f\")) + '; ' + \"\\u2060\\u2063\\u03a3: \" + (format(datum[\"__dbt_total\"], \",.2~f\"))"
       }
     }
   },

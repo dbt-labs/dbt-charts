@@ -35,11 +35,11 @@ _FORBIDDEN = math.inf
 MIN_LINES_PER_COLUMN = 5
 
 # Readable band, in characters per line (Bringhurst: 45-75 satisfactory). A
-# grid span narrower than MIN_CHARS is not a readable column; MAX_CHARS caps
-# the text inside a span that is wider, so the excess lands at the span's right
-# and a column's left edge never leaves its card content edge.
+# grid span narrower than MIN_CHARS is not a readable column; the measure
+# (``readable_measure``) caps the text inside a span that is wider, so the excess
+# lands at the span's right and a column's left edge never leaves its card
+# content edge.
 MIN_CHARS = 45
-MAX_CHARS = 75
 
 # What each candidate column break costs the packer. Only the ratios carry
 # meaning: a stranded line has to outrank the imbalance that avoiding it

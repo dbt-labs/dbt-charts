@@ -30,7 +30,9 @@ def validate_command(
 ) -> None:
     from dbt_charts.agent_api import ProjectSession
 
-    with ProjectSession.from_project(project) as project_session:
+    with ProjectSession.from_project(
+        project, allow_mutating_methods=True
+    ) as project_session:
         results = project_session.validate_paths(paths, warehouse=warehouse)
     _emit(results, json_output=json_output, strict=strict)
 

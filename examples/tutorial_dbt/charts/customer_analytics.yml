@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 # Customer Analytics Dashboard
 # Analyzes customer behavior, segments, and lifetime value
 

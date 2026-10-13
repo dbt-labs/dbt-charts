@@ -59,6 +59,7 @@ def _make_executor(board: Any) -> Any:
     assert isinstance(board, Board)
 
     executor = MagicMock()
+    executor.render_with_range_filters.return_value = None
     results: dict[str, list[dict[str, Any]]] = {
         "bar_chart": [{"cat": "A", "val": 10}, {"cat": "B", "val": 20}],
         "kpi_chart": [{"val": 42}],
@@ -235,6 +236,7 @@ def test_repeated_pie_layout_items_carry_their_slot_width_resolution() -> None:
 
     board = _make_repeated_pie_board()
     executor = MagicMock()
+    executor.render_with_range_filters.return_value = None
     executor.execute_query.return_value = [
         {"series": name, "value": value}
         for name, value in [
@@ -382,6 +384,7 @@ def test_overlay_layer_board_path_includes_non_primary_layer_data() -> None:
     overlay = _make_resolved_overlay_two_queries()
 
     executor = MagicMock()
+    executor.render_with_range_filters.return_value = None
     query_data: dict[str, list[dict[str, Any]]] = {
         "q_a": [{"cat": "A", "metric_a": 10}],
         "q_b": [{"cat": "A", "metric_b": 999}],

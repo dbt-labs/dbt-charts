@@ -546,29 +546,6 @@ def test_kpi_link_board_resolver():
     assert resolved == "/charts/zendesk/tickets/detail"
 
 
-@pytest.mark.parametrize(
-    ("raw_link", "expected"),
-    [
-        ("/zendesk/tickets/detail", "/charts/zendesk/tickets/detail"),
-        ("?var=value", "?var=value"),  # in-page link passes through
-        ("https://example.com", "https://example.com"),  # external passes through
-    ],
-)
-def test_table_cell_link_board_resolver(raw_link: str, expected: str) -> None:
-    """resolve_cell_link_with_board applies board resolver after template substitution."""
-    from dbt_charts.core.render.board_links import LinkContext, set_link_context
-    from dbt_charts.core.render.chart.table_support import resolve_cell_link_with_board
-
-    ctx = LinkContext(root="/charts", current_board_slug="zendesk/overview")
-    set_link_context(ctx)
-    try:
-        result = resolve_cell_link_with_board(raw_link, {}, [])
-    finally:
-        set_link_context(None)
-
-    assert result == expected
-
-
 def test_table_render_chart_root_link_is_row_scoped_column_link_wins() -> None:
     """A chart-root link renders as ONE row-scoped anchor per row, not per cell.
 
@@ -580,7 +557,8 @@ def test_table_render_chart_root_link_is_row_scoped_column_link_wins() -> None:
       — no per-cell anchor, no link-colored text
     """
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+
+    from ._engine_render import render_table_svg
 
     data = [
         {"ticket_id": "T1", "status": "Open"},
@@ -659,7 +637,8 @@ def test_table_chart_root_link_does_not_ink_plain_cells() -> None:
     so ``priority``/``status``-style dimensions stay plain text.
     """
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+
+    from ._engine_render import render_table_svg
 
     data = [
         {"ticket_id": "T1", "priority": "low", "status": "new"},
@@ -719,7 +698,7 @@ rows:
 
 def test_table_row_link_skips_summary_and_total_rows() -> None:
     """Summary/total rows get no row-band link or hover affordance."""
-    from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+    from ._engine_render import render_table_svg
 
     data = [
         {"company": "Apex", "id": 1, "kind": "value"},
@@ -769,7 +748,7 @@ def test_table_row_link_skips_row_number_column() -> None:
     With the index gutter visible the band must start to the RIGHT of where it
     starts without the gutter — the row link never covers the row-number column.
     """
-    from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+    from ._engine_render import render_table_svg
 
     data = [{"company": "Apex", "id": 1}, {"company": "Bright", "id": 2}]
     board_style = resolve_style(get_theme_style())
@@ -815,7 +794,8 @@ rows:
 def test_table_links_use_body_color_medium_weight_and_hover_underline() -> None:
     """Linked table cells stay neutral at rest and reveal underline on interaction."""
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+
+    from ._engine_render import render_table_svg
 
     data = [{"company": "Cyberdyne", "bookings": 2787}]
     board_style = resolve_style(get_theme_style())
@@ -862,7 +842,8 @@ rows:
 def test_table_render_no_link_produces_no_anchors() -> None:
     """Table chart without link: renders no <a> wrappers."""
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+
+    from ._engine_render import render_table_svg
 
     data = [{"name": "Alice", "score": 95}]
     board_style = resolve_style(get_theme_style())
@@ -975,7 +956,7 @@ def test_row_link_band_carries_its_link_color_as_a_property():
     itself — so two tables with different link colors on one page cannot
     collide the way a class minted per color once had to prevent. Pinned on
     the emitted shape of one table."""
-    from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+    from ._engine_render import render_table_svg
 
     data = [
         {"ticket_id": "T1", "status": "new"},

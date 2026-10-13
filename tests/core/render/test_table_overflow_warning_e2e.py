@@ -1,4 +1,5 @@
-"""End-to-end: TABLE_COLUMNS_OVERFLOW surfaces from render() for a cramped table.
+"""End-to-end: TABLE_COLUMNS_OVERFLOW surfaces from render() for a cramped table,
+and the overflowing table stays inside its slot.
 
 Proves the full seam — the table renderer records its real slot overflow, then
 renderer.py threads that capture into the WarningContext, and the detector's
@@ -11,6 +12,8 @@ asked for data instead of svg.
 
 from __future__ import annotations
 
+import re
+import xml.etree.ElementTree as ET
 from unittest.mock import Mock
 
 from dbt_charts.core.compile import compile
@@ -128,3 +131,93 @@ def test_non_svg_format_reports_same_warning_as_svg() -> None:
 
     codes = {w.code for w in render_result.warnings}
     assert "WARN-TABLE-COLUMNS-OVERFLOW" in codes
+
+
+_SIDE_BY_SIDE = """
+title: Wide table beside another
+charts:
+  wide_table:
+    query: q
+    type: table
+  other_table:
+    query: q
+    type: table
+queries:
+  q:
+    sql: SELECT * FROM t
+    source: test_source
+rows:
+  - cols: [wide_table, other_table]
+"""
+
+_SVG = "{http://www.w3.org/2000/svg}"
+
+
+def _wide_rows(n: int) -> list[dict[str, object]]:
+    return [
+        {
+            "email": f"someone.with.a.long.name{r}@example-company.com",
+            **{f"metric_{i:02d}": 1234567 + r * 1000 + i for i in range(22)},
+        }
+        for r in range(n)
+    ]
+
+
+def _translate_x(el: ET.Element) -> float:
+    match = re.match(r"translate\(([-\d.]+)", el.get("transform", ""))
+    return float(match.group(1)) if match else 0.0
+
+
+def test_overflowing_table_never_paints_past_its_slot() -> None:
+    """A 23-column table in half a row paints nothing past its slot's right edge.
+
+    Every drawn element whose x lies past the slot must sit under a clip whose
+    right edge is inside the slot, or it paints over the neighboring chart.
+    """
+    result = compile(_SIDE_BY_SIDE)
+    assert result.success and result.board is not None, result.errors
+    executor = _make_executor(result.board, result.query_registry, _wide_rows(5))
+
+    render_result = render(result.board, executor, format="svg")
+
+    assert "WARN-TABLE-COLUMNS-OVERFLOW" in {w.code for w in render_result.warnings}
+    assert isinstance(render_result.output, str)
+    root = ET.fromstring(render_result.output)
+    chart = next(
+        g for g in root.iter(f"{_SVG}g") if g.get("data-chart-id") == "wide_table"
+    )
+    slot_width = float(chart.get("data-chart-width", ""))
+    clip_right = {
+        clip.get("id"): max(
+            float(r.get("x", "0")) + float(r.get("width", "0"))
+            for r in clip.iter(f"{_SVG}rect")
+        )
+        for clip in root.iter(f"{_SVG}clipPath")
+    }
+
+    escapes: list[str] = []
+
+    def walk(el: ET.Element, offset: float, clip: float | None) -> None:
+        if (ref := el.get("clip-path")) is not None:
+            right = offset + _translate_x(el) + clip_right[ref[5:-1]]
+            clip = right if clip is None else min(clip, right)
+        offset += _translate_x(el)
+        right_edges = [
+            float(el.get("x", "0")) + float(el.get("width", "0"))
+            if el.tag == f"{_SVG}rect"
+            else float(el.get(attr, "0"))
+            for attr in ("x", "x1", "x2")
+            if attr in el.attrib
+        ]
+        for edge in right_edges:
+            x = offset + edge
+            if x > slot_width and (clip is None or clip > slot_width):
+                escapes.append(f"{el.tag} reaching x={x:.1f}")
+        for child in el:
+            walk(child, offset, clip)
+
+    walk(chart, 0.0, None)
+    assert not escapes, (
+        f"{len(escapes)} elements paint past the {slot_width:.0f}px slot "
+        f"onto the neighboring chart, e.g. {escapes[:3]}"
+    )

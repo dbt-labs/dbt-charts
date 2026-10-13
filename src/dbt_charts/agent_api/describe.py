@@ -93,6 +93,13 @@ class DescribeBoardArgs(BaseModel):
     """Describe the structure of a board file: queries (with type and source), charts (with query bindings and encoding), variables, and layout. Use this for orientation when picking up an unfamiliar dashboard — it reads the YAML and returns a curated narrative summary without executing any queries."""
 
     path: Path = Field(description="Path to the dashboard YAML file to describe")
+    chart: str | None = Field(
+        None,
+        description=(
+            "Chart id on that board. Narrows the result to that chart, the "
+            "queries it reads, and the variables it depends on; layout is omitted."
+        ),
+    )
 
 
 class DescribeBoardResult(BaseModel):
@@ -186,8 +193,13 @@ def _encoding_for_chart(chart: Chart) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def describe_board(path: Path, *, project: Project) -> DescribeBoardResult:
-    """Describe the structure of a board: queries, charts, variables, layout."""
+def describe_board(
+    path: Path, *, project: Project, chart: str | None = None
+) -> DescribeBoardResult:
+    """Describe the structure of a board: queries, charts, variables, layout.
+
+    With ``chart``, describe only that chart and the board context it needs.
+    """
     from dbt_charts.agent_api._paths import resolve_board_path
     from dbt_charts.core.diagnostics.base import DbtChartsError
 
@@ -206,13 +218,17 @@ def describe_board(path: Path, *, project: Project) -> DescribeBoardResult:
             ],
         )
 
-    return _describe_resolved(resolved)
+    return _describe_resolved(resolved, chart)
 
 
-def _describe_resolved(resolved: ProjectPath) -> DescribeBoardResult:
+def _describe_resolved(
+    resolved: ProjectPath, chart: str | None = None
+) -> DescribeBoardResult:
     """Describe an already-resolved board path — no re-resolution."""
     from dbt_charts.core.compile.compiler import compile_file
+    from dbt_charts.core.compile.normalize.chart_focus import focus_on_chart
     from dbt_charts.core.diagnostics.base import DbtChartsError
+    from dbt_charts.core.execute.collect import collect_all_query_names
 
     if not resolved.exists():
         return DescribeBoardResult(
@@ -258,25 +274,48 @@ def _describe_resolved(resolved: ProjectPath) -> DescribeBoardResult:
             ],
         )
 
+    charts = board.charts
+    queries = board.queries
+    variables = board.variables
+    layout_desc: LayoutDescription | None = None
+    if chart is None:
+        layout_type = board.layout.type
+        layout_desc = LayoutDescription(
+            primitive=(
+                layout_type.value if hasattr(layout_type, "value") else str(layout_type)
+            ),
+            items=_collect_layout_items(board.layout),
+        )
+    else:
+        try:
+            focused = focus_on_chart(board, chart)
+        except DbtChartsError as exc:
+            return DescribeBoardResult(
+                success=False,
+                path=resolved.relpath,
+                errors=[exc.to_diagnostic(file=resolved.relpath)],
+            )
+        charts = {chart: board.charts[chart]}
+        queries = {k: board.queries[k] for k in collect_all_query_names(focused)}
+        variables = focused.variables
+
     query_descs = [
-        _build_query_description(name, query) for name, query in board.queries.items()
+        _build_query_description(name, query) for name, query in queries.items()
     ]
 
     chart_descs = [
         ChartDescription(
             name=name,
-            type=chart.type,
-            query=chart.query_name or name,
-            title=getattr(chart, "title", None)
-            or getattr(chart, "label", None)
-            or None,
-            encoding=_encoding_for_chart(chart),
+            type=c.type,
+            query=c.query_name or name,
+            title=getattr(c, "title", None) or getattr(c, "label", None) or None,
+            encoding=_encoding_for_chart(c),
         )
-        for name, chart in board.charts.items()
+        for name, c in charts.items()
     ]
 
     var_descs: list[VariableDescription] = []
-    for name, var in board.variables.items():
+    for name, var in variables.items():
         static = var.options.static if var.options is not None else None
         var_descs.append(
             VariableDescription(
@@ -286,15 +325,6 @@ def _describe_resolved(resolved: ProjectPath) -> DescribeBoardResult:
                 options=[str(o) for o in static] if static else None,
             )
         )
-
-    layout_type = board.layout.type
-    layout_primitive = (
-        layout_type.value if hasattr(layout_type, "value") else str(layout_type)
-    )
-    layout_desc = LayoutDescription(
-        primitive=layout_primitive,
-        items=_collect_layout_items(board.layout),
-    )
 
     return DescribeBoardResult(
         success=True,

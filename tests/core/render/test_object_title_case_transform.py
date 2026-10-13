@@ -14,7 +14,8 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
-from dbt_charts.core.render.chart.table import render_table_svg
+
+from .._engine_render import render_table_svg
 
 
 def _resolved_style_with_title_case(case: str) -> tuple:
@@ -128,7 +129,7 @@ class TestSparkTitleCaseTransform:
         )
 
     def test_title_case_renders_in_title_case(self) -> None:
-        from dbt_charts.core.render.chart.spark_bar import render_spark_bar_svg
+        from .._engine_render import render_spark_bar_svg
 
         board_rs, board_ctx = _resolved_style_with_title_case("title")
         chart = resolve(
@@ -148,7 +149,7 @@ class TestSparkTitleCaseTransform:
         )
 
     def test_upper_case_renders_in_uppercase(self) -> None:
-        from dbt_charts.core.render.chart.spark_bar import render_spark_bar_svg
+        from .._engine_render import render_spark_bar_svg
 
         board_rs, board_ctx = _resolved_style_with_title_case("upper")
         chart = resolve(

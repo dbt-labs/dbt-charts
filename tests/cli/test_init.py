@@ -600,22 +600,26 @@ class TestInitPreservesExistingAgentMarkdown:
         assert "CLAUDE.md" not in result.output
         assert (dbt_dir / ".claude/skills/dct-board-build/SKILL.md").exists()
 
-    def test_ide_detection_both_found(self, dbt_dir: Path) -> None:
+    def test_ide_detection_both_found_prompts_on_a_tty(self, dbt_dir: Path) -> None:
         def _which(cmd: str) -> str | None:
             return f"/usr/bin/{cmd}" if cmd in ("code", "cursor") else None
 
-        with patch(
-            "dbt_charts.cli.commands.init.shutil.which",
-            side_effect=_which,
+        tty_sys = MagicMock()
+        tty_sys.stdin.isatty.return_value = True
+
+        with (
+            patch("dbt_charts.cli.commands.init.shutil.which", side_effect=_which),
+            # CliRunner swaps sys.stdin during invoke, so patch the module's sys.
+            patch("dbt_charts.cli.commands.init.sys", tty_sys),
         ):
             runner = CliRunner()
             result = runner.invoke(
                 app,
-                ["init", "--project-dir", str(dbt_dir), "--yes"],
+                ["init", "--project-dir", str(dbt_dir), "--no-mcp", "--no-skills"],
+                input="y\ny\n",
                 catch_exceptions=False,
             )
         assert result.exit_code == 0, result.output
-        # Both extensions should have been installed
         assert self.mocks.ext.call_count == 2
 
     def test_pip_extra_named_in_output(self, dbt_dir: Path) -> None:
@@ -632,3 +636,26 @@ class TestInitPreservesExistingAgentMarkdown:
         con.print(panel)
         output = buf.getvalue()
         assert "dbt-charts[mcp]" in output
+
+
+def test_init_yes_does_not_install_editor_extensions_without_flags(
+    dbt_dir: Path,
+) -> None:
+    def _which(cmd: str) -> str | None:
+        return f"/usr/bin/{cmd}" if cmd in ("code", "cursor") else None
+
+    with (
+        patch("dbt_charts.cli.commands.mcp_init.run_init"),
+        patch("dbt_charts.cli._extras.install_extras"),
+        patch("dbt_charts.cli.commands.init.shutil.which", side_effect=_which),
+        patch("dbt_charts.cli.commands.extension.shutil.which", side_effect=_which),
+        patch("dbt_charts.cli.commands.extension.subprocess.run") as run,
+    ):
+        result = CliRunner().invoke(
+            app,
+            ["init", "--project-dir", str(dbt_dir), "--yes"],
+            catch_exceptions=False,
+        )
+    assert result.exit_code == 0, result.output
+    run.assert_not_called()
+    assert "pass --vscode to install it" in result.output

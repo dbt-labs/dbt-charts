@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Q1 Sales Summary
 notes: KPI row pattern — three summary metrics from one aggregated query
 

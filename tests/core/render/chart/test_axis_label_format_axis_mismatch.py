@@ -363,7 +363,7 @@ class TestNumberFormatOnCategoryYAxisRaises:
             _render(chart, data)
         assert exc.value.code is ERR_LABEL_FORMAT_AXIS_MISMATCH
         message = str(exc.value)
-        assert "style.time_format" in message
+        assert "time spec" in message
         assert "categorical" not in message
 
     def test_horizontal_bar_mirror_format_raises(self) -> None:
@@ -466,7 +466,7 @@ class TestNumberFormatOnCategoryYAxisRaises:
         with pytest.raises(ChartDataError) as exc:
             _render(chart, data)
         assert exc.value.code is ERR_LABEL_FORMAT_AXIS_MISMATCH
-        assert "style.time_format" in str(exc.value)
+        assert "time spec" in str(exc.value)
 
 
 class TestLegalFormatsAreUntouched:

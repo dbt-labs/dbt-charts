@@ -123,7 +123,7 @@ def _unwrap_type(field: FieldInfo) -> type:
         if typing.get_origin(ann) is Annotated:
             ann = typing.get_args(ann)[0]
             continue
-        # Peel Union / X | None — covers both typing.Union and the 3.10+ types.UnionType
+        # Peel Union / X | None — covers both typing.Union and types.UnionType
         origin = typing.get_origin(ann)
         if origin is typing.Union or isinstance(ann, types.UnionType):
             non_none = [a for a in typing.get_args(ann) if a is not type(None)]
@@ -554,21 +554,20 @@ def _fragment_from_yaml(
     this is acceptable and fails loudly rather than silently.
 
     Raises:
-        CompilationError: invalid YAML or schema validation failure.
+        CompilationError: invalid YAML (``ERR-YAML-SYNTAX``) or schema
+            validation failure.
     """
-    import yaml
     from pydantic import ValidationError as PydanticValidationError
 
     from dbt_charts.core.compile.models.board.patch import (
         BOARD_PATCH_ADAPTER,
         BoardPatch,
     )
-    from dbt_charts.core.utils import UniqueKeyLoader
+    from dbt_charts.core.compile.parse.parser import load_yaml_text
 
-    try:
-        data = yaml.load(content, Loader=UniqueKeyLoader) or {}
-    except yaml.YAMLError as e:
-        raise CompilationError(f"extends: invalid YAML in {relpath}: {e}") from e
+    loaded = load_yaml_text(content, source=f"extends: {relpath}")
+    # An empty fragment file is a documented empty patch, not a fault.
+    data = {} if loaded is None else loaded
     if not isinstance(data, dict):
         raise CompilationError(
             f"extends: {relpath} must be a YAML mapping, got {type(data).__name__}"

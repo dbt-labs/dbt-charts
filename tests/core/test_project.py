@@ -487,7 +487,13 @@ class _MinimalFilePrimitivesProject(Project):
     def read_bytes(self, relpath: str) -> bytes:
         raise FileNotFoundError(relpath)
 
-    def iter_files(self, under: str, *, recursive: bool) -> Iterator[str]:
+    def iter_files(
+        self,
+        under: str,
+        *,
+        recursive: bool,
+        onerror: Callable[[str, OSError], None] | None = None,
+    ) -> Iterator[str]:
         return iter(())
 
     def iter_dir(self, under: str) -> Iterator[ProjectPath | ProjectDirectory]:
@@ -542,7 +548,13 @@ class _InMemoryProject(Project):
     def read_bytes(self, relpath: str) -> bytes:
         return self.read_text(relpath).encode()
 
-    def iter_files(self, under: str, *, recursive: bool) -> Iterator[str]:
+    def iter_files(
+        self,
+        under: str,
+        *,
+        recursive: bool,
+        onerror: Callable[[str, OSError], None] | None = None,
+    ) -> Iterator[str]:
         prefix = "" if under == "." else under.rstrip("/") + "/"
         for relpath in sorted(self._files):
             if not relpath.startswith(prefix):
@@ -722,7 +734,13 @@ class TestProjectFileQueriesContract:
             def read_bytes(self, relpath: str) -> bytes:
                 return self.read_text(relpath).encode()
 
-            def iter_files(self, under: str, *, recursive: bool) -> Iterator[str]:
+            def iter_files(
+                self,
+                under: str,
+                *,
+                recursive: bool,
+                onerror: Callable[[str, OSError], None] | None = None,
+            ) -> Iterator[str]:
                 return iter(sorted(self._corpus))
 
             def iter_dir(self, under: str) -> Iterator[ProjectPath | ProjectDirectory]:
@@ -759,7 +777,13 @@ class TestProjectFileQueriesContract:
             def read_bytes(self, relpath: str) -> bytes:
                 raise FileNotFoundError(relpath)
 
-            def iter_files(self, under: str, *, recursive: bool) -> Iterator[str]:
+            def iter_files(
+                self,
+                under: str,
+                *,
+                recursive: bool,
+                onerror: Callable[[str, OSError], None] | None = None,
+            ) -> Iterator[str]:
                 return iter(())
 
             def iter_dir(self, under: str) -> Iterator[ProjectPath | ProjectDirectory]:

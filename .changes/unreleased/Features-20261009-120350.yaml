@@ -1,0 +1,3 @@
+kind: Features
+body: Colors and font families that cannot be valid CSS now fail at the field, and font names like Source Serif 4 are quoted.
+time: 2026-10-09T12:03:50.722827-07:00

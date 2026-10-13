@@ -9,12 +9,12 @@ read the collected dict via ``WarningContext.text_truncations``.
 ``surface`` discriminates which detector owns the record:
   "axis_title"   — cartesian x/y axis title (emitters/_cartesian.py)
   "chart_title"  — chart title or subtitle (title_overflow.py)
-  "kpi_label"    — KPI card label (kpi.py)
-  "kpi_inline_fallback" — inline KPI variant fell back to stacked (kpi.py)
-  "table_header" — table column header (table.py)
-  "table_cell"   — table body cell (table.py)
-  "callout_text" — callout title, message, or hint (callout.py)
-  "spark_label"  — spark-bar row label (spark_bar.py)
+  "kpi_label"    — KPI card label (engine)
+  "kpi_support"  — KPI support explainer (engine)
+  "kpi_inline_fallback" — inline KPI variant fell back to stacked (engine)
+  "table_cell"   — table header or body cell (engine)
+  "callout_text" — callout title, message, or hint (callout family)
+  "spark_label"  — spark-bar row label (engine)
   "support_table_cell_overflow" — strip cells wider than their band
     (support_table_attachment.py); not a cut but a collision, so
     ``authored_text`` carries the measured "needed vs available" detail
@@ -40,9 +40,9 @@ TruncationSurface = Literal[
     "axis_title",
     "chart_title",
     "kpi_label",
+    "kpi_support",
     "kpi_inline_fallback",
     "kpi_align_overflow",
-    "table_header",
     "table_cell",
     "callout_text",
     "spark_label",

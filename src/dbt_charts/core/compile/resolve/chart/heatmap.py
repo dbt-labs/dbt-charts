@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from dbt_charts.core.compile.format import column_format
+from dbt_charts.core.compile.format import reject_native
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     HeatmapChart,
@@ -34,6 +34,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
     _cartesian_kwargs,
+    _color_column_format,
     _title_font,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
@@ -50,7 +51,6 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
-    declared_column_format,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
@@ -134,9 +134,6 @@ def _resolve_heatmap(
         else None
     )
     tooltip_format_values = _column_numeric_values(data, color_field)
-    color_declared = declared_column_format(
-        normalized, color_field, chart_style_context.formats, time=False
-    )
     _ay, style_tail = build_cartesian_axes(
         normalized.id,
         "heatmap",
@@ -146,15 +143,8 @@ def _resolve_heatmap(
         ax_edge=None,
         ticks=_CartesianTickResolution((), None, None),
         column_forming=True,
-        measure_tooltip_format=(
-            column_format(
-                "number",
-                chart_style_context.formats,
-                column=color_declared,
-                values=tooltip_format_values,
-            )
-            if color_declared is not None and tooltip_format_values
-            else None
+        measure_tooltip_format=_color_column_format(
+            normalized, color_field, chart_style_context.formats, data
         ),
         tooltip_format_values=tooltip_format_values,
         # Both of a heatmap's channels are nominal -- see plan_cartesian's
@@ -167,6 +157,7 @@ def _resolve_heatmap(
         zero_anchor=False,
         endpoint_rail_may_discard_domain=False,
     )
+    reject_native(style_tail["tooltip_format"], "style.tooltip.format")
     _tf = _title_font(normalized, chart_local_style_context, width)
     return ResolvedHeatmapChart(
         **_base_kwargs(

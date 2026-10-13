@@ -100,13 +100,13 @@ if TYPE_CHECKING:
         query_board as query_board,
     )
     from dbt_charts.agent_api.schema_hints import SchemaHints as SchemaHints
-    from dbt_charts.agent_api.validate import (
-        ValidateBoardArgs as ValidateBoardArgs,
-        ValidateResult as ValidateResult,
-    )
+    from dbt_charts.agent_api.validate import ValidateResult as ValidateResult
     from dbt_charts.agent_api.validate_query import QueryDiagnostic as QueryDiagnostic
     from dbt_charts.agent_api.warmup import warm_process as warm_process
-    from dbt_charts.core.attribution import set_surface as set_surface
+    from dbt_charts.core.attribution import (
+        attribute as attribute,
+        set_surface as set_surface,
+    )
     from dbt_charts.core.board import (
         BoardRenderResult as BoardRenderResult,
         RenderFormat as RenderFormat,
@@ -168,6 +168,7 @@ __all__ = [
     "MigrateSummary",
     "Project",
     "ProjectSession",
+    "attribute",
     "set_surface",
     "posix_relpath",
     "ProjectSourcesConfig",
@@ -178,7 +179,6 @@ __all__ = [
     "RenderFormat",
     "SchemaHints",
     "Topic",
-    "ValidateBoardArgs",
     "ValidateResult",
     # Execution extension seams
     "AllowlistedSourceResolver",
@@ -265,11 +265,11 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "QueryBoardResult": ("dbt_charts.agent_api.query", "QueryBoardResult"),
     "query_board": ("dbt_charts.agent_api.query", "query_board"),
     "SchemaHints": ("dbt_charts.agent_api.schema_hints", "SchemaHints"),
-    "ValidateBoardArgs": ("dbt_charts.agent_api.validate", "ValidateBoardArgs"),
     "ValidateResult": ("dbt_charts.agent_api.validate", "ValidateResult"),
     "QueryDiagnostic": ("dbt_charts.agent_api.validate_query", "QueryDiagnostic"),
     "QueryRefCalls": ("dbt_charts.core.dbt_ref_check", "QueryRefCalls"),
     "extract_ref_calls": ("dbt_charts.core.dbt_ref_check", "extract_ref_calls"),
+    "attribute": ("dbt_charts.core.attribution", "attribute"),
     "set_surface": ("dbt_charts.core.attribution", "set_surface"),
     "compile": ("dbt_charts.core.compile.compiler", "compile"),
     "CompileResult": ("dbt_charts.core.compile.compiler", "CompileResult"),

@@ -8,7 +8,8 @@ from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
-from dbt_charts.core.render.chart.table import render_table_svg
+
+from ..._engine_render import render_table_svg
 
 
 def _board_style(*, title_case: str, boundary_format: str):

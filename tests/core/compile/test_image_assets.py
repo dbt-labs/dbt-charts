@@ -12,6 +12,7 @@ from dbt_charts.core.compile.image_assets import (
     image_scope,
     resolve_image_ref,
     rewrite_markdown_images,
+    rewrite_markdown_text_images,
 )
 from mdsvg import parse
 from mdsvg.types import (
@@ -122,3 +123,50 @@ class TestRewriteMarkdownImages:
             (block,) = rewrite_markdown_images(list(parse("![alt](a.svg)")), "charts")
         assert isinstance(block, ImageBlock)
         assert block.alt == "alt"
+
+
+class TestRewriteMarkdownTextImages:
+    def test_every_local_image_in_the_text_is_embedded(self) -> None:
+        text = "a ![x](img/a.svg) b ![y](img/a.svg){height=9} ![r](https://e.com/r.png)"
+        with _bound({"charts/img/a.svg": _SVG}):
+            out = rewrite_markdown_text_images(text, "charts")
+        assert out.count(f"]({_EMBEDDED}") == 2
+        assert "](https://e.com/r.png)" in out
+        assert "{height=9}" in out
+        assert "img/a.svg" not in out
+
+    def test_a_bad_ref_raises_the_same_chart_error(self) -> None:
+        with _bound({}), pytest.raises(CompilationError) as e:
+            rewrite_markdown_text_images("![x](img/missing.svg)", "charts")
+        assert e.value.code.code == "ERR-IMAGE-REF-UNRESOLVED"
+
+    def test_only_images_are_rewritten_beside_code_links_and_prefixed_urls(
+        self,
+    ) -> None:
+        text = (
+            "![x](img/a.svg) `![x](img/a.svg)` [l](img/a.svg) "
+            "[o](img/a.svg.html) ![y](img/a.svg.png)"
+        )
+        with _bound({"charts/img/a.svg": _SVG, "charts/img/a.svg.png": _SVG}):
+            out = rewrite_markdown_text_images(text, "charts")
+        assert out.startswith(f"![x]({_EMBEDDED}")
+        assert " `![x](img/a.svg)` [l](img/a.svg) [o](img/a.svg.html) " in out
+        assert out.count("](data:") == 2
+
+    def test_a_ref_that_prefixes_another_ref_is_its_own_image(self) -> None:
+        with _bound({"charts/a.png": _SVG, "charts/a.png.png": _SVG}):
+            out = rewrite_markdown_text_images("![a](a.png) ![b](a.png.png)", "charts")
+        assert out.count("](data:") == 2 and "a.png" not in out
+
+    def test_an_image_in_a_fence_is_not_an_image(self) -> None:
+        text = "```\n![x](img/a.svg)\n```"
+        with _bound({}):
+            assert rewrite_markdown_text_images(text, "charts") == text
+
+    def test_the_rewrite_parses_to_the_rewritten_blocks(self) -> None:
+        text = "- a ![x](img/a.svg){height=9}\n- b\n\n![y](img/a.svg)"
+        with _bound({"charts/img/a.svg": _SVG}):
+            out = rewrite_markdown_text_images(text, "charts")
+            assert list(parse(out)) == rewrite_markdown_images(
+                list(parse(text)), "charts"
+            )

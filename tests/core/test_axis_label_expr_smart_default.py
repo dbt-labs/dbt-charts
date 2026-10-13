@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
+import vl_convert as vlc
 
 from dbt_charts.core.compile.config import get_theme_style, reset_config
 from dbt_charts.core.compile.resolve import resolve
@@ -18,9 +21,36 @@ from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
+
+def _eval_expr(expr: str, iso: str) -> str:
+    """Paint ``expr`` over one ``{d: iso}`` row through Vega and read the text."""
+    spec: dict[str, Any] = {
+        "data": {"values": [{"d": iso}]},
+        "transform": [{"calculate": expr, "as": "out"}],
+        "mark": "text",
+        "encoding": {"text": {"field": "out", "type": "nominal"}},
+    }
+    found: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("marktype") == "text":
+                found.extend(item["text"] for item in node.get("items", []))
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(vlc.vegalite_to_scenegraph(spec))
+    (text,) = found
+    return text
+
+
 # ---------------------------------------------------------------------------
 # Temporal data for testing
 # ---------------------------------------------------------------------------
+
 
 MONTHLY_DATA = [
     {"date": "2024-01-01", "value": 10},
@@ -34,11 +64,23 @@ MONTHLY_DATA = [
 
 
 class TestDefaultLabelExprHelper:
-    def test_weekly_tooltip_uses_calendar_start_date(self):
-        expr = tooltip_header_date_expr("datum.value", "yearweek")
-        assert "'Week of '" in expr
-        assert "'%b %-d, %Y'" in expr
-        assert "W%V" not in expr
+    @pytest.mark.parametrize(
+        ("iso", "time_unit", "expected"),
+        [
+            ("2024-03-03", "yearweek", "3–9 Mar 2024"),
+            ("2024-03-31", "yearweek", "31 Mar – 6 Apr 2024"),
+            ("2023-12-31", "yearweek", "31 Dec 2023 – 6 Jan 2024"),
+            ("2024-03-05", "", "5 Mar 2024"),
+            ("2024-03-05", "yearmonthdate", "5 Mar 2024"),
+            ("2024-03-01", "yearmonth", "Mar 2024"),
+        ],
+    )
+    def test_tooltip_header_reads_like_the_date_chip(self, iso, time_unit, expected):
+        """Week headers are the bucket's date range, dates are day-first: the
+        same shapes as the date-variable chip."""
+        assert _eval_expr(tooltip_header_date_expr("datum.d", time_unit), iso) == (
+            expected
+        )
 
     def test_label_time_unit_inherits_encoding_unit(self):
         assert resolve_label_time_unit("year", None) == "year"

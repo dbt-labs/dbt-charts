@@ -129,9 +129,8 @@ class TestTableFilterCellLinksInSVG:
         from dbt_charts.core.render.chart.auto_link import (
             set_filter_variables_context,
         )
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from .._engine_render import render_table_svg
 
         resolved, data, board_style = self._make_resolved_chart(make_chart)
         set_filter_variables_context(frozenset({"property_industry", "property_city"}))
@@ -145,9 +144,8 @@ class TestTableFilterCellLinksInSVG:
     def test_value_with_space_is_percent_encoded_in_svg(self, make_chart) -> None:
         """Multi-word values are percent-encoded so the link is a valid query string."""
         from dbt_charts.core.render.chart.auto_link import set_filter_variables_context
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from .._engine_render import render_table_svg
 
         resolved, data, board_style = self._make_resolved_chart(make_chart)
         set_filter_variables_context(frozenset({"property_industry"}))
@@ -163,9 +161,8 @@ class TestTableFilterCellLinksInSVG:
     def test_column_not_in_filter_vars_has_no_filter_link(self, make_chart) -> None:
         """A column absent from filter vars gets no filter link."""
         from dbt_charts.core.render.chart.auto_link import set_filter_variables_context
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from .._engine_render import render_table_svg
 
         resolved, data, board_style = self._make_resolved_chart(make_chart)
         # Only property_industry is a filter var — property_city is not
@@ -179,9 +176,7 @@ class TestTableFilterCellLinksInSVG:
 
     def test_no_filter_vars_context_no_filter_links(self, make_chart) -> None:
         """When no filter vars are set (default), no filter links are emitted."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         resolved, data, board_style = self._make_resolved_chart(make_chart)
         # No set_filter_variables_context call — default is empty
@@ -197,9 +192,8 @@ class TestTableFilterCellLinksInSVG:
         from dbt_charts.core.compile.config import get_theme_style
         from dbt_charts.core.compile.resolve.style.board import resolve_style
         from dbt_charts.core.render.chart.auto_link import set_filter_variables_context
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from .._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -241,9 +235,8 @@ class TestTableFilterCellLinksInSVG:
         from dbt_charts.core.compile.config import get_theme_style
         from dbt_charts.core.compile.resolve.style.board import resolve_style
         from dbt_charts.core.render.chart.auto_link import set_filter_variables_context
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from .._engine_render import render_table_svg
 
         chart = make_chart(
             "table",

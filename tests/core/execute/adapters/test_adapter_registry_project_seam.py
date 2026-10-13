@@ -9,7 +9,7 @@ read the gunicorn worker cwd instead of the project's git-blob store.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -47,7 +47,13 @@ class _NoFilesystemProject(Project):
         # instead of raising. This mirrors CloudManagedProject without a reader.
         return False
 
-    def iter_files(self, under: str, *, recursive: bool) -> Iterator[str]:
+    def iter_files(
+        self,
+        under: str,
+        *,
+        recursive: bool,
+        onerror: Callable[[str, OSError], None] | None = None,
+    ) -> Iterator[str]:
         return iter(())
 
     def iter_dir(self, under: str) -> Iterator[ProjectPath | ProjectDirectory]:
@@ -158,7 +164,13 @@ class TestManifestLoadThroughSeam:
             def read_bytes(self, relpath: str) -> bytes:
                 return _FIXTURE.encode()
 
-            def iter_files(self, under: str, *, recursive: bool) -> Iterator[str]:
+            def iter_files(
+                self,
+                under: str,
+                *,
+                recursive: bool,
+                onerror: Callable[[str, OSError], None] | None = None,
+            ) -> Iterator[str]:
                 return iter(())
 
             def iter_dir(self, under: str) -> Iterator[ProjectPath | ProjectDirectory]:

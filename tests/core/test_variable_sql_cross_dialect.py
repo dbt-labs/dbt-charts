@@ -19,17 +19,20 @@ is the one the rendered SQL has to satisfy everywhere. DuckDB and SQLite bind
 parameters rather than inlining, so for them this layer is a type analysis of
 the same comparison shape; Layer 2 runs their real path.
 
-Layer 2 — execution, with row-level expectations. DuckDB and SQLite run in
-CI (bound parameters, the adapters' own path), and so do Postgres (the
-runner's PostgreSQL) and BigQuery (a dry run through WIF), in
-test-dataface.yml's `test` job. Locally the last two skip until opted in;
-BigQuery uses Application Default Credentials:
+Layer 2 — execution, with row-level expectations. DuckDB and SQLite (bound
+parameters, the adapters' own path) and Postgres (the runner's PostgreSQL) run
+on every PR, in test-dataface.yml's `test` job. BigQuery (a dry run through
+WIF) and Databricks run nightly in warehouse-nightly.yml. Locally Postgres,
+BigQuery and Databricks skip until their variables are set; BigQuery uses
+Application Default Credentials:
 
     DCT_TEST_POSTGRES_URL=<url> DCT_TEST_BIGQUERY_PROJECT=<gcp project> \
     uv run pytest tests/core/test_variable_sql_cross_dialect.py
 
 Postgres executes the inlined literals; BigQuery dry-runs them, which scans
 nothing and is the one engine here that rejects a mistyped comparison.
+Databricks executes them against the test SQL warehouse once
+DCT_TEST_DATABRICKS_HOST, _HTTP_PATH and _TOKEN are set.
 
 Each case starts from the value's runtime shape (the string a URL parameter
 carries, or the typed value a YAML default carries) and goes through the same
@@ -71,6 +74,7 @@ from dbt_charts.core.execute.adapters.sqlite_adapter import SqliteAdapter
 from dbt_charts.core.execute.sql_literals import (
     INLINE_PLACEHOLDERS,
     inline_params_for_dialect,
+    sql_string_literal,
 )
 
 # One entry per dialect class, not per alias ("postgresql", "mssql", "trino"
@@ -542,3 +546,39 @@ class TestBigQueryDryRun:
             case, column, get_dialect("bigquery")
         )
         client.query(sql, job_config=config)
+
+
+def _databricks_fixture_cte() -> str:
+    databricks = get_dialect("databricks")
+    rows = ", ".join(
+        f"(CAST({id_} AS INT), DATE '{d}', TIMESTAMP '{ts}', CAST({n} AS INT), "
+        f"CAST({f} AS DOUBLE), {sql_string_literal(s, databricks)}, "
+        f"{'TRUE' if b else 'FALSE'})"
+        for id_, d, ts, n, f, s, b in ROWS
+    )
+    return f"WITH t AS (SELECT * FROM VALUES {rows} AS t(id, d, ts, n, f, s, b)) "
+
+
+@pytest.fixture(scope="module")
+def databricks() -> Iterator[Any]:
+    host = os.environ.get("DCT_TEST_DATABRICKS_HOST")
+    if not host:
+        pytest.skip("DCT_TEST_DATABRICKS_HOST not set")
+    sql = pytest.importorskip("databricks.sql")
+    con = sql.connect(
+        server_hostname=host,
+        http_path=os.environ["DCT_TEST_DATABRICKS_HTTP_PATH"],
+        access_token=os.environ["DCT_TEST_DATABRICKS_TOKEN"],
+    )
+    yield con.cursor()
+    con.close()
+
+
+class TestDatabricks:
+    @pytest.mark.parametrize(("case", "column"), _case_params())
+    def test_rows(self, databricks: Any, case: Case, column: str) -> None:
+        databricks.execute(
+            _databricks_fixture_cte()
+            + _render_inlined(case, column, get_dialect("databricks"))
+        )
+        assert {r[0] for r in databricks.fetchall()} == case.expect

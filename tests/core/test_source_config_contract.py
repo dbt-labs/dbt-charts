@@ -176,7 +176,6 @@ class TestDatabaseSourceConfigContracts:
             suppress_cert_warning=False,
             client_certificate="cert.pem",
             client_private_key="key.pem",
-            keytab="keytab",
             principal="reader@EXAMPLE.COM",
             krb5_config="krb5.conf",
             service_name="trino",

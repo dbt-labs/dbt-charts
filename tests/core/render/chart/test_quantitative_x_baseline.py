@@ -49,7 +49,8 @@ def _spec(
         "style": style,
     }
     if chart_format is not None:
-        payload["format"] = chart_format
+        assert style is None
+        payload["style"] = {"axis_y": {"labels": {"format": chart_format}}}
     chart = TypeAdapter(Chart).validate_python(payload)
     return generate_vega_lite_spec(
         chart, data, width=400, board_style=_BOARD_STYLE, chart_style_context=_BOARD_CTX

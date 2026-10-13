@@ -28,7 +28,7 @@ document.addEventListener('click',function(e){if(!e.target.closest('.dbt-nav-fil
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',queueSync);else queueSync();
 window.addEventListener('resize',queueSync);
 })();
-document.querySelectorAll('select.dbt-nav-download').forEach(function(s){s.addEventListener('change',function(){if(s.value){var p=window.location.pathname;var base=p.endsWith('/')?p+'index':p;window.location.href=base+'.'+s.value;s.value='';}});});
+document.querySelectorAll('select.dbt-nav-download').forEach(function(s){s.addEventListener('change',function(){if(s.value){window.location.href=window.location.pathname.replace(/\/$/,'')+'.'+s.value;s.value='';}});});
 (function(){var K='dbt-view',R=document.documentElement;
 function chrome(){var n=document.querySelector('.dbt-nav');if(n)R.style.setProperty('--dbt-view-chrome',n.getBoundingClientRect().height+'px');}
 function apply(v){R.classList.remove('dbt-view-fit-height','dbt-view-actual');if(v!=='fit-width')R.classList.add('dbt-view-'+v);chrome();}
@@ -52,4 +52,27 @@ s.addEventListener('change',function(){apply(s.value);try{window.localStorage.se
 // syncInset() positions the nav off the rendered SVG rect, which every mode changes.
 window.dispatchEvent(new Event('resize'));});}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
+})();
+(function(){var R=document.documentElement;
+function clear(){R.classList.remove('dbt-page-loading');document.removeEventListener('pointerdown',clear,true);document.removeEventListener('keydown',clear,true);}
+// On window, so a handler that claims the click first (the file menu trigger,
+// variables.js's in-page links) wins via defaultPrevented.
+window.addEventListener('click',function(e){
+if(e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;
+var a=e.target.closest('a');
+if(!a||a.hasAttribute('download'))return;
+var t=a.getAttribute('target');
+if(t&&t!=='_self')return;
+var h=a.getAttribute('href')||a.getAttribute('xlink:href');
+if(!h)return;
+var u=new URL(h,window.location.href);
+if(u.origin!==window.location.origin)return;
+if(u.hash&&u.pathname===window.location.pathname&&u.search===window.location.search)return;
+R.classList.add('dbt-page-loading');
+// A navigation that never commits (Escape, Stop, a 204) fires no pageshow; the next
+// interaction proves this document is still here.
+document.addEventListener('pointerdown',clear,true);
+document.addEventListener('keydown',clear,true);});
+// The back/forward cache restores the page exactly as it was left.
+window.addEventListener('pageshow',clear);
 })();

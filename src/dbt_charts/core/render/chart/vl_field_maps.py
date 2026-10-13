@@ -30,6 +30,7 @@ from dbt_charts.core.render.chart.emitters._measured_label_padding import (
 from dbt_charts.core.render.numeral_expr import (
     numeral_vega_expr,
     sub_unit_guarded_vega_expr,
+    vl_format_key,
 )
 from dbt_charts.core.text.format_d3 import (
     _LEADING_SIGN_CHARS,
@@ -42,7 +43,10 @@ from dbt_charts.core.text.numeral_scale import (
     SuffixMode,
     with_symbol,
 )
-from dbt_charts.core.text.predefined_formats import PREDEFINED_NATIVE_NAMES
+from dbt_charts.core.text.predefined_formats import (
+    PYTHON_ONLY_NATIVE_NAMES,
+    VEGA_ARMS,
+)
 from dbt_charts.core.utils import (
     DEFAULT_VL_LABEL_LIMIT,
     Rows,
@@ -225,13 +229,14 @@ def compose_axis_format(
     An authored ``labels.expr`` (already in ``d``) wins; ``format`` is still set
     because Vega's axis description reads it.
     """
+    native = fmt.spec in VEGA_ARMS
     if "labelExpr" in d:
-        d["format"] = fmt.spec
+        d.update(vl_format_key(fmt.spec))
     elif fmt.prefix or fmt.suffix:
         affixed = _affixed_digits_expr("datum.value", fmt.spec, fmt, anchored=False)
-        bare = f"format(datum.value,{json.dumps(fmt.spec)})"
+        bare = numeral_vega_expr("datum.value", fmt.spec)
         d["labelExpr"] = f"(datum.value === 0 ? {bare} : {affixed})"
-    elif fmt.notation is not None and is_d3_si_spec(fmt.spec):
+    elif native or (fmt.notation is not None and is_d3_si_spec(fmt.spec)):
         d["labelExpr"] = numeral_vega_expr("datum.value", fmt.spec, fmt.notation)
     else:
         d["format"] = fmt.spec
@@ -308,7 +313,7 @@ def axis_to_vl(
     if (fmt := _n(axis, "labels", "format")) is not None:
         # A ladder composes the affix into its own labelExpr.
         if _n(axis, "ruler") is not None or _n(axis, "tick_label") is not None:
-            d["format"] = fmt.spec
+            d.update(vl_format_key(fmt.spec))
         else:
             compose_axis_format(d, fmt)
 
@@ -466,20 +471,15 @@ def measure_axis_to_vl(
             # tick_label is what the ticks paint (via labelExpr); measuring the
             # shared label.format would size the gutter for the SI-compacted string.
             measure_fmt = axis.labels.format
-            # A PREDEFINED_NATIVE format name (e.g. "percent_number") bypasses
-            # d3 entirely -- it paints via a Python lambda, not a d3-format
-            # spec. quantitative_tick_labels/estimated_quantitative_tick_labels
-            # call d3_format() directly, which raises D3FormatError on a bare
-            # name like this. Native formats are only valid in Python-painted
-            # slots (KPI, table) per predefined_formats.py -- an axis reaching
-            # one here means compile-time validation didn't catch an invalid
-            # authoring, not that this code should guess how to measure it.
-            if measure_fmt is not None and measure_fmt.spec in PREDEFINED_NATIVE_NAMES:
+            # A Python-only native has no Vega arm, and d3_format() raises on
+            # its bare name; compile rejects it on an axis, so it can't be
+            # measured here.
+            if measure_fmt is not None and measure_fmt.spec in PYTHON_ONLY_NATIVE_NAMES:
                 measure_fmt = None
             if measure_fmt is not None:
                 if axis.tick_values:
                     labels = quantitative_tick_labels(
-                        tuple(axis.tick_values),
+                        axis.drawn_tick_values,
                         measure_fmt,
                         ruler=axis.ruler,
                         tick_label=axis.tick_label,

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 # Pivot Tables Reference
 # Demonstrates the table pivot / cross-tab channels: rows, columns, values.
 

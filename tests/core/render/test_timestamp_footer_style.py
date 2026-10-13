@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -122,7 +122,7 @@ class TestTimestampFormatOverride:
         yaml = _BOARD + 'style:\n  timestamp:\n    format: "%Y"\n'
         svg = _render_svg(yaml, local_project)
         # The value is stamped in UTC, so compare against the UTC year.
-        expected_year = str(datetime.now(timezone.utc).year)
+        expected_year = str(datetime.now(UTC).year)
         assert 'data-role="render-timestamp"' in svg
         match = re.search(r'data-role="render-timestamp"[^>]*>([^<]+)<', svg)
         assert match is not None
@@ -202,7 +202,7 @@ class TestDataFreshnessStamp:
         )
         from dbt_charts.core.compile.models.cache import CachePolicy
 
-        aged = datetime.now(timezone.utc) - timedelta(hours=2, minutes=17)
+        aged = datetime.now(UTC) - timedelta(hours=2, minutes=17)
         # Seed a cache-hit record so min(cache_hit_ats) sees `aged`. The board
         # query is inline values (no result_cache), so nothing appends to
         # _query_data_ages during render — the seeded record is what min() sees.
@@ -274,7 +274,7 @@ class TestDataFreshnessStamp:
         clock = re.search(r"(\d{2}):(\d{2})", stamp)
         assert clock is not None
         stamp_minutes = int(clock.group(1)) * 60 + int(clock.group(2))
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(UTC)
         utc_minutes = now_utc.hour * 60 + now_utc.minute
         drift = abs(stamp_minutes - utc_minutes)
         drift = min(drift, 1440 - drift)

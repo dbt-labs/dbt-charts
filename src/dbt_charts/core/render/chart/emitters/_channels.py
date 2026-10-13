@@ -5,12 +5,14 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Mapping
+from datetime import date
 from typing import Any
 
 from dbt_charts.core.colors import interpolate_hcl
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
 from dbt_charts.core.compile.models.primitives import (
+    ResolvedFormat,
     ResolvedNamedPaletteScaleTargetConfig,
     ResolvedScaleTarget,
     ScaleTargetConfig,
@@ -35,6 +37,7 @@ from dbt_charts.core.render.chart.time_unit_detect import (
     canonicalize_and_sort_ordinal_x,
     complete_ordinal_time_series,
     detect_time_unit,
+    range_extension_keeps_band_axis,
 )
 from dbt_charts.core.render.chart.type_inference import (
     DetectedTimeUnit,
@@ -42,7 +45,11 @@ from dbt_charts.core.render.chart.type_inference import (
     resolve_authored_x_type,
     resolve_cartesian_x_type,
 )
-from dbt_charts.core.render.chart.vl_field_maps import axis_to_vl, legend_to_vl
+from dbt_charts.core.render.chart.vl_field_maps import (
+    axis_to_vl,
+    compose_axis_format,
+    legend_to_vl,
+)
 from dbt_charts.core.text.case import field_title
 from dbt_charts.core.utils import is_vega_numeric_value
 
@@ -803,6 +810,7 @@ def gap_fill_ordinal_time(
     *,
     is_temporal: bool | None,
     detected_time_unit: DetectedTimeUnit,
+    x_date_range: tuple[date, date] | None,
 ) -> tuple[list[dict[str, Any]] | None, bool]:
     """Bucket + gap-fill ordinal bucketed-time data, or just normalize it.
 
@@ -917,9 +925,19 @@ def gap_fill_ordinal_time(
     assert ax.fill is not None, (
         "x-axis fill must be resolved before ordinal time-series completion"
     )
+    if x_date_range is not None and not range_extension_keeps_band_axis(
+        [[row.get(x_field) for row in data]], time_unit, x_date_range
+    ):
+        x_date_range = None
     return (
         complete_ordinal_time_series(
-            data, x_field, time_unit, dim_fields, ax.fill, ax.fiscal_year_start_month
+            data,
+            x_field,
+            time_unit,
+            dim_fields,
+            ax.fill,
+            ax.fiscal_year_start_month,
+            x_date_range,
         ),
         False,
     )
@@ -933,6 +951,7 @@ def gap_fill_ordinal_time_per_panel(
     mark_type: str,
     is_band_step_curve: bool,
     resolves_cartesian_x: bool,
+    x_date_range: tuple[date, date] | None,
 ) -> tuple[list[dict[str, Any]] | None, bool]:
     """``gap_fill_ordinal_time``, run once per small-multiples panel.
 
@@ -1040,6 +1059,7 @@ def gap_fill_ordinal_time_per_panel(
             resolves_cartesian_x,
             is_temporal=is_temporal,
             detected_time_unit=detected_time_unit,
+            x_date_range=x_date_range,
         )
         if filled is None:
             return panel_rows
@@ -1219,6 +1239,7 @@ def apply_color_legend(
     *,
     force_hidden: bool = False,
     drop_values: bool = False,
+    color_format: ResolvedFormat | None = None,
 ) -> None:
     """Inject resolved legend config into a color encoding dict, in-place.
 
@@ -1233,6 +1254,9 @@ def apply_color_legend(
     ``drop_values`` strips an authored ``values`` key from the injected
     config after the fact, since a caller can't suppress it by copying
     the (construction-final) ``legend`` model itself.
+
+    ``color_format`` is how the query says the color column prints; it labels
+    a continuous (quantitative) legend the way an axis labels its ticks.
     """
     if force_hidden or not legend.visible:
         enc["legend"] = None
@@ -1241,6 +1265,8 @@ def apply_color_legend(
         if legend_val:
             if drop_values:
                 legend_val.pop("values", None)
+            if color_format is not None and enc.get("type") == "quantitative":
+                compose_axis_format(legend_val, color_format)
             enc["legend"] = legend_val
 
 

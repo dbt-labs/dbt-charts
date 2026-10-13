@@ -25,7 +25,7 @@ from dbt_charts.core.render.chart.vega_lite import render_chart
 def test_column_width_reserves_real_theme_cell_padding():
     """Each column width must accommodate its widest measured string plus
     the theme's actual cell_padding on both sides — the same padding the
-    table renderer subtracts before wrapping (see table.py's
+    table renderer subtracts before wrapping (see the engine's
     ``content_w = col_widths[col] - cell_pad * 2``). A column narrower
     than that lets the renderer wrap text that has ample room.
     """
@@ -73,7 +73,7 @@ def test_rendered_attached_table_does_not_wrap_atomic_labels(make_chart):
     into "41"/"%" or "CONMEBOL" into "CONMEBO"/"L".
 
     Wrapped cells render their lines as sibling ``<tspan>`` elements inside
-    one ``<text>`` (see table.py), which breaks the literal label string
+    one ``<text>``, which breaks the literal label string
     across markup. An intact, unwrapped label survives as a contiguous
     substring; a wrapped one does not. Slices the SVG to the table region
     (starting at the first swatch ``rx="3"`` rect, which the donut's own

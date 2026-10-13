@@ -198,8 +198,7 @@ def build_skills_index() -> str:
         "## Available Skills\n\n"
         "Skills are progressive-disclosure guides — read the description below, "
         "and if one matches the task, call `get_skill(name=...)` to load its "
-        "full guide (or `search_skills(query=...)` / `list_skills()` to find "
-        "one).\n\n"
+        "full guide (or `list_skills()` for the full index).\n\n"
         f"{lines}"
     )
 
@@ -288,7 +287,7 @@ def build_dbt_charts_system_prompt(
 
     ``available_tools`` gates ``{{#if_tool NAME}}`` blocks in the shared skills
     to the tool set the calling surface actually has (e.g. the Playground,
-    which lacks ``search_boards``/``query_board``). ``None`` (the default)
+    which lacks ``search_boards``). ``None`` (the default)
     keeps every block — CLI, MCP, and full chat are unaffected.
     """
     skill_names = _PROMPT_SKILLS.get(prompt_type)

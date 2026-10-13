@@ -7,6 +7,7 @@ Hierarchy
 _BaseResolvedChartFields  — universal (all 13 families, except CalloutChart)
   └─ _SharedResolvedChartFields  — adds title/subtitle (all except KPI + Callout)
        ├─ _CartesianResolvedChartFields  — x/y/color/sort/format/aspect_ratio/…
+       │    └─ _DateAxisResolvedChartFields — bar/line/area: x_date_range
        └─ _GeoResolvedChartFields        — geo/lookup/value/projection/…
 
 Fields are declared ONCE on the relevant base, never re-declared on family
@@ -14,6 +15,8 @@ models.  extra="forbid" propagates to all subclasses.
 """
 
 from __future__ import annotations
+
+from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -237,9 +240,13 @@ class _CartesianResolvedChartFields(
             "the theme's default number format stamped on."
         ),
     )
-    format: ResolvedFormat | None = Field(
+    color_format: ResolvedFormat | None = Field(
         default=None,
-        description="Authored chart-level measure format, resolved; None when unauthored.",
+        description=(
+            "How the query's declared format prints the numeric color column "
+            "(its continuous legend, a heatmap's cell tooltip); None when the "
+            "query declares none."
+        ),
     )
     aspect_ratio: float | None = Field(
         default=None, description="Width:height aspect ratio."
@@ -257,6 +264,18 @@ class _CartesianResolvedChartFields(
     effective_support_table_style: SupportTableStyle | None = Field(
         default=None,
         description="Final per-chart support_table style (board theme merged with the family override).",
+    )
+
+
+class _DateAxisResolvedChartFields(_CartesianResolvedChartFields):
+    """Cartesian families whose x axis can span a filtered date range: bar, line, area."""
+
+    x_date_range: tuple[date, date] | None = Field(
+        default=None,
+        description=(
+            "First and last day the x axis is limited to by a date-range "
+            "filter in the chart's query. null unless the x column is proven filtered by it."
+        ),
     )
 
 

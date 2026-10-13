@@ -366,6 +366,7 @@ _SERIES_LABEL_D = {
     "font_weight": "400",
     "font_style": "normal",
     "dark_companion_palette": [],
+    "pin_companions": [],
     "gap_px": 18.0,
 }
 _ENDPOINT_LABELS_D = {"visible": False, "label_offset": 8.0, "height": 20.0}

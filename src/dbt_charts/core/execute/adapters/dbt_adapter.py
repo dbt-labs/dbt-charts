@@ -28,6 +28,7 @@ from dbt_charts.core.compile.models.query.normalized import (
 from dbt_charts.core.compile.sql_guard import validate_select_only
 from dbt_charts.core.compile.template.jinja import resolve_jinja_template
 from dbt_charts.core.compile.template.parameterized import (
+    DateRangeFilter,
     _check_placeholders_present,
     _ParameterCollector,
     make_filter_date_range_helper,
@@ -66,6 +67,7 @@ from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
 )
 from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
 from dbt_charts.core.execute.dbt_jinja import has_dbt_jinja
+from dbt_charts.core.execute.drivers import DRIVER_SOURCE_TYPES
 from dbt_charts.core.execute.sql_literals import (
     INLINE_PLACEHOLDERS,
     inline_params_for_dialect,
@@ -177,6 +179,45 @@ def _read_lakecompute_target(
     return {"type": "lakecompute", **connection}
 
 
+def _read_trino_target(
+    target: dict[str, Any],  # type-state: explicit_any — dbt owns profiles.yml values
+    profile_name: str,
+    target_name: str,
+    render: bool,
+) -> dict[str, Any]:  # type-state: explicit_any — mirrors _read_target_dict's dict
+    """The connection fields of a `type: trino` target, validated without dbt Core.
+
+    Trino connects through its own driver, so no dbt adapter is installed to
+    validate the target and the Trino source model does it instead. `threads`
+    is dbt's own setting and is dropped, as for every target. dbt spells the
+    unauthenticated method `none`; the source model spells it by omission.
+    """
+    from pydantic import ValidationError
+
+    from dbt_charts.core.compile.models.source import TrinoSourceConfig
+    from dbt_charts.core.compile.sources.dbt_jinja import render_dbt_jinja_in_dict
+
+    connection = {k: v for k, v in target.items() if k not in {"threads", "type"}}
+    if connection.get("method") == "none":
+        del connection["method"]
+    try:
+        TrinoSourceConfig.model_validate({"type": "trino", **connection})
+    except ValidationError as exc:
+        # Built from locations and messages only: the error's own text quotes
+        # the input, which here is a credential block.
+        problems = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+            for error in exc.errors()
+        )
+        raise ValueError(
+            f"Profile '{profile_name}' target '{target_name}' is not a valid "
+            f"trino connection: {problems}"
+        ) from None
+    if render:
+        connection = render_dbt_jinja_in_dict(connection)
+    return {"type": "trino", **connection}
+
+
 def _read_target_dict(
     dbt_project_path: Path | None,
     profile_name: str,
@@ -266,6 +307,8 @@ def _read_target_dict(
         in {"lakecompute", "alt", "lake_compute"}
     ):
         return _read_lakecompute_target(target, profile_name, resolved_target, render)
+    if isinstance(target, dict) and str(target.get("type")).lower() == "trino":
+        return _read_trino_target(target, profile_name, resolved_target, render)
 
     from dbt.adapters.factory import load_plugin
     from dbt_common.exceptions import DbtRuntimeError
@@ -342,6 +385,88 @@ def _read_target_dict(
         if dbt_project_path is not None and not path_obj.is_absolute():
             target["path"] = str((dbt_project_path / path_obj).resolve())
     return target
+
+
+def render_dbt_sql(
+    resolved: str,
+    variables: VariableValues | None,
+    dialect_name: str,
+    *,
+    strict: bool = True,
+    range_filters: list[DateRangeFilter] | None = None,
+) -> str:
+    """Render variables and filters of dbt-ref-free SQL to literal SQL.
+
+    Renders once: variable values come from URL query parameters, so they are
+    data and a second render of this output would treat them as template source.
+    The filter helpers collect their values as placeholders that are inlined as
+    escaped literals afterward, since dbt's adapter takes no bindings.
+
+    Args:
+        resolved: Query SQL with dbt refs already resolved.
+        variables: Variable values available to the template.
+        dialect_name: The dbt target's warehouse type, or the query's own
+            ``dialect:``.
+        strict: False lets undefined variables render empty, for queries
+            that declare lenient_variables.
+        range_filters: Collects each ``filter_date_range()`` call that emitted
+            a range (see ``render_parameterized``).
+    """
+    # The helpers' date spelling, by the target's type as read from the
+    # profile. Not `_escaping_dialect`: that refuses an unknown type, which is
+    # right for escaping a value but would fail a query that binds nothing
+    # before it reaches the adapter's own type check.
+    warehouse = get_dialect(dialect_name)
+    collector = _ParameterCollector(variables={}, dialect=INLINE_PLACEHOLDERS)
+    rendered = resolve_jinja_template(
+        resolved,
+        variables,
+        strict=strict,
+        filter_helpers={
+            "filter": make_filter_helper(collector.add_param, warehouse),
+            "filter_date_range": make_filter_date_range_helper(
+                collector.add_param, warehouse, range_filters
+            ),
+        },
+    )
+    if not collector.params:
+        return rendered
+    # Before inlining: the guard inside inline_params_for_dialect can only
+    # see a mangled token, never one a filter removed outright — and a
+    # dropped parameter is a query that runs unconstrained.
+    _check_placeholders_present(rendered, collector, INLINE_PLACEHOLDERS)
+    try:
+        return inline_params_for_dialect(
+            rendered,
+            collector.params,
+            INLINE_PLACEHOLDERS,
+            escaping=_escaping_dialect(dialect_name),
+        )
+    except ValueError as e:
+        # A surviving placeholder means a Jinja filter transformed one
+        # before it could be substituted. Coded here rather than left bare,
+        # which would reach the executor as ERR-INTERNAL.
+        raise JinjaError(str(e), resolved) from e
+
+
+def _escaping_dialect(dialect_name: str) -> SQLDialect:
+    """The dialect whose literal grammar the inlined values must satisfy.
+
+    Raises:
+        DbtChartsError: The warehouse type has no dialect here, so its literal
+            grammar is unknown. `get_dialect` would answer postgres, which leaves
+            backslashes alone — the wrong answer for a value on any engine that
+            escapes them, and wrong in the direction that puts part of a value in
+            code position.
+    """
+    warehouse = DIALECTS.get(dialect_name.lower())
+    if warehouse is None:
+        raise DbtChartsError.from_code(
+            ERR_SOURCE_INVALID_TYPE,
+            offending_value=dialect_name,
+            available=list_dialects(),
+        )
+    return warehouse
 
 
 class DbtAdapter(BaseAdapter):
@@ -557,10 +682,10 @@ class DbtAdapter(BaseAdapter):
             return self._adapter
 
         target_dict = self._resolve_target_dict()
-        if target_dict["type"] == "lakecompute":
+        if target_dict["type"] in DRIVER_SOURCE_TYPES:
             raise ExecutionError.from_code(
                 ERR_DBT_TARGET_NEEDS_SOURCE,
-                warehouse="lakecompute",
+                warehouse=target_dict["type"],
                 target=self.target_name,
                 profile=self.profile_name,
             )
@@ -587,86 +712,7 @@ class DbtAdapter(BaseAdapter):
     ) -> str:
         """Resolve dbt refs, then render variables and filters to literal SQL.
 
-        Variables resolve exactly as they always have on this path. Only the
-        filter helpers change: instead of the raising interpolation stubs, the
-        render context gets helpers that collect each value as a parameter and
-        emit a placeholder for it, which the inline pass below flattens to an
-        escaped literal — dbt's adapter.execute() takes a SQL string and no
-        bindings.
-
-        One Jinja render, deliberately. A second *render* of this output would
-        be re-rendering substituted variable values, and values come from URL
-        query parameters: they are data, never template source. The inline pass
-        is not a render — it substitutes a fixed NUL-delimited token that
-        cannot occur in authored SQL. A Jinja filter applied to a predicate is
-        caught on the way through, in the two shapes it can take: a token the
-        filter rewrote (`| upper`) is refused by the inline pass, and one it
-        removed outright — leaving a collected value with nowhere to bind, so
-        the query would run unconstrained — by the placeholder check above it.
-
-        Binding only the helpers is also what keeps a variable written *inside*
-        a literal (`'%{{ q }}%'`, `'{{ year }}-01-01'`) rendering as before; a
-        filtered value arrives already quoted and cannot be spliced into the
-        middle of somebody else's string.
-
-        Args:
-            sql: Query SQL, possibly containing dbt jinja and variable Jinja.
-            variables: Variable values available to the template.
-            strict: False lets undefined variables render empty, for queries
-                that declare lenient_variables.
+        See ``render_dbt_sql``.
         """
         resolved, _ = self._dbt_refs.resolve(sql)
-        # The helpers' date spelling, by the target's type as read from the
-        # profile. Not `_warehouse()`: that refuses an unknown type, which is
-        # right for escaping a value but would fail a query that binds nothing
-        # before it reaches the adapter's own type check.
-        warehouse = get_dialect(self._dialect)
-        collector = _ParameterCollector(variables={}, dialect=INLINE_PLACEHOLDERS)
-        rendered = resolve_jinja_template(
-            resolved,
-            variables,
-            strict=strict,
-            filter_helpers={
-                "filter": make_filter_helper(collector.add_param, warehouse),
-                "filter_date_range": make_filter_date_range_helper(
-                    collector.add_param, warehouse
-                ),
-            },
-        )
-        if not collector.params:
-            return rendered
-        # Before inlining: the guard inside inline_params_for_dialect can only
-        # see a mangled token, never one a filter removed outright — and a
-        # dropped parameter is a query that runs unconstrained.
-        _check_placeholders_present(rendered, collector, INLINE_PLACEHOLDERS)
-        try:
-            return inline_params_for_dialect(
-                rendered,
-                collector.params,
-                INLINE_PLACEHOLDERS,
-                escaping=self._warehouse(),
-            )
-        except ValueError as e:
-            # A surviving placeholder means a Jinja filter transformed one
-            # before it could be substituted. Coded here rather than left bare,
-            # which would reach the executor as ERR-INTERNAL.
-            raise JinjaError(str(e), resolved) from e
-
-    def _warehouse(self) -> SQLDialect:
-        """The dialect whose literal grammar the inlined values must satisfy.
-
-        Raises:
-            DbtChartsError: The dbt target's warehouse type has no dialect here,
-                so its literal grammar is unknown. `get_dialect` would answer
-                postgres, which leaves backslashes alone — the wrong answer for
-                a value on any engine that escapes them, and wrong in the
-                direction that puts part of a value in code position.
-        """
-        warehouse = DIALECTS.get(self._dialect.lower())
-        if warehouse is None:
-            raise DbtChartsError.from_code(
-                ERR_SOURCE_INVALID_TYPE,
-                offending_value=self._dialect,
-                available=list_dialects(),
-            )
-        return warehouse
+        return render_dbt_sql(resolved, variables, self._dialect, strict=strict)

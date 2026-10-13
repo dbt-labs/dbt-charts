@@ -32,14 +32,10 @@ import argparse
 import ast
 import re
 import sys
+import tomllib
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover - no test in this repo runs under Python 3.10
-    import tomli as tomllib
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _STDLIB = set(sys.stdlib_module_names)
@@ -62,11 +58,6 @@ _PYPI_TO_IMPORT_NAMES: dict[str, list[str]] = {
     # Pillow ships its module under the `PIL` import name for historical
     # compatibility with the original Python Imaging Library.
     "pillow": ["PIL"],
-    # `tomllib` is stdlib on 3.11+ but a runtime dep (`tomli`) on 3.10. Audit
-    # files that `try: import tomllib; except: import tomli` would flag
-    # `tomllib` as missing on 3.10 — `_STDLIB` reflects the *executor's*
-    # interpreter, not the wheel's target. Declaring tomli satisfies both.
-    "tomli": ["tomli", "tomllib"],
 }
 
 
@@ -94,6 +85,9 @@ class Policy:
     transitively_required_dependencies: list[str]
     # Regex patterns that must not match any decodable wheel file content.
     forbidden_content_regexes: list[str]
+    # Wheel path stem of the compiled extension the wheel must carry (e.g.
+    # `dbt_charts/_engine`). None for a pure-Python wheel.
+    native_extension: str | None
 
     @property
     def allowed_top_level(self) -> set[str]:
@@ -141,6 +135,7 @@ def _load_policy(path: Path) -> Policy:
             boundary.get("transitively_required_dependencies", [])
         ),
         forbidden_content_regexes=list(boundary.get("forbidden_content_regexes", [])),
+        native_extension=boundary.get("native_extension"),
     )
 
 
@@ -203,6 +198,68 @@ def _check_allowlist(members: list[str], policy: Policy) -> list[Finding]:
         findings.append(
             Finding(
                 m, "out_of_bounds_file", f"top-level `{first}` not in allowed_roots"
+            )
+        )
+    return findings
+
+
+# Home directories, the cargo registry and Windows user profiles: what rustc
+# embeds in panic locations unless the build remaps them.
+_BUILD_PATH = re.compile(
+    rb"(?:/home|/Users)/[^/\x00]+/|/root/\.cargo|[A-Za-z]:\\Users\\|\.cargo[/\\]registry"
+)
+
+
+def _check_native_extension(
+    wheel: list[tuple[str, bytes]], policy: Policy
+) -> list[Finding]:
+    """Assert the wheel is a platform wheel carrying exactly one clean extension.
+
+    The extension is binary, so `_check_content_scans` skips it; its raw bytes
+    are scanned for forbidden name substrings and build-machine paths here.
+    """
+    if policy.native_extension is None:
+        return []
+    stem = policy.native_extension
+    extensions = [
+        (m, b)
+        for m, b in wheel
+        if m.startswith(f"{stem}.") and m.endswith((".so", ".pyd"))
+    ]
+    if len(extensions) != 1:
+        return [
+            Finding(
+                stem,
+                "native_extension",
+                f"expected exactly one `{stem}` extension, found {len(extensions)}",
+            )
+        ]
+    findings: list[Finding] = []
+    member, blob = extensions[0]
+    wheel_file = next(b for m, b in wheel if m.endswith(".dist-info/WHEEL"))
+    if b"Root-Is-Purelib: false" not in wheel_file:
+        findings.append(
+            Finding(
+                member,
+                "native_extension",
+                "wheel is tagged pure-Python; expected `Root-Is-Purelib: false`",
+            )
+        )
+    for sub in policy.forbidden_name_substrings:
+        if sub.encode() in blob:
+            findings.append(
+                Finding(
+                    member, "name_substring", f"contains forbidden substring `{sub}`"
+                )
+            )
+    build_path = _BUILD_PATH.search(blob)
+    if build_path:
+        findings.append(
+            Finding(
+                member,
+                "native_extension",
+                f"embeds a build-machine path `{build_path.group().decode()}`; "
+                "build with --remap-path-prefix",
             )
         )
     return findings
@@ -397,6 +454,7 @@ def _audit(*, wheel_path: Path, policy: Policy) -> list[Finding]:
     findings: list[Finding] = []
     findings += _check_allowlist(wheel_names, policy)
     findings += _check_dev_context_leaked(wheel_names)
+    findings += _check_native_extension(wheel, policy)
     findings += _check_forbidden_module_paths(wheel_names, policy)
     findings += _check_content_scans(wheel_members, policy)
     findings += _check_content_regexes(wheel_members, policy)

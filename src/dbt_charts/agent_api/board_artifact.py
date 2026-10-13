@@ -4,7 +4,8 @@
 board's published `ResolvedBoard` contract and a data sidecar (the rows it was
 resolved against). `render_board_from_files` reads both back and renders
 without a compile step or a warehouse connection — the "skip the
-compilation" win the resolved-board artifact exists for.
+compilation" win the resolved-board artifact exists for. `board_artifact_schema`
+returns the JSON Schema an artifact conforms to.
 
 Business logic (the resolve/record/dump/load primitives) lives in
 `dbt_charts.core.execute.recording` and `dbt_charts.core.render.board_replay`;
@@ -19,10 +20,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict
+from pydantic.json_schema import JsonSchemaValue
 
 from dbt_charts.agent_api._paths import resolve_board_or_error
 from dbt_charts.core.compile import compile_file
 from dbt_charts.core.compile.models.board.resolved import ChartResolveFailure
+from dbt_charts.core.compile.schema.renderers.board_resolved import (
+    render_board_resolved_schema,
+)
 from dbt_charts.core.compile.template.variables import normalize_multiselect_values
 from dbt_charts.core.diagnostics import ERR_FILE_NOT_FOUND, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -195,3 +200,14 @@ def render_board_from_files(
     except DbtChartsError as exc:
         return RenderBoardArtifactResult(success=False, errors=[exc.to_diagnostic()])
     return RenderBoardArtifactResult(success=True, svg=svg)
+
+
+def board_artifact_schema() -> JsonSchemaValue:
+    """Return the JSON Schema (draft 2020-12) every emitted board artifact conforms to.
+
+    The artifact's ``$id`` names this schema. It is derived from the
+    ``ResolvedBoard`` models on each call, so it always matches the installed
+    release. The return is a JSON Schema document rather than a result model:
+    its shape is the JSON Schema standard's, not one a caller has to guess.
+    """
+    return render_board_resolved_schema()

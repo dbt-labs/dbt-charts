@@ -27,7 +27,10 @@ from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatte
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.resolve.chart._wide_fields import WIDE_VALUE_FIELD
 from dbt_charts.core.render.chart._types import VLDict
-from dbt_charts.core.render.chart.emitters._tooltip import format_quantitative_expr
+from dbt_charts.core.render.chart.emitters._tooltip import (
+    COUNT_TITLE,
+    format_quantitative_expr,
+)
 from dbt_charts.core.render.chart.features.structured_tooltip import (
     StructuredTooltipFeature,
 )
@@ -164,7 +167,7 @@ def _title(defn: VLDict) -> str:
     if isinstance(title, str):
         return title
     if defn.get("aggregate") == "count":
-        return "Count"
+        return COUNT_TITLE
     return str(defn["field"])
 
 

@@ -1,5 +1,5 @@
 line-length = 88
-target-version = "py310"
+target-version = "py311"
 
 [format]
 # ruff 0.16 formats Python fences inside Markdown by default; keep the

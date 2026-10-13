@@ -22,16 +22,19 @@ from dbt_charts.core.compile.file_refs import (
     is_local_image,
     resolve_image,
 )
-from dbt_charts.core.compile.markdown_blocks import SpanRun, map_span_runs
+from dbt_charts.core.compile.markdown_blocks import SpanRun, image_urls, map_span_runs
 from dbt_charts.core.diagnostics.codes_render import ERR_IMAGE_REF_UNRESOLVED
 from dbt_charts.core.utils import IMAGE_SUFFIXES
-from mdsvg import parse as parse_markdown
+from mdsvg import MarkdownParser, parse as parse_markdown
 from mdsvg.images import get_image_size
 from mdsvg.types import AnyBlock, ImageBlock, SpanType
 
 if TYPE_CHECKING:
     from dbt_charts.core.diagnostics.diagnostic import Diagnostic
     from dbt_charts.core.project import Project
+
+# mdsvg's own pattern for an inline image, the one its parser matches.
+_IMAGE_SYNTAX = MarkdownParser.IMAGE
 
 # The project the compile or render in flight reads images from. Scoped, like
 # ``svg_cache_scope``, because images resolve in painters a dozen frames below
@@ -129,6 +132,39 @@ def rewrite_markdown_images(
         return replace(block, url=resolve_image_ref(block.url, base_dir))
 
     return map_span_runs(blocks, run, image)
+
+
+def rewrite_markdown_text_images(markdown: str, base_dir: str | None) -> str:
+    """*markdown* with each image's destination replaced by its
+    ``resolve_image_ref`` URL, for a consumer that parses the text itself.
+
+    mdsvg's parse decides which ``![](..)`` is an image: each candidate the
+    parser's own image pattern finds is probed (is its destination read back as
+    an image?), so one inside a code span or fence stays text. The result must
+    parse to exactly ``rewrite_markdown_images``'s blocks, else it is refused.
+    """
+    expected = rewrite_markdown_images(list(parse_markdown(markdown)), base_dir)
+    resolved: dict[str, str] = {}
+    pieces: list[str] = []
+    cursor = 0
+    for index, candidate in enumerate(_IMAGE_SYNTAX.finditer(markdown)):
+        start, end = candidate.span(2)
+        probe = f"mdsvg-probe-{index}"
+        probed = markdown[:start] + probe + markdown[end:]
+        if probe not in image_urls(list(parse_markdown(probed))):
+            continue
+        ref = candidate.group(2)
+        if ref not in resolved:
+            resolved[ref] = resolve_image_ref(ref, base_dir)
+        pieces += [markdown[cursor:start], resolved[ref]]
+        cursor = end
+    rewritten = "".join(pieces) + markdown[cursor:]
+    if list(parse_markdown(rewritten)) != expected:
+        raise _unresolved(
+            next(iter(resolved), markdown[:40]),
+            "the image syntax could not be rewritten without changing other markdown",
+        )
+    return rewritten
 
 
 def rewrite_board_markdown_images(

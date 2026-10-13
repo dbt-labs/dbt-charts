@@ -1,0 +1,3 @@
+kind: Fixes
+body: Add the pygments night-owl code theme and require pygments 2.21 or newer.
+time: 2026-10-09T09:06:58.640413-07:00

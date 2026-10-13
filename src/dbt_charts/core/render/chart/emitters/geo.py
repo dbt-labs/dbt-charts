@@ -32,6 +32,7 @@ from dbt_charts.core.render.chart.emitters._channels import (
     channel_to_encoding,
     gradient_scale_to_vl,
 )
+from dbt_charts.core.render.chart.emitters._tooltip import COUNT_TITLE
 from dbt_charts.core.render.chart.geo_tooltip import (
     build_point_tooltip_fields,
     validate_map_lookup_key_contract,
@@ -550,7 +551,7 @@ class PointMapEmitter:
             encoding["size"] = {
                 "aggregate": "count",
                 "type": "quantitative",
-                "title": "Count",
+                "title": COUNT_TITLE,
                 "scale": dict(_AREA_PROPORTIONAL_SIZE_SCALE),
                 # A count is never fractional, and every shown tick must be
                 # unique — see COUNT_LEGEND_VALUES_SIGNAL's docstring for why
@@ -607,7 +608,7 @@ class PointMapEmitter:
         )
         if chart.collapse:
             tooltip_fields.append(
-                {"aggregate": "count", "type": "quantitative", "title": "Count"}
+                {"aggregate": "count", "type": "quantitative", "title": COUNT_TITLE}
             )
         if tooltip_fields:
             encoding["tooltip"] = tooltip_fields

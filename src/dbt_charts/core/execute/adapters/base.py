@@ -19,6 +19,7 @@ Security:
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BINDER_TYPE_MISMATCH,
     ERR_BINDER_UNKNOWN_COLUMN,
+    ERR_BINDER_UNKNOWN_RELATION,
     ERR_QUERY_INTERRUPTED,
     ERR_WAREHOUSE_CONNECTION,
     ERR_WAREHOUSE_RUNTIME,
@@ -305,7 +307,8 @@ class WarehouseStatementError(Exception):
 # 42000 is absent on purpose: engines answer a plain syntax error with it, so
 # reading it as an unknown reference would mislabel half the queries that carry it.
 _SQLSTATE_ERROR_CODES: dict[str, ErrorCode] = {
-    "42S02": ERR_BINDER_UNKNOWN_COLUMN,  # base table or view not found
+    "42S02": ERR_BINDER_UNKNOWN_RELATION,  # base table or view not found
+    "42P01": ERR_BINDER_UNKNOWN_RELATION,  # undefined_table (Postgres, Redshift)
     "42S22": ERR_BINDER_UNKNOWN_COLUMN,  # column not found
     "22018": ERR_BINDER_TYPE_MISMATCH,  # invalid character value for cast
 }
@@ -318,11 +321,24 @@ _SQLSTATE_ERROR_CODES: dict[str, ErrorCode] = {
 # exception wrapper but in an unverified message format — classifying those by
 # a guessed pattern risks a confidently wrong code, so they fall through to
 # ERR_WAREHOUSE_RUNTIME in classify_warehouse_error below.
+BIGQUERY_UNKNOWN_RELATION_SUBSTRINGS = ("Not found: Table", "Not found: Dataset")
 BIGQUERY_UNKNOWN_REF_SUBSTRINGS = (
     "Unrecognized name:",
-    "Not found: Table",
-    "Not found: Dataset",
+    *BIGQUERY_UNKNOWN_RELATION_SUBSTRINGS,
 )
+
+# Message patterns for "the relation does not exist", by dialect: the error text
+# the adapter wraps. Snowflake and Databricks carry no SQLSTATE through dbt's
+# exception wrapper; Postgres and Redshift do when a driver reports one, and
+# this is the same fact in dbt's text.
+_MISSING_RELATION_MESSAGES: dict[str, re.Pattern[str]] = {
+    "bigquery": re.compile("|".join(BIGQUERY_UNKNOWN_RELATION_SUBSTRINGS)),
+    "snowflake": re.compile(r"does not exist or not authorized"),
+    "databricks": re.compile(r"TABLE_OR_VIEW_NOT_FOUND"),
+    "postgres": re.compile(r'relation ".*" does not exist'),
+    "postgresql": re.compile(r'relation ".*" does not exist'),
+    "redshift": re.compile(r'relation ".*" does not exist'),
+}
 
 
 def classify_warehouse_error(
@@ -359,9 +375,11 @@ def classify_warehouse_error(
         # code means the same thing whoever reported it. An unmapped one falls
         # through to the runtime fallback below.
         code = _SQLSTATE_ERROR_CODES[error.sqlstate]
-    elif dialect == "bigquery" and any(
-        substring in str(error) for substring in BIGQUERY_UNKNOWN_REF_SUBSTRINGS
-    ):
+    elif dialect in _MISSING_RELATION_MESSAGES and _MISSING_RELATION_MESSAGES[
+        dialect
+    ].search(str(error)):
+        code = ERR_BINDER_UNKNOWN_RELATION
+    elif dialect == "bigquery" and "Unrecognized name:" in str(error):
         code = ERR_BINDER_UNKNOWN_COLUMN
     else:
         code = ERR_WAREHOUSE_RUNTIME

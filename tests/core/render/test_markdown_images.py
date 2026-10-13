@@ -126,6 +126,24 @@ class TestAnchor:
             }
         ) == {"lib/shot.svg"}
 
+    def test_callout_title_image_resolves_apart_from_the_message_image(self) -> None:
+        project = _RecordingProject(
+            Path("/proj"),
+            {
+                "sales.yml": (
+                    "rows:\n"
+                    "  - note:\n"
+                    "      type: callout\n"
+                    "      title: '![t](title.svg) Heads up'\n"
+                    "      message: plain words\n"
+                ),
+                "title.svg": _TALL,
+            },
+        )
+        svg = _svg(_render(project))
+        assert project.reads == {"title.svg"}
+        assert "<image" in svg and _EMBEDDED in svg
+
     @pytest.mark.parametrize(
         ("inherited", "board", "written_in"),
         [

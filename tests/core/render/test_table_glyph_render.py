@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import re
 
-import pytest
-
 from dbt_charts.core.compile.config import (
     get_theme_style,
 )
@@ -33,9 +31,7 @@ class TestGlyphRendersInSvg:
     """Glyphs from when-rules render as colored tspans inside table cells."""
 
     def test_negative_row_emits_red_down_arrow(self, make_chart) -> None:
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -78,7 +74,7 @@ class TestGlyphRendersInSvg:
         """A `tone:` rule (no explicit glyph_color) renders the glyph in the
         theme's resolved tone color — the full authored→render path, with the
         tones threaded through render_table_svg (not just the resolver)."""
-        from dbt_charts.core.render.chart import render_table_svg
+        from .._engine_render import render_table_svg
 
         board_rs = resolve_style(get_theme_style())
         board_ctx = resolve_chart_style_context(get_theme_style())
@@ -106,9 +102,7 @@ class TestGlyphRendersInSvg:
         )
 
     def test_static_column_glyph_renders_on_every_row(self, make_chart) -> None:
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -146,9 +140,7 @@ class TestGlyphOnNonNumericCells:
     """Glyphs on text/null/date cells must render, not silently disappear."""
 
     def test_static_glyph_on_text_column(self, make_chart) -> None:
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -179,9 +171,7 @@ class TestGlyphOnNonNumericCells:
         )
 
     def test_when_glyph_on_null_value(self, make_chart) -> None:
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from .._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -314,7 +304,7 @@ class TestGlyphWidthIsReserved:
     """
 
     def test_glyph_cell_text_fits_inside_its_background(self, make_chart) -> None:
-        from dbt_charts.core.render.chart.table import render_table_svg
+        from .._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -381,7 +371,7 @@ class TestGlyphWidthIsReserved:
         line, the same shape a glyph-free column of this width produces), not
         containment.
         """
-        from dbt_charts.core.render.chart.table import render_table_svg
+        from .._engine_render import render_table_svg
 
         columns = [f"c{i}" for i in range(22)]
         chart = make_chart(
@@ -411,152 +401,9 @@ class TestGlyphWidthIsReserved:
             "missing-entry path neither wraps nor truncates"
         )
 
-    def test_demand_reserves_the_glyph_run(self) -> None:
-        from dbt_charts.core.font_measure import get_font_measurer
-        from dbt_charts.core.render.chart.table_support import measure_column_demands
-
-        measurer = get_font_measurer()
-        bare, _ = measure_column_demands(**_MEASURE_ARGS, column_when_rules={})
-        with_glyph, _ = measure_column_demands(
-            **_MEASURE_ARGS, column_when_rules={"overall": _GLYPH_RULES}
-        )
-        assert with_glyph["overall"] - bare["overall"] == pytest.approx(
-            measurer.measure("○ ", 13.0)
-        ), (
-            "A column whose cells paint a glyph must demand exactly the glyph "
-            "run's width more than the same column without one"
-        )
-
-    def test_word_floor_reserves_the_glyph_run(self) -> None:
-        from dbt_charts.core.font_measure import get_font_measurer
-        from dbt_charts.core.render.chart.table_support import (
-            measure_column_word_floors,
-        )
-
-        measurer = get_font_measurer()
-        bare = measure_column_word_floors(**_MEASURE_ARGS, column_when_rules={})
-        with_glyph = measure_column_word_floors(
-            **_MEASURE_ARGS, column_when_rules={"overall": _GLYPH_RULES}
-        )
-        assert with_glyph["overall"] - bare["overall"] == pytest.approx(
-            measurer.measure("○ ", 13.0)
-        ), (
-            "The min-word floor must reserve the glyph run — the glyph is glued "
-            "to the first word and cannot break away from it"
-        )
-
-    def test_word_floor_pairs_each_glyph_with_its_own_cell(self) -> None:
-        """The floor is a first-line unit some cell actually paints.
-
-        Here the widest token and the only glyph belong to different cells,
-        so pairing the two column-wide maxima would reserve a unit nothing
-        renders — width taken straight out of a text neighbor.
-        """
-        from dbt_charts.core.font_measure import get_font_measurer
-        from dbt_charts.core.render.chart.table_support import (
-            measure_column_word_floors,
-        )
-
-        measurer = get_font_measurer()
-        floors = measure_column_word_floors(
-            # "glyphed": the glyph sits on the widest cell, so the floor has
-            # to grow. "split": the glyph and the widest token belong to
-            # different cells, so it must not.
-            ["glyphed", "split"],
-            {},
-            [
-                {"glyphed": "UNDETERMINED", "split": "UNDETERMINED"},
-                {"glyphed": "OK", "split": "OK"},
-            ],
-            measurer,
-            header_measurer=measurer,
-            font_size=13.0,
-            header_font_size=13.0,
-            cell_pad=0,
-            header_visible=False,
-            column_when_rules={
-                "glyphed": (_UNDETERMINED_RULE,),
-                "split": (_OK_RULE,),
-            },
-        )
-        widest = measurer.measure("UNDETERMINED", 13.0)
-        run = measurer.measure("○ ", 13.0)
-        assert floors["glyphed"] == pytest.approx(widest + run), (
-            "The widest cell paints a glyph, so the floor that keeps its word "
-            "whole must carry the glyph too"
-        )
-        assert floors["split"] == pytest.approx(widest), (
-            "Only the 'OK' cell paints a glyph; charging the glyph-free "
-            "'UNDETERMINED' cell for it reserves a first-line unit nothing "
-            "renders and takes the width from a text neighbor"
-        )
-
-    def test_overflow_check_sees_the_glyph_run(self) -> None:
-        """The fit cascade asks the question with the glyph included.
-
-        A column wide enough for the bare value but not for glyph + value
-        must read as overflow, or the cascade concludes the table fits and
-        never shrinks the font.
-        """
-        from dbt_charts.core.compile.models.primitives import FontStyle
-        from dbt_charts.core.font_measure import get_font_measurer
-        from dbt_charts.core.render.chart.table import _has_overflow
-
-        measurer = get_font_measurer("Inter Variable")
-        font = FontStyle(size=11.0, family="Inter Variable")
-        # Exactly the bare value's width plus padding and the fit breath, so
-        # only the glyph run can tip it over.
-        width = measurer.measure("INSUFFICIENT", 11.0) + 12 + 4
-        common = {
-            "columns": ["overall"],
-            "data": [{"overall": "INSUFFICIENT"}],
-            "column_configs": {},
-            "col_widths": {"overall": width},
-            "cell_pad": 6,
-            "cell_font": font,
-            "header_font": None,
-            "wrap": False,
-            "formats": None,
-        }
-        assert not _has_overflow(**common, column_when_rules={})
-        assert _has_overflow(**common, column_when_rules={"overall": _GLYPH_RULES})
-
-    def test_wrap_search_reserves_the_glyph_run(self) -> None:
-        """The wrap search runs against what is left after the glyph.
-
-        A cell sized to fit its text exactly must wrap once a glyph shares
-        the line, or the first line renders wider than the column.
-        """
-        from dbt_charts.core.font_measure import get_font_measurer
-        from dbt_charts.core.render.chart.table import _compute_wrap_layout
-
-        measurer = get_font_measurer("Inter Variable")
-        rows = [{"overall": "ACT NOW"}]
-        width = measurer.measure("ACT NOW", 11.0) + 12
-        common = {
-            "rows": rows,
-            "text_columns": ["overall"],
-            "column_configs": {},
-            "col_widths": {"overall": width},
-            "cell_pad": 6,
-            "font_size": 11,
-            "row_height": 24,
-            "text_baseline_offset": 4.0,
-            "measurer": measurer,
-        }
-        _, bare = _compute_wrap_layout(**common, column_when_rules={})
-        _, with_glyph = _compute_wrap_layout(
-            **common, column_when_rules={"overall": _GLYPH_RULES_ACT}
-        )
-        assert bare == [{}], "The bare text fits on one line; nothing should wrap"
-        assert with_glyph[0]["overall"] == ["ACT", "NOW"], (
-            "Once a glyph shares the first line the text no longer fits and "
-            f"must wrap; got {with_glyph[0].get('overall')}"
-        )
-
     def test_truncation_reserves_the_glyph_run(self, make_chart) -> None:
         """With wrap off, the ellipsis budget is what the glyph leaves behind."""
-        from dbt_charts.core.render.chart.table import render_table_svg
+        from .._engine_render import render_table_svg
 
         chart = make_chart(
             "table",
@@ -610,24 +457,3 @@ class TestGlyphInOverrides:
         out = resolve_conditional_styles(rules, -1)
         assert out["glyph"] == "▼"
         assert out["glyph_color"] == "#dc2626"
-
-
-def test_word_floor_measures_formatted_text_not_raw_repr() -> None:
-    """A float's raw repr is far wider than the text the cell paints."""
-    from dbt_charts.core.compile.models.style.authored.table import TableColumnConfig
-    from dbt_charts.core.render.chart.table_support import (
-        measure_column_word_floors,
-    )
-
-    measurer = get_font_measurer()
-    floors = measure_column_word_floors(
-        **{
-            **_MEASURE_ARGS,
-            "cell_pad": 0,
-            "columns": ["v"],
-            "column_configs": {"v": TableColumnConfig(format=".1f")},
-            "data": [{"v": -201.10000000000002}],
-        },
-        column_when_rules={},
-    )
-    assert floors["v"] == pytest.approx(measurer.measure("\u2212201.1", 13.0))

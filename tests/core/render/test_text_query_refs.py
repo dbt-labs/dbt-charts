@@ -395,7 +395,7 @@ _ALIASES: dict[str, str | FormatConfig] = {
         (0.042, "percent", "4.2%"),
         (1234.5, ",.0f", "1,235"),
         (1234.5, "mine", "$1.23k"),
-        (4210000.5, "analytic_alias", "$4.21\u00a0M"),
+        (4210000.5, "analytic_alias", "$4.21M"),
         (Decimal("1234.5"), ",.0f", "1,235"),
         (None, "percent", "—"),
         ("2026-01-05", "%b %Y", "Jan 2026"),

@@ -74,11 +74,6 @@ def test_without_formats_the_engine_number_prints() -> None:
     assert "$1,000,000" not in render_board_to_svg(_board(_BAR, formats=""))
 
 
-def test_the_column_format_beats_a_chart_wide_number_format() -> None:
-    chart = _BAR + "    style:\n      number_format: '.0%'\n"
-    assert "$1,000,000" in render_board_to_svg(_board(chart))
-
-
 def test_the_column_format_beats_a_board_level_axis_format() -> None:
     style = _STYLE + "  charts:\n    axis_y:\n      labels:\n        format: integer\n"
     assert "$1,000,000" in render_board_to_svg(_board(_BAR, style=style))
@@ -217,6 +212,7 @@ def test_a_table_column_keeps_its_own_options_over_the_declared_spec() -> None:
         {"revenue": columns["revenue"].format},
         None,
         {"revenue": "tagged"},
+        filter_variables=frozenset(),
     )
     parts = resolved["revenue"].format
     assert parts is not None
@@ -357,11 +353,26 @@ def test_a_heatmap_cell_tooltip_uses_the_colors_column_format() -> None:
     assert "Revenue: $1,234,567" in svg
 
 
+@pytest.mark.parametrize("family", ["bar", "line", "area", "scatter", "heatmap"])
+def test_a_continuous_color_legend_uses_the_colors_column_format(family: str) -> None:
+    axes = {
+        "scatter": "x: orders\n    y: year",
+        "heatmap": "x: month\n    y: year",
+    }.get(family, "x: month\n    y: orders")
+    chart = f"    type: {family}\n    {axes}\n    color: revenue\n"
+    if family in ("line", "area"):  # which hide their legend for endpoint labels
+        chart += "    style:\n      legend:\n        visible: true\n"
+        chart += "      endpoint_labels:\n        visible: false\n"
+    assert not any("$" in t for t in _tick_labels(_board(chart, formats="")))
+    labels = _tick_labels(_board(chart))
+    assert any("$" in t for t in labels), labels
+
+
 def test_a_pie_slice_uses_the_theta_columns_format() -> None:
     chart = "    type: pie\n    theta: revenue\n    color: month\n"
     svg = render_board_to_svg(_board(chart))
     assert "Revenue: $1,234,567" in svg
-    assert "Total: $3,580,245" in svg
+    assert "Σ: $3,580,245" in svg
 
 
 def test_an_axis_of_columns_with_different_formats_uses_number() -> None:

@@ -1,23 +1,22 @@
 """Typed query verbs for the agent API."""
 
-import sys
+import json
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing_extensions import Self
-
 from dbt_charts.agent_api._paths import resolve_board_path
 from dbt_charts.core.compile import compile_file
-from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.compile.models.board.normalized import Board
+from dbt_charts.core.compile.models.query.normalized import AnyQuery, SqlQuery
+from dbt_charts.core.compile.models.variable.authored import Variable
+from dbt_charts.core.compile.normalize.queries import is_file_source_ref
 from dbt_charts.core.compile.sql_guard import source_dialect
+from dbt_charts.core.compile.template.jinja import extract_sql_variable_dependencies
 from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.inspect.query_validator import QueryDiagnostic, validate_query
-from dbt_charts.core.project import Project
+from dbt_charts.core.project import InMemoryBoard, Project
 from dbt_charts.core.validate import normalize_data_for_json
 
 MAX_QUERY_LIMIT = 1000
@@ -26,9 +25,9 @@ MAX_QUERY_LIMIT = 1000
 class VariableBinding(BaseModel):
     """One variable binding in a tool call: a name–value pair.
 
-    Used in the ``variables`` / ``vars`` fields of ``render_board``,
-    ``execute_query``, and ``query_board`` instead of an open-keyed dict, so
-    that OpenAI strict mode can validate the full tool-call structure.
+    Used in the ``variables`` field of ``render_board`` and ``execute_query``
+    instead of an open-keyed dict, so that OpenAI strict mode can validate the
+    full tool-call structure.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -234,11 +233,19 @@ def lookup_board_query_sql(
 
 
 class ExecuteQueryArgs(BaseModel):
-    """Execute a SQL query against the project's data sources and return results. Use {{ variable_name }} for parameterized values — these work identically in dashboard YAML, so queries you test here will be cached when reused in dashboards. Great for exploring data shape before writing chart configs. Return values in natural units — never scale for display (no /1000, no _k/_m columns); compact display belongs to the chart's number format (e.g. currency)."""
+    """Run a query and return its columns and rows. Give exactly one of two forms: raw SQL (`sql`), or one named query from a stored board (`board` + `query`). Use {{ variable_name }} for parameterized values in raw SQL — these work identically in dashboard YAML, so queries you test here will be cached when reused in dashboards. The named form runs the query the board's author wrote, including Jinja variable substitution (declared defaults apply) and non-SQL query types (values, http); use it to inspect what a named query produces when debugging chart errors like 'unknown column foo'. Great for exploring data shape before writing chart configs. Return values in natural units — never scale for display (no /1000, no _k/_m columns); compact display belongs to the chart's number format (e.g. currency). The result is CSV bounded at about 25,000 tokens; page in SQL with LIMIT and OFFSET."""
 
-    sql: str = Field(
-        ...,
-        description="SQL query to execute. Use {{ variable_name }} for parameterized values — these work identically in dashboard YAML, so queries you test here will be cached when reused in dashboards.",
+    sql: str | None = Field(
+        None,
+        description="SQL query to execute. Use {{ variable_name }} for parameterized values — these work identically in dashboard YAML, so queries you test here will be cached when reused in dashboards. Not with 'board'/'query'.",
+    )
+    board: Path | None = Field(
+        None,
+        description="Path to the board YAML file holding the named query. Use with 'query', not with 'sql'.",
+    )
+    query: str | None = Field(
+        None,
+        description="Name of the query inside the board's `queries:` block. Use with 'board', not with 'sql'.",
     )
     variables: list[VariableBinding] | None = Field(
         None,
@@ -247,11 +254,16 @@ class ExecuteQueryArgs(BaseModel):
             'Example: [{"name": "region", "value": "US"}, {"name": "year", "value": 2024}]'
         ),
     )
-    source: str | None = Field(None, description="Data source name to execute against")
-    limit: int | None = Field(None, description="Maximum rows to return (default 50)")
+    source: str | None = Field(
+        None,
+        description=(
+            "Data source name, or a CSV/JSON/Parquet file path (table name = "
+            "file stem), to execute against ('sql' only)."
+        ),
+    )
     lenient_variables: bool = Field(
         False,
-        description="When True, undefined Jinja variables degrade gracefully (useful for iterative chart editing where not all variables are set).",
+        description="When True, undefined Jinja variables degrade gracefully (useful for iterative chart editing where not all variables are set). 'sql' only.",
     )
     # Display only — never reaches execute_query(). Ad-hoc SQL is the one query
     # surface with no author to describe it: a named board query carries the
@@ -259,13 +271,29 @@ class ExecuteQueryArgs(BaseModel):
     # a query that exists only for the length of one tool call.
     description: str | None = Field(
         None,
-        description="Short phrase naming what this query is for (e.g. 'Leads by industry'), shown to the user in place of the raw SQL.",
+        description="Short phrase naming what this query is for (e.g. 'Leads by industry'), shown to the user in place of the raw SQL. 'sql' only.",
     )
+
+    model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def _no_duplicate_variable_names(self) -> Self:
         if self.variables is not None:
             variables_to_dict(self.variables)
+        return self
+
+    @model_validator(mode="after")
+    def _exactly_one_form(self) -> Self:
+        if self.sql is not None:
+            if self.board is not None or self.query is not None:
+                raise ValueError("takes either 'sql' or 'board' + 'query', not both")
+        elif self.board is None or self.query is None:
+            raise ValueError("needs either 'sql', or both 'board' and 'query'")
+        elif self.source is not None or self.lenient_variables or self.description:
+            raise ValueError(
+                "'source', 'lenient_variables' and 'description' apply to 'sql' only; "
+                "a board query names its own source"
+            )
         return self
 
 
@@ -310,6 +338,20 @@ def _query_diagnostics(
         return []
 
 
+def _inline_file_source_board(source: str, project: Project) -> Board:
+    """Compile a root-level board whose `source:` is the inline file path, so
+    the compiler's own resolver registers it. Its `select 1` never executes."""
+    text = json.dumps(
+        {"title": source, "source": source, "queries": {"query": "select 1"}}
+    )
+    result = compile_file(
+        InMemoryBoard(text, path=project.path("query.yml")), apply_meta=False
+    )
+    if result.board is None:
+        raise ValueError("; ".join(e.message for e in result.errors))
+    return result.board
+
+
 def execute_query(
     sql: str,
     variables: dict[str, Any] | None = None,
@@ -321,9 +363,11 @@ def execute_query(
 ) -> ExecuteQueryResult:
     """Execute a SQL query and return the results.
 
-    Runs SQL directly against the configured data sources. Use {{ variable_name }}
-    syntax for parameterized values — these work identically in dashboard YAML,
-    so queries tested here will be cached when reused in dashboards.
+    Runs SQL directly against the configured data sources, or against an
+    inline file path (`data/orders.csv`, table name = stem) as a board's
+    `source:` would. Use {{ variable_name }} syntax for parameterized values —
+    these work identically in dashboard YAML, so queries tested here will be
+    cached when reused in dashboards.
     """
     limit = min(limit, MAX_QUERY_LIMIT)
     fetch_limit = limit + 1
@@ -334,16 +378,22 @@ def execute_query(
     diagnostics = _query_diagnostics(sql, source, adapter_registry)
 
     try:
-        # A sourceless query raises ERR-SOURCE-NOT-NAMED inside
-        # adapter_registry.execute() itself — the single enforcement point.
+        # A sourceless query runs against the project's implicit dbt source, or
+        # raises ERR-SOURCE-NOT-NAMED inside adapter_registry.execute() itself —
+        # the single enforcement point.
         query = SqlQuery(
             sql=sql,
             source=source,
             limit=fetch_limit,
             lenient_variables=lenient_variables,
         )
+        board = (
+            _inline_file_source_board(source, adapter_registry.project)
+            if source is not None and is_file_source_ref(source)
+            else None
+        )
 
-        result = adapter_registry.execute(query, variables=variables)
+        result = adapter_registry.execute(query, variables=variables, board=board)
 
         if result.error:
             return ExecuteQueryResult(
@@ -381,33 +431,6 @@ def execute_query(
             truncated=False,
             diagnostics=diagnostics,
         )
-
-
-class QueryBoardArgs(BaseModel):
-    """Run one named query from a board YAML file and return its columns and sample rows. Unlike execute_query (which takes raw SQL), query_board runs a query by name from the board the user actually authored — including Jinja variable substitution and support for non-SQL query types (values, http). Use this to inspect what a named query produces when debugging chart errors like 'unknown column foo'."""
-
-    name: str = Field(
-        ..., description="Name of the query inside the board's `queries:` block"
-    )
-    path: Path = Field(..., description="Path to the board YAML file")
-    vars: list[VariableBinding] | None = Field(
-        None,
-        description=(
-            "Variable overrides as an array of {name, value} pairs. "
-            'Example: [{"name": "country", "value": "FR"}]'
-        ),
-    )
-    limit: int = Field(
-        20, ge=1, le=1000, description="Max rows to return (default 20, max 1000)"
-    )
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="after")
-    def _no_duplicate_variable_names(self) -> Self:
-        if self.vars is not None:
-            variables_to_dict(self.vars)
-        return self
 
 
 class QueryBoardResult(BaseModel):
@@ -450,6 +473,28 @@ def _fail(
         errors=errors,
         available_queries=available or [],
     )
+
+
+_VALUE_HINTS = {"daterange": 'a JSON string like \'["2024-01-01", "2024-01-31"]\''}
+
+
+def _unbound_variable_errors(
+    query: AnyQuery, registry: dict[str, Variable], bound: set[str], query_name: str
+) -> list[str]:
+    """One error per variable the query uses that the board declares without a
+    default and the caller did not pass: binding it to null for them would be a
+    guess, and Jinja's own failure names neither its input type nor the fix."""
+    if not isinstance(query, SqlQuery) or query.lenient_variables:
+        return []
+    needed = extract_sql_variable_dependencies(query.sql, query.setup_sql)
+    return [
+        f"Query '{query_name}' uses variable '{var}' (input: {registry[var].input}), "
+        "which the board declares without a default. Pass a binding for it, "
+        f'{{"name": "{var}", "value": ...}}, where the value is '
+        + _VALUE_HINTS.get(registry[var].input, "a plain value")
+        + "."
+        for var in sorted(needed & registry.keys() - bound)
+    ]
 
 
 def query_board(
@@ -513,6 +558,10 @@ def query_board(
                 all_queries={**board.queries, **compile_result.query_registry},
                 query_name=name,
             )
+            if unbound := _unbound_variable_errors(
+                query, board.variable_registry or {}, set(merged_vars), name
+            ):
+                return _fail(name, resolved_display, unbound, sql=sql, notes=noted)
         exec_result = adapter_registry.execute(
             query, variables=merged_vars or None, board=board, query_name=name
         )

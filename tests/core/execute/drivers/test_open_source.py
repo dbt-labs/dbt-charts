@@ -18,6 +18,7 @@ from dbt_charts.core.compile.models.source import (
     LakeComputeTokenSource,
     PostgresSourceConfig,
     ResolvedSourceConfig,
+    TrinoSourceConfig,
 )
 from dbt_charts.core.execute.drivers import (
     DRIVER_SOURCE_TYPES,
@@ -30,14 +31,21 @@ def _lakecompute() -> LakeComputeTokenSource:
     return LakeComputeTokenSource(type="lakecompute", token="t")
 
 
+def _trino() -> TrinoSourceConfig:
+    return TrinoSourceConfig.model_validate(
+        {"type": "trino", "host": "h", "catalog": "c", "schema": "s", "user": "u"}
+    )
+
+
 _BUILDERS: dict[str, Callable[[], ResolvedSourceConfig]] = {
     "lakecompute": _lakecompute,
+    "trino": _trino,
 }
 
 
-def test_lakecompute_is_the_only_driver_type() -> None:
-    """Every existing warehouse stays on its dbt adapter."""
-    assert {"lakecompute"} == DRIVER_SOURCE_TYPES
+def test_the_driver_types_are_lakecompute_and_trino() -> None:
+    """Every other warehouse stays on its dbt adapter."""
+    assert {"lakecompute", "trino"} == DRIVER_SOURCE_TYPES
 
 
 @pytest.mark.parametrize("source_type", sorted(DRIVER_SOURCE_TYPES))
@@ -84,5 +92,5 @@ def test_opening_a_non_driver_source_is_a_caller_bug() -> None:
     """The call sites check `is_driver_source` first, so reaching `open_driver`
     with anything else is a defect to surface, not a type to guess a driver for."""
     config = DuckDBSourceConfig(type="duckdb", path=":memory:")
-    with pytest.raises(ValueError, match="lakecompute"):
+    with pytest.raises(ValueError, match="lakecompute.*trino"):
         open_driver(config, None)

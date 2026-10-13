@@ -40,12 +40,13 @@ from dbt_charts.core.text.category_label import category_label_text
 from dbt_charts.core.text.format_d3 import is_time_format, portable_strftime
 
 
-def authored_time_format(axis: ResolvedAxisStyle) -> str | None:
+def authored_time_format(axis: ResolvedAxisStyle, grain: str | None) -> str | None:
     """``axis.labels.format`` when it is the text Vega will paint on a
-    temporal axis, else ``None``.
+    temporal axis, else the board's redefinition of ``grain``'s
+    ``date_<grain>`` name (``None`` for no grain or an unredefined one).
 
     ``labels.format`` is a shared authoring surface for two grammars: a
-    d3-time-format spec (``'%b %Y'``, what ``style.time_format`` resolves to)
+    d3-time-format spec (``'%b %Y'``)
     and a d3 *number* format. Only the first is a label vocabulary a date can
     be rendered through, so only the first may reach a measurement —
     ``is_time_format`` is the same gate ``build_cartesian_x_encoding`` uses to
@@ -54,9 +55,17 @@ def authored_time_format(axis: ResolvedAxisStyle) -> str | None:
     measurement: ``cadence_label_text``.
     """
     fmt = axis.labels.format
-    if fmt is None or not is_time_format(fmt.spec):
+    if fmt is not None and is_time_format(fmt.spec):
+        return fmt.spec
+    return axis.grain_formats.get(grain) if grain else None
+
+
+def _ordinal_grain(values: list[str]) -> str | None:
+    """The calendar grain date-shaped bucket strings detect as, else ``None``."""
+    try:
+        return detect_time_unit(values)
+    except ValueError:
         return None
-    return fmt.spec
 
 
 class AxisLabelLayout(NamedTuple):
@@ -112,8 +121,8 @@ AxisDatum = str | int | float | Decimal | datetime.date | datetime.datetime | No
 # has no cadence ladder to share it with.
 _GENERIC_FORMATTERS: dict[str, Callable[[datetime.datetime], str]] = {
     "yearmonthdate": lambda value: portable_strftime(value, "%-d %b"),
-    "monthofyear": lambda value: value.strftime("%b"),
-    "dayofweek": lambda value: value.strftime("%a"),
+    "monthofyear": lambda value: portable_strftime(value, "%b"),
+    "dayofweek": lambda value: portable_strftime(value, "%a"),
     "dayofmonth": lambda value: str(value.day),
     "dayofyear": lambda value: str(value.timetuple().tm_yday),
     "hourofday": lambda value: str(value.hour),
@@ -139,9 +148,8 @@ def _generic_temporal_labels(
         return values
     parsed: list[datetime.datetime] = []
     for value in values:
-        normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
         try:
-            parsed.append(datetime.datetime.fromisoformat(normalized))
+            parsed.append(datetime.datetime.fromisoformat(value))
         except ValueError:
             return (
                 list(dict.fromkeys(values))
@@ -409,8 +417,8 @@ def _pinned_angle_block_height(
     values = _axis_label_values(x_field, data, domain_values)
     if not values:
         return font.size
-    authored_format = authored_time_format(axis)
     if raw_type != "temporal":
+        authored_format = authored_time_format(axis, _ordinal_grain(values))
         # The ordinal door: date-shaped bucket strings ("2022-01") infer
         # ordinal, and `build_cartesian_x_encoding` repaints exactly those
         # bands through the authored format — see `_ordinal_label_texts`.
@@ -421,6 +429,7 @@ def _pinned_angle_block_height(
             format_time_unit = resolve_label_time_unit(
                 encoding_time_unit, axis.labels.time_unit
             )
+            authored_format = authored_time_format(axis, format_time_unit)
             values = _generic_temporal_labels(
                 sorted(values),
                 encoding_time_unit,
@@ -438,7 +447,7 @@ def _pinned_angle_block_height(
         # datum's own text stands in — a deliberate over-reservation, usually
         # by some way: the strip clears the labels at the cost of an empty
         # band.
-        elif authored_format is not None:
+        elif (authored_format := authored_time_format(axis, None)) is not None:
             values = _generic_temporal_labels(sorted(values), "", "", authored_format)
     if axis.labels.expr is None:
         label_format = (
@@ -531,7 +540,7 @@ def _temporal_layout(
         encoding_time_unit, axis.labels.time_unit
     )
     # An authored format overrides every vocabulary below — `cadence_label_text`.
-    authored_format = authored_time_format(axis)
+    authored_format = authored_time_format(axis, format_time_unit)
     # A continuous temporal scale spaces and ticks by calendar, not by row:
     # quiet days with no row still take a band and can still open a month, so
     # measure the span Vega draws. An ordinal axis has one band per row, and
@@ -906,7 +915,9 @@ def resolve_axis_x_overlap(
 
     font = axis.labels.font
     measurer = get_weighted_font_measurer(font.family, font.weight)
-    labels = _ordinal_label_texts(values, authored_time_format(axis))
+    labels = _ordinal_label_texts(
+        values, authored_time_format(axis, _ordinal_grain(values))
+    )
     if axis.labels.expr is None:
         spec = axis.labels.format.spec if axis.labels.format is not None else None
         labels = [category_label_text(v, spec, font.case) for v in labels]
@@ -998,7 +1009,7 @@ def resolve_axis_y_overlap(
 
     values = _axis_label_values(y_field, data, None)
     dates = [datetime.date.fromisoformat(value[:10]) for value in values]
-    authored_format = authored_time_format(axis)
+    authored_format = authored_time_format(axis, format_time_unit)
     fiscal_year_start_month = axis.fiscal_year_start_month
     band = chart_height * label_usable_ratio / len(dates)
 

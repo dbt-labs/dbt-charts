@@ -374,27 +374,31 @@ class TestItalicOutsideMarkdownEmphasis:
 
         A callout renders during the sizing pass and the main pass replays it from
         cache, so no render-time sink can see it — reading the finished markup is
-        what covers it. Its family arrives HTML-escaped (`&#x27;Inter Variable&#x27;`),
+        what covers it. Its family arrives XML-escaped (`&apos;Inter Variable&apos;`),
         which is why the pairing unescapes before matching. `hint` is set only by the
         internal error-placard path, so this drives the renderer directly.
         """
         from dbt_charts.core.compile.config import get_theme_style
         from dbt_charts.core.compile.resolve.style import resolve_style
-        from dbt_charts.core.render.chart.callout import render_callout_svg
+        from dbt_charts.core.render.engine import render_callout_card
         from dbt_charts.core.render.font_selection import italic_families_in
 
         style = resolve_style(get_theme_style())
-        svg = render_callout_svg(
+        svg = render_callout_card(
             message="Something went wrong while loading this chart.",
-            hint="Check the query name and try again.",
+            placard={
+                "code": "ERR-INTERNAL",
+                "code_url": "https://docs.dbtcharts.com/reference/errors/#err-internal",
+                "hint": "Check the query name and try again.",
+                "doc_url": None,
+            },
             width=400.0,
-            callout_style=style.chart_defaults.callout_error,
-            markdown=False,
-            base_dir=None,
+            style=style.chart_defaults.callout_error,
+            chart_id="callout",
         )
         assert 'font-style="italic"' in svg
         # Not just truthiness: without the unescape the set is still non-empty, it
-        # just holds `&#x27;…&#x27;`, which matches no registry family — so every
+        # just holds `&apos;…&apos;`, which matches no registry family — so every
         # export with a placard would silently drop the italic board while a bare
         # `assert italic_families_in(svg)` stayed green. Asserted as "every family
         # found is a real registry family" rather than pinning which one, since the
@@ -451,8 +455,8 @@ class TestItalicIsAlwaysAttributable:
             assert isinstance(svg, str)
             body = svg.split("</style>")[-1]
             for tag in re.findall(r"<[^<>]*>", body):
-                # Same spelling the production matcher accepts, so a renderer using
-                # the style="…" form (table.py already does) cannot slip past a
+                # Same spelling the matcher accepts, so a renderer using the
+                # style="…" form (the table engine does) cannot slip past a
                 # guard that only looked for the attribute form. <tspan> is excluded
                 # deliberately: an emphasis run inherits its family from an ancestor
                 # and is the case the mdsvg sink covers.

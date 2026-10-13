@@ -1,3 +1,5 @@
 kind: Fixes
 body: On a board with multi-column text, a block of single-column text now snaps to the card grid so its left edge lines up with the columns beside it.
 time: 2026-10-05T15:15:00.000000-07:00
+custom:
+  DbtChartsIssue: "64"

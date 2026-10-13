@@ -82,7 +82,7 @@ def test_unknown_chart_local_color_token_errors_only_that_chart(
     out = render(result.board, executor, format="svg")
 
     assert out.board_error is None
-    assert [d.code for d in out.chart_errors] == ["ERR-CHART-COLOR-TOKEN"]
+    assert [d.code for d in out.chart_errors] == ["ERR-COLOR-TOKEN"]
     message = out.chart_errors[0].message
     assert "'bad'" in message
     assert "nosuch.shade" in message

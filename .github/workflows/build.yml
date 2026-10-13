@@ -25,4 +25,6 @@ jobs:
         with:
           version: "0.12.18"
 
+      - uses: ./.github/actions/setup-rust
+
       - run: uv build --wheel

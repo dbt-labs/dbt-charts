@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 # Composed chart shapes
 # =====================
 # Lives beside `chart-families.yml`: that board shows the shapes you can
@@ -442,7 +443,6 @@ charts:
     color: direction
     style:
       orientation: vertical
-      number_format: "$,.0f"
       # One direction per step, so the colored bars coincide instead of
       # splitting each band into side-by-side slots.
       overlap: full
@@ -453,6 +453,9 @@ charts:
         bar:
           labels:
             visible: true
+      axis_y:
+        labels:
+          format: "$,.0f"
   candlestick:
     query: prices
     type: bar
@@ -464,7 +467,6 @@ charts:
     color: session
     style:
       orientation: vertical
-      number_format: "$,.0f"
       # One session per day, so each day's bar fills its band instead of a grouped slot.
       overlap: full
       # Rising and falling read from the marks themselves.
@@ -484,6 +486,9 @@ charts:
           border:
             width: 0
             radius: 0
+      axis_y:
+        labels:
+          format: "$,.0f"
     layers:
     - type: bar
       y: close
@@ -506,7 +511,6 @@ charts:
     y_start: low
     style:
       orientation: vertical
-      number_format: "$,.0f"
       overlap: full
       legend:
         visible: false
@@ -522,6 +526,9 @@ charts:
           band_width: 0.08
           border:
             radius: 0
+      axis_y:
+        labels:
+          format: "$,.0f"
     layers:
     - type: bar
       y: close

@@ -2,12 +2,12 @@
 core/diagnostics/codes_render.py for what this fires on.
 
 Tables are a custom SVG renderer, not Vega-Lite, so there is no spec to
-inspect. Instead the renderer records the cap at the exact point it decides
-to stop pre-rendering pages into ``WarningContext.static_pagination_caps``
-(see ``render/chart/table_static_pagination.py``). This detector is
-policy-only: it reads that captured state, so the warning fires on exactly
-what rendered — no second page-count computation to drift from the
-renderer's.
+inspect. Instead the renderer records how it paginated each table into
+``WarningContext.static_paginations`` (see
+``render/chart/table_static_pagination.py``), including whether the note that
+states the cap fit in the slot. This detector is policy-only: it reads that
+captured state, so the warning fires on exactly what rendered — no second
+page-count computation to drift from the renderer's.
 """
 
 from __future__ import annotations
@@ -17,21 +17,20 @@ from dbt_charts.core.render.warnings.base import WarningContext
 
 
 def detect(ctx: WarningContext) -> list[Diagnostic]:
-    """Return one warning per table whose static export hit the page cap."""
-    warnings: list[Diagnostic] = []
-
-    for chart_id, cap in ctx.static_pagination_caps.items():
-        warnings.append(
-            Diagnostic.from_code(
-                WARN_STATIC_PAGINATION_CAPPED,
-                chart=chart_id,
-                message=WARN_STATIC_PAGINATION_CAPPED.message_template.format(
-                    chart_id=chart_id,
-                    rendered_pages=cap.rendered_pages,
-                    total_pages=cap.total_pages,
-                ),
-                fix=WARN_STATIC_PAGINATION_CAPPED.fix_template,
-            )
+    """Return one warning per capped table whose file does not state the cap."""
+    return [
+        Diagnostic.from_code(
+            WARN_STATIC_PAGINATION_CAPPED,
+            chart=chart_id,
+            message=WARN_STATIC_PAGINATION_CAPPED.message_template.format(
+                chart_id=chart_id,
+                page_rows=pagination.page_rows,
+                total_rows=pagination.total_rows,
+                rendered_pages=pagination.rendered_pages,
+                total_pages=pagination.total_pages,
+            ),
+            fix=WARN_STATIC_PAGINATION_CAPPED.fix_template,
         )
-
-    return warnings
+        for chart_id, pagination in ctx.static_paginations.items()
+        if pagination.cap_note_dropped
+    ]

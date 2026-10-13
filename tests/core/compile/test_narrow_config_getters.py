@@ -18,9 +18,8 @@ from dbt_charts.core.compile.config import (
 def test_get_chart_rendering_returns_correct_slice():
     reset_config()
     result = get_chart_rendering()
-    # kpi/spark_bar sub-nodes remain engine config; preferred_width lives on the theme cascade.
-    assert result.kpi.minimum_title_value_gap > 0
-    assert result.spark_bar.avg_char_width_px > 0
+    # preferred_width lives on the theme cascade.
+    assert result.spark_bar.title_height > 0
 
 
 def test_get_terminal_config_max_labels():

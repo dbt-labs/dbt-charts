@@ -638,7 +638,7 @@ def test_standalone_table_still_stripes(make_chart):
     This is the contrast that proves the fix landed in the right place: the
     donut's wedge key stops striping while an ordinary `type: table` on the
     same theme keeps it. Without this, a future "simplification" that drops
-    the theme's stripe entirely, or gates it inside table.py, would leave the
+    the theme's stripe entirely, or gates it inside the table engine, would leave the
     donut test green and silently flatten every real data table.
     """
     stripe = get_theme_style().charts.table.row.stripe

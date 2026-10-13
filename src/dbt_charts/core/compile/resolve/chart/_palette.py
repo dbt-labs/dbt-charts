@@ -185,6 +185,15 @@ def _resolved_series_label(
         font_weight=font_weight_as_css(font.compact_weight if compact else font.weight),
         font_style=font.style,
         dark_companion_palette=tuple(mark_ink(c, canvas) for c in eff_palette),
+        pin_companions=tuple(
+            sorted(
+                {
+                    (color, mark_ink(color, canvas))
+                    for scale in chart_style_context.category_colors
+                    for color in scale.overrides.values()
+                }
+            )
+        ),
         gap_px=font_size * multiplier,
     )
 

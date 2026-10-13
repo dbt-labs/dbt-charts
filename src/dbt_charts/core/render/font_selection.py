@@ -37,7 +37,7 @@ italic, so pairing cannot help and the sink below carries it instead:
 ``SVGRenderer.used_faces`` reports the faces a render actually reached, recorded
 against the family the caller handed it.
 
-Two cases stay unbacked, both deliberately. The tooltip's "+ N more" overflow row
+Two cases stay unbacked, both deliberately. The tooltip's "+N" overflow row
 (``templates/scripts/chart_interactivity.js``) is painted by the hover runtime, so
 render time cannot know whether a reader will ever trigger it — backing it would cost
 the board sans italic on every export for a row that may never appear. Emphasis inside

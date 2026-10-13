@@ -78,7 +78,6 @@ _ADAPTER_TYPE_MAP: dict[str, tuple[str, str, str, str | None]] = {
         "DatabricksCredentials",
         "databricks",
     ),
-    "trino": ("dbt.adapters.trino", "TrinoAdapter", "TrinoCredentialsFactory", "trino"),
     "athena": ("dbt.adapters.athena", "AthenaAdapter", "AthenaCredentials", "athena"),
     "clickhouse": (
         "dbt.adapters.clickhouse",

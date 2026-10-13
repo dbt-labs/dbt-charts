@@ -82,7 +82,7 @@ class TestTableHeightErrorPropagation:
     the chart's error card, so sizing reserves that card instead of aborting the
     board."""
 
-    def _call(self, exc: Exception) -> float:
+    def _call(self, exc: Exception) -> float | None:
         from dbt_charts.core.compile.resolve import resolve
         from dbt_charts.core.render.layout_sizing import _get_table_height_from_data
 
@@ -112,7 +112,7 @@ class TestTableHeightErrorPropagation:
         ],
     )
     def test_failure_sizes_the_error_card(self, exc: Exception) -> None:
-        assert self._call(exc) > 0
+        assert self._call(exc) is None
 
 
 # ---------------------------------------------------------------------------

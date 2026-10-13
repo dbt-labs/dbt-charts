@@ -55,16 +55,20 @@ def _cards(chart: dict[str, Any], style: dict[str, Any] | None = None) -> list[s
     ],
 )
 def test_an_unstructured_hover_card_paints_the_affix(chart: dict[str, Any]) -> None:
-    cards = _cards(chart | {"style": {"number_format": _AFFIX}})
+    cards = _cards(chart | {"style": {"axis_y": {"labels": {"format": _AFFIX}}}})
     assert any("EUR 1,200" in card for card in cards), cards
 
 
 def test_a_histogram_count_card_paints_the_affix() -> None:
     rows = {"spec": ",.0f", "suffix": " rows"}
     cards = _cards(
-        {"type": "histogram", "x": "revenue", "style": {"number_format": rows}}
+        {
+            "type": "histogram",
+            "x": "revenue",
+            "style": {"axis_y": {"labels": {"format": rows}}},
+        }
     )
-    assert any("Count: 1 rows" in card for card in cards), cards
+    assert any("#: 1 rows" in card for card in cards), cards
 
 
 def test_a_board_tooltip_alias_reaches_a_faceted_card() -> None:
@@ -80,7 +84,7 @@ def test_a_money_name_reaches_a_faceted_card() -> None:
     cards = _cards(
         {"type": "bar", "x": "month", "y": "revenue"}
         | {"multiples": {"columns": "region"}}
-        | {"style": {"number_format": "currency_whole"}}
+        | {"style": {"axis_y": {"labels": {"format": "currency_whole"}}}}
     )
     assert any("$1,200" in card for card in cards), cards
 
@@ -91,7 +95,7 @@ def test_an_explicit_x_format_keeps_the_scatter_x_plain() -> None:
         | {"layers": [{"type": "line", "y": "cost"}]}
         | {
             "style": {
-                "number_format": _AFFIX,
+                "axis_y": {"labels": {"format": _AFFIX}},
                 "axis_x": {"labels": {"format": ",.0f"}},
             }
         }

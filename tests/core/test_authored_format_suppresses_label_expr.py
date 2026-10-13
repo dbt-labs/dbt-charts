@@ -42,7 +42,7 @@ def _x_axis(time_format: str | None) -> dict[str, Any]:
         type="line",
         x="d",
         y="v",
-        style=LineChartStylePatch(time_format=time_format)
+        style=LineChartStylePatch(axis_x={"labels": {"format": time_format}})
         if time_format
         else LineChartStylePatch(),
     )

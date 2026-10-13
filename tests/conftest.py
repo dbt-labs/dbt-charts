@@ -439,9 +439,16 @@ class InMemoryProject(Project):
             raise FileNotFoundError(relpath)
         return self._files[relpath].encode()
 
-    def iter_files(self, under: str, *, recursive: bool) -> Iterator[str]:
+    def iter_files(
+        self,
+        under: str,
+        *,
+        recursive: bool,
+        onerror: Callable[[str, OSError], None] | None = None,
+    ) -> Iterator[str]:
         # under="." means the whole project (matches every relpath); otherwise
-        # restrict to the named subtree.
+        # restrict to the named subtree. onerror is unused: an in-memory dict
+        # has no permission-denied failure mode to report.
         prefix = "" if under == "." else under.rstrip("/") + "/"
         for relpath in sorted(self._files):
             if not relpath.startswith(prefix):

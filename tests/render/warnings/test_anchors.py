@@ -25,7 +25,6 @@ from dbt_charts.core.compile.models.chart.normalized import (
 from dbt_charts.core.render.warnings import (
     WarningContext,
     pie_dominant_segment,
-    pie_too_many_segments,
     point_map_out_of_projection,
     query_returned_zero_rows,
     redundant_encoding,
@@ -89,14 +88,12 @@ def test_y_encoding_mostly_null_anchors_on_y() -> None:
     assert w.path == "charts.c1.y"
 
 
-def test_pie_warnings_anchor_on_type_because_the_fix_is_a_different_chart() -> None:
-    """Both pie warnings are answered by "this should not be a pie" — the fix
-    text says so — so the mark belongs on `type:`, not on the data channel."""
-    many = [{"seg": f"s{i}", "val": 1} for i in range(20)]
+def test_pie_dominant_segment_anchors_on_type_because_the_fix_is_a_different_chart() -> (
+    None
+):
+    """The warning is answered by "this should not be a pie" — the fix text
+    says so — so the mark belongs on `type:`, not on the data channel."""
     chart = PieChart(id="c1", type="pie", query_name="q", color="seg", theta="val")
-    (w,) = pie_too_many_segments.detect(_ctx(chart, many))
-    assert w.path == "charts.c1.type"
-
     dominant = [{"seg": "a", "val": 999}, {"seg": "b", "val": 1}]
     (w,) = pie_dominant_segment.detect(_ctx(chart, dominant))
     assert w.path == "charts.c1.type"

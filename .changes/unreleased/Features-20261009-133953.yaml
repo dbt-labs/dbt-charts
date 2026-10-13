@@ -1,0 +1,3 @@
+kind: Features
+body: search_boards lists every board when the query is empty and pages long result sets with a cursor; connector results name the project and organization beside each id.
+time: 2026-10-09T13:39:53.438888-07:00

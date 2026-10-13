@@ -6,16 +6,12 @@ import json
 import os
 import shutil
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any, Literal
 
 import tomli_w
 from pydantic import BaseModel, ConfigDict
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover - exercised on 3.10 CI
-    import tomli as tomllib
 
 
 class McpClient(BaseModel):

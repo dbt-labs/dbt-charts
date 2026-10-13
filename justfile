@@ -169,42 +169,13 @@ serve dir port="":
 # Generated artifacts
 # ============================================
 
-# Regenerate every introspection-derived artifact. schema-names runs first:
-# every other artifact introspects models that read ThemeName / PaletteName /
-# ScalePaletteName from it.
-gen: generate-schema-names generate-inherit-registry gen-highlight-artifacts gen-board-resolved-schema gen-references
-
-# Regenerate schema_names.py (ThemeName/PaletteName/ScalePaletteName Literals).
-# Re-run after adding or removing a theme or palette YAML file.
-generate-schema-names:
-    uv run python scripts/generate_schema_names.py
-
-# Regenerate inherit_registry.yaml from InheritGraph markers on the Style model.
-# Re-run after adding Inherit / InheritSlot annotations to style/theme.py.
-generate-inherit-registry:
-    uv run python scripts/generate_inherit_registry.py
+# Regenerate every introspection-derived artifact.
+gen: gen-highlight-artifacts
 
 # Regenerate the highlight manifest (board.json) and tmLanguage grammar.
 # Re-run after any change to the authored schema's key structure.
 gen-highlight-artifacts:
     uv run python scripts/gen_highlight_artifacts.py
-
-# Regenerate board-resolved.schema.json.
-# Re-run after any change to ResolvedBoard or a type it references.
-gen-board-resolved-schema:
-    uv run python scripts/gen_board_resolved_schema.py
-
-# Regenerate the in-wheel YAML / error / warning reference pages that
-# `dct docs` serves. The monorepo also writes an apps/docs copy; standalone
-# only the wheel copies exist.
-gen-references:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    docs_dir="src/dbt_charts/agent_api/docs"
-    uv run python -c 'from dbt_charts.core.compile.schema import get_schema_for_prompt; print(get_schema_for_prompt())' > "$docs_dir/yaml-reference.md"
-    uv run python -c 'from dbt_charts.core.diagnostics.render_reference import render_reference; print(render_reference("error", with_anchors=False), end="")' > "$docs_dir/error-reference.md"
-    uv run python -c 'from dbt_charts.core.diagnostics.render_reference import render_reference; print(render_reference("warning", with_anchors=False), end="")' > "$docs_dir/warning-reference.md"
-    echo "✓ $docs_dir/{yaml,error,warning}-reference.md"
 
 # Freeze a changed YAML grammar under the same version as its dbt charts
 # release. Existing snapshots are verified and never rewritten; an unchanged

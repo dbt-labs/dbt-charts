@@ -518,7 +518,7 @@ def test_shared_scale_column_pad_agrees_when_capped_below_declared_precision():
     painted = _render_v2_svg_text_nodes(chart, data, width=400, height=200)
     one_point_two_m = next(t for t in painted if t.startswith("1.2"))
     three_m = next(t for t in painted if t.startswith("3"))
-    five_m = next(t for t in painted if t.startswith("5") and t.endswith("\u00a0M"))
+    five_m = next(t for t in painted if t.startswith("5") and t.endswith("M"))
 
     # The capped table (precision=1, from the OBSERVED max depth, not the
     # ,.2~f spec's own declared 2) is the single independent source of truth
@@ -531,7 +531,7 @@ def test_shared_scale_column_pad_agrees_when_capped_below_declared_precision():
         capped_table, "1.2"
     ), one_point_two_m
     three_pad = three_m[len("3") :]
-    five_pad = five_m[len("5") :].removesuffix("\u00a0M")
+    five_pad = five_m[len("5") :].removesuffix("M")
     assert three_pad == decimal_pad_for(capped_table, "3") == five_pad, (
         three_m,
         five_m,
@@ -3049,7 +3049,7 @@ def _compiled_bar_monthly_full_cadence(entries, chart_format: str | None = None)
         "support_table": {"entries": entries},
     }
     if chart_format is not None:
-        chart["format"] = chart_format
+        chart["style"] = {"axis_y": {"labels": {"format": chart_format}}}
     return TypeAdapter(Chart).validate_python(chart)
 
 
@@ -4765,7 +4765,7 @@ def test_pipeline_column_declares_its_unit_once(monkeypatch):
     calc = _goal_col_calc(spec)
     assert calc is not None
     assert "datum.__support_table_drawn_index === 1" in calc
-    assert '"\\u00a0M"' in calc
+    assert '"M"' in calc
     # The magnitude is divided out once rather than left to d3's `s` type.
     assert "1000000.0" in calc
 
@@ -5473,7 +5473,7 @@ rows:
 """
     svg = render_board_to_svg(board)
     texts = [t.strip() for t in re.findall(r"<text[^>]*>([^<]*)</text>", svg)]
-    assert [t for t in texts if "$" in t] == ["$2.346\u00a0M"], texts
+    assert [t for t in texts if "$" in t] == ["$2.346M"], texts
     assert [t for t in texts if "%" in t] == ["21.1%"]
 
     # The anchor's "%" hangs past the column's digit edge.
@@ -5515,4 +5515,4 @@ rows:
 """
     svg = render_board_to_svg(board)
     texts = [t.strip() for t in re.findall(r"<text[^>]*>([^<]*)</text>", svg)]
-    assert [t for t in texts if "$" in t] == ["$2.35\u00a0M"], texts
+    assert [t for t in texts if "$" in t] == ["$2.35M"], texts

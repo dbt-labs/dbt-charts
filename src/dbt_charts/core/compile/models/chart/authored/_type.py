@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class ChartType(str, Enum):
+class ChartType(StrEnum):
     """Authorable chart types -- every member maps to an AuthoredChart variant.
 
     The membership here must stay in sync with the AuthoredChart discriminated union

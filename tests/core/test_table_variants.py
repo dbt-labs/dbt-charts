@@ -160,14 +160,12 @@ class TestMinimalVariant:
         )
 
     def test_no_rules(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"Name": "Alice", "Score": 95}, {"Name": "Bob", "Score": 87}]
         _custom_ctx = self._minimal_style()
-        chart = resolve(chart, [], chart_style_context=_custom_ctx)
+        chart = resolve(chart, data, chart_style_context=_custom_ctx)
         svg = render_table_svg(
             chart,
             data,
@@ -177,14 +175,12 @@ class TestMinimalVariant:
         assert 'shape-rendering="crispEdges"' not in svg
 
     def test_no_weight_variation_on_headers(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"Name": "Alice", "Score": 95}]
         _custom_ctx = self._minimal_style()
-        chart = resolve(chart, [], chart_style_context=_custom_ctx)
+        chart = resolve(chart, data, chart_style_context=_custom_ctx)
         svg = render_table_svg(
             chart,
             data,
@@ -218,14 +214,12 @@ class TestBIVariant:
         )
 
     def test_header_background_present(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"Name": "Alice", "Score": 95}]
         _custom_ctx = self._bi_style()
-        chart = resolve(chart, [], chart_style_context=_custom_ctx)
+        chart = resolve(chart, data, chart_style_context=_custom_ctx)
         svg = render_table_svg(
             chart,
             data,
@@ -235,14 +229,12 @@ class TestBIVariant:
         assert "#EDEFF2" in svg
 
     def test_header_size_11(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"Name": "Alice", "Score": 95}]
         _custom_ctx = self._bi_style()
-        chart = resolve(chart, [], chart_style_context=_custom_ctx)
+        chart = resolve(chart, data, chart_style_context=_custom_ctx)
         svg = render_table_svg(
             chart,
             data,
@@ -259,9 +251,7 @@ class TestBIVariant:
     def test_summary_rule_renders_without_row_rules(self, make_chart):
         """Core P4 feature: summary rule above without body row rules."""
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         es = self._bi_style()
@@ -277,7 +267,7 @@ class TestBIVariant:
             {"Name": "Bob", "Score": 87, "row_role": "value"},
             {"Name": "Total", "Score": 182, "row_role": "total"},
         ]
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,
@@ -294,9 +284,7 @@ class TestBIVariant:
     def test_compact_body_uses_compact_header_weight(self, make_chart):
         """When body=11, header.font_compact.weight (500) applies instead of 600."""
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         es = self._bi_style()
@@ -308,7 +296,7 @@ class TestBIVariant:
             ),
         )  # compact body
         data = [{"Name": "Alice", "Score": 95}]
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,
@@ -341,14 +329,12 @@ class TestClassicVariant:
         )
 
     def test_uses_source_serif_font(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"Name": "Alice", "Score": 95}]
         _custom_ctx = self._classic_style()
-        chart = resolve(chart, [], chart_style_context=_custom_ctx)
+        chart = resolve(chart, data, chart_style_context=_custom_ctx)
         svg = render_table_svg(
             chart,
             data,
@@ -359,14 +345,12 @@ class TestClassicVariant:
 
     def test_per_column_header_rules(self, make_chart):
         """Classic uses per-column header rules (not continuous)."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"Name": "Alice", "Score": 95}, {"Name": "Bob", "Score": 87}]
         _custom_ctx = self._classic_style()
-        chart = resolve(chart, [], chart_style_context=_custom_ctx)
+        chart = resolve(chart, data, chart_style_context=_custom_ctx)
         svg = render_table_svg(
             chart,
             data,
@@ -383,9 +367,7 @@ class TestClassicVariant:
 
     def test_double_rule_above_total(self, make_chart):
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         es = self._classic_style()
@@ -400,7 +382,7 @@ class TestClassicVariant:
             {"Name": "Alice", "Score": 95, "row_role": "value"},
             {"Name": "Total", "Score": 95, "row_role": "total"},
         ]
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,
@@ -415,9 +397,7 @@ class TestClassicVariant:
     def test_no_summary_weight_variation(self, make_chart):
         """Classic summary rows use same weight as body (400), not medium."""
 
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         es = self._classic_style()
@@ -432,7 +412,7 @@ class TestClassicVariant:
             {"Name": "Alice", "Score": 95, "row_role": "value"},
             {"Name": "Total", "Score": 95, "row_role": "total"},
         ]
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,
@@ -468,14 +448,12 @@ class TestClassicSerifNumerals:
 
     def test_classic_variant_uses_serif_for_numerics(self, make_chart):
         """Classic variant: numeric cell font-family contains 'Source Serif'."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"Company": "Apex Technologies", "Revenue": 24730000}]
         _custom_ctx = self._classic_serif_style()
-        chart = resolve(chart, [], chart_style_context=_custom_ctx)
+        chart = resolve(chart, data, chart_style_context=_custom_ctx)
         svg = render_table_svg(
             chart,
             data,
@@ -491,14 +469,12 @@ class TestClassicSerifNumerals:
 
     def test_classic_tabular_nums_css_present(self, make_chart):
         """Classic variant: tabular-nums CSS is still emitted for digit alignment."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"Company": "Apex Technologies", "Revenue": 24730000}]
         _custom_ctx = self._classic_serif_style()
-        chart = resolve(chart, [], chart_style_context=_custom_ctx)
+        chart = resolve(chart, data, chart_style_context=_custom_ctx)
         svg = render_table_svg(
             chart,
             data,
@@ -511,14 +487,12 @@ class TestClassicSerifNumerals:
 
     def test_default_variant_still_uses_sans_tabular(self, make_chart):
         """Default (Inter) variant: numeric cells still use the curated sans stack."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"Company": "Apex Technologies", "Revenue": 24730000}]
         es = _style_with()  # default font — Inter
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,
@@ -533,9 +507,8 @@ class TestClassicSerifNumerals:
         """Numeric cells should use Source Serif when font_family is overridden."""
 
         from dbt_charts.core.compile.models.primitives import FontStyle
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"Name": "Alice", "Score": 95}]
@@ -552,7 +525,7 @@ class TestClassicSerifNumerals:
                 }
             ),
         )
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,
@@ -567,14 +540,12 @@ class TestClassicSerifNumerals:
 
     def test_default_font_still_uses_sans_numeric_stack(self, make_chart):
         """When font_family is default (Inter), numeric cells use dbt Sans Tabular."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"Name": "Alice", "Score": 95}]
         es = _style_with()  # default font
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,
@@ -619,9 +590,7 @@ class TestAdjacentPerColumnRuleGap:
 
         Minimum gap between adjacent rules: 4px (2 * _RULE_GAP=2 per side).
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         data = [
             {"Revenue": 24730000, "Profit": 8120000, "Margin": 0.328},
@@ -630,7 +599,7 @@ class TestAdjacentPerColumnRuleGap:
         _custom_ctx = self._classic_style()
         chart = resolve(
             make_chart("table", x=None, y=None),
-            [],
+            data,
             chart_style_context=_custom_ctx,
         )
         # Test at multiple widths including pathologically narrow cases
@@ -739,9 +708,7 @@ class TestHeaderSizeLinkingGroupDecision:
         This is the exact user-reported bug: Minimal specimens were
         rendering with body=13 and header=11 at comfortable widths.
         """
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         # Wider data values so columns get enough room that body stays at 14
         data = [
@@ -751,7 +718,7 @@ class TestHeaderSizeLinkingGroupDecision:
         _custom_ctx = self._minimal_style()
         chart = resolve(
             make_chart("table", x=None, y=None),
-            [],
+            data,
             chart_style_context=_custom_ctx,
         )
         for w in (1200, 1000, 800):
@@ -769,9 +736,7 @@ class TestHeaderSizeLinkingGroupDecision:
 
     def test_minimal_header_body_linked_at_narrow_width(self, make_chart):
         """Minimal: header and body stay linked through the cascade."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         data = [
             {
@@ -790,7 +755,7 @@ class TestHeaderSizeLinkingGroupDecision:
         _custom_ctx = self._minimal_style()
         chart = resolve(
             make_chart("table", x=None, y=None),
-            [],
+            data,
             chart_style_context=_custom_ctx,
         )
         for w in (600, 500, 400, 300, 250):
@@ -808,9 +773,7 @@ class TestHeaderSizeLinkingGroupDecision:
 
     def test_classic_header_body_linked_at_wide_width(self, make_chart):
         """Classic (same bug surface as Minimal): header must track body."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         data = [
             {"Description": "Acme Corporation", "Value": 849123456},
@@ -819,7 +782,7 @@ class TestHeaderSizeLinkingGroupDecision:
         _custom_ctx = self._classic_style()
         chart = resolve(
             make_chart("table", x=None, y=None),
-            [],
+            data,
             chart_style_context=_custom_ctx,
         )
         for w in (1200, 1000, 800):
@@ -834,9 +797,7 @@ class TestHeaderSizeLinkingGroupDecision:
 
     def test_classic_header_body_linked_at_narrow_width(self, make_chart):
         """Classic: header and body stay linked through cascade."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         data = [
             {
@@ -855,7 +816,7 @@ class TestHeaderSizeLinkingGroupDecision:
         _custom_ctx = self._classic_style()
         chart = resolve(
             make_chart("table", x=None, y=None),
-            [],
+            data,
             chart_style_context=_custom_ctx,
         )
         for w in (600, 500, 400, 300, 250):
@@ -872,14 +833,12 @@ class TestHeaderSizeLinkingGroupDecision:
         """BI explicitly sets header=11; body inherits root font.size from
         the cascade. They must NOT be locked together — BI's apparatus tier
         is independent by design."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         data = [{"Company": "Acme", "Revenue": 849000000}]
         _custom_ctx = self._bi_style()
-        chart = resolve(chart, [], chart_style_context=_custom_ctx)
+        chart = resolve(chart, data, chart_style_context=_custom_ctx)
         svg = render_table_svg(
             chart,
             data,
@@ -899,9 +858,7 @@ class TestFitCascadeFloor:
 
     def test_narrow_table_stops_at_11px(self, make_chart):
         """At very narrow widths, cascade stops at 11px; no sub-11 fonts."""
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         # Many columns in a narrow space to force cascade to engage fully
@@ -921,7 +878,7 @@ class TestFitCascadeFloor:
         es = _style_with()
         tc = es.table
         es = dataclasses.replace(es, table=tc.model_copy(update={"wrap": False}))
-        chart = resolve(chart, [], chart_style_context=es)
+        chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(
             chart,
             data,
@@ -944,16 +901,14 @@ class TestAnchorsKeepsMagnitudeSuffix:
     """
 
     def test_magnitude_suffix_present_on_every_kilo_row(self, make_chart):
-        from dbt_charts.core.render.chart.table import (
-            render_table_svg as render_table_svg,
-        )
+        from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
         # Two kilo-range rows with no explicit format → SI default (.3~s):
         # 1500 -> "1.5" + "K", 3000 -> "3" + "K".
         data = [{"revenue": 1500}, {"revenue": 3000}]
         _custom_ctx = _style_with(symbol_mode="anchors")
-        chart = resolve(chart, [], chart_style_context=_custom_ctx)
+        chart = resolve(chart, data, chart_style_context=_custom_ctx)
         svg = render_table_svg(chart, data, width=400, board_style=_BOARD_STYLE)
 
         # Both rows keep their "K" suffix tspan — the anchor row AND the middle

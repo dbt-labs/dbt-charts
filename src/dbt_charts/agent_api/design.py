@@ -379,7 +379,7 @@ _NEVER_A_LIST = {
 }
 
 # The pivot's arity rule, and the only one that spans three fields.
-# `render/chart/table.py` raises `ERR-TABLE-PIVOT-DIMENSIONS-AMBIGUOUS` —
+# the engine's table family raises `ERR-TABLE-PIVOT-DIMENSIONS-AMBIGUOUS` —
 # "declare at least one of `rows` or `values`" — for a table that sets
 # `columns:` and neither of the pair: with both omitted the row and measure
 # dimensions are ambiguous. The board parses, so the save endpoint's re-parse
@@ -713,7 +713,7 @@ def _widget_for(field: SchemaField) -> Widget | None:
     # a model arm the IR does not report as nested, so a text box showed an
     # authored object as empty and one keystroke replaced it with a string.
     arms = _arms(field.type_repr)
-    str_pattern = field.extra_union_type_patterns.get("str")
+    str_pattern = field.extra_union_type_keywords.get("str", {}).get("pattern")
     if str_pattern is not None and str_pattern not in _NAME_GUARDS:
         # A pattern-constrained string is parse-time sugar, not free text: a
         # text box would take what the pattern rejects (`gap: "x"`). A name
@@ -1241,15 +1241,13 @@ def _describe(
             enum_values = offered_font_families()
             widget = "combo"
         if enum_values and any(isinstance(f, Format) for f in field.facets):
-            # The field's Literal is the engine's own names for that slot's
-            # kind (`FormatAlias` on a kind-agnostic `format:`, the narrower
-            # `NumberFormatAlias`/`TimeFormatAlias` where the slot knows what it
-            # paints), which is all a wheel can know; the aliases this node's
-            # scope authors are legal here too — in every slot, since a user's
-            # alias carries no kind — and offering the snapshot alone tells an
-            # author the alias they wrote themselves is not a value. The dedup keeps the
-            # offer honest where a `style.formats` key spells a predefined name,
-            # which redefines it rather than adding a second entry.
+            # The field's Literal is the engine's own names (`FormatAlias`),
+            # which is all a wheel can know; the aliases this node's scope
+            # authors are legal here too, and offering the snapshot alone tells
+            # an author the alias they wrote themselves is not a value. The
+            # dedup keeps the offer honest where a `style.formats` key spells a
+            # predefined name, which redefines it rather than adding a second
+            # entry.
             enum_values += tuple(a for a in aliases if a not in enum_values)
         if (
             enum_values

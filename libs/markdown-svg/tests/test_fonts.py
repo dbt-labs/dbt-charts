@@ -379,6 +379,54 @@ class TestSplitTokenPreciseSeamBreaks:
                 f"URL piece should end at seam char, got ending {piece[-1]!r}: {piece!r}"
             )
 
+    def test_split_token_precise_measure_calls_stay_linear(self) -> None:
+        """A long seam-dense token must not measure every seam prefix per piece."""
+        calls = 0
+
+        def measure(text: str) -> float:
+            nonlocal calls
+            calls += 1
+            return float(len(text))
+
+        token = "ab_" * 1000
+        pieces = split_token_precise(token, 30.0, measure)
+
+        assert "".join(pieces) == token
+        assert pieces[0] == "ab_" * 10
+        assert calls < 2 * len(token)
+
+    def test_split_token_precise_measures_linear_in_token_length(
+        self, measurer: FontMeasurer
+    ) -> None:
+        """A seam-dense token (base64 data-URI) must not be re-measured per line."""
+        token = "data:image/png;base64," + "QUJD/0+9=" * 200
+        inner = self._measure_fn(measurer)
+        measured_chars = 0
+
+        def counting_measure(text: str) -> float:
+            nonlocal measured_chars
+            measured_chars += len(text)
+            return inner(text)
+
+        pieces = split_token_precise(token, 200.0, counting_measure)
+
+        assert "".join(pieces) == token
+        assert all(inner(piece) <= 200.0 for piece in pieces)
+        assert measured_chars <= 2 * len(token)
+
+    def test_split_token_precise_without_seams_takes_longest_fit(
+        self, measurer: FontMeasurer
+    ) -> None:
+        token = "abcdefghijklmnopqrstuvwxyz" * 30
+        measure = self._measure_fn(measurer)
+
+        pieces = split_token_precise(token, 120.0, measure)
+
+        assert "".join(pieces) == token
+        for piece, following in zip(pieces, pieces[1:], strict=False):
+            assert measure(piece) <= 120.0
+            assert measure(piece + following[0]) > 120.0
+
     def test_wrap_text_precise_snake_case_breaks_at_seam(
         self, measurer: FontMeasurer
     ) -> None:

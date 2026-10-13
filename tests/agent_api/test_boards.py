@@ -3,6 +3,7 @@
 Covers list_boards, get_board, and render_board.
 """
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -278,6 +279,124 @@ rows:
         result = list_boards(local_project(tmp_path), under="charts")
 
         assert {b.title for b in result.boards} == {"Home"}
+
+    @pytest.mark.parametrize("section", ["charts", "queries", "variables"])
+    def test_a_list_valued_section_is_skipped_not_crashed(
+        self,
+        tmp_path: Path,
+        section: str,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        """A board whose `charts:`/`queries:`/`variables:` is a YAML list
+        (not a mapping) parses fine and passes the board-declaring-key check,
+        so the crash is downstream: `content.get(section, {}).keys()` raises
+        `AttributeError` on a list. list_boards must route this into
+        `skipped_files` like every other malformed-file case, never let an
+        AttributeError escape. `charts:` alone already satisfies the
+        board-declaring-key check, so it is present in every case here even
+        when it isn't the section under test."""
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        content = "charts: {}\n" if section != "charts" else ""
+        content += f"{section}:\n  - a\n  - b\n"
+        (boards / "bad.yml").write_text(content)
+
+        result = list_boards(local_project(tmp_path))
+
+        assert result.count == 0
+        assert result.boards == []
+        skipped_relpaths = [f.file.relpath for f in result.skipped_files]
+        assert "charts/bad.yml" in skipped_relpaths
+
+    def test_a_list_valued_section_does_not_suppress_a_sibling_valid_board(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "bad.yml").write_text("charts:\n  - a\n")
+        (boards / "good.yml").write_text(
+            "title: Good\ncharts:\n  rev: {query: {sql: 'SELECT 1'}, type: bar}\n"
+        )
+
+        result = list_boards(local_project(tmp_path))
+
+        assert result.count == 1
+        assert result.boards[0].title == "Good"
+        skipped_relpaths = [f.file.relpath for f in result.skipped_files]
+        assert "charts/bad.yml" in skipped_relpaths
+
+    def test_an_unreadable_subdirectory_is_skipped_not_silently_empty(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Without `onerror` wired through, `os.walk`'s own default silently
+        skips a directory it cannot enter -- `count == 0` would then read
+        as "this project has no boards" rather than "couldn't check"."""
+        charts = tmp_path / "charts"
+        charts.mkdir()
+        (charts / "good.yml").write_text(
+            "title: Good\ncharts:\n  rev: {query: {sql: 'SELECT 1'}, type: bar}\n"
+        )
+        blocked = charts / "blocked"
+        blocked.mkdir()
+        (blocked / "hidden.yml").write_text(
+            "title: Hidden\ncharts:\n  rev: {query: {sql: 'SELECT 1'}, type: bar}\n"
+        )
+        blocked.chmod(0o000)
+        try:
+            if os.access(blocked, os.R_OK):
+                pytest.skip("running as root or on a filesystem that ignores chmod")
+            result = list_boards(local_project(tmp_path))
+        finally:
+            blocked.chmod(0o755)
+
+        assert result.count == 1
+        assert result.boards[0].title == "Good"
+        skipped_relpaths = [f.file.relpath for f in result.skipped_files]
+        assert "charts/blocked" in skipped_relpaths
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "title: 2024\ncharts: {rev: {query: {sql: 'SELECT 1'}, type: bar}}\n",
+            "title:\ncharts: {rev: {query: {sql: 'SELECT 1'}, type: bar}}\n",
+            "charts: {2024: {query: {sql: 'SELECT 1'}, type: bar}}\n",
+        ],
+        ids=["int-title", "empty-title", "int-chart-key"],
+    )
+    def test_a_board_failing_boardsummary_validation_is_skipped_not_crashed(
+        self,
+        tmp_path: Path,
+        content: str,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        """`title: 2024` (a year-named board), an empty `title:`, and an
+        integer chart key all parse as valid YAML and pass the
+        board-declaring-key check, so the crash is downstream: BoardSummary's
+        `title: str`/`charts: dict[str, ...]` fields don't coerce an int, and
+        pydantic raises ValidationError. Ordinary authoring mistakes, not
+        exotic input."""
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "bad.yml").write_text(content)
+
+        result = list_boards(local_project(tmp_path))
+
+        assert result.count == 0
+        skipped_relpaths = [f.file.relpath for f in result.skipped_files]
+        assert "charts/bad.yml" in skipped_relpaths
+
+    def test_a_non_utf8_board_is_skipped_not_crashed(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "bad.yml").write_bytes(b"title: caf\xe9\ncharts: {}\n")
+
+        result = list_boards(local_project(tmp_path))
+
+        assert result.count == 0
+        skipped_relpaths = [f.file.relpath for f in result.skipped_files]
+        assert "charts/bad.yml" in skipped_relpaths
 
 
 class TestGetBoard:

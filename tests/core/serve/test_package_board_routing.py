@@ -145,7 +145,7 @@ class TestDirectoryCandidates:
 
         project = FilesystemProject(pkg_project)
         candidates = _directory_candidates(project.charts_dir, "sub", project)
-        assert (project.charts_dir / "sub", "sub") in candidates
+        assert project.charts_dir / "sub" in candidates
 
     def test_package_namespace_resolves_under_its_own_charts_dir(
         self, pkg_project: Path
@@ -155,7 +155,7 @@ class TestDirectoryCandidates:
         project = FilesystemProject(pkg_project)
         candidates = _directory_candidates(project.charts_dir, "pkg_a", project)
         pkg_dir = pkg_project / "dbt_packages" / "pkg_a" / "charts"
-        assert (pkg_dir, "pkg_a") in candidates
+        assert pkg_dir in candidates
 
     def test_root_clean_path_resolves_to_charts_dir_alone(
         self, pkg_project: Path
@@ -164,7 +164,7 @@ class TestDirectoryCandidates:
 
         project = FilesystemProject(pkg_project)
         candidates = _directory_candidates(project.charts_dir, "", project)
-        assert candidates == [(project.charts_dir, "")]
+        assert candidates == [project.charts_dir]
 
     def test_charts_prefixed_path_yields_no_candidates(self, pkg_project: Path) -> None:
         from dbt_charts.core.serve.server import _directory_candidates

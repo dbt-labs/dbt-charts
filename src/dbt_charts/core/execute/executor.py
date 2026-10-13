@@ -31,13 +31,14 @@ import re
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal
 
 import sqlglot
 import sqlglot.errors
 import sqlglot.expressions as exp
+import yaml
 
 # Regex that detects __dct_cache_ref__NAME__ sentinels produced by
 # {{ queries.X.cache }} in a composing query's SQL.
@@ -67,6 +68,7 @@ from dbt_charts.core.compile.models.query.normalized import (
     is_sql_query,
 )
 from dbt_charts.core.compile.sql_guard import sqlglot_dialect
+from dbt_charts.core.compile.template.parameterized import DateRangeFilter
 from dbt_charts.core.compile.template.variables import (
     coerce_variable_values,
     parse_variable_json_strings,
@@ -81,11 +83,13 @@ from dbt_charts.core.execute.adapters.base import (
     apply_row_limit_truncation,
     resolve_effective_row_limit,
 )
+from dbt_charts.core.execute.adapters.dbt_utils import source_target_path
 from dbt_charts.core.execute.cache_backend import (
     CachedQueryFailure,
     CacheRows,
     TruncatedReason,
 )
+from dbt_charts.core.execute.dbt_jinja import has_dbt_jinja
 from dbt_charts.core.execute.duckdb_cache import compute_cache_key
 from dbt_charts.core.execute.sql_translate import (
     dialect_differs,
@@ -400,6 +404,11 @@ class TruncationInfo:
     reason: TruncatedReason
 
 
+def utc_now() -> datetime:
+    """The real clock, in UTC — ``Executor``'s default time source."""
+    return datetime.now(UTC)
+
+
 class Executor:
     """Executes queries for boards.
 
@@ -446,6 +455,7 @@ class Executor:
         result_cache: "QueryResultCache | None" = None,
         file_materializer: "FileSourceMaterializer | None" = None,
         file_materializer_factory: "Callable[[], FileSourceMaterializer] | None" = None,
+        clock: Callable[[], datetime] = utc_now,
     ):
         """Initialize executor.
 
@@ -473,8 +483,13 @@ class Executor:
                 so a fully-cached render never opens a DuckDB. Built at most once and
                 shared across the render's (possibly concurrent) queries. Exactly one
                 of ``file_materializer`` / ``file_materializer_factory`` is set.
+            clock: This render's only time source. Read once here for
+                ``rendered_at`` and again as each query's rows come back; pin it
+                and the render's bytes stop depending on when it ran.
         """
         self.board = board
+        self._clock = clock
+        self.rendered_at = clock()
         self.query_registry = query_registry or {}
         # Keyed by content *plus* the asking query's resolved policy (_memo_key):
         # the slot is warmed from the persistent store, so a content-only key
@@ -482,6 +497,9 @@ class Executor:
         self._cache: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
         self._provenance_cache: dict[str, list[ResolvedRelation]] = {}
         self._query_errors: dict[str, Exception] = {}
+        # Query name -> why its dbt column formats could not be derived; raised
+        # where a chart reading that query resolves (column_formats.py).
+        self.column_format_errors: dict[str, DbtChartsError] = {}
         self._use_cache = use_cache
         self._result_cache = result_cache
         # Per-query (name, data_as_of, policy, is_cache_hit) records for every
@@ -494,6 +512,9 @@ class Executor:
         # by execution.max_rows/max_result_bytes this render. Read by the
         # render-warnings pass (query_result_truncated.py) via truncations().
         self._truncations: dict[str, TruncationInfo] = {}
+        self._range_filter_memo: dict[
+            tuple[str, str], tuple[str, str | None, list[DateRangeFilter]] | None
+        ] = {}
         self._file_materializer = file_materializer
         self._file_materializer_factory = file_materializer_factory
         # Guards lazy build of the shared materializer (concurrent render workers).
@@ -502,6 +523,9 @@ class Executor:
         # query writes matches the one a later query in the same render reads even
         # if the file's mtime changes mid-render. Keyed by source name.
         self._source_versions: dict[str, str] = {}
+        # Same idea for the dbt manifest a ref()/source() resolves against,
+        # keyed by the source's authored target_path.
+        self._manifest_versions: dict[str | None, str] = {}
         self.adapter_registry = adapter_registry
         # Pre-parse file source configs once so _resolve_file_source does not
         # re-run Pydantic on every hot-path query call.
@@ -628,7 +652,7 @@ class Executor:
             query,
             variables,
             self.board.sources,
-            source_version=self._source_version(query),
+            source_version=self._source_version(query) + self._manifest_version(query),
         )
         memo_key = _memo_key(query, cache_key)
 
@@ -767,7 +791,7 @@ class Executor:
             result_data = self._enforce_result_limits(
                 composed_rows, query_name, seed_reason=cache_ref_reason
             )
-            data_as_of = datetime.now(timezone.utc)
+            data_as_of = self._clock()
             self._cache[memo_key] = result_data
             if should_use_cache:
                 # Write through to the persistent backend using the original
@@ -859,7 +883,7 @@ class Executor:
                     self._query_data_ages.append(
                         (
                             query_name,
-                            datetime.now(timezone.utc),
+                            self._clock(),
                             original_query.cache,
                             False,
                         )
@@ -869,7 +893,7 @@ class Executor:
                         query_name,
                         code=e.code if isinstance(e, DbtChartsError) else None,
                     ) from e
-                data_as_of = datetime.now(timezone.utc)
+                data_as_of = self._clock()
                 # Write through like any other query: the cache key now folds in the
                 # file's version token (Project.file_version), so an edited data file
                 # produces a new key and never a stale hit — while an unchanged file
@@ -895,7 +919,7 @@ class Executor:
             if should_use_cache:
                 self._cache_failure(query_name, query, variables, e)
             self._query_data_ages.append(
-                (query_name, datetime.now(timezone.utc), original_query.cache, False)
+                (query_name, self._clock(), original_query.cache, False)
             )
             raise QueryError(
                 str(e),
@@ -909,14 +933,14 @@ class Executor:
             if should_use_cache:
                 self._cache_failure(query_name, query, variables, result.error)
             self._query_data_ages.append(
-                (query_name, datetime.now(timezone.utc), original_query.cache, False)
+                (query_name, self._clock(), original_query.cache, False)
             )
             raise result.error
 
         # ────────────────────────────────────────────────────────────────
         # Step 6: Cache and return
         # ────────────────────────────────────────────────────────────────
-        data_as_of = datetime.now(timezone.utc)
+        data_as_of = self._clock()
         enforced_data = self._enforce_result_limits(
             result.data, query_name, seed_reason=result.truncated_reason
         )
@@ -1094,7 +1118,7 @@ class Executor:
             query,
             variables,
             self.board.sources,
-            source_version=self._source_version(query),
+            source_version=self._source_version(query) + self._manifest_version(query),
         )
         if _memo_key(query, cache_key) in self._cache:
             return True
@@ -1198,6 +1222,41 @@ class Executor:
         except ExecutionError as exc:
             err = exc
         raise QueryError(str(err), query_name, code=err.code)
+
+    def render_with_range_filters(
+        self, query_name: str, variables: VariableValues | None
+    ) -> tuple[str, str | None, list[DateRangeFilter]] | None:
+        """The SQL a query executes as, and the date ranges its filters recorded.
+
+        None when the query has no ``filter_date_range()`` or can't be rendered
+        here; it never fails a render.
+        """
+        query_name, query, merged = self._prepare_call(query_name, variables)
+        memo_key = (query_name, json.dumps(merged, sort_keys=True, default=str))
+        if memo_key not in self._range_filter_memo:
+            self._range_filter_memo[memo_key] = self._render_with_range_filters(
+                query_name, query, merged
+            )
+        return self._range_filter_memo[memo_key]
+
+    def _render_with_range_filters(
+        self, query_name: str, query: AnyQuery, merged: VariableValues
+    ) -> tuple[str, str | None, list[DateRangeFilter]] | None:
+        if not is_sql_query(query) or CACHE_REF_JINJA_RE.search(query.sql):
+            return None
+        query = resolve_query_references(
+            query,
+            all_queries={**self.board.queries, **self.query_registry},
+            query_name=query_name,
+        )
+        if not is_sql_query(query) or "filter_date_range" not in query.sql:
+            return None
+        try:
+            return self.adapter_registry.render_with_range_filters(
+                query, merged, board=self.board
+            )
+        except (DbtChartsError, OSError, ValueError, yaml.YAMLError):
+            return None
 
     def _query_dialect(self, query: SqlQuery, query_name: str) -> str | None:
         """Resolve the sqlglot dialect name for a query's source.
@@ -1395,6 +1454,31 @@ class Executor:
         self._source_versions[source_name] = version
         return version
 
+    def _manifest_version(self, query: "AnyQuery") -> str:
+        """Version of the dbt manifest this query's ``ref()`` / ``source()``
+        resolve against, read from the resolver that resolves them; folded into
+        the cache key beside ``_source_version``. ``""`` for a query without dbt
+        Jinja, or when resolution will raise the specific error itself (so
+        nothing is cached) and ``is_cached`` must not. Memoized per ``target_path``.
+        """
+        if not is_sql_query(query) or not (
+            has_dbt_jinja(query.sql)
+            or (query.setup_sql is not None and has_dbt_jinja(query.setup_sql))
+        ):
+            return ""
+        try:
+            source_config = self.adapter_registry.resolve_query_source(
+                query, board=self.board
+            )
+            target_path = source_target_path(source_config)
+            if target_path not in self._manifest_versions:
+                self._manifest_versions[target_path] = (
+                    self.adapter_registry.dbt_manifest_version(target_path)
+                )
+        except DbtChartsError:
+            return ""
+        return self._manifest_versions[target_path]
+
     # ─────────────────────────────────────────────────────────────────────
     # Cache-ref composition ({{ queries.X.cache }})
     # ─────────────────────────────────────────────────────────────────────
@@ -1558,7 +1642,7 @@ class Executor:
             query,
             variables,
             self.board.sources,
-            source_version=self._source_version(query),
+            source_version=self._source_version(query) + self._manifest_version(query),
         )
         self._result_cache.put(
             source_hash,

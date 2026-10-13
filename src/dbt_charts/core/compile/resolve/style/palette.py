@@ -48,10 +48,10 @@ import difflib
 import functools
 import re
 from collections.abc import Mapping, Sequence
-from importlib.resources import files
-from typing import Any, Literal, get_args
+from typing import Literal, get_args
 
 import yaml
+from importlib_resources import files
 
 from dbt_charts.core.colors import (
     VARIANT_WORDS,
@@ -72,7 +72,14 @@ from dbt_charts.core.colors import (
 )
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.config import ChartRenderingConfig
-from dbt_charts.core.compile.models.palette import Palette
+from dbt_charts.core.compile.models.palette import (
+    HARD_FAIL_PALETTE_NAMES,
+    PALETTE_WARN_ALIASES,
+    Palette,
+    PaletteFamily,
+    PaletteIndexEntry,
+    build_palette_index,
+)
 from dbt_charts.core.diagnostics.hints import respell_retired_variant_token
 
 # ============================================================================
@@ -106,31 +113,10 @@ class ToneAsPaletteError(ValueError):
 # ============================================================================
 
 _PALETTES_DIR = files("dbt_charts.core") / "defaults" / "palettes"
-_FAMILIES: tuple[str, ...] = (
-    "sequential",
-    "diverging",
-    "categorical",
-    "scaffold",
-    "tone",
-)
-# Index: {name: {"family": ..., "path": Path}}
-_index: dict[str, dict[str, Any]] | None = None
+_index: dict[str, PaletteIndexEntry] | None = None
 
 # Cache for loaded spine YAMLs (keyed by palette name).
 _spine_cache: dict[str, Palette] = {}
-
-
-# Known anti-patterns (§10).
-_HARD_FAIL_NAMES: frozenset[str] = frozenset({"jet", "rainbow", "hsv"})
-
-# RdYlGn/parula resolve (for migration paths) but emit a warning.
-# The mapped substitute is the nearest dbt charts palette so dashboards don't crash
-# when users encounter these names from prior tools. Warning text names
-# the substitution explicitly.
-_WARN_ALIASES: dict[str, str] = {
-    "RdYlGn": "dbt-div-crimson-green",
-    "parula": "dbt-seq-blue",
-}
 
 
 # ============================================================================
@@ -304,28 +290,10 @@ def _table_surface_div(
     return [_interpolate_oklch_at_t(spine_oklch, t) for t in ts]
 
 
-def _build_index() -> dict[str, dict[str, Any]]:
-    """Scan the palettes directory and build ``name → (family, path)`` map."""
-    idx: dict[str, dict[str, Any]] = {}
-    for family in _FAMILIES:
-        fam_dir = _PALETTES_DIR / family
-        if not fam_dir.is_dir():
-            continue
-        for yml in sorted(
-            (p for p in fam_dir.iterdir() if p.name.endswith(".yml")),
-            key=lambda p: p.name,
-        ):
-            data = yaml.safe_load(yml.read_text(encoding="utf-8"))
-            if not isinstance(data, dict) or "name" not in data:
-                continue
-            idx[data["name"]] = {"family": family, "path": yml}
-    return idx
-
-
-def _get_index() -> dict[str, dict[str, Any]]:
+def _get_index() -> dict[str, PaletteIndexEntry]:
     global _index
     if _index is None:
-        _index = _build_index()
+        _index = build_palette_index(_PALETTES_DIR)
     return _index
 
 
@@ -631,13 +599,13 @@ def palette(
         reverse = reverse or parsed_rev
 
     # Anti-patterns.
-    if name in _HARD_FAIL_NAMES:
+    if name in HARD_FAIL_PALETTE_NAMES:
         raise UnknownPaletteError(
             f"palette '{name}' is a known perceptual anti-pattern and is not "
             "shipped. See docs/guides/palette-resolver.md#anti-patterns"
         )
-    if name in _WARN_ALIASES:
-        name = _WARN_ALIASES[name]
+    if name in PALETTE_WARN_ALIASES:
+        name = PALETTE_WARN_ALIASES[name]
 
     entry = _get_index().get(name)
     if entry is None:
@@ -734,7 +702,7 @@ def resolve_palette_ref(ref: str, palettes: Mapping[str, str]) -> str:
 def resolve_palette_alias(name: str) -> tuple[list[str], str | None]:
     """Resolve a palette name, reporting the anti-pattern name it replaced.
 
-    ``palette()`` itself resolves anti-pattern aliases (see ``_WARN_ALIASES``)
+    ``palette()`` itself resolves anti-pattern aliases (see ``PALETTE_WARN_ALIASES``)
     silently — the WARN-PALETTE-UNSUPPORTED nudge is a render-stage detector
     over the compiled board, not an inline emit. This is the single place
     that detects the alias so a compile-time model (``CategoricalColorStyle``)
@@ -753,7 +721,7 @@ def resolve_palette_alias(name: str) -> tuple[list[str], str | None]:
     parsed_name, _ = _split_trailing_variant(name)
     if ":" in parsed_name or parsed_name.endswith("_r"):
         parsed_name, _, _ = _parse_palette_reference(parsed_name)
-    requested = parsed_name if parsed_name in _WARN_ALIASES else None
+    requested = parsed_name if parsed_name in PALETTE_WARN_ALIASES else None
     return palette(name), requested
 
 
@@ -764,7 +732,7 @@ def is_hard_fail_name(name: str) -> bool:
     theme role" apart from "known-bad, never a role" — deferring the latter
     would silently swallow a deliberate gate.
     """
-    return name in _HARD_FAIL_NAMES
+    return name in HARD_FAIL_PALETTE_NAMES
 
 
 def is_warn_alias(name: str) -> bool:
@@ -774,18 +742,18 @@ def is_warn_alias(name: str) -> bool:
     these, so this is what separates provenance the compiler computed from a
     value a board author fabricated.
     """
-    return name in _WARN_ALIASES
+    return name in PALETTE_WARN_ALIASES
 
 
 def substitute_for_alias(requested_alias_palette: str) -> str:
     """Return the palette name substituted for a known anti-pattern alias.
 
-    ``requested_alias_palette`` is one of ``_WARN_ALIASES``'s keys (the name
+    ``requested_alias_palette`` is one of ``PALETTE_WARN_ALIASES``'s keys (the name
     ``resolve_palette_alias`` stripped down to before substitution). Used by
     the WARN-PALETTE-UNSUPPORTED render detector to name the substitute
     palette, not its resolved hex stops, in the user-facing message.
     """
-    return _WARN_ALIASES[requested_alias_palette]
+    return PALETTE_WARN_ALIASES[requested_alias_palette]
 
 
 def _resolve_discrete(
@@ -1443,9 +1411,7 @@ def mark_ink(color: str, canvas: str) -> str:
 
 
 def list_palettes(
-    family: (
-        Literal["sequential", "diverging", "categorical", "scaffold", "tone"] | None
-    ) = None,
+    family: PaletteFamily | None = None,
 ) -> list[str]:
     """List palette names, optionally filtered by family."""
     idx = _get_index()

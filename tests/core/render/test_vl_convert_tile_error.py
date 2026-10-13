@@ -40,6 +40,8 @@ from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.chart.rendering import render_chart_item
 
+from .._svg_render import PINNED_RENDER_TIME
+
 
 def _noop_register_fonts(vlc_module: object) -> None:
     pass
@@ -250,6 +252,7 @@ def test_full_dashboard_render_produces_output_with_error_block_not_abort(
     )
 
     executor = MagicMock(spec=Executor)
+    executor.render_with_range_filters.return_value = None
     executor._query_errors = {}
     data = [{"cat": "A", "val": 10}, {"cat": "B", "val": 20}]
     executor.execute_chart.return_value = data
@@ -258,6 +261,7 @@ def test_full_dashboard_render_produces_output_with_error_block_not_abort(
     # empty list until a persistent-cache hit occurs, which never happens
     # against this mock's adapter stand-in.
     executor.cache_hit_ats = []
+    executor.rendered_at = PINNED_RENDER_TIME
 
     # Must NOT raise — full dashboard SVG must be produced.
     svg = render(result.board, executor, format="svg", variables={}).output

@@ -2,6 +2,7 @@
 
 import json
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -10,11 +11,6 @@ from typer.testing import CliRunner
 
 from dbt_charts.agent_api import mcp_install
 from dbt_charts.cli import main as cli_main
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover - exercised on 3.10 CI
-    import tomli as tomllib
 
 runner = CliRunner()
 
@@ -498,6 +494,27 @@ def test_mcp_serve_stays_uncached_unless_opted_in(
     (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
     monkeypatch.delenv("DCT_CACHE_PATH", raising=False)
     assert _injected_mcp_cache(monkeypatch, tmp_path) is None
+
+
+def test_mcp_serve_reports_its_own_surface(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The root callback declares "cli"; the stdio server narrows it to "mcp"."""
+    from dbt_charts.core.attribution import current_attribution
+
+    (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+    monkeypatch.delenv("DCT_CACHE_PATH", raising=False)
+    surfaces: list[str] = []
+
+    async def _capture(project: object, cache: object) -> None:
+        surfaces.append(current_attribution()["dbt_charts_surface"])
+
+    monkeypatch.setattr("dbt_charts.ai.mcp.run_server", _capture)
+    result = runner.invoke(
+        cli_main.app, ["mcp", "serve", "--project-dir", str(tmp_path)]
+    )
+    assert result.exit_code == 0
+    assert surfaces == ["mcp"]
 
 
 def test_mcp_serve_opens_the_cache_dct_cache_path_names(

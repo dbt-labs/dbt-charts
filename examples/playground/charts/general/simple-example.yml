@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: "Simple Example"
 notes: "Minimal example showing SQL data source usage"
 source: examples_db

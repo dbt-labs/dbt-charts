@@ -68,8 +68,9 @@ class CategoryColorScale:
     palette rather than being overpainted by the root's.
 
     ``overrides`` holds pins naming a color the palette does not contain. Such
-    a value still owns a slot — that is what its companion ink indexes — but
-    its fill is the literal the author wrote. Built by
+    a value still owns a slot — that is what its companion ink indexes, and
+    it may share one when the palette is full — but its fill is the literal
+    the author wrote. Built by
     ``plan_category_colors``; display order is deliberately absent, because
     reordering a domain is what desynchronizes everything downstream.
 
@@ -103,8 +104,7 @@ def _slot_for(scale: CategoryColorScale, value: str, palette: Sequence[str]) -> 
     it against a chart-local override that is SHORTER (``style.color.
     categorical.palette``, or a nested board's shorter theme) — wrapping that
     via ``% len(palette)`` would silently collapse two categories onto one
-    swatch, which is the one thing a ``CategoryColorScale`` guarantees never
-    happens. Both failure modes raise the same ``ChartDataError`` naming the
+    swatch, which ``CategoryColorScale`` guarantees never happens to a fill. Both failure modes raise the same ``ChartDataError`` naming the
     field and value, never a bare ``KeyError`` or a silent wrap.
     """
     try:
@@ -135,8 +135,9 @@ def ink_at(scale: CategoryColorScale, value: str, palette: Sequence[str]) -> str
 
     A parallel palette (dark companion, ghost, light) is indexed by slot only
     — an author's literal fill (an override) has no companion of its own, and
-    the slot it still burns is exactly what keeps its ink distinct from its
-    neighbors'.
+    its slot keeps its ink distinct from its neighbors' unless the palette is
+    full and the slot is shared. Endpoint labels read the ink baked for an override at resolve
+    time instead of calling this.
     """
     return palette[_slot_for(scale, value, palette)]
 

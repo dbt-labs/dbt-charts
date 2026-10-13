@@ -10,6 +10,7 @@ from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from dbt_charts.agent_api.query_csv import model_json
 from dbt_charts.ai.context import DbtChartsAIContext
 from dbt_charts.ai.events import (
     AGENT_ERROR_MESSAGE,
@@ -151,10 +152,9 @@ _TOOL_GUIDANCE = """## Tool Use
   for a new board, `edit_file` for a targeted change to a board the user named
   (read it first so you don't clobber it). Never silently append a chart to an
   existing board the user did not name — write a new board instead. Boards live
-  under `charts/`. Then run `validate_board` and fix every error before
-  continuing.
-- Once a saved board validates, call `render_board(path=...)` to check it
-  renders, and surface the preview URL (`render_board(path=..., as_link=true)`
+  under `charts/`.
+- Once a board is saved, call `render_board(path=...)` to check it
+  renders (fix every error it reports before continuing), and surface the preview URL (`render_board(path=..., as_link=true)`
   returns it) so they can open the dashboard in their browser. The preview
   server is already running — never try to start one.
 - If a tool returns an error, explain it clearly and fix it — do not proceed on
@@ -232,21 +232,9 @@ def _elide_if_svg(value: Any) -> Any:
     return value
 
 
-def _model_facing_result(result: dict[str, Any]) -> dict[str, Any]:
-    """Return the copy of a tool result the model reads.
-
-    SVG output is a display artifact for the host (Cloud embeds it; the CLI
-    never requests it) — feeding ~100KB of markup to the model wastes context
-    and invites it to echo the blob as prose. The model keeps the verdict
-    (status, warnings, errors); the host-facing ToolResultEvent keeps the
-    full payload.
-
-    Elision applies to every top-level key, not just ``data`` — a host
-    ``tool_overrides`` handler (e.g. Cloud's render_board merge) may carry
-    pixel SVG under a second key while ``data`` holds the agent's requested
-    semantic payload. A key-specific check would let that second key leak the
-    blob straight into model context.
-    """
+def _elide_svg(result: dict[str, Any]) -> dict[str, Any]:
+    """Elide SVG under every top-level key: a host override may carry pixel SVG
+    beside the semantic ``data``, and a key-specific check would leak it."""
     return {key: _elide_if_svg(value) for key, value in result.items()}
 
 
@@ -363,7 +351,7 @@ def run_agent(
                 ToolResultMessage(
                     tool_call_id=tc.id,
                     name=tc.name,
-                    content=json.dumps(_model_facing_result(result), default=str),
+                    content=model_json(_elide_svg(result)),
                 )
             )
             yield ToolResultEvent(

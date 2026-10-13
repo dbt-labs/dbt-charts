@@ -27,8 +27,6 @@ from dbt_charts.core.compile.errors import ParseError
 from dbt_charts.core.compile.models.markers import Format
 from dbt_charts.core.compile.models.schema_names import (
     FormatAlias,
-    NumberFormatAlias,
-    TimeFormatAlias,
 )
 from dbt_charts.core.compile.parse.parser import load_yaml_mapping, parse_yaml
 from dbt_charts.core.compile.parse.source_map import build_source_index
@@ -38,6 +36,7 @@ from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.render import render
 
 from .._svg_normalize import normalize_same_run_svg
+from ..core._svg_render import pinned_clock
 
 BOARD = """
 title: Revenue Overview
@@ -355,12 +354,8 @@ def _panel_interactions(prop):
 
 
 # The generated snapshot of engine-predefined names — what a wheel-shipped
-# artifact can know, and what a board's own aliases are offered beside. Split
-# by kind: a slot that knows whether it paints a number or a date offers only
-# that half, and only the kind-agnostic `format:` slots offer the union.
+# artifact can know, and what a board's own aliases are offered beside.
 _BUILT_IN_ALIASES = frozenset(get_args(FormatAlias))
-_NUMBER_ALIASES = frozenset(get_args(NumberFormatAlias))
-_TIME_ALIASES = frozenset(get_args(TimeFormatAlias))
 
 
 def _flat(node: DesignNode) -> dict[str, DesignProperty]:
@@ -1080,7 +1075,7 @@ _RENDER_FIXTURES = {
     ),
     "line-bare": "rows:\n  - title: Line\n    type: line\n    query: q\n",
     "area-bare": "rows:\n  - title: Area\n    type: area\n    query: q\n",
-    # `render/chart/table.py` raises `ERR-TABLE-PIVOT-DIMENSIONS-AMBIGUOUS` for
+    # The engine raises `ERR-TABLE-PIVOT-DIMENSIONS-AMBIGUOUS` for
     # a pivot declaring neither `rows` nor `values`, and every one of these three
     # fields is a `list` control, so the sweep reaches that rule from both
     # directions.
@@ -1354,7 +1349,8 @@ def _render_failures(board: str) -> list[str]:
 # ~210s here; the ceiling is a runaway guard, not a budget — it sits clear of
 # that measurement so a loaded xdist worker doesn't trip it.
 @pytest.mark.timeout(600)
-def test_no_list_control_can_commit_a_board_that_stops_rendering() -> None:
+@pytest.mark.parametrize("label", _RENDER_FIXTURES)
+def test_no_list_control_can_commit_a_board_that_stops_rendering(label: str) -> None:
     """The parse gate's blind half: a rule the compiler enforces at resolve.
 
     The multi-metric layers rule is a parse-time constraint on bar and area
@@ -1374,26 +1370,23 @@ def test_no_list_control_can_commit_a_board_that_stops_rendering() -> None:
     a query name that names nothing — are reached only through text boxes. A
     dozen controls is a few seconds; a chart's hundreds would be minutes.
     """
-    for label, chart in _RENDER_FIXTURES.items():
-        board = _RENDER_QUERY + chart
-        assert not _render_failures(board), (
-            f"[{label}] fixture is broken before any edit"
-        )
-        targets = _targets(board)
-        for target in targets.values():
-            for key, prop in _flat(target).items():
-                if prop.widget != "list" and target.model != "Variable":
-                    continue
-                absolute = f"{target.writes_at}.{key}" if target.writes_at else key
-                for value in _panel_interactions(prop):
-                    updated = set_board_values(board, {absolute: value})
-                    failures = _render_failures(updated)
-                    action = "clearing" if value is None else f"setting to {value!r}"
-                    assert not failures, (
-                        f"[{label}] the panel offers a list control on "
-                        f"{target.model}.{key}, but {action} it leaves a board "
-                        f"that parses and no longer renders: {failures}"
-                    )
+    board = _RENDER_QUERY + _RENDER_FIXTURES[label]
+    assert not _render_failures(board), f"[{label}] fixture is broken before any edit"
+    targets = _targets(board)
+    for target in targets.values():
+        for key, prop in _flat(target).items():
+            if prop.widget != "list" and target.model != "Variable":
+                continue
+            absolute = f"{target.writes_at}.{key}" if target.writes_at else key
+            for value in _panel_interactions(prop):
+                updated = set_board_values(board, {absolute: value})
+                failures = _render_failures(updated)
+                action = "clearing" if value is None else f"setting to {value!r}"
+                assert not failures, (
+                    f"[{label}] the panel offers a list control on "
+                    f"{target.model}.{key}, but {action} it leaves a board "
+                    f"that parses and no longer renders: {failures}"
+                )
 
 
 def test_grid_and_tab_layouts_produce_targets() -> None:
@@ -1722,7 +1715,7 @@ def _table(chart: str) -> dict[str, DesignProperty]:
 class TestThePivotsArityRule:
     """A pivot needs a `rows:` or a `values:`, and only the render says so.
 
-    `render/chart/table.py` raises `ERR-TABLE-PIVOT-DIMENSIONS-AMBIGUOUS` —
+    The engine raises `ERR-TABLE-PIVOT-DIMENSIONS-AMBIGUOUS` —
     "declare at least one of `rows` or `values`" — for a table that sets
     `columns:` and neither of the pair: with both omitted the row and measure dimensions are ambiguous. The
     board parses, so the save endpoint's re-parse passes it and the panel is
@@ -2024,44 +2017,17 @@ def test_format_fields_offer_the_built_in_aliases() -> None:
     formats = {
         key: prop
         for key, prop in _flat(build_design_target(board, "rows.0")).items()
-        if key.split(".")[-1] in ("format", "number_format", "time_format")
+        if key.split(".")[-1] == "format"
     }
     assert formats, "the bar family carries format controls; the walk lost them"
-    # `currency` on every control except `time_format`, which is the one slot
-    # where currency is not an alias but a wrong render — it offers the time
-    # half instead, and must still offer something.
     unlisted = [
         key
         for key, prop in formats.items()
-        if ("date_short" if key.endswith("time_format") else "currency")
-        not in (prop.enum_values or ())
+        if "currency" not in (prop.enum_values or ())
     ]
     assert not unlisted, (
         "these format controls offer no alias, so the engine's names are"
         " undiscoverable:\n  " + "\n  ".join(sorted(unlisted))
-    )
-
-
-def test_a_kind_fixed_format_control_offers_only_its_own_half() -> None:
-    """`time_format: currency` is a wrong render that looks right — don't offer it.
-
-    The combo was the whole vocabulary on every format control, so the panel put
-    `currency` and `percent` one click away from a temporal axis, where they
-    resolve to a d3 *number* spec and Vega paints garbage ticks. Each of the two
-    slots that knows its own kind offers that half and nothing else; the raw d3
-    spec stays authorable because the widget is still a combo.
-    """
-    board = "rows:\n  - title: R\n    type: bar\n    query: q\n    x: m\n    y: v\n"
-    props = _flat(build_design_target(board, "rows.0"))
-
-    time_fmt = props["style.time_format"]
-    assert set(time_fmt.enum_values or ()) == _TIME_ALIASES
-    assert time_fmt.widget == "combo", "a strftime spec must stay authorable"
-
-    number_fmt = props["style.number_format"]
-    assert set(number_fmt.enum_values or ()) == _NUMBER_ALIASES
-    assert "date_short" not in (number_fmt.enum_values or ()), (
-        "the narrowing runs both ways"
     )
 
 
@@ -2100,8 +2066,8 @@ def test_a_board_s_own_aliases_reach_both_halves() -> None:
         "    y: v\n"
     )
     props = _flat(build_design_target(board, "rows.0"))
-    assert "arr" in (props["style.time_format"].enum_values or ())
-    assert "arr" in (props["style.number_format"].enum_values or ())
+    assert "arr" in (props["style.axis_x.labels.format"].enum_values or ())
+    assert "arr" in (props["style.axis_y.labels.format"].enum_values or ())
 
 
 def test_an_open_enum_union_is_a_combo_not_a_select() -> None:
@@ -2128,7 +2094,7 @@ def test_an_open_enum_union_is_a_combo_not_a_select() -> None:
 def test_a_board_s_own_format_aliases_are_offered_beside_the_built_in_ones() -> None:
     """`style.formats` is board-global, so its keys are legal on every chart.
 
-    A board authoring `arr: "$,.0f"` can write `number_format: arr` on any chart
+    A board authoring `arr: "$,.0f"` can write `format: arr` on any chart axis
     in it — `formats` merges key-wise down the cascade — and a snapshot of the
     engine's own names can never contain it. Offering the built-ins alone tells
     the author their own alias is not a value.
@@ -2145,7 +2111,7 @@ def test_a_board_s_own_format_aliases_are_offered_beside_the_built_in_ones() -> 
         "    y: v\n"
     )
     props = _flat(build_design_target(board, "rows.0"))
-    fmt = props["style.number_format"]
+    fmt = props["style.axis_y.labels.format"]
     assert fmt.enum_values is not None
     assert "arr" in fmt.enum_values, "the board's own alias is not offered"
     assert "currency" in fmt.enum_values, "the built-ins are still the shortcuts"
@@ -2186,10 +2152,12 @@ def test_a_nested_scope_s_own_aliases_merge_onto_its_parent_s() -> None:
         "          y: v\n"
     )
     props = _flat(build_design_target(board, "tabs.items.0.rows.0"))
-    offered = props["style.number_format"].enum_values or ()
+    offered = props["style.axis_y.labels.format"].enum_values or ()
     assert "bps" in offered, "the tab's own alias is not offered"
     assert "arr" in offered, "the parent's alias, merged in, is not offered"
-    assert set(offered) >= _NUMBER_ALIASES, "the engine's names resolve in every scope"
+    assert set(offered) >= _BUILT_IN_ALIASES, (
+        "the engine's names resolve in every scope"
+    )
 
 
 def test_a_rows_nested_board_scopes_its_aliases_the_same_way() -> None:
@@ -2219,7 +2187,7 @@ def test_a_rows_nested_board_scopes_its_aliases_the_same_way() -> None:
     )
     offered = (
         _flat(build_design_target(board, "rows.0.rows.0"))[
-            "style.number_format"
+            "style.axis_y.labels.format"
         ].enum_values
         or ()
     )
@@ -2252,11 +2220,11 @@ def test_a_scope_that_styles_without_touching_formats_inherits_the_parent_s() ->
     )
     offered = (
         _flat(build_design_target(board, "tabs.items.0.rows.0"))[
-            "style.number_format"
+            "style.axis_y.labels.format"
         ].enum_values
         or ()
     )
-    assert set(offered) == _NUMBER_ALIASES | {"arr"}
+    assert set(offered) == _BUILT_IN_ALIASES | {"arr"}
 
 
 def test_an_explicit_formats_null_clears_the_table_for_that_scope() -> None:
@@ -2286,11 +2254,11 @@ def test_an_explicit_formats_null_clears_the_table_for_that_scope() -> None:
     )
     offered = (
         _flat(build_design_target(board, "tabs.items.0.rows.0"))[
-            "style.number_format"
+            "style.axis_y.labels.format"
         ].enum_values
         or ()
     )
-    assert set(offered) == _NUMBER_ALIASES
+    assert set(offered) == _BUILT_IN_ALIASES
 
 
 def test_an_authored_format_config_object_is_readonly_not_a_lossy_combo() -> None:
@@ -2300,10 +2268,10 @@ def test_an_authored_format_config_object_is_readonly_not_a_lossy_combo() -> Non
     """
     board = (
         "rows:\n  - title: R\n    type: bar\n    query: q\n    x: m\n"
-        "    y: v\n    style:\n      number_format:\n"
-        '        spec: ",.0f"\n        prefix: "EUR "\n'
+        "    y: v\n    style:\n      axis_y:\n        labels:\n          format:\n"
+        '            spec: ",.0f"\n            prefix: "EUR "\n'
     )
-    fmt = _flat(build_design_target(board, "rows.0"))["style.number_format"]
+    fmt = _flat(build_design_target(board, "rows.0"))["style.axis_y.labels.format"]
     assert fmt.widget == "combo"
     assert fmt.readonly, "an authored FormatConfig object must not offer a lossy combo"
     assert fmt.value == '",.0f" prefix="EUR "', fmt.value
@@ -2316,9 +2284,9 @@ def test_an_explicitly_nulled_format_field_stays_editable() -> None:
     """
     board = (
         "rows:\n  - title: R\n    type: bar\n    query: q\n    x: m\n"
-        "    y: v\n    style:\n      number_format: null\n"
+        "    y: v\n    style:\n      axis_y:\n        labels:\n          format: null\n"
     )
-    fmt = _flat(build_design_target(board, "rows.0"))["style.number_format"]
+    fmt = _flat(build_design_target(board, "rows.0"))["style.axis_y.labels.format"]
     assert fmt.value is None
     assert not fmt.readonly, "an explicit null must stay editable"
 
@@ -2326,9 +2294,9 @@ def test_an_explicitly_nulled_format_field_stays_editable() -> None:
 def test_a_board_with_no_aliases_of_its_own_offers_only_the_built_ins() -> None:
     """The engine's names are the whole vocabulary until a board adds to it."""
     board = "rows:\n  - title: R\n    type: bar\n    query: q\n    x: m\n    y: v\n"
-    fmt = _flat(build_design_target(board, "rows.0"))["style.number_format"]
+    fmt = _flat(build_design_target(board, "rows.0"))["style.axis_y.labels.format"]
     assert fmt.enum_values is not None
-    assert set(fmt.enum_values) == _NUMBER_ALIASES
+    assert set(fmt.enum_values) == _BUILT_IN_ALIASES
 
 
 def test_every_format_field_carries_the_format_facet() -> None:
@@ -2348,7 +2316,7 @@ def test_every_format_field_carries_the_format_facet() -> None:
     for model_name, model in introspect().models.items():
         for field in model.fields:
             offered = set(field.enum_values or ())
-            if not (offered >= _NUMBER_ALIASES or offered >= _TIME_ALIASES):
+            if not offered >= _BUILT_IN_ALIASES:
                 continue
             name = f"{model_name}.{field.name}"
             (
@@ -3461,11 +3429,8 @@ class TestFontFamilySuggestions:
 def _render_output(board: str) -> str:
     """A real render's SVG, normalized so two renders of one board compare equal.
 
-    Four tokens vary between renders in a single process, and `data-rendered-at`
-    is the one that bites: it is stamped at *second* resolution, so a raw
-    comparison passes whenever both renders land inside the same second and
-    fails when a second boundary falls between them — reporting a stale constant
-    against code that never changed. `_svg_normalize` owns the full list.
+    The clock is pinned, so both renders carry one stamp; `_svg_normalize`
+    renumbers the per-process id counters that still differ.
     """
     result = compile(board)
     assert result.success, (
@@ -3477,6 +3442,7 @@ def _render_output(board: str) -> str:
         compiled,
         adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
         query_registry=result.query_registry,
+        clock=pinned_clock,
     )
     svg = render(compiled, executor, format="svg").output
     # `output` is `str | bytes | None` because a png render returns bytes.

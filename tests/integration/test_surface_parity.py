@@ -14,19 +14,15 @@ import pytest
 from dbt_charts.ai.tools import TOOL_HANDLERS
 
 # Verbs fully wired on both CLI and MCP.  cli_name is the `dct <name>` subcommand.
-# Note: execute_query, describe_query, and query_board all map to `dct query` (D10).
+# Note: execute_query's two forms (sql, and board + query) both map to `dct query` (D10).
 _TOOL_TO_CLI: dict[str, str] = {
-    "validate_board": "validate",
     "render_board": "render",
-    "describe_query": "query",
     "execute_query": "query",
     "search_boards": "search",
     "docs": "docs",
-    "query_board": "query",
     "describe_board": "describe",
     "list_skills": "skills",
     "get_skill": "skills",
-    "search_skills": "skills",
     "list_diagnostic_codes": "docs",
     "get_diagnostic_code": "docs",
 }

@@ -67,17 +67,3 @@ class TestStyleVariablesSection:
     def test_variables_visible_true_by_default(self):
         # was variables.hidden: false — positive-renamed to visible: true (D-022)
         assert get_theme_style().variables.visible is True
-
-
-class TestPhase0bRegressions:
-    """Regression tests for get_theme_style() migration bugs."""
-
-    def test_spark_bar_respects_width_param(self):
-        """render_spark_bar must use its width arg, not hardcode 100."""
-        from dbt_charts.core.render.chart.spark import render_spark_bar
-
-        eff = resolve_style(get_theme_style()).chart_defaults
-        svg_narrow = render_spark_bar(50, width=50, normalize=True, resolved_style=eff)
-        svg_wide = render_spark_bar(50, width=200, normalize=True, resolved_style=eff)
-        assert 'width="50"' in svg_narrow
-        assert 'width="200"' in svg_wide

@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Generator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,14 @@ rows:
 """
 
 
+PINNED_RENDER_TIME = datetime(2001, 2, 3, 4, 5, 6, tzinfo=UTC)
+
+
+def pinned_clock() -> datetime:
+    """A clock that never moves, so two renders carry the same stamp."""
+    return PINNED_RENDER_TIME
+
+
 def render_board_to_svg(
     yaml_content: str = SAMPLE_BOARD_YAML, *, controls: bool = False
 ) -> str:
@@ -50,6 +59,7 @@ def render_board_to_svg(
         result.board,
         adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
         query_registry=result.query_registry,
+        clock=pinned_clock,
     )
     return render(result.board, executor, format="svg", controls=controls).output
 

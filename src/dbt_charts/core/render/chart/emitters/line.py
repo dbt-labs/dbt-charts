@@ -51,6 +51,7 @@ from dbt_charts.core.render.chart.emitters._endpoint_rail import (
 )
 from dbt_charts.core.render.chart.emitters._layers import emit_line_layer
 from dbt_charts.core.render.chart.emitters._overlay import (
+    overlay_draws_bars,
     overlay_uses_band_step,
     overlay_x_domain_values,
     render_cartesian_overlay,
@@ -120,6 +121,7 @@ def _normalize_line_data(
         "line",
         chart.style.line_mark.curve == BAND_STEP_CURVE,
         True,
+        chart.x_date_range,
     )
     if bucketed is not None:
         data = bucketed
@@ -157,7 +159,7 @@ def _apply_line_color_encoding(
             else None
         )
         enc = channel_to_encoding(color_ch, data, title=color_title)
-        apply_color_legend(enc, chart.legend)
+        apply_color_legend(enc, chart.legend, color_format=chart.color_format)
         enc_type = enc.get("type")
         is_bindable_series = (
             categorical_color_encoding(color_ch, enc_type) and enc_type == "nominal"
@@ -376,6 +378,8 @@ def _build_line_top_encoding(
             x_domain,
             reserved_width=resolve_endpoint_rail_span(chart, data, box.width),
             panel_fields=panel_fields,
+            x_date_range=chart.x_date_range,
+            overlay_bars=overlay_draws_bars(chart.layers),
         )
         if chart.x
         else CartesianXResolution("nominal", {}, {})
@@ -445,6 +449,7 @@ def _emit_folded_line(
             "line",
             reserved_width=resolve_endpoint_rail_span(chart, data, box.width),
             panel_fields=panel_fields,
+            x_date_range=chart.x_date_range,
         )
         if chart.x
         else CartesianXResolution("nominal", {}, {})

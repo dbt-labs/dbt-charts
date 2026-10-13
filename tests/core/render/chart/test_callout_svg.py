@@ -1,10 +1,9 @@
 """V2 callout SVG golden tests.
 
-Verifies render_callout_chart_svg produces valid, non-empty SVG output
-for a range of callout configurations. The v1 oracle (render_callout_chart_svg)
-has been deleted; these tests pin v2 output directly.
+Verifies the engine produces valid, non-empty SVG output
+for a range of callout configurations. These tests pin the engine output directly.
 
-  v2: normalize_chart -> resolve() -> render_callout_chart_svg
+  v2: normalize_chart -> resolve() -> render_native
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from typing import Any
 
 from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
-from dbt_charts.core.render.chart.callout import render_callout_svg
+from dbt_charts.core.render.engine import render_callout_card
 
 from ._callout_test_helpers import callout_style_for_tone, compute_svg_text_fills
 
@@ -37,13 +36,13 @@ def _chart_def(
 def _v2_svg(
     message: str, title: str | None = None, style: dict[str, Any] | None = None
 ) -> str:
-    """v2 path: authored dict -> normalize_chart -> resolve() -> render_callout_chart_svg."""
+    """v2 path: authored dict -> normalize_chart -> resolve() -> render_native."""
     from dbt_charts.core.compile.models.chart.resolved.callout import (
         ResolvedCalloutChart,
     )
     from dbt_charts.core.compile.normalize.charts import normalize_chart
     from dbt_charts.core.compile.resolve import resolve
-    from dbt_charts.core.render.chart.callout import render_callout_chart_svg
+    from dbt_charts.core.render.engine import render_native
 
     _, ctx = _rs_and_ctx()
     normalized = normalize_chart(
@@ -51,7 +50,17 @@ def _v2_svg(
     )
     resolved = resolve(normalized, [], ctx)
     assert isinstance(resolved, ResolvedCalloutChart)
-    return render_callout_chart_svg(resolved, [])
+    rs, _ = _rs_and_ctx()
+    svg, _ = render_native(
+        resolved,
+        [],
+        width=resolved.style.preferred_width,
+        height=0.0,
+        padding=None,
+        board_style=rs,
+        board_width=resolved.style.preferred_width,
+    )
+    return svg
 
 
 def test_v2_callout_message_only_produces_svg() -> None:
@@ -100,7 +109,7 @@ def test_v2_callout_border_dash_array_emits_svg_dasharray() -> None:
 
 def test_v2_callout_bold_message_uses_theme_bold_weight() -> None:
     """A **bold** span inside a callout message renders at the theme's bold
-    weight, not mdsvg's hardcoded default. render/chart/callout.py builds its
+    weight, not mdsvg's hardcoded default. The engine builds its
     own mdsvg.Style rather than going through compact_style_kwargs(), so this
     pins that bold_font_weight is actually threaded through, not left stale."""
     from dbt_charts.core.compile.models.style.theme import font_weight_as_css
@@ -136,11 +145,17 @@ def test_two_callouts_same_tone_are_byte_identical_css() -> None:
     them into one block once they share a document. No cache or coordination
     is involved: each call is independent."""
     style = callout_style_for_tone("positive")
-    svg1 = render_callout_svg(
-        message="First", width=300, callout_style=style, base_dir=None
+    svg1 = render_callout_card(
+        message="First",
+        width=300,
+        style=style,
+        chart_id="callout",
     )
-    svg2 = render_callout_svg(
-        message="Second", width=300, callout_style=style, base_dir=None
+    svg2 = render_callout_card(
+        message="Second",
+        width=300,
+        style=style,
+        chart_id="callout",
     )
 
     assert "First" in svg1
@@ -160,11 +175,17 @@ def test_two_callouts_different_tones_render_correct_colors_with_no_bleed() -> N
     correct color (no cross-callout bleed) once composited into one document."""
     success_style = callout_style_for_tone("positive")
     error_style = callout_style_for_tone("negative")
-    svg1 = render_callout_svg(
-        message="All good", width=300, callout_style=success_style, base_dir=None
+    svg1 = render_callout_card(
+        message="All good",
+        width=300,
+        style=success_style,
+        chart_id="callout",
     )
-    svg2 = render_callout_svg(
-        message="Uh oh", width=300, callout_style=error_style, base_dir=None
+    svg2 = render_callout_card(
+        message="Uh oh",
+        width=300,
+        style=error_style,
+        chart_id="callout",
     )
     document = f'<svg xmlns="http://www.w3.org/2000/svg">{svg1}{svg2}</svg>'
 
@@ -182,15 +203,15 @@ def test_callout_never_emits_a_bare_md_class_selector() -> None:
     is document-scoped, not limited to the nested `<svg>`/`<g>` it sits
     inside, so a bare rule would repaint any other mdsvg-rendered text
     sharing the document. mdsvg's own class scoping (`SVGRenderer._scoped_class`)
-    is what prevents this today; this pins that callout.py doesn't do anything
+    is what prevents this today; this pins that the callout engine does not do anything
     that would defeat it."""
     style = callout_style_for_tone("positive")
-    svg = render_callout_svg(
+    svg = render_callout_card(
         message="Body copy",
         title="Card title",
         width=300,
-        callout_style=style,
-        base_dir=None,
+        style=style,
+        chart_id="callout",
     )
     # `[a-z]+` alone would also match the hex-letter run inside a real
     # `md-<hash>-text` selector (e.g. "abcdef") right up to its own trailing
@@ -203,16 +224,16 @@ def test_callout_title_and_message_do_not_collide() -> None:
     with mdsvg's own scoped class name for "text". Title and message resolve
     to different colors (accent vs. body text), so their `Style` objects
     differ and mdsvg's per-renderer class-prefix hash (`SVGRenderer._scoped_class`)
-    gives them distinct classes automatically -- this pins that callout.py's
+    gives them distinct classes automatically -- this pins that the callout engine's
     two separate mdsvg renderers actually get built with those differing
-    colors, not that anything in callout.py itself does the scoping."""
+    colors, not that anything in the callout engine itself does the scoping."""
     style = callout_style_for_tone("warning")
-    svg = render_callout_svg(
+    svg = render_callout_card(
         message="Body copy",
         title="Card title",
         width=300,
-        callout_style=style,
-        base_dir=None,
+        style=style,
+        chart_id="callout",
     )
 
     rendered = compute_svg_text_fills(svg)
@@ -232,8 +253,11 @@ def test_callout_does_not_bleed_onto_unscoped_prose_text() -> None:
         '<text class="md-text">Board intro paragraph</text>'
     )
     style = callout_style_for_tone("negative")
-    callout_svg = render_callout_svg(
-        message="Something broke", width=300, callout_style=style, base_dir=None
+    callout_svg = render_callout_card(
+        message="Something broke",
+        width=300,
+        style=style,
+        chart_id="callout",
     )
     document = f"<svg>{prose_svg}{callout_svg}</svg>"
 
@@ -246,12 +270,12 @@ def test_every_class_used_on_an_element_has_a_matching_rule() -> None:
     """Every `class="..."` token an element actually carries resolves to some
     rule somewhere in the same SVG."""
     style = callout_style_for_tone("info")
-    svg = render_callout_svg(
+    svg = render_callout_card(
         message="Details in the [docs](https://example.com).",
         title="Note",
         width=300,
-        callout_style=style,
-        base_dir=None,
+        style=style,
+        chart_id="callout",
     )
     used = {
         cls

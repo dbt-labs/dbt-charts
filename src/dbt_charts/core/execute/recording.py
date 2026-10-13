@@ -10,7 +10,7 @@ turns a registered `ERR-*` code loose on a malformed one instead of a bare
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -74,6 +74,9 @@ def record_board(
     Call this after `build_resolved_board` has already run every query once
     for data-aware sizing — every lookup here is a cache hit, not a new
     execution.
+
+    ``recorded_at`` is the executor's own ``rendered_at``, so a replay stamps
+    exactly what the live render it records stamped.
     """
     rows_by_query = {
         name: executor.execute_query(name, variables) for name in resolved.queries
@@ -84,7 +87,7 @@ def record_board(
         if (relations := executor.get_query_provenance(name))
     }
     return BoardRecording(
-        recorded_at=datetime.now(timezone.utc),
+        recorded_at=executor.rendered_at,
         variables=dict(variables),
         rows_by_query=rows_by_query,
         provenance=provenance,

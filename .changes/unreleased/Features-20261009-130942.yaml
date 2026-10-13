@@ -1,0 +1,3 @@
+kind: Features
+body: Listing a warehouse's tables for ref resolution no longer reads every column.
+time: 2026-10-09T13:09:42.09006-07:00

@@ -24,6 +24,7 @@ from pydantic import ValidationError
 
 from dbt_charts.core.colors import is_color_token
 from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     CategoryColorBinding,
@@ -33,12 +34,12 @@ from dbt_charts.core.compile.resolve.style.category_colors import (
     CategoryColorScale,
     plan_category_colors,
 )
-from dbt_charts.core.compile.resolve.style.palette import UnknownColorError
 from dbt_charts.core.compile.resolve.style.tokens import _resolve_one_color_token
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_CATEGORY_COLOR_PALETTE_EXHAUSTED,
     ERR_CATEGORY_COLOR_PIN_DUPLICATE,
+    ERR_COLOR_TOKEN,
 )
 
 _VALID_BOARD_BASE = {"text": "hello"}
@@ -216,8 +217,9 @@ class TestTokenResolution:
                 }
             }
         )
-        with pytest.raises(UnknownColorError, match="bogus-palette"):
+        with pytest.raises(CompilationError, match="bogus-palette") as exc_info:
             _resolve_tokens_on_patch(patch, base)
+        assert exc_info.value.code is ERR_COLOR_TOKEN
 
     @pytest.mark.parametrize("theme_name", ["clarity", "stark"])
     def test_single_series_token_matches_the_themes_single_series_ink(
@@ -465,9 +467,11 @@ class TestPlanner:
         )
         assert plan == {}
 
-    def test_too_many_values_raises_when_the_author_named_the_field(self) -> None:
+    def test_too_many_unpinned_values_raises_when_the_author_named_the_field(
+        self,
+    ) -> None:
         """An authored field is explicit intent — silence would be wrong here."""
-        values = tuple(f"v{i}" for i in range(len(_PALETTE) + 1))
+        values = tuple(f"v{i}" for i in range(len(_PALETTE) + 2))
         with pytest.raises(ChartDataError, match="4 values") as raised:
             plan_category_colors(
                 [{"category": values}, {"category": values}],
@@ -475,6 +479,43 @@ class TestPlanner:
                 palette=_PALETTE,
             )
         assert raised.value.code is ERR_CATEGORY_COLOR_PALETTE_EXHAUSTED
+
+    def test_pinned_values_outside_the_palette_do_not_exhaust_it(self) -> None:
+        values = ("a", "b", "c", "d")
+        plan = plan_category_colors(
+            [{"category": values}],
+            authored={
+                "category": _binding(
+                    a=_PALETTE[0], b=_PALETTE[1], c="#aa0000", d="#bb0000"
+                )
+            },
+            palette=_PALETTE,
+        )
+        scale = plan["category"]
+        assert [color_at(scale, v, _PALETTE) for v in values] == [
+            _PALETTE[0],
+            _PALETTE[1],
+            "#aa0000",
+            "#bb0000",
+        ]
+        assert all(slot < len(_PALETTE) for slot in scale.slots.values())
+
+    def test_overrides_yield_free_slots_to_unpinned_values(self) -> None:
+        """A literal pin never starves an unpinned value of its swatch."""
+        values = ("a", "b", "c", "d", "e")
+        plan = plan_category_colors(
+            [{"category": values}],
+            authored={"category": _binding(a="#aa0000", b="#bb0000", c="#cc0000")},
+            palette=_PALETTE,
+        )
+        scale = plan["category"]
+        assert [color_at(scale, v, _PALETTE) for v in "abc"] == [
+            "#aa0000",
+            "#bb0000",
+            "#cc0000",
+        ]
+        assert {color_at(scale, v, _PALETTE) for v in ("d", "e")} <= set(_PALETTE)
+        assert color_at(scale, "d", _PALETTE) != color_at(scale, "e", _PALETTE)
 
     def test_no_observations_yields_no_scales(self) -> None:
         assert plan_category_colors([], authored={}, palette=_PALETTE) == {}

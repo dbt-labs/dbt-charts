@@ -12,6 +12,7 @@ row, not adding an accessor.
 """
 
 import base64
+import re
 import threading
 from collections.abc import Callable, Iterable
 from contextlib import ExitStack
@@ -352,6 +353,41 @@ FONT_REGISTRY: tuple[VendoredFace, ...] = (
         web_file="DBTSerifOldstyleProportional-Regular.woff2",
     ),
 )
+
+
+AUTHORED_FONT_STACK_PATTERN = r'^[^;{}<>"\\*\x00-\x1f\x7f]*$'
+_AUTHORED_FONT_STACK_RE = re.compile(AUTHORED_FONT_STACK_PATTERN)
+_CSS_IDENT_WORD = re.compile(r"^-?[A-Za-z_][A-Za-z0-9_-]*$")
+
+
+def check_authored_font_stack(stack: str) -> str:
+    """Return ``stack`` with every entry that is not a valid CSS identifier quoted.
+
+    A word cannot start with a digit, so ``Source Serif 4`` is written
+    ``'Source Serif 4'``; a browser would drop the whole declaration otherwise.
+    Raises ``ValueError`` on a forbidden character, an empty entry, or a stray quote.
+    """
+    if not _AUTHORED_FONT_STACK_RE.fullmatch(stack):
+        raise ValueError(
+            f'{stack!r} is not a font family: remove any of ; {{ }} < > " \\ * '
+            "or a control character"
+        )
+    if not stack.strip():
+        return stack
+    entries = []
+    for raw in stack.split(","):
+        entry = raw.strip()
+        if not entry:
+            raise ValueError(f"{stack!r} has an empty entry")
+        if entry[0] == "'":
+            if len(entry) < 3 or entry[-1] != "'" or "'" in entry[1:-1]:
+                raise ValueError(f"{entry!r} in {stack!r} is not a quoted family name")
+        elif "'" in entry:
+            raise ValueError(f"{entry!r} in {stack!r} has a stray quote")
+        elif not all(_CSS_IDENT_WORD.match(word) for word in entry.split()):
+            entry = f"'{entry}'"
+        entries.append(entry)
+    return ", ".join(entries)
 
 
 def registry_family(font_family: str) -> str:

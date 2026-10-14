@@ -56,7 +56,7 @@ mod coded_error_tests;
 
 // House null sentinel for a numeric/date cell with no value — matches
 // format_d3.py's NULL_DISPLAY (an em-dash, never a blank cell).
-pub(crate) const NULL_DISPLAY: &str = "\u{2014}";
+pub(crate) use d3rs::native::NULL_DISPLAY;
 
 /// Port of `_svg_font_family`'s quote-stripping half only:
 /// SVG's `font-family` presentation attribute treats a single/double quote
@@ -251,7 +251,7 @@ struct TableTheme {
     // The zero-row text (`table.empty_state`); read only by the empty render.
     #[serde(default)]
     empty_state: Option<EmptyState>,
-    /// `table.more_rows`: the "+ N more rows" note of a truncated table.
+    /// `table.more_rows`: the "+N" note of a truncated table.
     #[serde(default)]
     more_rows: Option<EmptyState>,
     // `style.charts.table.spark` — theme tokens for in-cell spark marks.
@@ -561,11 +561,6 @@ struct PaginationCfg {
     page_rows: Option<usize>,
 }
 
-// Height (px) of the static-export cap note's own band
-// Reserved so the note never lands on the
-// row-range label's baseline (4392-4395: "the collision
-// the band exists to prevent").
-const PAGINATION_CAP_NOTE_HEIGHT: f64 = 20.0;
 // Grow-by-2 ( `_PAGINATION_GROW_CAP`): an overflow past page_rows
 // within this cap draws every row on one page instead of paginating —
 // always when unbounded, in a slot only when the rows fit.
@@ -3757,6 +3752,22 @@ fn embed_table_pagination_script(xml: &mut Xml) {
     xml.close("script");
 }
 
+/// A page number's slot: `item_width` holds a two-digit label, and each
+/// further digit widens it by its own measured width so the spacing around the
+/// ellipsis and chevrons does not shrink.
+pub(super) fn page_slot_width(
+    fonts: &FontBook,
+    body_family: &str,
+    font_size: f64,
+    item_width: f64,
+    label: &str,
+) -> Result<f64, String> {
+    let family = crate::common::measure_family_stand_in(body_family);
+    let label_w = fonts.measure(label, family, font_size)?;
+    let two_digit_w = fonts.measure("00", family, font_size)?;
+    Ok(item_width + (label_w - two_digit_w).max(0.0))
+}
+
 /// Static-export pagination control bar: right-anchored chevrons + windowed
 /// page numbers, each clickable item carrying a `data-dbt-page-target` hit
 /// rect `table_pagination.js` reads (`data-dbt-page-var` too on a live host).
@@ -3767,6 +3778,7 @@ fn render_pagination_controls(
     body_family: &str,
     page: i64,
     total_pages: i64,
+    last_enabled_page: i64,
     page_var_name: &str,
     table_width: f64,
     y: f64,
@@ -3795,7 +3807,7 @@ fn render_pagination_controls(
         }
     }
     let prev_target = if page > 1 { page - 1 } else { 0 };
-    let next_target = if page < total_pages { page + 1 } else { 0 };
+    let next_target = if page < last_enabled_page { page + 1 } else { 0 };
 
     let mut sequence: Vec<(Role, String, i64)> =
         vec![(Role::Prev, PAGINATOR_PREV_CHEVRON.to_string(), prev_target)];
@@ -3804,7 +3816,9 @@ fn render_pagination_controls(
             PageItem::Ellipsis => {
                 sequence.push((Role::Ellipsis, PAGINATOR_ELLIPSIS.to_string(), 0))
             }
-            PageItem::Page(p) => sequence.push((Role::Page, p.to_string(), p)),
+            PageItem::Page(p) => {
+                sequence.push((Role::Page, p.to_string(), if p <= last_enabled_page { p } else { 0 }))
+            }
         }
     }
     sequence.push((Role::Next, PAGINATOR_NEXT_CHEVRON.to_string(), next_target));
@@ -3822,25 +3836,45 @@ fn render_pagination_controls(
     let rect_y = y + 4.0;
     let aux_slot_w = theme.item_width * PAGINATOR_AUX_SLOT_RATIO;
 
-    let slot_widths: Vec<f64> = sequence
+    let slot_widths = sequence
         .iter()
-        .map(|(role, ..)| match role {
-            Role::Prev | Role::Next | Role::Ellipsis => aux_slot_w,
-            Role::Page => theme.item_width,
+        .map(|(role, glyph, _)| match role {
+            Role::Prev | Role::Next | Role::Ellipsis => Ok(aux_slot_w),
+            Role::Page => {
+                page_slot_width(fonts, body_family, font_size as f64, theme.item_width, glyph)
+            }
         })
-        .collect();
+        .collect::<Result<Vec<f64>, String>>()?;
     let total_width: f64 = slot_widths.iter().sum();
-    let cursor_left_start = table_width - total_width;
-    let mut cursor_left = cursor_left_start;
+    let sequence_left = table_width - total_width;
 
-    // A muted "Rows {row_start}–{row_end} of {total_rows}" label at
+    // Slot centers, except an ellipsis sits midway between its neighbors' ink
+    // edges so the gap on each side is equal whatever the digit counts.
+    let measure_family = crate::common::measure_family_stand_in(body_family);
+    let mut centers: Vec<f64> = Vec::with_capacity(sequence.len());
+    let mut slot_left = sequence_left;
+    for slot_w in &slot_widths {
+        centers.push(slot_left + slot_w / 2.0);
+        slot_left += slot_w;
+    }
+    for i in 0..sequence.len() {
+        if matches!(sequence[i].0, Role::Ellipsis) {
+            let (prev, next) = (&sequence[i - 1].1, &sequence[i + 1].1);
+            let prev_edge =
+                centers[i - 1] + fonts.measure(prev, measure_family, font_size as f64)? / 2.0;
+            let next_edge =
+                centers[i + 1] - fonts.measure(next, measure_family, font_size as f64)? / 2.0;
+            centers[i] = (prev_edge + next_edge) / 2.0;
+        }
+    }
+
+    // A muted "{row_start}–{row_end} / {total_rows}" label at
     // `padding`, left of the page sequence —: an
     // unlabeled "‹ 1 2 … 37 ›" reads as "37 pages of dashboards", not "this
     // table has 37 pages of rows". Dropped entirely (never shrunk) if it
     // would collide with the right-anchored sequence — production gates on
-    // the sequence's own left edge, before any slot in the loop below has
-    // moved `cursor_left`.
-    let label_text = format!("Rows {row_start}\u{2013}{row_end} of {total_rows}");
+    // the sequence's own left edge.
+    let label_text = format!("{row_start}\u{2013}{row_end} / {total_rows}");
     // `get_font_measurer(font_family)`: every non-serif
     // family measures as Inter, whatever the label paints in.
     let label_w = fonts.measure(
@@ -3848,7 +3882,7 @@ fn render_pagination_controls(
         crate::common::measure_family_stand_in(body_family),
         font_size as f64,
     )?;
-    if padding + label_w <= cursor_left_start {
+    if padding + label_w <= sequence_left {
         xml.leaf(
             "text",
             Attrs::new()
@@ -3866,18 +3900,19 @@ fn render_pagination_controls(
 
     xml.open("g", Attrs::new().set("class", "dbt-paginator").set("data-paginator", page_var_name));
     for (i, (role, glyph, target)) in sequence.iter().enumerate() {
-        let slot_w = slot_widths[i];
-        let center_x = cursor_left + slot_w / 2.0;
-        cursor_left += slot_w;
+        let center_x = centers[i];
 
         let is_active_page = matches!(role, Role::Page) && *target == page;
         let is_disabled_chevron = matches!(role, Role::Prev | Role::Next) && *target == 0;
         let is_ellipsis = matches!(role, Role::Ellipsis);
 
+        let is_disabled_page = matches!(role, Role::Page) && *target == 0;
         let (color, weight, clickable) = if is_active_page {
             (theme.color_active.as_str(), theme.weight_active, false)
         } else if is_disabled_chevron {
             (theme.color_disabled.as_str(), theme.weight_chevron, false)
+        } else if is_disabled_page {
+            (theme.color_disabled.as_str(), theme.weight_inactive, false)
         } else if matches!(role, Role::Prev | Role::Next) {
             (theme.color_active.as_str(), theme.weight_chevron, true)
         } else if is_ellipsis {
@@ -3923,34 +3958,6 @@ fn render_pagination_controls(
     }
     xml.close("g");
     Ok(())
-}
-
-/// Left-aligned note for a static export that hit the pre-render page cap.
-/// A standalone artifact has no other channel to tell the reader the export stops short
-/// of every row.
-fn render_static_pagination_cap_note(
-    xml: &mut Xml,
-    theme: &PaginatorTheme,
-    body_family: &str,
-    rendered_pages: usize,
-    total_pages: usize,
-    padding: f64,
-    y: f64,
-) {
-    let font_size = theme.font.size_or(11.0) as i64;
-    let text_y = y + 18.0;
-    xml.leaf(
-        "text",
-        Attrs::new()
-            .set("class", "dbt-paginator-label")
-            .set("x", format!("{padding:.1}"))
-            .set("y", format!("{text_y:.1}"))
-            .set("font-size", font_size.to_string())
-            .set("fill", theme.color_inactive.as_str())
-            .set("font-family", body_family)
-            .set("font-weight", theme.weight_inactive.to_string()),
-        &format!("Showing pages 1\u{2013}{rendered_pages} of {total_pages} in this static export"),
-    );
 }
 
 // ── In-cell spark marks ──────────
@@ -5543,7 +5550,7 @@ fn wrap_title(
     let Some(limit) = limit.filter(|_| !text.is_empty()) else {
         return Ok(vec![text.to_string()]);
     };
-    let lines = crate::common::prepare_title_lines(text, mode, limit, font_size, family, fonts)?;
+    let (lines, _) = crate::common::prepare_title_lines(text, mode, limit, font_size, family, fonts)?;
     Ok(if lines.is_empty() { vec![text.to_string()] } else { lines })
 }
 
@@ -5836,7 +5843,7 @@ struct EmptyState {
     font: Font,
 }
 
-/// A table over no rows: the "No data" text centered in a canvas that holds
+/// A table over no rows: an em dash centered in a canvas that holds
 /// the title band and the header band. The canvas
 /// height is `_resolve_visible_rows`' content height with `rows_height == 0` —
 /// the no-slot path and the slot path's grow-by-2
@@ -5940,7 +5947,7 @@ pub fn render_empty(payload: &Payload, fonts: &FontBook) -> Result<String, Strin
             .set("fill", muted)
             .set("text-anchor", "middle")
             .set("font-family", family.as_str()),
-        "No data",
+        "\u{2014}",
     );
     xml.close("svg");
     Ok(xml.finish())
@@ -6272,12 +6279,7 @@ fn wrapped_headers(
             continue;
         }
         let mode = header_overflow_mode(r, th, col)?;
-        let max_lines = match mode {
-            "clip" | "truncate" => Some(1),
-            "wrap" => None,
-            _ => Some(2),
-        };
-        let lines = crate::common::prepare_title_lines(
+        let (lines, truncated) = crate::common::prepare_title_lines(
             &col.header,
             Some(mode),
             content_area,
@@ -6285,18 +6287,6 @@ fn wrapped_headers(
             header_measure_family,
             fonts,
         )?;
-        let truncated = max_lines.is_some_and(|max| {
-            crate::common::wrap_text_measured(
-                &col.header,
-                content_area,
-                header_font_size,
-                header_measure_family,
-                fonts,
-                None,
-                false,
-            )
-            .map_or(false, |natural| natural.len() > max)
-        });
         let lines = if lines.is_empty() { vec![col.header.clone()] } else { lines };
         out.push(WrappedHeader { lines, truncated });
     }
@@ -6841,7 +6831,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                 }
                 // `wrap_text_precise`: whitespace words, a
                 // word wider than the column split at its last fitting seam.
-                let lines = crate::common::wrap_text_measured(
+                let (lines, _) = crate::common::wrap_text_measured(
                     &cell.text,
                     cell_content_w,
                     font_size,
@@ -7197,13 +7187,11 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         rows_start_y = leaf_header_y + header_h + header_body_gap;
     }
 
-    // True page count (uncapped) vs. the capped count the paginator/cap-note
-    // actually render (the static export's pre-render cap limits the
-    // pages; a page count beyond it gets a note, not silent truncation).
+    // True page count (uncapped) vs. the count the static export pre-renders.
+    // The pager shows the true count with pages past the cap disabled.
     let paginated = true_total_pages > 1;
     let static_multi_page = paginated && !chart_id.is_empty() && !payload.interactive_controls;
     let total_pages = true_total_pages.min(STATIC_MULTI_PAGE_MAX_PAGES);
-    let pagination_capped = static_multi_page && total_pages < true_total_pages;
 
     // Extra breathing room before the first summary/total row
     // (`int(row_height * 0.4)`) so the double rule doesn't
@@ -7251,7 +7239,11 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     // tallest page so the card does not resize between pages.
     let shown_rows_h: f64 = row_heights[live_rows.clone()].iter().sum();
     let indicator_y = rows_start_y + shown_rows_h + last_gap + th.bottom_padding;
-    let canvas_rows_h: f64 = if paginated && have_heights {
+    // A zero-row table holds one row of body for its "No data" label, so the
+    // label sits below the header instead of over it.
+    let canvas_rows_h: f64 = if n_rows == 0 {
+        row_h
+    } else if paginated && have_heights {
         max_page_sum(&row_heights, n_shown)
     } else {
         shown_rows_h
@@ -7277,17 +7269,15 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     // Slot-pinned (bounded pagination): the canvas is exactly the slot —
     // production echoes `height` back as table_height and never re-adds the
     // control band. Otherwise the canvas derives from
-    // content, plus the control band when the paginator renders, plus the
-    // cap note's own band when it's capped (an explicit
-    // slot height already reserves both bands via the sizer, so this
-    // renderer must not double-add them — mirrors the row/summary-rule
+    // content, plus the control band when the paginator renders (an explicit
+    // slot height already reserves it via the sizer, so this
+    // renderer must not double-add it — mirrors the row/summary-rule
     // reserve's own slot-pinned carve-outs above).
     let svg_h = if slot_pinned {
         slot_h
     } else {
         canvas_y
             + if paginated { pagination_control_height } else { 0.0 }
-            + if pagination_capped { PAGINATION_CAP_NOTE_HEIGHT } else { 0.0 }
     };
     let svg_w = payload.width;
 
@@ -7610,7 +7600,6 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         // A deep-linked page past what the export pre-renders has nothing to
         // show: the last rendered page stands in rather than hiding every group.
         let initial_page = page_variable(&payload.variables, &page_var_name).min(rendered_pages);
-        let mut max_rendered_page_indicator_y: Option<f64> = None;
         for page_n in 1..=rendered_pages {
             let page_offset = (page_n - 1) * rows_per_page;
             let page_n_shown = rows_per_page.min(n_rows - page_offset);
@@ -7620,9 +7609,6 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             let page_rows_h: f64 =
                 row_heights[page_offset..page_offset + page_n_shown].iter().sum();
             let page_indicator_y = rows_start_y + page_rows_h + th.bottom_padding;
-            max_rendered_page_indicator_y = Some(
-                max_rendered_page_indicator_y.map_or(page_indicator_y, |m: f64| m.max(page_indicator_y)),
-            );
 
             // Recomputed per page, over THIS page's own row slice — never
             // sliced out of the global `cell_data` above, which anchors
@@ -7651,6 +7637,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                 &th.paginator,
                 &body_family,
                 page_n as i64,
+                true_total_pages as i64,
                 rendered_pages as i64,
                 &page_var_name,
                 svg_w,
@@ -7664,30 +7651,9 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             )?;
             xml.close("g");
         }
-        let mut cap_note_dropped = false;
-        if pagination_capped {
-            // One line below the tallest RENDERED page's own pager + label:
-            // no rendered page's own indicator can exceed this value, so
-            // the note clears every one of them regardless of which page is
-            // initially visible.
-            let max_y = max_rendered_page_indicator_y.expect("the loop above always sets it");
-            let cap_note_y = max_y + PAGINATION_CAP_NOTE_HEIGHT;
-            let note_bottom = cap_note_y + PAGINATION_CAP_NOTE_HEIGHT;
-            cap_note_dropped = note_bottom > svg_h;
-            if !cap_note_dropped {
-                render_static_pagination_cap_note(
-                    &mut xml,
-                    &th.paginator,
-                    &body_family,
-                    total_pages,
-                    true_total_pages,
-                    outer,
-                    cap_note_y,
-                );
-            }
-        }
-        // Every static multi-page render reports how it paginated; a dropped
-        // note leaves the export silent about the rows it lacks.
+        // Every static multi-page render reports how it paginated. The pager
+        // itself shows the true page count, so the file never needs a cap
+        // note and the user-facing warning stays silent.
         warn(
             Diagnostic::new(
                 &codes::WARN_STATIC_PAGINATION_CAPPED,
@@ -7699,7 +7665,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                     ("total_pages", json!(true_total_pages)),
                 ],
             )
-            .with_sink_param("cap_note_dropped", json!(cap_note_dropped)),
+            .with_sink_param("cap_note_dropped", json!(false)),
         );
         embed_table_pagination_script(&mut xml);
     } else {
@@ -7726,6 +7692,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                     &th.paginator,
                     &body_family,
                     current_page as i64,
+                    true_total_pages as i64,
                     true_total_pages as i64,
                     &format!("{chart_id}_page"),
                     svg_w,
@@ -7758,7 +7725,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                         .set("text-anchor", "middle")
                         .set("font-style", "italic")
                         .set("font-family", body_family.as_str()),
-                    &format!("+ {} more rows", n_rows - live_shown),
+                    &format!("+{}", n_rows - live_shown),
                 );
             }
         }
@@ -7792,12 +7759,12 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             "text",
             Attrs::new()
                 .set("x", crate::svg::py_float_str(svg_w / 2.0))
-                .set("y", crate::svg::py_float_str(svg_h / 2.0))
+                .set("y", crate::svg::py_float_str(rows_start_y + row_h / 2.0))
                 .set("font-size", crate::svg::py_float_str(size))
                 .set("fill", muted)
                 .set("text-anchor", "middle")
                 .set("font-family", body_family.as_str()),
-            "No data",
+            "\u{2014}",
         );
     }
     if content_overflows {
@@ -8823,11 +8790,10 @@ pub(crate) mod tests {
         assert!(svg.contains(">Region</text>"), "the inferred row dimension heads a column:\n{svg}");
     }
 
-    // Static export beyond the 20-page cap: the paginator still only shows
-    // the capped window, but a note states the export is incomplete instead
-    // of silently truncating.
+    // Static export beyond the 20-page cap: the pager keeps the true page
+    // count, and the pages past the cap are not clickable.
     #[test]
-    fn static_pagination_over_cap_renders_note() {
+    fn static_pagination_over_cap_keeps_true_page_count_with_capped_pages_disabled() {
         let rows: Vec<Value> = (0..500)
             .map(|i| json!({"company": format!("Row {i}"), "revenue": i as f64}))
             .collect();
@@ -8842,9 +8808,15 @@ pub(crate) mod tests {
         payload.height = 800.0;
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("capped pagination renders instead of erroring");
+        assert!(!svg.contains("Showing pages"), "no English cap note:\n{svg}");
+        assert!(svg.contains(">25</text>"), "pager keeps the true last page:\n{svg}");
         assert!(
-            svg.contains("Showing pages 1\u{2013}20 of 25 in this static export"),
-            "cap note states the true total:\n{svg}"
+            !svg.contains("data-dbt-page-target=\"25\""),
+            "a page past the cap is not clickable:\n{svg}"
+        );
+        assert!(
+            svg.contains("data-dbt-page-target=\"2\""),
+            "a rendered page stays clickable:\n{svg}"
         );
     }
 
@@ -8933,7 +8905,7 @@ pub(crate) mod tests {
         assert!(!svg.contains(">Row 0<") && !svg.contains(">Row 6<"), "only page 2:\n{svg}");
         assert!(!svg.contains("dbt-table-page") && !svg.contains("<script"), "{svg}");
         assert!(svg.contains("data-dbt-page-var=\"t1_page\" data-dbt-page-target=\"1\""), "{svg}");
-        assert!(svg.contains("Rows 4\u{2013}6 of 7"), "{svg}");
+        assert!(svg.contains("4\u{2013}6 / 7"), "{svg}");
     }
 
     #[test]
@@ -9128,88 +9100,77 @@ pub(crate) mod tests {
         &after[..after.find('"').unwrap()]
     }
 
-    // T4 + the cap note: a capped static export draws
-    // BOTH the row-range label and the "Showing pages a–b of N" note, and
-    // production gives the note its own band (`cap_note_y =
-    // max_rendered_page_indicator_y + _PAGINATION_CAP_NOTE_HEIGHT`)
-    // specifically so the two muted strings never collide —
-    // "clamping lands it on the row-range label, two muted strings at the
-    // same baseline, which is the collision the band exists to prevent"
-    #[test]
-    fn capped_pagination_note_does_not_share_a_baseline_with_the_row_range_label() {
-        let rows: Vec<Value> = (0..600)
+    /// Edge-to-edge gaps between consecutive pager glyphs of a live render,
+    /// measured in the family and size the glyphs were painted with.
+    fn pager_edge_gaps(page_count: usize) -> Vec<(String, String, f64)> {
+        let rows: Vec<Value> = (0..page_count * 3)
             .map(|i| json!({"company": format!("Row {i}"), "revenue": i as f64}))
             .collect();
-        let columns = json!({
-            "company": {"label": "Company"},
-            "revenue": {"label": "Revenue"},
-        });
-        let mut payload = make_payload(columns, rows, None, 20);
-        // Tall enough that pagination is slot-pinned at the full 20-row page
-        // (600/20 = 30 pages, past the 20-page static-export cap) with room
-        // left for the note's own band below the label/pager row.
-        payload.height = 1200.0;
+        let columns = json!({"company": {"label": "Company"}, "revenue": {"label": "Revenue"}});
+        let mut payload = make_paginated_payload_with_id("t1", columns, rows, 3, 800.0);
+        payload.interactive_controls = true;
         let fonts = test_fonts();
-        let svg = render(&payload, &fonts).expect("capped pagination renders instead of erroring");
-        assert!(svg.contains("Rows 1\u{2013}20 of 600"), "row-range label present:\n{svg}");
-        assert!(
-            svg.contains("Showing pages 1\u{2013}20 of 30 in this static export"),
-            "cap note present:\n{svg}"
-        );
-        let label_y = text_y_before(&svg, "Rows 1\u{2013}20 of 600");
-        let note_y = text_y_before(&svg, "Showing pages 1\u{2013}20 of 30 in this static export");
-        assert_ne!(
-            label_y, note_y,
-            "the row-range label and the cap note must not share a baseline:\n{svg}"
-        );
+        let svg = render(&payload, &fonts).expect("renders");
+        let attr = |t: &str, name: &str| -> String {
+            format!(" {t}").split(&format!(" {name}=\"")).nth(1).unwrap().split('"').next().unwrap().to_string()
+        };
+        let glyphs: Vec<(String, f64, f64)> = svg
+            .split("<text ")
+            .filter(|t| t.contains("dbt-paginator-glyph"))
+            .map(|t| {
+                let glyph = t.split('>').nth(1).unwrap().split("</text").next().unwrap();
+                let w = fonts
+                    .measure(
+                        glyph,
+                        crate::common::measure_family_stand_in(&attr(t, "font-family")),
+                        attr(t, "font-size").parse().unwrap(),
+                    )
+                    .unwrap();
+                (glyph.to_string(), attr(t, "x").parse().unwrap(), w)
+            })
+            .collect();
+        glyphs
+            .windows(2)
+            .map(|w| (w[0].0.clone(), w[1].0.clone(), w[1].1 - w[0].1 - w[0].2 / 2.0 - w[1].2 / 2.0))
+            .collect()
     }
 
-    /// The cap note's drop guard: a slot-pinned canvas
-    /// too short for the note's own band drops the note rather than
-    /// clamping it onto the row-range label's baseline. A 120px slot, page
-    /// 20 → the slot decides a one-row page (600 pages, still capped) and
-    /// leaves the label its row but the note no band of its own. (The
-    /// slot's own page-size budget reserves the band whenever a row can
-    /// still give way, so only a slot too short to drop another row
-    /// reaches this guard.)
+    // Smallest edge-to-edge gap of a two-digit pager (`… 30`),
+    // measured in the painted family and size.
+    const MAIN_MIN_EDGE_GAP: f64 = 4.98;
+
+    // A three-digit page count keeps every gap at least the tightest a
+    // two-digit pager has, and the ellipsis sits evenly between its
+    // neighbors (x is printed to 0.1, hence the tolerance).
     #[test]
-    fn capped_pagination_note_is_dropped_when_its_band_does_not_fit_the_slot() {
-        let rows: Vec<Value> = (0..600)
-            .map(|i| json!({"company": format!("Row {i}"), "revenue": i as f64}))
-            .collect();
-        let columns = json!({
-            "company": {"label": "Company"},
-            "revenue": {"label": "Revenue"},
-        });
-        let mut payload = make_payload(columns, rows, None, 20);
-        payload.height = 120.0;
-        let svg = render(&payload, &test_fonts()).expect("renders");
-        assert!(svg.contains("Rows 1\u{2013}"), "row-range label still drawn:\n{svg}");
-        assert!(
-            !svg.contains("Showing pages"),
-            "a note with no band of its own is dropped, never clamped:\n{svg}"
-        );
+    fn pager_gaps_survive_a_three_digit_page_count() {
+        for page_count in [30, 300] {
+            let gaps = pager_edge_gaps(page_count);
+            for (a, b, gap) in &gaps {
+                assert!(*gap >= MAIN_MIN_EDGE_GAP - 0.15, "{page_count} pages, {a} {b}: {gap}");
+            }
+            let before = gaps.iter().find(|g| g.1 == "\u{2026}").unwrap().2;
+            let after = gaps.iter().find(|g| g.0 == "\u{2026}").unwrap().2;
+            assert!((before - after).abs() < 0.15, "{page_count} pages: {before} vs {after}");
+        }
     }
 
-    /// The auto-sized (no slot height) capped export reserves the note's
-    /// band in the canvas height, so the note that
-    /// the drop guard would otherwise discard is drawn.
+    // Overflow with no pager (no chart id to name the page variable): the rows that did not fit collapse to "+N".
     #[test]
-    fn auto_sized_capped_export_reserves_the_cap_note_band() {
-        let rows: Vec<Value> = (0..600)
+    fn truncated_unpaginated_table_paints_a_bare_plus_count() {
+        let rows: Vec<Value> = (0..30)
             .map(|i| json!({"company": format!("Row {i}"), "revenue": i as f64}))
             .collect();
-        let columns = json!({
-            "company": {"label": "Company"},
-            "revenue": {"label": "Revenue"},
-        });
+        let columns = json!({"company": {"label": "Company"}, "revenue": {"label": "Revenue"}});
         let mut payload = make_payload(columns, rows, None, 20);
-        payload.height = 0.0;
+        payload.resolved["id"] = json!("");
+        payload.resolved["style"]["table"]["more_rows"] = json!({"font": {"size": 11.0}});
+        payload.board_style = crate::test_board_style(json!({"muted": "#626366"}));
+        payload.height = 300.0;
         let svg = render(&payload, &test_fonts()).expect("renders");
-        assert!(
-            svg.contains("Showing pages 1\u{2013}20 of 30 in this static export"),
-            "the reserved band lets the note draw:\n{svg}"
-        );
+        assert!(svg.contains("font-style=\"italic\""), "overflow note painted:\n{svg}");
+        assert!(!svg.contains("more rows"), "no English overflow note:\n{svg}");
+        assert!(svg.contains(">+25</text>"), "bare +N:\n{svg}");
     }
 
     // Unbounded grow-by-2 (production's no-height path): an
@@ -10190,10 +10151,10 @@ pub(crate) mod tests {
         );
     }
 
-    // T4: draws a muted "Rows {a}–{b} of {N}" label at
+    // T4: draws a muted "{a}–{b} / {N}" label at
     // `padding` in the pager control band whenever it fits left of the
     // right-anchored page sequence — `conversion`'s reference carries
-    // `<text x="0.0" y="563.0">Rows 1–20 of 240</text>`. table.rs drew the
+    // `<text x="0.0" y="563.0">1–20 / 240</text>`. table.rs drew the
     // page sequence and no label at all.
     #[test]
     fn paginator_draws_the_row_range_label_when_it_fits() {
@@ -10229,7 +10190,7 @@ pub(crate) mod tests {
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("renders");
         assert!(
-            svg.contains("Rows 1\u{2013}20 of 30"),
+            svg.contains("1\u{2013}20 / 30"),
             "a wide table must draw the row-range label left of the pager sequence:\n{svg}"
         );
     }
@@ -10253,7 +10214,7 @@ pub(crate) mod tests {
             "conditional_formatting": null,
         });
         // A narrow table leaves little room left of the right-anchored
-        // pager sequence for "Rows 1–20 of 30" to fit.
+        // pager sequence for "1–20 / 30" to fit.
         let payload_json = json!({
             "resolved": resolved,
             "rows": rows,
@@ -10267,12 +10228,11 @@ pub(crate) mod tests {
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("renders");
         assert!(svg.contains("dbt-paginator"), "pager sequence still renders:\n{svg}");
-        // "Rows ", not the literal "Rows 1–20 of 30": the 400px slot caps
-        // this page at 10 rows, so a deleted fit gate would draw
-        // "Rows 1–10 of 30" — a different string the narrower assertion
-        // below would miss entirely.
+        // " / 30", not the literal "1–20 / 30": the 400px slot caps this page
+        // at 10 rows, so a deleted fit gate would draw "1–10 / 30", a
+        // different string the narrower assertion would miss entirely.
         assert!(
-            !svg.contains("Rows "),
+            !svg.contains(" / 30"),
             "the row-range label must be dropped entirely when it would \
              collide with the pager sequence, not shrunk or overlapped:\n{svg}"
         );
@@ -10285,7 +10245,7 @@ pub(crate) mod tests {
     fn paginator_label_fit_is_measured_in_inter_whatever_the_body_family() {
         let rows: Vec<Value> = (0..30).map(|i| json!({"a": format!("Row {i}")})).collect();
         let fonts = test_fonts();
-        let label = "Rows 1\u{2013}20 of 30";
+        let label = "1\u{2013}20 / 30";
         let inter_w = fonts.measure(label, "Inter", 11.0).expect("measures");
         let code_w = fonts.measure(label, "Source Code Pro", 11.0).expect("measures");
         assert!(code_w > inter_w + 2.0, "premise: the two fonts must measure apart");
@@ -15736,16 +15696,43 @@ mod background_and_font_family_tests {
     }
 
     /// Zero rows over resolved columns: the header band and a centered
-    /// "No data".
+    /// em dash.
     #[test]
-    fn an_empty_result_keeps_the_header_and_says_no_data() {
+    fn an_empty_result_keeps_the_header_and_paints_an_em_dash() {
         let mut payload = payload_with(json!({}));
         payload.rows = vec![];
         payload.board_style = crate::test_board_style(json!({"muted": "#626366"}));
         payload.resolved["style"]["table"]["empty_state"] = json!({"font": {"size": 14.0}});
         let svg = crate::families::empty::render("table", &payload, &test_fonts()).unwrap();
         assert!(svg.contains(">A</text>"), "header label missing:\n{svg}");
-        assert!(svg.contains(">No data</text>"), "{svg}");
+        assert!(svg.contains(">\u{2014}</text>"), "{svg}");
+        assert!(!svg.contains("No data"), "{svg}");
+    }
+
+    /// The y of the `<text>` element whose content is `label`.
+    fn text_y(svg: &str, label: &str) -> f64 {
+        let open = svg.find(&format!(">{label}</text>")).unwrap();
+        let tag = &svg[svg[..open].rfind("<text").unwrap()..open];
+        let y = tag.split("y=\"").nth(1).unwrap().split('"').next().unwrap();
+        y.parse().unwrap()
+    }
+
+    /// The em dash sits in a body region below the header band and
+    /// inside the canvas, never over the column headers.
+    #[test]
+    fn the_empty_mark_sits_below_the_header_band_inside_the_canvas() {
+        let mut payload = payload_with(json!({}));
+        payload.rows = vec![];
+        payload.board_style = crate::test_board_style(json!({"muted": "#626366"}));
+        payload.resolved["style"]["table"]["empty_state"] = json!({"font": {"size": 14.0}});
+        let svg = crate::families::empty::render("table", &payload, &test_fonts()).unwrap();
+        let canvas_h: f64 =
+            svg.split("height=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+        let no_data = text_y(&svg, "\u{2014}");
+        let rule = svg.split("<rect").find(|r| r.contains("crispEdges")).unwrap();
+        let header_rule_y: f64 = rule.split("y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+        assert!(no_data > header_rule_y, "overlaps the header:\n{svg}");
+        assert!(no_data < canvas_h, "outside the canvas:\n{svg}");
     }
 
     /// `style.row_numbers`: a leading `#` column of 1-based indices, blank on a

@@ -1,0 +1,99 @@
+{#---
+description: Radar (spider) chart, one spoke per distinct x value in query order and one closed outline per series. Every spoke shares one scale from zero, so put the measures on a common scale, such as a score out of ten, in the query. Each series needs exactly one row per spoke.
+channels:
+  x:
+    description: Column naming each spoke.
+  y:
+    description: Column holding each spoke's value, zero or more.
+  color:
+    description: Optional column naming each series; each distinct value draws its own outline.
+    default: null
+options:
+  max:
+    type: number
+    default: null
+    description: Value at the outer ring. Defaults to the largest value.
+  rings:
+    type: integer
+    default: 4
+    description: Gridline rings between the center and the outer ring.
+  value_format:
+    type: string
+    default: ',.0f'
+---#}
+{% set p = options %}
+{% set axis_col = channels.x %}
+{% set value_col = channels.y %}
+{% set series_col = channels.color %}
+{% set ns = namespace(axes=[], series=[], keys=[], peak=0) %}
+{% for r in rows %}
+  {% if r[axis_col] is none %}{{ raise_error("A row has no spoke name in " ~ axis_col ~ ".") }}{% endif %}
+  {% if series_col and r[series_col] is none %}{{ raise_error("A row has no series name in " ~ series_col ~ ".") }}{% endif %}
+  {% set a = r[axis_col] | string %}
+  {% set s = (r[series_col] | string) if series_col else "" %}
+  {% if r[value_col] is not number or r[value_col] is boolean %}{{ raise_error("Spoke " ~ a ~ (" in series " ~ s if series_col else "") ~ " has no value in " ~ value_col ~ ".") }}{% endif %}
+  {% set v = r[value_col] | float %}
+  {% if v < 0 %}{{ raise_error("A radar spoke cannot be negative: " ~ a ~ " is " ~ v ~ ".") }}{% endif %}
+  {% if (a, s) in ns.keys %}{{ raise_error("More than one row for spoke " ~ a ~ (" in series " ~ s if series_col else "") ~ "; aggregate in the query.") }}{% endif %}
+  {% set ns.keys = ns.keys + [(a, s)] %}
+  {% if a not in ns.axes %}{% set ns.axes = ns.axes + [a] %}{% endif %}
+  {% if s not in ns.series %}{% set ns.series = ns.series + [s] %}{% endif %}
+  {% set ns.peak = [ns.peak, v] | max %}
+{% endfor %}
+{% set n = ns.axes | length %}
+{% if n < 3 %}{{ raise_error("A radar chart needs at least three spokes; this query has " ~ n ~ ".") }}{% endif %}
+{% if ns.keys | length != n * (ns.series | length) %}{{ raise_error("Every series needs a row for every spoke.") }}{% endif %}
+{% if p.max is not none and p.max <= 0 %}{{ raise_error("Option max must be above zero.") }}{% endif %}
+{% set top = p.max if p.max is not none else ns.peak %}
+{% if top <= 0 %}{{ raise_error("A radar chart needs a value above zero.") }}{% endif %}
+{% if ns.peak > top %}{{ raise_error("A value of " ~ ns.peak ~ " is above max " ~ top ~ ".") }}{% endif %}
+{% set size = style.font.size %}
+{% set small = style.charts.axis.labels.font.size %}
+{% set legend_h = size * 2.4 if series_col else 0 %}
+{% set lw = namespace(w=0) %}
+{% for a in ns.axes %}{% set lw.w = [lw.w, text_width(a, small)] | max %}{% endfor %}
+{% set ph = height - legend_h %}
+{% set cx = width / 2 %}
+{% set cy = ph / 2 %}
+{% set rad = [width / 2 - lw.w - 10, ph / 2 - small * 1.8] | min %}
+{% if rad <= 0 %}{{ raise_error("The chart is too small to fit its spoke labels.") }}{% endif %}
+{% set step = 2 * math.pi / n %}
+{% macro pt(i, r) %}{{ (cx + r * math.sin(step * i))|round(2) }},{{ (cy - r * math.cos(step * i))|round(2) }}{% endmacro %}
+<g font-family="{{ style.font.family }}">
+{% for k in range(1, p.rings + 1) %}
+  {% set rr = rad * k / p.rings %}
+  <polygon points="{% for i in range(n) %}{{ pt(i, rr) }} {% endfor %}" fill="none" stroke="{{ style.charts.axis.grid.color }}"/>
+  <text x="{{ (cx + 4)|round(1) }}" y="{{ (cy - rr)|round(1) }}" dy="-0.3em" font-size="{{ small }}" fill="{{ style.muted }}">{{ (top * k / p.rings) | format(p.value_format) }}</text>
+{% endfor %}
+{% for a in ns.axes %}
+  {% set i = loop.index0 %}
+  {% set sx = math.sin(step * i) %}
+  {% set sy = math.cos(step * i) %}
+  <line x1="{{ cx|round(2) }}" y1="{{ cy|round(2) }}" x2="{{ (cx + rad * sx)|round(2) }}" y2="{{ (cy - rad * sy)|round(2) }}" stroke="{{ style.charts.axis.grid.color }}"/>
+  <text x="{{ (cx + (rad + 8) * sx)|round(1) }}" y="{{ (cy - (rad + 8) * sy + small * 0.5 * (1 - sy) - (small * 1.3 if sy > 0.9 else 0))|round(1) }}" dy="{{ '-0.15em' if sy > 0.5 else '0.2em' }}" text-anchor="{{ 'middle' if sx | abs < 0.1 else ('start' if sx > 0 else 'end') }}" font-size="{{ small }}" fill="{{ style.font.color }}">{{ a }}</text>
+{% endfor %}
+{% for s in ns.series %}
+  {% set c = color_for(s, series_col) if series_col else style.charts.color.categorical.single_series_palette[0] %}
+  {% set vs = namespace(list=[]) %}
+  {% for a in ns.axes %}
+    {% for r in rows if (r[axis_col] | string) == a and (not series_col or (r[series_col] | string) == s) %}
+      {% set vs.list = vs.list + [r[value_col] | float] %}
+    {% endfor %}
+  {% endfor %}
+  <g>
+    <polygon points="{% for v in vs.list %}{{ pt(loop.index0, rad * v / top) }} {% endfor %}" fill="{{ c }}" fill-opacity="0.15" stroke="{{ c }}" stroke-width="2" stroke-linejoin="round"/>
+  {% for v in vs.list %}
+    {% set rr = rad * v / top %}
+    <circle cx="{{ (cx + rr * math.sin(step * loop.index0))|round(2) }}" cy="{{ (cy - rr * math.cos(step * loop.index0))|round(2) }}" r="3.5" fill="{{ c }}" stroke="{{ style.background }}"><title>{{ (s ~ ", ") if series_col else "" }}{{ ns.axes[loop.index0] }}: {{ v | format(p.value_format) }}</title></circle>
+  {% endfor %}
+  </g>
+{% endfor %}
+{% if series_col %}
+  {% set lx = namespace(x=0) %}
+  {% for s in ns.series %}
+  <rect x="{{ lx.x|round(1) }}" y="{{ (height - size - 2)|round(1) }}" width="10" height="10" rx="2" fill="{{ color_for(s, series_col) }}"/>
+  <text x="{{ (lx.x + 14)|round(1) }}" y="{{ (height - 3)|round(1) }}" font-size="{{ size }}" fill="{{ style.font.color }}">{{ s }}</text>
+  {% set lx.x = lx.x + 14 + text_width(s, size) + 22 %}
+  {% endfor %}
+{% endif %}
+</g>

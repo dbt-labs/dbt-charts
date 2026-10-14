@@ -119,6 +119,7 @@ from dbt_charts.core.compile.parse.source_map import (
 from dbt_charts.core.compile.parse.yaml_error_formatter import (
     format_validation_errors_structured,
 )
+from dbt_charts.core.compile.template.custom_template import available_template_names
 from dbt_charts.core.compile.template.jinja import (
     check_dialect_composition,
     detect_query_dependencies,
@@ -621,7 +622,9 @@ def compile(
                 ),
             ) or _stamp_compile_result(
                 CompileResult(
-                    errors=_parse_error_to_diagnostics(e, yaml_content, file=file)
+                    errors=_parse_error_to_diagnostics(
+                        e, yaml_content, file=file, base_dir=base_dir
+                    )
                 ),
                 yaml_content,
                 file,
@@ -667,7 +670,12 @@ def _with_migration_warnings(
 
 
 def _parse_error_to_diagnostics(
-    e: ParseError, yaml_content: str, *, file: str | None = None
+    e: ParseError,
+    yaml_content: str,
+    *,
+    file: str | None = None,
+    base_dir: ProjectDirectory
+    | None,  # type-state: optional — a standalone board has no project
 ) -> list[Diagnostic]:
     """Convert a ParseError into Diagnostics.
 
@@ -678,7 +686,19 @@ def _parse_error_to_diagnostics(
     Every other parse error produces one Diagnostic straight from ``e``.
     """
     if isinstance(e.__cause__, PydanticValidationError):
-        return format_validation_errors_structured(e.__cause__, yaml_content)
+        # Templates only feed the unknown-chart-type hint; skip the listing
+        # (a git-tree read on Cloud) for every other validation error.
+        wants_templates = base_dir is not None and any(
+            err.get("type") == "union_tag_not_found" for err in e.__cause__.errors()
+        )
+        template_names = (
+            tuple(available_template_names(base_dir.project))
+            if wants_templates and base_dir is not None
+            else ()
+        )
+        return format_validation_errors_structured(
+            e.__cause__, yaml_content, template_names
+        )
     if e.code is ERR_EMPTY_YAML_DOCUMENT:
         named = DbtChartsError.from_code(
             ERR_EMPTY_YAML_DOCUMENT,
@@ -722,7 +742,7 @@ def _compile_quoted_copy(
                 diagnostic
                 for error in syntax_errors
                 for diagnostic in _parse_error_to_diagnostics(
-                    error, yaml_content, file=file
+                    error, yaml_content, file=file, base_dir=None
                 )
             ]
         ),
@@ -1141,7 +1161,9 @@ def _compile_file(
         )
         return quoted or _stamp_compile_result(
             CompileResult(
-                errors=_parse_error_to_diagnostics(e, yaml_content, file=relpath)
+                errors=_parse_error_to_diagnostics(
+                    e, yaml_content, file=relpath, base_dir=board_path.parent
+                )
             ),
             yaml_content,
             relpath,

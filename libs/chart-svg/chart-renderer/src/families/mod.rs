@@ -2,6 +2,7 @@ pub mod area;
 pub mod bar;
 mod bar_hover_band;
 pub mod callout;
+pub mod custom;
 pub mod empty;
 pub mod geoshape;
 pub mod heatmap;

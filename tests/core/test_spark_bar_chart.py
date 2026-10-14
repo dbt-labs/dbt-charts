@@ -284,7 +284,7 @@ class TestSparkBarMaxBars:
         svg = render_spark_bar_svg(chart, data, board_style=_BOARD_STYLE)
 
         # Should show "more" indicator
-        assert "+ 5 more" in svg
+        assert "+5<" in svg
         # Should not have all categories
         assert "Cat 14" not in svg
 

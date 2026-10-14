@@ -1,0 +1,3 @@
+kind: Performance
+body: dbt-charts no longer depends on pyarrow, so a fresh install is about 125 MB smaller; a Parquet decimal column declared wider than 38 digits now fails to load instead of narrowing.
+time: 2026-10-12T12:03:45.063861-07:00

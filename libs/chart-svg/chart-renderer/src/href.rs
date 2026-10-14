@@ -5,12 +5,12 @@
 //! below is JS `'' + datum[field]` followed by `_vega_encode_field`'s chain.
 
 use mdsvg::pygments_re::is_py_space;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// `board_links.LinkContext`: where the host serves boards, so an authored
 /// board path becomes the URL its host answers.
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct LinkContext {
     pub root: String,
     pub current_board_slug: String,
@@ -120,13 +120,16 @@ pub(crate) fn js_string(value: Option<&Value>) -> Result<String, String> {
 }
 
 /// `_HREF_PLACEHOLDER` (`\{\{\s*(x|y|color|theta)\s*\}\}`) anchored at the start
-/// of `s`: the channel and the match's byte length.
-fn placeholder_at(s: &str) -> Option<(&'static str, usize)> {
+/// of `s`, over `channels`: the channel and the match's byte length.
+fn placeholder_at<'c>(s: &str, channels: &[&'c str]) -> Option<(&'c str, usize)> {
     let inner = s.strip_prefix("{{")?.trim_start_matches(is_py_space);
-    let channel = ["x", "y", "color", "theta"].into_iter().find(|c| inner.starts_with(c))?;
+    let channel = channels.iter().copied().find(|c| inner.starts_with(c))?;
     let tail = inner[channel.len()..].trim_start_matches(is_py_space).strip_prefix("}}")?;
     Some((channel, s.len() - tail.len()))
 }
+
+/// The Vega-Lite families' placeholder set.
+const VEGA_LINK_CHANNELS: &[&str] = &["x", "y", "color", "theta"];
 
 /// `_build_href_calc_expr`'s template law: every `_HREF_PLACEHOLDER` match is
 /// replaced by `channel_value(channel)` percent-encoded; every other byte,
@@ -135,12 +138,21 @@ fn placeholder_at(s: &str) -> Option<(&'static str, usize)> {
 /// `{{ {{ x }}` still substitutes its inner placeholder.
 pub(crate) fn resolve_channel_href(
     template: &str,
+    channel_value: impl FnMut(&str) -> Result<String, String>,
+) -> Result<String, String> {
+    resolve_channel_href_in(template, VEGA_LINK_CHANNELS, channel_value)
+}
+
+/// `resolve_channel_href` over a family's own placeholder set.
+pub(crate) fn resolve_channel_href_in(
+    template: &str,
+    channels: &[&str],
     mut channel_value: impl FnMut(&str) -> Result<String, String>,
 ) -> Result<String, String> {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(open) = rest.find("{{") {
-        match placeholder_at(&rest[open..]) {
+        match placeholder_at(&rest[open..], channels) {
             Some((channel, len)) => {
                 out.push_str(&rest[..open]);
                 out.push_str(&vega_encode_field(&channel_value(channel)?));

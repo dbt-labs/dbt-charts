@@ -13,7 +13,10 @@ dev = [
     "pytest>=7.0.0",
     "pytest-xdist>=3.5.0",  # Parallel test execution; `test` recipe runs -n auto
     "pytest-timeout>=2.2.0",  # Kill hung tests
+    "pytest-postgresql>=9.0.0",  # tests only: throwaway Postgres cluster
+    "psycopg>=3.1",  # tests only
     "pillow>=9.0.0",  # tests only
+    "pyarrow>=14.0.0",  # tests only: writes CSV/Parquet fixtures
     "filelock>=3.0",  # FileLock for xdist fixture TOCTOU guard (tests/integration/conftest.py)
     "packaging>=22",  # PEP 440 parsing (tests/core/test_packaging_metadata.py)
     "dbt-core==1.12.5",  # Match the monorepo lock for the dbt-internal-API canaries
@@ -110,13 +113,8 @@ dependencies = [
     # against exp.Expr, which 28.x does not define.
     "sqlglot>=30.0.0",
     "duckdb>=1.0.0",  # SET file_search_path (duckdb_adapter relative-path resolution)
-    # core/execute/file_source_materializer.py parses CSV/Parquet file sources
-    # via pyarrow.csv / pyarrow.parquet — load-bearing, not optional. No
-    # upper bound here (see [tool.uv] constraint-dependencies below for why
-    # pyarrow itself is still capped for dev/type-checking resolution) — a
-    # published bound would restrict every consumer's install just to quiet
-    # a type checker.
-    "pyarrow>=14.0.0",
+    # Builds Arrow from Python values without pyarrow (core/execute/arrow_ingest.py).
+    "nanoarrow>=0.9.0",
     "tomli-w>=1.0.0",
     # dbt_macro_loader.py and dbt_adapter_factory.py reach into dbt-internal
     # API (MacroParser, MacroManifest, FACTORY internals,
@@ -286,7 +284,7 @@ markers = [
 # is a published [project] bound instead, see plotext above). uv only honors
 # constraint-dependencies from the workspace root, so these entries protect
 # the standalone export, where dbt-charts is its own root. The root
-# pyproject.toml carries the same numpy/pyarrow/openai ceilings for the
+# pyproject.toml carries the same numpy/openai ceilings for the
 # monorepo's shared lock.
 constraint-dependencies = [
     # Transitive only (duckdb's stub surface pulls it in) — no direct
@@ -298,15 +296,6 @@ constraint-dependencies = [
     # below can target 3.11 without vendoring a numpy pin the rest of the
     # dependency tree doesn't otherwise need.
     "numpy<2.5",
-    # A direct import (core/execute/{cache_composition,
-    # file_source_materializer,trivial_local_cache}.py). pyarrow>=25
-    # dropped the py.typed marker pyarrow<25 shipped — capped at the last
-    # typed release so pyright's reportMissingTypeStubs (and mypy's
-    # disallow_untyped_calls, which stops seeing anything to flag once the
-    # module is untyped Any) both keep checking these modules for real,
-    # instead of a per-import suppression that would silently swallow the
-    # next unrelated typing regression too.
-    "pyarrow<25",
     # openai>=3 swapped its HTTP transport from httpx to the separate httpx2
     # fork, so its exception constructors (APITimeoutError, RateLimitError, …)
     # now type their request/response params as httpx2.Request/Response. The
@@ -493,6 +482,9 @@ transitively_required_dependencies = ["msgpack"]
 
 [tool.mypy]
 python_version = "3.11"
+# Hand stubs for libraries that ship none (nanoarrow); relative to this file so
+# mypy finds them from any working directory.
+mypy_path = "$MYPY_CONFIG_FILE_DIR/typings"
 namespace_packages = true
 warn_return_any = false
 warn_unused_configs = true
@@ -524,34 +516,16 @@ exclude = ["tests/"]
 
 # Modules that interact with untyped third-party libraries (pygments, dbt_charts_super_schema)
 # have no stubs available; suppress disallow_any_unimported only where unavoidable.
-# The three execute/ modules name `pyarrow.Table` in signatures: pyarrow ships a
-# py.typed marker but its `__init__.pyi` is still a placeholder whose
-# `__getattr__` returns Any, so every such annotation reads as an unfollowed
-# import. Naming the real type is worth more than the check it costs here; drop
-# these entries once pyarrow's stubs are real.
 [[tool.mypy.overrides]]
 module = [
     "dbt_charts.integrations.highlighting",
     "dbt_charts.core.inspect.resolver",
     "dbt_charts.core.inspect.cache_factory",
     "dbt_charts.core.execute.cache_backend",
-    "dbt_charts.core.execute.file_source_materializer",
-    "dbt_charts.core.execute.trivial_local_cache",
 ]
 disallow_any_unimported = false
 
-# pyarrow ships `__init__.pyi` but no `lib.pyi`, so every symbol it re-exports
-# from the compiled `pyarrow.lib` — Table, table, compute — resolves to Any for
-# mypy. The Arrow driver seam cannot keep pyarrow out of its signatures, since
-# pyarrow.Table is what it carries. Scoped to the modules that name the type.
+# trino.dbapi ships no annotations on connect().
 [[tool.mypy.overrides]]
-module = [
-    "dbt_charts.core.connections",
-    "dbt_charts.core.execute.result",
-    "dbt_charts.core.execute.adapters.sql_adapter",
-    "dbt_charts.core.execute.drivers.base",
-    "dbt_charts.core.execute.drivers._cdn",
-    "dbt_charts.core.execute.drivers.trino",
-]
-disallow_any_unimported = false
+module = ["dbt_charts.core.execute.drivers.trino"]
 disallow_untyped_calls = false

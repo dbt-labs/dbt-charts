@@ -70,6 +70,7 @@ fn render_chart<'py>(
     py: Python<'py>,
     payload_json: &str,
 ) -> PyResult<(String, Bound<'py, PyAny>, Option<f64>)> {
+    configure_sandbox(py)?;
     // `Payload` holds a `RefCell` report, so it is built inside the detached
     // closure rather than moved across the GIL release.
     let output = py.detach(|| {
@@ -80,6 +81,29 @@ fn render_chart<'py>(
     });
     let output = output.map_err(|diagnostic| coded_error(py, &diagnostic))?;
     Ok((output.svg, json_to_py(py, &output.warnings)?, output.natural_height))
+}
+
+/// A custom chart's template renders in a child interpreter that loads this
+/// extension by path and runs `custom_child` (`chart_renderer::sandbox`).
+fn configure_sandbox(py: Python<'_>) -> PyResult<()> {
+    use chart_renderer::sandbox::{configure, configured, Runner};
+    if configured() {
+        return Ok(());
+    }
+    let executable: String = py.import("sys")?.getattr("executable")?.extract()?;
+    let path: String = py.import("dbt_charts._engine")?.getattr("__file__")?.extract()?;
+    let loader = format!(
+        "import importlib.util as u; s = u.spec_from_file_location('_engine', {path:?}); \
+         m = u.module_from_spec(s); s.loader.exec_module(m); m.custom_child()"
+    );
+    configure(Runner::Spawn(vec![executable, "-I".into(), "-S".into(), "-c".into(), loader]));
+    Ok(())
+}
+
+/// The sandbox's child: a template job on stdin, its result on stdout.
+#[pyfunction]
+fn custom_child() {
+    chart_renderer::families::custom::child_main();
 }
 
 /// The width a table needs to show every column, columns and outer padding
@@ -122,6 +146,14 @@ fn table_title_geometry(py: Python<'_>, payload_json: &str) -> PyResult<(f64, f6
     geometry.map_err(|diagnostic| coded_error(py, &diagnostic))
 }
 
+/// Parse a custom chart template in the engine that renders it; the error
+/// message names the line. Compile runs this so a template the engine cannot
+/// parse fails at compile, not at render.
+#[pyfunction]
+fn check_template(source: &str) -> PyResult<()> {
+    chart_renderer::families::custom::check_template(source).map_err(PyValueError::new_err)
+}
+
 /// How many distinct `fonts_dir` loads this process has done.
 #[pyfunction]
 fn font_loads() -> usize {
@@ -134,6 +166,8 @@ fn _engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(measure_table_natural_width, m)?)?;
     m.add_function(wrap_pyfunction!(table_title_geometry, m)?)?;
     m.add_function(wrap_pyfunction!(font_loads, m)?)?;
+    m.add_function(wrap_pyfunction!(check_template, m)?)?;
+    m.add_function(wrap_pyfunction!(custom_child, m)?)?;
     m.add("RenderDiagnosticError", m.py().get_type::<RenderDiagnosticError>())?;
     Ok(())
 }

@@ -176,6 +176,25 @@ def render_with_budget(
     return "".join(chunks)
 
 
+def remaining_template_output_bytes() -> int:
+    """What the open render may still emit; the whole ceiling with no scope open.
+
+    The engine renders a custom chart's template against this number and
+    refuses at it, so a board of several custom charts shares one budget
+    instead of taking the ceiling once per chart. The chart then charges its
+    whole framed SVG (`render_native`), title and link included, which can
+    cross the budget by the framing's few bytes: that crossing is the
+    chart's `ERR-CUSTOM-RENDER`, not an internal error.
+    """
+    from dbt_charts.core.compile.config import resolve_max_template_output_bytes
+
+    budget = _budget.get()
+    if budget is None:
+        return resolve_max_template_output_bytes()
+    with budget._lock:
+        return max(budget.ceiling - budget.consumed, 0)
+
+
 def draw_down_template_output(nbytes: int) -> None:
     """Charge `nbytes` of emitted template output against the open budget.
 

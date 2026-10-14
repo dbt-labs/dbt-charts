@@ -26,6 +26,7 @@ from dbt_charts.core.compile.models.board.normalized import (
 from dbt_charts.core.compile.models.chart.normalized import PAINTS_MARKS
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedChart,
+    ResolvedCustomChart,
     ResolvedPieChart,
     ResolvedSparkBarChart,
     ResolvedTableChart,
@@ -130,7 +131,11 @@ def chart_title_metrics(
             ascent=inset_top + spark.title_baseline_y,
             tail=block_height - spark.title_baseline_y,
         )
-    if chart.chart_type not in PAINTS_MARKS:
+    # A custom chart's frame lays its title out as Vega-Lite does, so it
+    # shares the band with the mark families.
+    if chart.chart_type not in PAINTS_MARKS and not isinstance(
+        chart, ResolvedCustomChart
+    ):
         return None
     ascent = title_ascent(size)
     return TitleMetrics(

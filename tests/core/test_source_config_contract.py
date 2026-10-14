@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from dbt_charts.core.compile.models.source import (
     BigQuerySourceConfig,
     CsvSourceConfig,
+    DatabricksSourceConfig,
     DbtProfileSourceConfig,
     DuckDBSourceConfig,
     HttpSourceConfig,
@@ -459,3 +460,31 @@ class TestEnvVarResolution:
             headers={"Authorization": "{{ env_var('API_TOKEN') }}"},
         )
         assert config.headers == {"Authorization": "Bearer xyz"}
+
+
+class TestConnectBudgetDefaults:
+    """Every network source carries its own connect bound in the schema."""
+
+    def test_postgres_connect_timeout_is_five(self) -> None:
+        config = PostgresSourceConfig(
+            type="postgres", host="h", dbname="d", user="u", password="p"
+        )
+        assert config.connect_timeout == 5
+
+    def test_redshift_connect_timeout_is_unset(self) -> None:
+        config = RedshiftSourceConfig(type="redshift", host="h", dbname="d")
+        assert config.connect_timeout is None
+
+    def test_bigquery_job_creation_timeout_is_five(self) -> None:
+        config = BigQuerySourceConfig(type="bigquery", project="p", dataset="d")
+        assert config.job_creation_timeout_seconds == 5
+
+    def test_databricks_connect_timeout_is_fifteen(self) -> None:
+        config = DatabricksSourceConfig(
+            type="databricks",
+            host="h.cloud.databricks.com",
+            http_path="/sql/1.0/warehouses/abc",
+            token="t",
+            catalog="main",
+        )
+        assert config.connect_timeout == 15

@@ -5,7 +5,12 @@ where the fork's age shows, or its own extensions diverge — string literals,
 session reset, and statement_timeout, all below.
 """
 
+from typing import Any
+
 from dbt_charts.core.dialects.postgres import PostgresDialect
+
+# The server's cancel and its error packet must arrive before the client's read timer fires.
+_STATEMENT_CAP_HEADROOM_SECONDS = 10
 
 
 class RedshiftDialect(PostgresDialect):
@@ -32,3 +37,22 @@ class RedshiftDialect(PostgresDialect):
         https://docs.aws.amazon.com/redshift/latest/dg/r_statement_timeout.html
         """
         return f"SET statement_timeout TO {seconds * 1000}"
+
+    def connect_credentials(
+        self,
+        creds: dict[str, Any],  # type-state: explicit_any — raw source_config
+        seconds: int,
+    ) -> dict[str, Any]:  # type-state: explicit_any — raw source_config
+        """redshift_connector applies ``connect_timeout`` as the socket timeout
+        for the connection's whole life, so it also caps every read and must
+        outlast the statement cap."""
+        authored = (
+            creds.get("connect_timeout")
+            # type-state: silent_fallback — unset on the model and on dbt_profile
+            # targets; 0 is the max() identity, so the cap plus headroom then applies
+            or 0
+        )
+        return {
+            **creds,
+            "connect_timeout": max(authored, seconds + _STATEMENT_CAP_HEADROOM_SECONDS),
+        }

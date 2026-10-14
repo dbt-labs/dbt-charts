@@ -459,11 +459,9 @@ def prose_content_widths(
         list(parse_markdown(resolved)), text, resolved, base_dir, None
     )
     style = get_compact_style(resolved_style)
-    # A compile never fetches over the network; mdsvg measures a data: URI regardless.
     renderer = SVGRenderer(
         style=style,
         fonts=markdown_font_faces(body_text_font_family(resolved_style), style),
-        fetch_image_sizes=False,
     )
     floor = renderer.min_content_width(blocks)
     if needs_data:
@@ -568,14 +566,7 @@ def title_renderer(
         # Title spacing is chrome: it must not grow when body prose is resized.
         heading_margin_scale="chrome",
     )
-    # fetch_image_sizes=False: a render never fetches over the network. A local
-    # image is an embedded data: URI by now, which mdsvg measures regardless.
-    renderer = SVGRenderer(
-        style=style,
-        fonts=markdown_font_faces(family, style),
-        fetch_image_sizes=False,
-    )
-    return renderer, family
+    return SVGRenderer(style=style, fonts=markdown_font_faces(family, style)), family
 
 
 def title_blocks(

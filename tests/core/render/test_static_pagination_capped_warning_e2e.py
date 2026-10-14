@@ -1,9 +1,7 @@
-"""End-to-end: STATIC_PAGINATION_CAPPED surfaces from render() only when a
-static export is capped AND its in-file cap note could not be drawn.
+"""End-to-end: STATIC_PAGINATION_CAPPED stays silent for a capped static export.
 
-A capped export whose slot has room states the cap inside the file, so it
-stays silent; a slot too short for the note would otherwise lose every row
-past the cap with no signal at all. The text format states its own row and
+The pager keeps the true page count with the pages past the cap disabled, so
+the file states the cap in any slot. The text format states its own row and
 page counts and carries no static file, so it never warns.
 """
 
@@ -60,8 +58,7 @@ rows:
   - {slot}orgs
 """
 
-# A 150px row cannot hold the cap note's band under the pager; a roomy
-# (auto-sized) slot can.
+# A short slot and a roomy (auto-sized) one.
 _SHORT_SLOT = _BOARD.replace("{slot}", "height: 150\n    cols:\n      - ")
 _ROOMY_SLOT = _BOARD.replace("{slot}", "")
 _CODE = "WARN-STATIC-PAGINATION-CAPPED"
@@ -75,21 +72,12 @@ def _render(yaml_text: str, n_rows: int, fmt: str) -> RenderResult:
     return render(result.board, executor, format=fmt)
 
 
-def test_capped_table_in_a_slot_too_short_for_the_note_warns() -> None:
-    render_result = _render(_SHORT_SLOT, _CAPPED_ROWS, "svg")
+def test_capped_table_is_silent_in_any_slot() -> None:
+    for slot in (_SHORT_SLOT, _ROOMY_SLOT):
+        render_result = _render(slot, _CAPPED_ROWS, "svg")
 
-    assert "in this static export" not in str(render_result.output)
-    warning = next(w for w in render_result.warnings if w.code == _CODE)
-    assert warning.chart == "orgs"
-    assert warning.fix
-    assert str(_STATIC_MULTI_PAGE_MAX_PAGES) in warning.message
-
-
-def test_capped_table_whose_note_is_drawn_is_silent() -> None:
-    render_result = _render(_ROOMY_SLOT, _CAPPED_ROWS, "svg")
-
-    assert "in this static export" in str(render_result.output)
-    assert _CODE not in {w.code for w in render_result.warnings}
+        assert "in this static export" not in str(render_result.output)
+        assert _CODE not in {w.code for w in render_result.warnings}
 
 
 def test_text_render_of_a_capped_table_is_silent() -> None:

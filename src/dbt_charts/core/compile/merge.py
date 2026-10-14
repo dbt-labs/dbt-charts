@@ -431,8 +431,7 @@ def merge_onto_base(base: P, patch: BaseModel | None) -> P:
       font is not a tweak of what the theme bound there.
     - Both base_val and patch_val are BaseModel → recurse via merge_onto_base.
     - Both are dict → key-wise merge (patch keys win, base keys survive; a
-      ``Merge(Strategy.DEEP)`` dict also merges entries present on both sides); a
-      ``key: null`` entry removes that key from the result.
+      ``Merge(Strategy.DEEP)`` dict also merges entries present on both sides).
     - patch_val is BaseModel, base_val is None → seed from
       ``model_dump(exclude_unset=True)`` and let terminal validation accept a
       complete child or reject an incomplete one.
@@ -477,11 +476,6 @@ def merge_onto_base(base: P, patch: BaseModel | None) -> P:
             result[field_name] = patch_val.model_dump(exclude_unset=True)
         else:
             result[field_name] = patch_val
-        combined = result[field_name]
-        if isinstance(combined, dict):
-            # `key: null` deletes a base entry; it only means "remove" here,
-            # where no lower layer is left to shadow.
-            result[field_name] = {k: v for k, v in combined.items() if v is not None}
 
     validated = type(base).model_validate(result)
     values = {name: getattr(validated, name) for name in base_fields}

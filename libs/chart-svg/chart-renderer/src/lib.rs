@@ -2,6 +2,7 @@
 //! no Vega-Lite, no JS runtime. One module per chart family; families own
 //! their payload structs and deserialize the raw `resolved` JSON themselves.
 
+pub mod alloc_budget;
 pub mod board;
 pub mod case;
 pub mod codes;
@@ -12,10 +13,12 @@ pub mod diagnostic;
 pub mod embed_fonts;
 pub mod families;
 pub mod font_normalize;
+pub mod frame;
 pub mod href;
 pub mod label_template;
 pub mod number_locale;
 pub mod prose;
+pub mod sandbox;
 pub mod sizing;
 pub mod step_band;
 pub mod svg;
@@ -27,6 +30,9 @@ pub mod titlecase_first_char;
 pub mod variables;
 pub mod vega_fit;
 pub mod xml;
+
+#[global_allocator]
+static ALLOCATOR: alloc_budget::Budgeted = alloc_budget::Budgeted;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -190,6 +196,66 @@ pub struct PlaceholderFont {
     /// `FontStyle.weight`: a CSS keyword or a number, printed as authored.
     pub weight: Value,
     pub color: String,
+    /// The board's `ResolvedStyle.font.family`, the family production's
+    /// Vega-family overlay paints in. Optional in the envelope; a pie
+    /// placeholder errors when it is absent.
+    #[serde(default)]
+    pub family: Option<String>,
+}
+
+impl PlaceholderStyle {
+    /// `placeholder.py::add_placeholder_overlay`: a `width` x `height` wash and
+    /// the overlay text centered on it, in `family`, cased by `case`.
+    pub fn overlay(
+        &self,
+        xml: &mut xml::Xml,
+        width: f64,
+        height: f64,
+        family: &str,
+        case: Option<&str>,
+    ) -> Result<(), Diagnostic> {
+        use crate::svg::py_float_str;
+        use crate::xml::Attrs;
+        let overlay = &self.overlay;
+        let text = match case {
+            Some(case) if case != "none" => crate::case::apply_case(&overlay.text, case)?,
+            _ => overlay.text.clone(),
+        };
+        // `escape_attr` prints a keyword as written, an int bare, a float with its `.0`.
+        let weight = match &overlay.font.weight {
+            Value::String(s) => s.clone(),
+            Value::Number(n) if n.is_i64() || n.is_u64() => n.to_string(),
+            Value::Number(n) => py_float_str(n.as_f64().ok_or("placeholder font weight is not a number")?),
+            other => return Err(format!("placeholder font weight {other} is neither a keyword nor a number").into()),
+        };
+        xml.open("g", Attrs::new().set("class", "placeholder-overlay"));
+        xml.empty(
+            "rect",
+            Attrs::new()
+                .set("class", "dbt-pointer-inert")
+                .set("x", "0")
+                .set("y", "0")
+                .set("width", py_float_str(width))
+                .set("height", py_float_str(height))
+                .set("fill", &overlay.background),
+        );
+        xml.leaf(
+            "text",
+            Attrs::new()
+                .set("class", "dbt-pointer-inert")
+                .set("x", py_float_str(width / 2.0))
+                .set("y", py_float_str(height / 2.0))
+                .set("text-anchor", "middle")
+                .set("dominant-baseline", "middle")
+                .set("font-family", family)
+                .set("font-size", py_float_str(overlay.font.size))
+                .set("font-weight", weight)
+                .set("fill", &overlay.font.color),
+            &text,
+        );
+        xml.close("g");
+        Ok(())
+    }
 }
 
 /// The fields every table render requires of `board_style`, filled in for a
@@ -313,6 +379,10 @@ pub struct Payload {
     /// the "add data" overlay over it.
     #[serde(default)]
     pub is_placeholder: bool,
+    /// `execution.max_template_output_bytes`: the most SVG a custom chart's
+    /// template may emit for one render. Only the custom family reads it.
+    #[serde(default)]
+    pub max_template_output_bytes: Option<u64>,
     /// The `str()` text of each cell the wire tagged (a Decimal, a non-finite
     /// value) in `rows`, by row and column; filled when the payload is parsed.
     #[serde(skip)]
@@ -363,17 +433,18 @@ fn render_in_scope(
         .and_then(Value::as_str)
         .ok_or("payload.resolved.chart_type missing")?;
     // A chart-root `link` (`ResolvedChart.link`) is painted by bar and pie (a
-    // per-datum `<a>`), table (a per-row band) and kpi (the value's `<a>`);
-    // every other family would draw its marks with no href, so it refuses by
-    // name instead.
+    // per-datum `<a>`), table (a per-row band), kpi (the value's `<a>`) and
+    // custom (the body's `<a>`, or the template's own via `href(row)`); every
+    // other family would draw its marks with no href, so it refuses by name
+    // instead.
     let has_link = payload
         .resolved
         .get("link")
         .and_then(Value::as_str)
         .is_some_and(|l| !l.is_empty());
-    if has_link && !matches!(chart_type, "bar" | "pie" | "table" | "kpi") {
+    if has_link && !matches!(chart_type, "bar" | "pie" | "table" | "kpi" | "custom") {
         return Err(format!(
-            "{chart_type}: chart-root link not supported — only bar, pie, table and kpi"
+            "{chart_type}: chart-root link not supported — only bar, pie, table, kpi and custom"
         )
         .into());
     }
@@ -385,6 +456,10 @@ fn render_in_scope(
     // family models below cannot deserialize it: the empty result is decided
     // here, ahead of any of them. A callout has no query (`query_name` is
     // `None`), so no rows is its normal shape.
+    // A custom template decides its own empty drawing: it gets `rows` as is.
+    if chart_type == "custom" {
+        return families::custom::render(payload, fonts).map(|svg| (svg, None));
+    }
     if payload.rows.is_empty() && chart_type != "callout" {
         return families::empty::render(chart_type, payload, fonts).map(|svg| (svg, None));
     }

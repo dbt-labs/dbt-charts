@@ -501,7 +501,7 @@ class SVGRenderer:
         mono_font_path: Optional[str] = None,
         fonts: Optional[FontFaces] = None,
         # Image options
-        fetch_image_sizes: bool = True,
+        fetch_image_sizes: bool = False,
         image_base_path: Optional[str] = None,
         image_url_mapper: Optional[ImageUrlMapper] = None,
         image_timeout: float = 10.0,
@@ -523,8 +523,10 @@ class SVGRenderer:
                       against their real font files instead of a ratio-scaled
                       guess from the regular font file. Mutually exclusive with
                       `font_path`/`mono_font_path`.
-            fetch_image_sizes: If True (default), fetch image dimensions from
-                      local files or remote URLs. Required for accurate layout.
+            fetch_image_sizes: If True, read image dimensions from local files
+                      and fetch them from remote URLs. Only enable for trusted
+                      markdown: an author could otherwise make the renderer
+                      read server files and request any address.
             image_base_path: Base directory for resolving relative image paths.
                       Used when fetching local image dimensions.
             image_url_mapper: Optional function to transform image URLs before

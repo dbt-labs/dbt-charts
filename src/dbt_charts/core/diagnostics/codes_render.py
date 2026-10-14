@@ -3583,3 +3583,43 @@ ERR_ENGINE_REFUSED = REGISTRY.register(
         docs_topic="charts",
     )
 )
+
+ERR_CUSTOM_RENDER = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CUSTOM-RENDER",
+        domain="render",
+        title="Custom chart template failed to render",
+        message_template="Chart {chart_id!r} (custom): {reason}",
+        doc=(
+            "Fired when a `type: custom` chart's template fails while rendering: "
+            "a Jinja runtime error, a misspelled column, param, or style key "
+            "(templates use strict undefined), a column param naming a column "
+            "the query did not return, or the template calling `raise_error()`."
+        ),
+        summary="Fired when a custom chart's template raises, misses a column, or calls raise_error.",
+        docs_topic="charts",
+    )
+)
+
+ERR_CUSTOM_SVG = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CUSTOM-SVG",
+        domain="render",
+        title="Custom chart template produced disallowed SVG",
+        message_template="Chart {chart_id!r} (custom): {reason}",
+        doc=(
+            "Fired when a `type: custom` chart's template output is not "
+            "well-formed SVG or uses a construct outside the allowlist: "
+            "`script`, `foreignObject`, `style`, `image`, or animation "
+            "elements; `on*`, `role`, `aria-*` or `data-*` attributes; a "
+            "`role-`/`dbt-` class; a paint attribute that is not a color; an "
+            "`<a href>` outside the link rules (board path, http, https, "
+            "mailto); any other `href` that is not a `#local` reference; "
+            "`url(...)` that is not `url(#local)`; `javascript:`; nesting "
+            "past 64 levels; or a DOCTYPE or ENTITY declaration. Nothing is "
+            "stripped; the chart fails."
+        ),
+        summary="Fired when a custom chart's output is malformed or uses disallowed SVG.",
+        docs_topic="charts",
+    )
+)

@@ -86,7 +86,8 @@ use crate::families::heatmap_facet::HeatmapXAxis;
 use crate::families::line::LineXAxis;
 use crate::families::scatter_axis::TemporalXAxis;
 use crate::families::multiples::{self, Panel};
-use crate::svg::{xml_escape, xml_escape_attr, vega_escape_attr};
+use crate::frame::ChartFrame;
+use crate::svg::{num_full, xml_escape, xml_escape_attr, vega_escape_attr};
 use crate::text::FontBook;
 use crate::vega_fit;
 use crate::Payload;
@@ -999,12 +1000,7 @@ fn compose_facet_at(
     let canvas_h = canvas_h.ceil();
 
     let mut svg = String::with_capacity(16384 * spec.panels.len().max(1));
-    let _ = write!(
-        svg,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{canvas_w}\" height=\"{canvas_h}\" \
-         viewBox=\"0 0 {canvas_w} {canvas_h}\">"
-    );
-    let _ = write!(svg, "<rect width=\"{canvas_w}\" height=\"{canvas_h}\" fill=\"{bg}\"/>", bg = xml_escape_attr(bg));
+    ChartFrame::new(canvas_w, canvas_h, (pad_l, pad_r, pad_t, pad_b), bg, num_full).open(&mut svg);
 
     // Every row-header label's right edge lands on the SAME absolute x
     // independent of its own width.

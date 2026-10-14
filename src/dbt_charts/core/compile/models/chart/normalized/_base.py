@@ -213,15 +213,16 @@ __all__ = [
 #   - Vega render-first sizing (not Vega charts)
 #   - cols height alignment re-renders (non-Vega, don't benefit from re-render)
 # Each renderer owns its own sizing contract — there is no shared fixed height for this group.
-NON_ASPECT_RATIO_TYPES = frozenset({"table", "kpi", "spark_bar", "callout"})
+NON_ASPECT_RATIO_TYPES = frozenset({"table", "kpi", "spark_bar", "callout", "custom"})
 SVG_LAYOUT_PADDED_TYPES = frozenset({"table", "kpi", "spark_bar"})
 
 # Chart-type strings dispatched through get_emitter() (render/chart/emitters/__init__.py)
 # — the families that emit Vega-Lite marks. The complement (table, kpi, spark_bar,
-# callout) never paints a mark; it is drawn by a hand-crafted SVG renderer instead.
+# callout, custom) never paints a mark; it is drawn by a hand-crafted SVG renderer instead.
 # This is a different fact from SVG_LAYOUT_PADDED_TYPES above (that one is about
-# layout padding, not mark-painting) even though their complements happen to
-# coincide today — don't fold them into one set.
+# layout padding, not mark-painting): a custom chart paints no marks of its own
+# yet frames itself inside its padding as a Vega-Lite chart does, so don't fold
+# them into one set.
 #
 # These are RESOLVED-stage chart_type strings (ResolvedChart.chart_type), not
 # normalized-stage ones. The normalized `.type` vocabulary also contains

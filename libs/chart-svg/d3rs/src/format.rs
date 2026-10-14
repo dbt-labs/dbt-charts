@@ -1,7 +1,7 @@
 // Ported from libs/d3-format/src/d3_format/format.py and spec.py.
 // Implements the subset of the d3-format grammar required by dbt charts
-// theme/resolved payloads. Unsupported features (fill/align/width, b/o/x/X/e/n
-// types) return Err — never a silently wrong string.
+// theme/resolved payloads. Unsupported features (`#`, b/o/x/X/n types) return
+// Err — never a silently wrong string.
 //
 // Key d3 deviations from Rust's std formatting:
 //   - Negative sign is the locale's minus (U+2212 MINUS SIGN in en-US), not
@@ -61,14 +61,28 @@ impl Locale {
 /// is the integer digits only (ASCII); a size of zero or an empty size list
 /// would drop digits, so the caller validates them.
 fn group(value: &str, grouping: &Grouping) -> String {
+    group_within(value, grouping, usize::MAX)
+}
+
+/// `formatGroup` with its `width` cap: d3 passes infinity except when zero
+/// padding is grouped with the digits, where it bounds the grouped length.
+fn group_within(value: &str, grouping: &Grouping, width: usize) -> String {
     let mut remaining = value.len();
     let mut parts: Vec<&str> = Vec::new();
     let mut j = 0;
     let mut g = grouping.sizes[0];
+    let mut length = 0usize;
     while remaining > 0 && g > 0 {
+        if length.saturating_add(g + 1) > width {
+            g = width.saturating_sub(length).max(1);
+        }
         let start = remaining.saturating_sub(g);
         parts.push(&value[start..remaining]);
         remaining = start;
+        length = length.saturating_add(g + 1);
+        if length > width {
+            break;
+        }
         j = (j + 1) % grouping.sizes.len();
         g = grouping.sizes[j];
     }
@@ -77,8 +91,12 @@ fn group(value: &str, grouping: &Grouping) -> String {
 }
 
 struct Spec {
+    fill: char,
+    align: char,           // '>' (default), '<', '^', '='
     sign: char,            // '-' (default), '+', ' ', '('
     symbol: char,          // '\0', '$'
+    zero: bool,
+    width: Option<usize>,
     comma: bool,
     precision: Option<usize>,
     trim: bool,
@@ -87,7 +105,18 @@ struct Spec {
 
 impl Default for Spec {
     fn default() -> Self {
-        Spec { sign: '-', symbol: '\0', comma: false, precision: None, trim: false, type_: '\0' }
+        Spec {
+            fill: ' ',
+            align: '>',
+            sign: '-',
+            symbol: '\0',
+            zero: false,
+            width: None,
+            comma: false,
+            precision: None,
+            trim: false,
+            type_: '\0',
+        }
     }
 }
 
@@ -98,12 +127,19 @@ fn parse_spec(s: &str) -> Result<Spec, String> {
     let mut spec = Spec::default();
 
     // fill + align: second char is align → first is fill; or first char is align.
-    let is_align = |c: u8| matches!(c, b'<' | b'>' | b'^' | b'=');
-    if n >= 2 && is_align(bytes[1]) {
-        return Err(format!("unsupported fill/align in d3 spec {s:?}"));
-    }
-    if n >= 1 && is_align(bytes[0]) {
-        return Err(format!("unsupported align in d3 spec {s:?}"));
+    let is_align = |c: char| matches!(c, '<' | '>' | '^' | '=');
+    let mut chars = s.chars();
+    match (chars.next(), chars.next()) {
+        (Some(fill), Some(align)) if is_align(align) => {
+            spec.fill = fill;
+            spec.align = align;
+            i = fill.len_utf8() + 1;
+        }
+        (Some(align), _) if is_align(align) => {
+            spec.align = align;
+            i = 1;
+        }
+        _ => {}
     }
 
     // sign: '-' default, '+' (always show sign), ' ' (space for positive), '(' (parens for negative)
@@ -120,13 +156,22 @@ fn parse_spec(s: &str) -> Result<Spec, String> {
         return Err(format!("unsupported alternate form '#' in d3 spec {s:?}"));
     }
 
-    // zero flag: with no width it pads nothing, so it is accepted and ignored;
-    // a width (zero-padded or not) is not modeled.
     if i < n && bytes[i] == b'0' {
+        spec.zero = true;
         i += 1;
     }
-    if i < n && bytes[i].is_ascii_digit() {
-        return Err(format!("unsupported zero-pad/width in d3 spec {s:?}"));
+    // An explicit "0" flag and a "0" fill under "=" are one request (d3 collapses them).
+    if spec.zero || (spec.fill == '0' && spec.align == '=') {
+        spec.zero = true;
+        spec.fill = '0';
+        spec.align = '=';
+    }
+    let width_start = i;
+    while i < n && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i > width_start {
+        spec.width = Some(s[width_start..i].parse::<usize>().map_err(|e| format!("width in d3 spec {s:?}: {e}"))?);
     }
 
     // comma grouping
@@ -445,6 +490,8 @@ pub struct SpecParts {
     pub sign: char,
     /// `~` trim flag: insignificant trailing zeros removed.
     pub trim: bool,
+    /// A fill, an align, zero padding or a width is authored.
+    pub padded: bool,
 }
 
 /// Parse a d3 spec into its parts without formatting anything.
@@ -457,6 +504,7 @@ pub fn parse_parts(spec: &str) -> Result<SpecParts, String> {
         comma: s.comma,
         sign: s.sign,
         trim: s.trim,
+        padded: s.width.is_some() || s.zero || s.align != '>' || s.fill != ' ',
     })
 }
 
@@ -473,11 +521,14 @@ pub fn parse_parts(spec: &str) -> Result<SpecParts, String> {
 /// grouping. Both keep the sign and the currency symbol on the spec itself
 /// (no anchor tick to split it onto), always trim, and default the
 /// precision to 6 when the spec carries none. Production keeps the rest of
-/// the spec too (fill, align, zero, width, `#`); `d3rs::format::parse_parts`
-/// models none of them and refuses a spec carrying one, by name, rather
-/// than have this rebuild drop it. Returns `(digit, scientific)`.
+/// the spec too (fill, align, zero, width, `#`); this rebuild carries none of
+/// them, so a spec with one refuses by name rather than lose it. Returns
+/// `(digit, scientific)`.
 pub fn sub_unit_specs(si_spec: &str) -> Result<(String, String), String> {
     let parts = parse_parts(si_spec).map_err(|e| format!("{si_spec}: {e}"))?;
+    if parts.padded {
+        return Err(format!("{si_spec}: a padded spec's sub-unit siblings are not modeled"));
+    }
     let precision = parts.precision.unwrap_or(6);
     let sign = if parts.sign == '-' {
         String::new()
@@ -546,7 +597,8 @@ pub fn sub_unit_spec_for_value(
 ///
 /// Supported types: `f`, `%`, `s` (SI prefix), `d` (integer), `r` (rounded), `g`
 /// (general), `p` (rounded percent), and the empty type (`.12~g`).
-/// Supported modifiers: `,` (locale grouping), `.N` (precision), `~` (trim zeros), `$` (currency).
+/// Supported modifiers: fill and align, zero padding, width, `,` (locale grouping),
+/// `.N` (precision), `~` (trim zeros), `$` (currency).
 /// Unsupported features return `Err` with a description — never a silently wrong string.
 pub fn format(locale: &Locale, spec: &str, value: f64) -> Result<String, String> {
     let out = format_ascii_digits(locale, spec, value)?;
@@ -593,7 +645,10 @@ fn format_ascii_digits(locale: &Locale, spec: &str, value: f64) -> Result<String
         } else {
             String::new()
         };
-        return Ok(format!("{sign_prefix}{base_prefix}{}{base_suffix}", locale.nan));
+        // A body with no leading digit joins the suffix whole, out of
+        // grouping and zero padding (d3's split-suffix step).
+        let prefix = format!("{sign_prefix}{base_prefix}");
+        return Ok(pad(&s, locale, &prefix, String::new(), &format!("{}{base_suffix}", locale.nan)));
     }
 
     let is_negative = value.is_sign_negative();
@@ -616,7 +671,7 @@ fn format_ascii_digits(locale: &Locale, spec: &str, value: f64) -> Result<String
             base_prefix.to_string()
         };
         let close = if paren_wrap { ")" } else { "" };
-        return Ok(format!("{value_prefix}{body}{base_suffix}{close}"));
+        return Ok(pad(&s, locale, &value_prefix, String::new(), &format!("{body}{base_suffix}{close}")));
     }
 
     // Default precision = 6; clamp per type (significant vs decimal).
@@ -710,14 +765,46 @@ fn format_ascii_digits(locale: &Locale, spec: &str, value: f64) -> Result<String
         (body, value_suffix)
     };
 
-    let body = match (&locale.grouping, s.comma) {
-        (Some(grouping), true) => group(&body, grouping),
-        _ => body,
+    let value_suffix = if paren_wrap { format!("{value_suffix})") } else { value_suffix };
+    Ok(pad(&s, locale, &value_prefix, body, &value_suffix))
+}
+
+/// d3's closing steps: group the digits, pad to `width` with `fill`, align.
+/// Without zero padding the digits are grouped alone; with it the padding is
+/// grouped with them, so separators land inside the padded field.
+fn pad(s: &Spec, locale: &Locale, prefix: &str, value: String, suffix: &str) -> String {
+    let mut value = match (&locale.grouping, s.comma && !s.zero) {
+        (Some(grouping), true) => group(&value, grouping),
+        _ => value,
     };
-    if paren_wrap {
-        Ok(format!("{value_prefix}{body}{value_suffix})"))
-    } else {
-        Ok(format!("{value_prefix}{body}{value_suffix}"))
+    let length = prefix.chars().count() + value.chars().count() + suffix.chars().count();
+    let mut padding = match s.width {
+        Some(width) if width > length => s.fill.to_string().repeat(width - length),
+        _ => String::new(),
+    };
+    if s.comma && s.zero {
+        let width = match s.width {
+            Some(width) if !padding.is_empty() => width - suffix.chars().count(),
+            _ => usize::MAX,
+        };
+        let padded = format!("{padding}{value}");
+        value = match &locale.grouping {
+            Some(grouping) => group_within(&padded, grouping, width),
+            None => padded,
+        };
+        padding.clear();
+    }
+    match s.align {
+        '<' => format!("{prefix}{value}{suffix}{padding}"),
+        '=' => format!("{prefix}{padding}{value}{suffix}"),
+        '^' => {
+            let fill: Vec<char> = padding.chars().collect();
+            let (left, right) = fill.split_at(fill.len() / 2);
+            let left: String = left.iter().collect();
+            let right: String = right.iter().collect();
+            format!("{left}{prefix}{value}{suffix}{right}")
+        }
+        _ => format!("{padding}{prefix}{value}{suffix}"),
     }
 }
 
@@ -942,7 +1029,45 @@ mod tests {
     fn test_unsupported_type_errors() {
         assert!(format(&Locale::en_us(), "x", 1.0).is_err());
         assert!(format(&Locale::en_us(), "n", 1.0).is_err());
-        assert!(format(&Locale::en_us(), "0>10.2f", 1.0).is_err()); // fill + align + width
+    }
+
+    // --- Fill, align, width and zero padding (d3's closing pad step) ---
+
+    #[test]
+    fn fill_align_width_and_zero_pad_like_the_reference() {
+        // uv run python -c "from d3_format import format as f; print(repr(f(SPEC, VALUE)))"
+        for (spec, value, want) in [
+            ("'>8,.0f", 1234.0, "'''1,234"),
+            ("'>8,.0f", -1234.0, "''\u{2212}1,234"),
+            (">10.2f", 3.14159, "      3.14"),
+            ("<10.2f", 3.14159, "3.14      "),
+            ("^10.2f", 3.14159, "   3.14   "),
+            ("*^9d", 42.0, "***42****"),
+            ("=+10.1f", -5.25, "\u{2212}      5.3"),
+            ("08.2f", -3.5, "\u{2212}0003.50"),
+            ("010,d", 1234567.0, "01,234,567"),
+            ("020,.2f", -1234.5, "\u{2212}0,000,000,001,234.50"),
+            ("0>10.2f", 1.0, "0000001.00"),
+            ("\u{b7}>8d", 7.0, "\u{b7}\u{b7}\u{b7}\u{b7}\u{b7}\u{b7}\u{b7}7"),
+            (">6.0%", 0.25, "   25%"),
+            ("(10,.0f", -1234.0, "   (1,234)"),
+            ("$>12,.2f", 1234.5, "$$$$1,234.50"),
+            (">8d", f64::NAN, "     NaN"),
+            (">8d", f64::INFINITY, "       \u{221e}"),
+            ("08d", f64::NEG_INFINITY, "\u{2212}000000\u{221e}"),
+            ("4d", 123456.0, "123456"),
+            (">8.3~s", 1500.0, "    1.5k"),
+            // A non-finite body joins the suffix: never grouped, never split.
+            (",f", f64::INFINITY, "Infinity"),
+            ("$,.0f", f64::NEG_INFINITY, "\u{2212}$Infinity"),
+            ("08,d", f64::INFINITY, "000,000\u{221e}"),
+            ("09,.0f", f64::INFINITY, "0Infinity"),
+            ("02,d", f64::INFINITY, "0\u{221e}"),
+            ("010,f", f64::NAN, "000,000NaN"),
+            (",d", f64::NAN, "NaN"),
+        ] {
+            assert_eq!(fmt(spec, value), want, "{spec} on {value}");
+        }
     }
 
     // --- Rounded significant-digit type 'r' (d3's formatRounded) ---

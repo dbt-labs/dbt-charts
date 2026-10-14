@@ -86,8 +86,7 @@ class TestBulkIngest:
 
     def test_heterogeneous_column_matches_pre_bulk_behavior(self) -> None:
         """A column with mixed per-row types (e.g. an HTTP/JSON source) must still
-        cache — Arrow can't build the mixed array, so it falls back to the per-row
-        bind and DuckDB casts each cell to the column type, as before the bulk path.
+        cache, each cell cast to the column type as a bound parameter would be.
         """
         cache = TrivialDuckDBCache()
         # First row str → VARCHAR column; the int in row 2 is cast to text.

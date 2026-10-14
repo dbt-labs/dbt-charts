@@ -69,7 +69,7 @@ from dbt_charts.telemetry.emitter import begin_invocation, command_path
 # the render call site.
 pin_vl_convert_tz_utc()
 
-# A native fault in a loaded driver (ADBC, pyarrow) kills the process; this makes
+# A native fault in a loaded driver (ADBC, nanoarrow) kills the process; this makes
 # it leave a traceback first.
 faulthandler.enable()
 

@@ -5,6 +5,7 @@ SQL Server uses:
 """
 
 import re
+from datetime import date, datetime, time
 from typing import Any
 
 from dbt_charts.core.dialects.base import SQLDialect
@@ -68,6 +69,20 @@ class SQLServerDialect(SQLDialect):
             Parameter placeholder in @pN format
         """
         return f"@p{index}"
+
+    # T-SQL has no typed literals (`DATE '...'`) and no boolean literals.
+    # https://learn.microsoft.com/en-us/sql/t-sql/data-types/constants-transact-sql
+    def boolean_literal(self, value: bool) -> str:
+        return "1" if value else "0"
+
+    def date_literal(self, value: date) -> str:
+        return f"CAST('{value.isoformat()}' AS DATE)"
+
+    def timestamp_literal(self, value: datetime) -> str:
+        return f"CAST('{value.isoformat()}' AS DATETIME2)"
+
+    def time_literal(self, value: time) -> str:
+        return f"CAST('{value.isoformat()}' AS TIME)"
 
     def resolve_timeout_seconds(
         self,

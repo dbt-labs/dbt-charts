@@ -33,6 +33,7 @@ from dbt_charts.core.compile.models.board.normalized import (
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedCalloutChart,
     ResolvedChart,
+    ResolvedCustomChart,
     ResolvedKpiChart,
     ResolvedSparkBarChart,
     ResolvedTableChart,
@@ -41,8 +42,14 @@ from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.models.style.resolved.callout import ResolvedCalloutStyle
 from dbt_charts.core.compile.resolve.style.markdown_style import build_mdsvg_style
+from dbt_charts.core.compile.template.output_budget import (
+    TemplateOutputBudgetExceeded,
+    draw_down_template_output,
+    remaining_template_output_bytes,
+)
 from dbt_charts.core.diagnostics import REGISTRY, Diagnostic, display_message
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import ERR_CUSTOM_RENDER
 from dbt_charts.core.diagnostics.registry import ErrorCode, build_doc_url
 from dbt_charts.core.fonts import get_fonts_dir
 from dbt_charts.core.render.board_links import get_link_context, resolve_href
@@ -329,6 +336,13 @@ def build_chart_payload(
             board_style, board_width, active_format_locale(), active_time_locale()
         ),
         "is_placeholder": is_placeholder,
+        # A custom chart's template draws on the board's one output budget:
+        # the engine gets what is left, and the render charges what it emits.
+        "max_template_output_bytes": (
+            remaining_template_output_bytes()
+            if isinstance(chart, ResolvedCustomChart)
+            else None
+        ),
     }
 
 
@@ -494,7 +508,19 @@ def render_native(
         if isinstance(chart, ResolvedCalloutChart)
         else None
     )
-    return _render_payload(payload, authored, record_warnings=record_warnings)
+    svg, natural_height = _render_payload(
+        payload, authored, record_warnings=record_warnings
+    )
+    if isinstance(chart, ResolvedCustomChart):
+        # The engine refused the template's own output past the budget; the
+        # title, card and link framing it adds can still cross it here.
+        try:
+            draw_down_template_output(len(svg.encode("utf-8")))
+        except TemplateOutputBudgetExceeded as exc:
+            raise ChartDataError.from_code(
+                ERR_CUSTOM_RENDER, chart_id=chart.id, reason=str(exc)
+            ) from exc
+    return svg, natural_height
 
 
 def _render_payload(

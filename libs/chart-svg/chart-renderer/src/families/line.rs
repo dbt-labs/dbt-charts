@@ -225,6 +225,7 @@ use crate::families::temporal::{
     AuthoredTickCadence, AuthoredTimeFormat, BareTick, ResolvedVegaLabels, TemporalLabel,
     TimeUnit, UtcTickInterval,
 };
+use crate::frame::{ChartFrame, FrameTitle};
 use crate::svg::{py_float_str, xml_escape, xml_escape_attr, vega_escape_attr};
 use crate::vega_fit;
 use crate::text::FontBook;
@@ -3230,16 +3231,6 @@ pub(crate) fn render_line_panel(
     let y_limit = ax_y.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
     let line_stroke_w = r.style.line_mark.stroke.width.unwrap_or(4.0);
 
-    // An empty authored title is no title (production's set_chart_title
-    // skips it — the compiled spec carries none).
-    let cased_title: Option<String> = match r.title.as_deref() {
-        None => None,
-        Some(t) => {
-            let case = eff_title_ref.and_then(|ts| ts.font.case.as_deref()).unwrap_or("none");
-            Some(crate::case::apply_case(t, case)?)
-        }
-    };
-
 
     // A2: `detect_time_unit` refusing a cadence does not make the axis
     // non-temporal. Production's `_temporal_layout` returns an empty
@@ -3357,15 +3348,17 @@ pub(crate) fn render_line_panel(
     // unchanged — the same `.trunc()` `wrap_title_block` already does.
     let title_wrap_w =
         if shape == Shape::RailConcat { avail_w - (rail_pane_w + el.label_offset) } else { avail_w };
-    let title_block = crate::common::wrap_title_block(
-        cased_title.as_deref(),
-        r.subtitle.as_deref(),
-        eff_title_ref,
-        title_font_size,
-        crate::common::title_measure_font_size(r.title_style.as_ref()),
-        title_wrap_w,
-        fonts,
-    )?;
+    let new_title = |wrap_w: f64| {
+        FrameTitle::new(
+            r.title.as_deref(),
+            r.subtitle.as_deref(),
+            r.style.title_font.as_ref(),
+            r.title_style.as_ref(),
+            wrap_w,
+            fonts,
+        )
+    };
+    let title = new_title(title_wrap_w)?;
 
     // production's `_correct_concat_overshoot` (`converters/chart.py`) runs
     // `apply_title_overflow_to_spec` TWICE on the rail concat, at two
@@ -3373,7 +3366,7 @@ pub(crate) fn render_line_panel(
     // pre-correction width — which literally equals `payload.width`
     // verbatim (`_wrap_hconcat_label_pane` hands pane 0 the whole target
     // width before any shrink) — and once after, against the corrected
-    // `title_wrap_w` above (`title_block`, the one that paints). The
+    // `title_wrap_w` above (`title`, the one that paints). The
     // height branch of that SAME probe-and-shrink pass decides how much
     // the pane may shrink using ONLY the first (wide) wrap's chrome —
     // it runs before the second, narrower wrap ever exists. A subtitle
@@ -3386,23 +3379,15 @@ pub(crate) fn render_line_panel(
     // chrome the shrink decision never saw, and the correction is
     // single-pass (`docs/laws-line-area.md`'s own citation) — it does
     // not re-run to notice. Two title blocks, never one:
-    // `title_block` (this arm's real, narrow, PAINTED block) decides the
-    // canvas's true chrome; `title_block_probe` (wide, probe-only, never
+    // `title` (this arm's real, narrow, PAINTED block) decides the
+    // canvas's true chrome; `title_probe` (wide, probe-only, never
     // painted) decides how far the pane was allowed to shrink. Only a
     // `payload.measuring` render (`Payload::measuring`'s own doc) ever
     // reads it, so it's only ever built there — every other RailConcat
     // render (the real board paint, at an already-decided slot height)
     // leaves it `None` and pays nothing for it.
-    let title_block_probe = if payload.measuring && shape == Shape::RailConcat {
-        Some(crate::common::wrap_title_block(
-            cased_title.as_deref(),
-            r.subtitle.as_deref(),
-            eff_title_ref,
-            title_font_size,
-            crate::common::title_measure_font_size(r.title_style.as_ref()),
-            svg_w,
-            fonts,
-        )?)
+    let title_probe = if payload.measuring && shape == Shape::RailConcat {
+        Some(new_title(svg_w)?)
     } else {
         None
     };
@@ -3998,9 +3983,8 @@ pub(crate) fn render_line_panel(
                 .unwrap_or(0.0);
             let correction =
                 support_table_strip::support_table_title_offset_correction(title_font_size);
-            title_block
-                .ink
-                .as_ref()
+            title
+                .ink()
                 .map(|t| vega_fit::TitleInk { offset: theme_offset + correction, ..t.clone() })
         });
         // See `facet_compose::PanelGeometry.top_axis_overhang`'s own doc
@@ -4459,19 +4443,19 @@ pub(crate) fn render_line_panel(
         // a fixed card (mirrors bar's own `render_vertical_continuous_x_
         // panel` gate). `composed_title` stays the composed-strip-specific
         // title source; a facet panel's own title is refused before this
-        // seam is ever reached, so `title_block.ink` (empty) is the right
+        // seam is ever reached, so `title.ink()` (empty) is the right
         // fallback, same as the single-chart `fit_plot` arm below reads.
         let m = if composed.is_some() {
             vega_fit::pad_plot(svg_w, svg_h, &mut ink_pass, composed_title.as_ref())
         } else if suppress_x_axis {
-            vega_fit::pad_plot(svg_w, svg_h, &mut ink_pass, title_block.ink.as_ref())
+            vega_fit::pad_plot(svg_w, svg_h, &mut ink_pass, title.ink())
         } else {
             vega_fit::fit_plot(
                 svg_w,
                 svg_h,
                 (pad_l, pad_r, pad_t, pad_b),
                 &mut ink_pass,
-                title_block.ink.as_ref(),
+                title.ink(),
             )
         };
         if let Some(e) = fit_err {
@@ -4857,9 +4841,8 @@ pub(crate) fn render_line_panel(
         // title via `strip_title_offset`, porting production's closed-form
         // correction (`support_table_attachment.py:4425`), same as the
         // composed (non-concat) arm's own `composed_title`.
-        let title_stack = title_block
-            .ink
-            .as_ref()
+        let title_stack = title
+            .ink()
             .map(|ti| ti.ink_h + strip_title_offset.unwrap_or(ti.offset) - ti.dy_quirk)
             .unwrap_or(0.0);
         // The pane-shrink decision's own chrome estimate — the wide,
@@ -4873,13 +4856,13 @@ pub(crate) fn render_line_panel(
         // stack`, matching production's own cached-SVG reuse for that
         // render. The inner `.unwrap_or(0.0)` isn't reachable with a
         // different value than `title_stack` already has: both blocks
-        // wrap the identical `cased_title`, so `title_block_probe.ink`
-        // is `None` exactly when `title_block.ink` is, i.e. exactly when
+        // wrap the identical `cased_title`, so `title_probe.ink`
+        // is `None` exactly when `title.ink()` is, i.e. exactly when
         // `title_stack` is already `0.0` too.
         let title_stack_probe = if payload.measuring {
-            title_block_probe
+            title_probe
                 .as_ref()
-                .and_then(|tb| tb.ink.as_ref())
+                .and_then(|tb| tb.ink())
                 .map(|ti| ti.ink_h + strip_title_offset.unwrap_or(ti.offset) - ti.dy_quirk)
                 .unwrap_or(0.0)
         } else {
@@ -4916,7 +4899,7 @@ pub(crate) fn render_line_panel(
         // over-reserves by `y_extent − y_extent_ink` whenever S6/S8's stub
         // widening raises `y_extent` past its own unrounded extent.
         // Corpus-silent (no swept case's title outruns its mark reach).
-        let title_x2 = title_block.ink.as_ref().map(|ti| {
+        let title_x2 = title.ink().map(|ti| {
             if rail_strip_rows.is_some() {
                 ti.width - y_extent
             } else {
@@ -5134,7 +5117,7 @@ pub(crate) fn render_line_panel(
         // An untitled chart has no title element to hang the strip's offset
         // on, so the strip's height rides the same overhang. One ceil over the
         // whole sum: `top = ceil(-viewBounds.y1)` (`ViewLayout.js:165-168`).
-        let untitled_strip_h = if title_block.ink.is_none() {
+        let untitled_strip_h = if title.ink().is_none() {
             rail_strip_rows.as_ref().map(|(_, strip_h, _)| *strip_h).unwrap_or(0.0)
         } else {
             0.0
@@ -5330,7 +5313,7 @@ pub(crate) fn render_line_panel(
         // directly; this reaches the same anchor without a second title
         // emission path, keeping wrap/subtitle support on the strip's title
         // the way the composed (non-concat) arm already has it).
-        let title_pos = title_block.ink.as_ref().map(|ti| {
+        let title_pos = title.ink().map(|ti| {
             if rail_strip_rows.is_some() {
                 (-left_margin, -top_margin)
             } else {
@@ -5731,15 +5714,7 @@ pub(crate) fn render_line_panel(
     // `aspect_ratio` height on bar.rs's sibling shape, `chrome_bytes`-only,
     // invisible to the pixel-only per-chart ratchet).
     let mut svg = String::with_capacity(32768);
-    let canvas_w_s = py_float_str(canvas_w);
-    let canvas_h_s = py_float_str(canvas_h);
-    let _ = write!(
-        svg,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{canvas_w_s}\" height=\"{canvas_h_s}\" \
-         viewBox=\"0 0 {canvas_w_s} {canvas_h_s}\">"
-    );
-    let body_start = svg.len();
-    let _ = write!(svg, "<rect width=\"{canvas_w_s}\" height=\"{canvas_h_s}\" fill=\"{bg}\"/>", bg = xml_escape_attr(bg));
+    let body_start = ChartFrame::new(canvas_w, canvas_h, (pad_l, pad_r, pad_t, pad_b), bg, py_float_str).open(&mut svg);
     // Byte offset right after the panel's own background rect — a future
     // facet composite splices from here, mirroring bar's own `content_start`
     // (`render_vertical_panel`'s doc comment).
@@ -5755,25 +5730,16 @@ pub(crate) fn render_line_panel(
     // untitled composed strip, which production reserves in the padding.
     let group_x = pad_l + left_margin;
     let group_y = composed_pad_t + top_margin;
-    let title_h = match (vega_title_pos, title_block.title_lines.is_empty()) {
-        (Some((tx, ty)), false) => {
-            crate::common::emit_title_block_vega(
-                &mut svg,
-                &title_block,
-                eff_title_ref,
-                group_x + tx,
-                group_y + ty,
-                title_font_size,
-            );
-            title_font_size + 10.0
-        }
-        _ => crate::common::emit_title(
+    let title_h = if title.paint(&mut svg, vega_title_pos, (group_x, group_y)) {
+        title_font_size + 10.0
+    } else {
+        crate::common::emit_title(
             &mut svg,
             r.title.as_deref(),
             eff_title_ref,
             pad_l + left_margin,
             pad_t,
-        ),
+        )
     };
     // Byte offset within the body where the title's own markup ends — see
     // `support_table_strip::wrap_with_strip`'s doc comment for why a titled
@@ -6937,7 +6903,7 @@ pub(crate) fn render_line_panel(
             // doesn't have) — so the true growth (106px measured, untitled,
             // on a 432-tall slot) is neither this arm's `strip_h`-only
             // formula nor a fixed `payload_h + 48` bound.
-            if style.position == "top" && (!title_block.title_lines.is_empty() || show_rail) {
+            if style.position == "top" && (!title.block().title_lines.is_empty() || show_rail) {
                 return Err(
                     "line: a support_table strip with an active endpoint rail this port's \
                      rail-concat gate doesn't reach (a right value axis, or a kept legend \

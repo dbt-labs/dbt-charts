@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import nanoarrow as na
 import pyarrow as pa
 import pytest
 
@@ -53,12 +54,12 @@ class _Connection:
         self.session_statements: list[str] = []
         self.closed = False
 
-    def execute(self, sql: str, limit: Any) -> pa.Table:
+    def execute(self, sql: str, limit: Any) -> na.Array:
         self.statements.append(sql)
         outcome = self._outcomes.pop(0) if self._outcomes else _TABLE
         if isinstance(outcome, Exception):
             raise outcome
-        return outcome
+        return na.Array(outcome)
 
     def session_sql(self, sql: str) -> None:
         self.session_statements.append(sql)
@@ -347,7 +348,7 @@ class _BlockingConnection(_Connection):
         self.entered = threading.Event()
         self.cancelled = threading.Event()
 
-    def execute(self, sql: str, limit: Any) -> pa.Table:
+    def execute(self, sql: str, limit: Any) -> na.Array:
         self.entered.set()
         assert self.cancelled.wait(10), "interrupt() never cancelled the statement"
         raise RuntimeError("statement cancelled")

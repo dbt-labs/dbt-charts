@@ -57,6 +57,7 @@ use crate::families::facet_title::{layout_title, TitleLayout, TitleSource};
 use crate::families::multiples;
 use crate::families::scatter_axis::TemporalXAxis;
 use crate::families::legend::{size_legend_grid, VEGA_LEGEND_OFFSET, VEGA_LEGEND_TITLE_PADDING};
+use crate::frame::{ChartFrame, FrameTitle};
 use crate::svg::{py_float_str, xml_escape, xml_escape_attr, vega_escape_attr};
 use crate::text::FontBook;
 use crate::vega_fit;
@@ -2100,14 +2101,7 @@ fn render_fit(
         Some(_) => (left_margin + plot_w + m.right, top_margin + plot_h),
         None => (svg_w, svg_h),
     };
-    let svg_w_s = py_float_str(canvas_w);
-    let svg_h_s = py_float_str(canvas_h);
-    let _ = write!(
-        svg,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{svg_w_s}\" height=\"{svg_h_s}\" \
-         viewBox=\"0 0 {svg_w_s} {svg_h_s}\">"
-    );
-    let _ = write!(svg, "<rect width=\"{svg_w_s}\" height=\"{svg_h_s}\" fill=\"{bg}\"/>", bg = xml_escape_attr(bg));
+    ChartFrame::new(canvas_w, canvas_h, (pad_l, pad_r, pad_t, pad_b), bg, py_float_str).open(&mut svg);
     let content_start = svg.len();
 
     if let (Some((tx, ty)), Some(plan)) = (m.title_pos, &title_plan) {
@@ -2980,15 +2974,10 @@ fn render_legacy(
                      x scale)"
             .into());
     }
-    let w = payload.width;
-    let h = payload.height;
-    let pad = payload.padding.as_ref();
-    let pad_l = pad.map(|p| p.left).unwrap_or(0.0);
-    let pad_r = pad.map(|p| p.right).unwrap_or(0.0);
-    let pad_t = pad.map(|p| p.top).unwrap_or(0.0);
-    let pad_b = pad.map(|p| p.bottom).unwrap_or(0.0);
     // The chart's OWN effective background — see `ScatterResolved::background`.
-    let bg = r.background.as_str();
+    let frame = ChartFrame::of(payload, r.background.as_str());
+    let (w, h) = (frame.w, frame.h);
+    let (pad_l, pad_r, pad_t, pad_b) = frame.pad;
 
     let x_field = &r.x;
     let y_field = &r.y;
@@ -3216,12 +3205,7 @@ fn render_legacy(
 
     // ── SVG emission ───────────────────────────────────────────────────────
     let mut svg = String::with_capacity(32768);
-    let _ = write!(
-        svg,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" \
-         viewBox=\"0 0 {w} {h}\">"
-    );
-    let _ = write!(svg, "<rect width=\"{w}\" height=\"{h}\" fill=\"{bg}\"/>", bg = xml_escape_attr(bg));
+    frame.open(&mut svg);
 
     // Title-block law: paint and reservation come from ONE `TitleBlock`
     // (`docs/laws-shared.md`, "Title wrap law"), the `wrap_title_block`/
@@ -3233,33 +3217,16 @@ fn render_legacy(
     // one unwrapped line. This arm never tiers `style.title_font`, so the
     // paint size and `wrap_title_block`'s measure size are the same
     // `title_measure_font_size`.
-    let title_style_ref = r.title_style.as_ref();
-    let title_font_size = crate::common::title_measure_font_size(title_style_ref);
-    let cased_title: Option<String> = match r.title.as_deref() {
-        None => None,
-        Some(t) => {
-            let case = title_style_ref.and_then(|ts| ts.font.case.as_deref()).unwrap_or("none");
-            Some(crate::case::apply_case(t, case)?)
-        }
-    };
-    let title_block = crate::common::wrap_title_block(
-        cased_title.as_deref(),
+    let title = FrameTitle::new(
+        r.title.as_deref(),
         r.subtitle.as_deref(),
-        title_style_ref,
-        title_font_size,
-        title_font_size,
-        w - pad_l - pad_r,
+        None,
+        r.title_style.as_ref(),
+        frame.avail_w(),
         fonts,
     )?;
-    crate::common::emit_title_block_vega(
-        &mut svg,
-        &title_block,
-        title_style_ref,
-        pad_l,
-        pad_t,
-        title_font_size,
-    );
-    let title_h = title_block.ink.as_ref().map_or(0.0, |ink| ink.offset + ink.ink_h);
+    title.paint_at(&mut svg, pad_l, pad_t);
+    let title_h = title.ink().map_or(0.0, |ink| ink.offset + ink.ink_h);
     // The fit arm's own baseline-rule-ink term (`render_fit`'s
     // `Bounds::expand(zx.width)`): a fired x threshold rule's own stroke
     // overhangs the plot top by its FULL width, not half.

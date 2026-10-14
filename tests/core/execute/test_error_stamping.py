@@ -73,10 +73,18 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # an authoring mistake: no board YAML, CLI flag, or variable value can
         # produce it, so there is no author-facing diagnostic to stamp it with.
         ("executor.py", "Executor._enforce_result_limits"),
+        # arrow_ingest.py: TypeError/ValueError are the row-to-Arrow contract;
+        # composition wraps them, and the cache's rows are pre-coerced to fit.
+        ("arrow_ingest.py", "_kind"),
+        ("arrow_ingest.py", "_decimal_type"),
+        ("arrow_ingest.py", "infer_type"),
+        ("arrow_ingest.py", "_unscaled"),
         # file_source_materializer.py
-        ("file_source_materializer.py", "FileSourceMaterializer.materialize_and_run"),
+        ("file_source_materializer.py", "TableLoad.raise_empty"),
         ("file_source_materializer.py", "_parse_json"),
         ("file_source_materializer.py", "_parse_ndjson"),
+        # result.py: an unnamed Arrow column is a driver bug, not authoring.
+        ("result.py", "_name"),
         # sql_literals.py
         ("sql_literals.py", "_to_sql_literal"),
         ("sql_literals.py", "inline_percent_params"),

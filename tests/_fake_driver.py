@@ -11,6 +11,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
+import nanoarrow as na
 import pyarrow as pa
 
 from dbt_charts.core.execute.adapters.base import RowFetchLimit
@@ -20,13 +21,13 @@ class FakeDriverConnection:
     """A ``DriverConnection`` that records its traffic instead of connecting."""
 
     def __init__(self, table: pa.Table) -> None:
-        self._table = table
+        self._table = na.Array(table)
         self.statements: list[str] = []
         self.session_statements: list[str] = []
         self.closed = False
         self.limit: RowFetchLimit | None = None
 
-    def execute(self, sql: str, limit: RowFetchLimit) -> pa.Table:
+    def execute(self, sql: str, limit: RowFetchLimit) -> na.Array:
         self.statements.append(sql)
         self.limit = limit
         return self._table

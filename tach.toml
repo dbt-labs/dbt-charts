@@ -108,6 +108,9 @@ exclude = [
     # dev group). Used by dbt-charts/tests/integration/conftest.py to guard
     # xdist TOCTOU races when creating example fixture DuckDB files.
     "filelock",
+    # Test-only dev deps.
+    "pytest_postgresql",
+    "psycopg",
     # `packaging` is a test-only dev dep (declared in root pyproject.toml dev
     # group). Used by dbt-charts/tests/core/test_packaging_metadata.py to parse
     # declared dependency specifiers with PEP 440 semantics rather than

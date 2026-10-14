@@ -502,7 +502,7 @@ class PostgresSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
     connect_timeout: Annotated[
         int,
         Field(description="Connection timeout in seconds."),
-    ] = 10
+    ] = 5
     role: Annotated[
         str | None,
         Field(description="PostgreSQL role to assume after connecting."),
@@ -772,11 +772,11 @@ class BigQuerySourceConfig(
         ),
     ] = 1
     job_creation_timeout_seconds: Annotated[
-        int | None,
+        int,
         Field(
             description="Timeout in seconds while creating a BigQuery job.",
         ),
-    ] = None
+    ] = 5
     job_execution_timeout_seconds: Annotated[
         int | None,
         Field(
@@ -918,7 +918,9 @@ class RedshiftSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
     ] = False
     connect_timeout: Annotated[
         int | None,
-        Field(description="Connection timeout in seconds."),
+        Field(
+            description="Socket timeout in seconds for the whole connection, including every read. Unset: dbt Charts uses max_query_duration_seconds plus headroom so the server's statement timeout fires first. A larger authored value wins."
+        ),
     ] = None
     role: Annotated[
         str | None,
@@ -1088,10 +1090,9 @@ class DatabricksSourceConfig(
 ):
     """Databricks source configuration.
 
-    Field names match dbt profiles.yml exactly, with one exception:
-    ``socket_timeout`` is a dbt charts-only field — ``build_adapter`` folds it
-    into ``connection_parameters._socket_timeout`` on the way to the
-    credentials class, since dbt-databricks has no top-level field for it.
+    Field names match dbt profiles.yml exactly, with two exceptions:
+    ``socket_timeout`` and ``connect_timeout`` are dbt Charts-specific;
+    ``build_adapter`` maps them onto dbt-databricks' connection parameters.
     ``catalog`` is required: dbt's own ``__post_init__`` silently defaults an
     unset catalog to ``hive_metastore``.
 
@@ -1135,21 +1136,21 @@ class DatabricksSourceConfig(
         ),
     ] = 1
     connect_timeout: Annotated[
-        int | None,
+        int,
         Field(
-            description="Seconds to wait between connection retry attempts, not a limit on how long a single attempt may take. Has no effect unless retry_all is also set to true."
+            description="Seconds a connection attempt may keep retrying while the SQL warehouse starts. Replaces the driver's own retry budget, which defaults to about 15 minutes."
         ),
-    ] = None
+    ] = 15
     socket_timeout: Annotated[
         int | None,
         Field(
-            description="Socket read timeout in seconds for the SQL warehouse connection. It also replaces the driver's own retry budget for a failed connection, which defaults to about 15 minutes, so a value below that shortens a hang against an unreachable warehouse while a larger value lengthens it."
+            description="Socket read timeout in seconds for the SQL warehouse connection."
         ),
     ] = None
     retry_all: Annotated[
         bool,
         Field(
-            description="Whether dbt Charts itself retries a failed connection attempt, using connect_retries and connect_timeout. False (the default) means dbt Charts does not retry; the Databricks driver still retries certain connection failures on its own regardless of this setting."
+            description="Whether dbt Charts itself retries a failed connection attempt, with connect_retries setting how many attempts. False (the default) means dbt Charts does not retry; the Databricks driver still retries certain connection failures on its own regardless of this setting."
         ),
     ] = False
 

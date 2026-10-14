@@ -451,9 +451,9 @@ pub struct SVGRenderer {
     heading_slot: Option<FontSlot>,
     max_content_width: Cell<f64>,
     used_fonts: RefCell<HashSet<&'static str>>,
-    /// Python's `fetch_image_sizes` (default true): whether an image block asks
-    /// its source for an intrinsic size. Board prose turns it off, so an image
-    /// there is sized by its authored `{width= height=}` or the style alone.
+    /// Python's `fetch_image_sizes` (default false): whether an image block asks
+    /// its source for an intrinsic size. Off, an image is sized by its authored
+    /// `{width= height=}` or the style alone. On is not ported and refuses.
     fetch_image_sizes: bool,
 }
 
@@ -503,7 +503,7 @@ impl SVGRenderer {
             heading_slot: fonts.heading.clone(),
             max_content_width: Cell::new(0.0),
             used_fonts: RefCell::new(HashSet::new()),
-            fetch_image_sizes: true,
+            fetch_image_sizes: false,
         })
     }
 

@@ -27,6 +27,7 @@ use d3rs::sankey_circular::SankeyCircular;
 
 use crate::common::{emit_title, Font, TitleStyle};
 use crate::contract::{aria_attr, mark_group_close, mark_group_open, ItemRole, MUTED, ROLE_HEADER};
+use crate::frame::ChartFrame;
 use crate::svg::{num, xml_escape, xml_escape_attr};
 use crate::text::FontBook;
 use crate::Payload;
@@ -339,18 +340,10 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
     }
     out.push_str("</g>");
 
-    let (w, h) = (payload.width, payload.height);
-    Ok(format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" \
-         height=\"{}\" viewBox=\"0 0 {} {}\"><rect width=\"{}\" height=\"{}\" fill=\"{}\"/>{out}</svg>",
-        num(w),
-        num(h),
-        num(w),
-        num(h),
-        num(w),
-        num(h),
-        xml_escape_attr(&r.background),
-    ))
+    let mut svg = String::new();
+    ChartFrame::new(payload.width, payload.height, (pad.left, pad.right, pad.top, pad.bottom), &r.background, num)
+        .open(&mut svg);
+    Ok(svg + &out + "</svg>")
 }
 
 /// A label's advance at its painted weight.

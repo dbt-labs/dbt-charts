@@ -96,7 +96,8 @@ use crate::families::temporal::{
     temporal_label_half_width, AuthoredTimeFormat, TemporalLabel, TimeUnit, complete_buckets, parse_domain_dates,
     scaffold_within_budget};
 use crate::contract::Reads;
-use crate::svg::{py_float_str, xml_escape, xml_escape_attr, vega_escape_attr};
+use crate::frame::{ChartFrame, FrameTitle};
+use crate::svg::{num_full, py_float_str, xml_escape, xml_escape_attr, vega_escape_attr};
 use crate::text::FontBook;
 use crate::vega_fit;
 use crate::{Padding, Payload};
@@ -1317,8 +1318,8 @@ pub fn render_empty(payload: &Payload, fonts: &FontBook) -> Result<String, Strin
         return Err(format!("bar: empty result set not supported with {what}"));
     }
     let val_on_right = crate::families::empty::value_axis_on_right("bar", ax_y)?;
-    let card = crate::families::empty::Card::of(payload);
-    let titled = head.titled(card.w - card.pad.0 - card.pad.1, fonts)?;
+    let frame = crate::frame::ChartFrame::of(payload, &head.background);
+    let title = head.title(&frame, fonts)?;
 
     let val_family = ax_y.labels.font.family.as_deref().ok_or("bar: axis_y.labels.font.family absent (theme required)")?;
     let val_font_size = ax_y.labels.font.size.ok_or("bar: axis_y.labels.font.size absent (theme required)")?;
@@ -1345,11 +1346,12 @@ pub fn render_empty(payload: &Payload, fonts: &FontBook) -> Result<String, Strin
         }
         crate::families::empty::union_axis_groups(b, (pw, ph), (off_x, off_y), val_on_right);
     };
-    let m = card.fit("bar", &titled, &mut ink)?;
-    let (plot_left, plot_top) = (card.pad.0 + m.left, card.pad.2 + m.top);
+    let m = frame.fit("bar", &title, &mut ink)?;
+    let (plot_left, plot_top) = frame.origin(&m);
 
-    let mut svg = card.open(&head.background);
-    head.paint_title(&mut svg, &titled, &m, plot_left, plot_top);
+    let mut svg = String::new();
+    frame.open(&mut svg);
+    title.paint(&mut svg, m.title_pos, (plot_left, plot_top));
     // The zero-extent domain's one rung at the range midpoint; `tickRound`
     // snaps the rule to a whole pixel, the label keeps the exact position.
     let mid = LinearScale::new(0.0, 0.0, m.plot_h, 0.0).position(0.0);
@@ -3481,15 +3483,6 @@ fn render_horizontal_panel(
         + block.as_ref().filter(|b| b.side == Side::Left).map_or(0.0, ColumnBlock::footprint);
     let cat_gutter = if cat_flip { cat_label_pad } else { cat_label_pad + cat_w };
 
-    let title_fs = title_ref.map(|t| t.font.size_or(18.0)).unwrap_or(18.0);
-    let cased_title: Option<String> = match r.title.as_deref() {
-        None => None,
-        Some(t) => {
-            let case =
-                title_ref.and_then(|s| s.font.case.as_deref()).unwrap_or("none");
-            Some(crate::case::apply_case(t, case)?)
-        }
-    };
 
     // Vega's parity overlap on the value labels (`labelSeparation` is the
     // theme's min_gap; production forwards none when unset, Vega's 0). The
@@ -3503,15 +3496,15 @@ fn render_horizontal_panel(
     // padded card — this arm's vconcat top rail included, since production
     // stamps the width on the concat ROOT and defers only the hconcat pane
     // basis (`vega_lite.py`'s `if "hconcat" not in vl`).
-    let title_block = crate::common::wrap_title_block(
-        cased_title.as_deref(),
+    let title = FrameTitle::new(
+        r.title.as_deref(),
         r.subtitle.as_deref(),
-        title_ref,
-        title_fs,
-        crate::common::title_measure_font_size(r.title_style.as_ref()),
+        r.style.title_font.as_ref(),
+        r.title_style.as_ref(),
         w - pad_l - pad_r,
         fonts,
     )?;
+    let title_fs = title.font_size;
     let (plot_left, plot_top, plot_w, plot_h, vega_title_pos, vega_legend, canvas_w, canvas_h) = if use_vega_fit {
         let measure_labels = |labels: &[String]| -> Result<Vec<f64>, String> {
             labels.iter().map(|l| fonts.measure_shaped(l, val_family, val_font_size)).collect()
@@ -3656,14 +3649,14 @@ fn render_horizontal_panel(
                     ink(tick_values, val_label_ws, pw, ph, b);
                     block.ink(b, style, pw);
                 },
-                title_block.ink.as_ref(),
+                title.ink(),
             ),
             _ => vega_fit::fit_plot(
                 w,
                 h,
                 (pad_l, pad_r, pad_t, pad_b),
                 |pw, ph, b| ink(tick_values, val_label_ws, pw, ph, b),
-                title_block.ink.as_ref(),
+                title.ink(),
             ),
         };
         let mut m = fit(&tick_values, &val_label_ws);
@@ -3719,27 +3712,10 @@ fn render_horizontal_panel(
 
     // ── SVG emission ───────────────────────────────────────────────────────
     let mut svg = String::with_capacity(16384);
-    let _ = write!(
-        svg,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{canvas_w}\" height=\"{canvas_h}\" \
-         viewBox=\"0 0 {canvas_w} {canvas_h}\">"
-    );
-    let _ = write!(svg, "<rect width=\"{canvas_w}\" height=\"{canvas_h}\" fill=\"{bg}\"/>", bg = xml_escape_attr(bg));
+    ChartFrame::new(canvas_w, canvas_h, (pad_l, pad_r, pad_t, pad_b), bg, num_full).open(&mut svg);
 
-    match (vega_title_pos, title_block.title_lines.is_empty()) {
-        (Some((tx, ty)), false) => {
-            crate::common::emit_title_block_vega(
-                &mut svg,
-                &title_block,
-                title_ref,
-                plot_left + tx,
-                plot_top + ty,
-                title_fs,
-            );
-        }
-        _ => {
-            emit_title(&mut svg, r.title.as_deref(), title_ref, pad_l, pad_t);
-        }
+    if !title.paint(&mut svg, vega_title_pos, (plot_left, plot_top)) {
+        emit_title(&mut svg, r.title.as_deref(), title_ref, pad_l, pad_t);
     }
 
     let band = BandScale::new(cat_domain.clone(), 0.0, plot_h, band_pi, band_po);
@@ -4605,11 +4581,6 @@ fn render_vertical_continuous_x_panel(
     // single-chart wrapper.
     value_axis_right_overhang: f64,
 ) -> Result<Option<(String, PanelGeometry)>, String> {
-    let eff_title_style = crate::common::effective_title_style(
-        r.style.title_font.as_ref(),
-        r.title_style.as_ref(),
-    );
-    let title_ref = eff_title_style.as_ref().or(r.title_style.as_ref());
     // Production's routing predicate is `is_vega_numeric_value`
     // (type_inference.py), which deliberately does NOT accept numeric
     // strings — a string-typed numeric column compiles a NOMINAL band
@@ -4825,24 +4796,15 @@ fn render_vertical_continuous_x_panel(
         0.0
     };
 
-    let title_font_size = title_ref.map(|ts| ts.font.size_or(18.0)).unwrap_or(18.0);
-    let cased_title: Option<String> = match r.title.as_deref() {
-        None => None,
-        Some(t) => {
-            let case = title_ref.and_then(|ts| ts.font.case.as_deref()).unwrap_or("none");
-            Some(crate::case::apply_case(t, case)?)
-        }
-    };
     // The same title block the band arms compile: production runs
     // `apply_title_overflow_to_spec` on this unit spec too, so a title or
     // subtitle wider than the padded card wraps to two measured lines and
     // the group grows by `fontSize + 2` per extra line.
-    let title_block = crate::common::wrap_title_block(
-        cased_title.as_deref(),
+    let title = FrameTitle::new(
+        r.title.as_deref(),
         r.subtitle.as_deref(),
-        title_ref,
-        title_font_size,
-        crate::common::title_measure_font_size(r.title_style.as_ref()),
+        r.style.title_font.as_ref(),
+        r.title_style.as_ref(),
         avail_w,
         fonts,
     )?;
@@ -4987,9 +4949,9 @@ fn render_vertical_continuous_x_panel(
             }
     };
     let m = if suppress_x_axis {
-        vega_fit::pad_plot(svg_w, svg_h, &mut ink_pass, title_block.ink.as_ref())
+        vega_fit::pad_plot(svg_w, svg_h, &mut ink_pass, title.ink())
     } else {
-        vega_fit::fit_plot(svg_w, svg_h, (pad_l, pad_r, pad_t, pad_b), &mut ink_pass, title_block.ink.as_ref())
+        vega_fit::fit_plot(svg_w, svg_h, (pad_l, pad_r, pad_t, pad_b), &mut ink_pass, title.ink())
     };
     if let Some(e) = fit_err {
         return Err(e);
@@ -5025,28 +4987,12 @@ fn render_vertical_continuous_x_panel(
     // vs production's `"298.6666666666667"`, a `chrome_bytes`-only board-
     // sweep DIFF invisible to the pixel-only per-chart ratchet).
     let mut svg = String::with_capacity(16384);
-    let svg_w_s = py_float_str(svg_w);
-    let svg_h_s = py_float_str(svg_h);
-    let _ = write!(
-        svg,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{svg_w_s}\" height=\"{svg_h_s}\" \
-         viewBox=\"0 0 {svg_w_s} {svg_h_s}\">"
-    );
-    let _ = write!(svg, "<rect width=\"{svg_w_s}\" height=\"{svg_h_s}\" fill=\"{bg}\"/>", bg = xml_escape_attr(bg));
+    ChartFrame::new(svg_w, svg_h, (pad_l, pad_r, pad_t, pad_b), bg, py_float_str).open(&mut svg);
     // Byte offset right after the panel's own background rect — see the
     // matching capture point in `render_vertical_panel`'s doc comment
     // (`content_start`/`svg_end`'s own byte-splice convention).
     let content_start = svg.len();
-    if let Some((tx, ty)) = m.title_pos {
-        crate::common::emit_title_block_vega(
-            &mut svg,
-            &title_block,
-            title_ref,
-            pad_l + m.left + tx,
-            pad_t + m.top + ty,
-            title_font_size,
-        );
-    }
+    title.paint(&mut svg, m.title_pos, (pad_l + m.left, pad_t + m.top));
     let group_x = pad_l + m.left;
     let group_y = pad_t + m.top;
     let _ = write!(svg, "<g transform=\"translate({group_x:.3},{group_y:.3})\">");
@@ -7084,15 +7030,6 @@ pub(crate) fn render_vertical_panel(
         None
     };
 
-    let title_fs = title_ref.map(|t| t.font.size_or(18.0)).unwrap_or(18.0);
-    let cased_title: Option<String> = match r.title.as_deref() {
-        None => None,
-        Some(t) => {
-            let case =
-                title_ref.and_then(|s| s.font.case.as_deref()).unwrap_or("none");
-            Some(crate::case::apply_case(t, case)?)
-        }
-    };
 
     // Composed support_table arm (any x type — probed on both a temporal
     // `weekly_bar` and a nominal `product_bar`): the reference renderer's
@@ -7263,15 +7200,15 @@ pub(crate) fn render_vertical_panel(
     // which bar's `right_pane` rail compiles to exactly as line's does.
     let title_wrap_w =
         if shape == Shape::RailConcat { avail_w - (rail_pane_w + el.label_offset) } else { avail_w };
-    let title_block = crate::common::wrap_title_block(
-        cased_title.as_deref(),
+    let title = FrameTitle::new(
+        r.title.as_deref(),
         r.subtitle.as_deref(),
-        title_ref,
-        title_fs,
-        crate::common::title_measure_font_size(r.title_style.as_ref()),
+        r.style.title_font.as_ref(),
+        r.title_style.as_ref(),
         title_wrap_w,
         fonts,
     )?;
+    let title_fs = title.font_size;
     let mut rail_anchors: Vec<(String, f64)> = Vec::new();
     // The cascade's packing bounds — production's raw stacked extent, not
     // the rendered domain (see `raw_stacked_max`). Set by the rail arm.
@@ -7430,7 +7367,7 @@ pub(crate) fn render_vertical_panel(
         // The margins are closed-form here, with no ink bounds for
         // `vega_fit::pad_plot` to ceil, so its per-margin law is restated.
         let plot_top = pad_t
-            + if cased_title.is_some() {
+            + if title.text.is_some() {
                 (title_fs
                     + title_offset_theme
                     + support_table_strip::support_table_title_offset_correction(title_fs)
@@ -7662,9 +7599,8 @@ pub(crate) fn render_vertical_panel(
         // `strip_title_offset`, porting production's closed-form correction
         // (`support_table_attachment.py:4425`), same as the composed
         // (non-concat) arm's own `plot_top` term.
-        let title_stack = title_block
-            .ink
-            .as_ref()
+        let title_stack = title
+            .ink()
             .map(|ti| ti.ink_h + strip_title_offset.unwrap_or(ti.offset) - ti.dy_quirk)
             .unwrap_or(0.0);
         // support_table (S7): the pane keeps its OWN `autosize: pad` — its
@@ -7765,7 +7701,7 @@ pub(crate) fn render_vertical_panel(
         // directly instead (the same split `apply_chart_support_table_post_pass`
         // makes) — bar has no separate `composed_pad_t`, so it lands here.
         let ink_ext = rail_strip_rows.as_ref().map(|(_, _, ie)| *ie).unwrap_or(0.0);
-        let untitled_strip_h = if title_block.ink.is_none() {
+        let untitled_strip_h = if title.ink().is_none() {
             rail_strip_rows.as_ref().map(|(_, sh, _)| *sh).unwrap_or(0.0)
         } else {
             0.0
@@ -7829,7 +7765,7 @@ pub(crate) fn render_vertical_panel(
         // 2: the old separate `emit_title_vega(pad_l, pad_t)` bypass drew
         // the title only, silently dropping a subtitle `title_stack` still
         // reserved room for).
-        let title_pos = title_block.ink.as_ref().map(|ti| {
+        let title_pos = title.ink().map(|ti| {
             if rail_strip_rows.is_some() {
                 (-left_margin, -top_margin)
             } else {
@@ -8182,9 +8118,9 @@ pub(crate) fn render_vertical_panel(
                 }
             };
             if suppress_x_axis {
-                vega_fit::pad_plot(w, h, &mut ink_pass, title_block.ink.as_ref())
+                vega_fit::pad_plot(w, h, &mut ink_pass, title.ink())
             } else {
-                vega_fit::fit_plot(w, h, (pad_l, pad_r, pad_t, pad_b), &mut ink_pass, title_block.ink.as_ref())
+                vega_fit::fit_plot(w, h, (pad_l, pad_r, pad_t, pad_b), &mut ink_pass, title.ink())
             }
         };
         let (mut tick_values, mut val_tick_labels, mut max_val_w, mut val_gutter) =
@@ -8316,8 +8252,8 @@ pub(crate) fn render_vertical_panel(
         // draws (`horizontal_arm_draws_and_reserves_the_subtitle`'s doc
         // comment names the identical fix on the horizontal arm). With no
         // subtitle, this stays the old flat formula.
-        let title_band = if !title_block.sub_lines.is_empty() {
-            title_block.ink.as_ref().map_or(0.0, |ti| ti.offset + ti.ink_h)
+        let title_band = if !title.block().sub_lines.is_empty() {
+            title.ink().map_or(0.0, |ti| ti.offset + ti.ink_h)
         } else if r.title.is_some() {
             title_fs + 10.0
         } else {
@@ -8403,13 +8339,7 @@ pub(crate) fn render_vertical_panel(
     // flip-aligned label conventions (hero_bookings ref).
     let vega_emission = shape.is_vega();
     let mut svg = String::with_capacity(16384);
-    let _ = write!(
-        svg,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{canvas_w}\" height=\"{canvas_h}\" \
-         viewBox=\"0 0 {canvas_w} {canvas_h}\">"
-    );
-    let body_start = svg.len();
-    let _ = write!(svg, "<rect width=\"{canvas_w}\" height=\"{canvas_h}\" fill=\"{bg}\"/>", bg = xml_escape_attr(bg));
+    let body_start = ChartFrame::new(canvas_w, canvas_h, (pad_l, pad_r, pad_t, pad_b), bg, num_full).open(&mut svg);
     // Byte offset right after the panel's own background rect — a facet
     // composite splices from here (its own single background rect already
     // covers every panel), mirroring `title_split`'s same byte-offset-splice
@@ -8420,7 +8350,7 @@ pub(crate) fn render_vertical_panel(
         // Composed (non-concat) strip: the title anchors to the canvas
         // padding edge (Vega's own top-anchored title bounds — baseline at
         // pad_t + baseline_shift("top")), never to the negotiated plot box.
-        if let Some(text) = cased_title.as_deref() {
+        if let Some(text) = title.text.as_deref() {
             crate::common::emit_title_vega(&mut svg, text, title_ref, pad_l, pad_t, true);
         }
     } else {
@@ -8442,29 +8372,17 @@ pub(crate) fn render_vertical_panel(
         // targeted fix — a no-op when `sub_lines` is empty (no subtitle, or
         // no title to hang one under — `wrap_title_block` only fills a
         // subtitle when the title itself wrapped to a line).
-        match (vega_title_pos, title_block.title_lines.is_empty()) {
-            (Some((tx, ty)), false) => {
-                crate::common::emit_title_block_vega(
+        if !title.paint(&mut svg, vega_title_pos, (plot_left, plot_top)) {
+            emit_title(&mut svg, r.title.as_deref(), title_ref, pad_l, pad_t);
+            if !title.block().sub_lines.is_empty() {
+                crate::common::emit_subtitle_vega(
                     &mut svg,
-                    &title_block,
+                    &title.block().sub_lines,
                     title_ref,
-                    plot_left + tx,
-                    plot_top + ty,
+                    pad_l,
+                    pad_t,
                     title_fs,
                 );
-            }
-            _ => {
-                emit_title(&mut svg, r.title.as_deref(), title_ref, pad_l, pad_t);
-                if !title_block.sub_lines.is_empty() {
-                    crate::common::emit_subtitle_vega(
-                        &mut svg,
-                        &title_block.sub_lines,
-                        title_ref,
-                        pad_l,
-                        pad_t,
-                        title_fs,
-                    );
-                }
             }
         }
     }
@@ -9997,7 +9915,7 @@ pub(crate) fn render_vertical_panel(
             per_series_ink,
             canvas_w,
             canvas_h,
-            has_title: cased_title.is_some(),
+            has_title: title.text.is_some(),
             axis: facet_compose::PanelXAxis::Band(x_axis),
             top_axis_overhang,
             facet_legend,
@@ -11468,12 +11386,7 @@ impl<'a> LabelStyle<'a> {
         Ok(LabelStyle {
             position,
             font: label_font(ml, default_family),
-            font_style: ml
-                .font
-                .as_ref()
-                .and_then(|f| f.style.as_deref())
-                .map(|s| format!(" font-style=\"{}\"", xml_escape_attr(s)))
-                .unwrap_or_default(),
+            font_style: ml.font.as_ref().map(Font::style_attr).unwrap_or_default(),
             inside_bar: matches!(position, "top" | "middle"),
             horizontal_offset,
         })

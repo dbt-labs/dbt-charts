@@ -1,0 +1,78 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+# Florence Nightingale's "Diagram of the causes of mortality in the army in the
+# East" (1858), redrawn with the nightingale_rose template.
+title: Causes of mortality in the army in the East
+notes: |
+  After Florence Nightingale's diagram in *Notes on Matters Affecting the
+  Health, Efficiency, and Hospital Administration of the British Army* (1858).
+  Monthly deaths of British soldiers in the Crimean War, as annual rates per
+  1,000 of the army, the measure Nightingale drew. Wedge area, not radius, is
+  proportional to the rate. Deaths and army strength are the figures she
+  published; the query turns them into rates.
+style:
+  frame:
+    width: 1400
+  charts:
+    category_colors:
+      series:
+        values:
+          disease: "#9db4c8"
+          wounds: "#e0928e"
+          other_causes: "#4b4b4b"
+queries:
+  mortality:
+    source: examples_db
+    sql: |
+      SELECT
+        month,
+        period,
+        round(disease * 12000.0 / army, 1) AS disease,
+        round(wounds * 12000.0 / army, 1) AS wounds,
+        round(other * 12000.0 / army, 1) AS other_causes
+      FROM (VALUES
+        (1, 'Apr 1854', 'April 1854 to March 1855', 8571, 1, 0, 5),
+        (2, 'May 1854', 'April 1854 to March 1855', 23333, 12, 0, 9),
+        (3, 'Jun 1854', 'April 1854 to March 1855', 28333, 11, 0, 6),
+        (4, 'Jul 1854', 'April 1854 to March 1855', 28722, 359, 0, 23),
+        (5, 'Aug 1854', 'April 1854 to March 1855', 30246, 828, 1, 30),
+        (6, 'Sep 1854', 'April 1854 to March 1855', 30290, 788, 81, 70),
+        (7, 'Oct 1854', 'April 1854 to March 1855', 30643, 503, 132, 128),
+        (8, 'Nov 1854', 'April 1854 to March 1855', 29736, 844, 287, 106),
+        (9, 'Dec 1854', 'April 1854 to March 1855', 32779, 1725, 114, 131),
+        (10, 'Jan 1855', 'April 1854 to March 1855', 32393, 2761, 83, 324),
+        (11, 'Feb 1855', 'April 1854 to March 1855', 30919, 2120, 42, 361),
+        (12, 'Mar 1855', 'April 1854 to March 1855', 30107, 1205, 32, 172),
+        (13, 'Apr 1855', 'April 1855 to March 1856', 32252, 477, 48, 57),
+        (14, 'May 1855', 'April 1855 to March 1856', 35473, 508, 49, 37),
+        (15, 'Jun 1855', 'April 1855 to March 1856', 38863, 802, 209, 31),
+        (16, 'Jul 1855', 'April 1855 to March 1856', 42647, 382, 134, 33),
+        (17, 'Aug 1855', 'April 1855 to March 1856', 44614, 483, 164, 25),
+        (18, 'Sep 1855', 'April 1855 to March 1856', 47751, 189, 276, 20),
+        (19, 'Oct 1855', 'April 1855 to March 1856', 46852, 128, 53, 18),
+        (20, 'Nov 1855', 'April 1855 to March 1856', 37853, 178, 33, 32),
+        (21, 'Dec 1855', 'April 1855 to March 1856', 43217, 91, 18, 28),
+        (22, 'Jan 1856', 'April 1855 to March 1856', 44212, 42, 2, 48),
+        (23, 'Feb 1856', 'April 1855 to March 1856', 43485, 24, 0, 19),
+        (24, 'Mar 1856', 'April 1855 to March 1856', 46140, 15, 0, 35)
+      ) AS t(seq, month, period, army, disease, wounds, other)
+      ORDER BY seq
+charts:
+  rose:
+    type: custom
+    template: nightingale_rose
+    query: mortality
+    style:
+      aspect_ratio: 2.1
+    x: month
+    y: [disease, wounds, other_causes]
+    options:
+      panel: period
+      value_format: ",.0f"
+rows:
+  - text: |
+      Blue is death from preventable or mitigable disease, red from wounds,
+      and black from all other causes, each an annual rate per 1,000 soldiers.
+      In January 1855 disease alone was killing at a rate of more than 1,000
+      per 1,000 a year: the whole army, had it lasted twelve months. The
+      sanitary commission arrived in March 1855, and the second rose shrinks.
+  - rose

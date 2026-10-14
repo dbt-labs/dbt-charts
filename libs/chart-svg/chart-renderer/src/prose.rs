@@ -383,10 +383,7 @@ pub fn render_prose_svg(
     if allow_raw_html && mdsvg::types::contains_raw_html(&blocks) {
         return Err("board text raw HTML not modeled (html_policy: trusted-raw)".to_string());
     }
-    // Board prose never reads an image's source for a size (`prose.py`
-    // passes `fetch_image_sizes=False`), so an image is sized by its authored
-    // dims or the style alone.
-    let renderer = mdsvg::renderer::SVGRenderer::new(style, fonts)?.with_fetch_image_sizes(false);
+    let renderer = mdsvg::renderer::SVGRenderer::new(style, fonts)?;
 
     let pad = card_padding;
     let mut boxes = span_boxes(width + 2.0 * pad, plan);

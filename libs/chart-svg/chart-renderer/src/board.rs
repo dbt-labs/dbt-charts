@@ -2017,6 +2017,7 @@ fn render_error_card_svg(
     });
     let placard = crate::Payload {
         cell_text: Vec::new(),
+        max_template_output_bytes: None,
         resolved,
         rows: Vec::new(),
         width,
@@ -2290,6 +2291,8 @@ fn render_chart_item(
 
     let chart_payload = Payload {
         cell_text: Vec::new(),
+        // The composer sizes no custom chart (`sizing`), so no template runs here.
+        max_template_output_bytes: None,
         resolved: chart_json.clone(),
         rows: rows.clone(),
         width: slot_w,

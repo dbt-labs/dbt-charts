@@ -11,7 +11,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::common::{AxisStyle, Font, TitleBlock, TitleStyle};
+use crate::common::{AxisStyle, Font, TitleStyle};
 use crate::contract::stamp_view_root;
 use crate::diagnostic::Diagnostic;
 use crate::families::{bar, kpi, pie, spark_bar, table};
@@ -19,9 +19,9 @@ use crate::families::legend::{
     emit_vega_legend, legend_title_text, refuse_slide_blocker, vega_legend, LegendConfig,
     LegendSymbol, VEGA_LEGEND_OFFSET,
 };
-use crate::svg::xml_escape_attr;
+use crate::frame::{ChartFrame, FrameTitle};
 use crate::text::FontBook;
-use crate::vega_fit::{self, FitMargins};
+use crate::vega_fit;
 use crate::Payload;
 
 pub fn render(chart_type: &str, payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
@@ -73,62 +73,6 @@ pub(crate) struct HeadStyle {
     pub(crate) axis_y: AxisStyle,
     #[serde(default)]
     title_font: Option<Font>,
-}
-
-/// The chart title after production's overflow wrap, with the fit ink it
-/// reserves.
-pub(crate) struct Titled {
-    block: TitleBlock,
-    style: Option<TitleStyle>,
-    font_size: f64,
-}
-
-/// The card geometry every zero-row chart is fitted into.
-pub(crate) struct Card {
-    pub(crate) w: f64,
-    pub(crate) h: f64,
-    pub(crate) pad: (f64, f64, f64, f64),
-}
-
-impl Card {
-    pub(crate) fn of(payload: &Payload) -> Card {
-        let pad = payload.padding.as_ref();
-        Card {
-            w: payload.width,
-            h: payload.height,
-            pad: (
-                pad.map_or(0.0, |p| p.left),
-                pad.map_or(0.0, |p| p.right),
-                pad.map_or(0.0, |p| p.top),
-                pad.map_or(0.0, |p| p.bottom),
-            ),
-        }
-    }
-
-    /// `fit_plot` over `ink` and the title, or the named refusal when nothing
-    /// is left for the plot.
-    pub(crate) fn fit(
-        &self,
-        family: &str,
-        titled: &Titled,
-        ink: &mut impl FnMut(f64, f64, &mut vega_fit::Bounds),
-    ) -> Result<FitMargins, String> {
-        let m = vega_fit::fit_plot(self.w, self.h, self.pad, ink, titled.block.ink.as_ref());
-        if m.plot_w <= 0.0 || m.plot_h <= 0.0 {
-            return Err(format!("{family}: chart box {}×{} too small for content", self.w, self.h));
-        }
-        Ok(m)
-    }
-
-    /// The opening `<svg>` and background rect.
-    pub(crate) fn open(&self, background: &str) -> String {
-        let (w, h) = (self.w, self.h);
-        format!(
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" \
-             viewBox=\"0 0 {w} {h}\"><rect width=\"{w}\" height=\"{h}\" fill=\"{}\"/>",
-            xml_escape_attr(background)
-        )
-    }
 }
 
 /// The shapes a family's zero-row drawing covers beyond the plain single
@@ -187,54 +131,16 @@ impl Head {
         self.color.as_deref()
     }
 
-    /// The title block for a card `avail_w` wide (`common::wrap_title_block`,
-    /// the law every Vega family shares).
-    pub(crate) fn titled(&self, avail_w: f64, fonts: &FontBook) -> Result<Titled, String> {
-        let style = crate::common::effective_title_style(
+    /// The chart title, wrapped against the frame's padded width.
+    pub(crate) fn title(&self, frame: &ChartFrame, fonts: &FontBook) -> Result<FrameTitle, String> {
+        FrameTitle::new(
+            self.title.as_deref(),
+            self.subtitle.as_deref(),
             self.style.title_font.as_ref(),
             self.title_style.as_ref(),
-        );
-        let style_ref = style.as_ref().or(self.title_style.as_ref());
-        let font_size = style_ref.map(|t| t.font.size_or(18.0)).unwrap_or(18.0);
-        let cased_title = match self.title.as_deref() {
-            None => None,
-            Some(t) => {
-                let case = style_ref.and_then(|s| s.font.case.as_deref()).unwrap_or("none");
-                Some(crate::case::apply_case(t, case)?)
-            }
-        };
-        let block = crate::common::wrap_title_block(
-            cased_title.as_deref(),
-            self.subtitle.as_deref(),
-            style_ref,
-            font_size,
-            crate::common::title_measure_font_size(self.title_style.as_ref()),
-            avail_w,
+            frame.avail_w(),
             fonts,
-        )?;
-        Ok(Titled { block, style, font_size })
-    }
-
-    /// Paints the title block where the fit put it, relative to the plot origin.
-    pub(crate) fn paint_title(
-        &self,
-        svg: &mut String,
-        titled: &Titled,
-        m: &FitMargins,
-        plot_left: f64,
-        plot_top: f64,
-    ) {
-        if let (Some((tx, ty)), false) = (m.title_pos, titled.block.title_lines.is_empty()) {
-            let style = titled.style.as_ref().or(self.title_style.as_ref());
-            crate::common::emit_title_block_vega(
-                svg,
-                &titled.block,
-                style,
-                plot_left + tx,
-                plot_top + ty,
-                titled.font_size,
-            );
-        }
+        )
     }
 }
 
@@ -295,8 +201,8 @@ pub(crate) fn union_axis_groups(
 fn render_inkless(family: &str, payload: &Payload, fonts: &FontBook) -> Result<String, String> {
     let head = Head::parse(family, &payload.resolved)?;
     head.refuse_unmodeled(family, Allow::default())?;
-    let card = Card::of(payload);
-    let titled = head.titled(card.w - card.pad.0 - card.pad.1, fonts)?;
+    let frame = ChartFrame::of(payload, &head.background);
+    let title = head.title(&frame, fonts)?;
     let val_on_right = value_axis_on_right(family, &head.style.axis_y)?;
     let offsets = (
         head.style.axis_x.ticks.offset.unwrap_or(0.0),
@@ -305,9 +211,10 @@ fn render_inkless(family: &str, payload: &Payload, fonts: &FontBook) -> Result<S
     let mut ink = |pw: f64, ph: f64, b: &mut vega_fit::Bounds| {
         union_axis_groups(b, (pw, ph), offsets, val_on_right);
     };
-    let m = card.fit(family, &titled, &mut ink)?;
-    let mut svg = card.open(&head.background);
-    head.paint_title(&mut svg, &titled, &m, card.pad.0 + m.left, card.pad.2 + m.top);
+    let m = frame.fit(family, &title, &mut ink)?;
+    let mut svg = String::new();
+    frame.open(&mut svg);
+    title.paint(&mut svg, m.title_pos, frame.origin(&m));
     svg.push_str("</svg>");
     Ok(svg)
 }
@@ -389,8 +296,8 @@ fn render_discrete(family: &str, payload: &Payload, fonts: &FontBook) -> Result<
         }
         _ => None,
     };
-    let card = Card::of(payload);
-    let titled = head.titled(card.w - card.pad.0 - card.pad.1, fonts)?;
+    let frame = ChartFrame::of(payload, &head.background);
+    let title = head.title(&frame, fonts)?;
     // The value axis chrome's right edge, unshifted by the crisp 0.5 (a left
     // axis leaves the plot's own edge).
     let right_edge = |pw: f64| if val_on_right { pw + off_y + y_extra } else { pw };
@@ -409,10 +316,11 @@ fn render_discrete(family: &str, payload: &Payload, fonts: &FontBook) -> Result<
             b.union(&vega_fit::text_ink(pw / 2.0, ph + off_x + x_pad, x_w, x_fs, "center", "top"));
         }
     };
-    let m = card.fit(family, &titled, &mut ink)?;
-    let (plot_left, plot_top) = (card.pad.0 + m.left, card.pad.2 + m.top);
-    let mut svg = card.open(&head.background);
-    head.paint_title(&mut svg, &titled, &m, plot_left, plot_top);
+    let m = frame.fit(family, &title, &mut ink)?;
+    let (plot_left, plot_top) = frame.origin(&m);
+    let mut svg = String::new();
+    frame.open(&mut svg);
+    title.paint(&mut svg, m.title_pos, (plot_left, plot_top));
     // Both titles sit in axis groups carrying Vega's +0.5 crisp translate; the
     // shared emitters add it to the along-axis coordinate.
     crate::common::emit_axis_title_at(

@@ -88,10 +88,27 @@ def test_sizes_is_never_copied_into_a_slot() -> None:
     assert not hasattr(style.title.font, "sizes")
 
 
-def test_null_removes_a_registry_entry() -> None:
-    style = _pre_style({"fonts": {"mine": {"size": 9}}}, {"fonts": {"mine": None}})
+def test_null_registry_entry_fails_validation_naming_the_path() -> None:
+    from dbt_charts.core.compile import compile
+
+    result = compile(
+        "style:\n  fonts:\n    caption: null\ntitle: T\nrows:\n  - text: hi\n"
+    )
+    assert not result.success
+    assert [e.path for e in result.errors] == ["style.fonts.caption"]
+
+
+def test_board_redefining_heading_keeps_the_theme_s_other_fonts() -> None:
+    style = _pre_style({"fonts": {"heading": {"sizes": [30, 20, 16, 14, 12, 10]}}})
     assert style.fonts is not None
-    assert "mine" not in style.fonts
+    assert sorted(style.fonts) == sorted(KNOWN.split(", "))
+    assert style.fonts["heading"].sizes == [30, 20, 16, 14, 12, 10]
+
+
+def test_shipped_schema_registry_entries_reject_null() -> None:
+    schema = StylePatch.model_json_schema()
+    entries = schema["properties"]["fonts"]["anyOf"][0]["additionalProperties"]
+    assert "null" not in json.dumps(entries)
 
 
 def test_unknown_name_names_the_slot_and_known_fonts() -> None:
@@ -229,7 +246,7 @@ def test_heading_sizes_is_required() -> None:
     with pytest.raises(ValidationError, match="style.fonts.heading.sizes is required"):
         merge_onto_base(
             get_theme_style(),
-            StylePatch.model_validate({"fonts": {"heading": None}}),
+            StylePatch.model_validate({"fonts": {"heading": {"sizes": None}}}),
         )
 
 

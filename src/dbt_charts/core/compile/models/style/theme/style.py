@@ -145,15 +145,14 @@ class Style(BaseModel):
         description="Format alias map; None means no aliases at this cascade level.",
     )
     # Named-font registry, merged key-wise like ``formats`` (board keys win, other
-    # theme keys propagate). ``name: null`` removes an entry, applied in
-    # merge_onto_base, so the value type admits None. Names are expanded into
-    # slots by ``expand_named_fonts`` once the whole cascade has merged.
-    fonts: Annotated[dict[str, NamedFont | None] | None, Merge(Strategy.DEEP)] = Field(
+    # theme keys propagate). Names are expanded into slots by
+    # ``expand_named_fonts`` once the whole cascade has merged.
+    fonts: Annotated[dict[str, NamedFont] | None, Merge(Strategy.DEEP)] = Field(
         default=None,
         description=(
             "Named fonts other font slots reference as ``font: <name>`` or "
             "``font: {extends: <name>, ...}``. ``heading`` carries the H1–H6 "
-            "ramp in ``sizes``; ``name: null`` removes an entry."
+            "ramp in ``sizes``. An entry no slot references paints nothing."
         ),
     )
     # Theme palette role assignments.
@@ -218,8 +217,6 @@ class Style(BaseModel):
     @model_validator(mode="after")
     def _validate_fonts(self) -> Style:
         for name, font in self.fonts.items() if self.fonts is not None else ():
-            if font is None:
-                continue
             if name != "heading" and font.sizes is not None:
                 raise ValueError(
                     f"Only the 'heading' font takes sizes (the H1–H6 ramp); "

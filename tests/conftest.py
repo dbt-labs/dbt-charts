@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import os
+import secrets
+import shutil
 import subprocess
+import tempfile
 import time
 import zipfile
 from collections.abc import Callable, Iterator
@@ -11,6 +15,7 @@ from typing import IO, TYPE_CHECKING, Any
 
 import pytest
 from pydantic import BaseModel
+from pytest_postgresql import factories
 
 from dbt_charts._render_tz import pin_vl_convert_tz_utc
 from dbt_charts.cli.filesystem_project import FilesystemProject
@@ -133,6 +138,24 @@ def use_empty_git_template_dir(
             "GIT_TEMPLATE_DIR", str(tmp_path_factory.mktemp("empty-git-template"))
         )
         yield
+
+
+# Under /tmp, not $TMPDIR: macOS's per-user $TMPDIR alone nearly exhausts
+# AF_UNIX's ~104-byte sun_path.
+_PG_SOCKET_DIR = tempfile.mkdtemp(
+    prefix="dct-pg-", dir="/tmp" if os.name == "posix" else None
+)
+
+# A real password: without one pytest-postgresql runs `initdb --auth=trust`,
+# and its TCP listener would then admit any local user as superuser.
+# Tests using it must share xdist_group("postgres_cluster").
+pg_cluster = factories.postgresql_proc(
+    password=secrets.token_urlsafe(24), unixsocketdir=_PG_SOCKET_DIR
+)
+
+
+def pytest_sessionfinish() -> None:
+    shutil.rmtree(_PG_SOCKET_DIR, ignore_errors=True)
 
 
 @pytest.fixture

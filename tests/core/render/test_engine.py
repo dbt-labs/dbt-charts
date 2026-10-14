@@ -753,26 +753,13 @@ _CAPPED_TABLE = {
 _CAPPED_ROWS = [{"name": f"row_{i}"} for i in range(125)]
 
 
-def test_static_pagination_whose_cap_note_was_dropped_lands_in_its_sink() -> None:
+@pytest.mark.parametrize("height", [190.0, 0.0])
+def test_static_pagination_is_recorded_with_no_cap_note_in_any_slot(
+    height: float,
+) -> None:
     with _sinks() as sinks:
-        _native(_CAPPED_TABLE, _CAPPED_ROWS, width=400.0, height=190.0)
-    assert sinks.paginations == {
-        "c1": StaticPagination(
-            page_rows=5,
-            total_rows=125,
-            rendered_pages=20,
-            total_pages=25,
-            cap_note_dropped=True,
-        )
-    }
-
-
-def test_static_pagination_that_states_its_cap_in_the_file_is_recorded_as_stated() -> (
-    None
-):
-    with _sinks() as sinks:
-        svg, _ = _native(_CAPPED_TABLE, _CAPPED_ROWS, width=400.0, height=0.0)
-    assert "in this static export" in svg
+        svg, _ = _native(_CAPPED_TABLE, _CAPPED_ROWS, width=400.0, height=height)
+    assert "Showing pages" not in svg
     assert sinks.paginations == {
         "c1": StaticPagination(
             page_rows=5,

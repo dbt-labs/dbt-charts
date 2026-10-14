@@ -495,6 +495,7 @@ fn rendered_vega_height(
     let padding = additive_padding(chart_json, ctx.card_padding)?;
     let payload = crate::Payload {
         cell_text: Vec::new(),
+        max_template_output_bytes: None,
         resolved: chart_json.clone(),
         rows: rows.to_vec(),
         width,
@@ -569,6 +570,7 @@ fn spark_bar_natural_height(
 ) -> Result<f64, String> {
     let payload = crate::Payload {
         cell_text: Vec::new(),
+        max_template_output_bytes: None,
         resolved: chart_json.clone(),
         rows: rows.to_vec(),
         width,
@@ -695,6 +697,7 @@ fn get_table_height_from_data(
     let padding = additive_padding(chart_json, card_padding)?;
     let payload = crate::Payload {
         cell_text: Vec::new(),
+        max_template_output_bytes: None,
         resolved: chart_json.clone(),
         rows: rows.to_vec(),
         width: (width - padding.left - padding.right).max(0.0),
@@ -746,6 +749,7 @@ pub fn resolve_chart_item_height(
     if chart_type == "callout" {
         let payload = crate::Payload {
             cell_text: Vec::new(),
+            max_template_output_bytes: None,
             resolved: chart_json.clone(),
             rows: Vec::new(),
             width,

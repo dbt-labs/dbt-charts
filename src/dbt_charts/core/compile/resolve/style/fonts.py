@@ -31,21 +31,19 @@ T = TypeVar("T", bound=BaseModel)
 _REGISTRY_ONLY = frozenset({"extends", "sizes"})
 
 
-def resolve_registry(
-    registry: Mapping[str, NamedFont | None],
-) -> dict[str, NamedFont | None]:
+def resolve_registry(registry: Mapping[str, NamedFont]) -> dict[str, NamedFont]:
     """Return ``registry`` with every entry's ``extends`` chain folded in.
 
     An entry is its parent's resolved fields plus its own, own fields winning.
     ``sizes`` is the heading ramp and is never inherited.
     """
-    resolved: dict[str, NamedFont | None] = {}
+    resolved: dict[str, NamedFont] = {}
 
-    def resolve(name: str, chain: tuple[str, ...]) -> NamedFont | None:
+    def resolve(name: str, chain: tuple[str, ...]) -> NamedFont:
         if name in resolved:
             return resolved[name]
         entry = registry[name]
-        if entry is None or entry.extends is None:
+        if entry.extends is None:
             resolved[name] = entry
             return entry
         if entry.extends in chain:
@@ -56,7 +54,6 @@ def resolve_registry(
             )
         _check_known(entry.extends, registry, f"style.fonts.{name}")
         parent = resolve(entry.extends, (*chain, entry.extends))
-        assert parent is not None
         fields = {
             **parent.model_dump(exclude_unset=True, exclude=set(_REGISTRY_ONLY)),
             **entry.model_dump(exclude_unset=True, exclude={"extends"}),
@@ -74,7 +71,7 @@ def resolve_registry(
 
     for name in registry:
         font = resolve(name, (name,))
-        if font is not None and font.color and is_unknown_color_name(font.color):
+        if font.color and is_unknown_color_name(font.color):
             raise CompilationError.from_code(
                 ERR_COLOR_TOKEN,
                 scope=f"style.fonts.{name}.color",
@@ -83,11 +80,9 @@ def resolve_registry(
     return resolved
 
 
-def _check_known(
-    name: str, registry: Mapping[str, NamedFont | None], path: str
-) -> None:
-    if registry.get(name) is None:
-        known = sorted(k for k, v in registry.items() if v is not None)
+def _check_known(name: str, registry: Mapping[str, NamedFont], path: str) -> None:
+    if name not in registry:
+        known = sorted(registry)
         raise CompilationError.from_code(
             ERR_FONT_UNKNOWN,
             message=f"Unknown font '{name}' at {path}. Known fonts: {', '.join(known)}.",
@@ -95,7 +90,7 @@ def _check_known(
 
 
 def expand_named_fonts(
-    node: T, registry: Mapping[str, NamedFont | None], path: str = "style"
+    node: T, registry: Mapping[str, NamedFont], path: str = "style"
 ) -> T:
     """Return ``node`` with every ``extends`` slot replaced by its registry font.
 
@@ -106,7 +101,6 @@ def expand_named_fonts(
             return node
         _check_known(node.extends, registry, path)
         entry = registry[node.extends]
-        assert entry is not None
         # A single-line slot has no leading, so a registry font's is dropped.
         slot_fields = type(node).model_fields
         fields = {
@@ -130,7 +124,7 @@ def expand_named_fonts(
 
 def _expand_value(
     value: object,  # type-state: object_annotation — any model field value
-    registry: Mapping[str, NamedFont | None],
+    registry: Mapping[str, NamedFont],
     path: str,
 ) -> object:  # type-state: object_annotation — the value with named fonts expanded
     if isinstance(value, BaseModel):

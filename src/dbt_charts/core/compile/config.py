@@ -866,6 +866,16 @@ def _validate_sources_section(
     return normalized
 
 
+def validate_config_data(
+    mapping: dict[str, Any],  # type-state: explicit_any — raw YAML
+) -> Config:
+    """The engine-knob schema (``Config``) applied to *mapping* over the
+    defaults: an unknown top-level key or an invalid value raises
+    ``pydantic.ValidationError``. Publishes nothing to process-global state.
+    """
+    return Config.model_validate(deep_merge_dict(_load_defaults(), mapping))
+
+
 def validate_project_config_data(
     data: Any,  # type-state: explicit_any — raw YAML-decoded content, not yet known to be a mapping; _as_mapping below is the type check
     *,
@@ -881,8 +891,8 @@ def validate_project_config_data(
     an unsaved buffer, or a multi-tenant worker checking one project's
     dbt_charts.yml while compiling for another.
 
-    It is a read-only replay of ``load_config``/``load_project_sources``'s
-    validation, not a new schema: see ``Raises`` below for the exact faults.
+    It is a read-only replay of ``load_config``/``load_project_sources``/
+    ``get_project_warnings_ignore``'s validation, not a new schema: see ``Raises`` below for the exact faults.
 
     Args:
         data: Parsed dbt_charts.yml content: the raw YAML-decoded value, not
@@ -896,9 +906,10 @@ def validate_project_config_data(
             non-``None`` value (e.g. a bare scalar or list document).
         CompilationError: a source entry fails ``SourceConfig`` validation,
             or carries a raw credential literal.
+        ValueError: ``warnings.ignore`` names an unregistered code.
     """
     mapping = {} if data is None else _as_mapping(data, filename)
-    Config.model_validate(deep_merge_dict(_load_defaults(), mapping))
+    validate_config_data(mapping)
 
     sources_value = mapping.get("sources")
     sources_section = (
@@ -907,6 +918,7 @@ def validate_project_config_data(
         else None
     )
     _validate_sources_section(sources_section, filename)
+    _warnings_ignore_codes(mapping.get("warnings"), filename)
 
 
 def _validate_source_registry(
@@ -953,9 +965,10 @@ def _absolutize_source_paths(
 # ============================================================================
 
 
-def get_project_warnings_ignore(project: Project) -> frozenset[str]:
-    """Return warning codes to suppress project-wide. Fresh read per call."""
-    filename, warnings_map = _dbt_charts_yml_mapping_section(project, "warnings")
+def _warnings_ignore_codes(
+    warnings_map: dict[str, Any] | None,  # type-state: explicit_any — raw YAML section
+    filename: str,
+) -> frozenset[str]:
     if warnings_map is None:
         return frozenset()
     raw_ignore = warnings_map.get("ignore")
@@ -971,6 +984,12 @@ def get_project_warnings_ignore(project: Project) -> frozenset[str]:
             )
     validate_suppression_codes(raw_ignore, source=f"{filename}: warnings.ignore")
     return frozenset(raw_ignore)
+
+
+def get_project_warnings_ignore(project: Project) -> frozenset[str]:
+    """Return warning codes to suppress project-wide. Fresh read per call."""
+    filename, warnings_map = _dbt_charts_yml_mapping_section(project, "warnings")
+    return _warnings_ignore_codes(warnings_map, filename)
 
 
 class ProjectSourcesConfig:

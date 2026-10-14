@@ -14,8 +14,7 @@
 //! weight. Verified against Python mdsvg's own `FontMeasurer` on real
 //! bundled fonts in `fonts_tests.rs`'s `TestHvarExact`.
 //!
-//! Renamed per the guarded-token policy (the literal word this repo's
-//! rebrand guard rejects): `FontFace` -> `FontSlot`, `FontFaces` ->
+//! Named apart from Python: `FontFace` -> `FontSlot`, `FontFaces` ->
 //! `FontSlots`, `used_faces` -> `used_fonts` (the rename surfaces on
 //! `renderer.rs`, not here).
 //!

@@ -13,7 +13,7 @@
 //!   "markdown": "# Title",
 //!   "width": 400.0,
 //!   "padding": 0.0,
-//!   "fetch_image_sizes": true,
+//!   "fetch_image_sizes": false,
 //!   "style": { ...Style fields, any subset... },
 //!   "fonts": { "regular": {"path": "...", "weight": null, "font_number": 0}, ... }
 //! }
@@ -44,13 +44,8 @@ struct CliRequest {
     #[serde(default)]
     style: Style,
     fonts: FontSlots,
-    /// Python's constructor default; board prose sends `false`.
-    #[serde(default = "default_fetch_image_sizes")]
+    #[serde(default)]
     fetch_image_sizes: bool,
-}
-
-fn default_fetch_image_sizes() -> bool {
-    true
 }
 
 /// Print `{"error": msg}` (no trailing newline, matching every success

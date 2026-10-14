@@ -21,7 +21,6 @@ import contextlib
 import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path  # noqa: TID251 — DuckDB cache file (DCT_CACHE_PATH)
-from typing import Any
 
 from dbt_charts.core.execute._duckdb_cache_base import (
     _cache_safe_value,
@@ -33,6 +32,7 @@ from dbt_charts.core.execute._duckdb_cache_base import (
     _rows_from_result,
     _uniform_decimal_columns,
 )
+from dbt_charts.core.execute.arrow_ingest import insert_rows
 from dbt_charts.core.execute.cache_backend import (
     CacheHit,
     CacheOutcome,
@@ -256,17 +256,9 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
         data: CacheRows,
         decimal_columns: frozenset[str] = frozenset(),
     ) -> None:
-        # Bulk-load via a registered Arrow table + one INSERT … SELECT, not a
-        # per-row executemany: DuckDB's executemany binds row by row (~47s for
-        # 100k rows), while an Arrow scan is a single columnar append (~100ms).
-        # Values are still coerced (Decimal→float outside decimal_columns,
-        # list/dict→JSON text) so the typed result table from
-        # _ensure_result_table — including its JSON columns, which
-        # _rows_from_result decodes on read — is unchanged. A uniformly-Decimal
-        # column instead gets str(value) — exact — matching the VARCHAR type
-        # _ensure_result_table gave it.
-        import pyarrow as pa
-
+        # Values are coerced (Decimal→float outside decimal_columns, list/dict→
+        # JSON text) to fit the table _ensure_result_table typed; a
+        # uniformly-Decimal column gets exact str(value) for its VARCHAR type.
         keys = list(data[0])
         coerced = [
             {
@@ -279,30 +271,4 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
             }
             for row in data
         ]
-        try:
-            arrow = pa.Table.from_pylist(coerced)
-        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError):
-            # A genuinely heterogeneous column Arrow can't hold in one array —
-            # e.g. an HTTP/JSON source returning str in one row and int in another
-            # for the same column. Fall back to the per-row bind, where DuckDB
-            # casts each cell to the column type, exactly as the cache did before
-            # the bulk path. Same rows and values, just slower — not a wrong-data
-            # fallback; these inputs are rare and small in practice.
-            self._insert_rows_row_by_row(table_name, keys, coerced)
-            return
-        self.conn.register("_dct_bulk_ingest", arrow)
-        try:
-            self.conn.execute(
-                f"INSERT INTO {_q(table_name)} SELECT * FROM _dct_bulk_ingest"
-            )
-        finally:
-            self.conn.unregister("_dct_bulk_ingest")
-
-    def _insert_rows_row_by_row(
-        self, table_name: str, keys: list[str], coerced: list[dict[str, Any]]
-    ) -> None:
-        placeholders = ", ".join("?" * len(keys))
-        param_rows = [[row[k] for k in keys] for row in coerced]
-        self.conn.executemany(
-            f"INSERT INTO {_q(table_name)} VALUES ({placeholders})", param_rows
-        )
+        insert_rows(self.conn, _q(table_name), coerced)

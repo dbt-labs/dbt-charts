@@ -492,12 +492,14 @@ class TestMultiTableJoin:
 
 
 class TestExternalAccessBlocked:
-    def test_materializer_opens_only_a_sandboxed_duckdb_without_file_readers(
+    def test_file_readers_never_run_where_author_sql_runs(
         self,
         tmp_path: Path,
         local_project: Callable[..., FilesystemProject],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """DuckDB's file readers run on a private scratch connection; the
+        connection that runs author SQL is sandboxed and never sees a reader."""
         import duckdb
 
         project = _make_project(
@@ -506,11 +508,14 @@ class TestExternalAccessBlocked:
         source = _csv_source({"sales": "data/sales.csv"})
         real_connect = duckdb.connect
         DuckDBConfig = dict[str, str | bool | int | float | list[str]]
-        connections: list[DuckDBConfig] = []
+        statements: dict[str, list[str]] = {"sandboxed": [], "scratch": []}
 
-        class GuardedConnection:
-            def __init__(self, connection: duckdb.DuckDBPyConnection) -> None:
+        class RecordingConnection:
+            def __init__(
+                self, connection: duckdb.DuckDBPyConnection, log: list[str]
+            ) -> None:
                 self._connection = connection
+                self._log = log
 
             def __getattr__(self, name: str) -> Any:
                 return getattr(self._connection, name)
@@ -518,29 +523,37 @@ class TestExternalAccessBlocked:
             def execute(
                 self, query: str, parameters: Any = None
             ) -> duckdb.DuckDBPyConnection:
-                lowered = query.lower()
-                assert "read_csv" not in lowered
-                assert "read_json" not in lowered
-                assert "read_parquet" not in lowered
+                self._log.append(query.lower())
                 return self._connection.execute(query, parameters)
 
-        def guarded_connect(
+            def close(self) -> None:
+                self._connection.close()
+
+        def recording_connect(
             database: str = ":memory:",
             *,
             config: DuckDBConfig | None = None,
-        ) -> GuardedConnection:
-            assert config is not None
-            assert config["enable_external_access"] == "false"
-            connections.append(config)
-            return GuardedConnection(real_connect(database, config=config))
+        ) -> RecordingConnection:
+            sandboxed = (
+                config is not None and config["enable_external_access"] == "false"
+            )
+            log = statements["sandboxed" if sandboxed else "scratch"]
+            return RecordingConnection(real_connect(database, config=config or {}), log)
 
-        monkeypatch.setattr(duckdb, "connect", guarded_connect)
+        monkeypatch.setattr(duckdb, "connect", recording_connect)
 
         materializer = FileSourceMaterializer(project)
         assert materializer.materialize_and_run(
             source, "SELECT SUM(x) AS total FROM sales", {}, "sales"
         ) == [{"total": 1}]
-        assert len(connections) == 1
+        assert any("read_csv" in q for q in statements["scratch"])
+        assert not any("sum(x)" in q for q in statements["scratch"])
+        assert any("sum(x)" in q for q in statements["sandboxed"])
+        assert not any(
+            reader in q
+            for q in statements["sandboxed"]
+            for reader in ("read_csv", "read_json", "read_parquet")
+        )
 
     def test_http_read_csv_in_sql_is_blocked(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -980,8 +993,8 @@ class TestFileTableTypeFidelity:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """Same column name, genuinely different types across a glob's files:
-        a stamped error naming the two files that disagree, not the raw
-        ArrowTypeError the executor would stamp ERR-INTERNAL.
+        a stamped error naming the two files that disagree, not a raw engine
+        error the executor would stamp ERR-INTERNAL.
 
         Three shards, so the blamed pair is the offender and its neighbor —
         shard 1 is not in the message at all."""
@@ -1010,7 +1023,7 @@ class TestFileTableTypeFidelity:
     def test_glob_shard_with_an_all_null_column_takes_the_sibling_type(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """An empty column in one shard is ordinary — PyArrow types it ``null``,
+        """An empty column in one shard is ordinary: it has no type of its own,
         and it must adopt the sibling shard's type rather than fail the render."""
         project = _make_project(
             tmp_path,
@@ -1129,7 +1142,7 @@ class TestFileTableTypeFidelity:
         emits timestamp[ms], DuckDB timestamp[us]; one month's export is
         DECIMAL(18,2), the next DECIMAL(38,2)). That is not a type conflict:
         the row-dict path loaded every such pair losslessly, and so must the
-        Arrow path — in either shard order."""
+        typed path — in either shard order."""
         import pyarrow as pa
         import pyarrow.parquet as pq
 
@@ -1214,8 +1227,7 @@ class TestFileTableTypeFidelity:
     ) -> None:
         """The cap makes ns → us the one widening cast that can refuse. It must
         refuse inside the merge guard, as a coded mismatch naming both shards —
-        never as a raw pyarrow message. (Passes only while ``_widen_to_match``
-        runs inside ``_merge_arrow``'s try.)"""
+        never as a raw engine message, since DuckDB's own cast truncates."""
         import pyarrow as pa
         import pyarrow.parquet as pq
 
@@ -1264,13 +1276,114 @@ class TestFileTableTypeFidelity:
         ]
 
 
-class TestArrowTypesDuckDBRefuses:
-    """Parquet can hold Arrow types DuckDB's bridge rejects at ``register``:
-    ``decimal256`` (its FIXED_LEN_BYTE_ARRAY backing allows precision > 38, and
-    BigQuery BIGNUMERIC exports use it routinely) and ``float16``, at the top
-    level or nested inside a list/struct/map. Each is normalized to the nearest
-    type DuckDB accepts, losslessly, and anything left over is refused with a
-    stamped code rather than reaching the user as ERR-INTERNAL.
+class TestReaderParity:
+    """Cases where DuckDB's readers default differently from what file sources
+    have always loaded."""
+
+    def test_an_empty_csv_text_field_is_the_empty_string(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = _make_project(
+            tmp_path, {"data/t.csv": "id,note,blank\n1,,\n2,ok,\n"}, local_project
+        )
+        mat = FileSourceMaterializer(project)
+
+        rows = mat.materialize_and_run(
+            _csv_source({"t": "data/t.csv"}),
+            "SELECT note, blank FROM t ORDER BY id",
+            {},
+            "t_source",
+        )
+        assert rows == [{"note": "", "blank": None}, {"note": "ok", "blank": None}]
+
+    def test_missing_value_tokens_are_null_except_in_text(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = _make_project(
+            tmp_path,
+            {"data/t.csv": "x,s,n,f\n1,abc,NA,1.5\nN/A,NA,NA,nan\n2,,NULL,2\n"},
+            local_project,
+        )
+        mat = FileSourceMaterializer(project)
+
+        rows = mat.materialize_and_run(
+            _csv_source({"t": "data/t.csv"}),
+            "SELECT typeof(x) AS tx, x, s, n, f FROM t",
+            {},
+            "t_source",
+        )
+        assert rows == [
+            {"tx": "BIGINT", "x": 1, "s": "abc", "n": None, "f": 1.5},
+            {"tx": "BIGINT", "x": None, "s": "NA", "n": None, "f": None},
+            {"tx": "BIGINT", "x": 2, "s": "", "n": None, "f": 2.0},
+        ]
+
+    def test_a_latin_1_csv_decodes(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        path = tmp_path / "data" / "t.csv"
+        path.parent.mkdir(parents=True)
+        path.write_bytes("city\nZürich\n".encode("latin-1"))
+        mat = FileSourceMaterializer(local_project(tmp_path))
+
+        rows = mat.materialize_and_run(
+            _csv_source({"t": "data/t.csv"}, encoding="latin-1"),
+            "SELECT city FROM t",
+            {},
+            "t_source",
+        )
+        assert rows == [{"city": "Zürich"}]
+
+    def test_an_all_null_parquet_column_keeps_its_declared_type(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        path = tmp_path / "data" / "t.parquet"
+        path.parent.mkdir(parents=True)
+        pq.write_table(  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap
+            pa.table({"d": pa.array([None], pa.date32()), "n": pa.array([None])}),
+            path,
+        )
+        mat = FileSourceMaterializer(local_project(tmp_path))
+
+        rows = mat.materialize_and_run(
+            ParquetSourceConfig(type="parquet", files={"t": "data/t.parquet"}),
+            "SELECT typeof(d) AS d, typeof(n) AS n FROM t",
+            {},
+            "t_source",
+        )
+        assert rows == [{"d": "DATE", "n": "VARCHAR"}]
+
+    def test_a_parquet_json_column_stays_json(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        path = tmp_path / "data" / "t.parquet"
+        path.parent.mkdir(parents=True)
+        pq.write_table(  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap
+            pa.table({"j": pa.array(['{"a": 1}'], pa.json_())}), path
+        )
+        mat = FileSourceMaterializer(local_project(tmp_path))
+
+        rows = mat.materialize_and_run(
+            ParquetSourceConfig(type="parquet", files={"t": "data/t.parquet"}),
+            "SELECT typeof(j) AS t, j->>'a' AS a FROM t",
+            {},
+            "t_source",
+        )
+        assert rows == [{"t": "JSON", "a": "1"}]
+
+
+class TestParquetTypesDuckDBRefuses:
+    """Parquet can declare a decimal wider than DuckDB's 38 digits (its
+    FIXED_LEN_BYTE_ARRAY backing allows it, and BigQuery BIGNUMERIC exports use
+    it routinely). DuckDB reads such a column as DOUBLE, at some precisions as
+    wrong values, so it is refused with a stamped code before the read, at the
+    top level or nested. ``float16`` DuckDB reads as FLOAT.
     """
 
     @staticmethod
@@ -1290,19 +1403,18 @@ class TestArrowTypesDuckDBRefuses:
         )
         return ParquetSourceConfig(type="parquet", files={"wide": "data/wide.parquet"})
 
-    def test_values_that_fit_narrow_to_decimal_38(
+    def test_values_that_fit_are_still_refused(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
+        """The declared precision decides, not the values: DuckDB has no exact
+        read for a precision-40 column even when every value would fit."""
         source = self._write(tmp_path, [Decimal("1.10"), Decimal("2.20")], 40, 2)
         mat = FileSourceMaterializer(local_project(tmp_path))
 
-        rows = mat.materialize_and_run(
-            source,
-            "SELECT SUM(amount) AS s, ANY_VALUE(typeof(amount)) AS t FROM wide",
-            {},
-            "wide_source",
-        )
-        assert rows[0] == {"s": Decimal("3.30"), "t": "DECIMAL(38,2)"}
+        with pytest.raises(DbtChartsError) as excinfo:
+            mat.materialize_and_run(source, "SELECT * FROM wide", {}, "wide_source")
+        assert excinfo.value.code is not None
+        assert excinfo.value.code.code == "ERR-FILE-SOURCE-DECIMAL-TOO-WIDE"
 
     def test_a_value_wider_than_38_digits_is_refused(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -1319,13 +1431,12 @@ class TestArrowTypesDuckDBRefuses:
         assert "data/wide.parquet" in message
         assert "41" in message
         # The fields ride into `dct render --format json` and the
-        # `--diagnostics-json` stream verbatim: a live pyarrow type there
-        # crashes both surfaces on a legitimate authoring error.
+        # `--diagnostics-json` stream verbatim, so they must be plain JSON.
         json.dumps(excinfo.value.fields)
         dumped = excinfo.value.to_diagnostic(file="charts/x.yml").model_dump(
             mode="json"
         )
-        assert dumped["fields"]["column_type"] == "decimal256(41, 2)"
+        assert dumped["fields"]["column_type"] == "DECIMAL(41,2)"
 
     @staticmethod
     def _write_parquet(tmp_path: Path, table: Any) -> ParquetSourceConfig:
@@ -1359,7 +1470,7 @@ class TestArrowTypesDuckDBRefuses:
         )
         assert rows[0] == {"s": 4.0, "t": "FLOAT"}
 
-    def test_decimal256_nested_in_a_list_narrows(
+    def test_decimal256_nested_in_a_list_is_refused(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         import pyarrow as pa
@@ -1377,13 +1488,12 @@ class TestArrowTypesDuckDBRefuses:
         )
         mat = FileSourceMaterializer(local_project(tmp_path))
 
-        rows = mat.materialize_and_run(
-            source, "SELECT v, typeof(v) AS t FROM t", {}, "t_source"
-        )
-        assert rows[0]["v"] == [Decimal("1.10"), Decimal("2.20")]
-        assert rows[0]["t"] == "DECIMAL(38,2)[]"
+        with pytest.raises(DbtChartsError) as excinfo:
+            mat.materialize_and_run(source, "SELECT * FROM t", {}, "t_source")
+        assert excinfo.value.code is not None
+        assert excinfo.value.code.code == "ERR-FILE-SOURCE-DECIMAL-TOO-WIDE"
 
-    def test_float16_nested_in_a_struct_widens(
+    def test_float16_nested_in_a_struct_reads_as_float(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         import pyarrow as pa
@@ -1393,10 +1503,8 @@ class TestArrowTypesDuckDBRefuses:
             pa.table(
                 {
                     "v": pa.array(
-                        [{"half": 1.5, "wide": Decimal("2.20")}],
-                        type=pa.struct(
-                            [("half", pa.float16()), ("wide", pa.decimal256(40, 2))]
-                        ),
+                        [{"half": 1.5}],
+                        type=pa.struct([("half", pa.float16())]),
                     )
                 }
             ),
@@ -1406,39 +1514,34 @@ class TestArrowTypesDuckDBRefuses:
         rows = mat.materialize_and_run(
             source, "SELECT typeof(v) AS t FROM t", {}, "t_source"
         )
-        assert rows[0]["t"] == "STRUCT(half FLOAT, wide DECIMAL(38,2))"
+        assert rows[0]["t"] == "STRUCT(half FLOAT)"
 
-    def test_duplicate_column_names_do_not_crash_normalization(self) -> None:
-        """Arrow permits duplicate column names, and looking a field up by name
-        then returns -1. Normalization walks positionally, so both columns
-        survive and the wide one still narrows."""
+    def test_duplicate_parquet_column_names_are_stamped_not_renamed(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Arrow permits duplicate column names and DuckDB's reader would
+        rename the second one; the author sees a coded refusal instead."""
         import pyarrow as pa
 
-        from dbt_charts.core.execute.file_source_materializer import _normalize_arrow
-
-        duplicated = pa.Table.from_arrays(
-            [
-                pa.array([Decimal("1.10")], type=pa.decimal256(40, 2)),
-                pa.array([2], type=pa.int64()),
-            ],
-            schema=pa.schema([("a", pa.decimal256(40, 2)), ("a", pa.int64())]),
+        source = self._write_parquet(
+            tmp_path,
+            pa.Table.from_arrays([pa.array([1]), pa.array([2])], names=["a", "a"]),
         )
+        mat = FileSourceMaterializer(local_project(tmp_path))
 
-        normalized = _normalize_arrow(duplicated, "src", "t", "data/t.parquet")
-
-        assert normalized.schema.names == ["a", "a"]
-        assert normalized.schema.field(0).type == pa.decimal128(38, 2)
-        assert normalized.schema.field(1).type == pa.int64()
-        assert normalized.column(0).to_pylist() == [Decimal("1.10")]
+        with pytest.raises(DbtChartsError) as exc:
+            mat.materialize_and_run(source, "SELECT * FROM t", {}, "t_source")
+        assert exc.value.code is not None
+        assert exc.value.code.code == "ERR-FILE-SOURCE-DUPLICATE-COLUMN"
+        assert "'a'" in str(exc.value)
 
     def test_duplicate_csv_header_is_stamped_not_internal(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """pyarrow.csv reads ``a,a,b`` as three fields; DuckDB accepts the table at
-        register and refuses it at CREATE. The author sees a coded error naming
-        the table, not ERR-INTERNAL."""
+        """DuckDB's CSV reader renames a repeated header; the author sees a coded
+        error naming the table instead."""
         project = _make_project(
-            tmp_path, {"data/dup.csv": "a,a,b\n1,2,3\n"}, local_project
+            tmp_path, {"data/dup.csv": "a,A,b\n1,2,3\n"}, local_project
         )
         source = _csv_source({"dup": "data/dup.csv"})
         mat = FileSourceMaterializer(project)
@@ -1446,6 +1549,5 @@ class TestArrowTypesDuckDBRefuses:
         with pytest.raises(DbtChartsError) as exc:
             mat.materialize_and_run(source, "SELECT * FROM dup", {}, "dup")
         assert exc.value.code is not None
-        assert exc.value.code.code == "ERR-FILE-SOURCE-UNSUPPORTED-TYPE"
+        assert exc.value.code.code == "ERR-FILE-SOURCE-DUPLICATE-COLUMN"
         assert "'dup'" in str(exc.value)
-        assert "error.pxi" not in str(exc.value)

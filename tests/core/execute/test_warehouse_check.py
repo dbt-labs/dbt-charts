@@ -85,7 +85,7 @@ def _check(compiled, registry, query_name: str = "my_query"):
     )
 
 
-def _check_sql(sql: str, registry):
+def _check_sql(sql: str, registry, *, target: str | None = None):
     """Check one SQL string against a stubbed registry, via a real compiled board.
 
     The board is real even where the registry is a double: the check reads
@@ -100,7 +100,7 @@ def _check_sql(sql: str, registry):
         yaml.dump(
             {
                 "source": "s",
-                "queries": {"q": sql},
+                "queries": {"q": {"sql": sql, "target": target} if target else sql},
                 "charts": {"c": {"query": "q", "type": "table"}},
             }
         )
@@ -590,6 +590,39 @@ class TestWarehouseCheckBigQuery:
             job_config.default_dataset.project,
             job_config.default_dataset.dataset_id,
         ) == ("my-proj", "my-ds")
+
+    def test_the_dry_run_carries_the_attribution_labels(
+        self, fake_bigquery_client, monkeypatch
+    ):
+        """A dry run is a BigQuery job in the history like any other.
+
+        It is built on a bare client rather than the dbt connection that labels
+        execution, so the labels have to be put on its job config directly — else
+        the validation tier is the one traffic a cost model cannot attribute.
+        """
+        import dbt_charts.core.attribution as attribution_module
+
+        monkeypatch.setattr(
+            attribution_module, "_process_surface", {"dbt_charts_surface": "cli"}
+        )
+        fake_bigquery_client.query.return_value = SimpleNamespace(schema=[])
+        registry = _bigquery_registry()
+        registry.resolve_query_source.return_value = BigQuerySourceConfig(
+            type="bigquery",
+            project="my-proj",
+            dataset="my-ds",
+            attribution={"team": "analytics"},
+        )
+
+        _check_sql("SELECT 1 FROM orders", registry, target="prod")
+
+        labels = fake_bigquery_client.query.call_args.kwargs["job_config"].labels
+        assert labels["app"] == "dbt-charts"
+        assert labels["dbt_charts_surface"] == "cli"
+        assert labels["dbt_charts_query"] == "q"
+        assert labels["dbt_charts_target"] == "prod"
+        assert "dbt_charts_board" in labels
+        assert labels["team"] == "analytics"
 
     def test_the_dry_run_is_sent_to_the_source_location(self, fake_bigquery_client):
         """A dataset outside the US is not visible from the default region."""

@@ -12,10 +12,12 @@ from dbt_charts.core.compile.config import (
     get_config,
     load_config,
     reset_config,
+    validate_project_config_data,
 )
 from dbt_charts.core.compile.models.config import (
     PUBLISHED_TO_FORM,
     ChartRenderingConfig,
+    CloudConfig,
     Config,
     ConfigNode,
     InspectorConfig,
@@ -87,6 +89,38 @@ def test_published_to_rejects_anything_but_an_absolute_org_project_url(
     compiled["published_to"] = value
 
     with pytest.raises(ValidationError, match=re.escape(PUBLISHED_TO_FORM)):
+        Config.model_validate(compiled)
+
+
+def test_cloud_block_defaults_to_absent() -> None:
+    assert get_config().cloud is None
+
+
+@pytest.mark.parametrize("value", [True, False, None])
+def test_cloud_block_accepts_a_boolean_or_unset_switch(value: bool | None) -> None:
+    compiled = get_config().to_plain_dict(exclude_none=False)
+    compiled["cloud"] = {"allow_public": value, "honor_agent_instructions": value}
+
+    config = Config.model_validate(compiled)
+
+    assert config.cloud == CloudConfig(
+        allow_public=value, honor_agent_instructions=value
+    )
+
+
+def test_cloud_block_rejects_an_unknown_key() -> None:
+    compiled = get_config().to_plain_dict(exclude_none=False)
+    compiled["cloud"] = {"allow_publik": False}
+
+    with pytest.raises(ValidationError, match="cloud.allow_publik"):
+        Config.model_validate(compiled)
+
+
+def test_cloud_block_rejects_a_non_boolean_switch() -> None:
+    compiled = get_config().to_plain_dict(exclude_none=False)
+    compiled["cloud"] = {"allow_public": "nope"}
+
+    with pytest.raises(ValidationError, match="cloud.allow_public"):
         Config.model_validate(compiled)
 
 
@@ -181,6 +215,51 @@ def test_dbt_project_dir_key_is_accepted(
 
 def test_dbt_project_dir_defaults_to_none() -> None:
     assert get_config().dbt_project_dir is None
+
+
+def test_warnings_ignore_key_is_accepted_and_takes_effect(
+    tmp_path, local_project: Callable[..., FilesystemProject]
+):
+    """load_config and Project.warnings_ignore must both accept the same file."""
+    (tmp_path / "dbt_charts.yml").write_text(
+        "warnings:\n  ignore:\n    - WARN-REAGGREGATION\n"
+    )
+    project = local_project(tmp_path)
+
+    config = load_config(project)
+
+    assert config.warnings is not None
+    assert config.warnings.ignore == ["WARN-REAGGREGATION"]
+    assert project.warnings_ignore == frozenset({"WARN-REAGGREGATION"})
+
+
+def test_warnings_defaults_to_none() -> None:
+    assert get_config().warnings is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param("warnings:\n  ignored:\n    - WARN-REAGGREGATION\n", id="typo"),
+        pytest.param("warnings:\n  ignore: WARN-REAGGREGATION\n", id="not-a-list"),
+        pytest.param("warnings:\n  ignore:\n    - 42\n", id="non-string-entry"),
+    ],
+)
+def test_malformed_warnings_block_is_rejected(
+    body: str, tmp_path, local_project: Callable[..., FilesystemProject]
+):
+    (tmp_path / "dbt_charts.yml").write_text(body)
+
+    with pytest.raises(ValidationError):
+        load_config(local_project(tmp_path))
+
+
+def test_project_config_validation_rejects_an_unregistered_warning_code() -> None:
+    """A typo'd code would otherwise validate clean and fail every render."""
+    with pytest.raises(ValueError, match="WARN-TYPO"):
+        validate_project_config_data(
+            {"warnings": {"ignore": ["WARN-TYPO"]}}, filename="dbt_charts.yml"
+        )
 
 
 def test_default_config_yaml_is_valid_settings():

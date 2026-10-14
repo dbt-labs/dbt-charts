@@ -511,12 +511,10 @@ class TestGrowBy2RuleOnSelfSizing:
         )
 
 
-class TestCapNoteHeightReservation:
-    """A static export whose real page count exceeds the pre-render cap
-    (_STATIC_MULTI_PAGE_MAX_PAGES) draws an extra "Showing pages 1-N of M"
-    line below the pager. The sizer must reserve that line too, or an
-    explicit-height render (dct render, a grid: layout whose siblings don't
-    self-correct off a table's actual height) overflows its slot.
+class TestPastCapHeight:
+    """A static export past the pre-render cap (_STATIC_MULTI_PAGE_MAX_PAGES)
+    reserves only the pager band: the pager itself carries the cap, no extra
+    line.
     """
 
     def _paginated_chart(self, page_rows: int) -> Chart:
@@ -526,7 +524,7 @@ class TestCapNoteHeightReservation:
             )
         )
 
-    def test_page_count_within_cap_reserves_no_extra_line(self):
+    def test_page_count_within_cap_reserves_only_the_pager_band(self):
         from dbt_charts.core.render.sizing import (
             TABLE_PAGINATION_CONTROL_HEIGHT as _PAGINATION_CONTROL_HEIGHT,
         )
@@ -537,13 +535,11 @@ class TestCapNoteHeightReservation:
         height_5 = _call_provider(chart, _make_executor(5))
 
         assert height_100 == height_5 + _PAGINATION_CONTROL_HEIGHT, (
-            f"20 pages is within the static-export cap -- no cap-note line "
-            f"should be reserved: got height_100={height_100} vs "
+            f"got height_100={height_100} vs "
             f"height_5={height_5} + _PAGINATION_CONTROL_HEIGHT"
         )
 
-    def test_page_count_past_cap_reserves_the_cap_note_line(self):
-        _PAGINATION_CAP_NOTE_HEIGHT = 20
+    def test_page_count_past_cap_reserves_no_extra_line(self):
         from dbt_charts.core.render.sizing import (
             TABLE_PAGINATION_CONTROL_HEIGHT as _PAGINATION_CONTROL_HEIGHT,
         )
@@ -553,14 +549,7 @@ class TestCapNoteHeightReservation:
         height_105 = _call_provider(chart, _make_executor(105))
         height_5 = _call_provider(chart, _make_executor(5))
 
-        assert (
-            height_105
-            == height_5 + _PAGINATION_CONTROL_HEIGHT + _PAGINATION_CAP_NOTE_HEIGHT
-        ), (
-            f"21 pages exceeds the static-export cap (20) -- the cap-note "
-            f"line must be reserved: got height_105={height_105} vs "
-            f"height_5={height_5} + control + cap-note height"
-        )
+        assert height_105 == height_5 + _PAGINATION_CONTROL_HEIGHT
 
 
 # ---------------------------------------------------------------------------

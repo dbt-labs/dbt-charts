@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use d3rs::format::{Grouping, Locale};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// `DEFAULT_REGIONAL.format_locale` as the payload carries it, generated from
 /// production (`libs/chart-svg/tests/test_format_locale.py` pins it).
@@ -21,8 +21,8 @@ pub const EN_US_WIRE: &str = include_str!("../data/format_locale_en_us.json");
 /// A d3 locale and the words its magnitudes print: thousand, million,
 /// billion, trillion, in the analytic and the narrative register. A word
 /// carries its own gap (the no-break space, or none).
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(try_from = "Wire")]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(try_from = "Wire", into = "Wire")]
 pub struct NumberLocale {
     pub locale: Locale,
     analytic: [String; 4],
@@ -32,7 +32,7 @@ pub struct NumberLocale {
 /// `HouseLocale` as `chart_svg_dev._sweep.board_style_envelope` writes it:
 /// d3's locale definition (`locale_definition`) plus the two word registers.
 /// `thousands` and `grouping` travel together or not at all.
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Wire {
     decimal: String,
@@ -81,6 +81,28 @@ impl TryFrom<Wire> for NumberLocale {
             analytic: wire.analytic,
             narrative: wire.narrative,
         })
+    }
+}
+
+impl From<NumberLocale> for Wire {
+    fn from(locale: NumberLocale) -> Wire {
+        let Locale { decimal, grouping, currency, numerals, percent, minus, nan } = locale.locale;
+        let (thousands, grouping) = match grouping {
+            Some(g) => (Some(g.separator), Some(g.sizes)),
+            None => (None, None),
+        };
+        Wire {
+            decimal,
+            thousands,
+            grouping,
+            currency,
+            numerals: numerals.map(Vec::from),
+            percent,
+            minus,
+            nan,
+            analytic: locale.analytic,
+            narrative: locale.narrative,
+        }
     }
 }
 

@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 from dbt_charts._install_hint import install_hint
 
 if TYPE_CHECKING:
-    import pyarrow as pa
+    import nanoarrow as na
 
     from dbt_charts.core.compile.models.source import (
         BigQuerySourceConfig,
@@ -370,6 +370,24 @@ def list_datasets(source_config: SourceConfig) -> list[str]:
         ) from e
 
 
+def _adapter_credentials(
+    source_config: ResolvedSourceConfig,
+) -> dict[str, Any]:  # type-state: explicit_any — raw source_config
+    """The credentials ``build_adapter`` gets: schema defaults included, then the
+    dialect's own connect bounds, exactly as a render's connection pool builds them."""
+    from dbt_charts.core.compile.config import resolve_max_query_duration_seconds
+    from dbt_charts.core.dialects import get_dialect
+
+    dialect = get_dialect(source_config.type)
+    raw_config = source_config.model_dump(by_alias=True)
+    return dialect.connect_credentials(
+        raw_config,
+        dialect.resolve_timeout_seconds(
+            raw_config, resolve_max_query_duration_seconds(raw_config)
+        ),
+    )
+
+
 def list_catalogs(source_config: SourceConfig) -> list[str]:
     """Catalogs these credentials can see; ``source_config.catalog`` is ignored."""
     from dbt_charts.core.compile.models.source import DatabricksSourceConfig
@@ -382,9 +400,7 @@ def list_catalogs(source_config: SourceConfig) -> list[str]:
         raise ValueError(
             f"list_catalogs is Databricks-only, got {source_config.type!r}."
         )
-    creds = source_config.model_dump(
-        by_alias=True, exclude_unset=True, exclude_none=True
-    )
+    creds = _adapter_credentials(source_config)
     # None is chosen yet; the warehouse doesn't validate dbt's hive_metastore default.
     del creds["catalog"]
     adapter = build_adapter(creds)
@@ -427,7 +443,7 @@ def dataset_location(source_config: SourceConfig) -> str:
     return location
 
 
-def _send_one_statement(source_config: ResolvedSourceConfig, sql: str) -> pa.Table:
+def _send_one_statement(source_config: ResolvedSourceConfig, sql: str) -> na.Array:
     """Open a driver source, run *sql*, return its rows, and close the session.
 
     No query cap is applied here, so the driver's own default governs. The
@@ -502,9 +518,8 @@ def test_connection(
             return False, classify_connection_error(source_config.type, e)
         return True, None
 
-    creds = source_config.model_dump(
-        by_alias=True, exclude_unset=True, exclude_none=True
-    )
+    dialect = get_dialect(source_config.type)
+    creds = _adapter_credentials(source_config)
     try:
         adapter = build_adapter(creds)
     except (ImportError, ValueError):
@@ -516,7 +531,7 @@ def test_connection(
         return False, classify_connection_error(source_config.type, e)
 
     try:
-        probe_sql = get_dialect(source_config.type).namespace_probe_sql(creds)
+        probe_sql = dialect.namespace_probe_sql(creds)
     except ValueError as e:
         return False, WarehouseProbeError(
             "The catalog name contains characters that are not allowed.",
@@ -615,9 +630,7 @@ def _bulk_rows_for_config(
     from dbt_charts.core.execute.drivers import is_driver_source
     from dbt_charts.core.inspect.bulk_schema import bulk_schema_scope
 
-    creds = source_config.model_dump(
-        by_alias=True, exclude_unset=True, exclude_none=True
-    )
+    creds = _adapter_credentials(source_config)
     source_type = str(creds.get("type"))
     dialect = get_dialect(source_type)
     sql = build_sql(dialect, bulk_schema_scope(source_type, creds))
@@ -743,11 +756,8 @@ def probe_relation_readability(
             return False, str(e) or type(e).__name__
         return True, ""
 
-    creds = source_config.model_dump(
-        by_alias=True, exclude_unset=True, exclude_none=True
-    )
     try:
-        adapter = build_adapter(creds)
+        adapter = build_adapter(_adapter_credentials(source_config))
         qualified = ".".join(
             adapter.quote(part)
             for part in (relation.database, relation.schema, relation.name)

@@ -64,7 +64,7 @@ def _find_active_page_text(svg: str, var_name: str) -> str:
 class TestAutoShrinkOverridesTruncationFooter:
     """When pagination is enabled and the cell can't fit page_rows rows,
     the renderer must auto-shrink and paginate — never fall back to the
-    "+ N more rows" truncation footer. When pagination is disabled, the
+    "+N" truncation footer. When pagination is disabled, the
     renderer must use the table's natural height and render all rows instead.
     """
 
@@ -786,217 +786,8 @@ class TestStaticMultiPagePagination:
         assert max(targets) <= _STATIC_MULTI_PAGE_MAX_PAGES, (
             "paginator must never link to a page beyond what was pre-rendered"
         )
-        assert "static export" in svg.lower(), (
-            "the artifact itself must state that pages were cut, not just "
-            "silently omit them"
-        )
-
-    def test_row_range_label_does_not_collide_with_cap_note(self, make_chart) -> None:
-        """The per-page row-range label and the static-export cap note used
-        to share exactly the same (x, y) on the initially visible page --
-        both left-anchored at padding, both on baseline y+18 -- so a table
-        whose real page count exceeds the static-export cap painted them on
-        top of each other. Regression: they must sit on different lines.
-        """
-        from dbt_charts.core.compile.models.style.authored import (
-            TableChartStylePatch,
-        )
-
-        _STATIC_MULTI_PAGE_MAX_PAGES = 20
-
-        n_rows = (_STATIC_MULTI_PAGE_MAX_PAGES + 5) * 5
-        chart = make_chart(
-            "table",
-            x=None,
-            y=None,
-            id="static_cap2",
-            style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
-        )
-        data = _make_data(n_rows)
-        chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        svg = render_table_svg(
-            chart, data, width=600, board_style=resolve_style(get_theme_style())
-        )
-
-        _PAGINATION_CAP_NOTE_HEIGHT = 20
-
-        label_match = re.search(r'<text [^>]*?y="([\d.]+)"[^>]*>Rows ', svg)
-        assert label_match, "row-range label not found"
-        note_match = re.search(r'<text [^>]*?y="([\d.]+)"[^>]*>Showing pages', svg)
-        assert note_match, "static export cap note not found"
-
-        label_y = float(label_match.group(1))
-        note_y = float(note_match.group(1))
-        assert note_y - label_y >= _PAGINATION_CAP_NOTE_HEIGHT, (
-            f"label (y={label_y}) and cap note (y={note_y}) must be separated "
-            f"by at least a line height ({_PAGINATION_CAP_NOTE_HEIGHT}px) -- "
-            f"two 11px lines a few px apart still overlap"
-        )
-
-    def test_cap_note_clears_every_rendered_pages_own_baseline(
-        self, make_chart
-    ) -> None:
-        """The cap note's anchor must be a real max over what's actually
-        rendered, not the page that happens to be initially visible --
-        under variable row heights, a page other than page 1 can be the
-        tallest. Regression: anchoring off the initially-visible page's own
-        indicator_y put the note ~140-200px ABOVE later, taller pages' own
-        pagers whenever page 1 wasn't the tallest rendered page.
-        """
-        from dbt_charts.core.compile.models.style.authored import (
-            TableChartStylePatch,
-        )
-
-        _PAGINATION_CAP_NOTE_HEIGHT = 20
-        _STATIC_MULTI_PAGE_MAX_PAGES = 20
-
-        page_rows = 5
-        n_rows = (_STATIC_MULTI_PAGE_MAX_PAGES + 5) * page_rows  # 25 pages, cap=20
-        # A long value on a row landing on page 15 (well within the
-        # rendered range, but not page 1) makes THAT page the tallest
-        # rendered page.
-        tall_row = 15 * page_rows - 1
-        long_value = "x" * 200
-        data = [
-            {"name": f"row_{i}", "note": long_value if i == tall_row else "ok"}
-            for i in range(1, n_rows + 1)
-        ]
-        chart = make_chart(
-            "table",
-            x=None,
-            y=None,
-            id="static_cap4",
-            style=TableChartStylePatch(
-                pagination={"enabled": True, "page_rows": page_rows},
-                columns={"note": {"width": 60, "visible": True}},
-            ),
-        )
-        chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        svg = render_table_svg(
-            chart, data, width=600, board_style=resolve_style(get_theme_style())
-        )
-
-        label_ys = [
-            float(y) for y in re.findall(r'<text [^>]*?y="([\d.]+)"[^>]*>Rows ', svg)
-        ]
-        assert label_ys, "no row-range labels found"
-        note_match = re.search(r'<text [^>]*?y="([\d.]+)"[^>]*>Showing pages', svg)
-        assert note_match, "static export cap note not found"
-        note_y = float(note_match.group(1))
-
-        assert note_y >= max(label_ys) + _PAGINATION_CAP_NOTE_HEIGHT, (
-            f"cap note (y={note_y}) must clear every rendered page's own "
-            f"row-range label (max label y={max(label_ys)}); an anchor off "
-            f"only the initially-visible page fails this whenever a later, "
-            f"taller page isn't page 1"
-        )
-
-    def test_cap_note_is_omitted_rather_than_stacked_on_the_label(
-        self, make_chart
-    ) -> None:
-        """Across a height sweep the note either clears the label or is absent.
-
-        The note has one honest choice when its reserved band is squeezed out:
-        not to paint. Clamping it upward instead stacks two muted strings on
-        one baseline -- the collision the band exists to prevent. The text
-        format states the page counts and the cap independently of this line
-        rendering.
-
-        The sweep asserts BOTH outcomes actually occur. A version of this test
-        that only skipped absent notes passed while executing zero assertions,
-        because every height it probed omitted the note.
-        """
-        from dbt_charts.core.compile.models.style.authored import (
-            TableChartStylePatch,
-        )
-
-        _PAGINATION_CAP_NOTE_HEIGHT = 20
-        _STATIC_MULTI_PAGE_MAX_PAGES = 20
-
-        page_rows = 10
-        n_rows = (_STATIC_MULTI_PAGE_MAX_PAGES + 5) * page_rows
-        data = _make_data(n_rows)
-        chart = make_chart(
-            "table",
-            x=None,
-            y=None,
-            id="static_cap5",
-            style=TableChartStylePatch(
-                pagination={"enabled": True, "page_rows": page_rows}
-            ),
-        )
-        chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-
-        present, absent = [], []
-        for height in (240, 260, 280, 300, 340, 380, 420, 460):
-            svg = render_table_svg(
-                chart,
-                data,
-                width=600,
-                height=height,
-                board_style=resolve_style(get_theme_style()),
-            )
-            label_ys = [
-                float(y)
-                for y in re.findall(r'<text [^>]*?y="([\d.]+)"[^>]*>Rows ', svg)
-            ]
-            note_match = re.search(r'<text [^>]*?y="([\d.]+)"[^>]*>Showing pages', svg)
-            if note_match is None:
-                absent.append(height)
-                continue
-            present.append(height)
-            note_y = float(note_match.group(1))
-            assert label_ys, f"height={height}: labels vanished but the note stayed"
-            assert note_y >= max(label_ys) + _PAGINATION_CAP_NOTE_HEIGHT, (
-                f"height={height}: cap note (y={note_y}) paints on top of the "
-                f"row-range label (max label y={max(label_ys)}) -- when the "
-                f"band is squeezed the note must be omitted, not clamped"
-            )
-
-        assert present, (
-            "no probed height rendered the note, so the clearance assertion "
-            "never ran -- the sweep proves nothing about the emitted case"
-        )
-        assert absent, (
-            "no probed height omitted the note, so the omission branch is "
-            "unexercised -- widen the sweep downward"
-        )
-
-    def test_cap_note_survives_a_non_zero_bottom_padding(self, make_chart) -> None:
-        """bottom_padding must not decide whether the note renders at all.
-
-        The note is the artifact's only record that the export stops short of
-        the data; gating it on a second, never-reserved bottom_padding made a
-        truncated export photograph as a complete table.
-        """
-        from dbt_charts.core.compile.models.style.authored import (
-            TableChartStylePatch,
-        )
-
-        _STATIC_MULTI_PAGE_MAX_PAGES = 20
-
-        page_rows = 10
-        n_rows = (_STATIC_MULTI_PAGE_MAX_PAGES + 5) * page_rows
-        data = _make_data(n_rows)
-        for bottom_padding in (0, 4, 12, 24):
-            chart = make_chart(
-                "table",
-                x=None,
-                y=None,
-                id="static_cap6",
-                style=TableChartStylePatch(
-                    pagination={"enabled": True, "page_rows": page_rows},
-                    bottom_padding=bottom_padding,
-                ),
-            )
-            resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-            svg = render_table_svg(
-                resolved, data, width=600, board_style=resolve_style(get_theme_style())
-            )
-            assert "Showing pages" in svg, (
-                f"bottom_padding={bottom_padding}: the static-export cap note "
-                f"vanished on an auto-height table that reserved its band"
-            )
+        assert ">25</text>" in svg, "the pager keeps the true last page"
+        assert "Showing pages" not in svg, "no generated English cap note"
 
     def test_explicit_height_is_not_grown_past_when_capped(self, make_chart) -> None:
         """An explicit height:, once past sizing, is an invariant the renderer
@@ -1039,7 +830,7 @@ class TestStaticMultiPagePagination:
             )
 
     def test_no_cap_note_when_total_pages_within_cap(self, make_chart) -> None:
-        """A table whose real page count fits the cap gets no truncation note."""
+        """A table whose real page count fits the cap has no disabled pages."""
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
@@ -1164,7 +955,7 @@ class TestStripPaginationChrome:
         # The row-range label is content ("how much am I not seeing?"), not
         # clickable-looking chrome -- it must survive even though it used to
         # live inside the stripped <g class="dbt-paginator"> group.
-        assert "Rows 1–5 of 20" in stripped
+        assert "1–5 / 20" in stripped
 
     def test_no_op_on_single_page_table(self, make_chart) -> None:
         from dbt_charts.core.compile.models.style.authored import (
@@ -1189,7 +980,7 @@ class TestStripPaginationChrome:
 
 
 class TestPaginatorRowRangeLabel:
-    """The paginator states what it pages: "Rows N–M of T" left of the chevrons.
+    """The paginator states what it pages: "N–M / T" left of the chevrons.
 
     An unlabeled ``‹ 1 2 … 37 ›`` reads as "37 pages of dashboards I
     apparently created", not "this table has 37 pages of rows".
@@ -1222,7 +1013,7 @@ class TestPaginatorRowRangeLabel:
             board_style=resolve_style(get_theme_style()),
         )
 
-        assert "Rows 21–30 of 50" in svg
+        assert "21–30 / 50" in svg
 
     def test_short_last_page_reports_its_real_end_not_page_times_page_rows(
         self, make_chart
@@ -1251,7 +1042,7 @@ class TestPaginatorRowRangeLabel:
             board_style=resolve_style(get_theme_style()),
         )
 
-        assert "Rows 41–41 of 41" in svg
+        assert "41–41 / 41" in svg
 
     def test_absent_when_table_is_not_paginated(self, make_chart) -> None:
         chart = make_chart("table", x=None, y=None, id="unpaged")
@@ -1261,7 +1052,7 @@ class TestPaginatorRowRangeLabel:
             chart, data, width=600, board_style=resolve_style(get_theme_style())
         )
 
-        assert re.search(r"Rows \d+", svg) is None
+        assert re.search(r"\d+\u2013\d+ / \d+", svg) is None
 
     def test_label_dropped_when_it_would_collide_with_the_pager(
         self, make_chart
@@ -1288,12 +1079,12 @@ class TestPaginatorRowRangeLabel:
         svg = render_table_svg(
             chart,
             data,
-            width=180,
+            width=160,
             variables={"labeled_page": "3"},
             board_style=resolve_style(get_theme_style()),
         )
 
-        assert re.search(r"Rows \d+", svg) is None
+        assert re.search(r"\d+\u2013\d+ / \d+", svg) is None
         # Dropping the label must not drop the pager itself.
         assert "dbt-paginator" in svg
 
@@ -1324,7 +1115,7 @@ class TestPaginatorRowRangeLabel:
             board_style=resolve_style(get_theme_style()),
         )
 
-        assert "Rows 21–30 of 50" in svg
+        assert "21–30 / 50" in svg
 
 
 class TestPaginatorFollowsCurrentPage:

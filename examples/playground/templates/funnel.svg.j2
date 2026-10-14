@@ -1,0 +1,46 @@
+{#---
+description: Funnel of ordered stages, one row per stage in query order. Bars are centered and sized by value; the band between two bars shows the share that made it to the next stage.
+channels:
+  x:
+    description: Column naming each stage.
+  y:
+    description: Column holding the count that reached each stage.
+options:
+  value_format:
+    type: string
+    default: ',.0f'
+  label_width:
+    type: number
+    default: 120
+    description: Width reserved on the left for stage names.
+---#}
+{% set p = options %}
+{% set stage_col = channels.x %}
+{% set value_col = channels.y %}
+{% if not rows %}{{ raise_error("A funnel needs at least one stage.") }}{% endif %}
+{% set top = rows[0][value_col] | float %}
+{% set peak = rows | map(attribute=value_col) | map("float") | max %}
+{% set n = rows | length %}
+{% set band = height / n %}
+{% set bar_h = band * 0.62 %}
+{% set plot_w = width - p.label_width - 90 %}
+{% set cx = p.label_width + plot_w / 2 %}
+{% set fill = style.charts.color.categorical.single_series_palette[0] %}
+{% set axis_font = style.charts.axis.labels.font %}
+<g font-family="{{ style.font.family }}" font-size="{{ style.font.size }}">
+{% for r in rows %}
+  {% set v = r[value_col] | float %}
+  {% set w = plot_w * v / peak %}
+  {% set y = loop.index0 * band + (band - bar_h) / 2 %}
+  {% if not loop.first %}
+    {% set pv = rows[loop.index0 - 1][value_col] | float %}
+    {% set pw = plot_w * pv / peak %}
+    {% set py = y - band + bar_h %}
+    <path d="M{{ (cx - pw / 2)|round(1) }},{{ py|round(1) }}H{{ (cx + pw / 2)|round(1) }}L{{ (cx + w / 2)|round(1) }},{{ y|round(1) }}H{{ (cx - w / 2)|round(1) }}Z" fill="{{ fill }}" fill-opacity="0.15"/>
+    <text x="{{ width }}" y="{{ (py + (y - py) / 2)|round(1) }}" dy="0.35em" text-anchor="end" fill="{{ style.muted }}" font-size="{{ axis_font.size }}">{{ (v / pv) | format(".0%") }} of previous</text>
+  {% endif %}
+  <rect x="{{ (cx - w / 2)|round(1) }}" y="{{ y|round(1) }}" width="{{ [w, 1]|max|round(1) }}" height="{{ bar_h|round(1) }}" rx="2" fill="{{ fill }}"><title>{{ r[stage_col] }}: {{ v | format(p.value_format) }} ({{ (v / top) | format(".1%") }} of {{ rows[0][stage_col] }})</title></rect>
+  <text x="{{ p.label_width - 12 }}" y="{{ (y + bar_h / 2)|round(1) }}" dy="0.35em" text-anchor="end" fill="{{ style.font.color }}">{{ r[stage_col] }}</text>
+  <text x="{{ (cx + w / 2 + 8)|round(1) }}" y="{{ (y + bar_h / 2)|round(1) }}" dy="0.35em" font-weight="600" fill="{{ style.font.color }}">{{ v | format(p.value_format) }}</text>
+{% endfor %}
+</g>

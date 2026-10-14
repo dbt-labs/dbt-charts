@@ -350,10 +350,11 @@ def render_chart_item(
         available_height: Height in pixels for the chart
         resolved_style: Board-scoped ResolvedStyle for effective chart style.
         render_cache: Cache of pre-rendered SVGs shared with the sizing pass.
-        padding: 4-sided padding dict (left/right/top/bottom). Vega-family forwards
-            it to the spec, rendering at the outer size with ink pre-inset;
-            SVG-family renders at the inner size and wraps in a translate so the
-            inset content sits inside the padded box the tagged group carries.
+        padding: 4-sided padding dict (left/right/top/bottom). Vega-family and
+            custom charts render at the outer size with their ink pre-inset by
+            it; SVG-family (table/kpi/spark_bar) renders at the inner size and
+            wraps in a translate so the inset content sits inside the padded
+            box the tagged group carries.
         error_collector: When provided, per-chart Diagnostics are appended here.
 
     Returns:
@@ -594,8 +595,9 @@ def _card_shadow(
 
 
 def _ink_carries_padding(chart: ResolvedChart) -> bool:
-    """True when the chart's whole SVG is one Vega render at the outer size, so
-    its ink already sits inset by the padding its spec carried.
+    """True when the chart's whole SVG is one render at the outer size (a Vega
+    render, or a custom chart's frame), so its ink already sits inset by the
+    padding it carried.
 
     False for a ``callout``, whose card ``render_svg_family`` returns full-bleed
     at 0,0 with the padding never applied, and false for a pie that composed a
@@ -610,7 +612,7 @@ def _ink_carries_padding(chart: ResolvedChart) -> bool:
 
     if isinstance(chart, ResolvedPieChart) and chart.attached_table is not None:
         return False
-    return chart.chart_type in PAINTS_MARKS
+    return chart.chart_type in PAINTS_MARKS or chart.chart_type == "custom"
 
 
 def _wrap_rendered_chart_svg(
@@ -645,8 +647,8 @@ def _wrap_rendered_chart_svg(
     # padded outer box the tag now carries. A card rect the family paints
     # (svg_utils.card_box) already reaches back out over the same inset, so it
     # fills the outer box. Vega families already render at the outer size with
-    # padding baked into their own spec — no wrap, and the outer box is the
-    # measured size (Vega auto-sizes height).
+    # padding baked into their own spec, as a custom chart's frame does — no
+    # wrap, and the outer box is the measured size (Vega auto-sizes height).
     #
     # `inset` is the caller's own answer to "did I shrink this?" — present means
     # yes, and carries by how much. Shrinking and wrapping are two halves of one

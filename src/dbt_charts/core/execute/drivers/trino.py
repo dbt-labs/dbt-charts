@@ -25,7 +25,7 @@ from collections.abc import Callable, Iterator, Mapping
 from importlib.util import find_spec
 from typing import TYPE_CHECKING, Any, assert_never
 
-import pyarrow as pa
+import nanoarrow as na
 
 from dbt_charts._install_hint import install_hint
 from dbt_charts.core.attribution import attribution_payload, connection_identity
@@ -34,9 +34,12 @@ from dbt_charts.core.diagnostics.codes_execute import ERR_ADAPTER_NOT_INSTALLED
 from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
     AdapterNotInstalledError,
 )
+from dbt_charts.core.execute.arrow_ingest import encode, table
 from dbt_charts.core.execute.result import read_bounded_table
 
 if TYPE_CHECKING:
+    from nanoarrow._array import CArray
+
     from dbt_charts.core.execute.adapters.base import RowFetchLimit
 
 logger = logging.getLogger(__name__)
@@ -49,29 +52,29 @@ _Convert = Callable[
     Any,  # type-state: explicit_any — the value Arrow stores for it
 ]
 
-_SCALAR_TYPES: dict[str, pa.DataType] = {
-    "boolean": pa.bool_(),
-    "tinyint": pa.int8(),
-    "smallint": pa.int16(),
-    "integer": pa.int32(),
-    "bigint": pa.int64(),
+_SCALAR_TYPES: dict[str, na.Schema] = {
+    "boolean": na.bool_(),
+    "tinyint": na.int8(),
+    "smallint": na.int16(),
+    "integer": na.int32(),
+    "bigint": na.int64(),
     # The client parses REAL into a Python float; float32 would re-round it and
     # turn 0.1 into 0.10000000149.
-    "real": pa.float64(),
-    "double": pa.float64(),
-    "varchar": pa.string(),
-    "char": pa.string(),
-    "json": pa.string(),
-    "ipaddress": pa.string(),
-    "varbinary": pa.binary(),
-    "date": pa.date32(),
+    "real": na.float64(),
+    "double": na.float64(),
+    "varchar": na.string(),
+    "char": na.string(),
+    "json": na.string(),
+    "ipaddress": na.string(),
+    "varbinary": na.binary(),
+    "date": na.date32(),
     # Python's datetime and time hold microseconds, so the client has already
     # rounded any finer precision away.
-    "timestamp": pa.timestamp("us"),
-    "timestamp with time zone": pa.timestamp("us", tz="UTC"),
-    "time": pa.time64("us"),
+    "timestamp": na.timestamp("us"),
+    "timestamp with time zone": na.timestamp("us", "UTC"),
+    "time": na.time64("us"),
     # The type of a bare NULL literal.
-    "unknown": pa.null(),
+    "unknown": na.null(),
 }
 
 # Arrow has no type that round-trips these into a chart, so they travel as JSON
@@ -98,9 +101,7 @@ def _to_json(value: Any) -> str:  # type-state: explicit_any — nested warehous
     return json.dumps(_jsonable(value))
 
 
-def arrow_column_type(
-    name: str, trino_type: str
-) -> tuple[pa.DataType, _Convert | None]:
+def arrow_column_type(name: str, trino_type: str) -> tuple[na.Schema, _Convert | None]:
     """The Arrow type for a Trino column type, and how to convert its values.
 
     Raises:
@@ -109,12 +110,12 @@ def arrow_column_type(
     lowered = trino_type.lower()
     decimal = _DECIMAL.fullmatch(lowered)
     if decimal is not None:
-        return pa.decimal128(int(decimal[1]), int(decimal[2])), None
+        return na.decimal128(int(decimal[1]), int(decimal[2])), None
     family = lowered.split("(", 1)[0].strip()
     if family in _JSON_TYPES:
-        return pa.string(), _to_json
+        return na.string(), _to_json
     if family == "uuid":
-        return pa.string(), str
+        return na.string(), str
     # `timestamp(3) with time zone` → `timestamp with time zone`.
     scalar = " ".join(_PARAMETERS.sub("", lowered).split())
     if scalar in _SCALAR_TYPES:
@@ -240,7 +241,7 @@ class TrinoDriverConnection:
         self._live: set[Any] = set()  # type-state: explicit_any — untyped Cursor
         self._live_lock = threading.Lock()
 
-    def execute(self, sql: str, limit: RowFetchLimit) -> pa.Table:
+    def execute(self, sql: str, limit: RowFetchLimit) -> na.Array:
         """Run *sql* and return about ``limit.fetch_limit`` rows as Arrow.
 
         Closing the cursor cancels the query server-side, so a fetch that stops
@@ -253,8 +254,10 @@ class TrinoDriverConnection:
                 (column[0], *arrow_column_type(column[0], column[1]))
                 for column in cursor.description
             ]
-            schema = pa.schema([(name, type_) for name, type_, _ in columns])
-            return read_bounded_table(_batches(cursor, columns, schema), schema, limit)
+            schema = na.c_schema(
+                na.struct([na.Schema(type_, name=name) for name, type_, _ in columns])
+            )
+            return read_bounded_table(_batches(cursor, columns), schema, limit)
         finally:
             self._release(cursor)
 
@@ -308,23 +311,27 @@ class TrinoDriverConnection:
 
 def _batches(
     cursor: Any,  # type-state: explicit_any — trino.dbapi.Cursor is untyped
-    columns: list[tuple[str, pa.DataType, _Convert | None]],
-    schema: pa.Schema,
-) -> Iterator[pa.RecordBatch]:
+    columns: list[tuple[str, na.Schema, _Convert | None]],
+) -> Iterator[CArray]:
     while rows := cursor.fetchmany(_BATCH_ROWS):
-        arrays = [
-            pa.array(
-                [
-                    row[index]
-                    if convert is None or row[index] is None
-                    else convert(row[index])
-                    for row in rows
-                ],
-                type=type_,
-            )
-            for index, (_, type_, convert) in enumerate(columns)
-        ]
-        yield pa.RecordBatch.from_arrays(arrays, schema=schema)
+        yield table(
+            [
+                (
+                    name,
+                    encode(
+                        [
+                            row[index]
+                            if convert is None or row[index] is None
+                            else convert(row[index])
+                            for row in rows
+                        ],
+                        type_,
+                    ),
+                )
+                for index, (name, type_, convert) in enumerate(columns)
+            ],
+            len(rows),
+        )
 
 
 def require_trino_extra() -> None:

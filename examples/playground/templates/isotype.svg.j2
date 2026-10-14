@@ -1,0 +1,105 @@
+{#---
+description: Isotype pictogram after Otto and Marie Neurath, one row per block and group. Each block is a column of repeated symbols, one symbol per fixed quantity, colored by group and filled from the bottom in reverse query order.
+channels:
+  x:
+    description: Column naming each block of symbols, drawn left to right in query order.
+  color:
+    description: Column naming the group a count belongs to; sets the symbol color.
+  y:
+    description: Column holding the quantity for each block and group.
+options:
+  per_symbol:
+    type: number
+    description: Quantity one symbol stands for. Counts round to whole symbols.
+  unit:
+    type: string
+    description: What is counted, for the key ("teachers").
+  per_row:
+    type: integer
+    default: 5
+    description: Symbols per row in every block.
+  per_row_column:
+    type: column
+    default: null
+    description: Optional column giving each block its own symbols per row.
+  symbol:
+    type: string
+    default: person
+    description: person, square, or circle.
+---#}
+{% set p = options %}
+{% set block_col = channels.x %}
+{% set group_col = channels.color %}
+{% set count_col = channels.y %}
+{% if p.symbol not in ["person", "square", "circle"] %}{{ raise_error("symbol must be person, square, or circle; got " ~ p.symbol) }}{% endif %}
+{% set ns = namespace(blocks=[], groups=[], seq={}, wide={}) %}
+{% for r in rows %}
+  {% set b = r[block_col] | string %}{% set g = r[group_col] | string %}
+  {% if b not in ns.blocks %}{% set ns.blocks = ns.blocks + [b] %}{% endif %}
+  {% if g not in ns.groups %}{% set ns.groups = ns.groups + [g] %}{% endif %}
+  {% set k = ((r[count_col] | float) / p.per_symbol) | round | int %}
+  {% set ns.seq = dict(ns.seq, **{b: (ns.seq[b] if b in ns.seq else []) + [g] * k}) %}
+  {% set ns.wide = dict(ns.wide, **{b: (r[p.per_row_column] | int) if p.per_row_column else p.per_row}) %}
+{% endfor %}
+{% set key_h = 2.6 * style.font.size + 12 %}
+{% set label_h = style.font.size * 2.6 + 14 %}
+{% set gap_cols = 1.5 %}
+{% set ns.cols = 0 %}{% set ns.rows = 0 %}
+{% for b in ns.blocks %}
+  {% set ns.cols = ns.cols + ns.wide[b] %}
+  {% set ns.rows = [ns.rows, math.ceil((ns.seq[b] | length) / ns.wide[b])] | max %}
+{% endfor %}
+{% set aspect = 2.4 if p.symbol == "person" else 1 %}
+{% set cell = [width / (ns.cols + gap_cols * (ns.blocks | length - 1)), (height - key_h - label_h) / (ns.rows * aspect)] | min %}
+{% set sw = cell %}{% set sh = cell * aspect %}
+{% set base = height - key_h - label_h %}
+{% set gap = sw * 1.5 + 8 %}
+{% set ns.slot = {} %}{% set ns.used = gap * (ns.blocks | length - 1) %}
+{% for b in ns.blocks %}
+  {% set wmax = namespace(v=0) %}{% for w in b | split(" ") %}{% set wmax.v = [wmax.v, text_width(w, style.font.size)] | max %}{% endfor %}
+  {% set ns.slot = dict(ns.slot, **{b: [ns.wide[b] * sw, wmax.v] | max}) %}
+  {% set ns.used = ns.used + ns.slot[b] %}
+{% endfor %}
+{% set used = ns.used %}
+<defs>
+  <symbol id="{{ uid }}-person" viewBox="0 0 10 24">
+    <circle cx="5" cy="2.8" r="2.5"/>
+    <path d="M1.6 6.6h6.8l1.1 8.2H8.1l-.5 8.6H5.6L5 16.4l-.6 7H2.4l-.5-8.6H.5z"/>
+  </symbol>
+</defs>
+<g font-family="{{ style.font.family }}" font-size="{{ style.font.size }}" fill="{{ style.font.color }}">
+{% set ns.x = (width - used) / 2 %}
+{% for b in ns.blocks %}
+  {% set wide = ns.wide[b] %}
+  {% set seq = ns.seq[b] %}
+  {% set total = seq | length %}
+  {% set rem = total % wide or wide %}
+  {% set nrows = math.ceil(total / wide) %}
+  <g>
+    <title>{{ b }}: {% for g in ns.groups if g in seq %}{{ g }} {{ ((seq | select("equalto", g) | list | length) * p.per_symbol) | format(",.0f") }}{{ "; " if not loop.last }}{% endfor %}</title>
+  {% for g in seq %}
+    {% set k = loop.index0 %}
+    {% set row = 0 if k < rem else 1 + (k - rem) // wide %}
+    {% set col = k if k < rem else (k - rem) % wide %}
+    {% set x = ns.x + (ns.slot[b] - wide * sw) / 2 + col * sw %}{% set y = base - (nrows - row) * sh %}
+    {% if p.symbol == "person" %}
+    <use href="#{{ uid }}-person" x="{{ (x + sw * 0.08)|round(2) }}" y="{{ (y + sh * 0.06)|round(2) }}" width="{{ (sw * 0.84)|round(2) }}" height="{{ (sh * 0.88)|round(2) }}" fill="{{ color_for(g, group_col) }}"/>
+    {% elif p.symbol == "square" %}
+    <rect x="{{ (x + sw * 0.1)|round(2) }}" y="{{ (y + sh * 0.1)|round(2) }}" width="{{ (sw * 0.8)|round(2) }}" height="{{ (sh * 0.8)|round(2) }}" fill="{{ color_for(g, group_col) }}"/>
+    {% else %}
+    <circle cx="{{ (x + sw / 2)|round(2) }}" cy="{{ (y + sh / 2)|round(2) }}" r="{{ (sw * 0.4)|round(2) }}" fill="{{ color_for(g, group_col) }}"/>
+    {% endif %}
+  {% endfor %}
+  </g>
+  {% set words = [b] if text_width(b, style.font.size) <= ns.slot[b] + gap - 8 else b | split(" ") %}
+  <text x="{{ (ns.x + ns.slot[b] / 2)|round(1) }}" y="{{ (base + style.font.size + 6)|round(1) }}" text-anchor="middle">{% for w in words %}<tspan x="{{ (ns.x + ns.slot[b] / 2)|round(1) }}" dy="{{ 0 if loop.first else '1.15em' }}">{{ w }}</tspan>{% endfor %}</text>
+  {% set ns.x = ns.x + ns.slot[b] + gap %}
+{% endfor %}
+  <text x="{{ ((width - used) / 2)|round(1) }}" y="{{ (height - key_h + style.font.size + 10)|round(1) }}" fill="{{ style.muted }}">Each symbol represents {{ p.per_symbol | format(",") }} {{ p.unit }}</text>
+{% set ns.kx = (width - used) / 2 %}
+{% for g in ns.groups %}
+  <rect x="{{ ns.kx }}" y="{{ (height - style.font.size - 2)|round(1) }}" width="10" height="10" rx="2" fill="{{ color_for(g, group_col) }}"/>
+  <text x="{{ ns.kx + 14 }}" y="{{ (height - 3)|round(1) }}">{{ g }}</text>
+  {% set ns.kx = ns.kx + 14 + text_width(g, style.font.size) + 18 %}
+{% endfor %}
+</g>

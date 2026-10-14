@@ -177,6 +177,26 @@ class TestRedshiftDialect:
         """Redshift dialect has correct name."""
         assert dialect.name == "redshift"
 
+    def test_connect_credentials_outlasts_the_statement_cap(
+        self, dialect: RedshiftDialect
+    ) -> None:
+        creds = {"type": "redshift", "connect_timeout": 5}
+        assert dialect.connect_credentials(creds, 120)["connect_timeout"] > 120
+        assert creds["connect_timeout"] == 5
+
+    def test_connect_credentials_adds_headroom_when_the_key_is_absent(
+        self, dialect: RedshiftDialect
+    ) -> None:
+        creds = {"type": "redshift"}
+        assert dialect.connect_credentials(creds, 120)["connect_timeout"] == 130
+        assert "connect_timeout" not in creds
+
+    def test_connect_credentials_keeps_a_larger_authored_budget(
+        self, dialect: RedshiftDialect
+    ) -> None:
+        creds = {"type": "redshift", "connect_timeout": 300}
+        assert dialect.connect_credentials(creds, 120)["connect_timeout"] == 300
+
     def test_param_like_postgres(self, dialect: RedshiftDialect) -> None:
         """Redshift uses PostgreSQL-style $N parameters."""
         assert dialect.param(1) == "$1"

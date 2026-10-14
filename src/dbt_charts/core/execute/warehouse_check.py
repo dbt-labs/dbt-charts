@@ -54,6 +54,7 @@ has to be read for whose fault it was.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
@@ -62,8 +63,9 @@ import sqlglot.errors
 import sqlglot.expressions as exp
 from pydantic import BaseModel, ConfigDict
 
+from dbt_charts.core.attribution import attribute, attribution_payload
 from dbt_charts.core.compile.models.query.normalized import SqlQuery, is_sql_query
-from dbt_charts.core.compile.models.source import is_file_source
+from dbt_charts.core.compile.models.source import AttributedSourceConfig, is_file_source
 from dbt_charts.core.compile.sql_guard import (
     as_expressions,
     build_skeleton,
@@ -275,13 +277,25 @@ def warehouse_check(
                     "resolved BigQuery source config"
                 ),
             )
-        return _check_bigquery(
-            query,
-            board=board,
-            adapter_registry=adapter_registry,
-            variables=variables,
-            source_config=source_config,
-        )
+        # The dry run is sent on a bare client, not the dbt connection that labels
+        # execution, so it establishes the same scope the registry does and
+        # `_check_bigquery` reads it back.
+        scope = {"query": query_name, "board": board.id}
+        if query.target:
+            scope["target"] = query.target
+        with attribute(
+            scope,
+            source_config.attribution
+            if isinstance(source_config, AttributedSourceConfig)
+            else {},
+        ):
+            return _check_bigquery(
+                query,
+                board=board,
+                adapter_registry=adapter_registry,
+                variables=variables,
+                source_config=source_config,
+            )
     if adapter_type == "sqlserver":
         if source_config is None:
             return WarehouseCheck(
@@ -854,6 +868,7 @@ def _check_bigquery(
             wire_sql,
             job_config=QueryJobConfig(
                 dry_run=True,
+                labels=json.loads(attribution_payload()),
                 use_query_cache=False,
                 # Execution binds this to the connection, so without it a bare
                 # `FROM orders` — the normal spelling once the source names the

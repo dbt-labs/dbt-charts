@@ -1111,8 +1111,8 @@ def create_server(
         allow_external_access_in_readonly: Allow author SQL to reach the filesystem
             or network through DuckDB (read_csv/read_json_auto, httpfs, ATTACH).
             Default False: serve is strict read-only, matching Cloud. File sources
-            (csv/json/parquet) do not need this — they are parsed via PyArrow into
-            the cache by the file source materializer, out of band from author SQL.
+            (csv/json/parquet) do not need this: the file source materializer
+            reads them on a private connection, out of band from author SQL.
         duckdb_config: DuckDB config dict; defaults to enable_external_access when
             allow_external_access_in_readonly is True.
         allow_mutating_methods: Let http sources use POST/PUT/PATCH/DELETE.

@@ -305,13 +305,12 @@ def _parquet_uncompressed_size(path: Path) -> int:
     """The size the guard will measure, from the guard's own function — used
     to place a fixture's cap on the right side of it, never as the oracle a
     test asserts against."""
-    from dbt_charts.core.compile.models.source import ParquetSourceConfig
-    from dbt_charts.core.execute.file_source_materializer import _uncompressed_bytes
+    import duckdb
 
-    return _uncompressed_bytes(
-        ParquetSourceConfig(type="parquet", files={"t": "x.parquet"}),
-        path.read_bytes(),
-    )
+    from dbt_charts.core.execute.file_source_materializer import _parquet_bytes
+
+    with duckdb.connect() as scratch:
+        return _parquet_bytes(scratch, str(path))
 
 
 class TestFileSourceMaxBytesCap:

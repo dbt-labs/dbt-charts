@@ -7,6 +7,7 @@ pub mod arc;
 pub mod format;
 pub mod js_math;
 pub mod js_sort;
+pub mod native;
 pub mod path;
 pub mod pie;
 pub mod predefined_formats;

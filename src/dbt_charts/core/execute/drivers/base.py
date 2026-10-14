@@ -27,7 +27,7 @@ from dbt_charts.core.compile.models.source import (
 )
 
 if TYPE_CHECKING:
-    import pyarrow as pa
+    import nanoarrow as na
 
     from dbt_charts.core.execute.adapters.base import RowFetchLimit
 
@@ -41,7 +41,7 @@ DRIVER_SOURCE_TYPES: frozenset[str] = frozenset({"lakecompute", "trino"})
 class DriverConnection(Protocol):
     """One open warehouse session on the Arrow seam."""
 
-    def execute(self, sql: str, limit: RowFetchLimit) -> pa.Table:
+    def execute(self, sql: str, limit: RowFetchLimit) -> na.Array:
         """Run *sql* and stop fetching once ``limit.fetch_limit`` rows are in hand.
 
         A coarse bound, not an exact one: a driver reads whole batches, so the

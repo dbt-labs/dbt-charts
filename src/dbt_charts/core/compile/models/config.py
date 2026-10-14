@@ -633,6 +633,25 @@ class ProjectCacheConfig(CachePatch, ConstrainedModel):
 ProjectCacheInput = Annotated[ProjectCacheConfig, BeforeValidator(desugar_cache)]
 
 
+class CloudConfig(ConfigMappingBase):
+    """The ``cloud:`` block of dbt_charts.yml: rules dbt charts Cloud applies.
+
+    Tighten-only: ``false`` turns the capability off for the project; ``None``
+    (absent) and ``True`` both defer to Cloud's own settings, so the file can
+    never switch a capability on.
+    """
+
+    allow_public: bool | None = None  # None = not stated
+    honor_agent_instructions: bool | None = None  # None = not stated
+
+
+class WarningsConfig(ConfigMappingBase):
+    """The project's `warnings:` block: warning codes suppressed for every
+    board in the project."""
+
+    ignore: list[str] | None = None  # None = `ignore:` absent or left empty
+
+
 class Config(ConfigMappingBase):
     """Authoritative required runtime settings model.
 
@@ -688,6 +707,8 @@ class Config(ConfigMappingBase):
     # (dbt_charts.cloud_client.context) before it falls back to matching the
     # git remote. None = not connected, or not recorded yet.
     published_to: str | None = None
+    # Read by Cloud from the work branch's dbt_charts.yml, never through Config.
+    cloud: CloudConfig | None = None
     # Nothing reads this field: resolve_dbt_project_dir (core/project_roots.py)
     # reads dbt_charts.yml raw off disk before a Config exists (same reason
     # sources: above is unread here). It must stay declared anyway -- Config
@@ -695,6 +716,11 @@ class Config(ConfigMappingBase):
     # would fail load_config (and `dct serve` startup) for every project that
     # links an external dbt project. None = sibling default (no key set).
     dbt_project_dir: str | None = None
+    # Nothing reads this field: Project.warnings_ignore reads the block raw
+    # per project. It must stay declared anyway -- Config is extra="forbid"
+    # and validates the whole file, so dropping the field would fail
+    # load_config for every project that sets it. None = no block.
+    warnings: WarningsConfig | None = None
 
     @field_validator("published_to")
     @classmethod

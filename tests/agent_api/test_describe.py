@@ -515,3 +515,158 @@ rows:
         assert err.code == "ERR-UNKNOWN-CHART"
         assert "products" in err.message and "trend" in err.message
         assert err.hint is not None and "trend" in err.hint
+
+
+_TEMPLATE = """{#---
+description: Draws flows.
+channels:
+  x:
+    description: Origin column.
+  y:
+    description: Count column.
+    multiple: true
+  color:
+    default: null
+options:
+  label_size:
+    type: number
+    default: 11
+    description: Label font size.
+  palette:
+    type: color
+---#}
+<g/>"""
+
+_CUSTOM_BOARD = """
+queries:
+  q:
+    type: values
+    rows:
+      - {a: one, b: 2}
+charts:
+  flow:
+    type: custom
+    query: q
+    template: flow
+    x: a
+    y: b
+    options:
+      palette: "#ff0000"
+rows:
+  - flow
+"""
+
+
+def _template_project(tmp_path: Path) -> FilesystemProject:
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "templates" / "flow.svg.j2").write_text(_TEMPLATE)
+    (tmp_path / "templates" / "plain.svg.j2").write_text("<g/>")
+    return FilesystemProject(tmp_path)
+
+
+class TestDescribeTemplates:
+    """A template file or the templates folder describes its header contract."""
+
+    def test_template_file_describes_channels_and_options(self, tmp_path: Path) -> None:
+        from dbt_charts.agent_api.describe import describe_paths
+
+        project = _template_project(tmp_path)
+        (result,) = describe_paths([Path("templates/flow.svg.j2")], project=project)
+
+        assert result.success is True, result.errors
+        assert result.path == "templates/flow.svg.j2"
+        template = result.template
+        assert template is not None
+        assert template.name == "flow"
+        assert template.description == "Draws flows."
+        channels = {c.name: c for c in template.channels}
+        assert list(channels) == ["x", "y", "color"]
+        assert channels["x"].required is True
+        assert channels["x"].description == "Origin column."
+        assert channels["y"].multiple is True
+        assert channels["color"].required is False
+        options = {o.name: o for o in template.options}
+        assert options["label_size"].type == "number"
+        assert options["label_size"].default == 11
+        assert options["label_size"].required is False
+        assert options["label_size"].description == "Label font size."
+        assert options["palette"].required is True
+
+    def test_templates_folder_lists_every_template(self, tmp_path: Path) -> None:
+        from dbt_charts.agent_api.describe import describe_paths
+
+        project = _template_project(tmp_path)
+        results = describe_paths([Path("templates")], project=project)
+
+        assert [r.path for r in results] == [
+            "templates/flow.svg.j2",
+            "templates/plain.svg.j2",
+        ]
+        assert all(r.success and r.template is not None for r in results)
+
+    def test_only_files_under_templates_are_described_as_templates(
+        self, tmp_path: Path
+    ) -> None:
+        from dbt_charts.agent_api.describe import describe_paths
+
+        project = _template_project(tmp_path)
+        (tmp_path / "templates" / "flows").mkdir()
+        (tmp_path / "templates" / "flows" / "sub.svg.j2").write_text("<g/>")
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "stray.svg.j2").write_text("<g/>")
+
+        walked = describe_paths([Path("templates")], project=project)
+        names = [r.template.name for r in walked if r.template is not None]
+        assert names == ["flow", "flows/sub", "plain"]
+        root = describe_paths([Path()], project=project)
+        assert all(r.template is None for r in root)
+        (tmp_path / "charts" / "b.yml").write_text("title: B\nrows: []\n")
+        charts_only = describe_paths([Path("charts")], project=project)
+        assert all(r.template is None for r in charts_only)
+
+        (stray,) = describe_paths([Path("charts/stray.svg.j2")], project=project)
+        assert stray.success is False
+        assert [e.code for e in stray.errors] == ["ERR-CUSTOM-TEMPLATE"]
+        assert "not under templates/" in stray.errors[0].message
+
+    def test_invalid_template_header_is_a_structured_error(
+        self, tmp_path: Path
+    ) -> None:
+        from dbt_charts.agent_api.describe import describe_paths
+
+        project = _template_project(tmp_path)
+        (tmp_path / "templates" / "bad.svg.j2").write_text("{% for x in y %}")
+        (result,) = describe_paths([Path("templates/bad.svg.j2")], project=project)
+
+        assert result.success is False
+        assert result.errors[0].code == "ERR-CUSTOM-TEMPLATE"
+        assert "templates/bad.svg.j2" in result.errors[0].message
+
+    def test_board_describe_names_the_charts_template(self, tmp_path: Path) -> None:
+        from dbt_charts.agent_api.describe import describe_board
+
+        project = _template_project(tmp_path)
+        (tmp_path / "b.yml").write_text(_CUSTOM_BOARD)
+        result = describe_board(Path("b.yml"), project=project)
+
+        assert result.success is True, result.errors
+        chart = result.charts[0]
+        assert chart.type == "custom"
+        assert chart.template == "flow"
+        assert chart.template_description == "Draws flows."
+        assert chart.inline_template is False
+
+    def test_inline_custom_chart_is_marked_inline(self, tmp_path: Path) -> None:
+        from dbt_charts.agent_api.describe import describe_board
+
+        board = _CUSTOM_BOARD.replace("    template: flow\n", "    svg: '<g/>'\n")
+        board = board.replace(
+            '    x: a\n    y: b\n    options:\n      palette: "#ff0000"\n', ""
+        )
+        (tmp_path / "b.yml").write_text(board)
+        result = describe_board(Path("b.yml"), project=FilesystemProject(tmp_path))
+
+        assert result.success is True, result.errors
+        assert result.charts[0].template is None
+        assert result.charts[0].inline_template is True
+        assert result.charts[0].template_description is None

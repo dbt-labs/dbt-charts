@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Any
 from unittest.mock import patch
 
-import pyarrow as pa
+import nanoarrow as na
 import pytest
 import trino.auth
 from pydantic import ValidationError
@@ -100,7 +100,7 @@ class _Connection:
         self.closed = True
 
 
-def _run(columns: list[tuple[str, str]], rows: list[tuple[Any, ...]]) -> pa.Table:
+def _run(columns: list[tuple[str, str]], rows: list[tuple[Any, ...]]) -> na.Array:
     connection = TrinoDriverConnection(_Connection(_Cursor(columns, rows)))
     return connection.execute("SELECT 1", resolve_effective_row_limit(100))
 
@@ -287,62 +287,63 @@ def test_a_missing_client_names_the_extra_to_install() -> None:
 @pytest.mark.parametrize(
     ("trino_type", "value", "arrow_type", "expected"),
     [
-        ("boolean", True, pa.bool_(), True),
-        ("tinyint", 1, pa.int8(), 1),
-        ("smallint", 1, pa.int16(), 1),
-        ("integer", 1, pa.int32(), 1),
-        ("bigint", 2**40, pa.int64(), 2**40),
-        ("real", 0.1, pa.float64(), 0.1),
-        ("double", 0.1, pa.float64(), 0.1),
-        ("decimal(10,2)", Decimal("1.50"), pa.decimal128(10, 2), Decimal("1.50")),
-        ("varchar", "a", pa.string(), "a"),
-        ("varchar(5)", "a", pa.string(), "a"),
-        ("char(3)", "a  ", pa.string(), "a  "),
-        ("json", '{"a":1}', pa.string(), '{"a":1}'),
-        ("varbinary", b"\x00", pa.binary(), b"\x00"),
-        ("date", dt.date(2026, 1, 2), pa.date32(), dt.date(2026, 1, 2)),
+        ("boolean", True, na.bool_(), True),
+        ("tinyint", 1, na.int8(), 1),
+        ("smallint", 1, na.int16(), 1),
+        ("integer", 1, na.int32(), 1),
+        ("bigint", 2**40, na.int64(), 2**40),
+        ("real", 0.1, na.float64(), 0.1),
+        ("double", 0.1, na.float64(), 0.1),
+        ("decimal(10,2)", Decimal("1.50"), na.decimal128(10, 2), Decimal("1.50")),
+        ("varchar", "a", na.string(), "a"),
+        ("varchar(5)", "a", na.string(), "a"),
+        ("char(3)", "a  ", na.string(), "a  "),
+        ("json", '{"a":1}', na.string(), '{"a":1}'),
+        ("varbinary", b"\x00", na.binary(), b"\x00"),
+        ("date", dt.date(2026, 1, 2), na.date32(), dt.date(2026, 1, 2)),
         (
             "timestamp(3)",
             dt.datetime(2026, 1, 2, 3, 4, 5),
-            pa.timestamp("us"),
+            na.timestamp("us"),
             dt.datetime(2026, 1, 2, 3, 4, 5),
         ),
         (
             "timestamp(3) with time zone",
             dt.datetime(2026, 1, 2, 3, tzinfo=dt.timezone(dt.timedelta(hours=1))),
-            pa.timestamp("us", tz="UTC"),
+            na.timestamp("us", "UTC"),
             dt.datetime(2026, 1, 2, 2, tzinfo=dt.UTC),
         ),
-        ("time(3)", dt.time(1, 2, 3), pa.time64("us"), dt.time(1, 2, 3)),
+        ("time(3)", dt.time(1, 2, 3), na.time64("us"), dt.time(1, 2, 3)),
         (
             "uuid",
             uuid.UUID("12345678-1234-5678-1234-567812345678"),
-            pa.string(),
+            na.string(),
             "12345678-1234-5678-1234-567812345678",
         ),
-        ("array(integer)", [1, 2], pa.string(), "[1, 2]"),
-        ("map(varchar, integer)", {"a": 1}, pa.string(), '{"a": 1}'),
-        ("row(x integer, y varchar)", (1, "a"), pa.string(), '[1, "a"]'),
+        ("array(integer)", [1, 2], na.string(), "[1, 2]"),
+        ("map(varchar, integer)", {"a": 1}, na.string(), '{"a": 1}'),
+        ("row(x integer, y varchar)", (1, "a"), na.string(), '[1, "a"]'),
     ],
 )
 def test_each_trino_type_family_maps_to_one_arrow_type(
-    trino_type: str, value: object, arrow_type: pa.DataType, expected: object
+    trino_type: str, value: object, arrow_type: na.Schema, expected: object
 ) -> None:
     table = _run([("c", trino_type)], [(value,), (None,)])
-    assert table.schema.field("c").type == arrow_type
-    assert table.column("c").to_pylist() == [expected, None]
+    assert na.c_schema(table.schema.field(0)).format == na.c_schema(arrow_type).format
+    assert table.child(0).to_pylist() == [expected, None]
 
 
 def test_a_nested_value_is_json_all_the_way_down() -> None:
     value = {1: [Decimal("1.5"), dt.date(2026, 1, 2)]}
     table = _run([("c", "map(integer, array(decimal(3,1)))")], [(value,)])
-    assert json.loads(table.column("c")[0].as_py()) == {"1": ["1.5", "2026-01-02"]}
+    assert json.loads(table.child(0).to_pylist()[0]) == {"1": ["1.5", "2026-01-02"]}
 
 
 def test_an_empty_result_still_carries_its_typed_columns() -> None:
     table = _run([("n", "bigint"), ("s", "varchar")], [])
-    assert table.schema == pa.schema([("n", pa.int64()), ("s", pa.string())])
-    assert table.num_rows == 0
+    fields = [table.schema.field(i) for i in range(table.schema.n_fields)]
+    assert [(f.name, na.c_schema(f).format) for f in fields] == [("n", "l"), ("s", "u")]
+    assert len(table) == 0
 
 
 @pytest.mark.parametrize(
@@ -360,7 +361,7 @@ def test_a_fetch_stops_at_the_row_limit_and_releases_the_query() -> None:
     cursor = _Cursor([("n", "bigint")], [(n,) for n in range(50_000)])
     limit = resolve_effective_row_limit(10)
     table = TrinoDriverConnection(_Connection(cursor)).execute("SELECT n", limit)
-    assert table.num_rows >= limit.fetch_limit
+    assert len(table) >= limit.fetch_limit
     assert cursor.fetched < 50_000
     assert cursor.closed
 
@@ -405,7 +406,7 @@ class _UnreachableCursor(_Cursor):
 def test_a_failed_cancel_or_release_does_not_replace_the_result() -> None:
     cursor = _UnreachableCursor([("n", "bigint")], [(1,)], lambda: connection.cancel())
     connection = TrinoDriverConnection(_Connection(cursor))
-    assert connection.execute("SELECT 1", resolve_effective_row_limit(1)).num_rows == 1
+    assert len(connection.execute("SELECT 1", resolve_effective_row_limit(1))) == 1
 
 
 def test_cancel_with_nothing_running_is_a_no_op() -> None:

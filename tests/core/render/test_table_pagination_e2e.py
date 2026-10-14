@@ -126,11 +126,11 @@ def test_paginator_glyph_uses_a_class_not_a_presentation_attribute() -> None:
     assert "dbt-paginator-glyph {" not in svg
 
 
-def test_paginator_label_and_cap_note_are_inert_to_selection() -> None:
-    """The row-range label sits outside the strippable paginator group and the
-    static-export cap note outside any group, so neither is reached by the
-    host rule for the group's own glyphs. Both carry a class the host
-    stylesheet targets instead -- interaction never ships inline in a board.
+def test_paginator_label_is_inert_to_selection() -> None:
+    """The row-range label sits outside the strippable paginator group, so the
+    host rule for the group's own glyphs does not reach it. It carries a class
+    the host stylesheet targets instead -- interaction never ships inline in a
+    board.
     """
     result = compile(_BOARD_YAML)
     assert result.success and result.board is not None, result.errors
@@ -142,11 +142,10 @@ def test_paginator_label_and_cap_note_are_inert_to_selection() -> None:
     assert isinstance(live, str) and isinstance(static, str)
 
     assert re.search(
-        r'<text [^>]*class="dbt-paginator-label"[^>]*>Rows 1–5 of 105</text>', live
+        r'<text [^>]*class="dbt-paginator-label"[^>]*>1–5 / 105</text>', live
     )
     assert re.search(
-        r'<text [^>]*class="dbt-paginator-label"[^>]*>Showing pages 1–20 of 21',
-        static,
+        r'<text [^>]*class="dbt-paginator-label"[^>]*>1–5 / 105</text>', static
     )
     assert "user-select" not in live and "user-select" not in static
     assert re.search(

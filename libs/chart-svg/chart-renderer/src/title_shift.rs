@@ -39,7 +39,7 @@ impl TitleShift {
 /// applied the way production applies it to that family.
 ///
 /// Production assigns a shift only to a titled item of a Vega-Lite family that
-/// paints marks, a table or a spark_bar (`title_band.py::chart_title_metrics`);
+/// paints marks, a table, a spark_bar or a custom chart (`title_band.py::chart_title_metrics`);
 /// a kpi, a callout, a sankey and an attached-table pie are untitled for the
 /// band and always carry a zero shift. A shift anywhere else refuses by name
 /// rather than painting an unshifted title; so does a shift over a query that
@@ -49,24 +49,35 @@ pub fn for_family<'a>(payload: &'a Payload, chart_type: &str) -> Result<Cow<'a, 
         return Ok(Cow::Borrowed(payload));
     }
     // A table draws its own empty arm and applies the shift there.
-    if payload.rows.is_empty() && chart_type != "table" {
-        return Err(format!("{chart_type}: a title shift over an empty result is not modeled"));
+    if payload.rows.is_empty() && !matches!(chart_type, "table" | "custom") {
+        return Err(format!(
+            "{chart_type}: a title shift over an empty result is not modeled"
+        ));
     }
     match chart_type {
-        "bar" | "line" | "area" | "scatter" | "heatmap" | "histogram" => {
+        "bar" | "line" | "area" | "scatter" | "heatmap" | "histogram" | "custom" => {
             shift_vega_payload(payload, payload.title_shift)
         }
-        "pie" if payload.resolved.get("attached_table").is_some_and(|t| !t.is_null()) => Err(
-            "pie: a title shift over an attached table is not modeled — production keeps that \
+        "pie"
+            if payload
+                .resolved
+                .get("attached_table")
+                .is_some_and(|t| !t.is_null()) =>
+        {
+            Err(
+                "pie: a title shift over an attached table is not modeled — production keeps that \
              composite out of the title band"
-                .to_string(),
-        ),
+                    .to_string(),
+            )
+        }
         "pie" => shift_vega_payload(payload, payload.title_shift),
         "table" | "spark_bar" => Ok(Cow::Borrowed(payload)),
-        "geoshape" | "point_map" => {
-            Err(format!("{chart_type}: production shifts this family, which has no renderer here"))
-        }
-        other => Err(format!("{other}: production assigns no title shift to this family")),
+        "geoshape" | "point_map" => Err(format!(
+            "{chart_type}: production shifts this family, which has no renderer here"
+        )),
+        other => Err(format!(
+            "{other}: production assigns no title shift to this family"
+        )),
     }
 }
 
@@ -89,7 +100,11 @@ pub(crate) fn shift_vega_payload(
     if shift.is_zero() {
         return Ok(Cow::Borrowed(payload));
     }
-    let chart_id = payload.resolved.get("id").and_then(Value::as_str).unwrap_or("<unknown>");
+    let chart_id = payload
+        .resolved
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown>");
     // Production's helper indexes `spec["title"]`: a titled chart is the only
     // one `chart_title_metrics` hands a shift to.
     let titled = payload
@@ -97,7 +112,9 @@ pub(crate) fn shift_vega_payload(
         .get("title")
         .is_some_and(|t| !t.is_null() && t.as_str() != Some(""));
     if !titled {
-        return Err(format!("chart {chart_id}: a title shift needs a title block to move"));
+        return Err(format!(
+            "chart {chart_id}: a title shift needs a title block to move"
+        ));
     }
     let padding = payload
         .padding
@@ -115,7 +132,10 @@ pub(crate) fn shift_vega_payload(
         })?;
     let gap_extra = crate::sizing::python_round(shift.body_dy - shift.title_dy);
     let mut shifted = payload.clone();
-    shifted.padding = Some(Padding { top: padding.top + shift.body_dy - gap_extra, ..padding });
+    shifted.padding = Some(Padding {
+        top: padding.top + shift.body_dy - gap_extra,
+        ..padding
+    });
     *shifted
         .resolved
         .pointer_mut("/title_style/position/offset")
@@ -175,7 +195,11 @@ pub fn chart_title_metrics(
     spark_title: Option<&crate::SparkBarTitle>,
 ) -> Result<Option<TitleMetrics>, String> {
     // `title_band.py:106`: a subtitle-only chart draws no title block.
-    if !chart.get("title").and_then(Value::as_str).is_some_and(|t| !t.is_empty()) {
+    if !chart
+        .get("title")
+        .and_then(Value::as_str)
+        .is_some_and(|t| !t.is_empty())
+    {
         return Ok(None);
     }
     let chart_type = chart
@@ -187,64 +211,99 @@ pub fn chart_title_metrics(
     if chart_type == "pie" && chart.get("attached_table").is_some_and(|t| !t.is_null()) {
         return Ok(None);
     }
-    let chart_id = chart.get("id").and_then(Value::as_str).unwrap_or("<unknown>");
+    let chart_id = chart
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown>");
     let layout_top = chart
         .pointer("/layout_padding/top")
         .and_then(Value::as_f64)
         .ok_or_else(|| format!("chart {chart_id}: layout_padding.top missing"))?;
     let inset_top = card_padding + layout_top;
-    let has_subtitle = chart.get("subtitle").and_then(Value::as_str).is_some_and(|s| !s.is_empty());
-    // `title_band.py:112-114`: production asserts a titled chart resolves its title font.
-    let size = || {
-        chart
-            .pointer("/style/title_font/size")
-            .and_then(Value::as_f64)
-            .ok_or_else(|| format!("chart {chart_id}: a titled chart needs style.title_font.size"))
-    };
     match chart_type {
         "table" => {
             let (ascent, tail) = crate::families::table::title_geometry(chart, slot_width, fonts)?;
-            Ok(Some(TitleMetrics { ascent: inset_top + ascent, tail }))
+            Ok(Some(TitleMetrics {
+                ascent: inset_top + ascent,
+                tail,
+            }))
         }
         "spark_bar" => {
             let (ascent, tail) = crate::families::spark_bar::title_geometry(
                 chart,
                 spark_title.ok_or("spark_bar title: the board style carries no spark_bar_title")?,
             )?;
-            Ok(Some(TitleMetrics { ascent: inset_top + ascent, tail }))
+            Ok(Some(TitleMetrics {
+                ascent: inset_top + ascent,
+                tail,
+            }))
         }
-        // `title_band.py:140`: the types in `PAINTS_MARKS`; a kpi, callout and
-        // sankey have no title slot.
+        // `title_band.py:140`: the types in `PAINTS_MARKS`, and a custom chart,
+        // which draws its title in the same geometry; a kpi, callout and sankey
+        // have no title slot.
         "bar" | "histogram" | "line" | "area" | "scatter" | "heatmap" | "pie" | "geoshape"
-        | "point_map" => {
-            let size = size()?;
-            let ascent = crate::sizing::title_ascent(size);
-            let subtitle = if has_subtitle {
-                let subtitle_size = chart
-                    .pointer("/title_style/subtitle/font/size")
-                    .and_then(Value::as_f64)
-                    .ok_or_else(|| {
-                        format!("chart {chart_id}: a subtitle needs title_style.subtitle.font.size")
-                    })?;
-                subtitle_size + crate::vega_fit::SUBTITLE_PADDING
-            } else {
-                0.0
-            };
-            let offset = chart
-                .pointer("/title_style/position/offset")
-                .and_then(Value::as_f64)
-                .unwrap_or(VEGA_TITLE_OFFSET);
-            Ok(Some(TitleMetrics { ascent: inset_top + ascent, tail: size + subtitle + offset - ascent }))
+        | "point_map" | "custom" => {
+            let (ascent, tail) = vega_title_block(chart)?;
+            Ok(Some(TitleMetrics {
+                ascent: inset_top + ascent,
+                tail,
+            }))
         }
         _ => Ok(None),
     }
+}
+
+/// The Vega-Lite title block of a resolved chart as `(ascent, tail)`: the top
+/// to the first baseline (`title_ascent`), and that baseline to the body top
+/// (the title's size, one subtitle line plus its padding, `title.offset`).
+/// Both zero for an untitled chart (`title_band.py::vega_title_block_height`).
+pub(crate) fn vega_title_block(chart: &Value) -> Result<(f64, f64), String> {
+    if !chart
+        .get("title")
+        .and_then(Value::as_str)
+        .is_some_and(|t| !t.is_empty())
+    {
+        return Ok((0.0, 0.0));
+    }
+    let chart_id = chart
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown>");
+    let size = chart
+        .pointer("/style/title_font/size")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| format!("chart {chart_id}: a titled chart needs style.title_font.size"))?;
+    let ascent = crate::sizing::title_ascent(size);
+    let has_subtitle = chart
+        .get("subtitle")
+        .and_then(Value::as_str)
+        .is_some_and(|s| !s.is_empty());
+    let subtitle = if has_subtitle {
+        let subtitle_size = chart
+            .pointer("/title_style/subtitle/font/size")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| {
+                format!("chart {chart_id}: a subtitle needs title_style.subtitle.font.size")
+            })?;
+        subtitle_size + crate::vega_fit::SUBTITLE_PADDING
+    } else {
+        0.0
+    };
+    let offset = chart
+        .pointer("/title_style/position/offset")
+        .and_then(Value::as_f64)
+        .unwrap_or(VEGA_TITLE_OFFSET);
+    Ok((ascent, size + subtitle + offset - ascent))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const SPARK_TITLE: crate::SparkBarTitle = crate::SparkBarTitle { height: 24.0, baseline_y: 16.0 };
+    const SPARK_TITLE: crate::SparkBarTitle = crate::SparkBarTitle {
+        height: 24.0,
+        baseline_y: 16.0,
+    };
     use crate::text::FontBook;
     use serde_json::json;
 
@@ -253,7 +312,10 @@ mod tests {
     }
 
     fn shifts(metrics: &[Option<TitleMetrics>]) -> Vec<(f64, f64)> {
-        row_title_shifts(metrics).iter().map(|s| (s.title_dy, s.body_dy)).collect()
+        row_title_shifts(metrics)
+            .iter()
+            .map(|s| (s.title_dy, s.body_dy))
+            .collect()
     }
 
     // 24px and 18px bars, offset 10, card padding 16: ascents 16 + round(19.2) = 35 and
@@ -262,20 +324,48 @@ mod tests {
     // 35 - 30 = 5 and its body 50 - 30 - 14 = 6.
     #[test]
     fn titles_of_different_size_share_the_largest_ascent_and_the_lowest_block_end() {
-        let big = chart_title_metrics(&bar(24.0, None, Some(10.0)), 16.0, 500.0, &FontBook::empty(), None);
-        let small = chart_title_metrics(&bar(18.0, None, Some(10.0)), 16.0, 500.0, &FontBook::empty(), None);
+        let big = chart_title_metrics(
+            &bar(24.0, None, Some(10.0)),
+            16.0,
+            500.0,
+            &FontBook::empty(),
+            None,
+        );
+        let small = chart_title_metrics(
+            &bar(18.0, None, Some(10.0)),
+            16.0,
+            500.0,
+            &FontBook::empty(),
+            None,
+        );
         assert_eq!(big.clone().unwrap(), m(35.0, 15.0));
         assert_eq!(small.clone().unwrap(), m(30.0, 14.0));
-        assert_eq!(shifts(&[big.unwrap(), small.unwrap()]), [(0.0, 0.0), (5.0, 6.0)]);
+        assert_eq!(
+            shifts(&[big.unwrap(), small.unwrap()]),
+            [(0.0, 0.0), (5.0, 6.0)]
+        );
     }
 
     // A subtitle lengthens the tail by its font size plus Vega's 3px subtitle padding:
     // 18 + (11 + 3) + 10 - 14 = 28 against the neighbor's 14, so the neighbor's body drops 14.
     #[test]
     fn a_subtitle_lengthens_the_tail_and_drops_the_neighbors_body() {
-        let with_subtitle =
-            chart_title_metrics(&bar(18.0, Some(11.0), Some(10.0)), 16.0, 500.0, &FontBook::empty(), None).unwrap();
-        let plain = chart_title_metrics(&bar(18.0, None, Some(10.0)), 16.0, 500.0, &FontBook::empty(), None).unwrap();
+        let with_subtitle = chart_title_metrics(
+            &bar(18.0, Some(11.0), Some(10.0)),
+            16.0,
+            500.0,
+            &FontBook::empty(),
+            None,
+        )
+        .unwrap();
+        let plain = chart_title_metrics(
+            &bar(18.0, None, Some(10.0)),
+            16.0,
+            500.0,
+            &FontBook::empty(),
+            None,
+        )
+        .unwrap();
         assert_eq!(with_subtitle, m(30.0, 28.0));
         assert_eq!(shifts(&[with_subtitle, plain]), [(0.0, 0.0), (0.0, 14.0)]);
     }
@@ -287,7 +377,8 @@ mod tests {
         let fonts = FontBook::empty();
         let mut subtitle_only = bar(18.0, Some(11.0), Some(10.0));
         subtitle_only["title"] = Value::Null;
-        let titled = chart_title_metrics(&bar(24.0, None, Some(10.0)), 16.0, 500.0, &fonts, None).unwrap();
+        let titled =
+            chart_title_metrics(&bar(24.0, None, Some(10.0)), 16.0, 500.0, &fonts, None).unwrap();
         let bare = chart_title_metrics(&subtitle_only, 16.0, 500.0, &fonts, None).unwrap();
         assert_eq!(bare, None);
         assert_eq!(shifts(&[titled, bare]), [(0.0, 0.0), (0.0, 0.0)]);
@@ -300,9 +391,14 @@ mod tests {
         let fonts = FontBook::empty();
         let kpi = chart_title_metrics(&chart_of("kpi", 18.0), 16.0, 500.0, &fonts, None).unwrap();
         assert_eq!(kpi, None);
-        let big = chart_title_metrics(&bar(24.0, None, Some(10.0)), 16.0, 500.0, &fonts, None).unwrap();
-        let small = chart_title_metrics(&bar(18.0, None, Some(10.0)), 16.0, 500.0, &fonts, None).unwrap();
-        assert_eq!(shifts(&[big, kpi, small]), [(0.0, 0.0), (0.0, 0.0), (5.0, 6.0)]);
+        let big =
+            chart_title_metrics(&bar(24.0, None, Some(10.0)), 16.0, 500.0, &fonts, None).unwrap();
+        let small =
+            chart_title_metrics(&bar(18.0, None, Some(10.0)), 16.0, 500.0, &fonts, None).unwrap();
+        assert_eq!(
+            shifts(&[big, kpi, small]),
+            [(0.0, 0.0), (0.0, 0.0), (5.0, 6.0)]
+        );
     }
 
     // A lone titled cell is its own band, and a row with no titles has none.
@@ -318,18 +414,35 @@ mod tests {
     fn families_without_a_shared_title_slot_get_no_metrics() {
         let fonts = FontBook::empty();
         for family in ["callout", "sankey", "kpi"] {
-            let got = chart_title_metrics(&chart_of(family, 18.0), 16.0, 500.0, &fonts, None).unwrap();
+            let got =
+                chart_title_metrics(&chart_of(family, 18.0), 16.0, 500.0, &fonts, None).unwrap();
             assert_eq!(got, None, "{family}");
         }
         let mut attached = chart_of("pie", 18.0);
         attached["attached_table"] = json!({"columns": []});
-        assert_eq!(chart_title_metrics(&attached, 16.0, 500.0, &fonts, None).unwrap(), None);
+        assert_eq!(
+            chart_title_metrics(&attached, 16.0, 500.0, &fonts, None).unwrap(),
+            None
+        );
         let mut plain_pie = chart_of("pie", 18.0);
         plain_pie["attached_table"] = Value::Null;
-        for family in ["pie", "geoshape", "point_map", "histogram", "heatmap", "scatter", "area", "line"] {
+        for family in [
+            "pie",
+            "geoshape",
+            "point_map",
+            "histogram",
+            "heatmap",
+            "scatter",
+            "area",
+            "line",
+        ] {
             let mut c = plain_pie.clone();
             c["chart_type"] = json!(family);
-            assert_eq!(chart_title_metrics(&c, 16.0, 500.0, &fonts, None).unwrap(), m(30.0, 14.0), "{family}");
+            assert_eq!(
+                chart_title_metrics(&c, 16.0, 500.0, &fonts, None).unwrap(),
+                m(30.0, 14.0),
+                "{family}"
+            );
         }
     }
 
@@ -338,10 +451,16 @@ mod tests {
     #[test]
     fn an_unset_offset_is_vegas_default_and_layout_padding_moves_the_ascent() {
         let fonts = FontBook::empty();
-        assert_eq!(chart_title_metrics(&bar(18.0, None, None), 16.0, 500.0, &fonts, None).unwrap(), m(30.0, 8.0));
+        assert_eq!(
+            chart_title_metrics(&bar(18.0, None, None), 16.0, 500.0, &fonts, None).unwrap(),
+            m(30.0, 8.0)
+        );
         let mut padded = bar(18.0, None, Some(10.0));
         padded["layout_padding"]["top"] = json!(4.0);
-        assert_eq!(chart_title_metrics(&padded, 16.0, 500.0, &fonts, None).unwrap(), m(34.0, 14.0));
+        assert_eq!(
+            chart_title_metrics(&padded, 16.0, 500.0, &fonts, None).unwrap(),
+            m(34.0, 14.0)
+        );
     }
 
     // spark_bar: the title band is the config's 24px, baseline 16px down, and a subtitle
@@ -350,9 +469,15 @@ mod tests {
     fn spark_bar_reads_its_own_title_band() {
         let fonts = FontBook::empty();
         let mut spark = chart_of("spark_bar", 11.0);
-        assert_eq!(chart_title_metrics(&spark, 16.0, 500.0, &fonts, Some(&SPARK_TITLE)).unwrap(), m(32.0, 8.0));
+        assert_eq!(
+            chart_title_metrics(&spark, 16.0, 500.0, &fonts, Some(&SPARK_TITLE)).unwrap(),
+            m(32.0, 8.0)
+        );
         spark["subtitle"] = json!("sub");
-        assert_eq!(chart_title_metrics(&spark, 16.0, 500.0, &fonts, Some(&SPARK_TITLE)).unwrap(), m(32.0, 19.0));
+        assert_eq!(
+            chart_title_metrics(&spark, 16.0, 500.0, &fonts, Some(&SPARK_TITLE)).unwrap(),
+            m(32.0, 19.0)
+        );
     }
 
     #[test]
@@ -406,7 +531,11 @@ mod tests {
 
     fn shifted(p: &Payload, chart_type: &str) -> Result<(f64, f64), String> {
         let out = for_family(p, chart_type)?;
-        let offset = out.resolved.pointer("/title_style/position/offset").and_then(Value::as_f64).unwrap();
+        let offset = out
+            .resolved
+            .pointer("/title_style/position/offset")
+            .and_then(Value::as_f64)
+            .unwrap();
         Ok((out.padding.unwrap().top, offset))
     }
 
@@ -423,7 +552,11 @@ mod tests {
     fn the_whole_pixel_gap_rounds_half_to_even() {
         for (gap, whole) in [(0.5, 0.0), (1.5, 2.0), (2.5, 2.0)] {
             let p = payload("line", (0.0, gap), |_| {});
-            assert_eq!(shifted(&p, "line").unwrap(), (16.0 + gap - whole, 10.0 + whole), "gap {gap}");
+            assert_eq!(
+                shifted(&p, "line").unwrap(),
+                (16.0 + gap - whole, 10.0 + whole),
+                "gap {gap}"
+            );
         }
     }
 
@@ -438,23 +571,36 @@ mod tests {
     #[test]
     fn a_shift_over_an_untitled_chart_refuses() {
         let p = payload("bar", (1.0, 2.0), |r| r["title"] = Value::Null);
-        assert!(shifted(&p, "bar").unwrap_err().contains("needs a title block"));
+        assert!(shifted(&p, "bar")
+            .unwrap_err()
+            .contains("needs a title block"));
     }
 
     #[test]
     fn a_shift_over_an_unset_title_offset_refuses() {
-        let p = payload("bar", (1.0, 2.0), |r| r["title_style"]["position"]["offset"] = Value::Null);
-        assert!(shifted(&p, "bar").unwrap_err().contains("title_style.position.offset"));
+        let p = payload("bar", (1.0, 2.0), |r| {
+            r["title_style"]["position"]["offset"] = Value::Null
+        });
+        assert!(shifted(&p, "bar")
+            .unwrap_err()
+            .contains("title_style.position.offset"));
     }
 
     #[test]
     fn a_shift_on_a_family_production_never_shifts_refuses_by_name() {
         for family in ["kpi", "callout", "sankey"] {
             let p = payload(family, (1.0, 2.0), |_| {});
-            assert!(shifted(&p, family).unwrap_err().starts_with(family), "{family}");
+            assert!(
+                shifted(&p, family).unwrap_err().starts_with(family),
+                "{family}"
+            );
         }
-        let attached = payload("pie", (1.0, 2.0), |r| r["attached_table"] = json!({"columns": []}));
-        assert!(shifted(&attached, "pie").unwrap_err().contains("attached table"));
+        let attached = payload("pie", (1.0, 2.0), |r| {
+            r["attached_table"] = json!({"columns": []})
+        });
+        assert!(shifted(&attached, "pie")
+            .unwrap_err()
+            .contains("attached table"));
     }
 
     #[test]
@@ -477,7 +623,10 @@ mod tests {
     fn table_and_spark_bar_keep_their_own_payload() {
         for family in ["table", "spark_bar"] {
             let p = payload(family, (3.0, 4.0), |_| {});
-            assert!(matches!(for_family(&p, family).unwrap(), Cow::Borrowed(_)), "{family}");
+            assert!(
+                matches!(for_family(&p, family).unwrap(), Cow::Borrowed(_)),
+                "{family}"
+            );
         }
     }
 }

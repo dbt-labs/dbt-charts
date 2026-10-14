@@ -193,7 +193,7 @@ def test_paginated_narrow_table_keeps_row_label(local_project) -> None:
         + _QUIET
         + _ROWS
     )
-    assert "Rows 1–10 of 30" in _svg(yaml, local_project)
+    assert "1–10 / 30" in _svg(yaml, local_project)
 
 
 _KPI = "charts:\n  k:\n    query: q\n    type: kpi\n    value: b\n"

@@ -35,7 +35,10 @@ from dbt_charts.core.compile.template.jinja import (
     _jinja_env_text,
     resolve_jinja_template,
 )
-from dbt_charts.core.compile.template.labels_env import _format_filter, label_jinja_env
+from dbt_charts.core.compile.template.labels_env import (
+    _format_filter,
+    label_jinja_env,
+)
 from dbt_charts.core.compile.template.parameterized import (
     make_filter_date_range_helper,
     make_filter_helper,

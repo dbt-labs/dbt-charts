@@ -110,11 +110,14 @@ dependencies = [
  "base64",
  "d3rs",
  "display-text",
+ "libc",
  "md-5",
  "mdsvg",
+ "minijinja",
  "quick-xml",
  "regex",
  "resvg",
+ "roxmltree",
  "rustybuzz",
  "serde",
  "serde_json",
@@ -477,6 +480,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "memo-map"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5449c8c750f1a07ea702bbd212bd999fceece9b3d1508b17023b3e174583124b"
+
+[[package]]
+name = "minijinja"
+version = "2.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86886cf6dbf4e614b19c9a1eec9775f021869d7eadde0fc73921a81b90c9b4c9"
+dependencies = [
+ "memo-map",
+ "serde",
 ]
 
 [[package]]

@@ -14,6 +14,7 @@ encapsulates its own behavior.
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from datetime import date, datetime, time
 from typing import Any
 
 # Allowlist of valid SQL operators for filter() method
@@ -247,14 +248,14 @@ class SQLDialect(ABC):
         because the warehouse has no statement to send that would survive a
         pooled connection.
 
-        `seconds` is the resolved cap from :meth:`resolve_timeout_seconds`, and
-        is written unconditionally: deciding again here is how the number the
-        warehouse enforces drifts from the number an error reports.
+        `seconds` is the resolved cap from :meth:`resolve_timeout_seconds`;
+        deciding the cap again here is how the number the warehouse enforces
+        drifts from the number an error reports.
 
         Never mutates `creds` — the pool hashes the config it was handed to key
         the connection pool, so an in-place write would fork pools by cap. The
-        base returns it unchanged: for every dialect but ClickHouse and SQL
-        Server the cap is not credential-shaped.
+        base returns it unchanged: for every dialect but ClickHouse, Redshift
+        and SQL Server the cap is not credential-shaped.
         """
         return creds
 
@@ -365,6 +366,22 @@ class SQLDialect(ABC):
         if self.escapes_backslashes:
             return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
         return "'" + value.replace("'", "''") + "'"
+
+    def boolean_literal(self, value: bool) -> str:
+        """*value* as a SQL boolean literal."""
+        return "TRUE" if value else "FALSE"
+
+    def date_literal(self, value: date) -> str:
+        """*value* as a typed SQL date literal."""
+        return f"DATE '{value.isoformat()}'"
+
+    def timestamp_literal(self, value: datetime) -> str:
+        """*value* as a typed SQL timestamp literal."""
+        return f"TIMESTAMP '{value.isoformat()}'"
+
+    def time_literal(self, value: time) -> str:
+        """*value* as a typed SQL time literal."""
+        return f"TIME '{value.isoformat()}'"
 
     def schema_condition(self, schemas: Sequence[str], column: str) -> str:
         """``column IN (...)`` over *schemas*, compared case-insensitively on a

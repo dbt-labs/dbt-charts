@@ -815,6 +815,30 @@ def _make_data_aware_height_provider(
                     return _sizing_render_failed(item.chart, exc, width, resolved_style)
                 return actual_height + _vertical_inset(resolved_spark_bar)
 
+            # custom: sized from its aspect-ratio box; it has no natural
+            # height to measure, so a template failure shows at the main pass.
+            if item.chart.type == "custom":
+                resolved_custom = _require_resolved(
+                    render_ctx,
+                    item.chart,
+                    executor,
+                    render_ctx.variables,
+                    width,
+                    resolved_style,
+                    style_contexts[id(resolved_style)],
+                )
+                if resolved_custom is None:
+                    return _unresolved_height(item.chart, width, resolved_style)
+                inner_width = (
+                    width
+                    - 2 * card_pad
+                    - resolved_custom.layout_padding.left
+                    - resolved_custom.layout_padding.right
+                )
+                return get_chart_content_height(
+                    item.chart, width=inner_width, resolved_style=resolved_style
+                ) + _vertical_inset(resolved_custom)
+
             # Render-first Vega sizing.
             # Vega charts now render at full item width with card_pad as internal
             # Vega padding, so the returned SVG height already includes the inset.

@@ -1462,3 +1462,13 @@ def _has_continuous_dark_companion(name: str) -> bool:
     """
     twin = _get_index().get(f"{name}-dark")
     return twin is not None and twin["family"] in ("sequential", "diverging")
+
+
+def tone_colors(name: str) -> dict[str, str]:
+    """Every alias of tone palette ``name`` (``solid``, ``bg``, ...) as sRGB hex."""
+    entry = _get_index().get(name)
+    if entry is None or entry["family"] != "tone":
+        raise UnknownPaletteError(f"{name!r} is not a tone palette.")
+    aliases = _load_spine(name).aliases
+    assert aliases is not None, f"tone palette {name!r} declares no aliases"
+    return {alias: color(f"{name}.{alias}") for alias in aliases}

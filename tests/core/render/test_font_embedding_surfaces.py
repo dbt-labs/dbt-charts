@@ -330,7 +330,7 @@ class TestItalicOutsideMarkdownEmphasis:
     def test_spark_bar_more_indicator(self, tmp_path, local_project) -> None:
         """A renderer writing italic <text> with the family on the same element."""
         html = self._export(_SPARK_TRUNCATED_YAML, tmp_path, local_project)
-        assert "+ 2 more<" in html, "fixture did not actually truncate"
+        assert "+2<" in html, "fixture did not actually truncate"
         assert _ITALIC_BOARD.search(html) is not None
 
     def test_theme_default_blockquote(self, tmp_path, local_project) -> None:

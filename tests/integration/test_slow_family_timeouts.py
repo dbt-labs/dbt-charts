@@ -34,9 +34,8 @@ def test_postgres_explain_check_has_extended_timeout() -> None:
     assert timeout_marks, "test_postgres_explain_check must carry a timeout mark"
     (seconds,) = timeout_marks[0].args
     assert seconds > 30, (
-        "cluster boot (initdb + pg_ctl + readiness) exceeds the repo-wide 30s "
-        "timeout — a timeout during initdb/pg_ctl start, before the fixture's "
-        "try, would leak the postmaster"
+        "cluster boot (initdb + pg_ctl + readiness) can exceed the repo-wide "
+        "30s timeout"
     )
 
 
@@ -44,4 +43,4 @@ def test_postgres_explain_check_still_carries_xdist_group() -> None:
     marks = test_postgres_explain_check.pytestmark
     xdist_marks = [m for m in marks if m.name == "xdist_group"]
     assert xdist_marks, "cluster tests must share one worker"
-    assert xdist_marks[0].args == ("postgres_explain_cluster",)
+    assert xdist_marks[0].args == ("postgres_cluster",)

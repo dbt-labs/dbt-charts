@@ -2341,3 +2341,40 @@ ERR_STYLE_CSS_VALUE_INVALID = REGISTRY.register(
         docs_topic="charts",
     )
 )
+
+ERR_CUSTOM_TEMPLATE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CUSTOM-TEMPLATE",
+        domain="compile",
+        title="Custom chart template is missing or invalid",
+        message_template="Chart {chart_id!r} (custom): {reason}",
+        doc=(
+            "Fired when a `type: custom` chart's template cannot be loaded: "
+            "`template:` names no `templates/<name>.svg.j2` file in the project, "
+            "the board has no project to read it from, the `{#--- ... ---#}` "
+            "header is not valid YAML or declares an unknown param type, or the "
+            "Jinja source has a syntax error."
+        ),
+        summary="Fired when a custom chart's template is missing, unparseable, or has a bad header.",
+        docs_topic="charts",
+    )
+)
+
+ERR_CUSTOM_FIELDS = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CUSTOM-FIELDS",
+        domain="compile",
+        title="Custom chart channels or options do not match the template",
+        message_template="Chart {chart_id!r} (custom): {reason}",
+        doc=(
+            "Fired when a `type: custom` chart's channels (`x`, `y`, `color`, ...) "
+            "or `options:` disagree with what its template declares in its "
+            "header: an undeclared channel or option, a required one left out, "
+            "a list on a channel without `multiple: true`, a value of the wrong "
+            "type, or a color option that is not a color. A template with no "
+            "header accepts no channels and no options."
+        ),
+        summary="Fired when a custom chart's channels or options are undeclared, missing, or the wrong type.",
+        docs_topic="charts",
+    )
+)

@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from dbt_charts.core.execute._duckdb_cache_base import _rows_from_result
+from dbt_charts.core.execute._duckdb_cache_base import _q, _rows_from_result
+from dbt_charts.core.execute.arrow_ingest import ingest, rows_to_arrow
 from dbt_charts.core.execute.cache_backend import CacheRows
 
 
@@ -25,8 +26,7 @@ def compose_over_named_rows(
 ) -> CacheRows:
     """Execute *sql* over *named_rows* in an isolated in-process DuckDB.
 
-    Each entry in *named_rows* is registered as a table under its key (a
-    zero-copy Arrow table). *sql* is parameterized ($1/$2/…) with *params*
+    Each entry in *named_rows* is copied into a table under its key. *sql* is parameterized ($1/$2/…) with *params*
     bound by the driver — never string-interpolated — and external access is
     disabled, so the composing SQL can reach neither the filesystem/network nor
     any table other than the registered rows.
@@ -49,14 +49,13 @@ def compose_over_named_rows(
             reference to a table that is not one of the registered rowsets).
     """
     import duckdb
-    import pyarrow as pa
 
     conn = duckdb.connect(":memory:", config={"enable_external_access": False})
     try:
         for name, rows in named_rows.items():
-            conn.register(name, pa.Table.from_pylist(rows))
+            ingest(conn, _q(name), rows_to_arrow(rows))
         return _rows_from_result(conn.execute(sql, params), limit=limit)
-    except Exception as e:  # noqa: BLE001 — duckdb/pyarrow raise various internal exception types at the composition boundary
+    except Exception as e:  # noqa: BLE001 — duckdb and row-to-Arrow conversion raise various exception types at the composition boundary
         raise RuntimeError(f"Isolated-engine query failed: {e}\nSQL:\n{sql}") from e
     finally:
         conn.close()

@@ -1,0 +1,75 @@
+{#---
+description: XmR process behavior chart (X chart over a moving-range chart), one row per period in time order. Points outside the natural process limits, and runs of eight or more on one side of the mean, are flagged.
+channels:
+  x:
+    description: Column labeling each period, in time order.
+  y:
+    description: Column holding each period's measurement.
+options:
+  value_format:
+    type: string
+    default: ',.1f'
+  run_length:
+    type: integer
+    default: 8
+    description: Points in a row on one side of the mean that count as a signal.
+---#}
+{% set p = options %}
+{% set x_col = channels.x %}
+{% set value_col = channels.y %}
+{% if rows | length < 3 %}{{ raise_error("An XmR chart needs at least three periods.") }}{% endif %}
+{% set vals = rows | map(attribute=value_col) | map("float") | list %}
+{% set n = vals | length %}
+{% set mean = (vals | sum) / n %}
+{% set ns = namespace(mr=[], side=[], run=[], rid=0) %}
+{% for i in range(1, n) %}{% set ns.mr = ns.mr + [(vals[i] - vals[i - 1]) | abs] %}{% endfor %}
+{% set mrbar = (ns.mr | sum) / (ns.mr | length) %}
+{% set unpl = mean + 2.66 * mrbar %}
+{% set lnpl = mean - 2.66 * mrbar %}
+{% set url = 3.268 * mrbar %}
+{% for v in vals %}
+  {% set s = 1 if v > mean else (-1 if v < mean else 0) %}
+  {% if not loop.first and s != ns.side[-1] %}{% set ns.rid = ns.rid + 1 %}{% endif %}
+  {% set ns.side = ns.side + [s] %}{% set ns.run = ns.run + [ns.rid] %}
+{% endfor %}
+{% set axis = style.charts.axis %}
+{% set lab = axis.labels.font %}
+{% set gutter = 64 %}
+{% set pw = width - gutter - 4 %}
+{% set xh = height * 0.62 - 10 %}
+{% set my0 = height * 0.62 + 14 %}
+{% set mh = height - my0 - 20 %}
+{% set lo = [lnpl, vals | min] | min %}{% set hi = [unpl, vals | max] | max %}
+{% set pad = (hi - lo) * 0.06 %}{% set lo = lo - pad %}{% set hi = hi + pad %}
+{% set mhi = [url, ns.mr | max] | max * 1.08 %}
+{% macro px(i) %}{{ (4 + pw * i / (n - 1))|round(1) }}{% endmacro %}
+{% macro py(v) %}{{ (xh - xh * (v - lo) / (hi - lo))|round(1) }}{% endmacro %}
+{% macro my(v) %}{{ (my0 + mh - mh * v / mhi)|round(1) }}{% endmacro %}
+{% macro limit(y, label, value, color, dash) %}
+  <line x1="4" x2="{{ 4 + pw }}" y1="{{ y }}" y2="{{ y }}" stroke="{{ color }}" stroke-width="1.25"{% if dash %} stroke-dasharray="5 4"{% endif %}/>
+  <text x="{{ 4 + pw + 6 }}" y="{{ y }}" dy="0.35em" font-size="{{ lab.size }}" fill="{{ color }}">{{ label }} {{ value | format(p.value_format) }}</text>
+{% endmacro %}
+{% set ink = style.charts.color.categorical.single_series_palette[0] %}
+<g font-family="{{ lab.family }}">
+  {{ limit(py(unpl), "UNPL", unpl, style.muted, true) }}
+  {{ limit(py(mean), "Mean", mean, style.muted, false) }}
+  {{ limit(py(lnpl), "LNPL", lnpl, style.muted, true) }}
+  <polyline fill="none" stroke="{{ ink }}" stroke-width="1.5" points="{% for v in vals %}{{ px(loop.index0) }},{{ py(v) }} {% endfor %}"/>
+{% for v in vals %}
+  {% set i = loop.index0 %}
+  {% set out = v > unpl or v < lnpl %}
+  {% set in_run = ns.side[i] != 0 and (ns.run | select("equalto", ns.run[i]) | list | length) >= p.run_length %}
+  {% set c = style.tones.negative if out else (style.tones.warning if in_run else ink) %}
+  <circle cx="{{ px(i) }}" cy="{{ py(v) }}" r="{{ 4 if out or in_run else 2.5 }}" fill="{{ c }}" stroke="{{ style.background }}" stroke-width="1"><title>{{ rows[i][x_col] }}: {{ v | format(p.value_format) }}{{ " (outside limits)" if out else (" (run of " ~ p.run_length ~ "+)" if in_run else "") }}</title></circle>
+{% endfor %}
+  <text x="4" y="{{ my0 - 4 }}" font-size="{{ lab.size }}" fill="{{ style.muted }}">Moving range</text>
+  {{ limit(my(url), "URL", url, style.muted, true) }}
+  {{ limit(my(mrbar), "Avg", mrbar, style.muted, false) }}
+  <polyline fill="none" stroke="{{ ink }}" stroke-width="1.25" points="{% for m in ns.mr %}{{ px(loop.index) }},{{ my(m) }} {% endfor %}"/>
+{% for m in ns.mr %}
+  <circle cx="{{ px(loop.index) }}" cy="{{ my(m) }}" r="{{ 3.5 if m > url else 2 }}" fill="{{ style.tones.negative if m > url else ink }}"><title>{{ rows[loop.index][x_col] }}: moving range {{ m | format(p.value_format) }}</title></circle>
+{% endfor %}
+{% for i in [0, n // 2, n - 1] %}
+  <text x="{{ px(i) }}" y="{{ height - 4 }}" text-anchor="{{ 'start' if i == 0 else ('end' if i == n - 1 else 'middle') }}" font-size="{{ lab.size }}" fill="{{ lab.color }}">{{ rows[i][x_col] }}</text>
+{% endfor %}
+</g>

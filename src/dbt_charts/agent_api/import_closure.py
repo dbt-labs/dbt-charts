@@ -3,7 +3,8 @@
 Returns every file the board pulls in (directly or transitively) via layout
 imports (``rows``/``cols``/``grid.items``/``tabs.items`` strings ending in
 ``.yml``/``.yaml``) and cross-file refs (bare strings and ``{ref: ...}``
-dicts in ``queries``/``charts``/``variables``), plus ``extends:`` file refs.
+dicts in ``queries``/``charts``/``variables``), plus ``extends:`` file refs
+and the ``templates/<name>.svg.j2`` file each ``type: custom`` chart names.
 
 The result includes the root board itself as the first entry and is
 deduplicated — a file imported via multiple paths appears once.
@@ -24,6 +25,10 @@ from dbt_charts.core.compile.models.refs import (
     VAR_REF_RE,
 )
 from dbt_charts.core.compile.parse.parser import load_yaml_text
+from dbt_charts.core.compile.template.custom_template import (
+    TEMPLATE_FILE_SUFFIX,
+    TEMPLATES_DIR,
+)
 from dbt_charts.core.utils import YAML_LOADER
 
 if TYPE_CHECKING:
@@ -66,6 +71,13 @@ def board_import_closure(board_path: ProjectPath) -> list[ProjectPath]:
         if isinstance(data, dict):
             for ref, kind in _extract_imports(data):
                 walk(resolve_ref(ref, path.parent, kind))
+            for name in _custom_template_names(data):
+                template = path.project.path(
+                    f"{TEMPLATES_DIR}/{name}{TEMPLATE_FILE_SUFFIX}"
+                )
+                if template.relpath not in seen:
+                    seen.add(template.relpath)
+                    result.append(template)
 
         resolving.discard(relpath)
 
@@ -90,6 +102,30 @@ def _load_board_yaml(content: str, relpath: str) -> Any:
         except (ValueError, yaml.YAMLError) as exc:
             raise CompilationError(f"Parse error in '{relpath}': {exc}") from exc
     return load_yaml_text(content, source=relpath, loader=YAML_LOADER)
+
+
+def _custom_template_names(data: dict[str, Any]) -> list[str]:
+    """The ``template:`` names of every ``type: custom`` chart in the file.
+
+    A template is read at compile, so an edit to it changes the render the
+    way a board edit does; the closure is what a host keys its cache on. A
+    chart sits under ``charts:``, inline in a layout list, or in a nested
+    board's own ``charts:``, so the whole document is walked.
+    """
+    names: list[str] = []
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, dict):
+            if obj.get("type") == "custom" and isinstance(obj.get("template"), str):
+                names.append(obj["template"])
+            for value in obj.values():
+                walk(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                walk(item)
+
+    walk(data)
+    return names
 
 
 def _extract_imports(data: dict[str, Any]) -> list[tuple[str, RefKind]]:

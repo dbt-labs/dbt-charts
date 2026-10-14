@@ -1052,12 +1052,18 @@
             mark.getAttribute('opacity') === '0';
     }
 
+    /*{# A mark's paint value is authored markup; only a color-shaped one may #}*/
+    /*{# land in the tooltip's own HTML. #}*/
+    function swatchColor(color) {
+        return /^[A-Za-z0-9#.,%()\/\s+-]*$/.test(color) ? color : 'transparent';
+    }
+
     function seriesSwatch(color, asLine) {
         const sw = DCT_TOOLTIP_STYLE.swatch;
         const height = asLine ? 2 : sw.size;
         return '<span style="display:inline-block;width:' + sw.size + 'px;height:' + height +
             'px;border-radius:' + (asLine ? 1 : sw.radius) + 'px;' +
-            'background:' + color + ';margin-right:6px;flex-shrink:0;"></span>';
+            'background:' + swatchColor(color) + ';margin-right:6px;flex-shrink:0;"></span>';
     }
 
     /*{# active_marker: 'triangle' -- an edge-flush directional indicator on the #}*/

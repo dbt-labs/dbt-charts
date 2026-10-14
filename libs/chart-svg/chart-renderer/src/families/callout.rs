@@ -162,13 +162,11 @@ fn callout_md_renderer(
         list_item_spacing: 2.0,
         ..Default::default()
     };
-    // `callout.py:123` builds the renderer with `fetch_image_sizes=False`.
-    Ok(SVGRenderer::from_font_path(
+    SVGRenderer::from_font_path(
         style,
         font_path(fonts_dir, &family),
         mono_font_path(fonts_dir),
-    )?
-    .with_fetch_image_sizes(false))
+    )
 }
 
 struct ContentBlock {

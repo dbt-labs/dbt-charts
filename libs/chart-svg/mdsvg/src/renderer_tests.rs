@@ -2416,9 +2416,7 @@ fn test_every_authored_font_family_is_css_escaped_at_every_site() {
 // `Style::default()` unless a test names its own style, padding 20.
 
 fn unfetched(markdown: &str, width: f64, style: Style) -> (String, f64) {
-    let renderer = SVGRenderer::new(style, test_fonts())
-        .unwrap()
-        .with_fetch_image_sizes(false);
+    let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
     let blocks = parse(markdown);
     let svg = renderer.render(&blocks, width, 20.0).unwrap();
     let height = renderer.measure(&blocks, width, 20.0).unwrap().height;
@@ -2605,9 +2603,22 @@ fn image_block_in_a_blockquote_sits_inside_the_rule() {
 
 #[test]
 fn image_block_with_size_fetching_on_is_refused_by_name() {
-    let err = super::render("![Logo](u.png)", 400.0, 20.0, Style::default(), test_fonts())
+    let err = SVGRenderer::new(Style::default(), test_fonts())
+        .unwrap()
+        .with_fetch_image_sizes(true)
+        .render(&parse("![Logo](u.png)"), 400.0, 20.0)
         .unwrap_err();
     assert_eq!(err, "mdsvg-rs: image size fetch not supported");
+}
+
+#[test]
+fn image_block_defaults_to_the_fallback_ratio_without_fetching() {
+    let svg = super::render("![Logo](u.png)", 400.0, 20.0, Style::default(), test_fonts())
+        .unwrap();
+    assert_eq!(
+        image_lines(&svg)[0],
+        r#"  <image x="20" y="20" width="360" height="202.5" href="u.png" preserveAspectRatio="xMidYMid meet"/>"#
+    );
 }
 
 /// `<svg viewBox="0 0 412 128"/>`: the corpus logo's intrinsic size.
@@ -2712,9 +2723,7 @@ fn image_block_with_a_non_positive_fallback_ratio_is_refused_by_name() {
         image_fallback_aspect_ratio: 0.0,
         ..Style::default()
     };
-    let renderer = SVGRenderer::new(style, test_fonts())
-        .unwrap()
-        .with_fetch_image_sizes(false);
+    let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
     let err = renderer
         .render(&parse("![Logo](u.png)"), 400.0, 20.0)
         .unwrap_err();
@@ -3115,9 +3124,7 @@ fn inline(md: &str, style: Style, width: f64) -> Result<(Vec<String>, f64, f64),
     for (uri, name) in subs {
         source = source.replace(name, uri);
     }
-    let renderer = SVGRenderer::new(style, test_fonts())
-        .unwrap()
-        .with_fetch_image_sizes(false);
+    let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
     let blocks = parse(&source);
     let svg = renderer.render(&blocks, width, 20.0)?;
     let height = renderer.measure(&blocks, width, 20.0)?.height;
@@ -3314,7 +3321,6 @@ fn from_font_path(style: Style) -> SVGRenderer {
         inter_path("SourceCodePro-Regular.ttf"),
     )
     .unwrap()
-    .with_fetch_image_sizes(false)
 }
 
 #[test]
@@ -3333,7 +3339,6 @@ fn a_bare_font_path_measures_a_heading_at_the_files_own_weight() {
     assert!(from_path.contains(r#"<image x="28.68" y="0" width="120" height="40""#), "{from_path}");
     let reweighted = SVGRenderer::new(Style::default(), test_fonts())
         .unwrap()
-        .with_fetch_image_sizes(false)
         .render(&parse(&md), 400.0, 0.0)
         .unwrap();
     assert!(!reweighted.contains(r#"<image x="28.68""#));
@@ -3345,8 +3350,7 @@ fn first_baseline_is_the_first_line_s_own_ascent() {
     // ascent; an inline image taller than the text grows the line, so the
     // baseline the title band aligns to is the image's height.
     let renderer = SVGRenderer::new(Style::default(), test_fonts())
-        .unwrap()
-        .with_fetch_image_sizes(false);
+        .unwrap();
     let plain = parse("## Release");
     let multiplier = renderer.style.heading_line_height.unwrap_or(renderer.style.line_height);
     assert_eq!(
@@ -3373,8 +3377,7 @@ fn inline_image_beyond_the_ported_line_model_refuses_by_name() {
         "mdsvg-rs: inline image in a table cell not supported"
     );
     let renderer = SVGRenderer::new(Style::default(), test_fonts())
-        .unwrap()
-        .with_fetch_image_sizes(false);
+        .unwrap();
     let tall = parse(&format!("word word word word ![x]({SQ40}) word"));
     assert_eq!(
         renderer.measure_blocks(&tall, 120.0).unwrap_err(),
@@ -3394,7 +3397,9 @@ fn inline_image_beyond_the_ported_line_model_refuses_by_name() {
 
 #[test]
 fn inline_image_fetch_and_fallback_refusals_match_the_block_image() {
-    let fetched = SVGRenderer::new(Style::default(), test_fonts()).unwrap();
+    let fetched = SVGRenderer::new(Style::default(), test_fonts())
+        .unwrap()
+        .with_fetch_image_sizes(true);
     assert_eq!(
         fetched.render(&parse("See ![x](u.png) here"), 400.0, 20.0).unwrap_err(),
         "mdsvg-rs: image size fetch not supported"

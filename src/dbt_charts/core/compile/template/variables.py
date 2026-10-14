@@ -153,7 +153,7 @@ def coerce_variable_values(
     Runs at the runtime boundary (query execution), after defaults and user
     values have merged. URL params, CLI, and API values arrive as strings; a
     ``date`` variable's ``"2024-01-01"`` must reach SQL as a ``date`` object so
-    strict engines get ``DATE '2024-01-01'`` (inline path) or a typed bound
+    strict engines get the dialect's date literal (inline path) or a typed bound
     parameter — not a varchar that Trino/BigQuery refuse to compare to a date
     column. The semantic type comes from the variable's ``input`` kind; values
     that don't match it raise ``ExecutionError`` (fail fast, no silent fixups).

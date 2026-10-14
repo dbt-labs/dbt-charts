@@ -1,0 +1,136 @@
+{#---
+description: Isotype rows, one row per query row in query order. Each row repeats a symbol once per fixed quantity; a fractional remainder draws a partial symbol. Optionally draws a backdrop of outlined symbols (for "so many out of 100"), shades highlighted rows, and lays the rows out in several columns.
+channels:
+  y:
+    description: Column labeling each row.
+  x:
+    description: Column holding the quantity for each row.
+options:
+  per_symbol:
+    type: number
+    default: 1
+    description: Quantity one symbol stands for.
+  symbol:
+    type: string
+    default: person
+    description: person, cross, ship, seat, square, or circle.
+  key:
+    type: string
+    default: null
+    description: Optional key printed under the rows, such as "Each symbol represents 50,000 net tons".
+  out_of:
+    type: number
+    default: null
+    description: Optional backdrop size. Every row draws this many outlined symbols behind its filled ones.
+  backdrop_symbol:
+    type: string
+    default: person
+    description: Symbol for the backdrop.
+  backdrop_color:
+    type: color
+    default: null
+    description: Outline color for the backdrop. Defaults to the muted text color.
+  note:
+    type: column
+    default: null
+    description: Optional column with a short note printed under the label, such as "Plague".
+  highlight:
+    type: column
+    default: null
+    description: Optional boolean column; true rows sit on a shaded band.
+  group_every:
+    type: integer
+    default: null
+    description: Optional gap after every this many symbols, for counting at a glance.
+  column_count:
+    type: integer
+    default: 1
+    description: Lay the rows out in this many columns, filled top to bottom.
+  symbol_color:
+    type: color
+    default: null
+    description: Symbol color. Defaults to the single-series chart color.
+---#}
+{% set p = options %}
+{% set label_col = channels.y %}
+{% set value_col = channels.x %}
+{% set shapes = {
+  "person": {"w": 10, "h": 24},
+  "cross": {"w": 10, "h": 14},
+  "ship": {"w": 12, "h": 12},
+  "seat": {"w": 12, "h": 12},
+  "square": {"w": 10, "h": 10},
+  "circle": {"w": 10, "h": 10},
+} %}
+{% for s in [p.symbol, p.backdrop_symbol] %}
+  {% if s not in shapes %}{{ raise_error("symbol must be one of " ~ (shapes | list | join(", ")) ~ "; got " ~ s) }}{% endif %}
+{% endfor %}
+{% if not rows %}{{ raise_error("isotype_rows needs at least one row") }}{% endif %}
+{% set fill = p.symbol_color or style.charts.color.categorical.single_series_palette[0] %}
+{% set ink = style.font.color %}
+{% set size = style.font.size %}
+{% set ncols = p.column_count %}
+{% set per_col = math.ceil((rows | length) / ncols) %}
+{% set key_h = (size * 2 + 8) if p.key else 0 %}
+{% set row_h = (height - key_h) / per_col %}
+{% set ns = namespace(label_w=0, most=0) %}
+{% for r in rows %}
+  {% set ns.label_w = [ns.label_w, text_width(r[label_col] | string, size, 600)] | max %}
+  {% set ns.most = [ns.most, (r[value_col] | float) / p.per_symbol, p.out_of or 0] | max %}
+{% endfor %}
+{% set label_w = ns.label_w + 14 %}
+{% set gutter = 28 %}
+{% set col_w = (width - gutter * (ncols - 1)) / ncols %}
+{% set gaps = (math.ceil(ns.most / p.group_every) - 1) if p.group_every else 0 %}
+{% set shape = shapes[p.symbol] %}
+{% set aspect = shape.h / shape.w %}
+{% set cell = [(col_w - label_w) / (ns.most + gaps * 0.6), row_h * 0.72 / aspect] | min %}
+{% set sym_h = cell * aspect %}
+{% set back = shapes[p.backdrop_symbol] %}
+<defs>
+  <symbol id="{{ uid }}-person" viewBox="0 0 10 24"><circle cx="5" cy="2.8" r="2.5"/><path d="M1.6 6.6h6.8l1.1 8.2H8.1l-.5 8.6H5.6L5 16.4l-.6 7H2.4l-.5-8.6H.5z"/></symbol>
+  <symbol id="{{ uid }}-cross" viewBox="0 0 10 14"><path d="M4 0h2v3.5h3.5v2H6V12h3v2H1v-2h3V5.5H.5v-2H4z"/></symbol>
+  <symbol id="{{ uid }}-ship" viewBox="0 0 12 12"><path d="M5 1h2v3H5zM2.5 4h7v3h-7zM.5 7h11l-2.2 4H2.7z"/></symbol>
+  <symbol id="{{ uid }}-seat" viewBox="0 0 12 12"><path d="M2.5 1h7v5.5h-7zM1 7h10v1.8H1zM2 8.8h1.4V11H2zM8.6 8.8H10V11H8.6z"/></symbol>
+  <symbol id="{{ uid }}-square" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8"/></symbol>
+  <symbol id="{{ uid }}-circle" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></symbol>
+</defs>
+{% macro slot_x(x0, i) %}{{ x0 + i * cell + ((i // p.group_every) * cell * 0.6 if p.group_every else 0) }}{% endmacro %}
+<g font-family="{{ style.font.family }}" font-size="{{ size }}">
+{% for r in rows %}
+  {% set col = loop.index0 // per_col %}
+  {% set x_col = col * (col_w + gutter) %}
+  {% set y = (loop.index0 % per_col) * row_h %}
+  {% set x0 = x_col + label_w %}
+  {% set n = (r[value_col] | float) / p.per_symbol %}
+  {% set whole = n | int %}
+  {% set part = n - whole %}
+  {% set sy = y + (row_h - sym_h) / 2 %}
+  {% if p.highlight and r[p.highlight] %}
+  <rect x="{{ x_col }}" y="{{ y + row_h * 0.06 }}" width="{{ col_w }}" height="{{ row_h * 0.88 }}" fill="{{ style.palettes.negative.bg }}"/>
+  {% endif %}
+  <text x="{{ x_col }}" y="{{ y + row_h / 2 - (size * 0.45 if p.note and r[p.note] else 0) }}" dy="0.35em" font-weight="600" fill="{{ ink }}">{{ r[label_col] }}</text>
+  {% if p.note and r[p.note] %}
+  <text x="{{ x_col }}" y="{{ y + row_h / 2 + size * 0.75 }}" dy="0.35em" font-size="{{ style.charts.axis.labels.font.size }}" fill="{{ style.muted }}">{{ r[p.note] }}</text>
+  {% endif %}
+  <g>
+    <title>{{ r[label_col] }}: {{ r[value_col] | float | format(",") }}</title>
+  {% if p.out_of %}
+    {% set bw = cell %}{% set bh = cell * back.h / back.w %}
+    {% for i in range(p.out_of | int) %}
+    <use href="#{{ uid }}-{{ p.backdrop_symbol }}" x="{{ slot_x(x0, i) }}" y="{{ y + (row_h - bh) / 2 }}" width="{{ bw * 0.9 }}" height="{{ bh * 0.9 }}" fill="none" stroke="{{ p.backdrop_color or style.muted }}" stroke-width="0.7"/>
+    {% endfor %}
+  {% endif %}
+  {% for i in range(whole) %}
+    <use href="#{{ uid }}-{{ p.symbol }}" x="{{ slot_x(x0, i) }}" y="{{ sy }}" width="{{ cell * 0.9 }}" height="{{ sym_h * 0.9 }}" fill="{{ fill }}"/>
+  {% endfor %}
+  {% if part > 0.05 %}
+    <clipPath id="{{ uid }}-part-{{ loop.index }}"><rect x="{{ slot_x(x0, whole) }}" y="{{ sy }}" width="{{ cell * 0.9 * part }}" height="{{ sym_h }}"/></clipPath>
+    <use href="#{{ uid }}-{{ p.symbol }}" x="{{ slot_x(x0, whole) }}" y="{{ sy }}" width="{{ cell * 0.9 }}" height="{{ sym_h * 0.9 }}" fill="{{ fill }}" clip-path="url(#{{ uid }}-part-{{ loop.index }})"/>
+  {% endif %}
+  </g>
+{% endfor %}
+{% if p.key %}
+  <text x="0" y="{{ height - size * 0.6 }}" fill="{{ style.muted }}">{{ p.key }}</text>
+{% endif %}
+</g>

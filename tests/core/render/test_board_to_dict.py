@@ -204,6 +204,14 @@ _OMITTED_FROM_PROJECTION = {
     # where it is used — `Diagnostic.path` and the `data-editor-path` handle.
     "source_path": "authoring coordinates, not chart content",
     "defined_in_other_file": "internal: ChartRef provenance, not chart content",
+    # `type: custom` carries the template and its options; the project file (or
+    # inline `svg:`) is the content, and these are its resolved form.
+    "channels": "authored as the root x/y/color/... fields; keyed by declared name",
+    "options": "validated against the template header; authored as `options:`",
+    "template_name": "authored as `template:`/`svg:`",
+    "template_source": "project file content, not chart config",
+    "column_options": "derived from the template header",
+    "category_pins": "board style.charts.category_colors, resolved per chart",
     "base_dir": "internal: directory the chart was written in, not chart content",
     # Resolved/derived internals with no authored counterpart.
     "aspect_ratio": "derived at resolve time",

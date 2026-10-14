@@ -192,22 +192,21 @@ ERR_FILE_SOURCE_DECIMAL_TOO_WIDE = REGISTRY.register(
         title="File source decimal column exceeds precision 38",
         message_template=(
             "File source {source_name!r}, table {table_name!r}: column "
-            "{column!r} in {relpath!r} is {column_type}, and at least one value "
-            "needs more than the 38 significant digits the query engine's "
-            "DECIMAL can hold. Re-export the column at precision 38 or less "
-            "(BigQuery: CAST(col AS NUMERIC) instead of BIGNUMERIC), or split "
-            "the digits across columns."
+            "{column!r} in {relpath!r} is {column_type}, wider than the 38 "
+            "significant digits the query engine's DECIMAL can hold. Re-export "
+            "the column at precision 38 or less (BigQuery: CAST(col AS NUMERIC) "
+            "instead of BIGNUMERIC), or split the digits across columns."
         ),
         summary=(
-            "Fired when a file's decimal column holds a value wider than the "
+            "Fired when a file's decimal column is declared wider than the "
             "38-digit maximum the query engine supports."
         ),
         doc=(
-            "Fired when a decimal column in a file source holds a value needing "
-            "more than 38 significant digits. Parquet's decimal type allows more "
-            "precision than the query engine's DECIMAL, and BigQuery BIGNUMERIC "
-            "exports routinely use it. Re-export the column at precision 38 or "
-            "less, or split the digits across columns."
+            "Fired when a decimal column in a file source is declared with more "
+            "than 38 significant digits, whatever its values. Parquet's decimal "
+            "type allows more precision than the query engine's DECIMAL, and "
+            "BigQuery BIGNUMERIC exports routinely use it. Re-export the column "
+            "at precision 38 or less, or split the digits across columns."
         ),
         docs_topic="queries",
     )
@@ -228,10 +227,29 @@ ERR_FILE_SOURCE_UNSUPPORTED_TYPE = REGISTRY.register(
         ),
         doc=(
             "Fired when a file carries a column type the query engine cannot "
-            "represent. dbt charts converts the cases it can (a half-precision "
-            "float widens, a 256-bit decimal narrows) and reports this for the "
-            "rest. Re-export the file with the column cast to a standard SQL "
-            "type."
+            "represent. Re-export the file with the column cast to a standard "
+            "SQL type."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_FILE_SOURCE_DUPLICATE_COLUMN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FILE-SOURCE-DUPLICATE-COLUMN",
+        domain="execute",
+        title="File source repeats a column name",
+        message_template=(
+            "File source {source_name!r}, table {table_name!r}: {relpath!r} names "
+            "column {column!r} more than once. Column names are case-insensitive "
+            "in SQL; rename one of the columns in the file."
+        ),
+        summary="Fired when a CSV header or Parquet schema repeats a column name.",
+        doc=(
+            "Fired when a file's header (CSV) or schema (Parquet) names the same "
+            "column twice, ignoring case. SQL could not tell the two apart, so "
+            "the file is refused rather than one column being renamed. Rename one "
+            "of the columns in the file."
         ),
         docs_topic="queries",
     )

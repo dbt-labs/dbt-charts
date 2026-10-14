@@ -4,9 +4,9 @@ Holds the shared board style and drives the per-chart emit → features
 pipeline for a single board/board render.  Call ``emit_chart`` per chart,
 then ``finalize_vl`` to produce Vega-Lite JSON — that path is VL-only.
 
-Non-VL families (``kpi``, ``table``, ``spark_bar``, ``callout``) are custom
-SVG, not Vega-Lite: ``render_svg_family`` dispatches them straight to their
-renderer (kpi and spark_bar through the Rust engine) and returns the SVG string, bypassing
+Non-VL families (``kpi``, ``table``, ``spark_bar``, ``callout``, ``custom``) are
+hand-drawn SVG, not Vega-Lite: ``render_svg_family`` dispatches them straight to
+the Rust engine and returns the SVG string, bypassing
 ``emit_chart``/``finalize_vl`` entirely. It returns ``None`` for VL families
 so the caller falls through to the ``emit_chart``/``finalize_vl`` path.
 """
@@ -23,6 +23,7 @@ from dbt_charts.core.compile.models.board.normalized import (
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedCalloutChart,
     ResolvedChart,
+    ResolvedCustomChart,
     ResolvedKpiChart,
     ResolvedSparkBarChart,
     ResolvedTableChart,
@@ -42,6 +43,7 @@ from dbt_charts.core.render.chart.features import DEFAULT_FEATURES
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.translate import assemble_final_vl
 from dbt_charts.core.render.engine import render_native
+from dbt_charts.core.render.sizing import custom_chart_height
 from dbt_charts.core.render.utils import normalize_data_types
 
 
@@ -75,12 +77,15 @@ class BoardRenderSession:
         height: float | None = None,
         is_placeholder: bool = False,
         inset: dict[str, int | float] | None = None,
+        padding: dict[str, int | float] | None = None,
         title_shift: TitleShift = NO_TITLE_SHIFT,
     ) -> str | None:
         """Non-VL families → SVG string; VL families → None (caller runs emit path).
 
         ``inset`` is the padding the caller shrank ``width``/``height`` by; a
         family that paints a card rect grows it back out over that padding.
+        ``padding`` is the padding a custom chart frames itself inside at the
+        full ``width``/``height``, as a Vega-Lite chart does.
         """
         match chart:
             case ResolvedKpiChart() | ResolvedSparkBarChart():
@@ -117,6 +122,28 @@ class BoardRenderSession:
                     board_style=self.board_style,
                     title_shift=title_shift,
                 )[0]
+            case ResolvedCustomChart():
+                # A missing slot height means "no slot": the chart's own
+                # aspect-ratio box answers.
+                svg, _ = render_native(
+                    chart,
+                    data,
+                    width=width,
+                    height=custom_chart_height(
+                        chart.aspect_ratio,
+                        chart.min_height,
+                        chart.max_height,
+                        width,
+                        self.board_style.chart_defaults,
+                    )
+                    if height is None
+                    else height,
+                    padding=padding,
+                    board_style=self.board_style,
+                    board_width=width,
+                    title_shift=title_shift,
+                )
+                return svg
             case ResolvedCalloutChart():
                 svg, _ = render_native(
                     chart,

@@ -71,20 +71,23 @@ class InlinePlaceholderDialect(SQLDialect):
 INLINE_PLACEHOLDERS = InlinePlaceholderDialect()
 
 
-def _to_sql_literal(value: Any, escaping: SQLDialect) -> str:
+def _to_sql_literal(
+    value: Any,  # type-state: explicit_any — any bound parameter value
+    dialect: SQLDialect,
+) -> str:
     """Convert a Python value to a SQL literal string.
 
     Args:
         value: The value to render.
-        escaping: The engine that will parse the literal. Its
-            `escapes_backslashes` decides whether a backslash in the value has
-            to be doubled; a dialect that declares no answer raises here rather
-            than defaulting to one.
+        dialect: The engine that will parse the literal. It spells booleans,
+            dates, timestamps and times, and its `escapes_backslashes` decides
+            whether a backslash in a string has to be doubled; a dialect that
+            declares no answer raises here rather than defaulting to one.
     """
     if value is None:
         return "NULL"
     if isinstance(value, bool):
-        return "TRUE" if value else "FALSE"
+        return dialect.boolean_literal(value)
     if isinstance(value, int):
         return str(value)
     if isinstance(value, float):
@@ -105,14 +108,14 @@ def _to_sql_literal(value: Any, escaping: SQLDialect) -> str:
     if isinstance(value, Decimal):
         return str(value)
     if isinstance(value, datetime):
-        return f"TIMESTAMP '{value.isoformat()}'"
+        return dialect.timestamp_literal(value)
     if isinstance(value, date):
-        return f"DATE '{value.isoformat()}'"
+        return dialect.date_literal(value)
     if isinstance(value, time):
-        return f"TIME '{value.isoformat()}'"
+        return dialect.time_literal(value)
     if isinstance(value, bytes):
         return f"X'{value.hex()}'"
-    return escaping.string_literal(str(value))
+    return dialect.string_literal(str(value))
 
 
 def sql_string_literal(value: str, escaping: SQLDialect) -> str:

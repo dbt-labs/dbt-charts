@@ -4,6 +4,7 @@ import base64
 import struct
 import zlib
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import quote
 
 import pytest
@@ -222,6 +223,21 @@ class TestInlineImageRendering:
         assert len(url) > 1024
         svg = render(f"![Logo]({url})", width=400)
         assert '<image x="20" y="20" width="360" height="111.84"' in svg
+
+    def test_default_renderer_never_fetches_a_remote_image(self) -> None:
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            svg = render("Intro\n\n![x](http://169.254.169.254/latest)", width=400)
+
+        mock_urlopen.assert_not_called()
+        assert 'href="http://169.254.169.254/latest"' in svg
+
+    def test_default_renderer_never_reads_a_local_image(self, tmp_path: Path) -> None:
+        path = tmp_path / "wide.png"
+        path.write_bytes(png_header(412, 128))
+
+        svg = render(f"![x]({path})", width=400)
+
+        assert 'width="360" height="202.5"' in svg
 
     def test_data_uri_is_measured_even_with_fetch_image_sizes_false(self) -> None:
         """A data: URI is measured from its own payload -- no I/O -- so a

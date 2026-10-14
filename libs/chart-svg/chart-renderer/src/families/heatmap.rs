@@ -33,6 +33,7 @@ use crate::families::legend::{
     vega_legend, LegendConfig, LegendEntry, LegendSymbol,
     VEGA_LEGEND_TITLE_PADDING,
 };
+use crate::frame::{ChartFrame, FrameTitle};
 use crate::svg::{xml_escape, xml_escape_attr, vega_escape_attr};
 use crate::families::temporal::{
     detect_time_unit, is_time_format, parse_iso_date, resolve_vertical_temporal_labels,
@@ -211,15 +212,9 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         return crate::families::heatmap_facet::render_facet(payload, fonts, &r);
     }
 
-    let w = payload.width;
-    let h = payload.height;
-    let pad = payload.padding.as_ref();
-    let pad_l = pad.map(|p| p.left).unwrap_or(0.0);
-    let pad_r = pad.map(|p| p.right).unwrap_or(0.0);
-    let pad_t = pad.map(|p| p.top).unwrap_or(0.0);
-    let pad_b = pad.map(|p| p.bottom).unwrap_or(0.0);
     // The chart's OWN effective background — see `HeatmapResolved::background`.
-    let bg = r.background.as_str();
+    let frame = ChartFrame::of(payload, r.background.as_str());
+    let (w, h) = (frame.w, frame.h);
 
     let x_field = &r.x;
     let y_field = &r.y;
@@ -490,101 +485,80 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
     let legend_xy = std::cell::Cell::new((0.0, 0.0));
 
     // ── Title ─────────────────────────────────────────────────────────────
-    let eff_title_style =
-        crate::common::effective_title_style(r.style.title_font.as_ref(), r.title_style.as_ref());
-    let title_ref = eff_title_style.as_ref().or(r.title_style.as_ref());
-    let title_fs = title_ref.map(|t| t.font.size_or(18.0)).unwrap_or(18.0);
-    let cased_title = match r.title.as_deref() {
-        None => None,
-        Some(t) => {
-            let case = title_ref.and_then(|s| s.font.case.as_deref()).unwrap_or("none");
-            Some(crate::case::apply_case(t, case)?)
-        }
-    };
     // Heatmap is a plain unit spec here — a `multiples` chart took
     // `render_facet` above — no concat — so `_render_vl_artifact` runs `apply_title_overflow_to_spec`
     // over it like every other non-hconcat family: the compiled spec carries
     // the pass's own `title.limit` (568 on a 600-wide card with 16px padding).
     // Same law, same helper as pie and both line arms.
-    let title_block = crate::common::wrap_title_block(
-        cased_title.as_deref(),
+    let title = FrameTitle::new(
+        r.title.as_deref(),
         r.subtitle.as_deref(),
-        title_ref,
-        title_fs,
-        crate::common::title_measure_font_size(r.title_style.as_ref()),
-        w - pad_l - pad_r,
+        r.style.title_font.as_ref(),
+        r.title_style.as_ref(),
+        frame.avail_w(),
         fonts,
     )?;
 
     // ── Plot rect: Vega's autosize-fit negotiation ────────────────────────
-    let m = vega_fit::fit_plot(
-        w,
-        h,
-        (pad_l, pad_r, pad_t, pad_b),
-        |pw, ph, b| {
-            // The y axis's own bounds join `xBounds`, the x axis's `yBounds`
-            // (`ViewLayout.js:62-65`); the cells are bare rect marks.
-            let mut y_axis = Bounds::new(0.0, 0.0, pw, ph);
-            let ys = BandScale::new(y_domain.clone(), 0.0, ph, 0.0, 0.0);
-            // The axis group sits a crisp half pixel above its labels' own
-            // coordinates in the bounds Vega reads (`axis.js:77`), which only
-            // shows where a label overhangs the plot top.
-            for (cat, lw) in y_label_bands.iter().zip(&y_label_ws) {
-                let Some(by) = ys.position(cat) else { continue };
-                let cy = by + ys.bandwidth() / 2.0 - AXIS_TRANSLATE;
-                y_axis.union(&vega_fit::text_ink(-y_gutter, cy, *lw, y_label_fs, y_ink_align, "middle"));
+    let m = frame.fit("heatmap", &title, |pw, ph, b| {
+        // The y axis's own bounds join `xBounds`, the x axis's `yBounds`
+        // (`ViewLayout.js:62-65`); the cells are bare rect marks.
+        let mut y_axis = Bounds::new(0.0, 0.0, pw, ph);
+        let ys = BandScale::new(y_domain.clone(), 0.0, ph, 0.0, 0.0);
+        // The axis group sits a crisp half pixel above its labels' own
+        // coordinates in the bounds Vega reads (`axis.js:77`), which only
+        // shows where a label overhangs the plot top.
+        for (cat, lw) in y_label_bands.iter().zip(&y_label_ws) {
+            let Some(by) = ys.position(cat) else { continue };
+            let cy = by + ys.bandwidth() / 2.0 - AXIS_TRANSLATE;
+            y_axis.union(&vega_fit::text_ink(-y_gutter, cy, *lw, y_label_fs, y_ink_align, "middle"));
+        }
+        for label in y_dates.iter().flatten().filter(|l| !l.row2.is_empty()) {
+            let Some(by) = ys.position(&y_domain[label.domain_idx]) else { continue };
+            let cy = by + ys.bandwidth() / 2.0 - AXIS_TRANSLATE + vega_fit::label_row_advance(y_label_fs);
+            y_axis.union(&vega_fit::text_ink(-y_gutter, cy, label.w2.min(y_label_limit), y_label_fs, y_ink_align, "middle"));
+        }
+        if y_title_extra > 0.0 {
+            y_axis.union(&Bounds::new(y_label_edge - y_title_extra, 0.0, 0.0, ph));
+        }
+        b.union(&y_axis);
+        let mut x_axis = Bounds::new(0.0, 0.0, pw, ph);
+        let xs = BandScale::new(x_domain.clone(), 0.0, pw, 0.0, 0.0);
+        let row_y = ph + x_axis_offset + x_tick_len + x_label_pad;
+        if let Some(axis) = &x_dates {
+            axis.union_ink(&mut x_axis, pw, ph);
+        }
+        for (cat, lw) in x_domain.iter().zip(&x_label_ws).filter(|_| x_dates.is_none()) {
+            let Some(bx) = xs.position(cat) else { continue };
+            let cx = bx + xs.bandwidth() / 2.0;
+            let mut ink =
+                vega_fit::text_ink(cx, row_y, *lw, x_label_fs, x_align, x_baseline);
+            if x_angle != 0.0 {
+                // Vega rotates the text box about its anchor
+                // (`text.js bound()` → `Bounds.rotate`).
+                ink = ink.rotate(x_angle, cx, row_y);
             }
-            for label in y_dates.iter().flatten().filter(|l| !l.row2.is_empty()) {
-                let Some(by) = ys.position(&y_domain[label.domain_idx]) else { continue };
-                let cy = by + ys.bandwidth() / 2.0 - AXIS_TRANSLATE + vega_fit::label_row_advance(y_label_fs);
-                y_axis.union(&vega_fit::text_ink(-y_gutter, cy, label.w2.min(y_label_limit), y_label_fs, y_ink_align, "middle"));
-            }
-            if y_title_extra > 0.0 {
-                y_axis.union(&Bounds::new(y_label_edge - y_title_extra, 0.0, 0.0, ph));
-            }
-            b.union(&y_axis);
-            let mut x_axis = Bounds::new(0.0, 0.0, pw, ph);
-            let xs = BandScale::new(x_domain.clone(), 0.0, pw, 0.0, 0.0);
-            let row_y = ph + x_axis_offset + x_tick_len + x_label_pad;
-            if let Some(axis) = &x_dates {
-                axis.union_ink(&mut x_axis, pw, ph);
-            }
-            for (cat, lw) in x_domain.iter().zip(&x_label_ws).filter(|_| x_dates.is_none()) {
-                let Some(bx) = xs.position(cat) else { continue };
-                let cx = bx + xs.bandwidth() / 2.0;
-                let mut ink =
-                    vega_fit::text_ink(cx, row_y, *lw, x_label_fs, x_align, x_baseline);
-                if x_angle != 0.0 {
-                    // Vega rotates the text box about its anchor
-                    // (`text.js bound()` → `Bounds.rotate`).
-                    ink = ink.rotate(x_angle, cx, row_y);
-                }
-                x_axis.union(&ink);
-            }
+            x_axis.union(&ink);
+        }
+        b.union(&x_axis);
+        if x_title_extra > 0.0 {
+            let label_reach = (b.y2 - ph).max(0.0);
+            x_axis.union(&Bounds::new(0.0, 0.0, 0.0, ph + label_reach + x_title_extra));
             b.union(&x_axis);
-            if x_title_extra > 0.0 {
-                let label_reach = (b.y2 - ph).max(0.0);
-                x_axis.union(&Bounds::new(0.0, 0.0, 0.0, ph + label_reach + x_title_extra));
-                b.union(&x_axis);
+        }
+        // Only the legend's own axis joins the fit (probed at nine spec
+        // heights whose right box overhangs the plot by 1–70px, the
+        // bottom margin stayed on the x-label band every time).
+        if let Some(size) = legend_size(pw, ph) {
+            let origin = legend_origin(&r.legend.position, (y_axis.x1, y_axis.x2), (0.0, x_axis.y2), (pw, ph), size);
+            legend_xy.set(origin);
+            if let Some(reach) = legend_fit_bounds(&r.legend.position, origin, size) {
+                b.union(&reach);
             }
-            // Only the legend's own axis joins the fit (probed at nine spec
-            // heights whose right box overhangs the plot by 1–70px, the
-            // bottom margin stayed on the x-label band every time).
-            if let Some(size) = legend_size(pw, ph) {
-                let origin = legend_origin(&r.legend.position, (y_axis.x1, y_axis.x2), (0.0, x_axis.y2), (pw, ph), size);
-                legend_xy.set(origin);
-                if let Some(reach) = legend_fit_bounds(&r.legend.position, origin, size) {
-                    b.union(&reach);
-                }
-            }
-        },
-        title_block.ink.as_ref(),
-    );
-    let (plot_left, plot_top) = (pad_l + m.left, pad_t + m.top);
+        }
+    })?;
+    let (plot_left, plot_top) = frame.origin(&m);
     let (plot_w, plot_h) = (m.plot_w, m.plot_h);
-    if plot_w <= 0.0 || plot_h <= 0.0 {
-        return Err(format!("heatmap: chart box {w}×{h} too small for content"));
-    }
     if let Some(legend) = &horizontal_gradient {
         legend.check_labels_clear(fonts, horizontal_gradient_length(legend_edge, plot_w), TOP_LEAD)?;
     }
@@ -598,23 +572,8 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
     // Namespaced so two heatmaps on one board never collide
     // (`converters/chart.py::_namespace_svg_ids`'s law, ported at
     // `contract::safe_svg_id`).
-    let _ = write!(
-        svg,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" \
-         viewBox=\"0 0 {w} {h}\">"
-    );
-    let _ = write!(svg, "<rect width=\"{w}\" height=\"{h}\" fill=\"{bg}\"/>", bg = xml_escape_attr(bg));
-
-    if let Some((tx, ty)) = m.title_pos {
-        crate::common::emit_title_block_vega(
-            &mut svg,
-            &title_block,
-            title_ref,
-            plot_left + tx,
-            plot_top + ty,
-            title_fs,
-        );
-    }
+    frame.open(&mut svg);
+    title.paint(&mut svg, m.title_pos, (plot_left, plot_top));
 
     if vertical_gradient {
         emit_gradient_def(&mut svg, grad_id, &r.style.color_gradient.resolved_stops, true);

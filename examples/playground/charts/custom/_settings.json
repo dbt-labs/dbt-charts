@@ -1,0 +1,4 @@
+{
+  "default_format": "svg",
+  "description": "Custom charts: shapes with no built-in type, each drawn by a Jinja SVG template in templates/. Sankey, funnel, gauge, and friends, plus Isotype pictograms after Otto and Marie Neurath, and two classics: Nightingale's rose and Minard's march on Moscow."
+}

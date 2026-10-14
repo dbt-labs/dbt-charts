@@ -119,13 +119,14 @@ def _render_vl_artifact(
         # The same gate rendering.py shrinks by: only the padded families were
         # rendered at the inner size, so only they have an inset to grow over.
         inset=padding if resolved.chart_type in SVG_LAYOUT_PADDED_TYPES else None,
+        padding=padding,
         title_shift=title_shift,
     )
     if svg is not None:
         return RenderArtifact(kind="svg", payload=svg)
     # render_svg_family only returns None for the VL families, all of which
-    # are _SharedResolvedChartFields subclasses (KPI/callout/table/spark_bar
-    # return svg above) — title_style is guaranteed present below.
+    # are _SharedResolvedChartFields subclasses (KPI/callout/table/spark_bar/
+    # custom return svg above) — title_style is guaranteed present below.
     assert isinstance(resolved, _SharedResolvedChartFields)
 
     # Small multiples: every geometry decision an emitter makes (label
@@ -927,7 +928,9 @@ def render_chart(
         )
 
     render_data: ChartRenderData = data
-    if is_placeholder and not data:
+    # A custom template names its own columns; generic placeholder rows would
+    # fail its column params, so it draws a blank chart's empty rows instead.
+    if is_placeholder and not data and chart.type != "custom":
         from dbt_charts.core.render.placeholder import generate_placeholder_data
 
         render_data = generate_placeholder_data(chart.type, chart)

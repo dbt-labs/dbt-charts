@@ -1,0 +1,41 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+# Isotype chart V from "There's work for all" (1945), redrawn with the
+# isotype_rows template. Values are read off the original chart.
+title: Ups and downs in shipbuilding
+notes: |
+  After chart V of *There's work for all* (Isotype Institute, 1945). Each ship
+  is 50,000 net tons launched in the United Kingdom; a partial ship is a part of
+  that. The shaded row is a war year. Tonnages are read off the original chart.
+queries:
+  ships:
+    columns: [year, net_tons, at_war, event]
+    values:
+      - ["1906", 1150000, false, null]
+      - ["1908", 600000, false, null]
+      - ["1913", 1200000, false, null]
+      - ["1915", 400000, true, War]
+      - ["1920", 1300000, false, null]
+      - ["1923", 400000, false, null]
+      - ["1924", 900000, false, null]
+      - ["1926", 400000, false, null]
+      - ["1929", 900000, false, null]
+      - ["1933", 70000, false, null]
+      - ["1938", 600000, false, null]
+charts:
+  shipbuilding:
+    type: custom
+    template: isotype_rows
+    query: ships
+    style:
+      aspect_ratio: 1.7
+    y: year
+    x: net_tons
+    options:
+      per_symbol: 50000
+      symbol: ship
+      highlight: at_war
+      note: event
+      group_every: 10
+      key: Each symbol represents 50,000 net tons built in the United Kingdom
+rows:
+  - shipbuilding

@@ -20,13 +20,13 @@ parameters rather than inlining, so for them this layer is a type analysis of
 the same comparison shape; Layer 2 runs their real path.
 
 Layer 2 — execution, with row-level expectations. DuckDB and SQLite (bound
-parameters, the adapters' own path) and Postgres (the runner's PostgreSQL) run
-on every PR, in test-dataface.yml's `test` job. BigQuery (a dry run through
-WIF) and Databricks run nightly in warehouse-nightly.yml. Locally Postgres,
-BigQuery and Databricks skip until their variables are set; BigQuery uses
-Application Default Credentials:
+parameters, the adapters' own path) and Postgres (a throwaway cluster on the
+machine's own binaries, `pg_cluster` in tests/conftest.py) run everywhere,
+locally and on every PR. BigQuery (a dry run through WIF) and Databricks run
+nightly in warehouse-nightly.yml; locally they skip until their variables are
+set. BigQuery uses Application Default Credentials:
 
-    DCT_TEST_POSTGRES_URL=<url> DCT_TEST_BIGQUERY_PROJECT=<gcp project> \
+    DCT_TEST_BIGQUERY_PROJECT=<gcp project> \
     uv run pytest tests/core/test_variable_sql_cross_dialect.py
 
 Postgres executes the inlined literals; BigQuery dry-runs them, which scans
@@ -50,8 +50,10 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+import psycopg
 import pytest
 import sqlglot
+from pytest_postgresql.executors import PostgreSQLExecutor
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel
 from sqlglot.optimizer.annotate_types import annotate_types
@@ -102,6 +104,8 @@ COLUMN_TYPES = {
     "s": "VARCHAR",
     "b": "BOOLEAN",
 }
+# T-SQL has no BOOLEAN type; a checkbox column there is BIT, compared with 1/0.
+T_SQL_COLUMN_TYPES = {**COLUMN_TYPES, "b": "BIT"}
 ROWS = [
     (1, "2024-01-01", "2024-01-01 00:00:00", 1, 1.5, "gold", True),
     (2, "2024-01-15", "2024-01-15 13:00:00", 2, 2.5, "O'Brien", False),
@@ -343,8 +347,9 @@ def _comparisons(
 def _operand_families(sql: str, dialect_name: str) -> list[tuple[str, list[str]]]:
     """Parse `sql` in the dialect's grammar and type every comparison's operands."""
     read = SQLGLOT_NAMES.get(dialect_name, dialect_name)
+    types = T_SQL_COLUMN_TYPES if read == "tsql" else COLUMN_TYPES
     schema = MappingSchema(
-        {"t": {c: exp.DataType.build(t) for c, t in COLUMN_TYPES.items()}},
+        {"t": {c: exp.DataType.build(t) for c, t in types.items()}},
         dialect=read,
     )
     tree = sqlglot.parse_one(sql, read=read, error_level=ErrorLevel.RAISE)
@@ -493,12 +498,15 @@ class TestSQLite:
 
 
 @pytest.fixture(scope="module")
-def postgres() -> Iterator[Any]:
-    url = os.environ.get("DCT_TEST_POSTGRES_URL")
-    if not url:
-        pytest.skip("DCT_TEST_POSTGRES_URL not set")
-    psycopg = pytest.importorskip("psycopg")
-    con = psycopg.connect(url, autocommit=True)
+def postgres(pg_cluster: PostgreSQLExecutor) -> Iterator[Any]:
+    con = psycopg.connect(
+        host=pg_cluster.host,
+        port=pg_cluster.port,
+        user=pg_cluster.user,
+        password=pg_cluster.password,
+        dbname=pg_cluster.maintenance_dbname,
+        autocommit=True,
+    )
     cur = con.cursor()
     cur.execute(_DDL.format(kind="TEMP"))
     _insert_rows(cur.execute)
@@ -506,6 +514,8 @@ def postgres() -> Iterator[Any]:
     con.close()
 
 
+@pytest.mark.xdist_group("postgres_cluster")
+@pytest.mark.timeout(120)
 class TestPostgres:
     """Inlined literals, as `SqlAdapter` sends them to a dbt warehouse."""
 

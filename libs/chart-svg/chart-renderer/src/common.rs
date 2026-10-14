@@ -301,6 +301,14 @@ pub struct Font {
 }
 
 impl Font {
+    /// ` font-style="…"` when the resolved font carries a style, else nothing.
+    pub fn style_attr(&self) -> String {
+        self.style
+            .as_deref()
+            .map(|s| format!(" font-style=\"{}\"", crate::svg::xml_escape_attr(s)))
+            .unwrap_or_default()
+    }
+
     pub fn weight_str(&self) -> String {
         match &self.weight {
             // `as_f64()` only returns `None` for a `Number` this crate
@@ -619,11 +627,11 @@ impl FormatSlot {
         // `bytes` takes the board's locale there (Vega's `format` reads
         // `config.locale.number`); the Python slots print en-US.
         if spec == "bytes" {
-            let (number, unit) = bytes(value, crate::number_locale::d3_format)?;
+            let (number, unit) = d3rs::native::bytes(value, crate::number_locale::d3_format)?;
             return Ok(format!("{number}{unit}"));
         }
         if spec == "duration" {
-            let (number, unit) = predefined_native(spec, value)?.expect("duration is a native");
+            let (number, unit) = d3rs::native::predefined_native(spec, value)?.expect("duration is a native");
             return Ok(format!("{number}{unit}"));
         }
         let digits = crate::number_locale::d3_format(spec, value).map_err(|e| format!("format {spec:?} on {value}: {e}"))?;
@@ -782,7 +790,8 @@ pub struct TickLabelConfig {
 /// piece from the cut line onward is folded back into ONE string
 /// (word-split chunks re-glue without spaces) and char-truncated to
 /// `prefix.trim_end() + "…"` (`truncate_text_precise`, which yields the
-/// first char when nothing fits). Callers measure with the family
+/// first char when nothing fits). Returns `(lines, truncated)`: `truncated`
+/// is true exactly when `max_lines` cut text. Callers measure with the family
 /// production's `get_font_measurer(None)` resolves — Inter — regardless of
 /// the family the text paints in.
 pub fn wrap_text_measured(
@@ -793,10 +802,10 @@ pub fn wrap_text_measured(
     fonts: &crate::text::FontBook,
     max_lines: Option<usize>,
     ellipsis: bool,
-) -> Result<Vec<String>, String> {
+) -> Result<(Vec<String>, bool), String> {
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if normalized.is_empty() {
-        return Ok(vec![]);
+        return Ok((vec![], false));
     }
     let measure = |t: &str| fonts.measure(t, family, font_size);
     let space_w = measure(" ")?;
@@ -922,14 +931,15 @@ pub fn wrap_text_measured(
                 }
             };
             rendered.push(last);
-            return Ok(rendered);
+            return Ok((rendered, true));
         }
     }
-    Ok(lines.iter().map(|l| join(l)).collect())
+    Ok((lines.iter().map(|l| join(l)).collect(), false))
 }
 
 /// `resolve_title_overflow` + `prepare_title_text`: the lines a title or
-/// subtitle draws in `limit` px. An unknown mode takes the wrap-two default.
+/// subtitle draws in `limit` px, and whether the line cap cut text (never for
+/// `wrap`). An unknown mode takes the wrap-two default.
 /// `prepare_title_text` returns `lines[0] if lines else text` for the
 /// single-line modes, so a whitespace-only string survives clip and truncate
 /// and Vega reserves its full band; the wrapping modes join an empty list
@@ -942,15 +952,15 @@ pub fn prepare_title_lines(
     font_size: f64,
     family: &str,
     fonts: &crate::text::FontBook,
-) -> Result<Vec<String>, String> {
+) -> Result<(Vec<String>, bool), String> {
     let (cap, ellipsis) = match mode {
         Some("clip") => (Some(1), false),
         Some("truncate") => (Some(1), true),
         Some("wrap") => (None, false),
         _ => (Some(2), true),
     };
-    let lines = wrap_text_measured(text, limit, font_size, family, fonts, cap, ellipsis)?;
-    Ok(if lines.is_empty() && cap == Some(1) { vec![text.to_string()] } else { lines })
+    let (lines, truncated) = wrap_text_measured(text, limit, font_size, family, fonts, cap, ellipsis)?;
+    Ok((if lines.is_empty() && cap == Some(1) { vec![text.to_string()] } else { lines }, truncated))
 }
 
 #[cfg(test)]
@@ -971,7 +981,7 @@ mod wrap_text_measured_tests {
     #[test]
     fn fitting_text_stays_one_line_and_normalizes_whitespace() {
         let f = fonts();
-        let lines = wrap_text_measured("hello   world", 500.0, 11.0, FAM, &f, Some(2), true).unwrap();
+        let lines = wrap_text_measured("hello   world", 500.0, 11.0, FAM, &f, Some(2), true).unwrap().0;
         assert_eq!(lines, vec!["hello world"]);
     }
 
@@ -980,9 +990,9 @@ mod wrap_text_measured_tests {
         let f = fonts();
         // Narrow enough that four words need three lines — the wrap-two cap
         // keeps two, ellipsizing the second.
-        let all = wrap_text_measured("alpha beta gamma delta", 60.0, 11.0, FAM, &f, None, false).unwrap();
+        let all = wrap_text_measured("alpha beta gamma delta", 60.0, 11.0, FAM, &f, None, false).unwrap().0;
         assert!(all.len() >= 3, "uncapped wrap uses the width: {all:?}");
-        let two = wrap_text_measured("alpha beta gamma delta", 60.0, 11.0, FAM, &f, Some(2), true).unwrap();
+        let two = wrap_text_measured("alpha beta gamma delta", 60.0, 11.0, FAM, &f, Some(2), true).unwrap().0;
         assert_eq!(two.len(), 2);
         assert!(two[1].ends_with('\u{2026}'), "cut line carries the ellipsis: {two:?}");
         let w = f.measure(&two[1], FAM, 11.0).unwrap();
@@ -992,7 +1002,7 @@ mod wrap_text_measured_tests {
     #[test]
     fn truncate_mode_yields_one_ellipsized_line() {
         let f = fonts();
-        let lines = wrap_text_measured("a very long chart title indeed", 80.0, 14.0, FAM, &f, Some(1), true).unwrap();
+        let lines = wrap_text_measured("a very long chart title indeed", 80.0, 14.0, FAM, &f, Some(1), true).unwrap().0;
         assert_eq!(lines.len(), 1);
         assert!(lines[0].ends_with('\u{2026}'), "{lines:?}");
     }
@@ -1004,20 +1014,20 @@ mod wrap_text_measured_tests {
         // the identical lines.
         let f = fonts();
         const INTER: &str = "Inter";
-        let a = wrap_text_measured("Revenue share by product line", 200.0, 18.0, INTER, &f, Some(1), true).unwrap();
+        let a = wrap_text_measured("Revenue share by product line", 200.0, 18.0, INTER, &f, Some(1), true).unwrap().0;
         assert_eq!(a, vec!["Revenue share by pr\u{2026}"]);
-        let b1 = wrap_text_measured("Revenue by product category", 160.0, 14.0, INTER, &f, Some(1), true).unwrap();
+        let b1 = wrap_text_measured("Revenue by product category", 160.0, 14.0, INTER, &f, Some(1), true).unwrap().0;
         assert_eq!(b1, vec!["Revenue by product c\u{2026}"]);
-        let b2 = wrap_text_measured("Share of total spend by vendor and contract type", 180.0, 14.0, INTER, &f, Some(1), true).unwrap();
+        let b2 = wrap_text_measured("Share of total spend by vendor and contract type", 180.0, 14.0, INTER, &f, Some(1), true).unwrap().0;
         assert_eq!(b2, vec!["Share of total spend by v\u{2026}"]);
-        let c = wrap_text_measured("https://example.com/very/long/path/segment/here", 120.0, 11.0, INTER, &f, Some(2), true).unwrap();
+        let c = wrap_text_measured("https://example.com/very/long/path/segment/here", 120.0, 11.0, INTER, &f, Some(2), true).unwrap().0;
         assert_eq!(c, vec!["https://example.com/", "very/long/path/segm\u{2026}"]);
     }
 
     #[test]
     fn over_wide_single_word_splits_at_char_granularity() {
         let f = fonts();
-        let lines = wrap_text_measured("Antidisestablishmentarianism", 40.0, 11.0, FAM, &f, None, false).unwrap();
+        let lines = wrap_text_measured("Antidisestablishmentarianism", 40.0, 11.0, FAM, &f, None, false).unwrap().0;
         assert!(lines.len() > 1, "long word must split: {lines:?}");
         for l in &lines[..lines.len() - 1] {
             assert!(f.measure(l, FAM, 11.0).unwrap() <= 40.0, "chunk fits: {l}");
@@ -2468,6 +2478,11 @@ pub struct TitleBlock {
     /// `None` when there is no title — VL emits no title block, so nothing
     /// paints and no band is reserved.
     pub ink: Option<crate::vega_fit::TitleInk>,
+    /// Whether production's pre-pass cut the title / subtitle
+    /// (`prepare_title_text`'s `truncated`); Vega's native clip below it
+    /// does not count.
+    pub title_truncated: bool,
+    pub subtitle_truncated: bool,
 }
 
 /// Production's `apply_title_overflow_to_spec`, run before the chart render:
@@ -2509,9 +2524,9 @@ pub fn wrap_title_block(
     let wrap = |text: &str, mode: Option<&str>, font_size: f64, limit: f64| {
         prepare_title_lines(text, mode, limit, font_size, WRAP_MEASURE_FAMILY, fonts)
     };
-    let wrap_lines: Vec<String> = match (cased_title, limit) {
-        (None, _) => vec![],
-        (Some(text), None) => vec![text.to_string()],
+    let (wrap_lines, title_truncated) = match (cased_title, limit) {
+        (None, _) => (vec![], false),
+        (Some(text), None) => (vec![text.to_string()], false),
         (Some(text), Some(limit)) => wrap(
             text,
             style.and_then(|ts| ts.overflow.as_deref()),
@@ -2527,12 +2542,12 @@ pub fn wrap_title_block(
     // size (`title_overflow.py`'s `subtitle_font_size = ... or
     // effective_title_font_size`).
     let sub_fs = sub_style.and_then(|f| f.font.size).unwrap_or(title_measure_font_size);
-    let wrap_sub_lines: Vec<String> = match (wrap_lines.is_empty(), subtitle, limit) {
-        (false, Some(sub), None) => vec![sub.to_string()],
+    let (wrap_sub_lines, subtitle_truncated) = match (wrap_lines.is_empty(), subtitle, limit) {
+        (false, Some(sub), None) => (vec![sub.to_string()], false),
         (false, Some(sub), Some(limit)) => {
             wrap(sub, sub_style.and_then(|f| f.overflow.as_deref()), sub_fs, limit)?
         }
-        _ => vec![],
+        _ => (vec![], false),
     };
     let family = style.and_then(|ts| ts.font.family.as_deref()).unwrap_or("serif");
     let sub_family = sub_style.and_then(|f| f.font.family.as_deref()).unwrap_or("sans-serif");
@@ -2607,7 +2622,33 @@ pub fn wrap_title_block(
             (clip(wrap_lines, family, title_font_size)?, clip(wrap_sub_lines, sub_family, sub_fs)?)
         }
     };
-    Ok(TitleBlock { title_lines, sub_lines, ink })
+    Ok(TitleBlock { title_lines, sub_lines, ink, title_truncated, subtitle_truncated })
+}
+
+/// `WARN-CHART-TITLE-TRUNCATED` for each of `block`'s rows the pre-pass cut:
+/// production's `record_text_truncation(chart_id, "chart_title", text, field)`,
+/// with `cased_title` and `subtitle` as `wrap_title_block` received them.
+pub fn warn_title_truncations(
+    block: &TitleBlock,
+    chart_id: &str,
+    cased_title: Option<&str>,
+    subtitle: Option<&str>,
+) {
+    for (cut, field, text) in [
+        (block.title_truncated, "title", cased_title),
+        (block.subtitle_truncated, "subtitle", subtitle),
+    ] {
+        if let (true, Some(text)) = (cut, text) {
+            crate::diagnostic::warn(Diagnostic::new(
+                &codes::WARN_CHART_TITLE_TRUNCATED,
+                [
+                    ("authored_field", json!(field)),
+                    ("authored_text", json!(text)),
+                    ("chart_id", json!(chart_id)),
+                ],
+            ));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3839,7 +3880,7 @@ pub(crate) fn format_kpi_parts(value: f64, f: &FormatParts, o: &PartsOptions) ->
 
     // format_value.py:264-275: a native formatter knows its own unit; the
     // authored affix rides around number-and-unit.
-    if let Some((number, unit)) = predefined_native(&format_spec, value).map_err(Diagnostic::refused)? {
+    if let Some((number, unit)) = d3rs::native::predefined_native(&format_spec, value).map_err(Diagnostic::refused)? {
         let (prefix, number) = if o.sign_in_prefix {
             let (prefix, _, number) = sign_into_prefix(explicit_prefix, "", &number, f.placement);
             (prefix, number)
@@ -3999,73 +4040,6 @@ fn sign_into_prefix(
         return (explicit_prefix.to_string(), String::new(), format!("{sign}{d3_prefix}{digits}"));
     }
     (format!("{sign}{explicit_prefix}"), d3_prefix.to_string(), digits.to_string())
-}
-
-/// Native formatters (`PREDEFINED_NATIVE`, `predefined_formats.py`) bypass d3
-/// entirely — the value already IS the caller's unit (whole-number percent,
-/// point delta, seconds, bytes). Returns `(number, unit)`; the house minus
-/// replaces every `-`.
-pub fn predefined_native(name: &str, value: f64) -> Result<Option<(String, String)>, String> {
-    let unit = match name {
-        "percent_number" | "percent_number_delta" => "%",
-        "percentage_points_delta" => " pts",
-        "duration" => return duration(value).map(Some),
-        "bytes" => {
-            return bytes(value, |spec, v| d3rs::format::format(&d3rs::format::Locale::en_us(), spec, v)).map(Some)
-        }
-        _ => return Ok(None),
-    };
-    let number = if name == "percent_number" {
-        format!("{value:.1}")
-    } else {
-        format!("{value:+.1}")
-    };
-    Ok(Some((number.replace('-', "\u{2212}"), unit.to_string())))
-}
-
-/// `_DURATION_UNITS`: seconds in a unit, largest first.
-const DURATION_UNITS: [(u128, &str); 4] = [(86400, "d"), (3600, "h"), (60, "m"), (1, "s")];
-
-/// `_duration` (`predefined_formats.py`): the two largest units of a span in
-/// seconds, a zero lower unit dropped (`1h 23m`, `45s`); the fraction rounds
-/// half up. Python's `int` is unbounded; past `u128` there is no exact integer
-/// to print here, so it refuses rather than print a rounded one.
-fn duration(value: f64) -> Result<(String, String), String> {
-    if !value.is_finite() {
-        return Ok((crate::families::table::NULL_DISPLAY.to_string(), String::new()));
-    }
-    let rounded = (value.abs() + 0.5).floor();
-    if rounded >= 2f64.powi(127) {
-        return Err(format!("format \"duration\" on {value}: a span too long to print exactly"));
-    }
-    let seconds = rounded as u128;
-    let sign = if value < 0.0 && seconds > 0 { "\u{2212}" } else { "" };
-    for pair in DURATION_UNITS.windows(2) {
-        let ((size, unit), (lower_size, lower_unit)) = (pair[0], pair[1]);
-        if seconds >= size {
-            let lower = seconds % size / lower_size;
-            let tail = if lower > 0 { format!(" {lower}{lower_unit}") } else { String::new() };
-            return Ok((format!("{sign}{}{unit}{tail}", seconds / size), String::new()));
-        }
-    }
-    Ok((format!("{sign}{seconds}s"), String::new()))
-}
-
-/// `_bytes` (`predefined_formats.py`): decimal SI (1 kB = 1000 B) to three
-/// significant digits, the unit spaced from the number at every magnitude:
-/// `950 B`, `1.53 MB`. Under one byte d3's SI would reach for milli, so `r`
-/// prints it plainly. `format` is the digits' formatter: en-US for the Python
-/// slots (production's own `d3_format`), the board's locale for Vega's.
-fn bytes(value: f64, format: impl Fn(&str, f64) -> Result<String, String>) -> Result<(String, String), String> {
-    if !value.is_finite() {
-        return Ok((crate::families::table::NULL_DISPLAY.to_string(), String::new()));
-    }
-    let spec = if value.abs() < 1.0 { ".3~r" } else { ".3~s" };
-    let text = format(spec, value)?;
-    Ok(match text.chars().next_back().filter(|c| "kMGTPEZY".contains(*c)) {
-        Some(prefix) => (text[..text.len() - 1].to_string(), format!(" {prefix}B")),
-        None => (text, " B".to_string()),
-    })
 }
 
 #[cfg(test)]
@@ -5282,7 +5256,7 @@ mod predefined_native_tests {
     #[test]
     fn every_engine_native_name_has_a_formatter_and_no_spec() {
         for name in d3rs::predefined_formats::PREDEFINED_NATIVE {
-            assert!(predefined_native(name, 1.0).unwrap().is_some(), "{name}: no native arm");
+            assert!(d3rs::native::predefined_native(name, 1.0).unwrap().is_some(), "{name}: no native arm");
             assert_eq!(predefined_number_spec(name), None, "{name} is native, not a d3 spec");
         }
     }
@@ -5290,7 +5264,7 @@ mod predefined_native_tests {
     #[test]
     fn a_spec_name_is_not_a_native() {
         for spec in d3rs::predefined_formats::PREDEFINED_SPECS {
-            assert_eq!(predefined_native(spec.name, 1.0), Ok(None), "{}", spec.name);
+            assert_eq!(d3rs::native::predefined_native(spec.name, 1.0), Ok(None), "{}", spec.name);
         }
     }
 }

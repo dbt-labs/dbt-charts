@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from unittest.mock import patch
 
+import nanoarrow as na
 import pyarrow as pa
 import pytest
 
@@ -97,7 +98,7 @@ class _RejectingConnection(FakeDriverConnection):
     def __init__(self) -> None:
         super().__init__(pa.table({"x": []}))
 
-    def execute(self, sql: str, limit: RowFetchLimit) -> pa.Table:
+    def execute(self, sql: str, limit: RowFetchLimit) -> na.Array:
         raise RuntimeError("rejected")
 
 

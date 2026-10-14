@@ -460,6 +460,8 @@ def preferred_chart_width(
     authored = normalized.__dict__.get("width")  # cartesian/pie/geo only
     if authored is not None:
         return float(authored)
+    if normalized.type == "custom":  # no theme family slot: board-wide width
+        return float(chart_style_context.preferred_width)
     family_base = getattr(chart_style_context, _FAMILY_SLOT[normalized.type])
     family = merge_onto_base(family_base, normalized.style)
     return float(family.preferred_width)
@@ -477,6 +479,8 @@ def default_chart_width(
     ``ChartStyleContext`` instead, since that also merges any chart-local
     override.
     """
+    if chart_type == "custom":  # no theme family slot: board-wide width
+        return float(chart_defaults.preferred_width)
     family_base = getattr(chart_defaults, _FAMILY_SLOT[chart_type])
     return float(family_base.preferred_width)
 

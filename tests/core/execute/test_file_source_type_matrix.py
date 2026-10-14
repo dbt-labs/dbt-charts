@@ -126,15 +126,13 @@ _MATRIX: dict[str, dict[str, tuple[str, Any]]] = {
         for col, t in {
             "i": "BIGINT",
             "f": "DOUBLE",
-            # CSV declares no type: pyarrow infers double from "1.25", and no
-            # scale survives to make it a DECIMAL.
+            # CSV declares no type: the reader infers double from "1.25", and
+            # no scale survives to make it a DECIMAL.
             "d": "DOUBLE",
             "b": "BOOLEAN",
             "s": "VARCHAR",
             "dt": "DATE",
-            # PyArrow's CSV reader infers nanosecond precision from the
-            # microsecond-tailed literal; DuckDB keeps that unit.
-            "ts": "TIMESTAMP_NS",
+            "ts": "TIMESTAMP",
             "ts_tz": "TIMESTAMP WITH TIME ZONE",
             "n": "BIGINT",
         }.items()

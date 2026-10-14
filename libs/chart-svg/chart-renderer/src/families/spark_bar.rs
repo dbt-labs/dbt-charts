@@ -581,69 +581,18 @@ pub fn render(payload: &Payload, _fonts: &FontBook) -> Result<String, Diagnostic
                 .set("font-style", "italic")
                 .set("font-family", body_family)
                 .set("style", "font-variant-numeric: tabular-nums lining-nums;"),
-            &format!("+ {more_count} more"),
+            &format!("+{more_count}"),
         );
     }
 
     xml.text("\n");
     if let Some(style) = placeholder_style {
         xml.close("g");
-        placeholder_overlay(&mut xml, style, chart_width, chart_height, &sc.font)?;
+        let family = sc.font.family.as_deref().ok_or("spark_bar: style.spark_bar.font.family is unresolved")?;
+        style.overlay(&mut xml, chart_width, chart_height, family, sc.font.case.as_deref())?;
     }
     xml.close("svg");
     Ok(xml.finish())
-}
-
-/// The overlay's font weight as Python's `escape_attr` prints it: a keyword as
-/// written, an int bare, a float with its `.0`.
-fn overlay_weight(weight: &Value) -> Result<String, String> {
-    match weight {
-        Value::String(s) => Ok(s.clone()),
-        Value::Number(n) if n.is_i64() || n.is_u64() => Ok(n.to_string()),
-        Value::Number(n) => Ok(py_float_str(n.as_f64().ok_or("spark_bar: placeholder font weight is not a number")?)),
-        other => Err(format!("spark_bar: placeholder font weight {other} is neither a keyword nor a number")),
-    }
-}
-
-fn placeholder_overlay(
-    xml: &mut Xml,
-    style: &crate::PlaceholderStyle,
-    width: f64,
-    height: f64,
-    font: &Font,
-) -> Result<(), Diagnostic> {
-    let overlay = &style.overlay;
-    let text = match font.case.as_deref() {
-        Some(case) if case != "none" => crate::case::apply_case(&overlay.text, case)?,
-        _ => overlay.text.clone(),
-    };
-    xml.open("g", Attrs::new().set("class", "placeholder-overlay"));
-    xml.empty(
-        "rect",
-        Attrs::new()
-            .set("class", "dbt-pointer-inert")
-            .set("x", "0")
-            .set("y", "0")
-            .set("width", py_float_str(width))
-            .set("height", py_float_str(height))
-            .set("fill", &overlay.background),
-    );
-    xml.leaf(
-        "text",
-        Attrs::new()
-            .set("class", "dbt-pointer-inert")
-            .set("x", py_float_str(width / 2.0))
-            .set("y", py_float_str(height / 2.0))
-            .set("text-anchor", "middle")
-            .set("dominant-baseline", "middle")
-            .set("font-family", font.family.as_deref().ok_or("spark_bar: style.spark_bar.font.family is unresolved")?)
-            .set("font-size", py_float_str(overlay.font.size))
-            .set("font-weight", overlay_weight(&overlay.font.weight)?)
-            .set("fill", &overlay.font.color),
-        &text,
-    );
-    xml.close("g");
-    Ok(())
 }
 
 #[cfg(test)]
@@ -742,7 +691,7 @@ mod tests {
         );
         p.height = 82.0;
         let svg = render(&p, &fonts()).expect("renders");
-        assert!(svg.contains("+ 3 more"), "10 of 13 rows painted:\n{svg}");
+        assert!(svg.contains(">+3</text>"), "10 of 13 rows painted:\n{svg}");
         assert!(!svg.contains(">R10<"), "rows past max_bars must not paint:\n{svg}");
         // more_y = 10*20 + 12 = 212; height = 212 + 8 = 220 — the slot's 82
         // is overwritten exactly as production does.

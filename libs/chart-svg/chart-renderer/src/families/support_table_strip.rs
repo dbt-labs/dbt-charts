@@ -738,6 +738,11 @@ pub fn strip_numerals_for_values(
     if !anchored {
         return Ok(StripNumerals::plain(resolved));
     }
+    if parts.padded {
+        return Err(format!(
+            "support_table: the padded format {resolved:?} is not painted: its anchor geometry is not ported"
+        ));
+    }
     crate::number_locale::require_en_us_affixes("support_table", resolved)?;
     if parts.type_ != 's' {
         if (hang_right && parts.symbol) || (!parts.symbol && parts.type_ != '%') {

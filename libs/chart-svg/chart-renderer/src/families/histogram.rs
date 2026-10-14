@@ -132,11 +132,11 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::common::{
-    axis_title_band, axis_title_text, effective_title_style, emit_axis_title_bottom,
-    emit_axis_title_rotated, format_y_label, row_num, title_measure_font_size, wrap_title_block,
-    AxisStyle, Font, TitleStyle,
+    axis_title_band, axis_title_text, emit_axis_title_bottom,
+    emit_axis_title_rotated, format_y_label, row_num, AxisStyle, Font, TitleStyle,
 };
 use crate::families::cartesian::{d3_nice_domain, vl_default_tick_count, LinearScale};
+use crate::frame::{ChartFrame, FrameTitle};
 use crate::svg::{xml_escape, xml_escape_attr, vega_escape_attr};
 use crate::text::FontBook;
 use crate::vega_fit;
@@ -335,24 +335,12 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         crate::families::cartesian::unbaked_ticks(ax_y, 0.0, y_domain_max, count)
     };
 
-    let title_ref_owned = effective_title_style(r.style.title_font.as_ref(), r.title_style.as_ref());
-    let title_ref = title_ref_owned.as_ref().or(r.title_style.as_ref());
-    let title_font_size = title_ref.map(|ts| ts.font.size_or(18.0)).unwrap_or(18.0);
-    let cased_title: Option<String> = match r.title.as_deref() {
-        None => None,
-        Some(t) => {
-            let case = title_ref.and_then(|ts| ts.font.case.as_deref()).unwrap_or("none");
-            Some(crate::case::apply_case(t, case)?)
-        }
-    };
-    let avail_w = svg_w - pad_l - pad_r;
-    let title_block = wrap_title_block(
-        cased_title.as_deref(),
+    let title = FrameTitle::new(
+        r.title.as_deref(),
         r.subtitle.as_deref(),
-        title_ref,
-        title_font_size,
-        title_measure_font_size(r.title_style.as_ref()),
-        avail_w,
+        r.style.title_font.as_ref(),
+        r.title_style.as_ref(),
+        svg_w - pad_l - pad_r,
         fonts,
     )?;
 
@@ -516,7 +504,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
                 fit_err = Some(e);
             }
         },
-        title_block.ink.as_ref(),
+        title.ink(),
     );
     if let Some(e) = fit_err {
         return Err(e);
@@ -542,24 +530,8 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
 
     // ── Emission ─────────────────────────────────────────────────────────
     let mut svg = String::with_capacity(16384);
-    let svg_w_s = crate::svg::num_full(svg_w);
-    let svg_h_s = crate::svg::num_full(svg_h);
-    let _ = write!(
-        svg,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{svg_w_s}\" height=\"{svg_h_s}\" \
-         viewBox=\"0 0 {svg_w_s} {svg_h_s}\">"
-    );
-    let _ = write!(svg, "<rect width=\"{svg_w_s}\" height=\"{svg_h_s}\" fill=\"{bg}\"/>", bg = xml_escape_attr(bg));
-    if let Some((tx, ty)) = m.title_pos {
-        crate::common::emit_title_block_vega(
-            &mut svg,
-            &title_block,
-            title_ref,
-            pad_l + m.left + tx,
-            pad_t + m.top + ty,
-            title_font_size,
-        );
-    }
+    ChartFrame::new(svg_w, svg_h, (pad_l, pad_r, pad_t, pad_b), bg, crate::svg::num_full).open(&mut svg);
+    title.paint(&mut svg, m.title_pos, (pad_l + m.left, pad_t + m.top));
     let group_x = pad_l + m.left;
     let group_y = pad_t + m.top;
     let _ = write!(svg, "<g transform=\"translate({group_x:.3},{group_y:.3})\">");

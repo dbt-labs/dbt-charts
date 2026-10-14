@@ -238,12 +238,9 @@ def render_prose_svg(
         text_style, resolved_style
     )
 
-    # fetch_image_sizes=False: a render never fetches over the network. A local
-    # image is an embedded data: URI by now, which mdsvg measures regardless.
     renderer = SVGRenderer(
         style=style,
         fonts=fonts,
-        fetch_image_sizes=False,
         allow_raw_html=allow_raw_html,
     )
 
@@ -452,7 +449,7 @@ def _run_grid(
         list_items = _list_items(text)
         if not list_items:
             continue
-        renderer = SVGRenderer(style=style, fonts=fonts, fetch_image_sizes=False)
+        renderer = SVGRenderer(style=style, fonts=fonts)
         half, third = (
             _measure(grid_span(board_width, n, gap) - 2 * pad, col.max_chars, char_px)
             - style.list_indent
@@ -566,7 +563,6 @@ def _goes_multi_column(
     renderer = SVGRenderer(
         style=style,
         fonts=fonts,
-        fetch_image_sizes=False,
         allow_raw_html=block.html_policy == "trusted-raw",
     )
     text = resolve_display_text_from_provider(

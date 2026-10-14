@@ -198,6 +198,16 @@ impl FontBook {
         Ok(mdsvg::fonts::cached_measurer(&self.faces[i].path, 0, None))
     }
 
+    /// The font file `family_list` resolves to, for a weighted
+    /// `mdsvg::fonts::cached_measurer` built where this book cannot travel
+    /// (a template helper outliving the render call).
+    pub fn font_path(&self, family_list: &str) -> Result<String, String> {
+        let i = self
+            .face_for(family_list)
+            .ok_or_else(|| format!("text: no font face resolved for {family_list:?}"))?;
+        Ok(self.faces[i].path.clone())
+    }
+
     /// `measure`, with the variable face instanced at `weight` when given.
     ///
     /// A run painted heavier than its neighbors must be measured heavier or

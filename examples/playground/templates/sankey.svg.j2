@@ -1,0 +1,111 @@
+{#---
+description: Flow diagram from an edge list, one row per flow. Nodes sit in columns by their longest path from a start node; nodes with no outgoing flow end in the last column.
+channels:
+  x:
+    description: Two columns, the node each flow leaves and then the node it enters.
+    multiple: true
+  value:
+    description: Column holding the size of each flow.
+options:
+  value_format:
+    type: string
+    default: ',.0f'
+    description: d3-format spec for node values in labels.
+  node_width:
+    type: number
+    default: 10
+  node_gap:
+    type: number
+    default: 12
+---#}
+{% set p = options %}
+{% if channels.x | length != 2 %}{{ raise_error("x takes two columns: the source node, then the target node") }}{% endif %}
+{% set source_col = channels.x[0] %}
+{% set target_col = channels.x[1] %}
+{% set value_col = channels.value %}
+{% set label_size = style.font.size %}
+{% set ns = namespace(names=[], out={}, inn={}, depth={}, y={}, k=none, so={}, to={}) %}
+{# Collect nodes in query order and their in/out totals. #}
+{% for r in rows %}
+  {% set v = r[value_col] | float %}
+  {% if v <= 0 %}{{ raise_error("Flow values must be positive: " ~ r[source_col] ~ " -> " ~ r[target_col] ~ " is " ~ v) }}{% endif %}
+  {% for n in [r[source_col] | string, r[target_col] | string] %}
+    {% if n not in ns.names %}{% set ns.names = ns.names + [n] %}{% endif %}
+  {% endfor %}
+  {% set ns.out = dict(ns.out, **{r[source_col] | string: (ns.out[r[source_col] | string] if (r[source_col] | string) in ns.out else 0) + v}) %}
+  {% set ns.inn = dict(ns.inn, **{r[target_col] | string: (ns.inn[r[target_col] | string] if (r[target_col] | string) in ns.inn else 0) + v}) %}
+{% endfor %}
+{# Column = longest path from a start node. #}
+{% for n in ns.names %}{% set ns.depth = dict(ns.depth, **{n: 0}) %}{% endfor %}
+{% for _ in ns.names %}
+  {% for r in rows %}
+    {% set s = r[source_col] | string %}{% set t = r[target_col] | string %}
+    {% if ns.depth[t] <= ns.depth[s] %}{% set ns.depth = dict(ns.depth, **{t: ns.depth[s] + 1}) %}{% endif %}
+  {% endfor %}
+{% endfor %}
+{% for r in rows %}
+  {% if ns.depth[r[target_col] | string] <= ns.depth[r[source_col] | string] %}
+    {{ raise_error("Flows form a cycle through " ~ r[source_col] ~ " -> " ~ r[target_col] ~ "; a Sankey needs flows that only move forward.") }}
+  {% endif %}
+{% endfor %}
+{% set last = ns.depth | items | map(attribute=1) | max %}
+{% for n in ns.names if n not in ns.out %}{% set ns.depth = dict(ns.depth, **{n: last}) %}{% endfor %}
+{% set ns.k = 1e12 %}
+{% for c in range(last + 1) %}
+  {% set total = namespace(v=0, n=0) %}
+  {% for n in ns.names if ns.depth[n] == c %}
+    {% set total.v = total.v + [(ns.out[n] if n in ns.out else 0), (ns.inn[n] if n in ns.inn else 0)] | max %}{% set total.n = total.n + 1 %}
+  {% endfor %}
+  {% set ns.k = [ns.k, (height - p.node_gap * (total.n - 1)) / total.v] | min %}
+{% endfor %}
+{% set k = ns.k %}
+{% set colw = (width - p.node_width) / ([last, 1] | max) %}
+{# Lay columns out left to right; order each column by where its inflows come from. #}
+{% for c in range(last + 1) %}
+  {% set ns2 = namespace(items=[], total=0) %}
+  {% for n in ns.names if ns.depth[n] == c %}
+    {% set nv = [(ns.out[n] if n in ns.out else 0), (ns.inn[n] if n in ns.inn else 0)] | max %}
+    {% set bc = namespace(w=0, v=0) %}
+    {% for r in rows if (r[target_col] | string) == n and (r[source_col] | string) in ns.y %}
+      {% set bc.w = bc.w + (ns.y[r[source_col] | string] | float) * (r[value_col] | float) %}{% set bc.v = bc.v + (r[value_col] | float) %}
+    {% endfor %}
+    {% set ns2.items = ns2.items + [{"name": n, "value": nv, "order": (bc.w / bc.v) if bc.v else loop.index}] %}
+    {% set ns2.total = ns2.total + nv * k %}
+  {% endfor %}
+  {% set cy = namespace(y=(height - ns2.total - p.node_gap * ((ns2.items | length) - 1)) / 2) %}
+  {% for it in ns2.items | sort(attribute="order") %}
+    {% set ns.y = dict(ns.y, **{it.name: cy.y}) %}
+    {% set cy.y = cy.y + it.value * k + p.node_gap %}
+  {% endfor %}
+{% endfor %}
+{# Stack each node's links in the order of the nodes at their other end. #}
+{% set ns.links = [] %}
+{% for r in rows %}
+  {% set s = r[source_col] | string %}{% set t = r[target_col] | string %}
+  {% set ns.links = ns.links + [{"i": "l" ~ loop.index, "s": s, "t": t, "v": r[value_col] | float, "spos": ns.y[s], "tpos": ns.y[t]}] %}
+{% endfor %}
+{% for n in ns.names %}
+  {% set off = namespace(o=ns.y[n], i=ns.y[n]) %}
+  {% for l in ns.links | selectattr("s", "equalto", n) | sort(attribute="tpos") %}
+    {% set ns.so = dict(ns.so, **{l.i: off.o}) %}{% set off.o = off.o + l.v * k %}
+  {% endfor %}
+  {% for l in ns.links | selectattr("t", "equalto", n) | sort(attribute="spos") %}
+    {% set ns.to = dict(ns.to, **{l.i: off.i}) %}{% set off.i = off.i + l.v * k %}
+  {% endfor %}
+{% endfor %}
+<g fill-opacity="0.35">
+{% for l in ns.links %}
+  {% set x0 = ns.depth[l.s] * colw + p.node_width %}{% set x1 = ns.depth[l.t] * colw %}{% set xm = (x0 + x1) / 2 %}
+  {% set s0 = ns.so[l.i] %}{% set t0 = ns.to[l.i] %}{% set th = l.v * k %}
+  <path fill="{{ color_for(l.s, source_col) }}" d="M{{ x0|round(1) }},{{ s0|round(1) }}C{{ xm|round(1) }},{{ s0|round(1) }} {{ xm|round(1) }},{{ t0|round(1) }} {{ x1|round(1) }},{{ t0|round(1) }}V{{ (t0 + th)|round(1) }}C{{ xm|round(1) }},{{ (t0 + th)|round(1) }} {{ xm|round(1) }},{{ (s0 + th)|round(1) }} {{ x0|round(1) }},{{ (s0 + th)|round(1) }}Z"><title>{{ l.s }} → {{ l.t }}: {{ l.v | format(p.value_format) }}</title></path>
+{% endfor %}
+</g>
+<g font-family="{{ style.font.family }}" font-size="{{ label_size }}" fill="{{ style.font.color }}">
+{% for n in ns.names %}
+  {% set nv = [(ns.out[n] if n in ns.out else 0), (ns.inn[n] if n in ns.inn else 0)] | max %}
+  {% set x = ns.depth[n] * colw %}{% set y = ns.y[n] %}{% set hgt = [nv * k, 1] | max %}
+  <rect x="{{ x|round(1) }}" y="{{ y|round(1) }}" width="{{ p.node_width }}" height="{{ hgt|round(1) }}" fill="{{ color_for(n, source_col) }}"><title>{{ n }}: {{ nv | format(p.value_format) }}</title></rect>
+  {% set end = ns.depth[n] == last %}
+  <text x="{{ (x - 6 if end else x + p.node_width + 6)|round(1) }}" y="{{ (y + hgt / 2)|round(1) }}" dy="0.35em" text-anchor="{{ 'end' if end else 'start' }}" font-weight="600">{{ n }}<tspan dx="4" font-weight="400" fill="{{ style.muted }}">{{ nv | format(p.value_format) }}</tspan></text>
+{% endfor %}
+</g>

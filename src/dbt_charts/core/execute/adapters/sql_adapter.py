@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
-    import pyarrow as pa
+    import nanoarrow as na
 
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
 
@@ -208,7 +208,7 @@ class _SourcePool:
         # the timeout SQL to run once at connection setup, or None when the
         # dialect has no server-side SQL mechanism (DuckDB returns None;
         # BigQuery's cap is a job-level setting applied in _ensure_connected,
-        # ClickHouse's and SQL Server's are credentials applied just below).
+        # ClickHouse's, Redshift's and SQL Server's are credentials applied just below).
         self._timeout_sql = self._dialect.statement_timeout_sql(self._timeout_seconds)
         # The config every worker thread hands build_adapter: `source_config`
         # itself unless the dialect's cap is credential-shaped and it put the
@@ -545,7 +545,7 @@ class _DriverPool:
 
     def execute(
         self, sql: str, setup_sql: str | None, limit: RowFetchLimit
-    ) -> pa.Table:
+    ) -> na.Array:
         """Run SQL on a persistent worker thread, reconnecting once if the session died.
 
         The caller's context is copied onto the worker: ``ThreadPoolExecutor``
@@ -566,7 +566,7 @@ class _DriverPool:
 
     def _execute_on_worker(
         self, sql: str, setup_sql: str | None, limit: RowFetchLimit
-    ) -> pa.Table:
+    ) -> na.Array:
         connection = self._ensure_connected()
         try:
             if self._tls.session_dirty:
@@ -590,7 +590,7 @@ class _DriverPool:
         sql: str,
         setup_sql: str | None,
         limit: RowFetchLimit,
-    ) -> pa.Table:
+    ) -> na.Array:
         # Set before the send: a setup_sql that fails partway still leaves
         # whatever it created on the connection.
         self._tls.session_dirty = bool(setup_sql)

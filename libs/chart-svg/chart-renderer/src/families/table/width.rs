@@ -9,13 +9,15 @@
 //! the formatted cell text and the table theme, both already in the payload —
 //! so it takes exactly that and nothing else: no slot width, no board.
 
+use std::collections::HashMap;
+
 use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
     auto_column_demand, build_cell_data, column_inputs, is_compact_column, natural_auto_width,
     paginator_window, parse_column_width, pivot_for, resolve_row_roles, svg_font_family,
-    table_rows, visible_columns, ColumnInputs, MeasureFonts, PageItem, Resolved, WidthHint,
+    table_rows, visible_columns, ColumnInputs, page_slot_width, MeasureFonts, PageItem, Resolved, WidthHint,
     PAGINATION_GROW_CAP, PAGINATOR_AUX_SLOT_RATIO,
 };
 use crate::common::measure_family_stand_in;
@@ -144,26 +146,35 @@ pub fn paginator_band_width(
         return Err("table: pagination.page_rows must be at least 1".into());
     }
     let total_pages = total_rows.div_ceil(page_rows) as i64;
-    let label = format!("Rows {total_rows}\u{2013}{total_rows} of {total_rows}");
+    let label = format!("{total_rows}\u{2013}{total_rows} / {total_rows}");
     // `get_font_measurer(font_family)`: every non-serif family
     // measures as Inter, whatever the table paints in.
     let label_w =
         fonts.measure(&label, measure_family_stand_in(font_family), font_size as f64)?;
     let aux_slot_w = item_width * PAGINATOR_AUX_SLOT_RATIO;
-    // Windows differ only in how many ellipses they carry, and page 4 of >= 7
-    // carries the most; scanning four pages finds it without walking every
-    // page.
-    let pager_w = (1..=total_pages.min(4))
-        .map(|page| {
-            let mut slots = vec![aux_slot_w];
-            slots.extend(paginator_window(page, total_pages).iter().map(|item| match item {
-                PageItem::Page(_) => item_width,
+    // Windows differ in their ellipses and in the digit width of their page
+    // labels, and the widest is not always at either end, so every page's
+    // window is measured.
+    let mut slot_widths: HashMap<i64, f64> = HashMap::new();
+    let mut pager_w = 0.0_f64;
+    for page in 1..=total_pages {
+        let mut slots = vec![aux_slot_w];
+        for item in paginator_window(page, total_pages) {
+            slots.push(match item {
+                PageItem::Page(p) => match slot_widths.get(&p) {
+                    Some(w) => *w,
+                    None => {
+                        let w = page_slot_width(fonts, font_family, font_size as f64, item_width, &p.to_string())?;
+                        slot_widths.insert(p, w);
+                        w
+                    }
+                },
                 PageItem::Ellipsis => aux_slot_w,
-            }));
-            slots.push(aux_slot_w);
-            py_float_sum(&slots)
-        })
-        .fold(0.0_f64, f64::max);
+            });
+        }
+        slots.push(aux_slot_w);
+        pager_w = pager_w.max(py_float_sum(&slots));
+    }
     Ok(padding + label_w + pager_w)
 }
 
@@ -201,7 +212,7 @@ fn is_percent(hint: Option<&WidthHint>) -> bool {
 /// `measure_table_natural_width`: the width the table needs
 /// to show every column — columns and outer padding, before any card padding —
 /// or `None` with nothing to hug. A paginated table is at least as wide as its
-/// pager band, so the "Rows a–b of N" label is never dropped.
+/// pager band, so the "a–b / N" label is never dropped.
 ///
 pub fn measure_natural_width(
     payload: &MeasurePayload,

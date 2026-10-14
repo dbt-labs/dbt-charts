@@ -14,7 +14,7 @@ Covers the contract for the single patch-onto-base merge:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, get_args, get_origin
 
 import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -413,3 +413,40 @@ class TestStyleCascadeRegression:
         # unset fields inherit from base
         # title and grid are complex; just check result is same type as base
         assert type(merged) is type(existing_axis_x)
+
+
+def test_no_dict_field_value_admits_none() -> None:
+    """A `key: null` dict entry has no meaning in the merge, so none may type it."""
+    from dbt_charts.core.compile.models.board.patch import BoardPatch
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+
+    seen: set[type[BaseModel]] = set()
+
+    def nullable_dicts(model: type[BaseModel], path: str) -> list[str]:
+        if model in seen:
+            return []
+        seen.add(model)
+        found: list[str] = []
+        for name, field in model.model_fields.items():
+            for arg in _walk_annotation(field.annotation):
+                if isinstance(arg, type) and issubclass(arg, BaseModel):
+                    found += nullable_dicts(arg, f"{path}.{name}")
+                if get_origin(arg) is dict and type(None) in _walk_annotation(
+                    get_args(arg)[1]
+                ):
+                    found.append(f"{path}.{name}")
+        return found
+
+    found = [
+        *nullable_dicts(StylePatch, "StylePatch"),
+        *nullable_dicts(BoardPatch, "BoardPatch"),
+    ]
+    # A custom chart's option value may legitimately be null.
+    assert found == ["BoardPatch.charts.options"]
+
+
+def _walk_annotation(annotation: Any) -> list[Any]:
+    args = get_args(annotation)
+    if get_origin(annotation) is None and not args:
+        return [annotation]
+    return [annotation, *(a for arg in args for a in _walk_annotation(arg))]

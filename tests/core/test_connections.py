@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from dbt_charts._install_hint import install_hint
+from dbt_charts.core.compile.config import get_execution_config
 from dbt_charts.core.compile.models.source import (
     BigQuerySourceConfig,
     DatabricksSourceConfig,
@@ -43,6 +44,7 @@ from dbt_charts.core.connections import (
     probe_relation_readability,
     test_connection as probe_connection,
 )
+from dbt_charts.core.dialects import DuckDBDialect
 from dbt_charts.core.inspect.relations import Relation
 
 
@@ -464,7 +466,7 @@ def test_bulk_schema_for_config_propagates_not_implemented(
     RuntimeError — the caller needs to distinguish 'unsupported' from 'failed'."""
     source_config = _duckdb_with_two_schemas(tmp_path)
 
-    class _NoBulkFormDialect:
+    class _NoBulkFormDialect(DuckDBDialect):
         def bulk_schema_sql(self, scope: str = "") -> str:
             raise NotImplementedError("no bulk-introspection form")
 
@@ -764,6 +766,71 @@ def test_list_catalogs_runs_show_catalogs_through_the_adapter_without_a_catalog(
     assert (built[0]["token"], built[0]["socket_timeout"]) == ("t", 7)
 
 
+def test_list_catalogs_bounds_the_session_open_retry_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dbt_charts.core.execute.adapters import dbt_adapter_factory
+
+    real_build_adapter = dbt_adapter_factory.build_adapter
+    retry_budgets: list[int] = []
+
+    def _build(creds: dict[str, Any], **_kwargs: Any) -> _CatalogsAdapter:
+        built = real_build_adapter(creds, register_macros=False)
+        params = built.config.credentials.connection_parameters
+        retry_budgets.append(params["_retry_stop_after_attempts_duration"])
+        return _CatalogsAdapter()
+
+    monkeypatch.setattr(dbt_adapter_factory, "build_adapter", _build)
+
+    list_catalogs(_databricks_config(""))
+
+    assert retry_budgets == [15]
+
+
+def test_probe_relation_readability_hands_build_adapter_the_schema_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built = _catalogs_adapter(monkeypatch, _RecordingAdapter())
+
+    probe_relation_readability(
+        _databricks_config("main"), Relation(name="orders", schema="analytics")
+    )
+
+    assert built[0]["connect_timeout"] == 15
+
+
+def test_probe_never_raises_on_a_backend_that_ignores_the_cap() -> None:
+    """connect_credentials refuses the mssql-python backend; the probe reports
+    that through its return value like every other failure."""
+    source_config = DbtTargetSourceConfig(
+        type="sqlserver", backend="mssql-python", host="h"
+    )
+
+    success, message = probe_relation_readability(
+        source_config, Relation(name="orders", schema="analytics")
+    )
+
+    assert success is False
+    assert "mssql-python" in message
+
+
+def test_bulk_schema_for_config_hands_build_adapter_the_schema_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _EmptyTableAdapter(_RecordingAdapter):
+        def execute(self, sql: str, **kwargs: Any) -> tuple[None, SimpleNamespace]:
+            return None, SimpleNamespace(
+                column_names=["table_schema", "table_name", "column_name", "data_type"],
+                rows=[],
+            )
+
+    built = _catalogs_adapter(monkeypatch, _EmptyTableAdapter())
+
+    bulk_schema_for_config(_databricks_config("main"))
+
+    assert built[0]["connect_timeout"] == 15
+
+
 def test_list_catalogs_hands_the_adapter_service_principal_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -779,7 +846,7 @@ def test_list_catalogs_hands_the_adapter_service_principal_credentials(
 
     list_catalogs(m2m)
 
-    assert "token" not in built[0]
+    assert built[0]["token"] is None
     assert (built[0]["client_id"], built[0]["client_secret"]) == (
         "sp-app-id",
         "sp-secret",
@@ -1381,6 +1448,31 @@ def test_test_connection_classifies_redshift_unreachable(
     assert driver_text in exc.detail
 
 
+def test_test_connection_builds_the_adapter_from_connect_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test and render hand build_adapter the same config: Redshift's socket
+    timeout is raised past the query cap by its dialect's connect_credentials."""
+    built: list[dict[str, Any]] = []
+
+    def _build(creds: dict[str, Any], **_kwargs: Any) -> _RecordingAdapter:
+        built.append(creds)
+        return _RecordingAdapter()
+
+    monkeypatch.setattr(
+        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter", _build
+    )
+
+    success, _ = probe_connection(
+        RedshiftSourceConfig(type="redshift", host="h", dbname="d")
+    )
+
+    assert success is True
+    assert (
+        built[0]["connect_timeout"] > get_execution_config().max_query_duration_seconds
+    )
+
+
 def test_test_connection_falls_back_to_a_generic_message_when_unclassified(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1437,7 +1529,7 @@ def test_bulk_tables_for_config_propagates_not_implemented(
 ) -> None:
     source_config = _duckdb_with_two_schemas(tmp_path)
 
-    class _NoBulkFormDialect:
+    class _NoBulkFormDialect(DuckDBDialect):
         cursor_supports_driver_limit = False
 
         def bulk_tables_sql(self, scope: str, schemas: object) -> str:

@@ -298,27 +298,23 @@ def build_adapter(
         # dbt-databricks rejects a token-less profile without auth_type: oauth.
         if creds_kwargs.get("client_secret") and not creds_kwargs.get("token"):
             creds_kwargs["auth_type"] = "oauth"
-        # dbt charts' source schema names this field `socket_timeout`; dbt-databricks
-        # has no top-level field for it — it lives under
-        # connection_parameters._socket_timeout instead. Fold it in here, the
-        # same rename shape as duckdb_config -> config_options above.
-        #
-        # Also sets _retry_stop_after_attempts_duration to the same value:
-        # _socket_timeout alone only bounds each individual socket read, and
-        # this replaces the connector's own retry-loop budget rather than
-        # capping it — an author-supplied value larger than the driver's
-        # 900s default lengthens a hang against an unreachable host, not
-        # shortens one.
+        # dbt-databricks' own connect_timeout means the sleep
+        # between retries, so ours is popped rather than passed through.
+        # _retry_stop_after_attempts_duration replaces the connector's 900s
+        # session-open retry budget rather than capping it.
+        params = dict(
+            creds_kwargs.get("connection_parameters")
+            # type-state: silent_fallback — a dbt_profile target may omit
+            # connection_parameters; {} is the merge identity below, not a guessed value
+            or {}
+        )
         socket_timeout = creds_kwargs.pop("socket_timeout", None)
         if socket_timeout is not None:
-            params = dict(
-                creds_kwargs.get("connection_parameters")
-                # type-state: silent_fallback — a dbt_profile target may omit
-                # connection_parameters; {} is the merge identity below, not a guessed value
-                or {}
-            )
             params["_socket_timeout"] = socket_timeout
-            params["_retry_stop_after_attempts_duration"] = socket_timeout
+        connect_timeout = creds_kwargs.pop("connect_timeout", None)
+        if connect_timeout is not None:
+            params["_retry_stop_after_attempts_duration"] = connect_timeout
+        if params:
             creds_kwargs["connection_parameters"] = params
     creds_kwargs = creds_cls.translate_aliases(creds_kwargs)
     if "schema" not in creds_kwargs:

@@ -1,0 +1,9 @@
+from collections.abc import Iterator
+
+from nanoarrow._array import CArray
+from nanoarrow._schema import CSchema
+
+class CArrayStream:
+    def get_schema(self) -> CSchema: ...
+    def release(self) -> None: ...
+    def __iter__(self) -> Iterator[CArray]: ...

@@ -5,6 +5,8 @@ Schema names containing single quotes must be properly escaped before
 being inlined into SQL strings passed to dbt adapters.
 """
 
+from datetime import date, datetime, time
+
 import pytest
 
 from dbt_charts.core.dialects import get_dialect
@@ -497,3 +499,32 @@ class TestSqlStringLiteral:
     def test_injection_stays_inside_its_literal_on_backslash_dialect(self) -> None:
         out = sql_string_literal("\\' UNION ALL SELECT 1 --", get_dialect("bigquery"))
         assert out == r"'\\\' UNION ALL SELECT 1 --'"
+
+
+T_SQL_DIALECTS = frozenset({"sqlserver", "mssql", "fabric"})
+
+
+class TestTypedLiterals:
+    @pytest.mark.parametrize("profile_type", sorted(EXPECTED_CLASSIFICATION))
+    @pytest.mark.parametrize(
+        ("value", "portable", "t_sql"),
+        [
+            (True, "TRUE", "1"),
+            (False, "FALSE", "0"),
+            (date(2024, 1, 15), "DATE '2024-01-15'", "CAST('2024-01-15' AS DATE)"),
+            (
+                datetime(2024, 1, 15, 9, 30),
+                "TIMESTAMP '2024-01-15T09:30:00'",
+                "CAST('2024-01-15T09:30:00' AS DATETIME2)",
+            ),
+            (time(9, 30), "TIME '09:30:00'", "CAST('09:30:00' AS TIME)"),
+        ],
+    )
+    def test_each_dialect_spells_the_literal_its_engine_parses(
+        self, profile_type: str, value: bool | date | time, portable: str, t_sql: str
+    ) -> None:
+        expected = t_sql if profile_type in T_SQL_DIALECTS else portable
+
+        out = inline_params("SELECT $1", [value], get_dialect(profile_type))
+
+        assert out == f"SELECT {expected}"

@@ -327,7 +327,11 @@ impl Expr {
                 }
                 let x = val.as_f64(name)?;
                 let x = divisor.map_or(x, |d| x / d);
-                crate::number_locale::d3_format(spec, x).map_err(|e| format!("pie: slice-label template format '{spec}': {e}"))
+                let context = |e: String| format!("pie: slice-label template format '{spec}': {e}");
+                if let Some((number, unit)) = d3rs::native::predefined_native(spec, x).map_err(context)? {
+                    return Ok(format!("{number}{unit}"));
+                }
+                crate::number_locale::d3_format(spec, x).map_err(context)
             }
         }
     }

@@ -29,3 +29,10 @@ features = ["extension-module", "abi3-py311"]
 [profile.release]
 lto = true
 strip = true
+
+# Editable (local dev) installs: fat LTO is a single-threaded, multi-GB link
+# that dominates every rebuild, and render output does not depend on it.
+[profile.editable]
+inherits = "release"
+lto = false
+incremental = true

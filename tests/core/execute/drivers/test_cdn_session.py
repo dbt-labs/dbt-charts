@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+import nanoarrow as na
 import pyarrow as pa
 import pytest
 
@@ -30,21 +31,24 @@ _WARNINGS_OPTION = "adbc.dbt.last_warnings"
 
 
 class _FakeHandle:
-    address = 0
+    pass
 
 
 class _FakeReader:
-    """Stands in for the pyarrow reader imported from an ADBC stream handle."""
+    """Stands in for the Arrow stream read from an ADBC stream handle."""
 
     def __init__(self, batches: list[pa.RecordBatch], closed: list[str]) -> None:
-        self.schema = batches[0].schema
-        self._batches = batches
+        self._schema = na.c_schema(batches[0].schema)
+        self._batches = [na.c_array(batch) for batch in batches]
         self._closed = closed
+
+    def get_schema(self) -> Any:
+        return self._schema
 
     def __iter__(self) -> Any:
         yield from self._batches
 
-    def close(self) -> None:
+    def release(self) -> None:
         self._closed.append("reader")
 
 
@@ -93,16 +97,8 @@ def _adbc_error(sqlstate: str | None) -> Exception:
 
 
 def _readers_returning(reader: _FakeReader) -> Any:
-    """A stand-in for `pyarrow.RecordBatchReader` whose `_import_from_c` yields
-    *reader*. The real class is immutable, so the module attribute is what the
-    tests replace."""
-
-    class _Class:
-        @staticmethod
-        def _import_from_c(address: int) -> _FakeReader:
-            return reader
-
-    return _Class
+    """A stand-in for `nanoarrow.c_array_stream` that yields *reader*."""
+    return lambda _handle: reader
 
 
 def _connection() -> Any:
@@ -127,7 +123,7 @@ def _run(
     fake = statement or _FakeStatement(close_order, warnings=warnings)
     with (
         patch("adbc_driver_manager.AdbcStatement", lambda _conn: fake),
-        patch("pyarrow.RecordBatchReader", _readers_returning(reader)),
+        patch("nanoarrow.c_array_stream", _readers_returning(reader)),
     ):
         connection = CdnDriverConnection(_connection(), warnings_option, [])
         return connection.execute("SELECT 1", resolve_effective_row_limit(limit_rows))
@@ -209,7 +205,7 @@ class TestStatementOutlivesItsStream:
         enough rows, so the stream is still in flight when the scope ends."""
         close_order: list[str] = []
         table = _run(close_order, _batches(5, 4), 6)
-        assert table.num_rows < 20
+        assert len(table) < 20
         assert close_order == ["reader", "statement"]
 
     def test_the_statement_is_closed_even_when_the_read_raises(self) -> None:
@@ -220,7 +216,7 @@ class TestStatementOutlivesItsStream:
                 "adbc_driver_manager.AdbcStatement",
                 lambda _conn: _FakeStatement(close_order),
             ),
-            patch("pyarrow.RecordBatchReader", _readers_returning(reader)),
+            patch("nanoarrow.c_array_stream", _readers_returning(reader)),
             patch(
                 "dbt_charts.core.execute.result.read_bounded_table",
                 side_effect=RuntimeError("stream died"),
@@ -256,7 +252,7 @@ class TestBackendWarnings:
         table = _run(
             [], _batches(1, 2), 10, warnings="", warnings_option=_WARNINGS_OPTION
         )
-        assert table.num_rows == 2
+        assert len(table) == 2
 
     def test_the_option_is_read_by_the_name_the_driver_row_gave(self) -> None:
         statement = _FakeStatement([])

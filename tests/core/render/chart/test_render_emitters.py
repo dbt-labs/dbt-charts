@@ -3638,6 +3638,9 @@ def test_binding_capability_matches_every_authored_chart_family(
     from dbt_charts.core.compile.models.chart.normalized.callout import (
         CalloutChart as NormCalloutChart,
     )
+    from dbt_charts.core.compile.models.chart.normalized.custom import (
+        CustomChart as NormCustomChart,
+    )
     from dbt_charts.core.compile.models.chart.normalized.geoshape import (
         GeoshapeChart as NormGeoshapeChart,
     )
@@ -3675,6 +3678,9 @@ def test_binding_capability_matches_every_authored_chart_family(
     from dbt_charts.core.compile.resolve.style.category_colors import (
         categorical_channel_fields,
     )
+    from dbt_charts.core.compile.template.custom_template import (
+        CustomTemplateHeader,
+    )
     from dbt_charts.core.render.chart.emitters import get_emitter
 
     # tag -> minimal normalized instance, with color="cat" set whenever the
@@ -3697,6 +3703,15 @@ def test_binding_capability_matches_every_authored_chart_family(
         "callout": NormCalloutChart(id="t", type="callout", message="hi"),
         "spark_bar": NormSparkBarChart(
             id="t", type="spark_bar", x="x", y="y", color="cat"
+        ),
+        "custom": NormCustomChart(
+            id="t",
+            type="custom",
+            template_name="inline svg:",
+            template_source="<g/>",
+            template_header=CustomTemplateHeader(),
+            channels={},
+            options={},
         ),
     }
     assert set(normalized_by_tag) == set(AUTHORED_CHART_TYPE_TAGS), (
@@ -3723,6 +3738,7 @@ def test_binding_capability_matches_every_authored_chart_family(
         "geoshape": True,
         "callout": False,
         "spark_bar": False,
+        "custom": False,
     }
     assert set(expected_capable) == set(AUTHORED_CHART_TYPE_TAGS)
 

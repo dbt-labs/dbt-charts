@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import codecs
+import contextlib
 import hashlib
-import io
 import json
+import re
+import tempfile
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path  # noqa: TID251 — scratch files for DuckDB's readers
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from dbt_charts.core.compile.config import (
@@ -23,6 +28,7 @@ from dbt_charts.core.compile.template.parameterized import render_parameterized
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_FILE_SOURCE_DECIMAL_TOO_WIDE,
+    ERR_FILE_SOURCE_DUPLICATE_COLUMN,
     ERR_FILE_SOURCE_TOO_LARGE,
     ERR_FILE_SOURCE_TOO_MANY_TABLES,
     ERR_FILE_SOURCE_UNSUPPORTED_TYPE,
@@ -33,12 +39,12 @@ from dbt_charts.core.diagnostics.codes_execute import (
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.adapters.base import QueryParams
 from dbt_charts.core.execute.adapters.duckdb_adapter import duckdb_error_code
+from dbt_charts.core.execute.arrow_ingest import RelationStream, ingest, insert_rows
 from dbt_charts.core.execute.duckdb_cache import compute_source_hash
 from dbt_charts.core.project import is_glob
 
 if TYPE_CHECKING:
     import duckdb
-    import pyarrow as pa
 
     from dbt_charts.core.project import Project
 
@@ -169,8 +175,6 @@ class FileSourceMaterializer:
         else:
             resolved_sql, resolved_params = sql, params
 
-        union_by_name = isinstance(source, JsonSourceConfig) and source.union_by_name
-
         with self._lock:
             conn = self._connection()
             from dbt_charts.core.execute._duckdb_cache_base import (
@@ -182,92 +186,13 @@ class FileSourceMaterializer:
                 key = (source_hash, table_name)
                 physical = self._physical_name(source_hash, table_name)
                 if self._loaded.get(key) != version:
-                    rows: list[_JsonRow] = []
-                    arrow: pa.Table | None = None
-                    previous_relpath = ""
-                    first_relpath = ""
-                    first_keys: frozenset[str] = frozenset()
-                    row_count = 0
-                    materialized_bytes = 0
-                    for relpath in relpaths:
-                        file_bytes = self._project.read_bytes(relpath)
-                        materialized_bytes += _uncompressed_bytes(source, file_bytes)
-                        if materialized_bytes > byte_cap:
-                            raise DbtChartsError.from_code(
-                                ERR_FILE_SOURCE_TOO_LARGE,
-                                source_name=source_name,
-                                table_name=table_name,
-                                relpath=relpath,
-                                raw_mb=len(file_bytes) / _BYTES_PER_MB,
-                                size_mb=materialized_bytes / _BYTES_PER_MB,
-                                cap_mb=byte_cap / _BYTES_PER_MB,
-                            )
-                        parsed = _parse(source, file_bytes, relpath)
-                        if isinstance(parsed, list):
-                            file_count = len(parsed)
-                            file_keys = frozenset(parsed[0]) if parsed else frozenset()
-                        else:
-                            file_count = parsed.num_rows
-                            file_keys = frozenset(parsed.column_names)
-                        if not file_count:
-                            continue
-                        if not first_relpath:
-                            first_keys = file_keys
-                            first_relpath = relpath
-                        elif not union_by_name and file_keys != first_keys:
-                            extra = sorted(file_keys - first_keys)
-                            missing = sorted(first_keys - file_keys)
-                            detail = (f"Extra: {extra}. " if extra else "") + (
-                                f"Missing: {missing}. " if missing else ""
-                            )
-                            raise DbtChartsError.from_code(
-                                ERR_GLOB_SCHEMA_MISMATCH,
-                                source_name=source_name,
-                                table_name=table_name,
-                                path=relpath,
-                                first_path=first_relpath,
-                                detail=detail,
-                            )
-                        row_count += file_count
-                        if isinstance(parsed, list):
-                            rows.extend(parsed)
-                        else:
-                            arrow = _merge_arrow(
-                                arrow,
-                                _normalize_arrow(
-                                    parsed, source_name, table_name, relpath
-                                ),
-                                source_name,
-                                table_name,
-                                relpath,
-                                previous_relpath,
-                            )
-                            previous_relpath = relpath
-                    if not row_count:
-                        raise ValueError(
-                            f"File table {table_name!r}: parsed file(s) contain no rows. "
-                            "Empty file sources are not supported — provide a file with "
-                            "at least one data row."
+                    load = TableLoad(source_name, table_name, relpaths, byte_cap)
+                    if isinstance(source, JsonSourceConfig):
+                        self._replace_table_from_rows(
+                            conn, physical, table_name, self._json_rows(source, load)
                         )
-
-                    if arrow is None:
-                        if union_by_name:
-                            all_keys = dict.fromkeys(key for row in rows for key in row)
-                            for row in rows:
-                                for column in all_keys:
-                                    row.setdefault(column, None)
-                        self._replace_table_from_rows(conn, physical, table_name, rows)
                     else:
-                        import pyarrow as pa
-
-                        arrow = _normalize_arrow(
-                            arrow,
-                            source_name,
-                            table_name,
-                            previous_relpath,
-                            null_as=pa.string(),
-                        )
-                        self._replace_table(conn, physical, table_name, arrow)
+                        self._replace_table_from_files(conn, physical, source, load)
                     self._loaded[key] = version
 
                 conn.execute(
@@ -286,6 +211,155 @@ class FileSourceMaterializer:
         digest = hashlib.sha256(f"{source_hash}:{table_name}".encode()).hexdigest()[:24]
         return f"_dct_file_{digest}"
 
+    def _json_rows(self, source: JsonSourceConfig, load: TableLoad) -> list[_JsonRow]:
+        """Parse every matched JSON file into one row list, header-checked."""
+        rows: list[_JsonRow] = []
+        first: tuple[str, frozenset[str]] | None = None
+        materialized_bytes = 0
+        for relpath in load.relpaths:
+            file_bytes = self._project.read_bytes(relpath)
+            materialized_bytes += len(file_bytes)
+            load.check_size(relpath, len(file_bytes), materialized_bytes)
+            file_rows = _parse_json(file_bytes, relpath)
+            if not file_rows:
+                continue
+            keys = frozenset(file_rows[0])
+            if first is None:
+                first = (relpath, keys)
+            elif not source.union_by_name:
+                load.check_header(relpath, keys, *first)
+            rows.extend(file_rows)
+        if source.union_by_name and rows:
+            all_keys = dict.fromkeys(key for row in rows for key in row)
+            for row in rows:
+                for column in all_keys:
+                    row.setdefault(column, None)
+        if not rows:
+            load.raise_empty()
+        return rows
+
+    def _replace_table_from_files(
+        self,
+        conn: duckdb.DuckDBPyConnection,
+        physical: str,
+        source: CsvSourceConfig | ParquetSourceConfig,
+        load: TableLoad,
+    ) -> None:
+        """Read CSV/Parquet files with DuckDB's own readers into *physical*.
+
+        The readers need file access, which *conn* (it runs author SQL) never
+        gets, so they run on a private scratch connection over temp copies of
+        the files. Each file becomes one shard table; the shards' types are
+        merged per column (see :func:`_wider`) and the union crosses into
+        *conn* as one Arrow stream.
+        """
+        import duckdb
+
+        from dbt_charts.core.execute._duckdb_cache_base import _q
+
+        with (
+            tempfile.TemporaryDirectory(  # noqa: TID251 — DuckDB's readers take a path; the copies die with the load
+                prefix="dct_file_"
+            ) as tmp,
+            contextlib.closing(duckdb.connect(":memory:")) as scratch,
+        ):
+            scratch.execute("SET TimeZone='UTC'")
+            # Keeps DuckDB-only types (JSON, UUID) intact across the Arrow hop.
+            scratch.execute("SET arrow_lossless_conversion = true")
+            shards: list[_Shard] = []
+            merged: dict[str, str | None] = {}
+            materialized_bytes = 0
+            for index, relpath in enumerate(load.relpaths):
+                file_bytes = self._project.read_bytes(relpath)
+                path = str(Path(tmp) / str(index))
+                shard = _Shard(f"_shard_{index}", relpath, {})
+                if isinstance(source, CsvSourceConfig):
+                    Path(path).write_bytes(_as_utf8(file_bytes, source.encoding))
+                    size = len(file_bytes)
+                else:
+                    Path(path).write_bytes(file_bytes)
+                    size = _parquet_bytes(scratch, path)
+                materialized_bytes += size
+                load.check_size(relpath, len(file_bytes), materialized_bytes)
+                null_typed: set[str] = set()
+                if isinstance(source, CsvSourceConfig):
+                    load.check_unique(
+                        relpath, _csv_header(scratch, path, source.delimiter)
+                    )
+                else:
+                    load.check_decimals(scratch, path, relpath)
+                    top = _parquet_columns(scratch, path)
+                    load.check_unique(relpath, [name for name, _ in top])
+                    null_typed = {name for name, is_null in top if is_null}
+                if isinstance(source, CsvSourceConfig):
+                    _load_csv(scratch, shard.name, path, source.delimiter)
+                else:
+                    scratch.execute(
+                        f"CREATE TABLE {shard.name} AS SELECT * FROM read_parquet($1)",
+                        [path],
+                    )
+                described = scratch.execute(f"DESCRIBE {shard.name}").fetchall()
+                columns = [row[0] for row in described]
+                types = [row[1] for row in described]
+                counts = scratch.execute(
+                    "SELECT count(*), "
+                    + ", ".join(f"count({_q(column)})" for column in columns)
+                    + f" FROM {shard.name}"
+                ).fetchone()
+                assert counts is not None
+                if counts[0] == 0:
+                    continue
+                if shards:
+                    load.check_header(
+                        relpath,
+                        frozenset(columns),
+                        shards[0].relpath,
+                        frozenset(shards[0].types),
+                    )
+                for column, type_, count in zip(
+                    columns, types, counts[1:], strict=True
+                ):
+                    # A CSV column with no value carries no type; a Parquet one
+                    # keeps the type its footer declares unless that is null.
+                    csv = isinstance(source, CsvSourceConfig)
+                    untyped = not count if csv else column in null_typed
+                    typed = None if untyped else type_
+                    shard.types[column] = typed
+                    known = merged.get(column)
+                    if typed is None or typed == known:
+                        merged.setdefault(column, None)
+                        continue
+                    wide = typed if known is None else _wider(known, typed)
+                    if wide is None:
+                        raise load.mismatch(
+                            relpath,
+                            shards[-1].relpath,
+                            f"Column {column!r} is {typed} here and {known} "
+                            "across the files before it. ",
+                        )
+                    merged[column] = wide
+                shards.append(shard)
+            if not shards:
+                load.raise_empty()
+            _refuse_lossy_nanoseconds(scratch, load, shards, merged)
+            union = " UNION ALL BY NAME ".join(
+                "SELECT "
+                + ", ".join(
+                    _select(column, typed, merged[column])
+                    for column, typed in shard.types.items()
+                )
+                + f" FROM {shard.name}"
+                for shard in shards
+            )
+            try:
+                ingest(conn, _q(physical), RelationStream(scratch.sql(union)))
+            except duckdb.Error as exc:
+                raise DbtChartsError.from_code(
+                    ERR_FILE_SOURCE_UNSUPPORTED_TYPE,
+                    table_name=load.table_name,
+                    detail=str(exc).splitlines()[0],
+                ) from exc
+
     @staticmethod
     def _replace_table_from_rows(
         conn: duckdb.DuckDBPyConnection,
@@ -294,7 +368,6 @@ class FileSourceMaterializer:
         rows: list[_JsonRow],
     ) -> None:
         import duckdb
-        import pyarrow as pa
 
         from dbt_charts.core.execute._duckdb_cache_base import (
             _cache_safe_value,
@@ -318,23 +391,11 @@ class FileSourceMaterializer:
             {column: _cache_safe_value(row.get(column)) for column in keys}
             for row in rows
         ]
-        registered = False
         try:
             conn.execute(
                 f"CREATE OR REPLACE TEMP TABLE {staging} ({', '.join(columns)})"
             )
-            try:
-                arrow = pa.Table.from_pylist(coerced)
-            except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError):
-                placeholders = ", ".join("?" * len(keys))
-                conn.executemany(
-                    f"INSERT INTO {staging} VALUES ({placeholders})",
-                    [[row[column] for column in keys] for row in coerced],
-                )
-            else:
-                conn.register("_dct_file_ingest", arrow)
-                registered = True
-                conn.execute(f"INSERT INTO {staging} SELECT * FROM _dct_file_ingest")
+            insert_rows(conn, staging, coerced)
             conn.execute(
                 f"CREATE OR REPLACE TABLE {_q(physical)} AS SELECT * FROM {staging}"
             )
@@ -345,297 +406,304 @@ class FileSourceMaterializer:
                 detail=str(exc).splitlines()[0],
             ) from exc
         finally:
-            if registered:
-                conn.unregister("_dct_file_ingest")
             conn.execute(f"DROP TABLE IF EXISTS {staging}")
 
-    @staticmethod
-    def _replace_table(
-        conn: duckdb.DuckDBPyConnection,
-        physical: str,
-        table_name: str,
-        arrow: pa.Table,
-    ) -> None:
-        import duckdb
 
-        from dbt_charts.core.execute._duckdb_cache_base import _q
+@dataclass(frozen=True)
+class TableLoad:
+    """One file table being loaded, and the errors that name it."""
 
-        conn.register("_dct_file_ingest", arrow)
-        try:
-            conn.execute(
-                f"CREATE OR REPLACE TABLE {_q(physical)} AS "
-                "SELECT * FROM _dct_file_ingest"
-            )
-        except duckdb.Error as exc:
+    source_name: str
+    table_name: str
+    relpaths: list[str]
+    byte_cap: int
+
+    def check_size(self, relpath: str, raw_bytes: int, materialized_bytes: int) -> None:
+        if materialized_bytes > self.byte_cap:
             raise DbtChartsError.from_code(
-                ERR_FILE_SOURCE_UNSUPPORTED_TYPE,
-                table_name=table_name,
-                detail=str(exc).splitlines()[0],
-            ) from exc
-        finally:
-            conn.unregister("_dct_file_ingest")
+                ERR_FILE_SOURCE_TOO_LARGE,
+                source_name=self.source_name,
+                table_name=self.table_name,
+                relpath=relpath,
+                raw_mb=raw_bytes / _BYTES_PER_MB,
+                size_mb=materialized_bytes / _BYTES_PER_MB,
+                cap_mb=self.byte_cap / _BYTES_PER_MB,
+            )
 
-
-def _uncompressed_bytes(
-    source: CsvSourceConfig | JsonSourceConfig | ParquetSourceConfig,
-    file_bytes: bytes,
-) -> int:
-    """How much data this file actually carries, in bytes.
-
-    For CSV and JSON that is the file itself. For Parquet it is the sum of
-    the row groups' ``total_byte_size``, read from the footer — the file's own
-    record of its uncompressed size, which is the same quantity ``len()``
-    reports for the text formats. Measuring all three that way is what lets
-    one cap mean one thing across formats, so the compact format is never
-    the one a budget rejects.
-
-    The footer parse is free relative to the check it feeds: the caller has
-    already read the whole file (``Project`` exposes no range read), and this
-    is what avoids paying ``pq.read_table`` on a relation that will not fit.
-    """
-    if not isinstance(source, ParquetSourceConfig):
-        return len(file_bytes)
-    import pyarrow.parquet as pq
-
-    metadata = pq.ParquetFile(  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap
-        io.BytesIO(file_bytes)
-    ).metadata
-    return sum(
-        metadata.row_group(i).total_byte_size for i in range(metadata.num_row_groups)
-    )
-
-
-# ── Module-level parse helpers (no DuckDB filesystem access) ─────────────────
-
-
-def _engine_type(
-    arrow_type: pa.DataType, null_as: pa.DataType | None = None
-) -> pa.DataType:
-    """The nearest type DuckDB's Arrow bridge accepts, recursing into children.
-
-    ``float16`` and ``decimal256`` are the two Parquet can hand us that the
-    bridge rejects outright, at the top level or nested inside a list, struct,
-    or map. Widening a half float to ``float32`` is lossless; narrowing a
-    ``decimal256`` to ``DECIMAL(38, s)`` is lossless for every value that fits,
-    and the caller's ``safe`` cast raises rather than truncating for one that
-    does not.
-    """
-    import pyarrow as pa
-
-    # ``null`` (a column with no values at all) is left alone per shard so the
-    # glob merge can promote it to a sibling's type; only the merged table
-    # asks for it as text — see the ``null_as`` pass in materialize_and_run.
-    if null_as is not None and pa.types.is_null(arrow_type):
-        return null_as
-    if pa.types.is_float16(arrow_type):
-        return pa.float32()
-    if pa.types.is_decimal256(arrow_type):
-        return pa.decimal128(38, arrow_type.scale)
-    if pa.types.is_list(arrow_type):
-        return pa.list_(_engine_field(arrow_type.value_field, null_as))
-    if pa.types.is_large_list(arrow_type):
-        return pa.large_list(_engine_field(arrow_type.value_field, null_as))
-    if pa.types.is_fixed_size_list(arrow_type):
-        return pa.list_(
-            _engine_field(arrow_type.value_field, null_as), arrow_type.list_size
+    def check_header(
+        self,
+        relpath: str,
+        keys: frozenset[str],
+        first_relpath: str,
+        first_keys: frozenset[str],
+    ) -> None:
+        if keys == first_keys:
+            return
+        extra = sorted(keys - first_keys)
+        missing = sorted(first_keys - keys)
+        raise self.mismatch(
+            relpath,
+            first_relpath,
+            (f"Extra: {extra}. " if extra else "")
+            + (f"Missing: {missing}. " if missing else ""),
         )
-    if pa.types.is_struct(arrow_type):
-        return pa.struct([_engine_field(child, null_as) for child in arrow_type])
-    if pa.types.is_map(arrow_type):
-        return pa.map_(
-            _engine_type(arrow_type.key_type, null_as),
-            _engine_type(arrow_type.item_type, null_as),
+
+    def mismatch(self, relpath: str, first_relpath: str, detail: str) -> DbtChartsError:
+        return DbtChartsError.from_code(
+            ERR_GLOB_SCHEMA_MISMATCH,
+            source_name=self.source_name,
+            table_name=self.table_name,
+            path=relpath,
+            first_path=first_relpath,
+            detail=detail,
         )
-    return arrow_type
 
+    def check_decimals(
+        self, scratch: duckdb.DuckDBPyConnection, path: str, relpath: str
+    ) -> None:
+        """Refuse a Parquet decimal wider than DuckDB's 38 digits before reading.
 
-def _engine_field(field: pa.Field, null_as: pa.DataType | None) -> pa.Field:
-    return field.with_type(_engine_type(field.type, null_as))
-
-
-def _normalize_arrow(
-    table: pa.Table,
-    source_name: str,
-    table_name: str,
-    relpath: str,
-    *,
-    null_as: pa.DataType | None = None,
-) -> pa.Table:
-    """Recast *table* into types the query engine can load, or raise.
-
-    Every cast is ``safe``, so a value that will not fit the narrowed type
-    raises here instead of arriving silently truncated in a chart.
-
-    Positional throughout: Arrow permits duplicate column names, and looking a
-    field up by name returns -1 when there are two, which would corrupt the
-    table it is meant to be fixing.
-    """
-    import pyarrow as pa
-
-    normalized = pa.schema(
-        [_engine_field(field, null_as) for field in table.schema],
-        metadata=table.schema.metadata,
-    )
-    if normalized.equals(table.schema):
-        return table
-
-    columns = []
-    for index, field in enumerate(table.schema):
-        column = table.column(index)
-        target = normalized.field(index).type
-        if target == field.type:
-            columns.append(column)
-            continue
-        try:
-            fitted = column.cast(target, safe=True)  # type-state: cast — raises
-        except pa.ArrowInvalid as e:
+        DuckDB reads such a column as DOUBLE, and at some precisions as wrong
+        values, so it is never read at all.
+        """
+        wide = scratch.execute(
+            "SELECT name, precision, scale FROM parquet_schema($1) "
+            "WHERE precision > 38 LIMIT 1",
+            [path],
+        ).fetchone()
+        if wide is not None:
             raise DbtChartsError.from_code(
                 ERR_FILE_SOURCE_DECIMAL_TOO_WIDE,
-                source_name=source_name,
-                table_name=table_name,
-                column=field.name,
+                source_name=self.source_name,
+                table_name=self.table_name,
+                column=wide[0],
                 relpath=relpath,
-                column_type=str(field.type),
-            ) from e
-        columns.append(fitted)
-    return pa.Table.from_arrays(columns, schema=normalized)
+                column_type=f"DECIMAL({wide[1]},{wide[2]})",
+            )
+
+    def check_unique(self, relpath: str, columns: list[str]) -> None:
+        """Refuse a repeated column name, which DuckDB's readers would rename."""
+        seen: set[str] = set()
+        for column in columns:
+            if column.lower() in seen:
+                raise DbtChartsError.from_code(
+                    ERR_FILE_SOURCE_DUPLICATE_COLUMN,
+                    source_name=self.source_name,
+                    table_name=self.table_name,
+                    relpath=relpath,
+                    column=column,
+                )
+            seen.add(column.lower())
+
+    def raise_empty(self) -> None:
+        raise ValueError(
+            f"File table {self.table_name!r}: parsed file(s) contain no rows. "
+            "Empty file sources are not supported; provide a file with "
+            "at least one data row."
+        )
 
 
-def _merge_arrow(
-    accumulated: pa.Table | None,
-    table: pa.Table,
-    source_name: str,
-    table_name: str,
-    relpath: str,
-    previous_relpath: str,
-) -> pa.Table:
-    """Fold one more matched file into the glob's typed table.
+@dataclass
+class _Shard:
+    """One matched file loaded on the scratch connection.
 
-    ``promote_options="default"`` unifies by column name and lets a shard whose
-    column is empty (PyArrow types it ``null``) take a sibling's type — both are
-    ordinary shard shapes that the row-dict path always accepted. It does not
-    unify two *widths* of one kind (int32/int64, float/double, timestamp[ms]/
-    [us], DECIMAL(18,2)/DECIMAL(38,2)) — two producers writing the same column,
-    which the row-dict path also loaded losslessly — so ``_widen_to_match``
-    casts those to the wider side first. It stops short of ``"permissive"``,
-    which would widen an int64 column to double to swallow a genuine type
-    conflict. Folding per file rather than concatenating at the end is what
-    lets the error name the two files that disagree.
+    ``types`` maps each column to its DuckDB type, or None when the column
+    holds no value, so it takes whatever type its siblings give it.
     """
-    if accumulated is None:
-        return table
-    import pyarrow as pa
 
-    try:
-        accumulated, table = _widen_to_match(accumulated, table)
-        return pa.concat_tables([accumulated, table], promote_options="default")
-    except (pa.ArrowInvalid, pa.ArrowTypeError) as e:
-        raise DbtChartsError.from_code(
-            ERR_GLOB_SCHEMA_MISMATCH,
-            source_name=source_name,
-            table_name=table_name,
-            path=relpath,
-            first_path=previous_relpath,
-            detail=f"{e}. ",
-        ) from e
+    name: str
+    relpath: str
+    types: dict[str, str | None]
 
 
+def _as_utf8(file_bytes: bytes, encoding: str) -> bytes:
+    if codecs.lookup(encoding).name == "utf-8":
+        return file_bytes
+    return file_bytes.decode(encoding).encode("utf-8")
+
+
+def _parquet_bytes(scratch: duckdb.DuckDBPyConnection, path: str) -> int:
+    """A Parquet file's uncompressed size from its footer: the quantity
+    ``len()`` gives for CSV and JSON, so one byte cap means one thing."""
+    row = scratch.execute(
+        "SELECT coalesce(sum(row_group_bytes), 0) FROM "
+        "(SELECT DISTINCT row_group_id, row_group_bytes FROM parquet_metadata($1))",
+        [path],
+    ).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def _csv_header(
+    scratch: duckdb.DuckDBPyConnection, path: str, delimiter: str
+) -> list[str]:
+    row = scratch.execute(
+        "SELECT * FROM read_csv($1, delim=$2, header=false, all_varchar=true) LIMIT 1",
+        [path, delimiter],
+    ).fetchone()
+    return [] if row is None else [str(name) for name in row]
+
+
+def _select(column: str, typed: str | None, target: str | None) -> str:
+    """One shard column as the merged table holds it."""
+    from dbt_charts.core.execute._duckdb_cache_base import _q
+
+    if typed is not None and typed == target:
+        return _q(column)
+    # A column no file gave a value is text.
+    cast_to = "VARCHAR" if target is None else target
+    return f"CAST({_q(column)} AS {cast_to}) AS {_q(column)}"
+
+
+# Fields a CSV export writes for a missing value.
+_CSV_NULLS = [
+    "",
+    "#N/A",
+    "#N/A N/A",
+    "#NA",
+    "-1.#IND",
+    "-1.#QNAN",
+    "-NaN",
+    "-nan",
+    "1.#IND",
+    "1.#QNAN",
+    "N/A",
+    "NA",
+    "NULL",
+    "NaN",
+    "n/a",
+    "nan",
+    "null",
+]
+
+
+def _load_csv(
+    scratch: duckdb.DuckDBPyConnection, table: str, path: str, delimiter: str
+) -> None:
+    """Read a CSV into *table*, typing each column from its values.
+
+    A missing-value token is null in a typed column, but a text column keeps
+    every field as written, an empty one as the empty string. A column of
+    nothing but missing values is null throughout.
+    """
+    from dbt_charts.core.execute._duckdb_cache_base import _q
+
+    read = "read_csv($1, delim=$2, header=true, sample_size=-1"
+    scratch.execute(
+        f"CREATE TABLE {table} AS SELECT * FROM {read}, nullstr=$3)",
+        [path, delimiter, _CSV_NULLS],
+    )
+    text = [
+        column
+        for column, type_ in scratch.execute(
+            f"SELECT column_name, column_type FROM (DESCRIBE {table})"
+        ).fetchall()
+        if type_ == "VARCHAR"
+    ]
+    if not text:
+        return
+    counts = scratch.execute(
+        f"SELECT {', '.join(f'count({_q(c)})' for c in text)} FROM {table}"
+    ).fetchone()
+    assert counts is not None
+    text = [column for column, count in zip(text, counts, strict=True) if count]
+    if not text:
+        return
+    raw = ", ".join(f"coalesce(raw.{_q(c)}, '') AS {_q(c)}" for c in text)
+    scratch.execute(
+        f"CREATE OR REPLACE TABLE {table} AS SELECT typed.* REPLACE ({raw}) "
+        f"FROM {table} typed POSITIONAL JOIN {read}, all_varchar=true) raw",
+        [path, delimiter],
+    )
+
+
+def _parquet_columns(
+    scratch: duckdb.DuckDBPyConnection, path: str
+) -> list[tuple[str, bool]]:
+    """The top-level columns in a Parquet footer, repeats included, each with
+    whether its declared type is null.
+
+    ``parquet_schema`` lists the schema tree depth-first, root first, so a
+    top-level column is every node reached by skipping its siblings' subtrees.
+    """
+    nodes = scratch.execute(
+        "SELECT name, coalesce(num_children, 0), logical_type = 'NullType()' "
+        "FROM parquet_schema($1)",
+        [path],
+    ).fetchall()
+
+    def _after(index: int) -> int:
+        end = index + 1
+        for _ in range(nodes[index][1]):
+            end = _after(end)
+        return end
+
+    columns: list[tuple[str, bool]] = []
+    index = 1
+    while index < len(nodes):
+        columns.append((nodes[index][0], bool(nodes[index][2])))
+        index = _after(index)
+    return columns
+
+
+_INTEGERS = (
+    ("TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT"),
+    ("UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT", "UHUGEINT"),
+)
+_FLOATS = ("FLOAT", "DOUBLE")
 # Finer is wider — except nanoseconds, whose int64 range ends in 2262 and
 # would put a 9999-12-31 sentinel out of bounds. DuckDB's TIMESTAMP is
 # microseconds, so that is where a unit pair caps.
-_TIME_UNIT_RANK = {"s": 0, "ms": 1, "us": 2, "ns": 2}
-_TIME_UNIT_AT_RANK = {0: "s", 1: "ms", 2: "us"}
+_TIMESTAMPS = {"TIMESTAMP_S": 0, "TIMESTAMP_MS": 1, "TIMESTAMP": 2, "TIMESTAMP_NS": 2}
+_TIMESTAMP_AT_RANK = ("TIMESTAMP_S", "TIMESTAMP_MS", "TIMESTAMP")
+_DECIMAL = re.compile(r"DECIMAL\((\d+),(\d+)\)")
 
 
-def _wider(a: pa.DataType, b: pa.DataType) -> pa.DataType | None:
-    """The lossless common type of two widths of one kind, or None when the
-    pair is a genuine conflict (int vs double, string vs numeric, nested)."""
-    import pyarrow as pa
-
-    if pa.types.is_integer(a) and pa.types.is_integer(b):
-        if pa.types.is_signed_integer(a) != pa.types.is_signed_integer(b):
-            return None
-        return a if a.bit_width >= b.bit_width else b
-    if pa.types.is_floating(a) and pa.types.is_floating(b):
-        return a if a.bit_width >= b.bit_width else b
-    if pa.types.is_timestamp(a) and pa.types.is_timestamp(b) and a.tz == b.tz:
-        rank = max(_TIME_UNIT_RANK[a.unit], _TIME_UNIT_RANK[b.unit])
-        return pa.timestamp(_TIME_UNIT_AT_RANK[rank], a.tz)
-    if pa.types.is_decimal(a) and pa.types.is_decimal(b) and a.scale == b.scale:
-        return a if a.precision >= b.precision else b
+def _wider(a: str, b: str) -> str | None:
+    """The lossless common DuckDB type of two widths of one kind, or None when
+    the pair is a genuine conflict (int vs double, string vs numeric, nested)."""
+    for family in (*_INTEGERS, _FLOATS):
+        if a in family and b in family:
+            return max(a, b, key=family.index)
+    if a in _TIMESTAMPS and b in _TIMESTAMPS:
+        return _TIMESTAMP_AT_RANK[max(_TIMESTAMPS[a], _TIMESTAMPS[b])]
+    da, db = _DECIMAL.fullmatch(a), _DECIMAL.fullmatch(b)
+    if da and db and da[2] == db[2]:
+        return a if int(da[1]) >= int(db[1]) else b
     return None
 
 
-def _widen_to_match(
-    accumulated: pa.Table, table: pa.Table
-) -> tuple[pa.Table, pa.Table]:
-    """Cast width-only differences on shared column names to the wider type.
+def _refuse_lossy_nanoseconds(
+    scratch: duckdb.DuckDBPyConnection,
+    load: TableLoad,
+    shards: list[_Shard],
+    merged: dict[str, str | None],
+) -> None:
+    """Raise when merging a nanosecond shard to microseconds would drop digits.
 
-    Integer, float and decimal-precision widening cannot lose a value. A
-    timestamp pair caps at microseconds (see ``_TIME_UNIT_RANK``), so a
-    nanosecond shard with sub-microsecond remainders is the one cast that can
-    refuse — it raises inside ``_merge_arrow``'s guard and is stamped like any
-    other shard mismatch. A duplicated column name (``get_field_index``
-    answers -1) is left for ``concat_tables`` to judge.
+    The cap in ``_TIMESTAMPS`` makes ns → us the one widening that can lose a
+    value, and DuckDB's CAST truncates silently.
     """
-    for name in set(accumulated.schema.names) & set(table.schema.names):
-        ia = accumulated.schema.get_field_index(name)
-        ib = table.schema.get_field_index(name)
-        if ia < 0 or ib < 0:
-            continue
-        ta, tb = accumulated.schema.field(ia).type, table.schema.field(ib).type
-        if ta == tb:
-            continue
-        wide = _wider(ta, tb)
-        if wide is None:
-            continue
-        if ta != wide:
-            accumulated = accumulated.set_column(
-                ia,
-                accumulated.schema.field(ia).with_type(wide),
-                accumulated.column(ia).cast(wide),  # type-state: cast — widening
-            )
-        if tb != wide:
-            table = table.set_column(
-                ib,
-                table.schema.field(ib).with_type(wide),
-                table.column(ib).cast(wide),  # type-state: cast — widening
-            )
-    return accumulated, table
+    from dbt_charts.core.execute._duckdb_cache_base import _q
+
+    for index, shard in enumerate(shards):
+        for column, typed in shard.types.items():
+            if typed != "TIMESTAMP_NS" or merged[column] != "TIMESTAMP":
+                continue
+            row = scratch.execute(
+                f"SELECT count(*) FROM {shard.name} "
+                f"WHERE epoch_ns({_q(column)}) % 1000 <> 0"
+            ).fetchone()
+            if row is not None and row[0]:
+                raise load.mismatch(
+                    shard.relpath,
+                    shards[index - 1 if index else 1].relpath,
+                    f"Column {column!r} holds nanoseconds that TIMESTAMP "
+                    "cannot represent. ",
+                )
 
 
-def _parse(
-    source: CsvSourceConfig | JsonSourceConfig | ParquetSourceConfig,
-    file_bytes: bytes,
-    relpath: str,
-) -> list[_JsonRow] | pa.Table:
-    """Dispatch to the correct parser.
-
-    JSON/NDJSON returns row dicts: their values carry no schema beyond what
-    ``json.loads`` produces. CSV and Parquet return the file's own typed Arrow
-    table, which ``materialize_and_run`` loads directly so the SQL-visible
-    table keeps those types.
-    """
-    if isinstance(source, CsvSourceConfig):
-        return _parse_csv(file_bytes, source.delimiter, source.encoding)
-    if isinstance(source, JsonSourceConfig):
-        return _parse_json(file_bytes, relpath)
-    return _parse_parquet(file_bytes)
-
-
-def _parse_csv(file_bytes: bytes, delimiter: str, encoding: str) -> pa.Table:
-    """Parse CSV bytes with PyArrow's CSV reader.
-
-    PyArrow infers column types (int, float, string, bool, date) — no-magic
-    violation requires types be inferred from data, not returned as all-string.
-    """
-    import pyarrow.csv as pacsv
-
-    parse_opts = pacsv.ParseOptions(delimiter=delimiter)
-    read_opts = pacsv.ReadOptions(encoding=encoding)
-    return pacsv.read_csv(
-        io.BytesIO(file_bytes), parse_options=parse_opts, read_options=read_opts
-    )
+# ── Module-level parse helpers (no DuckDB filesystem access) ─────────────────
 
 
 def _parse_json(
@@ -701,10 +769,3 @@ def _parse_ndjson(file_bytes: bytes) -> list[_JsonRow]:
             )
         rows.append(obj)
     return rows
-
-
-def _parse_parquet(file_bytes: bytes) -> pa.Table:
-    """Parse Parquet bytes with PyArrow."""
-    import pyarrow.parquet as pq
-
-    return pq.read_table(io.BytesIO(file_bytes))  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap

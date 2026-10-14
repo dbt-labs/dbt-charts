@@ -31,7 +31,7 @@ from dbt_charts.core.execute.adapters.base import (
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-    import pyarrow as pa
+    import nanoarrow as na
     from adbc_driver_manager import AdbcStatement, Error
 
     from dbt_charts.core.execute.adapters.base import RowFetchLimit
@@ -94,7 +94,7 @@ class CdnDriverConnection:
         self._live: set[AdbcStatement] = set()
         self._live_lock = threading.Lock()
 
-    def execute(self, sql: str, limit: RowFetchLimit) -> pa.Table:
+    def execute(self, sql: str, limit: RowFetchLimit) -> na.Array:
         """Run *sql* and return at most ``limit.fetch_limit`` rows as Arrow.
 
         Raises:
@@ -110,25 +110,17 @@ class CdnDriverConnection:
             failure = self._redacted(error)
         raise failure
 
-    def _execute(self, sql: str, limit: RowFetchLimit) -> pa.Table:
-        import pyarrow
-
-        from dbt_charts.core.execute.result import read_bounded_table
+    def _execute(self, sql: str, limit: RowFetchLimit) -> na.Array:
+        from dbt_charts.core.execute.result import read_bounded_stream
 
         with self._statement() as statement:
             statement.set_sql_query(sql)
             handle, _ = statement.execute_query()
-            # `_import_from_c` is how adbc_driver_manager's own DBAPI layer turns
-            # a stream handle into a reader; pyarrow has no public equivalent.
-            reader = pyarrow.RecordBatchReader._import_from_c(handle.address)
-            # The reader must be released before the statement that produced it:
+            # The stream must be released before the statement that produced it:
             # releasing an unconsumed stream cancels it, into a freed statement
-            # if the order is wrong. `read_bounded_table` stops early, so the
-            # undrained case is the common one.
-            try:
-                table = read_bounded_table(reader, reader.schema, limit)
-            finally:
-                reader.close()
+            # if the order is wrong. `read_bounded_stream` releases it and stops
+            # early, so the undrained case is the common one.
+            table = read_bounded_stream(handle, limit)
             # Read while the statement is still open: no caller ever holds one.
             if self._warnings_option is not None:
                 warnings = statement.get_option(self._warnings_option)

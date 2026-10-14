@@ -115,6 +115,11 @@ skill_name_build:
   dct: "board-build"
   install: "dct-board-build"
 
+skill_name_custom_chart_build:
+  tool: "custom-chart-build"
+  dct: "custom-chart-build"
+  install: "dct-custom-chart-build"
+
 skill_name_design_board:
   tool: "board-design"
   dct: "board-design"

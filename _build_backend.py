@@ -208,7 +208,16 @@ def build_editable(
     config_settings: dict[str, str] | None = None,
     metadata_directory: str | None = None,
 ) -> str:
-    name = maturin.build_editable(wheel_directory, config_settings, None)
+    # Editable installs are local dev builds only: skip the release profile's
+    # fat LTO (see [profile.editable] in libs/chart-svg/python/Cargo.toml).
+    build_args = maturin.get_maturin_pep517_args(config_settings)
+    settings: dict[str, Any] = {
+        k: v
+        for k, v in (config_settings or {}).items()
+        if k not in ("build-args", "maturin.build-args")
+    }
+    settings["build-args"] = ["--profile", "editable", *build_args]
+    name = maturin.build_editable(wheel_directory, settings, None)
     return _finalize(Path(wheel_directory) / name, editable=True)
 
 

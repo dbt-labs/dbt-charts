@@ -37,12 +37,14 @@ use crate::families::legend::{
     legend_fit_bounds, legend_origin, limit_legend_text, LegendConfig, LegendEntry, LegendSymbol, VegaLegend,
 };
 use crate::families::table::is_date_like_cell;
-use crate::svg::{num_full, vega_escape_attr, xml_escape, xml_escape_attr};
+use crate::frame::{ChartFrame, FrameTitle};
+use crate::svg::{num_full, py_float_str, vega_escape_attr, xml_escape, xml_escape_attr};
 use crate::text::FontBook;
 use crate::Payload;
 
 #[derive(Deserialize)]
 struct Resolved {
+    id: String,
     theta: String,
     field_labels: crate::common::FieldLabels,
     identity_field: Option<String>,
@@ -188,6 +190,7 @@ fn render_attached_table_svg(
     )?;
     let table_payload = Payload {
         cell_text: Vec::new(),
+        max_template_output_bytes: None,
         resolved: attached.clone(),
         rows: table_rows,
         width: table_width,
@@ -257,8 +260,8 @@ struct PieStyle {
 
 #[derive(Deserialize)]
 struct SliceMark {
-    /// Arc mark opacity. The wedges do not paint it; a legend symbol would
-    /// (`encode.ts` `symbols` forwards it), so a visible legend refuses it.
+    /// Arc mark opacity, painted on every wedge. A legend symbol would carry
+    /// it too (`encode.ts` `symbols` forwards it), so a visible legend refuses it.
     opacity: Option<f64>,
     gap: Option<f64>,
     corner_radius: Option<f64>,
@@ -539,13 +542,7 @@ fn plan_legend(
 /// placement is production's own Python SVG arithmetic.
 #[allow(clippy::too_many_arguments)]
 fn draw_pie_fit(
-    w: f64,
-    h: f64,
-    pad_l: f64,
-    pad_r: f64,
-    pad_t: f64,
-    pad_b: f64,
-    background: &str,
+    frame: &ChartFrame,
     r: &Resolved,
     payload_rows: &[serde_json::Map<String, Value>],
     thetas: &[f64],
@@ -554,6 +551,9 @@ fn draw_pie_fit(
     title_dx: f64,
 ) -> Result<(String, f64), String> {
     use crate::vega_fit;
+
+    let (w, h) = (frame.w, frame.h);
+    let (pad_l, pad_r, pad_t, pad_b) = frame.pad;
 
     // Per-visible-slice label geometry, fixed ahead of the fit (only the
     // anchor positions vary with the candidate plot box).
@@ -605,11 +605,10 @@ fn draw_pie_fit(
                 max_w = max_w.max(fonts.measure_shaped(line, family, font_size)?);
             }
             // The board slot when bound — `ink_at`'s pure function of the
-            // row's own value, same as the wedge's `color_at` — read
-            // BEFORE `labels.font.color`, since production never reads
-            // `font.color` once `color_key` is set. Unbound, the
-            // pre-#7167 row-position fallback below still runs after
-            // `font.color` (see the AGENTS.md deferral).
+            // row's own value, same as the wedge's `color_at`. Production
+            // reads `labels.font.color` only when there is no color key: a
+            // color channel always inks with the dark companions, by board
+            // slot or, unbound, by row position.
             let via_scale = match (category_scale, color_field) {
                 (Some(scale), Some(cf))
                     if !matches!(payload_rows[idx].get(cf), None | Some(Value::Null)) =>
@@ -618,8 +617,9 @@ fn draw_pie_fit(
                 }
                 _ => None,
             };
+            let authored = if color_field.is_some() { None } else { labels.font.color.clone() };
             let fill = via_scale.unwrap_or_else(|| {
-                labels.font.color.clone().unwrap_or_else(|| {
+                authored.unwrap_or_else(|| {
                     r.dark_companion_stops
                         .get(idx % r.dark_companion_stops.len().max(1))
                         .cloned()
@@ -636,28 +636,20 @@ fn draw_pie_fit(
     // Title ink (width-resolved font slot). Overflowing text is processed
     // exactly as production's `apply_title_overflow_to_spec` processes it
     // BEFORE the wheel render — the shared `wrap_title_block` law.
-    let eff_title_style = crate::common::effective_title_style(
+    let title = FrameTitle::new(
+        r.title.as_deref(),
+        r.subtitle.as_deref(),
         r.style.title_font.as_ref(),
         r.title_style.as_ref(),
-    );
-    let eff_title_ref = eff_title_style.as_ref().or(r.title_style.as_ref());
-    let title_font_size = eff_title_ref.and_then(|ts| ts.font.size).unwrap_or(18.0);
-    let cased_title: Option<String> = match r.title.as_deref() {
-        None => None,
-        Some(t) => {
-            let case = eff_title_ref.and_then(|ts| ts.font.case.as_deref()).unwrap_or("none");
-            Some(crate::case::apply_case(t, case)?)
-        }
-    };
-    let title_block = crate::common::wrap_title_block(
-        cased_title.as_deref(),
-        r.subtitle.as_deref(),
-        eff_title_ref,
-        title_font_size,
-        crate::common::title_measure_font_size(r.title_style.as_ref()),
-        w - pad_l - pad_r,
+        frame.avail_w(),
         fonts,
     )?;
+    crate::common::warn_title_truncations(
+        title.block(),
+        &r.id,
+        title.text.as_deref(),
+        r.subtitle.as_deref(),
+    );
 
     let arc_stroke_w = r
         .style
@@ -679,11 +671,9 @@ fn draw_pie_fit(
             let value_font = &r.style.total_style.value.font;
             let value_size = value_font.size_or(14.0);
             let formatted = match &r.style.total_style.value.format {
-                Some(fmt) if fmt.has_affix() => {
+                Some(fmt) => {
                     fmt.paint(total).map_err(|e| format!("pie: total value format: {e}"))?
                 }
-                Some(fmt) => d3_format(&fmt.spec, total)
-                    .map_err(|e| format!("pie: total value format: {e}"))?,
                 None if total.fract() == 0.0 => format!("{}", total as i64),
                 None => format!("{total}"),
             };
@@ -765,7 +755,7 @@ fn draw_pie_fit(
                 }
             }
         },
-        title_block.ink.as_ref(),
+        title.ink(),
     );
     if m.plot_w <= 0.0 || m.plot_h <= 0.0 {
         return Err(format!("pie: plot box too small ({}×{})", m.plot_w, m.plot_h));
@@ -777,8 +767,8 @@ fn draw_pie_fit(
 
     // ── Emission ─────────────────────────────────────────────────────────
     let mut svg = String::with_capacity(4096);
-    let _ = write!(svg, "<rect width=\"{w}\" height=\"{h}\" fill=\"{background}\"/>", background = xml_escape_attr(background));
-    if let (Some((tx, ty)), false) = (m.title_pos, title_block.title_lines.is_empty()) {
+    frame.background(&mut svg);
+    if let (Some(_), false) = (m.title_pos, title.block().title_lines.is_empty()) {
         // `arc_attached_table.py::_slide_title`: a left-placed table pushes the
         // wheel right, and the title group slides back by that much so it stays
         // on the card's own left edge.
@@ -786,14 +776,7 @@ fn draw_pie_fit(
         if title_dx != 0.0 {
             let _ = write!(svg, "<g transform=\"translate({},0)\">", d3rs::py_float::format_g(title_dx));
         }
-        crate::common::emit_title_block_vega(
-            &mut svg,
-            &title_block,
-            eff_title_ref,
-            pad_l + m.left + tx,
-            pad_t + m.top + ty,
-            title_font_size,
-        );
+        title.paint(&mut svg, m.title_pos, frame.origin(&m));
         if title_dx != 0.0 {
             svg.push_str("</g>");
         }
@@ -810,6 +793,10 @@ fn draw_pie_fit(
             xml_escape_attr(s.join.as_deref().unwrap_or("miter")),
         ),
         None => String::new(),
+    };
+    let stroke_attrs = match r.style.slice_mark.opacity {
+        Some(opacity) => format!("{stroke_attrs} opacity=\"{opacity}\""),
+        None => stroke_attrs,
     };
     // Structured-tooltip content, computed once: `value_title` doesn't vary
     // per slice (`features/structured_tooltip.py::_pie_roles`'s
@@ -899,8 +886,9 @@ fn draw_pie_fit(
             let _ = write!(
                 svg,
                 "<text x=\"{cx:.2}\" y=\"{value_y:.2}\" text-anchor=\"middle\" \
-                 font-family=\"{value_family}\" font-size=\"{value_size}\" \
+                 font-family=\"{value_family}\" font-size=\"{value_size}\"{} \
                  font-weight=\"{value_weight}\" fill=\"{value_color}\">{}</text>",
+                value_font.style_attr(),
                 xml_escape(formatted), value_family = vega_escape_attr(value_family), value_weight = xml_escape_attr(&value_weight), value_color = xml_escape_attr(value_color)
             );
             svg.push_str(crate::href::anchor_close(total_href.as_deref()));
@@ -917,8 +905,9 @@ fn draw_pie_fit(
                 let _ = write!(
                     svg,
                     "<text x=\"{cx:.2}\" y=\"{label_y:.2}\" text-anchor=\"middle\" \
-                     font-family=\"{label_family}\" font-size=\"{label_size}\" \
+                     font-family=\"{label_family}\" font-size=\"{label_size}\"{} \
                      font-weight=\"{label_weight}\" fill=\"{label_color}\">{}</text>",
+                    label_font.style_attr(),
                     xml_escape(label_text), label_family = vega_escape_attr(label_family), label_weight = xml_escape_attr(&label_weight), label_color = xml_escape_attr(label_color)
                 );
                 svg.push_str(crate::href::anchor_close(total_href.as_deref()));
@@ -956,9 +945,10 @@ fn draw_pie_fit(
             let _ = write!(
                 svg,
                 "<text x=\"{x}\" y=\"{}\" text-anchor=\"{anchor}\" \
-                 font-family=\"{family}\" font-size=\"{label_fs}\" \
+                 font-family=\"{family}\" font-size=\"{label_fs}\"{} \
                  font-weight=\"{weight}\" fill=\"{}\"{label_attr}>",
                 num_full(y_anchored + first_dy),
+                labels.font.style_attr(),
                 xml_escape_attr(&sl.fill), anchor = xml_escape_attr(anchor), family = vega_escape_attr(family), weight = xml_escape_attr(&weight)
             );
             for (i, line) in sl.lines.iter().enumerate() {
@@ -1013,16 +1003,9 @@ pub fn render_empty(payload: &Payload, fonts: &FontBook) -> Result<String, Strin
     if legend_is_drawn(&r) {
         return Err("pie: a visible legend over an empty result set is not ported".into());
     }
-    let pad = payload.padding.as_ref();
-    let (w, h) = (payload.width, payload.height);
+    let frame = ChartFrame::of(payload, r.background.as_str());
     let (content, _radius) = draw_pie_fit(
-        w,
-        h,
-        pad.map_or(0.0, |p| p.left),
-        pad.map_or(0.0, |p| p.right),
-        pad.map_or(0.0, |p| p.top),
-        pad.map_or(0.0, |p| p.bottom),
-        r.background.as_str(),
+        &frame,
         &r,
         &payload.rows,
         &[],
@@ -1030,10 +1013,9 @@ pub fn render_empty(payload: &Payload, fonts: &FontBook) -> Result<String, Strin
         fonts,
         0.0,
     )?;
-    Ok(format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" \
-         viewBox=\"0 0 {w} {h}\">{content}</svg>"
-    ))
+    let mut svg = String::new();
+    frame.root(&mut svg);
+    Ok(format!("{svg}{content}</svg>"))
 }
 
 /// `title_band.py::vega_title_block_height`: a titled chart's title block down
@@ -1084,13 +1066,9 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         return Err("pie: conditional color channel not supported".into());
     }
 
-    let w = payload.width;
-    let h = payload.height;
-    let pad = payload.padding.as_ref();
-    let pad_l = pad.map(|p| p.left).unwrap_or(0.0);
-    let pad_r = pad.map(|p| p.right).unwrap_or(0.0);
-    let pad_t = pad.map(|p| p.top).unwrap_or(0.0);
-    let pad_b = pad.map(|p| p.bottom).unwrap_or(0.0);
+    // The chart's OWN effective background — see `Resolved::background`.
+    let frame = ChartFrame::of(payload, r.background.as_str());
+    let (w, (pad_l, pad_r, pad_t, pad_b)) = (frame.w, frame.pad);
 
     let thetas: Vec<f64> = payload
         .rows
@@ -1106,19 +1084,9 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
 
     match r.attached_table.as_ref().filter(|v| !v.is_null()) {
         None => {
-            let _ = write!(
-                svg,
-                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" viewBox=\"0 0 {w} {h}\">"
-            );
+            frame.root(&mut svg);
             let (content, _radius) = draw_pie_fit(
-                w,
-                h,
-                pad_l,
-                pad_r,
-                pad_t,
-                pad_b,
-                // The chart's OWN effective background — see `Resolved::background`.
-                r.background.as_str(),
+                &frame,
                 &r,
                 &payload.rows,
                 &thetas,
@@ -1126,8 +1094,30 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
                 fonts,
                 0.0,
             )?;
-            svg.push_str(&content);
+            if payload.is_placeholder {
+                // `render_vega_spec`'s placeholder arm: the whole drawing faded
+                // under the overlay, in the board's font.
+                let style = payload
+                    .board_style
+                    .as_ref()
+                    .and_then(|b| b.placeholder.as_ref())
+                    .ok_or("pie: a placeholder chart needs board_style.placeholder")?;
+                let family = style
+                    .overlay
+                    .font
+                    .family
+                    .as_deref()
+                    .ok_or("pie: a placeholder chart needs board_style.placeholder.overlay.font.family")?;
+                let _ = write!(svg, "<g opacity=\"{}\">{content}</g>", py_float_str(style.opacity));
+                let mut overlay = crate::xml::Xml::new();
+                style.overlay(&mut overlay, w, frame.h, family, None).map_err(|e| e.to_string())?;
+                svg.push_str(&overlay.finish());
+            } else {
+                svg.push_str(&content);
+            }
         }
+        // Production composes the attached-table wheel and table without the
+        // placeholder flag, so neither fades.
         Some(attached) => {
             // Production suppresses the legend whenever the key is a table
             // (`suppress_legend=mode != "direct"`); a payload carrying both
@@ -1263,15 +1253,15 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
             // A left table pushes the wheel right by its own width and gap.
             let title_dx = if placement == "left" { -(table_width + gap) } else { 0.0 };
 
-            let (donut_content, radius) = draw_pie_fit(
+            let wheel_frame = ChartFrame::new(
                 wheel_width,
                 wheel_h,
-                pad_l,
-                pad_r,
-                wheel_pad_t,
-                pad_b,
-                // The chart's OWN effective background — see `Resolved::background`.
+                (pad_l, pad_r, wheel_pad_t, pad_b),
                 r.background.as_str(),
+                num_full,
+            );
+            let (donut_content, radius) = draw_pie_fit(
+                &wheel_frame,
                 pushed.as_ref().unwrap_or(&r),
                 &payload.rows,
                 &thetas,
@@ -1315,10 +1305,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
                 }
             };
 
-            let _ = write!(
-                svg,
-                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{outer_h}\" viewBox=\"0 0 {w} {outer_h}\">"
-            );
+            ChartFrame { h: outer_h, ..frame }.root(&mut svg);
             let _ = write!(svg, "<g transform=\"translate({donut_x:.2}, 0)\">{donut_content}</g>");
             let _ = write!(svg, "<g transform=\"translate({table_x:.2}, {table_y:.2})\">{table_content}</g>");
         }
@@ -1336,6 +1323,7 @@ mod tests {
     fn make_pie_payload(total: Value) -> Value {
         json!({
             "resolved": {
+                "id": "pie",
                 "chart_type": "pie",
                 "theta": "revenue",
                 "identity_field": "category",
@@ -1708,6 +1696,25 @@ mod tests {
         payload_json
     }
 
+    /// A color channel inks each label with its wedge's dark companion; an
+    /// authored `font.color` applies only to a pie with no color channel.
+    #[test]
+    fn a_color_channel_label_ignores_an_authored_font_color() {
+        let label_fills = |p: &Value| -> Vec<String> {
+            let svg = render(&make_payload(p.clone()), &test_fonts()).unwrap();
+            svg.split("<text ")
+                .skip(1)
+                .filter(|t| t.contains("<tspan"))
+                .map(|t| t.split("fill=\"").nth(1).unwrap().split('"').next().unwrap().to_string())
+                .collect()
+        };
+        let mut p = make_pie_payload_with_labels("{{ category }}");
+        assert_eq!(label_fills(&p), ["#333333", "#333333", "#333333"], "no channel: authored");
+        p["resolved"]["resolved_channels"] =
+            json!({"color": {"channel": "color", "mode": "series", "data_field": "category"}});
+        assert_eq!(label_fills(&p), ["#183253", "#3c4d65", "#183253"], "channel: dark companions");
+    }
+
     #[test]
     fn category_only_template_renders_name_without_percent_or_value() {
         let payload = make_payload(make_pie_payload_with_labels("{{ category }}"));
@@ -1835,6 +1842,17 @@ mod tests {
             svg.contains("Total Revenue"),
             "expected total label caption in output:\n{svg}"
         );
+    }
+
+    /// A native total format paints its own unit, as `format_d3` does.
+    #[test]
+    fn a_native_total_format_paints_its_unit() {
+        for (name, want) in [("duration", ">5d 3h<"), ("bytes", ">443 kB<")] {
+            let mut payload_json = make_pie_payload(json!({"visible": true}));
+            payload_json["resolved"]["style"]["total_style"]["value"]["format"] = json!(name);
+            let svg = render(&make_payload(payload_json), &test_fonts()).expect(name);
+            assert!(svg.contains(want), "{name}:\n{svg}");
+        }
     }
 
     /// Oracle: `format_d3(443023, ".3~s", "CHF ", "", None, "after_prefix")`
@@ -2358,6 +2376,120 @@ mod tests {
         }
         assert_eq!(ys.len(), 2, "wrap-two subtitle renders two rows:\n{svg}");
         assert!((ys[1] - ys[0] - 13.0).abs() < 1e-6, "second row advances by sub_fs + 2: {ys:?}");
+    }
+
+    /// An authored `font.style` reaches the center total's value and label
+    /// and every slice label as `font-style`, as Vega paints VL's `fontStyle`.
+    #[test]
+    fn an_authored_font_style_reaches_the_total_and_slice_labels() {
+        let mut json = make_pie_payload(json!({"visible": true, "label": "Total"}));
+        json["resolved"]["style"]["total_style"]["value"]["font"]["style"] = json!("italic");
+        json["resolved"]["style"]["total_style"]["label"]["font"]["style"] = json!("oblique");
+        json["resolved"]["slice_label_indices"] = json!([0, 1, 2]);
+        json["resolved"]["style"]["slice_mark"]["labels"] = json!({
+            "offset": 6.0,
+            "line_height": 14.0,
+            "font": {"family": TEST_FONT, "size": 12.0, "weight": "500", "style": "italic"},
+            "template": "{{ category }}"
+        });
+        let svg = render(&make_payload(json), &test_fonts()).expect("renders");
+        let texts: Vec<&str> = svg.split("<text ").skip(1).collect();
+        let styled = |needle: &str| texts.iter().filter(|t| t.contains(needle)).count();
+        assert_eq!(styled("font-style=\"oblique\""), 1, "total label:\n{svg}");
+        assert_eq!(styled("font-style=\"italic\""), 4, "total value + 3 slice labels:\n{svg}");
+
+        let plain = render(&make_payload(make_pie_payload(json!({"visible": true}))), &test_fonts()).unwrap();
+        assert!(!plain.contains("font-style"), "no authored style, no attribute:\n{plain}");
+    }
+
+    /// An authored slice opacity paints on every wedge.
+    #[test]
+    fn an_authored_slice_opacity_paints_on_every_wedge() {
+        let mut json = make_pie_payload(Value::Null);
+        json["resolved"]["style"]["slice_mark"]["opacity"] = json!(0.55);
+        let svg = render(&make_payload(json), &test_fonts()).expect("renders");
+        let wedges: Vec<&str> = svg.split("<path ").skip(1).collect();
+        assert_eq!(wedges.len(), 3, "{svg}");
+        assert!(wedges.iter().all(|w| w.contains("opacity=\"0.55\"")), "{svg}");
+    }
+
+    /// A placeholder fades the whole drawing and lays the overlay over the
+    /// canvas in the board's font, as `render_vega_spec` does.
+    #[test]
+    fn a_placeholder_fades_the_wheel_and_paints_the_overlay() {
+        let mut json = make_pie_payload(Value::Null);
+        json["board_style"] = json!({
+            "format_locale": crate::number_locale::en_us_wire(),
+            "time_locale": crate::time_locale::en_us_wire(),
+            "placeholder": {
+                "opacity": 0.4,
+                "overlay": {
+                    "text": "add data", "background": "rgba(255, 255, 255, 0.5)",
+                    "font": {"size": 16.0, "weight": 500.0, "color": "#666666", "family": "Inter"}
+                }
+            }
+        });
+        let plain = render(&make_payload(json.clone()), &test_fonts()).unwrap();
+        json["is_placeholder"] = json!(true);
+        let svg = render(&make_payload(json), &test_fonts()).expect("renders");
+        let (open, rest) = plain.split_at(plain.find('>').unwrap() + 1);
+        let content = rest.strip_suffix("</svg>").unwrap();
+        assert_eq!(
+            svg,
+            format!(
+                "{open}<g opacity=\"0.4\">{content}</g><g class=\"placeholder-overlay\">\
+                 <rect class=\"dbt-pointer-inert\" x=\"0\" y=\"0\" width=\"600.0\" height=\"432.0\" \
+                 fill=\"rgba(255, 255, 255, 0.5)\"/><text class=\"dbt-pointer-inert\" x=\"300.0\" \
+                 y=\"216.0\" text-anchor=\"middle\" dominant-baseline=\"middle\" font-family=\"Inter\" \
+                 font-size=\"16.0\" font-weight=\"500.0\" fill=\"#666666\">add data</text></g></svg>"
+            )
+        );
+    }
+
+    /// A pre-pass cut reports `WARN-CHART-TITLE-TRUNCATED` per field, with the
+    /// text as cased; a row that fits reports nothing.
+    #[test]
+    fn a_cut_title_or_subtitle_warns_title_truncated() {
+        let mut json = make_pie_payload(Value::Null);
+        json["width"] = json!(220.0);
+        json["resolved"]["title"] = json!("a title far too long for a narrow card to hold");
+        json["resolved"]["subtitle"] = json!("short");
+        json["resolved"]["title_style"] = json!({
+            "font": {"family": TEST_FONT, "size": 14.0, "weight": "500", "case": "upper"},
+            "overflow": "truncate",
+            "position": {"offset": 10.0},
+            "subtitle": {
+                "font": {"family": TEST_FONT, "size": 11.0, "weight": "400"},
+                "overflow": "truncate"
+            }
+        });
+        let cut = |field: &str, text: &str| {
+            crate::diagnostic::Diagnostic::new(
+                &crate::codes::WARN_CHART_TITLE_TRUNCATED,
+                [
+                    ("authored_field", json!(field)),
+                    ("authored_text", json!(text)),
+                    ("chart_id", json!("pie")),
+                ],
+            )
+        };
+        let payload = make_payload(json.clone());
+        let (svg, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
+        svg.expect("renders");
+        assert_eq!(warnings, vec![cut("title", "A TITLE FAR TOO LONG FOR A NARROW CARD TO HOLD")]);
+
+        let subtitle = "a subtitle far too long for a narrow card to hold as well";
+        json["resolved"]["title"] = json!("Short");
+        json["resolved"]["subtitle"] = json!(subtitle);
+        let payload = make_payload(json);
+        let (_, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
+        assert_eq!(warnings, vec![cut("subtitle", subtitle)]);
+
+        let mut wide = make_pie_payload(Value::Null);
+        wide["resolved"]["title"] = json!("Fits");
+        let payload = make_payload(wide);
+        let (_, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]

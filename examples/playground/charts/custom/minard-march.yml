@@ -1,0 +1,111 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+# Charles Joseph Minard's 1869 map of Napoleon's Russian campaign of 1812,
+# redrawn with the minard template.
+title: Napoleon's march on Moscow, 1812
+notes: |
+  After Charles Joseph Minard's *Carte figurative des pertes successives en
+  hommes de l'Armée Française dans la campagne de Russie 1812-1813* (1869).
+  The band's width is the number of men still with the army: tan on the
+  advance from the Niemen, black on the retreat from Moscow. Beneath it, the
+  cold of the retreat, in degrees Réaumur, on the same longitude scale.
+  Troop, city, and temperature figures are approximate, as tabulated from
+  Minard's map by Leland Wilkinson and Michael Friendly.
+style:
+  frame:
+    width: 1600
+  charts:
+    category_colors:
+      direction:
+        values:
+          A: "#d8b98a"
+          R: "#262626"
+queries:
+  campaign:
+    columns: [kind, lon, lat, survivors, direction, grp, name, temp]
+    values:
+      - [troop, 24.0, 54.9, 340000, A, 1, null, null]
+      - [troop, 24.5, 55.0, 340000, A, 1, null, null]
+      - [troop, 25.5, 54.5, 340000, A, 1, null, null]
+      - [troop, 26.0, 54.7, 320000, A, 1, null, null]
+      - [troop, 27.0, 54.8, 300000, A, 1, null, null]
+      - [troop, 28.0, 54.9, 280000, A, 1, null, null]
+      - [troop, 28.5, 55.0, 240000, A, 1, null, null]
+      - [troop, 29.0, 55.1, 210000, A, 1, null, null]
+      - [troop, 30.0, 55.2, 180000, A, 1, null, null]
+      - [troop, 30.3, 55.3, 175000, A, 1, null, null]
+      - [troop, 32.0, 54.8, 145000, A, 1, null, null]
+      - [troop, 33.2, 54.9, 140000, A, 1, null, null]
+      - [troop, 34.4, 55.5, 127100, A, 1, null, null]
+      - [troop, 35.5, 55.4, 100000, A, 1, null, null]
+      - [troop, 36.0, 55.5, 100000, A, 1, null, null]
+      - [troop, 37.6, 55.8, 100000, A, 1, null, null]
+      - [troop, 37.7, 55.7, 100000, R, 1, null, null]
+      - [troop, 37.5, 55.7, 98000, R, 1, null, null]
+      - [troop, 37.0, 55.0, 97000, R, 1, null, null]
+      - [troop, 36.8, 55.0, 96000, R, 1, null, null]
+      - [troop, 35.4, 55.3, 87000, R, 1, null, null]
+      - [troop, 34.3, 55.2, 55000, R, 1, null, null]
+      - [troop, 33.3, 54.8, 37000, R, 1, null, null]
+      - [troop, 32.0, 54.6, 24000, R, 1, null, null]
+      - [troop, 30.4, 54.4, 20000, R, 1, null, null]
+      - [troop, 29.2, 54.3, 20000, R, 1, null, null]
+      - [troop, 28.5, 54.2, 20000, R, 1, null, null]
+      - [troop, 28.3, 54.3, 20000, R, 1, null, null]
+      - [troop, 27.5, 54.5, 20000, R, 1, null, null]
+      - [troop, 26.8, 54.3, 12000, R, 1, null, null]
+      - [troop, 26.4, 54.4, 14000, R, 1, null, null]
+      - [troop, 25.0, 54.4, 8000, R, 1, null, null]
+      - [troop, 24.4, 54.4, 4000, R, 1, null, null]
+      - [troop, 24.2, 54.4, 4000, R, 1, null, null]
+      - [troop, 24.1, 54.4, 4000, R, 1, null, null]
+      - [troop, 24.0, 55.1, 60000, A, 2, null, null]
+      - [troop, 24.5, 55.2, 60000, A, 2, null, null]
+      - [troop, 25.5, 54.7, 60000, A, 2, null, null]
+      - [troop, 26.6, 55.7, 40000, A, 2, null, null]
+      - [troop, 27.4, 55.6, 33000, A, 2, null, null]
+      - [troop, 28.7, 55.5, 33000, R, 2, null, null]
+      - [troop, 29.2, 54.3, 30000, R, 2, null, null]
+      - [troop, 24.0, 55.2, 22000, A, 3, null, null]
+      - [troop, 24.5, 55.3, 22000, A, 3, null, null]
+      - [troop, 24.6, 55.8, 6000, A, 3, null, null]
+      - [troop, 24.6, 55.8, 6000, R, 3, null, null]
+      - [troop, 24.2, 54.4, 6000, R, 3, null, null]
+      - [troop, 24.1, 54.4, 6000, R, 3, null, null]
+      - [city, 24.0, 55.0, null, null, null, Kowno, null]
+      - [city, 25.3, 54.7, null, null, null, Wilna, null]
+      - [city, 26.4, 54.4, null, null, null, Smorgoni, null]
+      - [city, 26.8, 54.3, null, null, null, Molodexno, null]
+      - [city, 27.7, 55.2, null, null, null, Gloubokoe, null]
+      - [city, 27.6, 53.9, null, null, null, Minsk, null]
+      - [city, 28.5, 54.3, null, null, null, Studienska, null]
+      - [city, 28.7, 55.5, null, null, null, Polotzk, null]
+      - [city, 29.2, 54.4, null, null, null, Bobr, null]
+      - [city, 30.2, 55.3, null, null, null, Witebsk, null]
+      - [city, 30.4, 54.5, null, null, null, Orscha, null]
+      - [city, 30.4, 53.9, null, null, null, Mohilow, null]
+      - [city, 32.0, 54.8, null, null, null, Smolensk, null]
+      - [city, 33.2, 54.9, null, null, null, Dorogobouge, null]
+      - [city, 34.3, 55.2, null, null, null, Wixma, null]
+      - [city, 34.4, 55.5, null, null, null, Chjat, null]
+      - [city, 36.0, 55.5, null, null, null, Mojaisk, null]
+      - [city, 37.6, 55.8, null, null, null, Moscou, null]
+      - [city, 36.6, 55.3, null, null, null, Tarantino, null]
+      - [city, 36.5, 55.0, null, null, null, Malo-Jarosewli, null]
+      - [temp, 37.6, null, null, null, null, Oct 18, 0]
+      - [temp, 36.0, null, null, null, null, Oct 24, 0]
+      - [temp, 33.2, null, null, null, null, Nov 9, -9]
+      - [temp, 32.0, null, null, null, null, Nov 14, -21]
+      - [temp, 29.2, null, null, null, null, Nov 24, -11]
+      - [temp, 28.5, null, null, null, null, Nov 28, -20]
+      - [temp, 27.2, null, null, null, null, Dec 1, -24]
+      - [temp, 26.7, null, null, null, null, Dec 6, -30]
+      - [temp, 25.3, null, null, null, null, Dec 7, -26]
+charts:
+  march:
+    type: custom
+    template: minard
+    query: campaign
+    style:
+      aspect_ratio: 2.4
+rows:
+  - march

@@ -1087,11 +1087,14 @@ def emit_scatter_layer(
     """Build mark_props for a scatter series.
 
     Shared by ScatterEmitter (base series) and overlay layer rendering (chart.layers).
-    When no color encoding is present, applies single_series_fill directly so
-    the mark is painted with the chart's single-series palette slot.
+    When no color encoding is present a filled dot paints from the mark's
+    ``color``, a hollow one rings in ``color`` around its ``fill``; either falls
+    back to single_series_fill, the chart's single-series palette slot. With a
+    color encoding the series palette owns the dots.
     """
     mark_props: VLDict = {"tooltip": True}
-    if not has_color_encoding:
-        mark_props["fill"] = single_series_fill
     mark_props.update(scatter_mark_to_vl(point_mark))
+    if not has_color_encoding:
+        interior = point_mark.fill if point_mark.filled is False else point_mark.color
+        mark_props["fill"] = interior or single_series_fill
     return mark_props

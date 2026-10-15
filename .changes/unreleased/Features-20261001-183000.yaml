@@ -1,3 +1,3 @@
 kind: Features
-body: 'Named fonts: define fonts once under `style.fonts` and use them in any `font:` by name (`font: heading`) or with overrides. Heading sizes move from `style.title.sizes` to `style.fonts.heading.sizes`; boards update automatically.'
+body: 'Named fonts: define fonts once under `style.fonts` and use them in any `font:` by name (`font: heading`) or with overrides, including table text, footers and timestamps. An entry can `extends:` another and override its keys. Table cells follow `fonts.label`, no longer `style.font.size`. Heading sizes move from `style.title.sizes` to `style.fonts.heading.sizes`; boards update automatically.'
 time: 2026-10-01T18:30:00.000000-07:00

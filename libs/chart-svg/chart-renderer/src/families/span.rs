@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::common::FormatSlot;
 use crate::contract::{self, SpanRow};
 use crate::families::temporal::{
-    civil_from_days, days_from_civil, parse_iso_date, utc_ticks, AuthoredTimeFormat, TimeUnit,
+    civil_from_days, date_text_day, days_from_civil, parse_iso_date, utc_ticks_exact, AuthoredTimeFormat, TimeUnit,
     MONTH_ABBR,
 };
 use crate::Payload;
@@ -307,7 +307,7 @@ impl SpanBlock {
 /// `5 Jan 2026` (`PredefinedTimeFormat.date_short`, `%-d %b %Y`): the house
 /// date every span tooltip prints.
 fn tooltip_date(day: f64) -> String {
-    let (y, m, d) = civil_from_days(day as i64);
+    let (y, m, d) = civil_from_days(day.floor() as i64);
     format!("{d} {} {y}", MONTH_ABBR[(m - 1) as usize])
 }
 
@@ -343,7 +343,7 @@ pub(crate) fn date_axis(rows: &[Row], fields: [&str; 2], tick_count: usize) -> R
     if !(hi > lo) {
         return Err("bar: a date measure whose dates span no time has no scale".into());
     }
-    let ticks = utc_ticks((lo as i64, hi as i64), tick_count)?;
+    let ticks = utc_ticks_exact(lo, hi, tick_count)?;
     Ok(DateAxis {
         domain: (lo, hi),
         labels: ticks.iter().map(|&t| date_tick_label(t)).collect(),
@@ -351,10 +351,8 @@ pub(crate) fn date_axis(rows: &[Row], fields: [&str; 2], tick_count: usize) -> R
     })
 }
 
-/// `payload` with each row's date columns as day numbers, so the numeric
-/// arms draw a date measure unchanged. Only whole dates (`YYYY-MM-DD`) are
-/// modeled: a time of day would put bars between the days the ticks and the
-/// duration text read in.
+/// `payload` with each row's date columns as day numbers (a time of day as the
+/// fraction of its day), so the numeric arms draw a date measure unchanged.
 pub(crate) fn with_day_numbers(payload: &Payload, fields: [&str; 2]) -> Result<Payload, String> {
     let mut converted = payload.clone();
     for (i, row) in converted.rows.iter_mut().enumerate() {
@@ -363,13 +361,14 @@ pub(crate) fn with_day_numbers(payload: &Payload, fields: [&str; 2]) -> Result<P
                 Some(Value::String(text)) => text.clone(),
                 other => return Err(format!("bar: row {i}: date column {field:?} holds {other:?}, not a date")),
             };
-            let (y, m, d) = if text.len() == 10 { parse_iso_date(&text) } else { None }.ok_or_else(|| {
-                format!(
-                    "bar: row {i}: date column {field:?} value {text:?} is not a whole date — \
-                     a time of day is not modeled on a date measure"
-                )
+            let day = date_text_day(&text).ok_or_else(|| {
+                if text.len() > 10 && text.get(..10).and_then(parse_iso_date).is_some() {
+                    format!("bar: row {i}: date column {field:?} value {text:?} has a time of day that is not modeled (only HH:MM[:SS])")
+                } else {
+                    format!("bar: row {i}: date column {field:?} value {text:?} is not a date")
+                }
             })?;
-            row.insert(field.to_string(), Value::from(days_from_civil(y, m, d) as f64));
+            row.insert(field.to_string(), Value::from(day));
         }
     }
     Ok(converted)

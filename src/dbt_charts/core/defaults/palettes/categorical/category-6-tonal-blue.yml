@@ -9,14 +9,14 @@ name: category-6-tonal-blue
 description: |
   Tonal monochromatic blue palette. 6 stops at fixed hue (H≈248.8°), all in
   the blue family. Use for editorial / brand-restrained dashboards that want
-  one hue throughout. Strict-safe core: slots 0-3 (Leonardo ΔE ≥ 11 pairwise).
-  Extended: slots 4-5 (require dash, marker, or pattern redundancy past slot 4).
+  one hue throughout. Strict-safe core: slots 1-4 (Leonardo ΔE ≥ 11 pairwise).
+  Extended: slots 5-6 (require dash, marker, or pattern redundancy past slot 4).
   See docs/guides/palettes.md#tonal-monochrome-category-6-tonal-.
 
 colors:
-  - "#0375c4"    # 0 — bluish (anchor / default single-series)
-  - "#81b3e5"    # 1 — carolina blue (light tint)
-  - "#004a7f"    # 2 — prussian blue (dark saturated)
-  - "#002341"    # 3 — marine (very dark)
-  - "#6f89a3"    # 4 — blue/gray (extended; form-redundant)
-  - "#c2d3e4"    # 5 — light blue gray (extended; form-redundant)
+  - "#0375c4"    # 1 — bluish (anchor / default single-series)
+  - "#81b3e5"    # 2 — carolina blue (light tint)
+  - "#004a7f"    # 3 — prussian blue (dark saturated)
+  - "#002341"    # 4 — marine (very dark)
+  - "#6f89a3"    # 5 — blue/gray (extended; form-redundant)
+  - "#c2d3e4"    # 6 — light blue gray (extended; form-redundant)

@@ -1,72 +1,65 @@
 # yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
-# Two `type: custom` charts whose Jinja SVG templates live inline under `svg:`.
-# Inline templates take no channels or options; they read columns straight off `rows`.
-title: Inline custom charts
+# A `type: custom` chart whose Jinja SVG template lives inline under `svg:`,
+# with its own header declaring the channels.
+title: Trade balance
 notes: |
   `type: custom` with the template written inline under `svg:`: rows in, SVG
-  out. Colors and fonts come from `style`, so both charts follow the board's
-  theme. Use `type: custom` only when the user asks for a shape no built-in type
-  draws; a bar chart and a KPI would answer these two questions. Write a one-off
-  template inline like this; move one you reuse into the project's `templates/`
-  folder and name it with `template:`.
+  out. This is a Playfair-style balance chart: two lines with the gap between
+  them filled and labeled, a form no built-in type draws. Colors and fonts come
+  from `style`, so it follows the board's theme. Use `type: custom` only when
+  the user asks for a shape no built-in type draws. Write a one-off template
+  inline like this; move one you reuse into the project's `templates/` folder
+  and name it with `template:`.
 queries:
-  quota:
-    columns: [rep, attainment]
+  trade:
+    columns: [year, exports, imports]
     values:
-      - [Ana, 1.18]
-      - [Ben, 0.92]
-      - [Chloe, 0.64]
-      - [Dev, 1.03]
-  goal:
-    columns: [raised, target]
-    values:
-      - [68400, 90000]
+      - [1700, 60, 40]
+      - [1710, 75, 50]
+      - [1720, 80, 55]
+      - [1730, 110, 60]
+      - [1740, 125, 80]
+      - [1750, 150, 95]
+      - [1760, 170, 115]
+      - [1770, 200, 130]
 charts:
-  quota_bars:
+  trade_balance:
     type: custom
-    title: Quota attainment
-    query: quota
+    query: trade
     svg: |
-      {% set band = height / (rows | length) %}
-      {% set scale = (width - 140) / 1.25 %}
-      <g font-family="{{ style.font.family }}" font-size="{{ style.font.size }}">
-      {% for r in rows %}
-        {% set a = r.attainment | float %}
-        {% set y = loop.index0 * band %}
-        <text x="70" y="{{ y + band / 2 }}" dy="0.35em" text-anchor="end"
-              fill="{{ style.font.color }}">{{ r.rep }}</text>
-        <rect x="80" y="{{ y + band * 0.2 }}" height="{{ band * 0.6 }}" width="{{ a * scale }}"
-              fill="{{ style.tones.positive if a >= 1 else style.charts.color.categorical.single_series_palette[0] }}">
-          <title>{{ r.rep }}: {{ a | format('.0%') }}</title>
-        </rect>
-        <text x="{{ 86 + a * scale }}" y="{{ y + band / 2 }}" dy="0.35em"
-              fill="{{ style.muted }}">{{ a | format('.0%') }}</text>
-      {% endfor %}
-        <line x1="{{ 80 + scale }}" x2="{{ 80 + scale }}" y1="0" y2="{{ height }}"
-              stroke="{{ style.font.color }}" stroke-dasharray="3 3"/>
+      {#---
+      description: Two lines with the gap between them filled and labeled.
+      channels:
+        x:
+          description: Column holding the period.
+        y:
+          description: The upper line's column, then the lower line's.
+          multiple: true
+      ---#}
+      {% set up = channels.y[0] %}{% set lo = channels.y[1] %}
+      {% set n = rows | length %}{% set pad = 40 %}
+      {% set ymax = [rows | map(attribute=up) | max, rows | map(attribute=lo) | max] | max * 1.1 %}
+      <g font-family="{{ style.font.family }}" font-size="{{ style.font.size }}" fill="{{ style.font.color }}">
+        <polygon fill="{{ style.tones.positive }}" fill-opacity="0.3"
+          points="{% for r in rows %}{{ pad + loop.index0 * (width - 2 * pad) / (n - 1) }},{{ height - pad - r[up] / ymax * (height - 2 * pad) }} {% endfor %}{% for r in rows | reverse %}{{ pad + (n - 1 - loop.index0) * (width - 2 * pad) / (n - 1) }},{{ height - pad - r[lo] / ymax * (height - 2 * pad) }} {% endfor %}"/>
+        <polyline fill="none" stroke="{{ style.accent }}" stroke-width="2"
+          points="{% for r in rows %}{{ pad + loop.index0 * (width - 2 * pad) / (n - 1) }},{{ height - pad - r[up] / ymax * (height - 2 * pad) }} {% endfor %}"/>
+        <polyline fill="none" stroke="{{ style.muted }}" stroke-width="2"
+          points="{% for r in rows %}{{ pad + loop.index0 * (width - 2 * pad) / (n - 1) }},{{ height - pad - r[lo] / ymax * (height - 2 * pad) }} {% endfor %}"/>
+        {% for r in rows %}
+        <text x="{{ pad + loop.index0 * (width - 2 * pad) / (n - 1) }}" y="{{ height - pad / 3 }}"
+              text-anchor="middle">{{ r[channels.x] }}</text>
+        {% endfor %}
+        {% set mid = rows[n // 2] %}
+        <text x="{{ pad + (n // 2) * (width - 2 * pad) / (n - 1) }}"
+              y="{{ height - pad - (mid[up] + mid[lo]) / 2 / ymax * (height - 2 * pad) }}"
+              text-anchor="middle" dy="0.35em" font-style="italic">Balance in our favor</text>
+        <text x="{{ width - pad }}" y="{{ height - pad - rows[n - 1][up] / ymax * (height - 2 * pad) - 8 }}"
+              text-anchor="end" fill="{{ style.accent }}">{{ up }}</text>
+        <text x="{{ width - pad }}" y="{{ height - pad - rows[n - 1][lo] / ymax * (height - 2 * pad) + 22 }}"
+              text-anchor="end" fill="{{ style.muted }}">{{ lo }}</text>
       </g>
-  goal_ring:
-    type: custom
-    title: Fundraising goal
-    query: goal
-    style:
-      aspect_ratio: 1.4
-    svg: |
-      {% if rows | length != 1 %}{{ raise_error("goal_ring needs one row") }}{% endif %}
-      {% set r0 = rows[0] %}
-      {% set share = [(r0.raised | float) / (r0.target | float), 1] | min %}
-      {% set cx = width / 2 %}{% set cy = height / 2 %}
-      {% set rad = [width, height] | min / 2 - 10 %}
-      {% set a = 2 * math.pi * share %}
-      <circle cx="{{ cx }}" cy="{{ cy }}" r="{{ rad }}" fill="none"
-              stroke="{{ style.charts.axis.grid.color }}" stroke-width="{{ rad * 0.22 }}"/>
-      <path fill="none" stroke="{{ style.accent }}" stroke-width="{{ rad * 0.22 }}"
-            d="M{{ cx }},{{ cy - rad }}A{{ rad }},{{ rad }} 0 {{ 1 if share > 0.5 else 0 }} 1 {{ cx + rad * math.sin(a) }},{{ cy - rad * math.cos(a) }}">
-        <title>{{ r0.raised | format('$,.0f') }} of {{ r0.target | format('$,.0f') }}</title>
-      </path>
-      <text x="{{ cx }}" y="{{ cy }}" text-anchor="middle" dy="0.35em" font-family="{{ style.font.family }}"
-            font-size="{{ rad * 0.36 }}" font-weight="600" fill="{{ style.font.color }}">{{ share | format('.0%') }}</text>
+    x: year
+    y: [exports, imports]
 rows:
-  - cols:
-    - quota_bars
-    - goal_ring
+  - trade_balance

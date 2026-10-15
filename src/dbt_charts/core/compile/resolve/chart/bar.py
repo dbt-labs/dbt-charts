@@ -39,6 +39,7 @@ from dbt_charts.core.compile.models.style.theme import (
     BarLabelsStyle,
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
+    _apply_multiples_mirror,
     _bake_ay_orient,
     _bake_ay_position_left,
     _cascaded_legend,
@@ -622,6 +623,7 @@ def _resolve_bar(
     dataset: ChartDataset,
     chart_style_context: ChartStyleContext,
     width: float,
+    title_width: float,
     datasets: LayerDatasets,
     automatic_link_candidate: AutomaticLinkCandidate,
     x_date_range: tuple[date, date] | None,
@@ -671,8 +673,10 @@ def _resolve_bar(
         "bar",
         x_ch_type,
         "quantitative",
-        normalized.multiples,
-        normalized.y,
+        # The mirror default depends on orientation, which is known only after
+        # the axis cascade; it is applied below.
+        None,
+        None,
         has_quantitative_axis=True,
     )
     bar = chart_local_style_context.bar
@@ -713,6 +717,15 @@ def _resolve_bar(
     # resolved `orientation` field at the bottom of this function.
     orientation = _bar_orientation(
         normalized, bar, data, ax_merged.time_unit is not None
+    )
+    ay_merged = _apply_multiples_mirror(
+        ay_merged,
+        normalized.multiples,
+        normalized.y,
+        "quantitative",
+        normalized.id,
+        has_layers=bool(normalized.layers),
+        measure_on_y=orientation != "horizontal",
     )
     # The layered-single-series rail (EndpointLabelFeature._apply_layered_single_series)
     # only ever fires on the vertical right_pane path — a horizontal bar's rail is the
@@ -1134,7 +1147,7 @@ def _resolve_bar(
         endpoint_rail_may_discard_domain=False,
     )
     axis_house_default = plan.axes.y.is_house
-    _tf = resolve_title_font(chart_local_style_context, width)
+    _tf = resolve_title_font(chart_local_style_context, title_width)
     bkw = _base_kwargs(
         normalized,
         chart_style_context,

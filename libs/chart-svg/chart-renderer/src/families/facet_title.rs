@@ -29,22 +29,18 @@ pub(crate) struct TitlePlan {
 pub(crate) enum TitleLayout {
     Untitled,
     Plan(TitlePlan),
-    /// The title or subtitle is wider than the card and the caller did not
-    /// ask for the wrap-two law.
-    Overflow,
 }
 
 impl TitlePlan {
-    /// True when the overflow pass cut a wrapped row down to an ellipsis
-    /// (`prepare_title_text`): Vega then reserves its native `limit` exactly,
-    /// which the measured `ink.width` does not reproduce.
-    pub(crate) fn truncated(&self, src: &TitleSource) -> bool {
-        let cut = |lines: &[String], full: Option<&str>| {
-            full.is_some_and(|f| lines.join(" ").split_whitespace().ne(f.split_whitespace()))
-        };
-        self.block.as_ref().is_some_and(|b| {
-            cut(&b.title_lines, Some(&self.text)) || cut(&b.sub_lines, src.subtitle.filter(|_| !b.sub_lines.is_empty()))
-        })
+    /// `WARN-CHART-TITLE-TRUNCATED` for each row the wrap cut.
+    pub(crate) fn warn_truncated(&self, chart_id: &str) {
+        if let Some(block) = &self.block {
+            crate::common::warn_title_truncations(
+                chart_id,
+                (Some(&self.text), block.title_truncated),
+                (self.subtitle.as_deref(), block.subtitle_truncated),
+            );
+        }
     }
 }
 
@@ -56,13 +52,11 @@ impl TitleSource<'_> {
 
 /// `apply_title_overflow_to_spec` against `avail_w`, the padded card width
 /// (a facet composite carries no top-level width, so production passes it in
-/// by hand). `wrap_on_overflow` picks the wrap-two law for an over-wide
-/// title; otherwise the caller gets `Overflow`.
+/// by hand). An over-wide title or subtitle takes the wrap-two law.
 pub(crate) fn layout_title(
     src: &TitleSource,
     fonts: &FontBook,
     avail_w: f64,
-    wrap_on_overflow: bool,
 ) -> Result<TitleLayout, String> {
     let eff_title_style = src.effective_style();
     let eff_title_ref = eff_title_style.as_ref().or(src.title_style);
@@ -85,9 +79,6 @@ pub(crate) fn layout_title(
     };
     let overflows = width > avail_w || sub_measure.is_some_and(|(_, sub_w)| sub_w > avail_w);
     let (ink, block) = if overflows {
-        if !wrap_on_overflow {
-            return Ok(TitleLayout::Overflow);
-        }
         let block = crate::common::wrap_title_block(
             Some(&text),
             subtitle,

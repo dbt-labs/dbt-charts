@@ -9,9 +9,10 @@ use serde_json::{json, Value};
 
 use super::table::{
     compute_scale_domain, font_weight_as_css, interpolate_scale_color, resolve_conditional_styles,
-    resolve_hinge, resolve_palette_stops, sanitized_color, ScaleTarget, WhenRule, VALID_FONT_WEIGHTS,
+    resolve_hinge, resolve_palette_stops, sanitized_color, WhenRule, VALID_FONT_WEIGHTS,
 };
 use super::table_dates;
+use crate::common::ScaleTarget;
 use crate::codes;
 use crate::common::{
     format_kpi_parts, measure_family_stand_in, FormatParts, FormatSlot, PartsOptions,
@@ -1776,7 +1777,7 @@ mod render_tests {
             "background": null,
             "fonts_dir": null,
             "padding": null,
-            "board_style": {
+            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},
                 "muted": "#626366",
                 "tones": {
                     "positive": "#00884d",

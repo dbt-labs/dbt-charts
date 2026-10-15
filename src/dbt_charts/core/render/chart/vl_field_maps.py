@@ -21,6 +21,7 @@ from dbt_charts.core.compile.models.style.resolved._base import (
 )
 from dbt_charts.core.compile.models.style.theme.marks import BarMarkStyle
 from dbt_charts.core.compile.resolve.chart.tick_values import numeric_domain_bounds
+from dbt_charts.core.constants.bar import CONTINUOUS_BAR_MAX_SIZE
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.emitters._measured_label_padding import (
     estimated_quantitative_tick_labels,
@@ -41,7 +42,9 @@ from dbt_charts.core.text.format_d3 import (
 )
 from dbt_charts.core.text.numeral_scale import (
     SuffixMode,
+    has_symbol,
     with_symbol,
+    without_symbol,
 )
 from dbt_charts.core.text.predefined_formats import (
     PYTHON_ONLY_NATIVE_NAMES,
@@ -221,23 +224,32 @@ def sign_affixed_expr(sign_e: str, affixed_e: str, fmt: ResolvedFormat | None) -
 def compose_axis_format(
     d: dict[str, Any],  # type-state: explicit_any — VL JSON dict boundary
     fmt: ResolvedFormat,
+    quantitative: bool,
 ) -> None:
     """Set VL's native ``format``, or compose a ``labelExpr`` when the format
-    carries an affix or an SI notation override a d3 spec cannot hold. A zero
-    tick stays bare, as on the ladder paths.
+    carries an affix, a currency symbol or an SI notation override a d3 spec
+    cannot hold. A zero tick stays bare, without the affix or the spec's own
+    symbol, as on the ladder paths; the symbol only on a ``quantitative``
+    scale, since a category's label is its row text.
 
     An authored ``labels.expr`` (already in ``d``) wins; ``format`` is still set
     because Vega's axis description reads it.
     """
     native = fmt.spec in VEGA_ARMS
+    symbol = quantitative and has_symbol(fmt.spec)
     if "labelExpr" in d:
         d.update(vl_format_key(fmt.spec))
     elif fmt.prefix or fmt.suffix:
         affixed = _affixed_digits_expr("datum.value", fmt.spec, fmt, anchored=False)
-        bare = numeral_vega_expr("datum.value", fmt.spec)
+        bare = numeral_vega_expr("datum.value", without_symbol(fmt.spec))
         d["labelExpr"] = f"(datum.value === 0 ? {bare} : {affixed})"
-    elif native or (fmt.notation is not None and is_d3_si_spec(fmt.spec)):
-        d["labelExpr"] = numeral_vega_expr("datum.value", fmt.spec, fmt.notation)
+    elif native or symbol or (fmt.notation is not None and is_d3_si_spec(fmt.spec)):
+        painted = numeral_vega_expr("datum.value", fmt.spec, fmt.notation)
+        if symbol:
+            bare = numeral_vega_expr("datum.value", without_symbol(fmt.spec))
+            painted = f"(datum.value === 0 ? {bare} : {painted})"
+            d["format"] = fmt.spec
+        d["labelExpr"] = painted
     else:
         d["format"] = fmt.spec
 
@@ -315,7 +327,7 @@ def axis_to_vl(
         if _n(axis, "ruler") is not None or _n(axis, "tick_label") is not None:
             d.update(vl_format_key(fmt.spec))
         else:
-            compose_axis_format(d, fmt)
+            compose_axis_format(d, fmt, _n(axis, "is_quantitative") is True)
 
     # Title: null suppresses the visual axis label (title still appears in tooltips
     # via encoding.title). Emitting null is the correct VL mechanism — it removes
@@ -450,14 +462,14 @@ def measure_axis_to_vl(
     orient = d.get("orient")
     align = d.get("labelAlign")
     labels: list[str] = []
-    # A synthesized affix labelExpr is measurable via format_d3; an authored
-    # label.expr or a case transform is not.
+    # A synthesized affix or bare-zero labelExpr is measurable via format_d3;
+    # an authored label.expr or a case transform is not.
     _measurable_affix_expr = (
         axis.labels.expr is None
         and axis.ruler is None
         and axis.tick_label is None
         and axis.labels.format is not None
-        and axis.labels.format.has_affix
+        and (axis.labels.format.has_affix or has_symbol(axis.labels.format.spec))
     )
     if (
         orient in ("left", "right")
@@ -1231,17 +1243,14 @@ def continuous_bar_size_prop(
                 if field in row and (ms := epoch_ms(row[field])) is not None
             }
         )
+    max_size = continuous_bar_max_size(bar)
     if len(xs) < 2:
-        assert bar.max_size is not None, (
-            "marks.bar.size and marks.bar.max_size both unset — "
-            "theme cascade must populate at least one"
-        )
-        return {prop_key: bar.max_size}
+        return {prop_key: max_size}
     step = min(b - a for a, b in zip(xs, xs[1:], strict=False))
     scale_name = "y" if orientation == "horizontal" else "x"
     a = xs[0]
-    # size is unset (the only way callers reach this function), so gap/min_size/
-    # max_size are the fields the theme cascade must have populated — asserted
+    # size is unset (the only way callers reach this function), so gap/min_size
+    # are the fields the theme cascade must have populated — asserted
     # individually (rather than trusting the caller) since an interpolated
     # None would otherwise repr() as the literal text "None" in the expression
     # string below and die with an opaque Vega "Unrecognized signal name" error.
@@ -1251,29 +1260,27 @@ def continuous_bar_size_prop(
     assert bar.min_size is not None, (
         "marks.bar.min_size unset — theme cascade must populate it when marks.bar.size is unset"
     )
-    assert bar.max_size is not None, (
-        "marks.bar.max_size unset — theme cascade must populate it when marks.bar.size is unset"
-    )
     expr = (
         f"clamp(abs(scale('{scale_name}', {a + step!r}) - scale('{scale_name}', {a!r})) "
-        f"- {bar.gap!r}, {bar.min_size!r}, {bar.max_size!r})"
+        f"- {bar.gap!r}, {bar.min_size!r}, {max_size!r})"
     )
     return {prop_key: {"expr": expr}}
 
 
-def effective_bar_size(bar: BarMarkStyle) -> float | None:
+def continuous_bar_max_size(bar: BarMarkStyle) -> float:
+    """Ceiling of a computed continuous-scale bar width: authored ``max_size``, else the engine's."""
+    return bar.max_size if bar.max_size is not None else CONTINUOUS_BAR_MAX_SIZE
+
+
+def effective_bar_size(bar: BarMarkStyle) -> float:
     """The pixel bar thickness a caller should budget layout space against.
 
-    ``bar.size`` when authored; otherwise ``bar.max_size``, the ceiling a
-    computed continuous-scale width can never exceed — a safe upper-bound
-    estimate for callers (horizontal-bar min-height, quantitative-x scale
-    padding) that need a single number before the real per-bar width is
-    known. Still ``| None`` in the rare case a chart-local override clears
-    both — callers that require a concrete value assert on the result, the
-    same cascade-completeness contract every other theme-populated field here
-    carries.
+    ``bar.size`` when authored; otherwise the ceiling a computed
+    continuous-scale width can never exceed — a safe upper-bound estimate for
+    callers (horizontal-bar min-height, quantitative-x scale padding) that
+    need a single number before the real per-bar width is known.
     """
-    return bar.size if bar.size is not None else bar.max_size
+    return bar.size if bar.size is not None else continuous_bar_max_size(bar)
 
 
 def bar_data_signs(data: list[dict[str, Any]], field: str) -> tuple[bool, bool]:

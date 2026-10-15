@@ -184,7 +184,7 @@ def row_has_negative_size(row: VLDict, size_field: str) -> bool:
 
 
 def _geo_format(chart: ResolvedGeoshapeChart) -> dict[str, Any]:
-    """Assemble the VL-format dict from baked semantic fields (ADR-011: VL shape is render-local)."""
+    """Assemble the VL-format dict from baked semantic fields (the VL shape is render-local)."""
     fmt: dict[str, Any] = {"type": chart.geo_format_type}
     if chart.geo_feature is not None:
         fmt["feature"] = chart.geo_feature
@@ -227,7 +227,7 @@ class GeoshapeEmitter:
         dataset: ChartDataset,
     ) -> ChartSpec:
         data = dataset.all_rows()
-        # All geo descriptor fields were baked at resolve time (ADR-008).
+        # All geo descriptor fields were baked at resolve time.
         geo_data = {"url": chart.geo_url, "format": _geo_format(chart)}
         proj = _geo_projection(chart)
 
@@ -467,7 +467,7 @@ class PointMapEmitter:
         point_mark = chart.style.point_mark
         data = normalize_data_types(dataset.all_rows())
 
-        # Lat/lon baked at resolve time (ADR-008); use directly.
+        # Lat/lon baked at resolve time; use directly.
         lat_field = chart.latitude
         lon_field = chart.longitude
 

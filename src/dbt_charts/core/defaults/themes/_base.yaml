@@ -89,7 +89,6 @@ style:
     subtitle:
       size: *size_body
       weight: 400
-      case: sentence
     # Body prose: sized and led independently of `style.font.*` (the 11-unit
     # chrome floor). Sustained reading wants more than a label size; 14 matches
     # the series-label and H3/H4 rungs. Root 1.25 is label leading — too tight
@@ -515,10 +514,12 @@ style:
         # size is unset here on purpose: it is the author's fixed-width
         # override (see its Field description), so it must stay None until
         # a board/chart actually authors it. A continuous (quantitative) x/y
-        # scale sizes itself from gap/min_size/max_size below instead.
+        # scale sizes itself from gap/min_size below, and from max_size, which
+        # is also unset here on purpose: authored, it caps band-scale bars too,
+        # so a theme default would cap every category chart. Unauthored, the
+        # continuous ladder's ceiling is constants/bar.py.
         gap: 3.0
         min_size: 4.0
-        max_size: 20.0
       line:
         stroke:
           # No width here: the resolve layer bakes a density-adaptive width
@@ -619,6 +620,7 @@ style:
             extends: label
             size: 14
             weight: '500'
+            color: auto
           # Default 2-line Jinja templates for per-slice labels when the
           # chart author omits ``labels:`` on a pie/donut. Picked at
           # resolve time: ``with_color`` when the chart
@@ -739,6 +741,12 @@ style:
         font:
           extends: label
           case: title
+      support:
+        font:
+          color: auto
+        glyph:
+          font:
+            color: auto
       min_card_width: 100.0
       preferred_width: 300.0
       default_height: 48.0
@@ -784,7 +792,7 @@ style:
       border:
         radius: 2.0
 
-    # Attached chart.support_table primitive (spec §4, ADR-002).
+    # Attached chart.support_table primitive.
     # Universal tier-1 defaults. Per-chart-type tier-2 lives nested under
     # bar/line/area as support_table: {...}.
     support_table:
@@ -809,6 +817,7 @@ style:
         font:
           weight: '500'
           case: title
+          color: auto
       padding_top: 8
       padding_bottom: 4
       # Always reserve 2 axis-label lines above the strip so yearly boundary
@@ -822,7 +831,7 @@ style:
       # that require a different layout set position explicitly.
 
     # build_patch_model_ext-based types: TYPE_CHECKING stub shows required fields from
-    # _ChartStyleBase, so mypy can't verify zero-arg construction. These stay required.
+    # _ChartStyleBase, so pyright can't verify zero-arg construction. These stay required.
     scatter:
       # Scatter always breaks at missing buckets (honest dots). Pinned here so a
       # future THEME change to the global style.charts.axis_x.fill does not connect
@@ -862,8 +871,11 @@ style:
           # that do track a line.
           stroke_width: 2.5
 
+    donut:
+      inner_radius: 0.6
     pie:
       aspect_ratio: 1.0
+      inner_radius: 0
       # Donut center total — the big number on top, smaller caption below.
       # `chart.total: { label }` is chart-root copy (auto-filled if the
       # author leaves it unset); `value.format` here is style paint,
@@ -879,7 +891,7 @@ style:
         label:
           font: label
 
-    # Choropleth (color-encoded) map — renamed from 'map' in ADR-015.
+    # Choropleth (color-encoded) map — renamed from 'map'.
     # geo_source is a chart-root channel (chart.geo_source), not a style field.
     geoshape:
       aspect_ratio: 1.2
@@ -894,7 +906,7 @@ style:
       legend:
         visible: true
 
-    # Point map (scatter over geography) — renamed from 'geoshape' in ADR-015.
+    # Point map (scatter over geography) — renamed from 'geoshape'.
     point_map:
       aspect_ratio: 1.2
       projection:

@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'The dual-axis competing-scales warning now points at axis_y.grid.visible: false for the interleaved gridlines.'
+time: 2026-10-14T21:04:23.830644-07:00

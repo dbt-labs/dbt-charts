@@ -687,3 +687,20 @@ def test_inline_bare_chart_literal_palette_still_compiles():
 def test_inline_named_chart_literal_gradient_still_compiles():
     result = compile_board(_inline_named_gradient("dbt-seq-blue"))
     assert result.success, [e.message for e in result.errors]
+
+
+def test_unresolvable_role_ref_names_the_palette_and_the_authored_role():
+    from dbt_charts.core.compile.errors import CompilationError
+    from dbt_charts.core.compile.resolve.style.tokens import expand_palette_refs
+
+    theme = get_theme_style("clarity")
+    categorical = theme.charts.color.categorical.model_copy(
+        update={"palette": "category:99"}
+    )
+    color = theme.charts.color.model_copy(update={"categorical": categorical})
+    charts = theme.charts.model_copy(update={"color": color})
+    with pytest.raises(CompilationError) as exc:
+        expand_palette_refs(theme.model_copy(update={"charts": charts}))
+    message = str(exc.value)
+    assert "'editorial-10:99'" in message
+    assert "'category:99'" in message

@@ -24,6 +24,7 @@ from dbt_charts.core.render.chart.vega_lite import render_chart
 from dbt_charts.core.render.engine import render_callout_card
 from dbt_charts.core.render.renderer import render
 
+from ..._board_utils import merged_patch
 from ..._svg_render import PINNED_RENDER_TIME
 from ._callout_test_helpers import (
     callout_style_for_tone,
@@ -199,7 +200,7 @@ def _render_callout(make_chart, style: dict | None, *board_patches):
         message="Details",
         style=CalloutChartStylePatch.model_validate(style) if style else None,
     )
-    rs, ctx = resolve_style_and_context(get_theme_style(), *board_patches)
+    rs, ctx = resolve_style_and_context(get_theme_style(), merged_patch(*board_patches))
     resolved = resolve(chart, [], chart_style_context=ctx)
     svg = render_chart(
         chart,

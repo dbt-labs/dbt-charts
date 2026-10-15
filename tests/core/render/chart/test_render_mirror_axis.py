@@ -18,6 +18,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     BarChart,
     Chart,
     LineChart,
+    ScatterChart,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.render.chart.spec import RenderBox
@@ -27,6 +28,10 @@ _SVG_NS = "http://www.w3.org/2000/svg"
 
 
 _MIRROR: dict[str, Any] = {"axis_y": {"mirror": True}}
+# A plain "$.3~s" axis: no ruler, only the zero tick dropping its "$".
+_BARE_ZERO_SI = (
+    '(datum.value === 0 ? format(datum.value,".3~s") : format(datum.value,"$.3~s"))'
+)
 
 
 @pytest.fixture(autouse=True)
@@ -116,6 +121,22 @@ def _y_axis_key_by_orient(spec: dict[str, Any], key: str) -> dict[str, Any]:
     return found
 
 
+def _scaled_y_encodings(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every encoding in the spec tree whose y binds the scale (not a `value`)."""
+    found: list[dict[str, Any]] = []
+
+    def walk(s: dict[str, Any]) -> None:
+        enc = s.get("encoding")
+        if isinstance(enc, dict) and isinstance(enc.get("y"), dict):
+            if "value" not in enc["y"]:
+                found.append(enc)
+        for lyr in s.get("layer", []):
+            walk(lyr)
+
+    walk(spec)
+    return found
+
+
 class TestV2MirrorAxis:
     def test_mirror_draws_both_edges(self):
         chart = AreaChart.model_validate(
@@ -156,30 +177,78 @@ class TestV2MirrorAxis:
         assert spec.get("resolve", {}).get("axis", {}).get("y") == "independent"
 
     @pytest.mark.parametrize("top_y", [None, "revenue"])
-    def test_layered_mirror_raises_typed_error(self, top_y):
-        """`layers:` move every y encoding onto the layers (the base's own
-        included), so the shared encoding has no y for the ghost to bind —
-        but a real y axis still paints, so mirror must refuse with the typed
-        ERR-MIRROR-LAYERS rather than silently skip (or die in the code-less
-        ChartDataError that surfaces as ERR-INTERNAL, the pre-fix behavior).
-        Both authored shapes, since the y-less one still binds layer ys."""
-        from dbt_charts.core.diagnostics.chart_data import ChartDataError
-        from dbt_charts.core.diagnostics.codes_render import ERR_MIRROR_LAYERS
-
+    def test_layered_mirror_on_shared_y_draws_one_axis_per_edge(self, top_y):
+        """Layers that share the base's y scale are one scale to reflect: each
+        edge carries exactly one y axis (the layers' own copies are stripped),
+        for the y-less base shape and the base-with-y shape alike."""
         chart_def: dict[str, Any] = {
             "id": "t",
             "type": "line",
             "x": "month",
-            "layers": [
-                {"type": "line", "y": "target"},
-            ],
+            "layers": [{"type": "line", "y": "target"}],
             "style": _MIRROR,
         }
         if top_y is not None:
             chart_def["y"] = top_y
         chart = LineChart.model_validate(chart_def)
         data = [{"month": i, "revenue": 100 + i, "target": 90 + i} for i in range(6)]
-        with pytest.raises(ChartDataError, match="layers") as exc_info:
+        spec = _v2_vl(chart, data)
+        orients = [a["orient"] for a in _y_axis_defs(spec) if a.get("orient")]
+        assert sorted(orients) == ["left", "right"]
+        assert spec["resolve"]["axis"]["y"] == "independent"
+        # A scaled y with no `axis` key (the zero rule's datum) would paint a
+        # third axis under independent resolution.
+        assert all("axis" in enc["y"] for enc in _scaled_y_encodings(spec))
+
+    def test_layered_scatter_mirror_gives_the_zero_rule_no_axis(self):
+        """A scatter's zero rule lives in ``underlays``, not ``layers``; with
+        authored layers no shared y carries the null axis down to it, so mirror
+        must null it too or the primary edge paints two y axes."""
+        chart = ScatterChart.model_validate(
+            {
+                "id": "t",
+                "type": "scatter",
+                "x": "month",
+                "y": "revenue",
+                "layers": [{"type": "line", "y": "target"}],
+                "style": _MIRROR,
+            }
+        )
+        data = [
+            {"month": i, "revenue": i * 10 - 25, "target": i * 8 - 20} for i in range(6)
+        ]
+        spec = _v2_vl(chart, data)
+        assert all("axis" in enc["y"] for enc in _scaled_y_encodings(spec))
+        orients = [a["orient"] for a in _y_axis_defs(spec) if a.get("orient")]
+        assert sorted(orients) == ["left", "right"]
+
+    @pytest.mark.parametrize(
+        ("style", "layer_extra"),
+        [
+            (_MIRROR, {"axis_y": {"position": "right"}}),
+            ({**_MIRROR, "orientation": "horizontal"}, {}),
+        ],
+        ids=["layer-pins-its-own-axis", "horizontal-base"],
+    )
+    def test_layered_mirror_raises_typed_error(self, style, layer_extra):
+        """A layer that pins its own y axis has a scale of its own, and a
+        horizontal base has no y measure to reflect: mirror refuses with the
+        typed ERR-MIRROR-LAYERS rather than silently skipping a real axis."""
+        from dbt_charts.core.diagnostics.chart_data import ChartDataError
+        from dbt_charts.core.diagnostics.codes_render import ERR_MIRROR_LAYERS
+
+        chart = BarChart.model_validate(
+            {
+                "id": "t",
+                "type": "bar",
+                "x": "month",
+                "y": "revenue",
+                "layers": [{"type": "line", "y": "target", **layer_extra}],
+                "style": style,
+            }
+        )
+        data = [{"month": i, "revenue": 100 + i, "target": 90 + i} for i in range(6)]
+        with pytest.raises(ChartDataError) as exc_info:
             _v2_vl(chart, data)
         assert exc_info.value.code is ERR_MIRROR_LAYERS
 
@@ -199,6 +268,25 @@ class TestV2MirrorAxis:
         spec = _v2_vl(chart, _wide_data())
         assert {"left", "right"} <= _y_axis_orients(spec)
         assert spec.get("resolve", {}).get("axis", {}).get("y") == "independent"
+
+    def test_mirror_axes_bind_to_scale_layers_on_quantitative_x(self):
+        """A quantitative x puts a vertical zero rule first in the layer stack;
+        its y is a `value` channel with no scale, so a y axis attached to it never
+        paints. Every y axis must ride a layer whose y binds the shared scale."""
+        chart = LineChart.model_validate(
+            {"id": "t", "type": "line", "x": "minute", "y": "feet", "style": _MIRROR}
+        )
+        data = [{"minute": i * 5, "feet": 400 + i * 300} for i in range(6)]
+        spec = _v2_vl(chart, data)
+
+        def axis_owners(layer: dict[str, Any]) -> list[dict[str, Any]]:
+            y = layer.get("encoding", {}).get("y")
+            own = [y] if isinstance(y, dict) and isinstance(y.get("axis"), dict) else []
+            return own + [o for s in layer.get("layer", []) for o in axis_owners(s)]
+
+        owners = axis_owners(spec)
+        assert {o["axis"]["orient"] for o in owners} == {"left", "right"}
+        assert all("value" not in o for o in owners)
 
     def test_mirror_draws_both_edges_bar_mixed_sign(self):
         """Mixed-sign bar data triggers emit_bar_layer's pos/neg corner-radius
@@ -778,8 +866,8 @@ class TestV2MirrorAxis:
         assert formats == {"right": "$.2s", "left": ".0%"}
 
     def test_mirror_expr_override_relabels_only_ghost_axis(self):
-        """`mirror: {expr: ...}` emits VL `labelExpr` on the mirrored edge only;
-        the primary axis carries no labelExpr and keeps its own format. This is
+        """`mirror: {expr: ...}` relabels the mirrored edge only; the primary
+        keeps its own format and bare-zero labelExpr. This is
         the share-of-total relabel — a Vega expression can divide by a total
         before formatting, which a d3-format string cannot."""
         expr = "format(datum.value / 315000000, '.0%')"
@@ -795,7 +883,14 @@ class TestV2MirrorAxis:
             }
         )
         spec = _v2_vl(chart, _wide_data())
-        assert _y_axis_key_by_orient(spec, "labelExpr") == {"right": None, "left": expr}
+        bare_zero = (
+            '(datum.value === 0 ? format(datum.value,".2s") '
+            ': format(datum.value,"$.2s"))'
+        )
+        assert _y_axis_key_by_orient(spec, "labelExpr") == {
+            "right": bare_zero,
+            "left": expr,
+        }
         # The ghost still copies the primary's format (labelExpr wins in VL, and
         # None-override means "reuse"), and the primary format is untouched.
         # Inline d3 spec passes through without trim (three-way contract).
@@ -941,7 +1036,7 @@ class TestV2MirrorAxisRulerMechanism:
     one.
     """
 
-    def test_right_primary_default_bakes_no_labelexpr_on_either_edge(self):
+    def test_right_primary_default_bakes_no_ruler_on_either_edge(self):
         chart = AreaChart.model_validate(
             {
                 "id": "t",
@@ -960,14 +1055,13 @@ class TestV2MirrorAxisRulerMechanism:
         spec = _v2_vl(chart, _compacting_data())
         exprs = _y_axis_key_by_orient(spec, "labelExpr")
         # The primary (right, start-anchored by VL's own default) bakes no
-        # ruler, so no labelExpr. The mirror block that would build the
-        # ghost's own ruler only fires when the primary has one, so the
-        # ghost (left) gets none either -- not the primary's mechanism
+        # ruler, only the bare-zero labelExpr. The mirror block that would
+        # build the ghost's own ruler only fires when the primary has one, so
+        # the ghost (left) gets none either -- not the primary's mechanism
         # inherited verbatim.
-        assert exprs["right"] is None
-        assert exprs["left"] is None
+        assert exprs == {"right": _BARE_ZERO_SI, "left": _BARE_ZERO_SI}
 
-    def test_left_primary_default_bakes_no_labelexpr_on_either_edge(self):
+    def test_left_primary_default_bakes_no_ruler_on_either_edge(self):
         """The mirror image: a default (left) primary is end-anchored and
         keeps its reservation-free plain rendering; its right-edge ghost is
         start-anchored by VL's own default, which now bakes no ruler.
@@ -985,8 +1079,7 @@ class TestV2MirrorAxisRulerMechanism:
         )
         spec = _v2_vl(chart, _compacting_data())
         exprs = _y_axis_key_by_orient(spec, "labelExpr")
-        assert exprs["left"] is None
-        assert exprs["right"] is None
+        assert exprs == {"left": _BARE_ZERO_SI, "right": _BARE_ZERO_SI}
 
     def test_right_primary_mirror_on_non_tabular_font_does_not_raise(self):
         """A start-anchored primary now bakes no ruler at all, so it never
@@ -1017,8 +1110,7 @@ class TestV2MirrorAxisRulerMechanism:
         )
         spec = _v2_vl(chart, _compacting_data())
         exprs = _y_axis_key_by_orient(spec, "labelExpr")
-        assert exprs["right"] is None
-        assert exprs["left"] is None
+        assert exprs == {"right": _BARE_ZERO_SI, "left": _BARE_ZERO_SI}
 
     def test_right_primary_case_wraps_ghost_the_same_as_primary(self):
         """Regression: the ghost's rebuilt labelExpr (mirror.ruler differs
@@ -1153,8 +1245,7 @@ class TestRenderAccurateAnchoring:
         # inherits the SAME literal "left" verbatim -> ALSO start-anchored
         # -> also no ruler, not a mismatched mechanism copied from the
         # primary.
-        assert exprs["right"] is None
-        assert exprs["left"] is None
+        assert exprs == {"right": _BARE_ZERO_SI, "left": _BARE_ZERO_SI}
 
     def test_area_primary_and_mirror_ghost_share_case_wrapped_text(self):
         """Regression: ``compose_axis_label_expr`` -- the one-path case/

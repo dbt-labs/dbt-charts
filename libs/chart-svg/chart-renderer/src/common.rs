@@ -63,6 +63,13 @@ pub fn symbol_radius(size: f64) -> f64 {
     size.sqrt() / 2.0
 }
 
+/// How far an unfilled symbol's ring grows its ink: `boundStroke` adds the
+/// full stroke width, a filled symbol nothing. Shared by scatter.rs's data
+/// marks and bar.rs's right-pinned scatter layer.
+pub fn symbol_stroke_ink(filled: Option<bool>, stroke_width: f64) -> f64 {
+    if filled == Some(false) { stroke_width } else { 0.0 }
+}
+
 /// A tilted category label's own ink: the flat text box (extended one
 /// extra line height for a two-row temporal label), rotated about its own
 /// anchor when `angle != 0.0` (vega-scenegraph's `text.js bound()` →
@@ -75,7 +82,7 @@ pub fn symbol_radius(size: f64) -> f64 {
 /// law) — callers on a band scale add their own `±0.5` at the call site;
 /// a POINT-scale axis (scatter's nominal x) carries no such bake-out and
 /// must not add it. The crowding ladder itself
-/// (`vega_fit::category_label_angle`) and the anchor it implies
+/// (`vega_fit::category_label_layout`) and the anchor it implies
 /// (`vega_fit::vl_x_label_anchor`) already live in `vega_fit.rs` as bare
 /// functions every cartesian family can call directly; this is the one
 /// remaining piece of the law bar's own ordinal category axis
@@ -129,7 +136,7 @@ pub fn measure_family_stand_in(family: &str) -> &str {
     if family.contains("Source Serif") {
         // The `Web` alias is a paint-time CSS font name; production measures the
         // bundled file under the authored family.
-        family.strip_prefix("Source Serif 4 Web, ").unwrap_or(family)
+        family.strip_prefix("'Source Serif 4 Web', ").unwrap_or(family)
     } else {
         "Inter"
     }
@@ -591,11 +598,16 @@ impl FormatSlot {
     }
 
     /// A plain value-axis tick as `compose_axis_format` paints it
-    /// (`vl_field_maps.py:217`): the zero tick stays bare, every other tick
-    /// wears the affix (`quantitative_tick_labels`, the gutter's twin).
+    /// (`vl_field_maps.py:217`): the zero tick stays bare, without the affix
+    /// or the spec's own currency symbol; every other tick wears both
+    /// (`quantitative_tick_labels`, the gutter's twin).
     pub fn paint_tick(&self, value: f64) -> Result<String, String> {
-        if value == 0.0 && self.has_affix() {
-            return crate::number_locale::d3_format(&self.spec, value).map_err(|e| format!("format {:?} on {value}: {e}", self.spec));
+        if value == 0.0 {
+            let bare = match self.spec.as_str() {
+                "bytes" | "duration" => self.spec.clone(),
+                spec => d3rs::format::without_symbol(spec)?,
+            };
+            return self.digits(&bare, None, value);
         }
         self.paint(value)
     }
@@ -612,8 +624,8 @@ impl FormatSlot {
     /// the digits at this slot's notation, the slot's affix wraps them, and an
     /// anchored affix (one tick per ladder) leads the sign so the anchor's
     /// digits line up with the bare ticks beside it (`painted_sign_placement`).
-    pub fn paint_anchored(&self, spec: &str, value: f64, anchored: bool) -> Result<String, String> {
-        let digits = self.digits(spec, self.notation.as_deref(), value)?;
+    pub fn paint_anchored(&self, spec: &str, value: f64, anchored: bool, pad_table: &[String]) -> Result<String, String> {
+        let digits = self.padded_digits(spec, value, pad_table)?;
         let (sign, body) = split_sign(&digits);
         let placement = if anchored { SignPlacement::AfterPrefix } else { self.placement() };
         Ok(self.wear_at(placement, sign, body))
@@ -622,8 +634,16 @@ impl FormatSlot {
     /// A ladder tick's bare digits at this slot's notation and `spec`
     /// (`numeral_vega_expr(datum.value, tick_label.format, fmt.notation)`):
     /// the text every tick off the anchor paints.
-    pub fn bare_digits(&self, spec: &str, value: f64) -> Result<String, String> {
-        self.digits(spec, self.notation.as_deref(), value)
+    pub fn bare_digits(&self, spec: &str, value: f64, pad_table: &[String]) -> Result<String, String> {
+        self.padded_digits(spec, value, pad_table)
+    }
+
+    /// The digits followed by the decimal-alignment pad `pad_table` selects
+    /// for them (none when the table is empty).
+    fn padded_digits(&self, spec: &str, value: f64, pad_table: &[String]) -> Result<String, String> {
+        let digits = self.digits(spec, self.notation.as_deref(), value)?;
+        let pad = crate::families::table::decimal_pad_for(pad_table, &digits)?;
+        Ok(format!("{digits}{pad}"))
     }
 
     /// The d3 digits of `value`, an SI letter respelled at `notation`.
@@ -1338,10 +1358,10 @@ pub fn format_y_label(
                 };
             let text = match affixed_slot {
                 Some(slot) if on_anchor => slot
-                    .paint_anchored(&anchor_spec, value, anchored)
+                    .paint_anchored(&anchor_spec, value, anchored, &[])
                     .map_err(|e| format!("tick_label affixed spec {anchor_spec:?}: {e}"))?,
                 Some(slot) => slot
-                    .bare_digits(&tl.format, value)
+                    .bare_digits(&tl.format, value, &[])
                     .map_err(|e| format!("tick_label format {:?}: {e}", tl.format))?,
                 None if on_anchor && !tl.prefix.is_empty() => crate::number_locale::d3_format(&anchor_spec, value)
                     .map_err(|e| format!("tick_label anchor spec {anchor_spec:?}: {e}"))?,
@@ -1642,6 +1662,26 @@ pub fn tick_row(origin: f64, position: f64) -> f64 {
     origin + position.round() + 0.5
 }
 
+/// A gridline or tick ink the resolve stage always fills; its absence refuses
+/// by name rather than painting a guessed color.
+pub fn required_ink<'a>(ink: Option<&'a str>, family: &str, field: &str) -> Result<&'a str, String> {
+    ink.ok_or_else(|| format!("{family}: {field} absent (theme required)"))
+}
+
+/// The rows of a value axis's tick marks: one per rung inside the plot (a
+/// pixel of slack), none when the ticks have no length. `origin` is the plot
+/// top in the frame the marks are emitted in.
+pub fn value_tick_rows(origin: f64, plot_h: f64, tick_len: f64, positions: impl IntoIterator<Item = f64>) -> Vec<f64> {
+    if tick_len <= 0.0 {
+        return Vec::new();
+    }
+    positions
+        .into_iter()
+        .map(|position| tick_row(origin, position))
+        .filter(|&row| row >= origin - 1.0 && row <= origin + plot_h + 1.0)
+        .collect()
+}
+
 /// One horizontal tick mark per row in `rows`, `len` long, running outward from
 /// the axis `edge_x` (rightward when `outward` is positive, leftward when
 /// negative), stroked with `ticks`' own color and width. Vega draws a mark per
@@ -1653,9 +1693,13 @@ pub fn emit_value_ticks(
     edge_x: f64,
     outward: f64,
     len: f64,
-) {
+) -> Result<(), String> {
     let (x1, x2) = if outward > 0.0 { (edge_x, edge_x + len) } else { (edge_x - len, edge_x) };
-    let color = ticks.color.as_deref().unwrap_or("#D0D3D9");
+    let mut rows = rows.into_iter().peekable();
+    if rows.peek().is_none() {
+        return Ok(());
+    }
+    let color = required_ink(ticks.color.as_deref(), "axis", "ticks.color")?;
     let width = ticks.width.unwrap_or(1.0);
     for y in rows {
         let _ = std::fmt::Write::write_fmt(
@@ -1667,6 +1711,7 @@ pub fn emit_value_ticks(
             ),
         );
     }
+    Ok(())
 }
 
 impl AxisStyle {
@@ -1746,7 +1791,8 @@ impl AxisStyle {
     /// `tick_values` only: the ladder-less SI shape (`si_format`), a
     /// `decimal_pad_table` and the unbaked ladder's estimated gutter
     /// ([`estimated_tick_label_gutter`]) compose no affix here, as a
-    /// `repeat: anchor` that resolve left unbaked and a ruler ladder do not.
+    /// `repeat: anchor` that resolve left unbaked and a ruler ladder's authored
+    /// prefix or suffix do not.
     pub fn refuse_unpainted_affix(&self, family: &str, axis: &str, paints_plain: bool) -> Result<(), String> {
         let Some(slot) = &self.labels.format else { return Ok(()) };
         let unported = if !paints_plain {
@@ -1768,7 +1814,11 @@ impl AxisStyle {
         } else {
             None
         };
+        // A ruler's digit spec carries no SI type, so `notation`, `sign_placement`
+        // and `repeat` (baked into the ruler) change none of its digits: only an
+        // authored affix is unported there.
         let key = match unported {
+            Some(_) if self.ruler.is_some() => slot.carried().find(|k| matches!(*k, "prefix" | "suffix")),
             Some(_) => slot.carried().next(),
             None => slot.unpainted_key(self.tick_label.is_some()),
         };
@@ -2146,6 +2196,9 @@ pub struct AxisTicks {
 pub struct AxisLabels {
     pub font: Font,
     pub padding: Option<f64>,
+    /// Authored `labels.values`: the dates whose labels the axis keeps.
+    #[serde(default)]
+    pub values: Option<Vec<Value>>,
     #[serde(default)]
     pub format: Option<FormatSlot>,
     pub visible: Option<bool>,
@@ -2452,6 +2505,10 @@ pub struct MarkLabels {
     pub font: Option<Font>,
     #[serde(default)]
     pub position: Option<String>,
+    /// `false` unlabels the segments of a stacked bar; not ported, so a bar
+    /// refuses it by name (`families/bar.rs::refuse_unmodeled_bar_marks`).
+    #[serde(default)]
+    pub stacked: Option<bool>,
 }
 
 /// The text a value label paints for one point — shared by each family's
@@ -2653,18 +2710,18 @@ pub fn wrap_title_block(
     Ok(TitleBlock { title_lines, sub_lines, ink, title_truncated, subtitle_truncated })
 }
 
-/// `WARN-CHART-TITLE-TRUNCATED` for each of `block`'s rows the pre-pass cut:
-/// production's `record_text_truncation(chart_id, "chart_title", text, field)`,
-/// with `cased_title` and `subtitle` as `wrap_title_block` received them.
+/// `WARN-CHART-TITLE-TRUNCATED` for each of the title and subtitle the pre-pass
+/// cut: production's `record_text_truncation(chart_id, "chart_title", text,
+/// field)`, with `cased_title` and `subtitle` as `wrap_title_block` received
+/// them. Each text pairs with whether the pre-pass cut it.
 pub fn warn_title_truncations(
-    block: &TitleBlock,
     chart_id: &str,
-    cased_title: Option<&str>,
-    subtitle: Option<&str>,
+    (cased_title, title_truncated): (Option<&str>, bool),
+    (subtitle, subtitle_truncated): (Option<&str>, bool),
 ) {
     for (cut, field, text) in [
-        (block.title_truncated, "title", cased_title),
-        (block.subtitle_truncated, "subtitle", subtitle),
+        (title_truncated, "title", cased_title),
+        (subtitle_truncated, "subtitle", subtitle),
     ] {
         if let (true, Some(text)) = (cut, text) {
             crate::diagnostic::warn(Diagnostic::new(
@@ -2676,6 +2733,61 @@ pub fn warn_title_truncations(
                 ],
             ));
         }
+    }
+}
+
+/// How many distinct `field` values `rows` carry under Python's equality, as
+/// `len({row[field] ...})` counts the bands of the raw query result.
+pub fn distinct_values(rows: &[serde_json::Map<String, Value>], field: &str) -> usize {
+    rows.iter()
+        .filter(|row| row.contains_key(field))
+        .map(|row| py_scalar_key(&row[field]))
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+}
+
+/// `count_horizontal_bar_categories` (`_cartesian.py`): the distinct `str()` of
+/// the category field over the rows that carry it non-null.
+pub fn count_horizontal_bar_categories(rows: &[serde_json::Map<String, Value>], field: &str) -> usize {
+    rows.iter()
+        .filter(|row| row.get(field).is_some_and(|v| !v.is_null()))
+        .map(|row| row_str(row, field))
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+}
+
+/// The face a value label measures in for the crowd check: its own font, else
+/// the theme's text-mark font, per field. Errors when the payload carries
+/// neither, rather than measuring in a guessed face.
+pub fn crowd_label_font(
+    own: Option<&Font>,
+    board: Option<&crate::BoardStyle>,
+) -> Result<(String, f64), String> {
+    let text_mark = board.map(|b| &b.text_mark_font);
+    let family = own.and_then(|f| f.family.clone()).or_else(|| text_mark.map(|t| t.family.clone()));
+    let size = own.and_then(|f| f.size).or_else(|| text_mark.map(|t| t.size));
+    family.zip(size).ok_or_else(|| {
+        "value labels: no labels.font, and the payload carries no board_style to name the text-mark face".into()
+    })
+}
+
+/// `WARN-VALUE-LABELS-CROWD-WIDTH` (`value_labels_crowd_width.py`): each of
+/// `distinct` marks gets `render_width / distinct` px, and the widest value
+/// label (`widest`, measured at the font it paints in) is wider than that.
+pub fn warn_value_labels_crowd(chart_id: &str, render_width: f64, distinct: usize, widest: f64) {
+    if render_width <= 0.0 || distinct == 0 {
+        return;
+    }
+    let slot_width = render_width / distinct as f64;
+    if widest > slot_width {
+        crate::diagnostic::warn(Diagnostic::new(
+            &codes::WARN_VALUE_LABELS_CROWD_WIDTH,
+            [
+                ("chart_id", json!(chart_id)),
+                ("label_width", json!(widest)),
+                ("slot_width", json!(slot_width)),
+            ],
+        ));
     }
 }
 
@@ -3035,6 +3147,17 @@ pub fn row_num(row: &serde_json::Map<String, Value>, field: &str) -> Option<f64>
     }
 }
 
+/// Python's comparison of two raw x values: numbers with numbers, strings with
+/// strings, any other pair has no order (`TypeError`).
+pub fn raw_x_order(a: &Value, b: &Value) -> Result<std::cmp::Ordering, String> {
+    let order = match (a, b) {
+        (Value::Number(a), Value::Number(b)) => a.as_f64().zip(b.as_f64()).and_then(|(a, b)| a.partial_cmp(&b)),
+        (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
+        _ => None,
+    };
+    order.ok_or_else(|| format!("x values {a} and {b} have no order"))
+}
+
 /// Production's `last_nonnull_value_per_series` (`_cartesian.py`): each
 /// series' value at its own greatest x, found by walking the rows in order and
 /// replacing the held pair whenever a row's raw x is `>=` the held one (Python's
@@ -3058,11 +3181,7 @@ pub fn last_nonnull_value_per_series(
         let series = row_str(row, series_field);
         let replaces = match latest.get(&series) {
             None => true,
-            Some((held, _)) => match (held, x) {
-                (Value::Number(a), Value::Number(b)) => b.as_f64() >= a.as_f64(),
-                (Value::String(a), Value::String(b)) => b >= a,
-                _ => return Err(format!("x values {held} and {x} of series {series:?} have no order")),
-            },
+            Some((held, _)) => raw_x_order(x, held).map_err(|e| format!("{e} (series {series:?})"))?.is_ge(),
         };
         if replaces {
             latest.insert(series, (x, y));
@@ -3076,7 +3195,7 @@ pub fn last_nonnull_value_per_series(
 /// `Value::Number` with no fractional part), a 4-digit string matching
 /// `^\d{4}$`, or an integral float (a warehouse NUMERIC/Decimal year comes
 /// back as a JSON number that may still carry a `.0`) — each in
-/// `[1900, 2100]`. A JSON `Value::Bool` never matches (`Value::Number`
+/// `[1700, 2100]`. A JSON `Value::Bool` never matches (`Value::Number`
 /// can't confuse a bool with a number the way Python's `isinstance(v,
 /// int)` can, so there is no separate bool exclusion to port). Empty input
 /// (every row's `field` null or absent) is not year-shaped.
@@ -3088,7 +3207,7 @@ pub fn last_nonnull_value_per_series(
 /// alone does not catch it. This predicate is the missing precondition a
 /// categorical-x gate (line/area's authored-sort gate) needs alongside it.
 pub fn is_year_shaped(rows: &[serde_json::Map<String, Value>], field: &str) -> bool {
-    const YEAR_MIN: f64 = 1900.0;
+    const YEAR_MIN: f64 = 1700.0;
     const YEAR_MAX: f64 = 2100.0;
     let mut any = false;
     for row in rows {
@@ -3104,7 +3223,7 @@ pub fn is_year_shaped(rows: &[serde_json::Map<String, Value>], field: &str) -> b
             Value::String(s) => {
                 s.len() == 4
                     && s.bytes().all(|b| b.is_ascii_digit())
-                    && s.parse::<i32>().is_ok_and(|y| (1900..=2100).contains(&y))
+                    && s.parse::<i32>().is_ok_and(|y| (1700..=2100).contains(&y))
             }
             _ => false,
         };
@@ -3130,13 +3249,13 @@ mod is_year_shaped_tests {
             .collect()
     }
 
-    /// `[1900, 2100]` is inclusive at both ends (`utils.py::is_year_shaped`'s
+    /// `[1700, 2100]` is inclusive at both ends (`utils.py::is_year_shaped`'s
     /// own `YEAR_MIN <= y <= YEAR_MAX`), string or number alike.
     #[test]
-    fn the_1900_2100_range_is_inclusive_at_both_ends() {
-        let r = rows("year", &[Value::String("1900".into()), Value::String("2100".into())]);
+    fn the_1700_2100_range_is_inclusive_at_both_ends() {
+        let r = rows("year", &[Value::String("1700".into()), Value::String("2100".into())]);
         assert!(is_year_shaped(&r, "year"));
-        let r = rows("year", &[serde_json::json!(1900), serde_json::json!(2100)]);
+        let r = rows("year", &[serde_json::json!(1700), serde_json::json!(2100)]);
         assert!(is_year_shaped(&r, "year"));
     }
 
@@ -3145,15 +3264,15 @@ mod is_year_shaped_tests {
     /// domain's extremes.
     #[test]
     fn a_value_one_outside_either_bound_fails_the_whole_domain() {
-        let r = rows("year", &[Value::String("1899".into()), Value::String("2000".into())]);
+        let r = rows("year", &[Value::String("1699".into()), Value::String("2000".into())]);
         assert!(!is_year_shaped(&r, "year"));
         let r = rows("year", &[Value::String("2000".into()), Value::String("2101".into())]);
         assert!(!is_year_shaped(&r, "year"));
-        let r = rows("year", &[serde_json::json!(1899), serde_json::json!(2000)]);
+        let r = rows("year", &[serde_json::json!(1699), serde_json::json!(2000)]);
         assert!(!is_year_shaped(&r, "year"));
     }
 
-    /// A non-year 4-digit number outside `[1900, 2100]` — e.g. a product
+    /// A non-year 4-digit number outside `[1700, 2100]` — e.g. a product
     /// code or a quantity — never counts as year-shaped, string or number.
     #[test]
     fn a_non_year_4_digit_number_is_not_year_shaped() {
@@ -3542,6 +3661,149 @@ pub fn row_str(row: &serde_json::Map<String, Value>, field: &str) -> String {
     }
 }
 
+/// Vega's `ascending` comparator on two JSON scalars with JS `<`/`>`
+/// coercion: numbers compare numerically (a numeric string coerces), strings
+/// lexicographically, and a number against a non-numeric string is "equal".
+fn js_ascending(a: &Value, b: &Value) -> i32 {
+    fn num(v: &Value) -> Option<f64> {
+        match v {
+            Value::Number(n) => n.as_f64(),
+            Value::String(s) => {
+                let t = s.trim();
+                if t.is_empty() { Some(0.0) } else { t.parse().ok() }
+            }
+            _ => None,
+        }
+    }
+    match (a, b) {
+        (Value::String(x), Value::String(y)) => match x.cmp(y) {
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Greater => 1,
+            std::cmp::Ordering::Equal => 0,
+        },
+        _ => match (num(a), num(b)) {
+            (Some(x), Some(y)) if x < y => -1,
+            (Some(x), Some(y)) if x > y => 1,
+            _ => 0,
+        },
+    }
+}
+
+/// The order Vega's ordinal-scale `sort: true` produces for a domain of JSON
+/// scalars: JavaScript `Array.prototype.sort` with `ascending`, which V8 runs
+/// as a run-detecting binary insertion sort below 64 elements. A column that
+/// mixes numbers and strings makes the comparator non-transitive, so the
+/// result depends on that algorithm and is reproduced step for step.
+pub fn vega_ascending_sort(mut values: Vec<Value>) -> Result<Vec<Value>, String> {
+    let n = values.len();
+    if n >= 64 {
+        let kinds = values.iter().filter(|v| v.is_number()).count();
+        if kinds != 0 && kinds != n {
+            return Err("a mixed numeric/categorical column with 64 or more distinct values is not supported".into());
+        }
+        values.sort_by(|a, b| js_ascending(a, b).cmp(&0));
+        return Ok(values);
+    }
+    if n < 2 {
+        return Ok(values);
+    }
+    let mut run = 2;
+    let descending = js_ascending(&values[1], &values[0]) < 0;
+    while run < n {
+        let order = js_ascending(&values[run], &values[run - 1]);
+        if (descending && order >= 0) || (!descending && order < 0) {
+            break;
+        }
+        run += 1;
+    }
+    if descending {
+        values[..run].reverse();
+    }
+    for start in run..n {
+        let (mut left, mut right) = (0, start);
+        while left < right {
+            let mid = left + ((right - left) >> 1);
+            if js_ascending(&values[start], &values[mid]) < 0 {
+                right = mid;
+            } else {
+                left = mid + 1;
+            }
+        }
+        values[left..=start].rotate_right(1);
+    }
+    Ok(values)
+}
+
+/// `_LINE_POS_MAP` and `_POINT_POS_MAP` (`features/value_labels.py`, identical but
+/// for `middle`'s align): the (align, baseline, dx, dy) of a point value label at an authored `position`; `None` for an unknown one.
+pub fn value_label_anchor(position: &str) -> Option<(&'static str, &'static str, f64, f64)> {
+    Some(match position {
+        "top" => ("center", "bottom", 0.0, -4.0),
+        "bottom" => ("center", "top", 0.0, 4.0),
+        "left" => ("right", "middle", -4.0, 0.0),
+        "right" => ("left", "middle", 4.0, 0.0),
+        "middle" => ("center", "middle", 0.0, 0.0),
+        _ => return None,
+    })
+}
+
+/// One point value label's `<text>`: `baseline_y` already carries the anchor's
+/// dy and the baseline's own font shift; `align` is `vega_fit::text_ink`'s
+/// vocabulary; `font_style` is `Font::style_attr`.
+#[allow(clippy::too_many_arguments)]
+pub fn write_value_label(
+    svg: &mut String,
+    x: f64,
+    baseline_y: f64,
+    align: &str,
+    family: &str,
+    size: f64,
+    weight: &str,
+    font_style: &str,
+    color: &str,
+    label_attr: &str,
+    text: &str,
+) {
+    use std::fmt::Write as _;
+    let text_anchor = match align {
+        "left" => "start",
+        "right" => "end",
+        _ => "middle",
+    };
+    let _ = write!(
+        svg,
+        "<text x=\"{x:.2}\" y=\"{baseline_y:.2}\" text-anchor=\"{text_anchor}\" font-family=\"{}\" \
+         font-size=\"{size}\" font-weight=\"{}\"{font_style} fill=\"{}\"{label_attr}>{}</text>",
+        crate::svg::vega_escape_attr(family),
+        crate::svg::xml_escape_attr(weight),
+        crate::svg::xml_escape_attr(color),
+        crate::svg::xml_escape(text),
+    );
+}
+
+#[cfg(test)]
+mod vega_ascending_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sorted(v: Value) -> Vec<String> {
+        let values = v.as_array().unwrap().clone();
+        vega_ascending_sort(values).unwrap().iter().map(|x| x.to_string().trim_matches('"').to_string()).collect()
+    }
+
+    #[test]
+    fn a_mixed_domain_sorts_as_v8_runs_it() {
+        assert_eq!(sorted(json!([3, "b", 1, "a"])), ["3", "b", "1", "a"]);
+        assert_eq!(sorted(json!([10, 2, "a", "B"])), ["2", "10", "B", "a"]);
+        assert_eq!(sorted(json!(["d", "c", 2, 1, "a"])), ["c", "d", "1", "2", "a"]);
+    }
+
+    #[test]
+    fn a_pure_domain_sorts_ascending() {
+        assert_eq!(sorted(json!(["b", "a", "C"])), ["C", "a", "b"]);
+    }
+}
+
 #[cfg(test)]
 mod axis_title_text_tests {
     use super::*;
@@ -3697,22 +3959,42 @@ pub fn wide_series_names(
     names
 }
 
-/// A stacked wide chart ranks and paints the series its folded rows carry,
-/// yet production also seats a series with no folded row (a measure null on
-/// every row, or a `color:` value missing a measure) in the palette and the
-/// legend. That unpainted seat has no port, so such a chart refuses by name.
-pub fn refuse_unobserved_wide_series(
-    fam: &str,
-    wide_series: &[String],
-    folded_rows: &[serde_json::Map<String, Value>],
-) -> Result<(), String> {
-    let observed: std::collections::HashSet<String> =
-        folded_rows.iter().map(|row| row_str(row, WIDE_LABEL_FIELD)).collect();
-    match wide_series.iter().find(|series| !observed.contains(*series)) {
-        Some(absent) => Err(format!(
-            "{fam}: wide_measures with stack: series {absent:?} has no non-null value — not supported"
-        )),
-        None => Ok(()),
+/// Vega's `center` stack offset: a category whose stack totals `total` floats
+/// to the middle of the tallest one, `max_total`.
+pub fn center_offset(max_total: f64, total: f64) -> f64 {
+    (max_total - total) / 2.0
+}
+
+/// Vega's `stackZero` running sums for one category (`vega-transforms/Stack.js`):
+/// a value below zero descends from 0, anything else (zero included) climbs
+/// from `start`. A segment is `(start, end)`; the mark's `y` edge is `end`.
+#[derive(Clone, Copy, Debug)]
+pub struct StackZero {
+    pos: f64,
+    neg: f64,
+}
+
+impl StackZero {
+    pub fn new(start: f64) -> Self {
+        Self { pos: start, neg: 0.0 }
+    }
+
+    /// The next segment; a caller that normalizes passes the already
+    /// normalized value for a non-negative one.
+    pub fn push(&mut self, v: f64) -> (f64, f64) {
+        let sum = if v < 0.0 { &mut self.neg } else { &mut self.pos };
+        let start = *sum;
+        *sum += v;
+        (start, *sum)
+    }
+
+    /// The positive pile's height; the column total when nothing is negative.
+    pub fn pos_total(&self) -> f64 {
+        self.pos
+    }
+
+    pub fn neg_total(&self) -> f64 {
+        self.neg
     }
 }
 
@@ -4286,15 +4568,22 @@ mod axis_title_tests {
     fn value_ticks_run_outward_from_the_axis_edge_on_each_row() {
         let t = ticks(serde_json::json!({"visible": true, "color": "#112233", "width": 2.0}));
         let mut left = String::new();
-        emit_value_ticks(&mut left, &t, [tick_row(10.0, 3.4)], 50.5, -1.0, 6.0);
+        emit_value_ticks(&mut left, &t, [tick_row(10.0, 3.4)], 50.5, -1.0, 6.0).unwrap();
         assert_eq!(
             left,
             "<line x1=\"44.50\" y1=\"13.50\" x2=\"50.50\" y2=\"13.50\" \
              stroke=\"#112233\" stroke-width=\"2\"/>"
         );
         let mut right = String::new();
-        emit_value_ticks(&mut right, &t, [13.5], 50.5, 1.0, 6.0);
+        emit_value_ticks(&mut right, &t, [13.5], 50.5, 1.0, 6.0).unwrap();
         assert!(right.contains("x1=\"50.50\"") && right.contains("x2=\"56.50\""));
+    }
+
+    #[test]
+    fn a_tick_without_an_ink_refuses_by_name() {
+        let t = ticks(serde_json::json!({"visible": true}));
+        let err = emit_value_ticks(&mut String::new(), &t, [13.5], 50.5, 1.0, 6.0).unwrap_err();
+        assert_eq!(err, "axis: ticks.color absent (theme required)");
     }
 
     fn ticks(json: serde_json::Value) -> AxisTicks {
@@ -4823,6 +5112,22 @@ mod labels_expr_tests {
     }
 }
 
+/// A color channel's legend/palette domain: the distinct values, sorted the
+/// way Vega-Lite's nominal scale sorts an unpinned domain.
+pub fn color_domain_of<'a>(
+    rows: impl IntoIterator<Item = &'a serde_json::Map<String, Value>>,
+    color_field: &str,
+) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut domain: Vec<String> = rows
+        .into_iter()
+        .map(|row| row_str(row, color_field))
+        .filter(|v| seen.insert(v.clone()))
+        .collect();
+    domain.sort();
+    domain
+}
+
 /// `resolved_channels.<name>`: the resolver's style channel. `mode` is the
 /// only field every family's rejection guard reads (`"conditional"` is
 /// retired from every family's own paint path — table/kpi read
@@ -4837,6 +5142,34 @@ pub struct StyleChannel {
     /// that predates the flag, which then says neither.
     #[serde(default)]
     pub quantitative_data: Option<bool>,
+    /// A gradient-mode channel's scale (`ResolvedScaleTarget`).
+    #[serde(default)]
+    pub scale: Option<ScaleTarget>,
+}
+
+/// `ResolvedScaleTarget` (`resolve_hinge`/`compute_scale_domain`/
+/// `interpolate_scale_color` all take this as `target`): the palette (a Vega
+/// scheme name, or color stops: a named palette's already baked into
+/// `resolved_stops`, or an inline list in `palette`), its authored bounds and
+/// diverging pivot. A table cell paints no legend, so only a chart reads
+/// `nice`.
+#[derive(Deserialize, Clone)]
+pub struct ScaleTarget {
+    pub palette: Value,
+    #[serde(default)]
+    pub resolved_stops: Option<Vec<String>>,
+    #[serde(default)]
+    pub min: Option<f64>,
+    #[serde(default)]
+    pub max: Option<f64>,
+    #[serde(default)]
+    pub nice: bool,
+    #[serde(default)]
+    pub null_color: Option<String>,
+    /// A number, or `"auto"`.
+    #[serde(default)]
+    pub hinge: Option<Value>,
+    pub arm_mode: String,
 }
 
 /// Board-wide value→palette-slot binding for one categorical field —
@@ -4888,9 +5221,24 @@ pub fn category_color(scale: &CategoryColorScale, value: &str, palette: &[String
     Ok(palette[slot].clone())
 }
 
-/// The INK `value`'s companion carries: always the slot, never the override
-/// — mirrors `ink_at` (a literal fill has no companion of its own).
-pub fn category_ink(scale: &CategoryColorScale, value: &str, companions: &[String]) -> Result<String, String> {
+/// The INK `value`'s fill pairs with: the palette slot's companion, except a
+/// value pinned to a color outside the palette, which takes that pinned
+/// color's own ink from `pin_companions` (`(pinned color, ink)` pairs,
+/// `series_label.pin_companions`). A pin the pairs do not cover refuses.
+pub fn category_ink(
+    scale: &CategoryColorScale,
+    value: &str,
+    companions: &[String],
+    pin_companions: &[(String, String)],
+) -> Result<String, String> {
+    if let Some(pinned) = scale.overrides.get(value) {
+        return pin_companions
+            .iter()
+            .find_map(|(color, ink)| (color == pinned).then(|| ink.clone()))
+            .ok_or_else(|| {
+                format!("`{value}` is pinned to {pinned}, which has no entry in pin_companions.")
+            });
+    }
     let slot = slot_for(scale, value, companions.len())?;
     Ok(companions[slot].clone())
 }
@@ -4927,7 +5275,7 @@ pub fn series_color(
 
 /// The companion ink `value`'s fill pairs with, mirroring
 /// `companion_color_for_fill`/`ink_at`'s pair: the board scale's slot when
-/// bound (never the override — a companion always indexes the slot), else
+/// bound (or the pinned color's own ink, see [`category_ink`]), else
 /// this chart's own positional companion at the same index `series_color`
 /// used for the fill — and, past the companion list's end, the FILL itself,
 /// exactly as `companion_color_for_fill` returns `fill` when `index >=
@@ -4937,10 +5285,11 @@ pub fn series_ink(
     palette_domain: &[String],
     palette: &[String],
     companions: &[String],
+    pin_companions: &[(String, String)],
     scale: Option<&CategoryColorScale>,
 ) -> Result<String, String> {
     if let Some(scale) = scale {
-        return category_ink(scale, value, companions);
+        return category_ink(scale, value, companions, pin_companions);
     }
     let idx = palette_domain
         .iter()
@@ -4955,6 +5304,24 @@ pub fn series_ink(
     }
 }
 
+/// A non-stacked per_series cell's ink: the companion at the series' rank in
+/// the sorted series list, wrapping past the list's end
+/// (`support_table_attachment.py`'s `alpha_index`). No board scale is read.
+pub fn alphabetical_companion_ink(
+    value: &str,
+    series_order: &[String],
+    companions: &[String],
+) -> Result<String, String> {
+    if companions.is_empty() {
+        return Err("internal error - empty dark companion palette".to_string());
+    }
+    let rank = series_order
+        .iter()
+        .filter(|s| s.as_str() < value)
+        .count();
+    Ok(companions[rank % companions.len()].clone())
+}
+
 #[cfg(test)]
 mod category_color_tests {
     use super::*;
@@ -4966,6 +5333,15 @@ mod category_color_tests {
 
     fn pal(hexes: &[&str]) -> Vec<String> {
         hexes.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn alphabetical_companion_ink_ranks_sorted_and_wraps() {
+        let order: Vec<String> = ["b", "c", "a"].iter().map(|s| s.to_string()).collect();
+        let comp = pal(&["#1", "#2"]);
+        assert_eq!(alphabetical_companion_ink("a", &order, &comp).unwrap(), "#1");
+        assert_eq!(alphabetical_companion_ink("b", &order, &comp).unwrap(), "#2");
+        assert_eq!(alphabetical_companion_ink("c", &order, &comp).unwrap(), "#1");
     }
 
     /// A value's board slot wins over its chart-local (e.g. alphabetical)
@@ -5003,17 +5379,22 @@ mod category_color_tests {
         assert_eq!(category_color(&s, "North", &palette).unwrap(), "#custom");
     }
 
-    /// The companion ink never reads the override — it always indexes the
-    /// slot, mirrors `ink_at`.
+    /// A pinned value takes its pinned color's own ink, never the slot's
+    /// companion; an unpinned value indexes its slot; a pin with no baked ink
+    /// refuses.
     #[test]
-    fn ink_never_reads_the_override() {
+    fn a_pinned_value_takes_its_pinned_colors_ink() {
         let s = scale(json!({
             "field": "region",
-            "slots": {"North": 1},
+            "slots": {"North": 1, "South": 0},
             "overrides": {"North": "#custom"}
         }));
         let companions = pal(&["#dark0", "#dark1"]);
-        assert_eq!(category_ink(&s, "North", &companions).unwrap(), "#dark1");
+        let pins = vec![("#custom".to_string(), "#darkcustom".to_string())];
+        assert_eq!(category_ink(&s, "North", &companions, &pins).unwrap(), "#darkcustom");
+        assert_eq!(category_ink(&s, "South", &companions, &pins).unwrap(), "#dark0");
+        let err = category_ink(&s, "North", &companions, &[]).unwrap_err();
+        assert!(err.contains("North") && err.contains("#custom"), "{err}");
     }
 
     /// No board scale for the field: falls back to this chart's own
@@ -5038,7 +5419,7 @@ mod category_color_tests {
         let domain = vec!["East".to_string()];
         let err = series_color("Ghost", &domain, &palette, None, "#ccc").unwrap_err();
         assert!(err.contains("Ghost"), "{err}");
-        let err = series_ink("Ghost", &domain, &palette, &palette, None).unwrap_err();
+        let err = series_ink("Ghost", &domain, &palette, &palette, &[], None).unwrap_err();
         assert!(err.contains("Ghost"), "{err}");
     }
 
@@ -5061,19 +5442,14 @@ mod category_color_tests {
         assert!(err.contains("slot 2") && err.contains("only 2"), "{err}");
     }
 
-    /// The companion ink follows the board slot too, ignoring an override
-    /// (an override has no companion of its own) and the chart-local order.
+    /// The companion ink follows the board slot, not the chart-local order.
     #[test]
-    fn series_ink_follows_the_board_slot_not_the_override_or_local_order() {
-        let s = scale(json!({
-            "field": "region",
-            "slots": {"East": 3},
-            "overrides": {"East": "#custom"}
-        }));
+    fn series_ink_follows_the_board_slot_not_the_local_order() {
+        let s = scale(json!({"field": "region", "slots": {"East": 3}, "overrides": {}}));
         let companions = pal(&["#d0", "#d1", "#d2", "#d3"]);
         let domain = vec!["East".to_string()]; // local index 0, board slot 3
         assert_eq!(
-            series_ink("East", &domain, &companions, &companions, Some(&s)).unwrap(),
+            series_ink("East", &domain, &companions, &companions, &[], Some(&s)).unwrap(),
             "#d3"
         );
     }
@@ -5085,8 +5461,8 @@ mod category_color_tests {
         let domain = pal(&["a", "b", "c"]);
         let palette = pal(&["#111", "#222", "#333"]);
         let companions = pal(&["#aaa"]);
-        assert_eq!(series_ink("a", &domain, &palette, &companions, None).unwrap(), "#aaa");
-        assert_eq!(series_ink("c", &domain, &palette, &companions, None).unwrap(), "#333");
+        assert_eq!(series_ink("a", &domain, &palette, &companions, &[], None).unwrap(), "#aaa");
+        assert_eq!(series_ink("c", &domain, &palette, &companions, &[], None).unwrap(), "#333");
     }
 }
 
@@ -5188,6 +5564,15 @@ mod format_slot_tests {
             let ticks: Vec<String> = [-1000.0, 0.0, 1000.0].iter().map(|&v| slot.paint_tick(v).unwrap()).collect();
             assert_eq!(ticks, expected, "{fmt}");
         }
+    }
+
+    /// Oracle: `quantitative_tick_labels` over `ResolvedFormat(spec="$,.0f")`:
+    /// the currency symbol in the spec leaves the zero tick like an affix does.
+    #[test]
+    fn a_plain_axis_zero_tick_drops_the_spec_currency_symbol() {
+        let slot = slot(json!({"spec": "$,.0f"}));
+        let ticks: Vec<String> = [-1000.0, 0.0, 1000.0].iter().map(|&v| slot.paint_tick(v).unwrap()).collect();
+        assert_eq!(ticks, ["\u{2212}$1,000", "0", "$1,000"]);
     }
 
     /// Oracle: `sign_affixed_expr` (`vl_field_maps.py:208`) over the same
@@ -5428,8 +5813,8 @@ mod measure_family_tests {
     #[test]
     fn serif_measures_under_the_authored_family_not_the_web_alias() {
         assert_eq!(
-            measure_family_stand_in("Source Serif 4 Web, Source Serif 4, Georgia, serif"),
-            "Source Serif 4, Georgia, serif"
+            measure_family_stand_in("'Source Serif 4 Web', 'Source Serif 4', Georgia, serif"),
+            "'Source Serif 4', Georgia, serif"
         );
         assert_eq!(measure_family_stand_in("Inter Variable, sans-serif"), "Inter");
     }
@@ -5488,5 +5873,53 @@ mod css_color_tests {
         for ok in ["#123456", "#fff", "red", "rgb(1, 2, 3)", "hsl(120 50% 40%)"] {
             assert_eq!(css_color(ok).unwrap(), ok);
         }
+    }
+}
+
+/// A cell's Python equality class: `1`, `1.0` and `True` are one key, an
+/// integral double equals the int it names, and `None` is its own key. A list
+/// or object cell (unhashable in Python) keys by its JSON text.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum PyKey {
+    None,
+    Int(i128),
+    Float(u64),
+    Str(String),
+}
+
+pub fn py_scalar_key(cell: &Value) -> PyKey {
+    match cell {
+        Value::Null => PyKey::None,
+        Value::Bool(b) => PyKey::Int(i128::from(*b)),
+        Value::String(s) => PyKey::Str(s.clone()),
+        Value::Number(n) if n.is_f64() => {
+            let x = n.as_f64().expect("an f64 number");
+            // Every JSON int fits in i128, so an integral double past it
+            // equals no int.
+            if x.fract() == 0.0 && x.abs() < 2f64.powi(127) {
+                PyKey::Int(x as i128)
+            } else {
+                PyKey::Float(x.to_bits())
+            }
+        }
+        Value::Number(n) => PyKey::Int(n.as_i64().map_or_else(|| i128::from(n.as_u64().expect("a u64")), i128::from)),
+        Value::Array(_) | Value::Object(_) => PyKey::Str(cell.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod distinct_values_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn rows(values: Vec<Value>) -> Vec<serde_json::Map<String, Value>> {
+        values.into_iter().map(|v| json!({"x": v}).as_object().unwrap().clone()).collect()
+    }
+
+    /// `1`, `1.0` and `True` are one Python key; `"1"`, `None` and `""` are three more.
+    #[test]
+    fn distinct_values_follow_pythons_equality() {
+        let cells = rows(vec![json!(1), json!(1.0), json!(true), json!("1"), json!(null), json!("")]);
+        assert_eq!(distinct_values(&cells, "x"), 4);
     }
 }

@@ -102,6 +102,33 @@ def test_column_edges_right_plot_gutter_pushes_the_whole_block_away_from_the_plo
 # =============================================================================
 
 
+def test_attach_columns_without_a_category_y_encoding_raises_its_registered_code():
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError
+
+    spec = _hbar_spec()
+    spec["encoding"].pop("y")
+    table = _table([ResolvedSupportTableSource(source="revenue", format="$.2s")])
+    numerals = plain_numerals(table, "Inter", [[]] * len(table.entries))
+    with pytest.raises(ChartDataError) as exc:
+        attach_support_table_columns(
+            spec,
+            support_table=table,
+            style=_dt_style(position="left"),
+            entry_numerals=numerals,
+            value_formats=[e.format for e in table.entries],
+            column_widths=[60.0],
+            column_headers=["Revenue"],
+            category_field="region",
+            color_field=None,
+            series_order=None,
+            dark_fills=None,
+            header_fills=None,
+            axis_y_orient="left",
+        )
+    assert exc.value.code is not None
+    assert exc.value.code.code == "ERR-SUPPORT-TABLE-NO-Y-ENCODING"
+
+
 def test_attach_columns_source_entry_emits_cell_and_header():
     spec = _hbar_spec()
     table = _table([ResolvedSupportTableSource(source="revenue", format="$.2s")])
@@ -837,7 +864,7 @@ def _per_series_cell_fills(
     ]
     board_style, ctx = resolve_style_and_context(
         get_theme_style(),
-        *([StylePatch.model_validate(board_patch)] if board_patch else []),
+        StylePatch.model_validate(board_patch) if board_patch else None,
     )
     resolve(chart, data, chart_style_context=ctx)
     spec = generate_vega_lite_spec(

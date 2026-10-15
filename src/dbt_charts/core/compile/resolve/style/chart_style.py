@@ -79,6 +79,18 @@ def _chart_style_has_overrides(
     return any(v is not None for v in style.model_dump().values())
 
 
+# Chart type -> family slot whose board-tier `background` is the chart's fill.
+# Limited to the radial and map families: callout's theme default is `by_tone`,
+# not a fill.
+_BOARD_BACKGROUND_SLOT: dict[str, str] = {
+    "pie": "pie",
+    "donut": "pie",
+    "geoshape": "geoshape",
+    "map": "geoshape",
+    "point_map": "point_map",
+    "bubble_map": "point_map",
+}
+
 # Fields that cascade global -> theme family (picked by chart.type) -> chart-local.
 # Inherit can't express this: its source path is fixed, the family is runtime data.
 _FAMILY_THEN_LOCAL_FIELDS: tuple[str, ...] = ("legend", "title")
@@ -190,9 +202,22 @@ def merge_chart_style(
             single_series_palette=base_charts.single_series_palette,
         )
 
-    if not _chart_style_has_overrides(chart_style_patch) and all(
-        _family_field_patch(base_charts, chart_type, f) is None
-        for f in _FAMILY_THEN_LOCAL_FIELDS
+    # A board-tier family background sits between the global background and the
+    # chart's own; an unauthored family slot is None, so non-None means authored.
+    _background_slot = _BOARD_BACKGROUND_SLOT.get(chart_type_raw)
+    _family_background = (
+        getattr(base_charts, _background_slot).background
+        if _background_slot is not None
+        else None
+    )
+
+    if (
+        not _chart_style_has_overrides(chart_style_patch)
+        and _family_background is None
+        and all(
+            _family_field_patch(base_charts, chart_type, f) is None
+            for f in _FAMILY_THEN_LOCAL_FIELDS
+        )
     ):
         return {}
 
@@ -328,6 +353,8 @@ def merge_chart_style(
     _background = getattr(
         primary, "background", None
     )  # type-state: silent_fallback — the patch is a per-family union; families without the slot legitimately lack the attribute
+    if _background is None:
+        _background = _family_background
     if _background is not None:
         overrides["background"] = _background
         # Composite over board_canvas, not ink_canvas (the CHART canvas) --

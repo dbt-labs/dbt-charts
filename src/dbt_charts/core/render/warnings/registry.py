@@ -51,6 +51,7 @@ import dbt_charts.core.render.warnings.kpi_align_overflow as kpi_align_overflow
 import dbt_charts.core.render.warnings.kpi_inline_fallback as kpi_inline_fallback
 import dbt_charts.core.render.warnings.kpi_label_truncated as kpi_label_truncated
 import dbt_charts.core.render.warnings.kpi_support_truncated as kpi_support_truncated
+import dbt_charts.core.render.warnings.layer_data_outside_domain as layer_data_outside_domain
 import dbt_charts.core.render.warnings.layer_x_domain_paint_order as layer_x_domain_paint_order
 import dbt_charts.core.render.warnings.layered_chart_shared_y_axis_scale_mismatch as layered_chart_shared_y_axis_scale_mismatch
 import dbt_charts.core.render.warnings.layout_min_exceeds_height as layout_min_exceeds_height
@@ -129,6 +130,7 @@ _DATA_DETECTORS: list[ModuleType] = [
     area_unstacked_reads_as_stacked,
     category_color_pin_unseen,
     dual_axis_competing_scales,
+    layer_data_outside_domain,
     layered_chart_shared_y_axis_scale_mismatch,
     legend_values_unresolved,
     likely_currency_or_percent_missing_formatter,

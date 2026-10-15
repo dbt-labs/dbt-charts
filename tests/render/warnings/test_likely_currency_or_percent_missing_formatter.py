@@ -6,14 +6,15 @@ Detection rule:
     carries '%', currency carries '$'; the SI default '~s' suits neither).
 
 Currency name signals: ends in _usd, _dollars, _revenue, _amount, _price,
-  _cost, _spend, _value, _gmv, _arr, _mrr; contains 'revenue', 'dollars', 'usd';
+  _cost, _spend, _gmv, _arr, _mrr; contains 'revenue', 'dollars', 'usd';
   or is bare 'usd'/'dollars'/'revenue'/'price'/'gmv'/'arr'/'mrr'.
 
 Percent name signals: ends in _pct, _percent, _percentage, _rate, _share;
   contains 'percent'; or is bare 'pct'/'percent'/'percentage'/'share'.
 
 Bare 'value'/'amount'/'rate'/'cost'/'spend' do NOT match (no unit meaning on
-their own) — only their `_`-prefixed suffix form does.
+their own) — only their `_`-prefixed suffix form does, except `_value`, which
+is too weak a money signal (`index_value` is a rebased index).
 
 Skip: charts whose type implies no y-axis (kpi, table, callout, text, markdown, pivot).
 Once any layer pins axis_y.position the y axes resolve independently: a layer is
@@ -344,11 +345,17 @@ def test_bare_currency_field_name_no_format_fires() -> None:
 
 def test_bare_generic_metric_names_no_warning() -> None:
     """Bare value/amount/rate/cost/spend must NOT fire; only their
-    `_`-prefixed suffix form (`_value`, `_amount`, ...) still matches."""
+    `_`-prefixed suffix form (`_amount`, ...) still matches."""
     for name in ("value", "amount", "rate", "cost", "spend"):
         chart = _make_chart(y=name)
         ctx = _make_ctx(chart)
         assert detector.detect(ctx) == [], f"{name!r} must not fire bare"
+
+
+def test_index_value_field_name_no_warning() -> None:
+    """`_value` is not a money signal: an index rebased to 100 must not warn."""
+    for name in ("index_value", "deal_value"):
+        assert detector.detect(_make_ctx(_make_chart(y=name))) == [], name
 
 
 def test_percent_field_with_currency_prefix_still_fires() -> None:

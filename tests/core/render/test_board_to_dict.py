@@ -236,6 +236,7 @@ _OMITTED_FROM_PROJECTION = {
     "panel_axes": "derived small-multiples partition; no authored counterpart (see `multiples`)",
     "variable_dependencies": "internal dependency set",
     "dark_companion_stops": "derived dark-mode palette companion",
+    "pin_companions": "derived dark-mode ink of each pinned color",
     "resolution_width": "pie layout finalization input",
     "outer_fraction": "resolved pie wheel geometry",
     "attached_table_gap": "resolved pie attachment geometry",

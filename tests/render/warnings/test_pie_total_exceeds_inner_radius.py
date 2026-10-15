@@ -109,10 +109,6 @@ def test_no_fire_when_total_fits() -> None:
     assert _warnings(_make_donut(), _WIDE_ROWS, 400, 300) == []
 
 
-def test_no_fire_when_total_none() -> None:
-    assert _warnings(_make_donut(total_format=None), _NARROW_ROWS, 88, 240) == []
-
-
 def test_no_fire_when_total_not_visible() -> None:
     chart = _make_donut(total=ChartTotal(visible=False))
     assert _warnings(chart, _NARROW_ROWS, 88, 240) == []

@@ -1,0 +1,3 @@
+kind: Fixes
+body: A horizontal bar with multiples.columns no longer repeats its category labels at the far right of the board.
+time: 2026-10-14T21:55:32.030628-07:00

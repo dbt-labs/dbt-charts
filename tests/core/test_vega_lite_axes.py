@@ -705,6 +705,27 @@ class TestAxisYLabelAlignInvasion:
         spec = generate_vega_lite_spec(chart, data)
         assert "labelAlign" not in spec["encoding"]["y"]["axis"]
 
+    def test_own_side_align_with_currency_spec_keeps_its_measured_gutter(
+        self, make_chart
+    ):
+        """The bare-zero ``labelExpr`` a ``$`` spec composes is measurable, so
+        the own-side align survives with a measured ``labelPadding``."""
+        chart = make_chart(
+            "line",
+            x="month",
+            y="revenue",
+            style=LineChartStylePatch(
+                axis_y=AxisYStylePatch(
+                    position="right",
+                    labels=AxisLabelStylePatch(align="right", format="$,.0f"),
+                ),
+            ),
+        )
+        data = [{"month": "Jan", "revenue": 100}, {"month": "Feb", "revenue": 300}]
+        axis = generate_vega_lite_spec(chart, data)["encoding"]["y"]["axis"]
+        assert axis["labelAlign"] == "right"
+        assert axis["labelPadding"] > 0
+
     def test_own_side_align_with_native_predefined_format_falls_back(self, make_chart):
         """A PREDEFINED_NATIVE format name (e.g. "percent_number") bypasses
         d3 entirely -- it paints via a Python lambda (KPI/table slots only),
@@ -969,7 +990,7 @@ class TestAxisYLabelAlignInvasion:
             {"category": "B", "series": "Y", "value": 4_000_000},
         ]
         resolved = _resolve_bar(
-            chart, partition(None, data), ctx, 800.0, {}, None, None
+            chart, partition(None, data), ctx, 800.0, 800.0, {}, None, None
         )
         ay = resolved.style.axis_y
         # The bake sets domain=[0.0, 1.0] on the resolved axis scale.
@@ -1019,7 +1040,7 @@ class TestAxisYLabelAlignInvasion:
             {"category": "B", "series": "Y", "value": 4_000_000},
         ]
         resolved = _resolve_area(
-            chart, partition(None, data), ctx, 800.0, {}, None, None
+            chart, partition(None, data), ctx, 800.0, 800.0, {}, None, None
         )
         ay = resolved.style.axis_y
         assert ay.scale is not None, "normalize-stack must bake a scale onto the axis"

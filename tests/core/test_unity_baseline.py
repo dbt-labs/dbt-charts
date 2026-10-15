@@ -378,10 +378,13 @@ def test_unity_rule_renders_as_one_visible_horizontal_line() -> None:
 
     spec = _spec("line", _RATIO_DATA, style=style)
     svg = vlc.vegalite_to_svg(spec)
-    rule_lines = re.findall(
-        r'<line[^>]*aria-roledescription="rule mark"[^>]*>',
-        svg,
-    )
+    rule_lines = [
+        line
+        for group in re.findall(
+            r'<g [^>]*class="mark-rule role-mark[^>]*>.*?</g>', svg, re.S
+        )
+        for line in re.findall(r"<line[^>]*>", group)
+    ]
 
     assert len(rule_lines) == 1
 

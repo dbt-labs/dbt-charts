@@ -32,7 +32,6 @@ from dbt_charts.core.compile.models.factories import (
     build_patch_model_ext,
     register_patch,
 )
-from dbt_charts.core.compile.models.markers import NotInherited
 from dbt_charts.core.compile.models.style.authored.table import (
     PaginationConfig,
     TableChartStylePatch,
@@ -150,7 +149,7 @@ DimensionLabelStylePatch = build_patch_model(DimensionLabelStyle)
 # ── Axis variant patches ──────────────────────────────────────────────────────
 # Five axis-variant patches, each typed to the matching authored slot so extra
 # fields on the wrong variant raise at validation time.
-# TYPE_CHECKING stubs give mypy proper class definitions — at runtime
+# TYPE_CHECKING stubs give pyright proper class definitions — at runtime
 # build_patch_model generates the actual Pydantic model.
 if TYPE_CHECKING:
 
@@ -359,8 +358,8 @@ class StylePatch(_StylePatchBase):
     """Authored overlay for Style: all fields optional."""
 
     # Redeclared (not generated) because a float has no patch class to carry the
-    # shorthand; NotInherited repeats Style.gap's.
-    gap: Annotated[
+    # shorthand.
+    gap: (
         Annotated[
             float,
             BeforeValidator(
@@ -371,9 +370,8 @@ class StylePatch(_StylePatchBase):
                 | float,
             ),
         ]
-        | None,
-        NotInherited(),
-    ] = Field(default=None, description=Style.model_fields["gap"].description)
+        | None
+    ) = Field(default=None, description=Style.model_fields["gap"].description)
 
 
 # BaseAxisGridStylePatch / AxisDomainStylePatch / AxisElementStylePatch are
@@ -395,7 +393,7 @@ TotalSlotStylePatch = build_patch_model(TotalSlotStyle)
 TotalStylePatch = build_patch_model(TotalStyle)
 GlobalMarksStylePatch = build_patch_model(GlobalMarksStyle)
 
-# TYPE_CHECKING stub mirrors the variant-axis-patch pattern — gives mypy a
+# TYPE_CHECKING stub mirrors the variant-axis-patch pattern — gives pyright a
 # proper class (with accurate field names from LegendStyle) while the runtime
 # uses the dynamically created patch model from build_patch_model().
 if TYPE_CHECKING:
@@ -440,7 +438,7 @@ else:
 # build_patch_model recurses: LineLayerStyle{marks: LineChartMarksStyle} →
 # LineLayerStylePatch{marks: LineChartMarksStylePatch | None}.
 # TYPE_CHECKING stubs mirror the axis-variant-patch / LegendStylePatch pattern so
-# mypy sees a valid class while the runtime uses the dynamically-created model.
+# pyright sees a valid class while the runtime uses the dynamically-created model.
 if TYPE_CHECKING:
 
     class LineLayerStylePatch(LineLayerStyle):

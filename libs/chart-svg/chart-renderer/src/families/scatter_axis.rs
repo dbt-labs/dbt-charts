@@ -46,6 +46,8 @@ pub(crate) struct TemporalXAxis {
     /// An authored `labels.align` wins over every derived anchor.
     align: Option<String>,
     parity: bool,
+    /// The labels measured when skip/tilt were tried and they still collide.
+    pub(crate) collision: Option<usize>,
     labels: Vec<AxisLabel>,
     font_size: f64,
     family: String,
@@ -96,8 +98,10 @@ impl TemporalXAxis {
         if authored_tu.is_some_and(|v| v.as_str().and_then(parse_authored_time_unit) != Some(data_tu)) {
             return Err("scatter: an authored axis_x.time_unit other than the data's own grain is not supported".into());
         }
-        crate::families::temporal::refuse_authored_time_format("scatter", labels_cfg.spec())?;
-        crate::families::temporal::refuse_grain_format("scatter", &ax_x.grain_formats, data_tu)?;
+        let authored = crate::families::temporal::AuthoredTimeFormat::parse_for_vega_labels(
+            "scatter",
+            crate::families::temporal::axis_time_format(labels_cfg.spec(), &ax_x.grain_formats, Some(data_tu)),
+        )?;
         if ax_x.fiscal_year_start_month != 1 && data_tu.is_fiscal_sensitive() {
             return Err(format!(
                 "scatter: a date x at the {data_tu:?} grain under a non-calendar \
@@ -124,7 +128,7 @@ impl TemporalXAxis {
             overlap.is_some_and(|o| o.tilt),
             labels_cfg.tilt_increments.as_deref(),
             font_size,
-            None,
+            authored,
             &mut measure,
         )?;
         // An authored angle bypasses the tilt ladder and rotates every label.
@@ -153,6 +157,7 @@ impl TemporalXAxis {
             angle,
             align: labels_cfg.align.clone(),
             parity: resolved.parity,
+            collision: resolved.collision,
             labels,
             font_size,
             family,
@@ -163,7 +168,7 @@ impl TemporalXAxis {
             separation: labels_cfg.min_gap.unwrap_or(0.0),
             tick_len: ticks.length.unwrap_or(6.0),
             ticks_visible: ticks.visible.unwrap_or(true),
-            tick_color: ticks.color.as_deref().unwrap_or("#D0D3D9").to_string(),
+            tick_color: crate::common::required_ink(ticks.color.as_deref(), "scatter_axis", "ticks.color")?.to_string(),
             tick_width: ticks.width.unwrap_or(1.0),
             axis_offset: ticks.offset.unwrap_or(0.0),
             title_text,
@@ -250,7 +255,7 @@ impl TemporalXAxis {
 
     /// Ticks, labels and title, positioned against a plot at `plot_left` of
     /// width `plot_w` whose bottom edge is `plot_bottom`.
-    pub(crate) fn paint(&self, svg: &mut String, ax_x: &AxisStyle, plot_left: f64, plot_w: f64, plot_bottom: f64) {
+    pub(crate) fn paint(&self, svg: &mut String, ax_x: &AxisStyle, plot_left: f64, plot_w: f64, plot_bottom: f64) -> Result<(), String> {
         let fs = self.font_size;
         // The drawn axis group is translated by half a pixel so 1px strokes
         // land on a pixel boundary; the fit measures the ink before it.
@@ -327,5 +332,6 @@ impl TemporalXAxis {
         let title_y = anchor_y + reach + ax_x.title.padding.unwrap_or(10.0) + vega_fit::baseline_shift("top", title_fs);
         crate::common::emit_axis_title_at(svg, &self.title_text, &ax_x.title, plot_left + plot_w / 2.0, title_y, self.title_key);
         crate::contract::axis_group_close(svg);
+        Ok(())
     }
 }

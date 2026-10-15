@@ -51,6 +51,9 @@ from __future__ import annotations
 from typing import Any
 
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import (
+    ERR_STEP_BAND_MULTI_SERIES,
+)
 
 BAND_STEP_CURVE = "step"
 
@@ -127,12 +130,7 @@ def apply_step_band(
     # (``datum``) or constant (``value``) color is fine.
     color_enc = encoding.get("color")
     if isinstance(color_enc, dict) and color_enc.get("field"):
-        raise ChartDataError(
-            f"curve: step does not support a multi-series color encoding on a "
-            f"band x-axis (chart '{chart_id}'). It is a single-series "
-            f"target-overlay idiom; drop the color split or pick a different curve.",
-            chart_id=chart_id,
-        )
+        raise ChartDataError.from_code(ERR_STEP_BAND_MULTI_SERIES, chart_id=chart_id)
 
     doubled: list[dict[str, Any]] = []
     for row in rows:

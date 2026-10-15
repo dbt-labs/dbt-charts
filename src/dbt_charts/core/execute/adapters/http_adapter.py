@@ -79,7 +79,7 @@ class HttpAdapter(BaseAdapter):
         >>> result = adapter.execute(query, {"token": "xyz"})
     """
 
-    def __init__(self, timeout: int = 30, allow_mutating_methods: bool = False):
+    def __init__(self, timeout: int = 30, allow_mutating_methods: bool = False) -> None:
         """Initialize HTTP adapter.
 
         Args:

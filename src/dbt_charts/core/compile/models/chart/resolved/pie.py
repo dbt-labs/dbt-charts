@@ -61,6 +61,14 @@ class ResolvedPieChart(_PieResolvedChartFields):
             "present, a single static fill otherwise."
         ),
     )
+    pin_companions: tuple[tuple[str, str], ...] = Field(
+        description=(
+            "Slice label ink for each color a `category_colors` pin names, as "
+            "(pinned color, ink) pairs derived against the chart's canvas the "
+            "way the palette's label ink is, so a slice pinned to a color "
+            "outside the palette is labeled in that color's ink."
+        ),
+    )
     resolution_width: float = Field(
         description="Card width used to finalize pie presentation policy.",
     )

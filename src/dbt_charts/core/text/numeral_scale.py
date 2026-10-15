@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from d3_format import FormatSpec, parse as _d3_parse
+from d3_format.errors import D3FormatError
 from dbt_charts.core.text.format_d3 import (
     Notation,
     active_format_locale,
@@ -50,6 +51,10 @@ _TIERS: tuple[int, ...] = tuple(_D3_PREFIX_BY_EXPONENT)
 # instantly at six characters, and the Economist corpus survey found a
 # magnitude suffix reaching a tick twice in 61 pages.
 _COMPACTION_DIGIT_THRESHOLD = 6
+
+# What an unformatted column prints when its vote declines to compact: grouped
+# digits to the most precision a cell can carry, trimmed so whole values stay whole.
+UNCOMPACTED_COLUMN_SPEC = ",.6~f"
 
 # Once the magnitude is chosen, the extreme value rendered at that scale
 # reaching this many integer digits means the ladder/column has outgrown its
@@ -603,6 +608,23 @@ def with_symbol(digit_spec: str, symbol: str) -> str:
     already correct without it.
     """
     return str(dataclasses.replace(_d3_parse(digit_spec), symbol=symbol))
+
+
+def has_symbol(spec: str) -> bool:
+    """Whether ``spec`` carries d3's ``$`` currency flag. A native name or time
+    directive is no d3 spec and carries none."""
+    try:
+        return _d3_parse(spec).symbol == "$"
+    except D3FormatError:
+        return False
+
+
+def without_symbol(spec: str) -> str:
+    """``spec`` without its ``$`` currency flag: the digits a bare zero tick
+    paints."""
+    if not has_symbol(spec):
+        return spec
+    return str(dataclasses.replace(_d3_parse(spec), symbol=""))
 
 
 def non_compacting_tick_format(

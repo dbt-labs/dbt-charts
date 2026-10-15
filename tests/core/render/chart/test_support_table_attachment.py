@@ -2286,8 +2286,9 @@ def test_attach_layered_spec_with_no_x_anywhere_raises_chart_data_error():
         ],
     }
     table = _table([ResolvedSupportTableSource(source="revenue", format="$.2s")])
-    with pytest.raises(ChartDataError, match="x-encoding"):
+    with pytest.raises(ChartDataError, match="x-encoding") as exc_info:
         _attach(spec, table)
+    assert exc_info.value.code.code == "ERR-SUPPORT-TABLE-NO-X-ENCODING"
 
 
 def test_attach_layered_spec_with_disagreeing_layer_x_raises_chart_data_error():
@@ -2319,8 +2320,9 @@ def test_attach_layered_spec_with_disagreeing_layer_x_raises_chart_data_error():
         ],
     }
     table = _table([ResolvedSupportTableSource(source="revenue", format="$.2s")])
-    with pytest.raises(ChartDataError, match="per-layer"):
+    with pytest.raises(ChartDataError, match="per-layer") as exc_info:
         _attach(spec, table)
+    assert exc_info.value.code.code == "ERR-SUPPORT-TABLE-X-FIELD-DISAGREE"
 
 
 def test_attach_layered_spec_with_independent_x_scale_raises_chart_data_error():
@@ -2352,8 +2354,9 @@ def test_attach_layered_spec_with_independent_x_scale_raises_chart_data_error():
         ],
     }
     table = _table([ResolvedSupportTableSource(source="revenue", format="$.2s")])
-    with pytest.raises(ChartDataError, match="independent"):
+    with pytest.raises(ChartDataError, match="independent") as exc_info:
         _attach(spec, table)
+    assert exc_info.value.code.code == "ERR-SUPPORT-TABLE-INDEPENDENT-X"
 
 
 def test_bottom_position_row_y_is_below_spec_height():

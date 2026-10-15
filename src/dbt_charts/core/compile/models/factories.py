@@ -27,18 +27,60 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    ValidationInfo,
     create_model,
     model_validator,
 )
 from pydantic_core import PydanticUndefinedType
 
-from dbt_charts.core.compile.models.markers import ResetOnSet
+from dbt_charts.core.compile.models.markers import Absent, ResetOnSet
 
 FontAlias = Annotated[str, Field(description="Name of a ``style.fonts`` entry.")]
 
 
+AUTHORED_INPUT = {"authored": True}
+
+
 class _PatchBase(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    # Only authored input (AUTHORED_INPUT context) rejects an explicit null:
+    # internal round trips through a patch carry None on every unset leaf.
+    rejects_null: ClassVar[bool] = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_null_on_valued_fields(
+        cls,
+        value: Any,  # type-state: explicit_any — raw pre-validation patch value
+        info: ValidationInfo,
+    ) -> Any:  # type-state: explicit_any — passes non-mapping input through
+        if (
+            not cls.rejects_null
+            or not isinstance(value, dict)
+            or not isinstance(info.context, dict)
+            or not info.context.get("authored")
+        ):
+            return value
+        for name, field in cls.model_fields.items():
+            key = name if field.alias is None else field.alias
+            if (
+                key in value
+                and value[key] is None
+                and not any(isinstance(meta, Absent) for meta in field.metadata)
+            ):
+                raise ValueError(
+                    f"{name}: null is not accepted here. Omit the key to leave "
+                    "the field unset."
+                )
+        return value
+
+
+class BoardPatchBase(_PatchBase):
+    """Base of ``BoardPatch``: a board-level null clears what a meta.yml or an
+    ``extends`` parent set."""
+
+    rejects_null: ClassVar[bool] = False
 
 
 class FontSlotBase(_PatchBase):

@@ -44,8 +44,8 @@ def _resolve(
     chart_def: dict[str, Any], board_patch: dict[str, Any] | None = None
 ) -> ResolvedChart:
     flat = normalize_chart("c1", chart_def, {"q": ValuesQuery(rows=_ROWS)}, sources={})
-    patches = [StylePatch.model_validate(board_patch)] if board_patch else []
-    ctx = resolve_chart_style_context(get_theme_style(), *patches)
+    patch = StylePatch.model_validate(board_patch) if board_patch else None
+    ctx = resolve_chart_style_context(get_theme_style(), patch)
     return resolve(flat, _ROWS, chart_style_context=ctx)
 
 

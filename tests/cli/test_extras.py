@@ -26,7 +26,7 @@ def _fake_find_spec_mcp_missing(name: str, *args, **kwargs):
 
 def _make_non_tty() -> io.StringIO:
     buf = io.StringIO("")
-    buf.isatty = lambda: False  # type: ignore[attr-defined]
+    buf.isatty = lambda: False
     return buf
 
 
@@ -36,7 +36,7 @@ class TestRequireExtras:
         from dbt_charts.cli._extras import require_extras
 
         with patch("importlib.util.find_spec", side_effect=_fake_find_spec_all_present):
-            result = require_extras("mcp")  # type: ignore[func-returns-value]
+            result = require_extras("mcp")
 
         assert result is None
 
@@ -134,7 +134,7 @@ class TestRequireExtras:
         from dbt_charts.cli._extras import require_extras
 
         tty_stdin = io.StringIO("")
-        tty_stdin.isatty = lambda: True  # type: ignore[attr-defined]
+        tty_stdin.isatty = lambda: True
         monkeypatch.setattr("sys.stdin", tty_stdin)
         monkeypatch.delenv("UV", raising=False)
         monkeypatch.delenv("DCT_NO_AUTO_INSTALL", raising=False)

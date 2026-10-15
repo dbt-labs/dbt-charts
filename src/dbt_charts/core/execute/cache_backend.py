@@ -56,7 +56,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Literal, Protocol, TypeAlias, runtime_checkable
+from typing import Any, Literal, Protocol, TypeAlias, get_args, runtime_checkable
 
 # Shared with executor.TruncationInfo.reason — the set of causes a cached
 # rows entry can carry. Defined here (not imported from executor) because
@@ -108,6 +108,13 @@ class CacheHit:
 
     def __post_init__(self) -> None:
         _require_aware(self.written_at, "CacheHit.written_at")
+        if self.truncated_reason is not None and self.truncated_reason not in get_args(
+            TruncatedReason
+        ):
+            raise ValueError(
+                f"CacheHit.truncated_reason must be one of "
+                f"{get_args(TruncatedReason)} or None, got {self.truncated_reason!r}"
+            )
 
 
 @dataclass(frozen=True)

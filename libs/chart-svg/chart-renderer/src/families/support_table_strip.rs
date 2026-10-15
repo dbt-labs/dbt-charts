@@ -1,11 +1,10 @@
 //! Attached `chart.support_table` strip — shared by `bar.rs`/`line.rs`.
 //!
 //! Ports the subset of `support_table_attachment.py` this renderer supports:
-//! `source`/`aggregate` entries (one text row each) plus a normal
-//! (`by_measure: false`) `per_series:` entry, which expands to one row per
-//! series in the caller's `series_order` — see `build_rows_composed`'s
-//! per_series branch. `by_measure: true` is refused (`parse_config`); a
-//! `per_series` entry also refuses on the legacy splice arm (`build_rows`)
+//! `source`/`aggregate` entries (one text row each; a `by_measure: true`
+//! `per_series:` entry is one, see `SupportTableEntry`) plus a `per_series:`
+//! entry, which expands to one row per series in the caller's `series_order`
+//! — see `build_rows_composed`'s per_series branch. A `per_series` entry also refuses on the legacy splice arm (`build_rows`)
 //! and when the caller has no color field/`series_order`
 //! (`build_rows_composed`). Every other entry becomes one text row of
 //! formatted values, one cell per x-domain position, plus a row label.
@@ -22,20 +21,18 @@
 //!   centering cell dx. Cells and stubs anchor from the value axis's orient.
 //! * **Legacy splice** (`build_rows`/`render_rows`/`wrap_with_strip`): the
 //!   pre-composed approximation kept for every sub-shape the composed arm
-//!   does not model (bottom strips, left-axis line/area, the rail concat) —
+//!   does not model (left-axis line/area, the rail concat) —
 //!   cells paint their full format spec per cell (production's own fallback
 //!   for an unanchored row), and the canvas grows by `strip_height` only,
 //!   without the autosize-pad chrome overshoot. Documented in `AGENTS.md`.
 //!
 //! Row-y convention: `_row_y_pixel` (`support_table_attachment.py`) measures
-//! every row/divider/inter-row-rule pixel from the plot edge (`spec_height`
-//! for `position: bottom`, `y=0` for `position: top`) — row 0 always
-//! closest to the plot. `row_y_base`/`divider_y_base` below reproduce those
+//! every row/divider/inter-row-rule pixel from the plot edge (`y=0` for
+//! `position: top`) — row 0 always closest to the plot. `row_y_base`/`divider_y_base` below reproduce those
 //! same formulas with the plot edge pinned at local origin 0 (i.e.
 //! `spec_height` fixed to 0.0); `to_local` then re-anchors that local origin
-//! into the strip's own drawn box (`[0, strip_h]` for top, translated by the
-//! caller to sit directly below the title; `[0, axis_offset + strip_h]` for
-//! bottom, translated to sit directly below the plot).
+//! into the strip's own drawn box (`[0, strip_h]`, translated by the caller
+//! to sit directly below the title).
 
 use crate::constants::layout::SUPPORT_TABLE_MAX_X_TICKS;
 use serde::Deserialize;
@@ -43,6 +40,8 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
+use crate::codes;
+use crate::diagnostic::Diagnostic;
 use crate::common::{row_str, slug_to_display, Divider, FormatSlot, GappedDivider, Font, SignPlacement};
 use crate::families::temporal::TimeUnit;
 use crate::svg::{xml_escape, xml_escape_attr, vega_escape_attr};
@@ -57,24 +56,56 @@ const ROW_HEIGHT_BASE: f64 = 14.0;
 // gutter the caller reserved for it.
 const LABEL_STUB_LIMIT_PX: f64 = 80.0;
 
+/// One `support_table` entry as the payload spells it. A `by_measure: true`
+/// `per_series` entry is one row reading that column directly, headed by its
+/// `label` or the raw column name: exactly a `source` entry, so it
+/// deserializes into one (`SupportTableEntry::from`).
+#[derive(Deserialize)]
+struct RawSupportTableEntry {
+    source: Option<String>,
+    aggregate: Option<String>,
+    #[serde(default)]
+    format: Option<FormatSlot>,
+    label: Option<String>,
+    per_series: Option<String>,
+    #[serde(default)]
+    by_measure: bool,
+}
+
 #[derive(Deserialize, Clone, Debug)]
+#[serde(from = "RawSupportTableEntry")]
 pub struct SupportTableEntry {
     pub source: Option<String>,
     pub aggregate: Option<String>,
     /// `None` when production's resolve-time bake left the format unset
     /// (`compile/support_table.py` only bakes a format when `entry.source ==
     /// y_field`) — render unformatted in that case, matching production.
-    #[serde(default)]
     pub format: Option<FormatSlot>,
     pub label: Option<String>,
     /// Presence signals a `per_series:` entry — the source column each
     /// expanded series row sums (`build_rows_composed`'s per_series branch).
     pub per_series: Option<String>,
-    /// A `per_series:` entry's single-row mode — one row reading
-    /// `per_series` directly instead of expanding to `series_order.len()`
-    /// rows. Unmodeled: refused at `parse_config`.
-    #[serde(default)]
-    pub by_measure: bool,
+}
+
+impl From<RawSupportTableEntry> for SupportTableEntry {
+    fn from(raw: RawSupportTableEntry) -> Self {
+        match raw.per_series {
+            Some(column) if raw.by_measure => SupportTableEntry {
+                label: Some(raw.label.unwrap_or_else(|| column.clone())),
+                source: Some(column),
+                aggregate: raw.aggregate,
+                format: raw.format,
+                per_series: None,
+            },
+            per_series => SupportTableEntry {
+                source: raw.source,
+                aggregate: raw.aggregate,
+                format: raw.format,
+                label: raw.label,
+                per_series,
+            },
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -114,22 +145,16 @@ pub struct SupportTableStyle {
     pub label: LabelStyle,
     pub padding_top: f64,
     pub padding_bottom: f64,
+    /// Lines of horizontal x label the baked axis gap already reserves.
+    pub label_max_lines: f64,
     pub position: String,
 }
 
 /// Parse `resolved.support_table` (already `Option<Value>` on the family
-/// payload) into a `SupportTableConfig`, refusing a `by_measure: true` entry
-/// — its single-row-per-entry mode (`_per_series_row_layers`'s `by_measure`
-/// branch, support_table_attachment.py:1310-1358) is not ported.
+/// payload) into a `SupportTableConfig`.
 pub fn parse_config(value: &Value, family: &str) -> Result<SupportTableConfig, String> {
     let config: SupportTableConfig = serde_json::from_value(value.clone())
         .map_err(|e| format!("{family}: support_table payload: {e}"))?;
-    if config.entries.iter().any(|e| e.by_measure) {
-        return Err(format!(
-            "{family}: support_table with a `per_series: ..., by_measure: true` entry not \
-             supported — its single-row-per-entry mode is not ported"
-        ));
-    }
     if config.entries.iter().any(|e| e.aggregate.is_none() && e.source.is_none() && e.per_series.is_none())
     {
         return Err(format!(
@@ -139,40 +164,42 @@ pub fn parse_config(value: &Value, family: &str) -> Result<SupportTableConfig, S
     Ok(config)
 }
 
-/// A bottom strip's baked axis gap grows by the tilted x-label block
-/// (`_tilted_label_axis_offset`, `support_table_attachment.py:4394-4420`),
-/// which the emitter measured at the labels' painted weight
-/// (`_pinned_angle_block_height`, `_label_overlap.py:449`; the picked tilt,
-/// `_label_overlap.py:907`). The growth is unmodeled, so a tilt a bottom strip
-/// would have to clear refuses; labels production leaves at the baked gap
-/// (hidden, or a zero font size, `:4417`) and flat labels do not.
-pub(crate) fn refuse_tilted_label_block(
-    family: &str,
-    labels: &crate::common::AxisLabels,
-    angle: f64,
-) -> Result<(), String> {
-    if angle == 0.0 || labels.visible == Some(false) || labels.font.size_or(11.0) <= 0.0 {
-        return Ok(());
+/// The distance between a grouped bar's `n` sub-bands inside a category band
+/// (`bandwidth / n`, the `xOffset`/`yOffset` scale the bar marks use). A color
+/// 1:1 with the category carries no offset scale: the one bar takes the band.
+/// The only place the split is computed: the grouped marks, vertical and
+/// horizontal, and the strip's cells all read it.
+pub(crate) fn sub_band_step(bandwidth: f64, n: usize, one_to_one: bool) -> f64 {
+    if one_to_one {
+        bandwidth
+    } else if n == 0 {
+        0.0
+    } else {
+        bandwidth / n as f64
     }
-    Err(format!(
-        "{family}: a position=bottom support_table under x labels tilted to {angle} degrees is \
-         not supported: production grows the strip's axis gap by the tilted label block \
-         (x_label_block_px, support_table_attachment.py:4394) and the port does not model it"
-    ))
+}
+
+/// Where sub-band `slot` starts, from its category band's start.
+pub(crate) fn sub_band_start(step: f64, slot: usize, one_to_one: bool) -> f64 {
+    if one_to_one { 0.0 } else { slot as f64 * step }
+}
+
+/// Each of `n` sub-bands' center, from the category band's center.
+pub(crate) fn sub_band_center_offsets(bandwidth: f64, n: usize, one_to_one: bool) -> Vec<f64> {
+    let step = sub_band_step(bandwidth, n, one_to_one);
+    (0..n).map(|i| sub_band_start(step, i, one_to_one) + step / 2.0 - bandwidth / 2.0).collect()
 }
 
 /// Total visual rows a config expands to — port of the row-accounting loop
 /// in `support_table_strip_height` (support_table_attachment.py:195-220): a
-/// normal (`by_measure: false`) `per_series:` entry expands to
-/// `series_count` rows (one per series); every other entry (including a
-/// `by_measure` one, though `parse_config` already refuses those) is one
-/// row. `series_count` is the parent chart's color-domain size — required
-/// (>0) whenever a per_series entry is present; defaulting it to 1 would
+/// `per_series:` entry expands to `series_count` rows (one per series);
+/// every other entry (a `by_measure` one included) is one row.
+/// `series_count` is the parent chart's color-domain size, required (>0) whenever a per_series entry is present; defaulting it to 1 would
 /// silently under-size the strip.
 pub fn visual_row_count(config: &SupportTableConfig, series_count: usize) -> Result<usize, String> {
     let mut n = 0usize;
     for e in &config.entries {
-        if e.per_series.is_some() && !e.by_measure {
+        if e.per_series.is_some() {
             if series_count == 0 {
                 return Err(
                     "support_table: a `per_series:` entry needs the parent chart's \
@@ -250,8 +277,8 @@ fn divider_y_base(style: &SupportTableStyle, axis_offset_value: f64) -> f64 {
 /// Port of `_inter_row_rule_y_pixel` with `spec_height` fixed at 0.0 — the
 /// rule between row `index` and row `index + 1`.
 fn inter_row_y_base(index: usize, style: &SupportTableStyle, axis_offset_value: f64) -> f64 {
-    let row_y = row_y_base(index, style, axis_offset_value);
     let half_gap = row_height(style) / 2.0 + style.row.divider.width / 2.0;
+    let row_y = row_y_base(index, style, axis_offset_value);
     if style.position == "bottom" {
         row_y + half_gap
     } else {
@@ -259,16 +286,11 @@ fn inter_row_y_base(index: usize, style: &SupportTableStyle, axis_offset_value: 
     }
 }
 
-/// Re-anchor a plot-edge-relative pixel (`row_y_base`/`divider_y_base`) into
-/// the strip's own local drawing box: `[0, strip_h]` for `top` (the caller
-/// translates that box to sit directly above the plot), unchanged for
-/// `bottom` (local origin already coincides with the plot edge).
-fn to_local(base: f64, style: &SupportTableStyle, strip_h: f64) -> f64 {
-    if style.position == "bottom" {
-        base
-    } else {
-        strip_h + base
-    }
+/// Re-anchor a plot-top-relative pixel (`row_y_base`/`divider_y_base`) into
+/// the legacy splice's strip box `[0, strip_h]`, which the caller translates
+/// to sit directly above the plot.
+fn to_local(base: f64, strip_h: f64) -> f64 {
+    strip_h + base
 }
 
 /// A resolved cell value before formatting — a bare source column can hold
@@ -542,11 +564,15 @@ pub struct StripNumerals {
     /// `declares_once`, else on every cell.
     authored: Option<FormatSlot>,
     declares_once: bool,
+    /// The trailing pad `decimal_pad_for` selects per cell so mixed fractional
+    /// depths line up on the decimal point; empty when nothing aligns.
+    decimal_pad: Vec<String>,
 }
 
 impl StripNumerals {
     fn plain(spec: &str) -> StripNumerals {
         StripNumerals {
+            decimal_pad: Vec::new(),
             digit_spec: spec.to_string(),
             prefix: false,
             suffix: String::new(),
@@ -560,51 +586,68 @@ impl StripNumerals {
         }
     }
 
+    /// A row that keeps the author's own spec with no unit to declare, aligned
+    /// by the deepest fractional depth its cells print (`_unscaled_decimal_pad`).
+    fn unscaled(values: &[f64], spec: &str, pad: &DecimalPad) -> Result<StripNumerals, String> {
+        Ok(StripNumerals { decimal_pad: pad.unscaled(values, spec)?, ..StripNumerals::plain(spec) })
+    }
+
+    /// `_entry_numerals` for a literal d3 spec or alias: it opts out of the
+    /// house rules but keeps the decimal alignment of a trim fixed-point spec.
+    pub(crate) fn literal(spec: &str, pad: &DecimalPad) -> Result<StripNumerals, String> {
+        Ok(StripNumerals { decimal_pad: pad.for_spec(spec, None)?, ..StripNumerals::plain(spec) })
+    }
+
+    /// `plain_numerals`: nothing anchors, so every cell paints the author's
+    /// spec in full. An SI spec with no trim table aligns on its cells' own
+    /// observed depth.
+    pub(crate) fn undeclared(values: &[f64], spec: &str, pad: &DecimalPad) -> Result<StripNumerals, String> {
+        let literal = StripNumerals::literal(spec, pad)?;
+        let is_si = d3rs::format::parse_parts(spec).is_ok_and(|p| p.type_ == 's');
+        if literal.decimal_pad.is_empty() && is_si {
+            return StripNumerals::unscaled(values, spec, pad);
+        }
+        Ok(literal)
+    }
+
     /// `_authored_affix_numerals`: the affix declares on the anchor cell when
     /// the strip is `anchored` and the slot asks (`repeat: anchor`, or a house
     /// format's default), on every cell otherwise (`repeat: every`, a
-    /// literal d3 spec, a notation alone). The left-axis `hang` and the column
-    /// block's anchor geometry are not ported; a decimal-padded spec, a `$`
-    /// spec and an anchored `before_prefix` sign refuse by name.
+    /// literal d3 spec, a notation alone). A `$` spec and an anchored
+    /// `before_prefix` sign refuse by name.
     pub(crate) fn authored(
         slot: &FormatSlot,
         anchored: bool,
         hang_right: bool,
-        vertical: bool,
-    ) -> Result<StripNumerals, String> {
+        pad: &DecimalPad,
+        field_path: &str,
+    ) -> Result<StripNumerals, Diagnostic> {
         let spec = &slot.spec;
-        if hang_right || vertical {
-            return Err(format!(
-                "support_table: format {:?} on a {} is not painted: its anchor geometry is not ported \
-                 (_authored_affix_numerals)",
-                slot.carried().next().unwrap_or("notation"),
-                if vertical { "column block" } else { "left-axis strip" },
-            ));
-        }
         let parts = d3rs::format::parse_parts(spec).map_err(|e| format!("support_table: format {spec:?}: {e}"))?;
         if parts.symbol {
-            return Err(format!("support_table: an authored affix on the `$` spec {spec:?} is not painted"));
-        }
-        if parts.type_ == 'f' && parts.trim && parts.precision.unwrap_or(6) > 0 {
-            return Err(format!(
-                "support_table: an authored affix on the trim spec {spec:?} is not painted: its decimal pad \
-                 is not ported (decimal_pad_table_for)"
-            ));
+            return Err(format!("support_table: an authored affix on the `$` spec {spec:?} is not painted").into());
         }
         let declares_once = anchored
             && (!slot.prefix.is_empty() || !slot.suffix.is_empty())
             && match slot.repeat.as_deref() {
                 Some(repeat) => repeat == "anchor",
-                None => slot.is_house(),
+                // A left-aligned anchor's leading prefix would push its digits
+                // off the shared edge, so a house format with one repeats it.
+                None => slot.is_house() && !(hang_right && !slot.prefix.is_empty()),
             };
         if declares_once && !slot.prefix.is_empty() && slot.sign_placement == Some(SignPlacement::BeforePrefix) {
-            return Err(format!(
-                "support_table: sign_placement before_prefix on the anchored prefix {:?} is a chart error \
-                 in production (ERR-FORMAT-SIGN-BEFORE-ANCHORED-PREFIX)",
-                slot.prefix
+            return Err(Diagnostic::new(
+                &codes::ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX,
+                [("field_path", serde_json::json!(field_path))],
             ));
         }
-        Ok(StripNumerals { authored: Some(slot.clone()), declares_once, ..StripNumerals::plain(spec) })
+        Ok(StripNumerals {
+            authored: Some(slot.clone()),
+            declares_once,
+            hang_right,
+            decimal_pad: pad.for_spec(spec, None)?,
+            ..StripNumerals::plain(spec)
+        })
     }
 
     /// The trailing affix only the anchor paints on a right-aligned strip
@@ -615,7 +658,7 @@ impl StripNumerals {
     /// into the anchor's own band, and a REPEAT row paints it on every cell.
     pub(crate) fn hung_suffix(&self) -> &str {
         if let Some(slot) = &self.authored {
-            return if self.declares_once { &slot.suffix } else { "" };
+            return if self.declares_once && !self.hang_right { &slot.suffix } else { "" };
         }
         if self.hang_right || self.repeat_suffix {
             ""
@@ -631,6 +674,11 @@ impl StripNumerals {
         v.is_finite() && !(self.suffix_is_magnitude && v == 0.0)
     }
 
+    fn padded(&self, text: String) -> Result<String, String> {
+        let pad = crate::families::table::decimal_pad_for(&self.decimal_pad, &text)?;
+        Ok(format!("{text}{pad}"))
+    }
+
     /// The text one cell paints. `is_anchor` marks the single unit-declaring
     /// cell (the first carrying cell in paint order).
     pub fn cell_text(&self, v: f64, is_anchor: bool) -> Result<String, String> {
@@ -639,23 +687,26 @@ impl StripNumerals {
             // cell leads its sign with the prefix, the rest paint the digits
             // alone.
             let text = if !self.declares_once || is_anchor {
-                slot.paint_anchored(&self.digit_spec, v, self.declares_once)
+                slot.paint_anchored(&self.digit_spec, v, self.declares_once, &self.decimal_pad)
             } else {
-                slot.bare_digits(&self.digit_spec, v)
+                slot.bare_digits(&self.digit_spec, v, &self.decimal_pad)
             };
             return text.map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec));
         }
         if !self.prefix && self.suffix.is_empty() {
-            return crate::number_locale::d3_format(&self.digit_spec, v)
-                .map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec));
+            let text = crate::number_locale::d3_format(&self.digit_spec, v)
+                .map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec))?;
+            return self.padded(text);
         }
         if !self.suffix_is_magnitude {
             // Trimmed: format through the author's spec, then remove the
-            // repeated affix from non-anchor cells — rebuilding the spec is
-            // what would silently drop a sign or zero pad.
+            // repeated affix from the cell — rebuilding the spec is what would
+            // silently drop a sign or zero pad. A left-axis (`hang_right`)
+            // anchor puts the suffix back after the stripped text, so a padded
+            // spec keeps its digits on the shared left edge.
             let full = crate::number_locale::d3_format(&self.digit_spec, v)
                 .map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec))?;
-            if is_anchor {
+            if is_anchor && !self.hang_right {
                 return Ok(full);
             }
             let mut bare = full;
@@ -665,12 +716,16 @@ impl StripNumerals {
             if !self.suffix.is_empty() {
                 bare = bare.replacen(self.suffix.as_str(), "", 1);
             }
+            if is_anchor {
+                bare.push_str(&self.suffix);
+            }
             return Ok(bare);
         }
         // Composed: one shared magnitude; the sign leads the `$` (d3 renders a
         // negative currency as "-$448").
         let digits = crate::number_locale::d3_format(&self.digit_spec, v.abs() / self.divisor)
             .map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec))?;
+        let digits = self.padded(digits)?;
         let sign = if v < 0.0 { "\u{2212}" } else { "" };
         let prefix = if self.prefix && (is_anchor || self.prefix_repeats) { "$" } else { "" };
         let suffix_on = v != 0.0 && (self.repeat_suffix || is_anchor);
@@ -702,6 +757,78 @@ fn decimal_exponent(v: f64) -> i32 {
     v.abs().log10().floor() as i32 + 1
 }
 
+/// The face `decimal_pad_table_for` composes its padding units from: the
+/// support table's own `font.family`. Units are composed when a table is
+/// actually built, never for a chart that aligns nothing.
+pub(crate) struct DecimalPad<'a> {
+    fonts: &'a FontBook,
+    family: &'a str,
+}
+
+impl<'a> DecimalPad<'a> {
+    pub(crate) fn new(fonts: &'a FontBook, style: &'a SupportTableStyle) -> Result<Self, String> {
+        let family = style.font.family.as_deref().ok_or("support_table: font.family absent (theme required)")?;
+        Ok(DecimalPad { fonts, family })
+    }
+
+    fn table(&self, precision: usize) -> Result<Vec<String>, String> {
+        let measurer = self.fonts.measurer(self.family)?;
+        let (digit_unit, dot_unit) = mdsvg::reservation::compose_decimal_units(&measurer, self.family)?;
+        Ok(d3rs::numeral_pad::build_decimal_pad_table(precision, &digit_unit, &dot_unit))
+    }
+
+    /// `decimal_pad_table_for`: a table for a trim-enabled fixed-point spec
+    /// with decimals, empty for every other spec. A spec d3 cannot parse (a
+    /// native name) is empty too, as in production: it fails where it paints.
+    fn for_spec(&self, spec: &str, max_precision: Option<usize>) -> Result<Vec<String>, String> {
+        let Some(declared) = d3rs::numeral_pad::pad_table_precision(spec) else { return Ok(Vec::new()) };
+        match max_precision.map_or(declared, |cap| declared.min(cap)) {
+            0 => Ok(Vec::new()),
+            precision => self.table(precision),
+        }
+    }
+
+    /// `_unscaled_decimal_pad`: a row with no shared magnitude aligns on the
+    /// deepest fractional depth its own cells print, when they share one unit.
+    fn unscaled(&self, values: &[f64], spec: &str) -> Result<Vec<String>, String> {
+        let texts: Vec<(f64, String)> = values
+            .iter()
+            .filter(|v| v.is_finite())
+            .map(|&v| {
+                crate::number_locale::d3_format(spec, v)
+                    .map(|t| (v, t))
+                    .map_err(|e| format!("support_table: format {spec:?}: {e}"))
+            })
+            .collect::<Result<_, _>>()?;
+        let decimal = &crate::number_locale::active_number_locale().locale.decimal;
+        match d3rs::numeral_pad::unscaled_pad_precision(&texts, decimal) {
+            Some(deepest) => self.table(deepest),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// `_shared_scale_decimal_pad`: a shared-scale row's digit spec, capped at
+    /// the deepest depth its scaled cells actually print.
+    fn shared_scale(&self, values: &[f64], digit_spec: &str, magnitude: f64) -> Result<Vec<String>, String> {
+        if self.for_spec(digit_spec, None)?.is_empty() {
+            return Ok(Vec::new());
+        }
+        let depths: HashSet<usize> = values
+            .iter()
+            .filter(|v| v.is_finite())
+            .map(|&v| {
+                crate::number_locale::d3_format(digit_spec, v / magnitude)
+                    .map(|t| crate::families::table::count_decimals(&t))
+                    .map_err(|e| format!("support_table: format {digit_spec:?}: {e}"))
+            })
+            .collect::<Result<_, _>>()?;
+        match depths.iter().max() {
+            Some(&deepest) if depths.len() > 1 => self.for_spec(digit_spec, Some(deepest)),
+            _ => Ok(Vec::new()),
+        }
+    }
+}
+
 /// Port of `strip_numerals_for_values` + `_magnitude_numerals`
 /// (support_table_attachment.py) over `shared_scale_for_column`
 /// (numeral_scale.py). `anchored` is the caller's anchor decision — false
@@ -716,23 +843,15 @@ fn decimal_exponent(v: f64) -> i32 {
 /// nothing to hang and anchors normally either way. `vertical` is a column
 /// block (`vertical=True`): its magnitude suffix speaks the analytic register
 /// while it declares once, narrative once it repeats.
-pub fn strip_numerals_for_values(
+pub(crate) fn strip_numerals_for_values(
     values: &[f64],
     resolved: &str,
-    anchored: bool,
     hang_right: bool,
     vertical: bool,
+    pad: &DecimalPad,
 ) -> Result<StripNumerals, String> {
     let parts = d3rs::format::parse_parts(resolved)
         .map_err(|e| format!("support_table: format {resolved:?}: {e}"))?;
-    if !anchored {
-        return Ok(StripNumerals::plain(resolved));
-    }
-    if parts.padded {
-        return Err(format!(
-            "support_table: the padded format {resolved:?} is not painted: its anchor geometry is not ported"
-        ));
-    }
     crate::number_locale::require_en_us_affixes("support_table", resolved)?;
     if parts.type_ != 's' {
         if (hang_right && parts.symbol) || (!parts.symbol && parts.type_ != '%') {
@@ -749,6 +868,7 @@ pub fn strip_numerals_for_values(
             prefix_repeats: false,
             authored: None,
             declares_once: false,
+            decimal_pad: Vec::new(),
         });
     }
 
@@ -757,7 +877,7 @@ pub fn strip_numerals_for_values(
     // compact) — production's own fallback, never a heuristic.
     let voters: Vec<f64> = values.iter().copied().filter(|v| *v != 0.0 && v.is_finite()).collect();
     if voters.is_empty() {
-        return Ok(StripNumerals::plain(resolved));
+        return StripNumerals::unscaled(values, resolved, pad);
     }
     let mut tally: std::collections::HashMap<Option<i32>, usize> = std::collections::HashMap::new();
     for v in &voters {
@@ -766,12 +886,12 @@ pub fn strip_numerals_for_values(
     let top = *tally.values().max().expect("voters is non-empty");
     let tied: Vec<Option<i32>> = tally.iter().filter(|(_, &c)| c == top).map(|(t, _)| *t).collect();
     if tied.contains(&None) {
-        return Ok(StripNumerals::plain(resolved));
+        return StripNumerals::unscaled(values, resolved, pad);
     }
     let majority = tied.iter().filter_map(|t| *t).max().expect("no None in tie");
     let extreme = values.iter().fold(0.0_f64, |a, v| a.max(v.abs()));
     if integer_digit_count(extreme) < 6 {
-        return Ok(StripNumerals::plain(resolved));
+        return StripNumerals::unscaled(values, resolved, pad);
     }
     let magnitude = 10f64.powi(majority);
     let finest = voters
@@ -793,8 +913,8 @@ pub fn strip_numerals_for_values(
         ),
     };
     match distance {
-        None => return Ok(StripNumerals::plain(resolved)),
-        Some(d) if d > 1 => return Ok(StripNumerals::plain(resolved)),
+        None => return StripNumerals::unscaled(values, resolved, pad),
+        Some(d) if d > 1 => return StripNumerals::unscaled(values, resolved, pad),
         _ => {}
     }
     let sig_figs = parts.precision.unwrap_or(6) as i32;
@@ -806,9 +926,10 @@ pub fn strip_numerals_for_values(
         let printed = crate::number_locale::d3_format(&digit_spec, v / magnitude)
             .map_err(|e| format!("support_table: format {digit_spec:?}: {e}"))?;
         if !printed.chars().any(|c| c.is_ascii_digit() && c != '0') {
-            return Ok(StripNumerals::plain(resolved));
+            return StripNumerals::unscaled(values, resolved, pad);
         }
     }
+    let decimal_pad = pad.shared_scale(values, &digit_spec, magnitude)?;
     let mode_repeat = integer_digit_count(extreme / magnitude) >= 4;
     let pow = 10f64.powi(decimals);
     let printed_extreme = (extreme / magnitude * pow).round() / pow;
@@ -824,6 +945,7 @@ pub fn strip_numerals_for_values(
         prefix_repeats: hang_right && parts.symbol,
         authored: None,
         declares_once: false,
+        decimal_pad,
     })
 }
 
@@ -1060,14 +1182,10 @@ pub(crate) fn entry_lines<'a>(
     vertical: bool,
     color_field: Option<&str>,
     series_order: &[String],
-) -> Result<EntryLines<'a>, String> {
-    if entry.by_measure {
-        return Err(
-            "support_table: a `by_measure: true` entry is not supported — its \
-             single-row-per-entry mode is not ported"
-                .to_string(),
-        );
-    }
+    pad: &DecimalPad,
+    chart_id: &str,
+    entry_index: usize,
+) -> Result<EntryLines<'a>, Diagnostic> {
     let spec = entry.format.as_ref().map(|f| f.spec.as_str());
     // `_entry_numerals`: a predefined name declares once; a d3 literal with
     // the same spec keeps per-cell units.
@@ -1077,14 +1195,14 @@ pub(crate) fn entry_lines<'a>(
             return Err(
                 "support_table: a `per_series:` entry requires the chart to carry a \
                  color encoding"
-                    .to_string(),
+                    .to_string().into(),
             );
         };
         if series_order.is_empty() {
             return Err(
                 "support_table: a `per_series:` entry requires series_order — the \
                  parent chart's color-domain series list"
-                    .to_string(),
+                    .to_string().into(),
             );
         }
         // One SUM(per_series) grouped by (x, color) per series, filtered
@@ -1107,15 +1225,23 @@ pub(crate) fn entry_lines<'a>(
         .collect();
     let numerals = match (&entry.format, spec) {
         (Some(slot), _) if slot.has_affix() => {
-            Some(StripNumerals::authored(slot, anchored, !axis_on_right, vertical)?)
+            Some(StripNumerals::authored(
+                slot,
+                anchored,
+                !axis_on_right,
+                pad,
+                &format!("charts.{chart_id}.support_table.entries[{entry_index}].format"),
+            )?)
         }
         (Some(slot), _) if slot.repeat.is_some() || slot.sign_placement.is_some() => {
             return Err(format!(
                 "support_table: format {:?} on a format with no authored affix is not painted",
                 slot.carried().next().unwrap_or_default()
-            ));
+            ).into());
         }
-        (_, Some(s)) => Some(strip_numerals_for_values(&nums, s, anchored && predefined, !axis_on_right, vertical)?),
+        (_, Some(s)) if !anchored => Some(StripNumerals::undeclared(&nums, s, pad)?),
+        (_, Some(s)) if !predefined => Some(StripNumerals::literal(s, pad)?),
+        (_, Some(s)) => Some(strip_numerals_for_values(&nums, s, !axis_on_right, vertical, pad)?),
         (_, None) => None,
     };
     Ok(EntryLines { spec, lines, numerals, nums })
@@ -1146,6 +1272,7 @@ pub(crate) fn entry_lines<'a>(
 /// production's own guard (`attach_support_table`, :1910-1921).
 #[allow(clippy::too_many_arguments)]
 pub fn build_rows_composed(
+    chart_id: &str,
     config: &SupportTableConfig,
     rows: &[serde_json::Map<String, Value>],
     x_field: &str,
@@ -1159,17 +1286,16 @@ pub fn build_rows_composed(
     color_field: Option<&str>,
     series_order: &[String],
     series_ink: &[String],
-) -> Result<Vec<ComposedRow>, String> {
+) -> Result<Vec<ComposedRow>, Diagnostic> {
     if domain.len() != x_positions.len() {
         return Err("support_table: domain/x_positions length mismatch".into());
     }
     validate_against_data(config, rows, x_field, domain)?;
-    let font_family = style.font.family_or("sans-serif");
-    let font_size = style.font.size_or(11.0);
+    let (font_family, font_size) = cell_font(style)?;
     let (label_family, label_size) = label_font_resolved(style);
 
     let mut out: Vec<ComposedRow> = Vec::new();
-    for entry in &config.entries {
+    for (entry_index, entry) in config.entries.iter().enumerate() {
         let EntryLines { spec, lines, numerals, nums } = entry_lines(
             entry,
             rows,
@@ -1180,6 +1306,9 @@ pub fn build_rows_composed(
             false,
             color_field,
             series_order,
+            &DecimalPad::new(fonts, style)?,
+            chart_id,
+            entry_index,
         )?;
         // The block's own worst-case anchor width, from the SAME pooled
         // values the shared `numerals` above declared its affix from —
@@ -1193,7 +1322,7 @@ pub fn build_rows_composed(
                 return Err(
                     "support_table: internal error — series_ink/series_order length \
                      mismatch"
-                        .to_string(),
+                        .to_string().into(),
                 );
             }
             // dx is shared across the block too — `_compute_support_table_
@@ -1210,9 +1339,8 @@ pub fn build_rows_composed(
             }
             let dx = if band_centered { max_bare_w / 2.0 } else { 0.0 };
             for (i, cells) in cells_by_series.into_iter().enumerate() {
-                // Normal per_series mode always uses the series name — only
-                // `by_measure` mode (refused above) falls back to
-                // `entry.label` (support_table_attachment.py:1355).
+                // A per_series row is always headed by the series name
+                // (a `by_measure` entry reads as a `source` one).
                 let label = truncate_label(fonts, label_family, label_size, &series_order[i], true)?;
                 let label_w = fonts.measure_shaped(&label, label_family, label_size)?;
                 out.push(ComposedRow {
@@ -1278,6 +1406,51 @@ pub fn width_sampling_step(n: usize, axis_x_width: f64, min_band_px: f64) -> usi
     ((n as f64 / fit_cols).ceil() as usize).max(1)
 }
 
+/// The typeface a strip cell is measured and painted in.
+fn cell_font(style: &SupportTableStyle) -> Result<(&str, f64), String> {
+    let family = style.font.family.as_deref().ok_or("support_table: font.family absent")?;
+    let size = style.font.size.ok_or("support_table: font.size absent")?;
+    Ok((family, size))
+}
+
+/// The width one strip cell needs of its band: the widest cell plus the row
+/// padding on both sides (`min_band_px`).
+fn min_band_px(max_cell_w: f64, row_padding_horizontal: f64) -> f64 {
+    max_cell_w + 2.0 * row_padding_horizontal
+}
+
+/// The widest cell any legacy-splice row paints, measured as the composed
+/// arm's `build_cells` measures a cell.
+pub fn widest_strip_cell(rows: &[StripRow], fonts: &FontBook, style: &SupportTableStyle) -> Result<f64, String> {
+    let (family, size) = cell_font(style)?;
+    rows.iter()
+        .flat_map(|row| &row.cells)
+        .try_fold(0.0_f64, |widest, (_, text, _)| Ok(widest.max(fonts.measure_shaped(text, family, size)?)))
+}
+
+/// `WARN-SUPPORT-TABLE-CELL-OVERFLOW`: the widest strip cell needs more than
+/// the width one band is drawn at, so neighboring values run together.
+pub fn warn_cell_overflow(
+    chart_id: &str,
+    max_cell_w: f64,
+    row_padding_horizontal: f64,
+    axis_x_width: f64,
+    n_bands: usize,
+    sampling_step: usize,
+) {
+    let min_band_px = min_band_px(max_cell_w, row_padding_horizontal);
+    let drawn_band_px = axis_x_width / n_bands.max(1) as f64 * sampling_step as f64;
+    if n_bands > 0 && min_band_px > drawn_band_px {
+        crate::diagnostic::warn(crate::diagnostic::Diagnostic::new(
+            &crate::codes::WARN_SUPPORT_TABLE_CELL_OVERFLOW,
+            [
+                ("chart_id", serde_json::json!(chart_id)),
+                ("detail", serde_json::json!(format!("{min_band_px:.0}px needed, {drawn_band_px:.0}px per band"))),
+            ],
+        ));
+    }
+}
+
 /// Keep every `step`-th cell, starting from the first — port of
 /// `_sampling_transforms`'s VL window+filter pair (1-indexed row_number
 /// ascending by x, `(row_number - 1) % step == 0`); `cells` is already in
@@ -1336,9 +1509,11 @@ pub fn filter_composed_row(row: &mut ComposedRow, keep: &[bool]) {
 /// `max_cell_w = max(_entry_cell_widths(...))` scans every entry, not one
 /// row at a time).
 pub fn apply_width_sampling(
+    chart_id: &str,
     rows: &mut [ComposedRow],
     axis_x_width: f64,
     row_padding_horizontal: f64,
+    ordered_x: bool,
 ) {
     // `c.w` already includes each row's own actual anchor cell's affix
     // (`build_cells` measures the anchor's OWN decorated text), but
@@ -1355,9 +1530,14 @@ pub fn apply_width_sampling(
         .map(|c| c.w)
         .chain(rows.iter().map(|r| r.anchor_worst_case_w))
         .fold(0.0_f64, f64::max);
-    let min_band_px = max_cell_w + 2.0 * row_padding_horizontal;
     let n = rows.first().map_or(0, |r| r.cells.len());
-    let step = width_sampling_step(n, axis_x_width, min_band_px);
+    // Only an ordered x axis is thinned; any other never drops a category.
+    let step = if ordered_x {
+        width_sampling_step(n, axis_x_width, min_band_px(max_cell_w, row_padding_horizontal))
+    } else {
+        1
+    };
+    warn_cell_overflow(chart_id, max_cell_w, row_padding_horizontal, axis_x_width, n, step);
     if step <= 1 {
         return;
     }
@@ -1378,8 +1558,36 @@ pub fn composed_ink_extent(style: &SupportTableStyle, n_rows: usize) -> f64 {
         return 0.0;
     }
     let fs = style.font.size_or(11.0);
-    let rise = (0.8 * fs).round() - crate::vega_fit::baseline_shift("middle", fs);
+    let rise = crate::vega_fit::middle_rise(fs);
     -row_y_base(n_rows - 1, style, 0.0) + rise
+}
+
+/// How far a bottom strip's axis gap grows to clear x labels drawn at `angle`
+/// (`_tilted_label_axis_offset`, `support_table_attachment.py:4549`): the
+/// compile-baked gap reserves `label_max_lines` flat lines, and a label
+/// rotated toward vertical is as tall as it is long (`_label_block_height`).
+/// `widest` is the widest label as the tilt resolution measured it. Hidden
+/// labels reserve nothing. A raw quantitative x is a documented production gap:
+/// `_pinned_angle_block_height` returns the font size there, so the block is one
+/// flat row whatever the angle.
+pub(crate) fn tilted_axis_gap_growth(
+    style: &SupportTableStyle,
+    labels: &crate::common::AxisLabels,
+    font_size: f64,
+    angle: f64,
+    widest: f64,
+    quantitative: bool,
+) -> f64 {
+    if labels.visible == Some(false) || font_size <= 0.0 {
+        return 0.0;
+    }
+    let block = if quantitative {
+        font_size
+    } else {
+        let (sin, cos) = angle.abs().to_radians().sin_cos();
+        widest * sin + font_size * cos
+    };
+    (block - font_size * style.label_max_lines).max(0.0)
 }
 
 /// Round-half-to-even, matching Python's `round()` — production's own
@@ -1435,6 +1643,8 @@ pub fn composed_ink(
     ay_label_padding: f64,
     plot_w: f64,
     axis_on_right: bool,
+    origin_y: f64,
+    axis_offset: f64,
 ) {
     let font_size = style.font.size_or(11.0);
     let (_, label_size) = label_font_resolved(style);
@@ -1442,7 +1652,7 @@ pub fn composed_ink(
         if axis_on_right { ("right", "left") } else { ("left", "right") };
     let stub_x = if axis_on_right { plot_w + ay_label_padding } else { -ay_label_padding };
     for (i, row) in rows.iter().enumerate() {
-        let y = row_y_base(i, style, 0.0);
+        let y = origin_y + row_y_base(i, style, axis_offset);
         let dx = if axis_on_right { row.dx } else { -row.dx };
         for cell in &row.cells {
             b.union(&crate::vega_fit::text_ink(
@@ -1501,6 +1711,7 @@ pub fn render_rows_composed(
     origin_x: f64,
     origin_y: f64,
     axis_on_right: bool,
+    axis_offset: f64,
 ) {
     let font_family = style.font.family_or("sans-serif");
     let font_size = style.font.size_or(11.0);
@@ -1512,7 +1723,7 @@ pub fn render_rows_composed(
     let baseline = crate::vega_fit::baseline_shift("middle", font_size);
 
     if style.divider.line.visible {
-        let y = origin_y + divider_y_base(style, 0.0);
+        let y = origin_y + divider_y_base(style, axis_offset);
         out.push_str(&divider_line(origin_x, y, origin_x + plot_w, y, &style.divider.line));
     }
     let (cell_anchor, stub_anchor) =
@@ -1523,7 +1734,7 @@ pub fn render_rows_composed(
         origin_x - ay_label_padding
     };
     for (i, row) in rows.iter().enumerate() {
-        let row_y = origin_y + row_y_base(i, style, 0.0) + baseline;
+        let row_y = origin_y + row_y_base(i, style, axis_offset) + baseline;
         let dx = if axis_on_right { row.dx } else { -row.dx };
         crate::contract::mark_group_open(out, "text", "strip");
         for cell in &row.cells {
@@ -1549,7 +1760,7 @@ pub fn render_rows_composed(
             xml_escape(&row.label), stub_anchor = xml_escape_attr(stub_anchor), label_weight = xml_escape_attr(&label_weight), row_label_color = xml_escape_attr(row_label_color)
         );
         if style.row.divider.visible && i + 1 < rows.len() {
-            let y = origin_y + inter_row_y_base(i, style, 0.0);
+            let y = origin_y + inter_row_y_base(i, style, axis_offset);
             out.push_str(&divider_line(origin_x, y, origin_x + plot_w, y, &style.row.divider));
         }
     }
@@ -1649,8 +1860,7 @@ pub(crate) fn label_font_resolved(style: &SupportTableStyle) -> (&str, f64) {
 /// (no declare-once `StripNumerals` affix; that anchoring never runs on this
 /// path, see the module doc). `color_field`/`series_order`/`series_ink` are
 /// the caller's own resolved color domain for a `per_series:` entry — see
-/// `build_rows_composed`'s matching doc comment; `by_measure: true` refuses
-/// (unmodeled).
+/// `build_rows_composed`'s matching doc comment.
 #[allow(clippy::too_many_arguments)]
 pub fn build_rows(
     config: &SupportTableConfig,
@@ -1671,13 +1881,6 @@ pub fn build_rows(
     let (label_family, label_size) = label_font_resolved(style);
     let mut out: Vec<StripRow> = Vec::new();
     for entry in &config.entries {
-        if entry.by_measure {
-            return Err(
-                "support_table: a `by_measure: true` entry is not supported — its \
-                 single-row-per-entry mode is not ported"
-                    .to_string(),
-            );
-        }
         if let Some(key) = entry.format.as_ref().and_then(|f| f.carried().next()) {
             return Err(format!(
                 "support_table: format {key:?} is not painted on the legacy strip arm — only the composed \
@@ -1778,9 +1981,7 @@ fn truncate_label(
 
 /// Render the strip's SVG content (no `<svg>` wrapper). `strip_h` is this
 /// entry's own `strip_height()` (needed to re-anchor `position: top` rows
-/// into local coordinates — see `to_local`); `axis_offset_value` is the
-/// resolved chart's own baked `support_table_axis_offset`, consulted only for
-/// `position: bottom`. `label_x`/`label_anchor` place the row label at the
+/// into local coordinates — see `to_local`). `label_x`/`label_anchor` place the row label at the
 /// y-axis tick label's own gutter (caller derives both from the chart's
 /// resolved `axis_y.position`); `plot_left`/`plot_right` bound the
 /// divider/inter-row rule lines.
@@ -1789,7 +1990,6 @@ pub fn render_rows(
     rows: &[StripRow],
     style: &SupportTableStyle,
     strip_h: f64,
-    axis_offset_value: f64,
     label_x: f64,
     label_anchor: &str,
     plot_left: f64,
@@ -1806,12 +2006,12 @@ pub fn render_rows(
     let mut svg = String::new();
 
     if style.divider.line.visible {
-        let y = to_local(divider_y_base(style, axis_offset_value), style, strip_h);
+        let y = to_local(divider_y_base(style, 0.0), strip_h);
         svg.push_str(&divider_line(plot_left, y, plot_right, y, &style.divider.line));
     }
 
     for (i, row) in rows.iter().enumerate() {
-        let row_y = to_local(row_y_base(i, style, axis_offset_value), style, strip_h);
+        let row_y = to_local(row_y_base(i, style, 0.0), strip_h);
         let row_label_color = row.label_color.as_deref().unwrap_or(label_color);
         let _ = write!(
             svg,
@@ -1839,7 +2039,7 @@ pub fn render_rows(
         }
         crate::contract::mark_group_close(&mut svg);
         if style.row.divider.visible && i + 1 < rows.len() {
-            let y = to_local(inter_row_y_base(i, style, axis_offset_value), style, strip_h);
+            let y = to_local(inter_row_y_base(i, style, 0.0), strip_h);
             svg.push_str(&divider_line(plot_left, y, plot_right, y, &style.row.divider));
         }
     }
@@ -1862,91 +2062,50 @@ pub fn render_rows(
 /// absolute position, the strip is drawn in the gap at `title_bottom_px`,
 /// and everything after the title shifts down by `strip_h`.
 ///
-/// `position: "bottom"`: production reserves `axis_offset_value + strip_h`
-/// beyond the **plot**, not the card (`_row_y_pixel`'s `spec_height` is the
-/// plot height) — the strip is drawn right after the x-axis label+title band
-/// (`axis_offset_value`), anchored at `plot_bottom`, not below the card's own
-/// `h` (the card bottom already includes that band; anchoring at `h` would
-/// reserve it twice). Anything already drawn *below* that band — a
-/// `legend.position: bottom` legend on line/area (bar refuses one) — sits in
-/// `legend_split..` and must move further down to make room: `legend_split`
-/// is the byte offset within `base_svg`'s body where that trailing content
-/// begins (`usize::MAX`, clamped to `body.len()`, when there is none, e.g.
-/// bar or a right/no legend — nothing to shift). Everything up to
-/// `legend_split` (background, plot, axis labels) keeps its original
-/// position; the strip is drawn at `plot_bottom`; trailing content shifts
-/// down by `strip_h` so the strip and the legend never overlap, and the
-/// canvas grows by exactly `strip_h` beyond `h` whenever there is trailing
-/// content to protect (the axis-band-only, no-trailing-content case keeps
-/// the pre-existing `(plot_bottom + reserved).max(h)` growth, since `h` may
-/// already carry slack from the card's own bottom padding).
+/// Splice the finished strip above the plot, below the title: the canvas grows
+/// by `strip_h`, the strip is drawn at `title_bottom_px`, and everything after
+/// `title_split` (the plot and its axes) shifts down by `strip_h`.
 #[allow(clippy::too_many_arguments)]
 pub fn wrap_with_strip(
     base_svg: &str,
     w: f64,
     h: f64,
     strip_h: f64,
-    position: &str,
     strip_svg: &str,
     bg: &str,
     title_split: usize,
     title_bottom_px: f64,
-    axis_offset_value: f64,
-    plot_bottom: f64,
-    legend_split: usize,
 ) -> Result<String, String> {
     let open_end = base_svg.find('>').ok_or("support_table: base SVG has no opening tag")? + 1;
     let close_start = base_svg.rfind("</svg>").ok_or("support_table: base SVG has no closing tag")?;
     let body = &base_svg[open_end..close_start];
+    let new_h = h + strip_h;
+    let (before, after) = body.split_at(title_split.min(body.len()));
+    let mut out = String::with_capacity(base_svg.len() + strip_svg.len() + 256);
+    let _ = write!(
+        out,
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{new_h}\" \
+         viewBox=\"0 0 {w} {new_h}\">"
+    );
+    let _ = write!(out, "<rect width=\"{w}\" height=\"{new_h:.2}\" fill=\"{bg}\"/>", bg = xml_escape_attr(bg));
+    out.push_str(before);
+    let _ = write!(out, "<g transform=\"translate(0, {title_bottom_px:.2})\">");
+    out.push_str(strip_svg);
+    out.push_str("</g>");
+    let _ = write!(out, "<g transform=\"translate(0, {strip_h:.2})\">");
+    out.push_str(after);
+    out.push_str("</g>");
+    out.push_str("</svg>");
+    Ok(out)
+}
 
-    match position {
-        "top" => {
-            let new_h = h + strip_h;
-            let split = title_split.min(body.len());
-            let (before, after) = body.split_at(split);
-            let mut out = String::with_capacity(base_svg.len() + strip_svg.len() + 256);
-            let _ = write!(
-                out,
-                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{new_h}\" \
-                 viewBox=\"0 0 {w} {new_h}\">"
-            );
-            let _ = write!(out, "<rect width=\"{w}\" height=\"{new_h:.2}\" fill=\"{bg}\"/>", bg = xml_escape_attr(bg));
-            out.push_str(before);
-            let _ = write!(out, "<g transform=\"translate(0, {title_bottom_px:.2})\">");
-            out.push_str(strip_svg);
-            out.push_str("</g>");
-            let _ = write!(out, "<g transform=\"translate(0, {strip_h:.2})\">");
-            out.push_str(after);
-            out.push_str("</g>");
-            out.push_str("</svg>");
-            Ok(out)
-        }
-        "bottom" => {
-            let reserved = axis_offset_value + strip_h;
-            let split = legend_split.min(body.len());
-            let has_trailing = split < body.len();
-            let (before, after) = body.split_at(split);
-            let new_h = if has_trailing { h + strip_h } else { (plot_bottom + reserved).max(h) };
-            let mut out = String::with_capacity(base_svg.len() + strip_svg.len() + 256);
-            let _ = write!(
-                out,
-                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{new_h}\" \
-                 viewBox=\"0 0 {w} {new_h}\">"
-            );
-            let _ = write!(out, "<rect width=\"{w}\" height=\"{new_h:.2}\" fill=\"{bg}\"/>", bg = xml_escape_attr(bg));
-            out.push_str(before);
-            let _ = write!(out, "<g transform=\"translate(0, {plot_bottom:.2})\">");
-            out.push_str(strip_svg);
-            out.push_str("</g>");
-            if has_trailing {
-                let _ = write!(out, "<g transform=\"translate(0, {strip_h:.2})\">");
-                out.push_str(after);
-                out.push_str("</g>");
-            }
-            out.push_str("</svg>");
-            Ok(out)
-        }
-        other => Err(format!("support_table: position {other:?} not supported")),
+#[cfg(test)]
+fn pad() -> DecimalPad<'static> {
+    static FONTS: std::sync::OnceLock<FontBook> = std::sync::OnceLock::new();
+    let dir = format!("{}/../../../src/dbt_charts/core/render/fonts", env!("CARGO_MANIFEST_DIR"));
+    DecimalPad {
+        fonts: FONTS.get_or_init(|| FontBook::load_dir(&dir).expect("test fonts load")),
+        family: "'dbt Sans Tabular', Inter, sans-serif",
     }
 }
 
@@ -1961,7 +2120,7 @@ mod numerals_tests {
     #[test]
     fn trimmed_currency_declares_the_dollar_once() {
         let vals = [75404.0, 68400.0, 62070.0];
-        let n = strip_numerals_for_values(&vals, "$,.0f", true, false, false).unwrap();
+        let n = strip_numerals_for_values(&vals, "$,.0f", false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(75404.0, true).unwrap(), "$75,404");
         assert_eq!(n.cell_text(68400.0, false).unwrap(), "68,400");
         assert_eq!(n.cell_text(62070.0, false).unwrap(), "62,070");
@@ -1972,7 +2131,7 @@ mod numerals_tests {
     #[test]
     fn trimmed_percent_declares_the_percent_once() {
         let vals = [0.232, 0.22, 0.195];
-        let n = strip_numerals_for_values(&vals, ".1%", true, false, false).unwrap();
+        let n = strip_numerals_for_values(&vals, ".1%", false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(0.232, true).unwrap(), "23.2%");
         assert_eq!(n.cell_text(0.22, false).unwrap(), "22.0");
         assert_eq!(n.cell_text(0.195, false).unwrap(), "19.5");
@@ -1988,7 +2147,7 @@ mod numerals_tests {
     #[test]
     fn composed_si_divides_by_one_shared_magnitude() {
         let vals = [102850.0, 97469.0, 86180.0, 111122.0, 45402.0];
-        let n = strip_numerals_for_values(&vals, "$.3~s", true, false, false).unwrap();
+        let n = strip_numerals_for_values(&vals, "$.3~s", false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(102850.0, true).unwrap(), "$102.8k");
         assert_eq!(n.cell_text(97469.0, false).unwrap(), "97.5");
         assert_eq!(n.cell_text(45402.0, false).unwrap(), "45.4");
@@ -1999,10 +2158,12 @@ mod numerals_tests {
     #[test]
     fn composed_zero_cell_is_never_the_anchor_and_never_suffixed() {
         let vals = [0.0, 102850.0, 97469.0];
-        let n = strip_numerals_for_values(&vals, "$.3~s", true, false, false).unwrap();
+        let n = strip_numerals_for_values(&vals, "$.3~s", false, false, &pad()).unwrap();
         assert!(!n.carries(0.0), "zero cannot carry the unit");
         assert!(n.carries(102850.0), "first non-zero cell declares");
-        assert_eq!(n.cell_text(0.0, false).unwrap(), "0");
+        // The zero cell prints no decimals beside `97.5`, so it takes the
+        // whole-number pad: one figure unit and the dot's.
+        assert_eq!(n.cell_text(0.0, false).unwrap(), "0\u{2007}\u{200b}\u{2008}\u{200b}");
     }
 
     /// A set whose extreme stays under six written integer digits does not
@@ -2011,7 +2172,7 @@ mod numerals_tests {
     #[test]
     fn composed_below_compaction_threshold_keeps_the_author_spec() {
         let vals = [75404.0, 68400.0];
-        let n = strip_numerals_for_values(&vals, "$.3~s", true, false, false).unwrap();
+        let n = strip_numerals_for_values(&vals, "$.3~s", false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(75404.0, true).unwrap(), "$75.4k");
         assert_eq!(
             n.cell_text(68400.0, false).unwrap(),
@@ -2026,7 +2187,7 @@ mod numerals_tests {
     #[test]
     fn unanchored_rows_format_every_cell_in_full() {
         let vals = [75404.0, 68400.0];
-        let n = strip_numerals_for_values(&vals, "$,.0f", false, false, false).unwrap();
+        let n = StripNumerals::undeclared(&vals, "$,.0f", &pad()).unwrap();
         assert_eq!(n.cell_text(75404.0, true).unwrap(), "$75,404");
         assert_eq!(n.cell_text(68400.0, false).unwrap(), "$68,400");
     }
@@ -2047,17 +2208,17 @@ mod numerals_tests {
     /// placing the sign by the prefix (`CHF \u{2212}10`).
     #[test]
     fn an_authored_affix_declares_on_the_anchor_for_repeat_anchor_and_on_every_cell_otherwise() {
-        let anchor = StripNumerals::authored(&affixed("US$", "", Some("anchor")), true, false, false).unwrap();
+        let anchor = StripNumerals::authored(&affixed("US$", "", Some("anchor")), true, false, &pad(), "p").unwrap();
         assert_eq!(anchor.cell_text(-40.0, true).unwrap(), "US$\u{2212}40");
         assert_eq!(anchor.cell_text(-40.0, false).unwrap(), "\u{2212}40");
         assert_eq!(anchor.cell_text(0.0, false).unwrap(), "0");
-        let trailing = StripNumerals::authored(&affixed("", " CHF", Some("anchor")), true, false, false).unwrap();
+        let trailing = StripNumerals::authored(&affixed("", " CHF", Some("anchor")), true, false, &pad(), "p").unwrap();
         assert_eq!(trailing.cell_text(10.0, true).unwrap(), "10 CHF");
         assert_eq!(trailing.hung_suffix(), " CHF", "a right-aligned anchor's suffix hangs past the edge");
         for numerals in [
-            StripNumerals::authored(&affixed("CHF ", "", Some("every")), true, false, false).unwrap(),
-            StripNumerals::authored(&affixed("CHF ", "", None), true, false, false).unwrap(),
-            StripNumerals::authored(&affixed("CHF ", "", Some("anchor")), false, false, false).unwrap(),
+            StripNumerals::authored(&affixed("CHF ", "", Some("every")), true, false, &pad(), "p").unwrap(),
+            StripNumerals::authored(&affixed("CHF ", "", None), true, false, &pad(), "p").unwrap(),
+            StripNumerals::authored(&affixed("CHF ", "", Some("anchor")), false, false, &pad(), "p").unwrap(),
         ] {
             assert_eq!(numerals.cell_text(-10.0, true).unwrap(), "CHF \u{2212}10");
             assert_eq!(numerals.cell_text(-10.0, false).unwrap(), "CHF \u{2212}10");
@@ -2066,7 +2227,7 @@ mod numerals_tests {
         }
         // A glued prefix signs before itself on an undeclared row: the sign
         // placement is the slot's own, not the anchor's `after_prefix`.
-        let glued = StripNumerals::authored(&affixed("US$", "", Some("every")), true, false, false).unwrap();
+        let glued = StripNumerals::authored(&affixed("US$", "", Some("every")), true, false, &pad(), "p").unwrap();
         assert_eq!(glued.cell_text(-10.0, false).unwrap(), "\u{2212}US$10");
         assert_eq!(glued.cell_text(-10.0, true).unwrap(), "\u{2212}US$10");
     }
@@ -2086,34 +2247,72 @@ mod numerals_tests {
                 format: Some(slot),
                 label: None,
                 per_series: None,
-                by_measure: false,
             };
             let rows: Vec<serde_json::Map<String, Value>> =
                 vec![serde_json::json!({"week": "2024-01-01", "units": 150.0}).as_object().unwrap().clone()];
             let domain = vec!["2024-01-01".to_string()];
-            let err = entry_lines(&entry, &rows, "week", &domain, true, true, false, None, &[]).err().unwrap();
+            let err = entry_lines(&entry, &rows, "week", &domain, true, true, false, None, &[], &pad(), "c", 0).err().unwrap();
             assert!(err.contains("no authored affix"), "{err}");
         }
     }
 
 
+    /// A house format's default anchors its affix, but a leading prefix on a
+    /// left-aligned strip would push the anchor's digits off the shared edge,
+    /// so the prefix repeats on every cell instead (`house_anchors`).
     #[test]
-    fn an_authored_affix_refuses_the_shapes_whose_anchor_geometry_is_not_ported() {
+    fn a_house_prefix_on_a_left_axis_repeats_on_every_cell() {
+        let house = FormatSlot { raw: Some("number".into()), ..affixed("US$", "", None) };
+        assert!(house.is_house());
+        let left = StripNumerals::authored(&house, true, true, &pad(), "p").unwrap();
+        assert!(!left.declares_once);
+        assert_eq!(left.cell_text(5.0, true).unwrap(), "US$5");
+        assert_eq!(left.cell_text(6.0, false).unwrap(), "US$6");
+        let right = StripNumerals::authored(&house, true, false, &pad(), "p").unwrap();
+        assert!(right.declares_once, "a right axis still declares once");
+        assert_eq!(right.cell_text(6.0, false).unwrap(), "6");
+    }
+
+    #[test]
+    fn an_authored_affix_on_a_left_axis_declares_once_and_hangs_nothing() {
+        let slot = affixed("", " pts", Some("anchor"));
+        let left = StripNumerals::authored(&slot, true, true, &pad(), "p").unwrap();
+        assert_eq!(left.hung_suffix(), "", "a left-aligned anchor trails its suffix into its own band");
+        assert_eq!(left.cell_text(5.0, true).unwrap(), "5 pts");
+        assert_eq!(left.cell_text(6.0, false).unwrap(), "6");
         let slot = affixed("US$", "", Some("anchor"));
-        let refusal = |hang_right, vertical| StripNumerals::authored(&slot, true, hang_right, vertical).err().unwrap();
-        assert!(refusal(true, false).contains("left-axis strip"));
-        assert!(refusal(false, true).contains("column block"));
         let padded = FormatSlot { spec: ",.2~f".into(), ..slot.clone() };
-        assert!(StripNumerals::authored(&padded, true, false, false).err().unwrap().contains("decimal pad"));
+        let aligned = StripNumerals::authored(&padded, true, false, &pad(), "p").unwrap();
+        assert_eq!(aligned.cell_text(1.5, true).unwrap(), "US$1.5\u{2007}\u{200b}", "an authored affix keeps the trim spec's decimal pad");
         let symbol = FormatSlot { spec: "$,.0f".into(), ..slot };
-        assert!(StripNumerals::authored(&symbol, true, false, false).err().unwrap().contains("`$` spec"));
+        assert!(StripNumerals::authored(&symbol, true, false, &pad(), "p").err().unwrap().contains("`$` spec"));
+    }
+
+    /// A fill-and-align format is just a spec: the anchor machinery reads its
+    /// type and symbol, and the fill paints through d3.
+    #[test]
+    fn a_padded_format_paints_its_fill_in_every_cell() {
+        let n = strip_numerals_for_values(&[100.0, 90.0], "*>10,.0f", false, false, &pad()).unwrap();
+        assert_eq!(n.cell_text(100.0, true).unwrap(), "*******100");
+        assert_eq!(n.cell_text(90.0, false).unwrap(), "********90");
+    }
+
+    /// A left-axis anchor is the stripped text plus the suffix
+    /// (`bare + suffix`), so a padded spec keeps its fill before the unit.
+    #[test]
+    fn a_left_axis_padded_percent_anchor_puts_the_suffix_after_the_fill() {
+        let n = strip_numerals_for_values(&[0.55, 0.09], "*<8.0%", true, false, &pad()).unwrap();
+        assert_eq!(n.cell_text(0.55, true).unwrap(), "55*****%");
+        assert_eq!(n.cell_text(0.09, false).unwrap(), "9******");
+        let right = strip_numerals_for_values(&[0.55, 0.09], "*<8.0%", false, false, &pad()).unwrap();
+        assert_eq!(right.cell_text(0.55, true).unwrap(), "55%*****");
     }
 
     /// No affix in the spec (`,d`): nothing to declare; identical output on
     /// every cell, anchored or not.
     #[test]
     fn affix_free_specs_are_unchanged() {
-        let n = strip_numerals_for_values(&[2693.0, 2280.0], ",d", true, false, false).unwrap();
+        let n = strip_numerals_for_values(&[2693.0, 2280.0], ",d", false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(2693.0, true).unwrap(), "2,693");
         assert_eq!(n.cell_text(2280.0, false).unwrap(), "2,280");
     }
@@ -2127,7 +2326,7 @@ mod numerals_tests {
     #[test]
     fn a_left_axis_trimmed_symbol_format_never_anchors() {
         let vals = [102850.0, 97469.0, 86180.0];
-        let n = strip_numerals_for_values(&vals, "$,.0f", true, true, false).unwrap();
+        let n = strip_numerals_for_values(&vals, "$,.0f", true, false, &pad()).unwrap();
         assert_eq!(n.cell_text(102850.0, true).unwrap(), "$102,850");
         assert_eq!(
             n.cell_text(97469.0, false).unwrap(),
@@ -2142,11 +2341,15 @@ mod numerals_tests {
     #[test]
     fn a_left_axis_symbol_si_format_repeats_the_dollar_and_declares_the_suffix_once() {
         let vals = [102850.0, 97469.0, 86180.0, 111122.0, 45402.0, 0.0];
-        let n = strip_numerals_for_values(&vals, "$.3~s", true, true, false).unwrap();
+        let n = strip_numerals_for_values(&vals, "$.3~s", true, false, &pad()).unwrap();
         assert_eq!(n.cell_text(102850.0, true).unwrap(), "$102.8k");
         assert_eq!(n.cell_text(97469.0, false).unwrap(), "$97.5");
         assert_eq!(n.cell_text(45402.0, false).unwrap(), "$45.4");
-        assert_eq!(n.cell_text(0.0, false).unwrap(), "$0", "a zero cell keeps the repeated $, no suffix");
+        assert_eq!(
+            n.cell_text(0.0, false).unwrap(),
+            "$0\u{2007}\u{200b}\u{2008}\u{200b}",
+            "a zero cell keeps the repeated $, no suffix, and the whole-number pad"
+        );
         assert_eq!(n.cell_text(-97469.0, false).unwrap(), "\u{2212}$97.5");
         assert_eq!(n.hung_suffix(), "");
     }
@@ -2155,7 +2358,7 @@ mod numerals_tests {
     #[test]
     fn a_right_axis_symbol_si_format_declares_the_dollar_once() {
         let vals = [102850.0, 97469.0, 86180.0, 111122.0, 45402.0];
-        let n = strip_numerals_for_values(&vals, "$.3~s", true, false, false).unwrap();
+        let n = strip_numerals_for_values(&vals, "$.3~s", false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(102850.0, true).unwrap(), "$102.8k");
         assert_eq!(n.cell_text(97469.0, false).unwrap(), "97.5");
         assert_eq!(n.hung_suffix(), "k");
@@ -2167,11 +2370,11 @@ mod numerals_tests {
     #[test]
     fn a_vertical_block_declares_its_magnitude_in_the_analytic_register() {
         let vals = [1_200_000.0, 3_400_000.0, 5_600_000.0];
-        let n = strip_numerals_for_values(&vals, ".3~s", true, false, true).unwrap();
+        let n = strip_numerals_for_values(&vals, ".3~s", false, true, &pad()).unwrap();
         assert_eq!(n.cell_text(1_200_000.0, true).unwrap(), "1.2M");
         assert_eq!(n.cell_text(3_400_000.0, false).unwrap(), "3.4");
         assert_eq!(n.hung_suffix(), "M");
-        let row = strip_numerals_for_values(&vals, ".3~s", true, false, false).unwrap();
+        let row = strip_numerals_for_values(&vals, ".3~s", false, false, &pad()).unwrap();
         assert_eq!(row.cell_text(1_200_000.0, true).unwrap(), "1.2mn");
     }
 
@@ -2188,7 +2391,7 @@ mod numerals_tests {
         let de: crate::number_locale::NumberLocale = serde_json::from_value(wire).unwrap();
         crate::number_locale::with_number_locale(&de, || {
             let vals = [1_200_000.0, 3_400_000.0, 5_600_000.0];
-            let n = strip_numerals_for_values(&vals, ".3~s", true, false, true).unwrap();
+            let n = strip_numerals_for_values(&vals, ".3~s", false, true, &pad()).unwrap();
             assert_eq!(n.cell_text(1_200_000.0, true).unwrap(), "1,2\u{a0}M");
             assert_eq!(n.cell_text(3_400_000.0, false).unwrap(), "3,4");
             assert_eq!(n.hung_suffix(), "\u{a0}M");
@@ -2201,12 +2404,12 @@ mod numerals_tests {
     fn an_anchored_dollar_strip_refuses_under_a_suffix_currency_locale() {
         let vals = [1_200_000.0, 3_400_000.0, 5_600_000.0];
         let err = crate::number_locale::with_number_locale(&crate::number_locale::de_de(), || {
-            strip_numerals_for_values(&vals, "$.3~s", true, false, false)
+            strip_numerals_for_values(&vals, "$.3~s", false, false, &pad())
         })
         .err()
         .expect("refuses");
         assert!(err.contains("paints the board's currency"), "{err}");
-        assert!(strip_numerals_for_values(&vals, "$.3~s", true, false, false).is_ok());
+        assert!(strip_numerals_for_values(&vals, "$.3~s", false, false, &pad()).is_ok());
     }
 
     /// A suffix every cell paints (`SuffixMode.REPEAT`: the extreme scales to
@@ -2215,7 +2418,7 @@ mod numerals_tests {
     #[test]
     fn a_repeating_vertical_suffix_reads_narrative() {
         let vals = [1_500_000.0, 2_500_000.0, 1_200_500_000.0];
-        let n = strip_numerals_for_values(&vals, ".3~s", true, false, true).unwrap();
+        let n = strip_numerals_for_values(&vals, ".3~s", false, true, &pad()).unwrap();
         assert_eq!(n.cell_text(1_500_000.0, false).unwrap(), "1.5mn");
         assert_eq!(n.hung_suffix(), "");
     }
@@ -2226,7 +2429,7 @@ mod numerals_tests {
     /// `Units` row on both left-axis reference cases).
     #[test]
     fn a_left_axis_affix_free_format_still_anchors() {
-        let n = strip_numerals_for_values(&[2693.0, 2280.0], ",d", true, true, false).unwrap();
+        let n = strip_numerals_for_values(&[2693.0, 2280.0], ",d", true, false, &pad()).unwrap();
         assert_eq!(n.cell_text(2693.0, true).unwrap(), "2,693");
         assert_eq!(n.cell_text(2280.0, false).unwrap(), "2,280");
     }
@@ -2235,23 +2438,6 @@ mod numerals_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Only a tilt a bottom strip would have to clear refuses: flat labels and
-    /// labels production leaves at the baked gap (hidden) keep rendering.
-    #[test]
-    fn only_visible_tilted_labels_refuse_a_bottom_strip() {
-        let labels = |visible: bool| -> crate::common::AxisLabels {
-            serde_json::from_value(serde_json::json!({
-                "font": {"family": "Inter", "size": 11.0, "weight": "400"},
-                "visible": visible,
-            }))
-            .expect("axis labels parse")
-        };
-        refuse_tilted_label_block("line", &labels(true), 0.0).expect("flat labels need no growth");
-        refuse_tilted_label_block("line", &labels(false), 315.0).expect("hidden labels keep the baked gap");
-        let err = refuse_tilted_label_block("line", &labels(true), 315.0).unwrap_err();
-        assert!(err.starts_with("line:") && err.contains("x_label_block_px"), "{err}");
-    }
 
     /// A divider payload: a zero width stands for "not visible" here, since the
     /// engine now gates on `visible` and every theme carries a positive width.
@@ -2283,6 +2469,7 @@ mod tests {
             "label": {"font": {"family": "sans", "size": 11.0, "color": "#333"}},
             "padding_top": padding_top,
             "padding_bottom": padding_bottom,
+            "label_max_lines": 2,
             "position": position,
         }))
         .unwrap()
@@ -2319,6 +2506,7 @@ mod tests {
             "label": {"font": {"family": TEST_FONT, "size": 11.0}},
             "padding_top": 8.0,
             "padding_bottom": 4.0,
+            "label_max_lines": 2,
             "position": "top",
         }))
         .unwrap()
@@ -2423,16 +2611,22 @@ mod tests {
         let v = serde_json::json!({"entries": [{"per_series": "revenue", "format": ",d"}]});
         let config = parse_config(&v, "bar").unwrap();
         assert_eq!(config.entries[0].per_series.as_deref(), Some("revenue"));
-        assert!(!config.entries[0].by_measure);
     }
 
+    /// A `by_measure` entry is one row reading the column directly, headed by
+    /// the raw column name unless it authors a label.
     #[test]
-    fn parse_config_rejects_by_measure_entry() {
-        let v = serde_json::json!({
-            "entries": [{"per_series": "revenue", "format": ",d", "by_measure": true}]
-        });
-        let err = parse_config(&v, "bar").unwrap_err();
-        assert!(err.contains("by_measure"), "names the unsupported shape: {err}");
+    fn a_by_measure_entry_is_a_source_row_headed_by_the_column() {
+        let v = serde_json::json!({"entries": [
+            {"per_series": "edge_share", "by_measure": true, "format": ",d"},
+            {"per_series": "edge_share", "by_measure": true, "label": "Edge", "format": ",d"},
+        ]});
+        let config = parse_config(&v, "bar").unwrap();
+        assert_eq!(config.entries[0].source.as_deref(), Some("edge_share"));
+        assert_eq!(config.entries[0].per_series, None);
+        assert_eq!(config.entries[0].label.as_deref(), Some("edge_share"));
+        assert_eq!(config.entries[1].label.as_deref(), Some("Edge"));
+        assert_eq!(visual_row_count(&config, 0).unwrap(), 2);
     }
 
     #[test]
@@ -2445,7 +2639,6 @@ mod tests {
                     format: Some(",d".into()),
                     label: None,
                     per_series: Some("revenue".into()),
-                    by_measure: false,
                 },
                 SupportTableEntry {
                     source: Some("revenue".into()),
@@ -2453,7 +2646,6 @@ mod tests {
                     format: Some(",d".into()),
                     label: Some("Total".into()),
                     per_series: None,
-                    by_measure: false,
                 },
             ],
         };
@@ -2469,7 +2661,6 @@ mod tests {
                 format: Some(",d".into()),
                 label: None,
                 per_series: Some("revenue".into()),
-                by_measure: false,
             }],
         };
         let err = visual_row_count(&config, 0).unwrap_err();
@@ -2485,7 +2676,6 @@ mod tests {
                 format: Some(",d".into()),
                 label: None,
                 per_series: Some("revenue".into()),
-                by_measure: false,
             }],
         };
         let rows: Vec<serde_json::Map<String, Value>> =
@@ -2509,7 +2699,6 @@ mod tests {
                 format: Some(",d".into()),
                 label: None,
                 per_series: Some("revenue".into()),
-                by_measure: false,
             }],
         };
         let rows: Vec<serde_json::Map<String, Value>> = vec![
@@ -2548,39 +2737,6 @@ mod tests {
     }
 
     #[test]
-    fn build_rows_refuses_a_by_measure_entry() {
-        let config = SupportTableConfig {
-            entries: vec![SupportTableEntry {
-                source: None,
-                aggregate: None,
-                format: Some(",d".into()),
-                label: Some("Revenue".into()),
-                per_series: Some("revenue".into()),
-                by_measure: true,
-            }],
-        };
-        let rows: Vec<serde_json::Map<String, Value>> =
-            vec![serde_json::json!({"week": "2024-01-01", "revenue": 10.0}).as_object().unwrap().clone()];
-        let domain = vec!["2024-01-01".to_string()];
-        let series_order = vec!["A".to_string()];
-        let series_ink = vec!["#111".to_string()];
-        let err = build_rows(
-            &config,
-            &rows,
-            "week",
-            &domain,
-            &[10.0],
-            &test_fonts(),
-            &label_style(),
-            Some("category"),
-            &series_order,
-            &series_ink,
-        )
-        .unwrap_err();
-        assert!(err.contains("by_measure"), "names the unsupported shape: {err}");
-    }
-
-    #[test]
     fn build_rows_aggregates_multiple_rows_per_x() {
         let config = SupportTableConfig {
             entries: vec![SupportTableEntry {
@@ -2589,7 +2745,6 @@ mod tests {
                 format: Some(FormatSlot { raw: Some("currency_whole".into()), ..FormatSlot::from("$,.0f") }),
                 label: Some("Total".into()),
                 per_series: None,
-                by_measure: false,
             }],
         };
         let rows: Vec<serde_json::Map<String, Value>> = vec![
@@ -2613,7 +2768,6 @@ mod tests {
                 format: Some(",d".into()),
                 label: None,
                 per_series: None,
-                by_measure: false,
             }],
         };
         let rows: Vec<serde_json::Map<String, Value>> =
@@ -2638,7 +2792,6 @@ mod tests {
                 format: None,
                 label: Some("Units".into()),
                 per_series: None,
-                by_measure: false,
             }],
         };
         let rows: Vec<serde_json::Map<String, Value>> =
@@ -2664,7 +2817,6 @@ mod tests {
                 }),
                 label: None,
                 per_series: None,
-                by_measure: false,
             }],
         };
         let rows: Vec<serde_json::Map<String, Value>> =
@@ -2715,7 +2867,6 @@ mod tests {
                     format: Some(",d".into()),
                     label: Some("Count".into()),
                     per_series: None,
-                    by_measure: false,
                 },
                 SupportTableEntry {
                     source: Some("product".into()),
@@ -2723,7 +2874,6 @@ mod tests {
                     format: Some(",d".into()),
                     label: Some("Distinct".into()),
                     per_series: None,
-                    by_measure: false,
                 },
             ],
         };
@@ -2762,7 +2912,6 @@ mod tests {
                 format: None,
                 label: Some("Product".into()),
                 per_series: None,
-                by_measure: false,
             }],
         };
         let rows: Vec<serde_json::Map<String, Value>> = vec![
@@ -2795,7 +2944,6 @@ mod tests {
                 format: None,
                 label: Some("Code".into()),
                 per_series: None,
-                by_measure: false,
             }],
         };
         let rows: Vec<serde_json::Map<String, Value>> = vec![
@@ -2828,7 +2976,6 @@ mod tests {
                 format: Some(",d".into()),
                 label: Some("Revenue".into()),
                 per_series: None,
-                by_measure: false,
             }],
         };
         let rows: Vec<serde_json::Map<String, Value>> =
@@ -2853,7 +3000,6 @@ mod tests {
                 format: None,
                 label: Some("Total".into()),
                 per_series: None,
-                by_measure: false,
             }],
         };
         let rows: Vec<serde_json::Map<String, Value>> = vec![
@@ -2880,7 +3026,6 @@ mod tests {
                 format: None,
                 label: Some("Revenue".into()),
                 per_series: None,
-                by_measure: false,
             }],
         };
         let rows: Vec<serde_json::Map<String, Value>> = vec![
@@ -2910,7 +3055,6 @@ mod tests {
                 format: None,
                 label: Some("Missing".into()),
                 per_series: None,
-                by_measure: false,
             }],
         };
         let rows: Vec<serde_json::Map<String, Value>> =
@@ -2932,7 +3076,6 @@ mod tests {
                 format: None,
                 label: Some("Revenue".into()),
                 per_series: None,
-                by_measure: false,
             }],
         };
         let n = SUPPORT_TABLE_MAX_X_TICKS + 1;
@@ -2958,7 +3101,6 @@ mod tests {
                 format: None,
                 label: Some("A Very Long Row Label That Overruns The Gutter Width".into()),
                 per_series: None,
-                by_measure: false,
             }],
         };
         let rows: Vec<serde_json::Map<String, Value>> =
@@ -2989,7 +3131,7 @@ mod tests {
         let strip_h = strip_height(&s, 3);
         let rows =
             vec![row("Revenue", vec![(50.0, "$1")]), row("Units", vec![(50.0, "2")]), row("Orders", vec![(50.0, "3")])];
-        let svg = render_rows(&rows, &s, strip_h, 0.0, 0.0, "end", 0.0, 100.0);
+        let svg = render_rows(&rows, &s, strip_h, 0.0, "end", 0.0, 100.0);
 
         let pos = |label: &str| svg.find(&format!(">{label}<")).unwrap_or_else(|| panic!("{label} missing: {svg}"));
         let revenue_idx = pos("Revenue");
@@ -3020,6 +3162,31 @@ mod tests {
         assert!((revenue_y - (strip_h - 4.0 - 9.0)).abs() < 0.01, "revenue_y={revenue_y} strip_h={strip_h}");
     }
 
+    fn tilt_labels(visible: bool) -> crate::common::AxisLabels {
+        serde_json::from_value(serde_json::json!({
+            "font": {"family": "Inter", "size": 11.0, "weight": "400"},
+            "visible": visible,
+        }))
+        .expect("axis labels parse")
+    }
+
+    /// The baked gap reserves `label_max_lines` flat rows; only the label block
+    /// beyond them grows it, hidden labels reserve nothing, flat labels fit.
+    #[test]
+    fn the_axis_gap_grows_by_the_tilted_block_beyond_the_reserved_rows() {
+        let style = style_positioned(8.0, 4.0, 2.0, 0.0, 0.0, "bottom");
+        let reserved = 11.0 * style.label_max_lines;
+        let block = |w: f64| w * 45f64.to_radians().sin() + 11.0 * 45f64.to_radians().cos();
+        let growth = tilted_axis_gap_growth(&style, &tilt_labels(true), 11.0, 45.0, 60.0, false);
+        assert!((growth - (block(60.0) - reserved)).abs() < 1e-9, "{growth}");
+        assert_eq!(tilted_axis_gap_growth(&style, &tilt_labels(true), 11.0, 45.0, 5.0, false), 0.0, "a short label fits the rows");
+        assert_eq!(tilted_axis_gap_growth(&style, &tilt_labels(true), 11.0, 0.0, 60.0, false), 0.0, "flat labels fit");
+        assert_eq!(tilted_axis_gap_growth(&style, &tilt_labels(false), 11.0, 45.0, 60.0, false), 0.0, "hidden labels reserve nothing");
+        let raw = tilted_axis_gap_growth(&style, &tilt_labels(true), 11.0, 315.0, 60.0, false);
+        let expected = (60.0 * 315f64.to_radians().sin() + 11.0 * 315f64.to_radians().cos() - reserved).max(0.0);
+        assert!((raw - expected).abs() < 1e-9, "an authored 315 takes sin of 315 as given");
+    }
+
     #[test]
     fn wrap_with_strip_top_places_strip_between_title_and_plot() {
         let base_svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"200\" height=\"100\" \
@@ -3035,14 +3202,10 @@ mod tests {
             200.0,
             100.0,
             20.0,
-            "top",
             "<text>STRIP</text>",
             "#fff",
             title_split,
             20.0,
-            0.0,
-            0.0, // plot_bottom unused by the "top" arm
-            usize::MAX, // legend_split unused by the "top" arm
         )
         .unwrap();
 
@@ -3054,68 +3217,6 @@ mod tests {
             "reading order is title -> strip -> plot: {out}"
         );
         assert!(out.contains("height=\"120\""), "canvas grows by strip_h: {out}");
-    }
-
-    /// Regression for the double-reservation bug: the card's own `h` (100)
-    /// already includes the x-axis label+title band below `plot_bottom`
-    /// (70) — the strip must anchor at `plot_bottom`, not `h`, or the axis
-    /// gap gets reserved twice and the strip detaches from the plot. Before
-    /// the fix this asserted `translate(0, 100.00)` / `height="132"`
-    /// (`h + axis_offset_value + strip_h`) — the buggy values this test used
-    /// to pin; it now fails against that behavior (mutation counterfactual:
-    /// reverting `wrap_with_strip`'s bottom arm to translate on `h` instead
-    /// of `plot_bottom` makes this test fail).
-    #[test]
-    fn wrap_with_strip_bottom_anchors_at_plot_bottom_not_card_height() {
-        let base_svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"200\" height=\"100\" \
-                         viewBox=\"0 0 200 100\"><rect width=\"200\" height=\"100\" fill=\"#fff\"/></svg>";
-        let plot_bottom = 70.0;
-        let axis_offset_value = 20.0;
-        let strip_h = 15.0;
-        let out = wrap_with_strip(
-            base_svg,
-            200.0,
-            100.0,
-            strip_h,
-            "bottom",
-            "<text>STRIP</text>",
-            "#fff",
-            0,
-            0.0,
-            axis_offset_value,
-            plot_bottom,
-            usize::MAX, // no trailing legend to shift
-        )
-        .unwrap();
-        // plot_bottom(70) + axis_offset_value(20) + strip_h(15) = 105 — grows
-        // past the card's own h=100, but not by h + reserved (which would be 135).
-        assert!(out.contains("height=\"105\""), "canvas reserves past plot_bottom, not card h: {out}");
-        assert!(out.contains("translate(0, 70.00)"), "strip anchors at plot_bottom, not h: {out}");
-        assert!(!out.contains("translate(0, 100.00)"), "must not anchor at the card's own h: {out}");
-    }
-
-    /// `position: "bottom"` row placement: row 0 sits `axis_offset_value +
-    /// padding_top + row_h/2` below the plot edge (local origin 0), and
-    /// index increases *downward* (away from the plot in the opposite
-    /// direction from `top`).
-    #[test]
-    fn render_rows_bottom_positions_rows_after_axis_offset() {
-        let s = style_positioned(8.0, 4.0, 2.0, 0.0, 0.0, "bottom");
-        let strip_h = strip_height(&s, 2);
-        let rows = vec![row("Total", vec![(50.0, "$1")]), row("Units", vec![(50.0, "2")])];
-        let axis_offset = 12.0;
-        let svg = render_rows(&rows, &s, strip_h, axis_offset, 0.0, "end", 0.0, 100.0);
-
-        let y_of = |label: &str| -> f64 {
-            let idx = svg.find(&format!(">{label}<")).unwrap();
-            let tag_start = svg[..idx].rfind("<text").unwrap();
-            svg[tag_start..idx].split("y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
-        };
-        let total_y = y_of("Total");
-        let units_y = y_of("Units");
-        assert!(total_y < units_y, "index increases downward for position:bottom: total_y={total_y} units_y={units_y}");
-        // Row 0's local y = padding_top(8) + axis_offset(12) + row_h/2(9) = 29.
-        assert!((total_y - 29.0).abs() < 0.01, "total_y={total_y}");
     }
 
     /// S4: the composed strip's anchoring follows the value axis's orient —
@@ -3143,14 +3244,14 @@ mod tests {
         };
 
         let mut right = String::new();
-        render_rows_composed(&mut right, &rows, &s, 6.0, 100.0, 200.0, 300.0, true);
+        render_rows_composed(&mut right, &rows, &s, 6.0, 100.0, 200.0, 300.0, true, 0.0);
         assert_eq!(attr(&right, "$1", "text-anchor"), "end");
         assert_eq!(attr(&right, "$1", "x"), "257.00", "cell right-aligned at center + dx");
         assert_eq!(attr(&right, "Revenue", "text-anchor"), "start");
         assert_eq!(attr(&right, "Revenue", "x"), "306.00", "stub past plot_w + padding");
 
         let mut left = String::new();
-        render_rows_composed(&mut left, &rows, &s, 6.0, 100.0, 200.0, 300.0, false);
+        render_rows_composed(&mut left, &rows, &s, 6.0, 100.0, 200.0, 300.0, false, 0.0);
         assert_eq!(attr(&left, "$1", "text-anchor"), "start");
         assert_eq!(attr(&left, "$1", "x"), "243.00", "cell left-aligned at center - dx");
         assert_eq!(attr(&left, "Revenue", "text-anchor"), "end");
@@ -3165,7 +3266,6 @@ mod tests {
                 format: Some(",d".into()),
                 label: label.map(str::to_string),
                 per_series: Some("revenue".into()),
-                by_measure: false,
             }],
         }
     }
@@ -3192,8 +3292,7 @@ mod tests {
     /// `per_series` grouped by (x, color), skipping a null (x, series) pair
     /// — `_per_series_row_layers`, support_table_attachment.py:1387-1426.
     /// The row label is always the series name — `entry.label` (authored
-    /// here as "Ignored") only overrides in `by_measure` mode
-    /// (support_table_attachment.py:1355), never read on this path.
+    /// here as "Ignored") is never read on this path.
     #[test]
     fn build_rows_composed_expands_a_per_series_entry_one_row_per_series() {
         let config = per_series_config(Some("Ignored"));
@@ -3201,7 +3300,7 @@ mod tests {
         let domain = vec!["2024-01-01".to_string(), "2024-01-08".to_string()];
         let series_order = vec!["A".to_string(), "B".to_string()];
         let series_ink = vec!["#111111".to_string(), "#222222".to_string()];
-        let out = build_rows_composed(
+        let out = build_rows_composed("c",
             &config,
             &rows,
             "week",
@@ -3246,7 +3345,7 @@ mod tests {
         let series_order = vec!["A".to_string(), "B".to_string()];
         let series_ink = vec!["#111111".to_string(), "#222222".to_string()];
         let fonts = test_fonts();
-        let out = build_rows_composed(
+        let out = build_rows_composed("c",
             &config,
             &rows,
             "week",
@@ -3285,7 +3384,6 @@ mod tests {
                     format: Some(",d".into()),
                     label: None,
                     per_series: Some("revenue".into()),
-                    by_measure: false,
                 },
                 SupportTableEntry {
                     source: Some("revenue".into()),
@@ -3293,7 +3391,6 @@ mod tests {
                     format: Some(",d".into()),
                     label: Some("Total".into()),
                     per_series: None,
-                    by_measure: false,
                 },
             ],
         };
@@ -3308,7 +3405,7 @@ mod tests {
         let series_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
         let series_ink = vec!["#111".to_string(), "#222".to_string(), "#333".to_string()];
         let s = style(8.0, 4.0, 2.0, 0.0, 1.0);
-        let out = build_rows_composed(
+        let out = build_rows_composed("c",
             &config,
             &rows,
             "week",
@@ -3326,7 +3423,7 @@ mod tests {
         .unwrap();
         assert_eq!(out.len(), 4, "3 series rows + 1 aggregate row");
         let mut svg = String::new();
-        render_rows_composed(&mut svg, &out, &s, 6.0, 100.0, 0.0, 0.0, false);
+        render_rows_composed(&mut svg, &out, &s, 6.0, 100.0, 0.0, 0.0, false, 0.0);
         assert_eq!(
             svg.matches("<line").count(),
             3,
@@ -3339,7 +3436,7 @@ mod tests {
         let config = per_series_config(None);
         let rows = per_series_rows();
         let domain = vec!["2024-01-01".to_string(), "2024-01-08".to_string()];
-        let err = build_rows_composed(
+        let err = build_rows_composed("c",
             &config,
             &rows,
             "week",
@@ -3363,7 +3460,7 @@ mod tests {
         let config = per_series_config(None);
         let rows = per_series_rows();
         let domain = vec!["2024-01-01".to_string(), "2024-01-08".to_string()];
-        let err = build_rows_composed(
+        let err = build_rows_composed("c",
             &config,
             &rows,
             "week",
@@ -3382,41 +3479,6 @@ mod tests {
         assert!(err.contains("series_order"), "names the missing input: {err}");
     }
 
-    #[test]
-    fn build_rows_composed_refuses_a_by_measure_entry() {
-        let config = SupportTableConfig {
-            entries: vec![SupportTableEntry {
-                source: None,
-                aggregate: None,
-                format: Some(",d".into()),
-                label: Some("Revenue".into()),
-                per_series: Some("revenue".into()),
-                by_measure: true,
-            }],
-        };
-        let rows = per_series_rows();
-        let domain = vec!["2024-01-01".to_string(), "2024-01-08".to_string()];
-        let series_order = vec!["A".to_string(), "B".to_string()];
-        let series_ink = vec!["#111".to_string(), "#222".to_string()];
-        let err = build_rows_composed(
-            &config,
-            &rows,
-            "week",
-            &domain,
-            &[10.0, 20.0],
-            &test_fonts(),
-            &label_style(),
-            true,
-            true,
-            false,
-            Some("category"),
-            &series_order,
-            &series_ink,
-        )
-        .unwrap_err();
-        assert!(err.contains("by_measure"), "names the unsupported shape: {err}");
-    }
-
     fn house_entry(name: &str, spec: &str) -> SupportTableEntry {
         SupportTableEntry {
             source: Some("share".into()),
@@ -3424,7 +3486,6 @@ mod tests {
             format: Some(FormatSlot { raw: Some(name.into()), ..FormatSlot::from(spec) }),
             label: Some("Share".into()),
             per_series: None,
-            by_measure: false,
         }
     }
 
@@ -3445,7 +3506,7 @@ mod tests {
     ) -> Vec<ComposedRow> {
         let (rows, domain) = share_rows(values);
         let xs: Vec<f64> = (0..values.len()).map(|i| 100.0 * i as f64).collect();
-        build_rows_composed(
+        build_rows_composed("c",
             &SupportTableConfig { entries: vec![entry] },
             &rows,
             "q",

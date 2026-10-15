@@ -23,6 +23,9 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
     wide_series_names,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import (
+    ERR_BAND_STEP_MULTI_METRIC,
+)
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.emitters._cartesian import (
     CartesianXResolution,
@@ -457,10 +460,8 @@ def _emit_folded_line(
         else CartesianXResolution("nominal", {}, {})
     )
     if is_band_step(line_mark.curve, x_res.vl_type if chart.x else None):
-        raise ChartDataError(
-            f"Line chart '{chart.id}': band-aware step curve is not supported "
-            "for multi-metric (y: [...]) charts -- use a single y field or "
-            "choose a different curve style."
+        raise ChartDataError.from_code(
+            ERR_BAND_STEP_MULTI_METRIC, chart_type="Line", chart_id=chart.id
         )
     measures = list(chart.wide_measures)
     dimension = chart.color

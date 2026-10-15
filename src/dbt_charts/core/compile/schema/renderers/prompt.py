@@ -316,13 +316,7 @@ def _render_model(name: str, schema: AuthorableSchema, path_map: _StylePathMap) 
         if field.inherit_slot:
             link = _fallback_link(field, field.inherit_slot, path_map, name)
             if link is not None:
-                exception = ""
-                if field.inherit_slot_exclude:
-                    names = ", ".join(
-                        f"`{n}`" for n in sorted(field.inherit_slot_exclude)
-                    )
-                    exception = f" (except {names})"
-                desc += f" Unset fields fall back to {link}{exception}."
+                desc += f" Unset fields fall back to {link}."
         elif field.inherit_from:
             link = _fallback_link(field, field.inherit_from[0], path_map, name)
             if link is not None:

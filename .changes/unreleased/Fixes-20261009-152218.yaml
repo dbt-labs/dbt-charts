@@ -1,3 +1,0 @@
-kind: Fixes
-body: Agent sessions refuse non-GET http queries so read-only tool annotations are honest.
-time: 2026-10-09T15:22:18.767204-07:00

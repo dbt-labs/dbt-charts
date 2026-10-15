@@ -369,10 +369,10 @@ uv sync --extra dev
 uv run python playground/server.py   # Run the playground
 uv run pytest tests/                 # Run tests
 uv run ruff check src/ tests/        # Run linter
-uv run mypy src/                     # Run type checker
+uv run pyright                       # Run type checker
 ```
 
-Inside the dbt charts monorepo, the equivalent recipes are `just markdown_svg play`, `just markdown_svg test`, and `just markdown_svg mypy`.
+Inside the dbt charts monorepo, the equivalent recipes are `just markdown_svg play`, `just markdown_svg test`, and `just pyright`.
 
 ## Roadmap
 

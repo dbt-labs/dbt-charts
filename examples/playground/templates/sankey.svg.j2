@@ -106,6 +106,11 @@ options:
   {% set x = ns.depth[n] * colw %}{% set y = ns.y[n] %}{% set hgt = [nv * k, 1] | max %}
   <rect x="{{ x|round(1) }}" y="{{ y|round(1) }}" width="{{ p.node_width }}" height="{{ hgt|round(1) }}" fill="{{ color_for(n, source_col) }}"><title>{{ n }}: {{ nv | format(p.value_format) }}</title></rect>
   {% set end = ns.depth[n] == last %}
-  <text x="{{ (x - 6 if end else x + p.node_width + 6)|round(1) }}" y="{{ (y + hgt / 2)|round(1) }}" dy="0.35em" text-anchor="{{ 'end' if end else 'start' }}" font-weight="600">{{ n }}<tspan dx="4" font-weight="400" fill="{{ style.muted }}">{{ nv | format(p.value_format) }}</tspan></text>
+  {% set v = nv | format(p.value_format) %}
+  {% set nw = text_width(n, label_size, 600) %}
+  {% set lx = x - 6 - nw - 4 - text_width(v, label_size) if end else x + p.node_width + 6 %}
+  {% set ly = (y + hgt / 2)|round(1) %}
+  <text x="{{ lx|round(1) }}" y="{{ ly }}" dy="0.35em" font-weight="600">{{ n }}</text>
+  <text x="{{ (lx + nw + 4)|round(1) }}" y="{{ ly }}" dy="0.35em" fill="{{ style.muted }}">{{ v }}</text>
 {% endfor %}
 </g>

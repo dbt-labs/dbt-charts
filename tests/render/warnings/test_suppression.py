@@ -307,7 +307,7 @@ rows:
 """
 
 
-def _make_executor(board, query_registry):  # type: ignore[no-untyped-def]
+def _make_executor(board, query_registry):
     from unittest.mock import Mock
 
     ok = Mock()
@@ -328,7 +328,7 @@ def _fake_detector(code: str, chart_id: str | None = "c") -> ModuleType:
     (registered) code."""
     fake = ModuleType(f"fake_detector_{code}")
 
-    def _detect(ctx):  # type: ignore[no-untyped-def]
+    def _detect(ctx):
         return [
             Diagnostic.from_code(
                 REGISTRY.get(code), message="test warning", chart=chart_id

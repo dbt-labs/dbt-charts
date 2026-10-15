@@ -395,7 +395,7 @@ def test_cli_describe_command_uses_project_session_with_block(tmp_path: Path) ->
     ]
 
     @contextmanager
-    def fake_from_project(project, *, cache=None, **_kwargs):  # type: ignore[no-untyped-def]
+    def fake_from_project(project, *, cache=None, **_kwargs):
         yield fake_project
 
     with patch(

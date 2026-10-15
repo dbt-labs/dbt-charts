@@ -49,7 +49,7 @@ import statistics
 from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from d3_format import FormatSpec, parse as _d3_parse
 from d3_format.errors import D3FormatError
@@ -102,6 +102,12 @@ from dbt_charts.core.diagnostics import ERR_INPUT_INVALID
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX,
+)
+from dbt_charts.core.diagnostics.codes_render import (
+    ERR_SUPPORT_TABLE_INDEPENDENT_X,
+    ERR_SUPPORT_TABLE_NO_X_ENCODING,
+    ERR_SUPPORT_TABLE_NO_Y_ENCODING,
+    ERR_SUPPORT_TABLE_X_FIELD_DISAGREE,
 )
 from dbt_charts.core.font_measure import compose_decimal_units, get_font_measurer
 from dbt_charts.core.fonts import (
@@ -1817,7 +1823,7 @@ def _divider_rule_layer(
     axis_offset_value: float | None,
     spec_height: float,
 ) -> dict[str, Any]:
-    """Strip-top divider rule (ADR-006: rule-only, no header text).
+    """Strip-top divider rule (rule-only, no header text).
 
     ``x`` is explicitly nulled out — the same opt-out already used for
     ``yOffset``/``color`` elsewhere in this module. This layer's own inline
@@ -2141,20 +2147,11 @@ def attach_support_table(
     if "x" in top_encoding:
         parent_x_enc = top_encoding["x"]
     else:
-        from dbt_charts.core.diagnostics.chart_data import ChartDataError
-
         layers_inline = spec.get("layer")
         if not isinstance(layers_inline, list) or not layers_inline:
-            raise ChartDataError(
-                "support_table attachment requires an x-encoding on the chart spec "
-                "or its layers; none found."
-            )
+            raise ChartDataError.from_code(ERR_SUPPORT_TABLE_NO_X_ENCODING)
         if spec.get("resolve", {}).get("scale", {}).get("x") == "independent":
-            raise ChartDataError(
-                "support_table strip cannot anchor to a layer spec with "
-                "resolve.scale.x == 'independent'; the layers have per-dataset "
-                "x scales and the strip cannot anchor coherently."
-            )
+            raise ChartDataError.from_code(ERR_SUPPORT_TABLE_INDEPENDENT_X)
         layer_x_encs = [
             layer.get("encoding", {}).get("x")
             for layer in layers_inline
@@ -2162,18 +2159,11 @@ def attach_support_table(
         ]
         non_null_x_encs = [enc for enc in layer_x_encs if isinstance(enc, dict)]
         if not non_null_x_encs:
-            raise ChartDataError(
-                "support_table attachment requires an x-encoding on the chart spec "
-                "or its layers; none found."
-            )
+            raise ChartDataError.from_code(ERR_SUPPORT_TABLE_NO_X_ENCODING)
         first_x_field = non_null_x_encs[0].get("field")
         for enc in non_null_x_encs[1:]:
             if enc.get("field") != first_x_field:
-                raise ChartDataError(
-                    "support_table strip cannot anchor to a layer spec whose "
-                    "per-layer x-encodings disagree on field; lift x to chart "
-                    "level or remove support_table."
-                )
+                raise ChartDataError.from_code(ERR_SUPPORT_TABLE_X_FIELD_DISAGREE)
         parent_x_enc = non_null_x_encs[0]
     color_field: str | None = None
     for color_encoding in _emitted_color_encodings(spec):
@@ -3928,12 +3918,7 @@ def attach_support_table_columns(
         top_encoding = _raw_top_encoding
     parent_y_enc = top_encoding.get("y")
     if not isinstance(parent_y_enc, dict) or "field" not in parent_y_enc:
-        from dbt_charts.core.diagnostics.chart_data import ChartDataError
-
-        raise ChartDataError(
-            "support_table column attachment requires a category y-encoding "
-            "on the chart spec; none found."
-        )
+        raise ChartDataError.from_code(ERR_SUPPORT_TABLE_NO_Y_ENCODING)
 
     plot_gutter = _column_block_plot_gutter(style, axis_label_padding)
     total_width = sum(column_widths) + plot_gutter
@@ -4667,9 +4652,6 @@ def apply_chart_support_table_post_pass(
             f"axis_y.position resolved to unexpected value {resolved_orient!r}; "
             "expected 'left' or 'right'"
         )
-    # mypy can't narrow `resolved_orient` from the ValueError guard above,
-    # so the cast is required for mypy even though pyright sees it as redundant.
-    axis_y_orient = cast(Literal["left", "right"], resolved_orient)  # pyright: ignore[reportUnnecessaryCast]  # type-state: cast — mypy cannot narrow resolved_orient past the ValueError guard above; pyright sees it redundant; pre-existing, relocated by this diff
     assert dt_style.position is not None, (
         "effective_support_table_style.position must already be resolved to a "
         "concrete side at compile time — see "
@@ -4684,7 +4666,7 @@ def apply_chart_support_table_post_pass(
             data,
             padding,
             dt_style,
-            axis_y_orient,
+            resolved_orient,
             axis_label_padding,
             stacked_series_order,
         )
@@ -4767,13 +4749,13 @@ def apply_chart_support_table_post_pass(
     # `sort: null`, so its leftmost cell is the first x in data order. A
     # sorted category axis paints its pinned domain in order; an unpinned
     # sort keeps per-cell formatting rather than stranding the unit mid-row.
-    # dt_style/axis_label_padding/axis_y_orient are already resolved above
+    # dt_style/axis_label_padding/resolved_orient are already resolved above
     # (shared with the column-path dispatch).
     # Which side the anchor's affix overhangs. Right-oriented y-axis: affix leads
     # digits, hanging into the gutter (left). Left-oriented y-axis: affix trails
     # digits, hanging into the anchor cell's own band (right), so every non-anchor
     # cell's left digit edge stays in one lane.
-    hang: Literal["left", "right"] = "left" if axis_y_orient == "right" else "right"
+    hang: Literal["left", "right"] = "left" if resolved_orient == "right" else "right"
     if (
         x_encoding.get("field")
         # Only `sort: null` (key present, value null) signals data order.
@@ -5059,7 +5041,7 @@ def apply_chart_support_table_post_pass(
         series_order=series_order,
         dark_fills=dark_fills,
         label_period_filter_expr=period_filter,
-        axis_y_orient=axis_y_orient,
+        axis_y_orient=resolved_orient,
         suppress_series_labels=False,
     )
     if suppress_legend:

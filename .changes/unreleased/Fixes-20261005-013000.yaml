@@ -1,3 +1,0 @@
-kind: Fixes
-body: The board skills no longer ask for a `notes:` line on every query, chart and variable.
-time: 2026-10-05T01:30:00.000000-07:00

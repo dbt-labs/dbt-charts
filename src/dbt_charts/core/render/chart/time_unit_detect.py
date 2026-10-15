@@ -30,7 +30,8 @@ import math
 import re
 import statistics
 from collections.abc import Callable, Iterable
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from dbt_charts.core.constants.axis import MAX_ORDINAL_BUCKETS, SPARSE_CEILING_PX
 from dbt_charts.core.font_measure import FontMeasurer
@@ -2300,6 +2301,141 @@ _TICK_MINUTE_STEP_BOUNDARY_SECONDS = math.sqrt(30 * 60)  # ~42.4264
 _ESTIMATED_Y_AXIS_CHROME_PX = 100.0
 
 
+def _subday_instants(
+    values: list[Any],  # type-state: explicit_any — raw x-field values
+    authored_domain: tuple[int | float | str, int | float | str] | None,
+) -> tuple[list[dt.datetime], bool] | None:
+    """The sorted distinct instants a sub-day axis renders across, and whether
+    they are UTC-anchored (``True``) or naive local time (``False``).
+
+    ``None`` when the field has no sub-day component, mixes naive and
+    UTC-anchored values (no single accessor reads both), or spans fewer than two
+    instants. See ``default_subday_label_expr_for`` for why the authored domain,
+    not the data, decides the extent once set.
+    """
+    parsed = [
+        p for p in (_parse_date(v) for v in values if v is not None) if p is not None
+    ]
+    if not _has_subday_component(parsed):
+        return None
+    # The authored scale domain — not the field's own data extent — is what
+    # decides span/offset/midnight-count once it's set (see the docstring's
+    # `authored_domain` paragraph); `parsed` above stays data-derived because
+    # `_has_subday_component` is a question about the field, not the range.
+    extent_source = (
+        [p for p in (_parse_date(v) for v in authored_domain) if p is not None]
+        if authored_domain is not None
+        else parsed
+    )
+    # An explicit UTC offset is an absolute instant — convert it rather than
+    # dropping it, so the gate below reads the same instant the rendered
+    # expression's UTC accessors will (see the has_offset branch below). A
+    # bare date-only value (``dt.date``, no time component) is ALSO an
+    # absolute instant for this purpose: Vega parses a date-only string as
+    # UTC midnight, never local, the same convention the calendar-bucketed
+    # vocabulary's docstring notes above. A domain MIXING either of those
+    # with a naive datetime is the one state neither accessor can get right
+    # — Python's `instants` below would normalize the UTC-anchored values
+    # while leaving the naive ones untouched (reading a blended clock no
+    # single accessor choice matches), and Vega itself still parses the
+    # naive values as local regardless of what we pick — so it bails rather
+    # than guessing which side to trust. This check spans BOTH `parsed`
+    # (the field's own data) AND `extent_source` (the authored domain, when
+    # set) — checking the domain alone would miss a naive/offset mismatch
+    # BETWEEN the two, e.g. a date-only domain (UTC) framing naive sub-day
+    # data (local): the offset choice below has to hold for everything the
+    # rendered expression's accessors will actually touch, not just the
+    # values that happen to decide the span.
+    offset_check_source = parsed if authored_domain is None else parsed + extent_source
+    offset_flags = [
+        (isinstance(p, dt.datetime) and p.tzinfo is not None)
+        # `p` is always a `dt.date | dt.datetime` here, so "not a datetime"
+        # already means "a bare date" -- an `isinstance(p, dt.date)` check
+        # would be trivially true for both members of that union.
+        or (not isinstance(p, dt.datetime))
+        for p in offset_check_source
+    ]
+    if any(offset_flags) and not all(offset_flags):
+        return None
+    has_offset = all(offset_flags)
+    instants = sorted(
+        {
+            (
+                p.astimezone(dt.UTC).replace(tzinfo=None)
+                if isinstance(p, dt.datetime) and p.tzinfo is not None
+                else (
+                    p
+                    if isinstance(p, dt.datetime)
+                    else dt.datetime.combine(p, dt.time.min)
+                )
+            )
+            for p in extent_source
+        }
+    )
+    if len(instants) < 2:
+        return None
+    return instants, has_offset
+
+
+# The steps a person reads off a clock face. d3-time's own tick ladder (what
+# Vega draws by default) has no 10-minute or 2-hour rung.
+_SUBDAY_TICK_LADDER: tuple[tuple[str, int], ...] = (
+    ("minutes", 1),
+    ("minutes", 5),
+    ("minutes", 10),
+    ("minutes", 15),
+    ("minutes", 30),
+    ("hours", 1),
+    ("hours", 2),
+    ("hours", 3),
+    ("hours", 6),
+    ("hours", 12),
+)
+
+# Room one sub-day tick label needs: the widest is the hour word at the house
+# size ("Midnight"), with air on both sides.
+_SUBDAY_TICK_PITCH_PX = 64.0
+
+
+def default_subday_tick_interval(
+    values: list[Any],  # type-state: explicit_any — raw x-field values
+    authored_domain: tuple[int | float | str, int | float | str] | None,
+    available_width: float | None,
+) -> tuple[str, int, int] | None:
+    """The finest clock-aligned tick step that fits the plot, as ``(Vega interval,
+    step, tick count)``, or ``None`` when the axis keeps Vega's own ticks.
+
+    Applies to a continuous temporal axis whose data carries a sub-day
+    component, across a domain the ladder can cover (12-hour ticks at the
+    coarsest, under a year). Each rung of ``_SUBDAY_TICK_LADDER`` is aligned to
+    the clock (a 15-minute step ticks at :00, :15, :30, :45), so every whole hour
+    is a tick wherever the step divides an hour. ``available_width`` is the
+    horizontal space known before Vega lays the plot out; the estimated y-axis
+    chrome is taken off it, same as ``predicted_tick_count``.
+
+    UTC-anchored values keep Vega's ticks: Vega aligns an interval to the
+    viewer's local clock on a ``time`` scale, which is not the UTC clock the
+    labels read.
+    """
+    if available_width is None:
+        return None
+    max_ticks = int(
+        (available_width - _ESTIMATED_Y_AXIS_CHROME_PX) // _SUBDAY_TICK_PITCH_PX
+    )
+    extent = _subday_instants(values, authored_domain)
+    if extent is None:
+        return None
+    instants, has_offset = extent
+    span = instants[-1] - instants[0]
+    if has_offset or span >= _SUBDAY_MAX_DOMAIN_SPAN:
+        return None
+    for interval, step in _SUBDAY_TICK_LADDER:
+        count = math.ceil(span / dt.timedelta(**{interval: step}))
+        if 2 <= count <= max_ticks:
+            return interval, step, count
+    return None
+
+
 def predicted_tick_count(available_width: float | None) -> int | None:
     """Predict a safe LOWER BOUND on Vega's continuous-temporal tickCount.
 
@@ -2465,67 +2601,10 @@ def default_subday_label_expr_for(
     """
     if tick_count is None or tick_count_ceiling is None:
         return None
-    parsed = [
-        p for p in (_parse_date(v) for v in values if v is not None) if p is not None
-    ]
-    if not _has_subday_component(parsed):
+    extent = _subday_instants(values, authored_domain)
+    if extent is None:
         return None
-    # The authored scale domain — not the field's own data extent — is what
-    # decides span/offset/midnight-count once it's set (see the docstring's
-    # `authored_domain` paragraph); `parsed` above stays data-derived because
-    # `_has_subday_component` is a question about the field, not the range.
-    extent_source = (
-        [p for p in (_parse_date(v) for v in authored_domain) if p is not None]
-        if authored_domain is not None
-        else parsed
-    )
-    # An explicit UTC offset is an absolute instant — convert it rather than
-    # dropping it, so the gate below reads the same instant the rendered
-    # expression's UTC accessors will (see the has_offset branch below). A
-    # bare date-only value (``dt.date``, no time component) is ALSO an
-    # absolute instant for this purpose: Vega parses a date-only string as
-    # UTC midnight, never local, the same convention the calendar-bucketed
-    # vocabulary's docstring notes above. A domain MIXING either of those
-    # with a naive datetime is the one state neither accessor can get right
-    # — Python's `instants` below would normalize the UTC-anchored values
-    # while leaving the naive ones untouched (reading a blended clock no
-    # single accessor choice matches), and Vega itself still parses the
-    # naive values as local regardless of what we pick — so it bails rather
-    # than guessing which side to trust. This check spans BOTH `parsed`
-    # (the field's own data) AND `extent_source` (the authored domain, when
-    # set) — checking the domain alone would miss a naive/offset mismatch
-    # BETWEEN the two, e.g. a date-only domain (UTC) framing naive sub-day
-    # data (local): the offset choice below has to hold for everything the
-    # rendered expression's accessors will actually touch, not just the
-    # values that happen to decide the span.
-    offset_check_source = parsed if authored_domain is None else parsed + extent_source
-    offset_flags = [
-        (isinstance(p, dt.datetime) and p.tzinfo is not None)
-        # `p` is always a `dt.date | dt.datetime` here, so "not a datetime"
-        # already means "a bare date" -- an `isinstance(p, dt.date)` check
-        # would be trivially true for both members of that union.
-        or (not isinstance(p, dt.datetime))
-        for p in offset_check_source
-    ]
-    if any(offset_flags) and not all(offset_flags):
-        return None
-    has_offset = all(offset_flags)
-    instants = sorted(
-        {
-            (
-                p.astimezone(dt.UTC).replace(tzinfo=None)
-                if isinstance(p, dt.datetime) and p.tzinfo is not None
-                else (
-                    p
-                    if isinstance(p, dt.datetime)
-                    else dt.datetime.combine(p, dt.time.min)
-                )
-            )
-            for p in extent_source
-        }
-    )
-    if len(instants) < 2:
-        return None
+    instants, has_offset = extent
     span = instants[-1] - instants[0]
     if span >= _SUBDAY_MAX_DOMAIN_SPAN:
         return None
@@ -2584,6 +2663,61 @@ def default_subday_label_expr_for(
         return core
     date_row = f"{hours_fn}(datum.value) === 0 ? {fmt}(datum.value, '%b %-d') : ''"
     return f"[{core}, {date_row}]"
+
+
+# Past this span a header naming the time of day on every point is noise: the
+# reader is scanning days, not hours.
+_TOOLTIP_TIME_MAX_SPAN = dt.timedelta(hours=48)
+
+
+@dataclass(frozen=True)
+class SubdayHeader:
+    """How a sub-day temporal x names a point in its tooltip header.
+
+    ``scope`` is ``"time"`` when every point falls on one calendar day (the date
+    is the chart's context), ``"datetime"`` otherwise. ``utc`` and ``clock`` match
+    the axis labels' accessors and clock register.
+    """
+
+    scope: Literal["time", "datetime"]
+    utc: bool
+    clock: int | None
+    seconds: bool
+
+
+def subday_header_for(
+    values: list[Any],  # type-state: explicit_any — raw x-field values
+    clock: int | None,
+) -> SubdayHeader | None:
+    """The tooltip header for sub-day data spanning 48 hours or less, else ``None``
+    (the date-only header)."""
+    extent = _subday_instants(values, None)
+    if extent is None:
+        return None
+    instants, has_offset = extent
+    if instants[-1] - instants[0] > _TOOLTIP_TIME_MAX_SPAN:
+        return None
+    return SubdayHeader(
+        scope="time" if instants[0].date() == instants[-1].date() else "datetime",
+        utc=has_offset,
+        clock=clock,
+        seconds=any(i.second for i in instants),
+    )
+
+
+def subday_header_expr(value_ref: str, header: SubdayHeader) -> str:
+    """Vega expression for a sub-day tooltip header, in the axis labels' clock."""
+    fmt = "utcFormat" if header.utc else "timeFormat"
+    v = f"toDate({value_ref})"
+    if header.clock == 24:
+        spec = "%H:%M:%S" if header.seconds else "%H:%M"
+        time = f"{fmt}({v}, '{spec}')"
+    else:
+        spec = "%-I:%M:%S%p" if header.seconds else "%-I:%M%p"
+        time = f"lower({fmt}({v}, '{spec}'))"
+    if header.scope == "time":
+        return time
+    return f"{fmt}({v}, '%-d %b %Y') + ', ' + {time}"
 
 
 def tooltip_header_date_expr(value_ref: str, time_unit: str) -> str:

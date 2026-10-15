@@ -35,7 +35,7 @@ class RenderError(DbtChartsError):
     # bypass __init__) still satisfy `e.element` access.
     element: str | None = None
 
-    def __init__(self, message: str, element: str | None = None):
+    def __init__(self, message: str, element: str | None = None) -> None:
         self.message = message
         self.element = element
         self.fields: dict[str, Any] = {}

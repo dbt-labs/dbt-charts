@@ -66,3 +66,10 @@ def test_null_gap_fails_loudly_instead_of_leaking_into_the_expression() -> None:
     data = [{"x": 1.0}, {"x": 2.0}, {"x": 3.0}]
     with pytest.raises(AssertionError, match="marks.bar.gap unset"):
         continuous_bar_size_prop(bar, "x", data, "vertical")
+
+
+def test_unauthored_max_size_caps_at_the_engine_ceiling() -> None:
+    bar = BarMarkStyle(gap=3.0, min_size=4.0)
+    assert continuous_bar_size_prop(bar, "x", [], "vertical") == {"width": 20.0}
+    expr = continuous_bar_size_prop(bar, "x", [{"x": 1}, {"x": 2}], "vertical")
+    assert expr["width"]["expr"].endswith("4.0, 20.0)")

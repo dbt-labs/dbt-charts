@@ -33,7 +33,7 @@ _ITERATIONS = 5
 # Inline data on purpose: this measures render *compute*, and a warehouse would
 # swamp it with query I/O. That also means the ratio below is not a
 # dashboard-latency number for a warehouse-backed board — see
-# ai_notes/rendered-svg-memo-measured-2026-08-15.md.
+# ai_notes/engine/rendered-svg-memo-measured-2026-08-15.md.
 _BOARD = (
     "title: Benchmark\n"
     "queries:\n"

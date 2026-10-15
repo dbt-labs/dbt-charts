@@ -756,7 +756,9 @@ resolve to the same recipe, and the same error names the recipe if you guess a `
 | gantt | type: bar with a date y and a date y_start, style.orientation: horizontal so time runs left to right, keeping the query's row order rather than the usual value-descending default |
 
 Shapes with no built-in type — naming them is the half a recipe cannot cover. When the user asks for one of these by name, draw it with `type: custom`; never substitute one for a built-in chart the user did not ask to replace:
-`alluvial`, `chord`, `funnel`, `gauge`, `marimekko`, `network`, `radar`, `sankey`, `spider`, `sunburst`, `treemap`, `violin`, `word cloud`.
+`alluvial`, `funnel`, `gauge`, `marimekko`, `radar`, `sankey`, `spider`, `violin`.
+
+`chord`, `network`, `sunburst`, `treemap` and `word cloud` are not supported: no built-in type draws them, and a custom template cannot compute their layouts. Say so instead of approximating one.
 
 ### Shared chart fields
 
@@ -1122,7 +1124,7 @@ options:
 style:
   aspect_ratio: 2         # sizing only: aspect_ratio, min_height, max_height
 
-# custom, inline — the template under `svg:`; no channels or options, read columns off rows
+# custom, inline: the template under `svg:`; header optional; without one, read columns off rows
 type: custom
 query: quota
 svg: |
@@ -1151,10 +1153,10 @@ style:
 Use `type: custom` only when the user asks for a shape by name or description that no built-in type or composed recipe draws; a custom chart gets no axes, legend, sizing rules, or visual warnings for free. A custom chart is drawn by a Jinja-style template that emits SVG content. SQL does the
 math (positions, stacking, binning); the template draws. Exactly one of
 `template:` (a project file, `templates/<name>.svg.j2`) or `svg:` (inline
-source) is required. Write one-off charts inline; an inline template has no
-header and takes no channels or options, so it reads columns by name (`r.revenue`).
-`dct examples charts/custom-inline` is a complete inline board. The platform wraps the output in a root `<svg>` sized
-`width x height` and draws `title`/`subtitle` above it.
+source) is required. Write one-off charts inline; an inline template may open with
+the same header as a template file; without one it declares no channels or options and reads columns by name (`r.revenue`).
+`dct examples charts/custom-inline` is a complete inline board. The platform clips the output to the `width x height`
+drawing box and draws `title`/`subtitle` above it.
 
 A template file may open with a Jinja comment holding YAML that declares its
 `channels` and `options`:

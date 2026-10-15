@@ -248,7 +248,7 @@ def _pin_unauthored_nested_background(
     None` as statically impossible even though it is meaningful at runtime.
 
     A single-field ``model_copy(update=...)``, not ``scope_patch``: several
-    Style fields (``layout``, ``frame``, ...) are ``NotInherited``, so
+    Style fields (``footer``, ``padding``, ...) are ``NotInherited``, so
     scoping a second, background-only patch onto ``patch`` would drop every
     such field ``patch`` already resolved.
     """
@@ -265,30 +265,24 @@ def _pin_unauthored_nested_background(
 
 
 def _with_nested_layout_gap(
-    patch: StylePatch,
-    board_style: StylePatch | None,
-    layout_type: LayoutType | None,
+    patch: StylePatch, layout_type: LayoutType | None
 ) -> StylePatch:
-    """``patch`` with this board's own ``style.layout.<type>.gap`` as its ``style.gap``.
+    """``patch`` with its ``style.layout.<type>.gap`` as its ``style.gap``.
 
     A nested board pitches its items by ``style.gap`` (0 when unset) and never
-    reads ``layout.<type>.gap``, so an authored layout gap would otherwise
-    validate and do nothing. An explicit ``style.gap`` wins.
-
-    The gap deliberately does not inherit: it applies at the board that
-    authored it and never reaches a board nested inside it. So it is read from
-    ``board_style`` (this board's own raw patch, never the merged one) and
-    lives only in the patch this board resolves from, not in the patch handed
-    down to its children.
+    reads ``layout.<type>.gap``, so an authored layout gap, this board's or an
+    ancestor's, would otherwise validate and do nothing. An explicit
+    ``style.gap`` wins. Only authored values count: an unset layout gap leaves
+    ``style.gap`` unset rather than taking the theme's.
     """
-    if board_style is None or layout_type is None or patch.gap is not None:
+    if layout_type is None or patch.gap is not None:
         return patch
     if layout_type not in (LayoutType.ROWS, LayoutType.COLS, LayoutType.GRID):
         return patch
     # model_dump, not attribute access: a patch model's TYPE_CHECKING stub
     # types every field as non-optional, so the unauthored cases read as
     # statically impossible (see _pin_unauthored_nested_background).
-    own_layout = board_style.model_dump(exclude_unset=True).get("layout")
+    own_layout = patch.model_dump(exclude_unset=True).get("layout")
     if own_layout is None:
         return patch
     layout_patch = own_layout.get(layout_type.value)
@@ -315,7 +309,7 @@ def compile_board_resolved_style(
     1. Board-to-board relation (``scope_patch(parent_patch, board_style)``).
        Most fields default to the ancestor's authored value crossing in when
        this board leaves them unset; a field marked ``NotInherited`` — a
-       per-board structural or root-only concern (spacing/frame,
+       per-board or root-only concern (padding/margin,
        footer/timestamp chrome), not thematic identity — never crosses, so
        this board's own value (or the theme's) applies.
     2. Theme defaults (theme_name → compiled theme → resolve_style) fill
@@ -350,7 +344,8 @@ def compile_board_resolved_style(
     authoring), which decides the ink-canvas bottom layer below.
 
     ``layout_type`` is this board's own layout, which a nested board needs to
-    read its authored ``layout.<type>.gap`` (``_with_nested_layout_gap``). Left
+    read its authored or inherited ``layout.<type>.gap``
+    (``_with_nested_layout_gap``). Left
     ``None`` where it is not yet known — ``normalize_board`` resolves a board
     before its layout exists, and the parent's ``_propagate_resolved_style``
     re-resolves every nested board with the type afterward.
@@ -386,20 +381,23 @@ def compile_board_resolved_style(
 
     if board_style is None:
         # No style: of its own to merge -- still folds whatever an ancestor
-        # authored (`parent_patch`), background pinned to `replacement` when
-        # this scope is nested and authored no style at all. Always a fresh
-        # resolve: an unstyled nested board never reuses its parent's object
-        # (layout_sizing.py's canonical_resolved_key keys "same placement"
-        # on a value, not identity, precisely so this can be true).
+        # authored (`parent_patch`, minus its NotInherited fields), background
+        # pinned to `replacement` when this scope is nested and authored no
+        # style at all. Always a fresh resolve: an unstyled nested board never
+        # reuses its parent's object (layout_sizing.py's canonical_resolved_key
+        # keys "same placement" on a value, not identity, precisely so this
+        # can be true).
+        inherited_patch = scope_patch(parent_patch, None)
         merged_patch = _pin_unauthored_nested_background(
-            parent_patch, None, is_nested=is_nested, replacement=replacement
+            inherited_patch, None, is_nested=is_nested, replacement=replacement
         )
-        patches = (merged_patch,) if merged_patch is not None else ()
+        if merged_patch is not None and is_nested:
+            merged_patch = _with_nested_layout_gap(merged_patch, layout_type)
         return (
             *resolve_style_and_context(
-                base, *patches, base_background=bottom_layer, currency=currency
+                base, merged_patch, base_background=bottom_layer, currency=currency
             ),
-            parent_patch,
+            inherited_patch,
         )
 
     if is_nested:
@@ -409,12 +407,8 @@ def compile_board_resolved_style(
         own_patch, board_style, is_nested=is_nested, replacement=replacement
     )
 
-    # What this board itself resolves from; ``own_patch`` stays the patch its
-    # children inherit.
     resolve_patch = (
-        _with_nested_layout_gap(own_patch, board_style, layout_type)
-        if is_nested
-        else own_patch
+        _with_nested_layout_gap(own_patch, layout_type) if is_nested else own_patch
     )
 
     cache = _current_board_style_cache()

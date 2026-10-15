@@ -26,7 +26,7 @@ class ChartType(StrEnum):
     SCATTER = "scatter"  # VL mark: point
     HEATMAP = "heatmap"  # -> rect
     PIE = "pie"  # -> arc
-    DONUT = "donut"  # -> pie with style.inner_radius=0.6 (normalized alias)
+    DONUT = "donut"  # -> pie styled by charts.donut (normalized alias)
     HISTOGRAM = "histogram"  # -> bar + binning
     MAP = "map"  # -> geoshape (generic map)
     POINT_MAP = "point_map"  # -> circle marks with lat/lng

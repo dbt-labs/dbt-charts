@@ -145,7 +145,7 @@ class Skill(BaseModel):
         ),
     )
 
-    @computed_field  # type: ignore[prop-decorator]  # pydantic-documented computed_field/cached_property interaction
+    @computed_field
     @cached_property
     def has_examples(self) -> bool:
         return bool(self.examples)

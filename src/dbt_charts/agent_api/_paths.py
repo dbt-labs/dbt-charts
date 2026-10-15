@@ -13,6 +13,7 @@ from dbt_charts.core.diagnostics import (
     ERR_FILE_NOT_FOUND,
     ERR_INTERNAL,
     ERR_META_SCHEMA,
+    ERR_PATH_OUTSIDE_PROJECT,
     ERR_PROJECT_CONFIG_SCHEMA,
     Diagnostic,
 )
@@ -78,9 +79,10 @@ def _patch_diagnostics(patch_data: dict[str, Any], relpath: str) -> list[Diagnos
     from pydantic import ValidationError as PydanticValidationError
 
     from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
+    from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
 
     try:
-        BOARD_PATCH_ADAPTER.validate_python(patch_data)
+        BOARD_PATCH_ADAPTER.validate_python(patch_data, context=AUTHORED_INPUT)
     except PydanticValidationError as exc:
         return _pydantic_diagnostics(exc, ERR_META_SCHEMA, relpath)
     return []
@@ -293,23 +295,42 @@ def empty_stdin_diagnostic() -> Diagnostic:
     ).to_diagnostic()
 
 
-def invalid_ignore_code_diagnostics(ignore_codes: set[str]) -> list[Diagnostic]:
-    """One error per ``--ignore-warning`` code that isn't a registered WARN-* code."""
+def ignore_code_diagnostics(ignore_codes: set[str]) -> list[Diagnostic]:
+    """Diagnostics for ``--ignore-warning`` codes that aren't live WARN-* codes.
+
+    A retired code yields a warning (it suppresses nothing but the render
+    proceeds, as in authored YAML); any other unregistered code yields an error.
+    """
     from dbt_charts.core.diagnostics import REGISTRY
     from dbt_charts.core.diagnostics.codes_compile import (
         ERR_IGNORE_ERROR_CODE,
         ERR_UNKNOWN_WARNING_CODE,
+        WARN_RETIRED_IGNORE_CODE,
     )
+    from dbt_charts.core.diagnostics.codes_retired import RETIRED_WARNING_CODES
 
     warning_codes = REGISTRY.codes(level="warning")
     error_codes = REGISTRY.codes(level="error")
-    return [
-        DbtChartsError.from_code(
-            ERR_IGNORE_ERROR_CODE if code in error_codes else ERR_UNKNOWN_WARNING_CODE,
-            code=code,
-        ).to_diagnostic()
-        for code in sorted(ignore_codes - warning_codes)
-    ]
+    diagnostics: list[Diagnostic] = []
+    for code in sorted(ignore_codes - warning_codes):
+        if code in RETIRED_WARNING_CODES:
+            diagnostics.append(
+                Diagnostic.from_code(
+                    WARN_RETIRED_IGNORE_CODE,
+                    message=WARN_RETIRED_IGNORE_CODE.message_template.format(code=code),
+                    fix=WARN_RETIRED_IGNORE_CODE.fix_template,
+                )
+            )
+        else:
+            diagnostics.append(
+                DbtChartsError.from_code(
+                    ERR_IGNORE_ERROR_CODE
+                    if code in error_codes
+                    else ERR_UNKNOWN_WARNING_CODE,
+                    code=code,
+                ).to_diagnostic()
+            )
+    return diagnostics
 
 
 def render_crash_diagnostic(board_path: Path, exc: Exception) -> Diagnostic:
@@ -350,7 +371,23 @@ def resolve_board_relpath(relpath: PurePosixPath, project: Project) -> ProjectPa
     return project.path(relpath_str)  # caller reports not-found
 
 
-def _relpath_for_fs_location(path: Path, project: Project) -> str:
+class PathOutsideProjectError(DbtChartsError, ValueError):
+    """A board path that resolves outside the project root: user input, not a bug."""
+
+
+def resolution_error_diagnostic(exc: ValueError) -> Diagnostic:
+    """Diagnostic for a ``ValueError`` out of ``resolve_board_path``.
+
+    Only an escaping path is the user's mistake; every other ``ValueError`` here
+    (a non-local project, a malformed relpath) is a caller bug and stays
+    ``ERR-INTERNAL``.
+    """
+    if isinstance(exc, PathOutsideProjectError):
+        return exc.to_diagnostic()
+    return DbtChartsError.from_code(ERR_INTERNAL, message=str(exc)).to_diagnostic()
+
+
+def _relpath_for_fs_location(path: Path, project: Project) -> str | None:
     """Relativize an absolute, on-disk board location against a local project root.
 
     Absolute and ``..``-leading board paths are explicit filesystem locations —
@@ -364,7 +401,8 @@ def _relpath_for_fs_location(path: Path, project: Project) -> str:
     follows symlinks (handles e.g. ``/var`` -> ``/private/var`` on macOS); a
     symlink-blind ``normpath`` fallback accepts paths through intentional
     project-internal symlinks (e.g. ``charts/tasks/`` -> ``../../tasks/``).
-    Raises ``ValueError`` if neither check places *path* inside the root.
+    Returns ``None`` if neither check places *path* inside the root; raises
+    ``ValueError`` if *project* is not a local filesystem project.
     """
     if not isinstance(project, FilesystemProject):
         raise ValueError(
@@ -381,7 +419,7 @@ def _relpath_for_fs_location(path: Path, project: Project) -> str:
     try:
         return posix_relpath(normalized, root)
     except ValueError:
-        raise ValueError(f"Path {path!r} is outside project root {root!r}") from None
+        return None
 
 
 def resolve_board_path(path: Path, project: Project) -> ProjectPath:
@@ -403,6 +441,10 @@ def resolve_board_path(path: Path, project: Project) -> ProjectPath:
         )
     else:
         return resolve_board_relpath(PurePosixPath(path), project)
+    if relpath is None:
+        raise PathOutsideProjectError.from_code(
+            ERR_PATH_OUTSIDE_PROJECT, path=path.as_posix()
+        )
     return project.path(relpath)
 
 
@@ -413,12 +455,12 @@ def resolve_board_or_error(path: Path, project: Project) -> BoardFile | Diagnost
     located input — shared by the CLI render verb and the AI render tool so the
     boards-first retry and the ``ERR-FILE-NOT-FOUND`` envelope never drift
     between surfaces. Returns a ``Diagnostic`` for an escaping path
-    (``ERR-INTERNAL``) or a missing board (``ERR-FILE-NOT-FOUND``).
+    (``ERR-PATH-OUTSIDE-PROJECT``) or a missing board (``ERR-FILE-NOT-FOUND``).
     """
     try:
         resolved = resolve_board_path(path, project)
     except ValueError as exc:
-        return DbtChartsError.from_code(ERR_INTERNAL, message=str(exc)).to_diagnostic()
+        return resolution_error_diagnostic(exc)
     if not resolved.exists():
         return DbtChartsError.from_code(
             ERR_FILE_NOT_FOUND,

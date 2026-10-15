@@ -6,7 +6,7 @@ import copy
 import json
 import os
 from collections.abc import Iterator
-from typing import Any, Protocol, assert_never
+from typing import Any, Protocol
 
 from dbt_charts.ai.events import (
     ContentDelta,
@@ -489,8 +489,6 @@ class OpenAIAdapter:
                             "output": message.content,
                         }
                     )
-                case _:
-                    assert_never(message)
         return items
 
     def stream_with_tools(
@@ -536,8 +534,6 @@ class OpenAIAdapter:
                             name=event.name,
                             arguments=event.arguments,
                         )
-                    case _:
-                        assert_never(event)
         except GatewayError as exc:
             raise LLMClientError(str(exc)) from exc
 

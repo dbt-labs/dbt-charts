@@ -27,6 +27,8 @@ from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 from dbt_charts.core.render.engine import render_native
 from dbt_charts.core.utils import Rows
 
+from ._board_utils import merged_patch
+
 
 def render_kpi_svg(
     chart: ResolvedKpiChart,
@@ -113,7 +115,7 @@ def render_pie_svg(
     under ``theme`` (the default theme when omitted) and ``patches`` at
     ``width`` first."""
     board_style, context = resolve_style_and_context(
-        get_theme_style() if theme is None else theme, *patches
+        get_theme_style() if theme is None else theme, merged_patch(*patches)
     )
     if isinstance(chart, PieChart):
         resolved = resolve(chart, data, chart_style_context=context, width=width)

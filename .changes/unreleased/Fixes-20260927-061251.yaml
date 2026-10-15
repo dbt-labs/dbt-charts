@@ -1,3 +1,3 @@
 kind: Fixes
-body: "The `cloud-setup` skill decides how to connect a GitHub repository by the repository's visibility, so a public repository connects with no browser step even when `gh` looks signed out under a sandboxed agent. It reads the checkout's state from `dct cloud status`, and says a warehouse grant must cover every dataset the boards' SQL names. It checks BigQuery auth with `gcloud auth print-access-token`, which fails for an expired account where `gcloud auth list` does not. It keeps a freshly minted BigQuery key and retries once before minting another, since a new key can take a minute to propagate. It also covers two sandbox limits: `dct serve` unable to bind a port, and a push that needs a rebase the sandbox blocks in place."
+body: The `cloud-setup` skill connects public repositories without a browser step, checks BigQuery auth reliably, and requires warehouse grants to cover every dataset the boards read.
 time: 2026-09-27T06:12:56Z

@@ -79,9 +79,6 @@ docs/usage-examples/output/*.svg
 !docs/usage-examples/output/.gitkeep
 
 # Type checking
-.mypy_cache/
-.dmypy.json
-dmypy.json
 
 # Ruff
 .ruff_cache/

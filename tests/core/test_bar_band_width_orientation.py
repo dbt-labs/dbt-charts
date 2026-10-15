@@ -23,7 +23,12 @@ DATA = [
 ]
 
 
-def _render(make_chart, orientation: str = "vertical", band_width: float | None = None):
+def _render(
+    make_chart,
+    orientation: str = "vertical",
+    band_width: float | None = None,
+    max_size: float | None = None,
+):
     """Render a bar chart with optional orientation and band_width override.
 
     ``orientation`` and ``band_width`` both live inside ``ChartStylePatch``.
@@ -33,9 +38,14 @@ def _render(make_chart, orientation: str = "vertical", band_width: float | None 
     from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 
     bar_kwargs: dict = {"orientation": orientation}
-    if band_width is not None:
+    bar_marks = {
+        key: value
+        for key, value in (("band_width", band_width), ("max_size", max_size))
+        if value is not None
+    }
+    if bar_marks:
         # band_width lives at bar.marks.bar.band_width (ADR-015 marks namespace)
-        bar_kwargs["marks"] = {"bar": {"band_width": band_width}}
+        bar_kwargs["marks"] = {"bar": bar_marks}
 
     chart = make_chart(
         "bar",
@@ -117,6 +127,23 @@ class TestBandWidthExplicitOverride:
     def test_explicit_band_width_horizontal(self, make_chart):
         spec = _render(make_chart, orientation="horizontal", band_width=0.5)
         assert _bar_mark(spec).get("height") == {"band": 0.5}
+
+
+class TestBandMaxSizeCap:
+    """marks.bar.max_size caps a band-scale bar's thickness (never thicker)."""
+
+    def test_vertical_band_width_is_clamped_to_max_size(self, make_chart):
+        mark = _bar_mark(_render(make_chart, band_width=0.7, max_size=24))
+        assert mark.get("width") == {"expr": "min(0.7 * bandwidth('x'), 24.0)"}
+
+    def test_horizontal_band_height_is_clamped_to_max_size(self, make_chart):
+        mark = _bar_mark(
+            _render(make_chart, orientation="horizontal", band_width=0.7, max_size=24)
+        )
+        assert mark.get("height") == {"expr": "min(0.7 * bandwidth('y'), 24.0)"}
+
+    def test_unauthored_max_size_leaves_band_fraction_uncapped(self, make_chart):
+        assert _bar_mark(_render(make_chart)).get("width") == {"band": 0.8}
 
 
 class TestAllThemesBandWidthSmoke:

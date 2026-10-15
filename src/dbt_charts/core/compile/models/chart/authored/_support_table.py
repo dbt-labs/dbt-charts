@@ -211,7 +211,7 @@ CHART_SUPPORT_TABLE_SUPPORTED_TYPES: frozenset[str] = frozenset({"bar", "line", 
 
 
 def validate_support_table_shape(entries: list[ChartSupportTableEntry]) -> None:
-    """Data-free validation of a support_table entry list (spec §3.2)."""
+    """Data-free validation of a support_table entry list."""
     seen: set[tuple[str, str | None, bool]] = set()
     for entry in entries:
         if isinstance(entry, ChartSupportTablePerSeries):

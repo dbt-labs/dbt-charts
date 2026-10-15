@@ -17,6 +17,9 @@ class PieChart(_SharedChartFields, _FieldLabelsField):
     """Normalized pie or donut chart."""
 
     type: Literal["pie", "donut"]
+    is_donut: bool = Field(
+        default=False, description="Authored as `type: donut`; styled by `donut`."
+    )
     theta: str = Field(description="Field mapped to arc angle (required).")
     color: str | None = Field(default=None, description="Field mapped to arc color.")
     total: ChartTotal | None = Field(

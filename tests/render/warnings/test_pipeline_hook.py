@@ -104,7 +104,7 @@ def test_render_result_propagates_detector_warnings(
 
     fake = ModuleType("fake_pipeline_detector")
 
-    def _detect(ctx):  # type: ignore[no-untyped-def]
+    def _detect(ctx):
         return [
             Diagnostic.from_code(
                 WARN_REDUNDANT_ENCODING, message="pipeline warning", chart="c"

@@ -1,3 +1,0 @@
-kind: Features
-body: KPI headline compaction is now a theme setting at style.charts.kpi.value.compact, and thumbnail tuning moves to rendering.thumbnail in dbt_charts.yml.
-time: 2026-10-14T08:33:24.431154-07:00

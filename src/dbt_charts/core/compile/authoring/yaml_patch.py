@@ -365,10 +365,7 @@ def _format_scalar(value: ScalarLeaf) -> str:
     # newline away on the string arm, so a bare multi-line string would render
     # single-line and pass a check on the output while an item carrying the same
     # newline inside a list still raised. One question, one answer.
-    # A tuple, not a list: the two arms carry different element types, and only
-    # a covariant container lets them join without an annotation mypy and
-    # ruff's SIM108 cannot both be satisfied by.
-    parts = tuple(value) if isinstance(value, list) else (value,)
+    parts = value if isinstance(value, list) else [value]
     if any(isinstance(part, str) and "\n" in part for part in parts):
         raise ValueError(
             f"Cannot set a multi-line value ({value!r}) -- this setter only "

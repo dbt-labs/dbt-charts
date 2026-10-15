@@ -15,7 +15,7 @@ class ResolvedGeoshapeChart(_GeoResolvedChartFields):
     """Render-ready geoshape (choropleth) or map chart.
 
     Geo descriptor fields are baked at resolve time (compile layer) so the
-    render layer needs no config reach-back (ADR-008).
+    render layer needs no config reach-back.
     """
 
     chart_type: Literal["geoshape"] = Field(

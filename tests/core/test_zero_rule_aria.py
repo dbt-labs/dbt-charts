@@ -1,4 +1,4 @@
-"""A ``y_start`` bar's zero baseline rule never announces ``NaN``."""
+"""A ``y_start`` bar's zero baseline rule is hidden from screen readers."""
 
 from __future__ import annotations
 
@@ -32,8 +32,11 @@ rows:
 
 
 @pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
-def test_zero_rule_on_y_start_bar_has_no_nan_aria_label(orientation: str) -> None:
+def test_zero_rule_on_y_start_bar_is_hidden_not_announced_as_nan(
+    orientation: str,
+) -> None:
     svg = render_board_to_svg(_BOARD.format(orientation=orientation))
-    rule_marks = re.findall(r"<line [^>]*rule mark[^>]*>", svg)
-    assert rule_marks
-    assert not [mark for mark in rule_marks if "NaN" in mark]
+    rule_groups = re.findall(r'<g [^>]*class="mark-rule role-mark[^>]*>', svg)
+    assert rule_groups
+    assert all('aria-hidden="true"' in group for group in rule_groups), rule_groups
+    assert "NaN" not in svg

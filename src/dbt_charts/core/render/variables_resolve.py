@@ -425,8 +425,6 @@ def format_variable_display_value(
     if input_type == "auto":
         raise ValueError("variable display requires a resolved input type, not 'auto'")
 
-    raise ValueError(f"unsupported variable input type for display: {input_type!r}")
-
 
 def _month(d: datetime.date) -> str:
     return active_time_locale()["shortMonths"][d.month - 1]

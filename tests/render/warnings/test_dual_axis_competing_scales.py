@@ -62,6 +62,12 @@ def test_fires_on_pinned_layer() -> None:
     assert w.fix is not None
 
 
+def test_fix_names_the_competing_gridlines_remedy() -> None:
+    (w,) = _detect(_pinned())
+    assert w.fix is not None
+    assert "gridlines" in w.fix and "grid.visible: false" in w.fix
+
+
 def test_two_pinned_layers_give_one_diagnostic() -> None:
     assert len(_detect(_pinned("headcount"), _pinned("revenue"))) == 1
 

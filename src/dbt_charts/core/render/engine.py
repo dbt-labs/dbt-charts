@@ -281,6 +281,9 @@ def board_style_envelope(
             "family": board_style.chart_defaults.marks.text.font.family,
             "size": board_style.chart_defaults.marks.text.font.size,
         },
+        "dark_companion_palette": list(
+            board_style.chart_defaults.dark_companion_palette
+        ),
         "pagination_control_height": TABLE_PAGINATION_CONTROL_HEIGHT,
         "column_block_share_warn_ratio": SUPPORT_TABLE_COLUMN_BLOCK_SHARE_WARN_RATIO,
         "spark_bar_title": {

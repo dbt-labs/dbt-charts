@@ -1892,6 +1892,46 @@ class TestAspectRatioDrivenSizing:
             "family style slot."
         )
 
+    def test_board_donut_slot_sizes_donuts_only(self):
+        """charts.donut.preferred_width and aspect_ratio reach a `type: donut`
+        chart (plain pies keep the pie slot)."""
+        from dbt_charts.core.compile.models.style.authored import StylePatch
+        from dbt_charts.core.compile.resolve import preferred_chart_width
+
+        source = """
+queries:
+  q:
+    type: values
+    rows:
+      - {k: a, v: 1}
+charts:
+  d:
+    query: q
+    type: donut
+    theta: v
+  p:
+    query: q
+    type: pie
+    theta: v
+rows: [d, p]
+style:
+  charts:
+    donut:
+      preferred_width: 555
+      aspect_ratio: 2
+"""
+        result = compile(source)
+        assert result.success, result.errors
+        donut, pie = result.board.charts["d"], result.board.charts["p"]
+        context = result.board.chart_style_context
+        assert preferred_chart_width(donut, context) == 555
+        assert preferred_chart_width(pie, context) != 555
+
+        patch = StylePatch.model_validate({"charts": {"donut": {"aspect_ratio": 2}}})
+        style = resolve_style(get_theme_style(), patch)
+        assert get_chart_content_height(donut, width=400.0, resolved_style=style) == 200
+        assert get_chart_content_height(pie, width=400.0, resolved_style=style) != 200
+
     def test_map_height_matches_geoshape_family(self):
         """map is a type alias for the geoshape family style slot
         (_FAMILY_SLOT routes it there) — the static sizing pass must apply
@@ -5131,10 +5171,14 @@ class TestIntrinsicWidthCombination:
     def test_root_and_nested_board_report_the_same_content_width(self) -> None:
         from dbt_charts.core.compile.sizing import WidthMeasurer, board_intrinsic_width
 
+        chrome_hidden = (
+            "style:\n  footer:\n    visible: false\n  timestamp:\n    visible: false\n"
+        )
         root = self._board(
-            "text: hello\nstyle:\n"
-            "  footer:\n    visible: false\n  timestamp:\n    visible: false\n"
-            "rows:\n  - text: inner\n"
+            "text: hello\n"
+            + chrome_hidden
+            + "rows:\n  - text: inner\n    "
+            + chrome_hidden.replace("\n", "\n    ").rstrip(" ")
         )
         nested = root.layout.items[0].board
         assert nested is not None

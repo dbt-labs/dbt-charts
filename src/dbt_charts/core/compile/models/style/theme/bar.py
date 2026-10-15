@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Annotated, Literal
 if TYPE_CHECKING:
     # These authored types are injected into theme/__init__.py's module globals at
     # runtime by dbt_charts.core.compile.models.style.authored (after authored.py
-    # finishes executing). The import here is TYPE_CHECKING-only to give mypy and
+    # finishes executing). The import here is TYPE_CHECKING-only to give pyright and
     # ruff the static definitions they need without creating a circular import.
     from dbt_charts.core.compile.models.style.authored import (  # noqa: PLC0415
         EndpointLabelsConfig,
@@ -97,10 +97,10 @@ class BarChartStyle(_CartesianChartStyle, _QuantitativeAxisChartStyleMixin):
         description=(
             "Within-group spacing for grouped bars. Keywords: 'auto' "
             "(2 series → partial, 3+ → none), 'none' (small gap), 'flush' "
-            "(bars touch), 'partial' (25% overlap), 'full' (bars coincide). Or a "
-            "number as a fraction of bar width: >0 overlaps, 0 touches, <0 gaps; "
-            "1 is the maximum (bars fully coincide, same as 'full') and values "
-            "above 1 are clamped to 1; bars never cross past each other. None "
+            "(bars touch), 'partial' (25% overlap), 'full' (bars coincide; an error "
+            "unless each category holds one color). Or a number as a fraction "
+            "of bar width: >0 overlaps, 0 touches, <0 gaps; 1 or more is 'full'. "
+            "None "
             "uses the renderer default ('auto'). Only applies to grouped bars; "
             "setting it together with an active stack mode is an error."
         ),

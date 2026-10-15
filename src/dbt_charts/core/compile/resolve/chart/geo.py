@@ -72,7 +72,7 @@ __all__ = [
 
 
 # Lat/lon field name candidates for auto-detection when chart.latitude/longitude is None.
-# Baked at resolve time (ADR-008): emitter reads chart.latitude/longitude, never re-derives.
+# Baked at resolve time: emitter reads chart.latitude/longitude, never re-derives.
 _LAT_CANDIDATES: tuple[str, ...] = ("latitude", "lat", "Latitude", "Lat", "y")
 
 
@@ -238,7 +238,7 @@ def _geoshape_kwargs(
     display_text: ChartDisplayText,
     chart_style_context: ChartStyleContext,
 ) -> dict[str, Any]:
-    """Bake all geoshape geo-descriptor fields at resolve time (ADR-008).
+    """Bake all geoshape geo-descriptor fields at resolve time.
 
     Performs the single config lookup here (compile layer) so the render layer
     needs no compile.config reach-back.
@@ -409,7 +409,7 @@ def _resolve_point_map(
     ]
 
     # Lat/lon: authored value takes precedence; auto-detect from data column names as fallback.
-    # Baked here (ADR-008) so the emitter reads chart.latitude/longitude without re-deriving.
+    # Baked here so the emitter reads chart.latitude/longitude without re-deriving.
     lat_field: str | None = normalized.latitude or (
         next((f for f in _LAT_CANDIDATES if data and f in data[0]), None)
         if data
@@ -512,7 +512,7 @@ def _resolve_point_map(
             # (that walk is cartesian-only), so they always take the first
             # single-series stop rather than a rhythm slot.
             single_series_fill=_effective_single_series_fill(
-                chart_style_context, primary
+                chart_style_context, point_map
             ),
             tooltip_format=reject_native(
                 column_format(

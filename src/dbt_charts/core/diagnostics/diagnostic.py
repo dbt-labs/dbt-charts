@@ -100,7 +100,7 @@ class Diagnostic(BaseModel):
     # code/level through the chain); a bare string for a foreign exception.
     cause: Diagnostic | str | None = None
 
-    @computed_field  # type: ignore[prop-decorator]
+    @computed_field
     @property
     def level(self) -> Literal["error", "warning"]:
         return REGISTRY.get(self.code).level

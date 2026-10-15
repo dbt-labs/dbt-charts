@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     # Import-time-only: PEP 562 __getattr__ below resolves these lazily at
-    # runtime. Kept here so mypy/pyright still see concrete types instead of
+    # runtime. Kept here so pyright still sees concrete types instead of
     # falling back to Any on every re-export.
     from dbt_charts.agent_api import examples as examples, skills as skills
     from dbt_charts.agent_api._paths import (

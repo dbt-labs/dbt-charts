@@ -1,0 +1,3 @@
+kind: Fixes
+body: A mirrored y-axis now prints labels on both edges when the x-axis is a number.
+time: 2026-10-14T22:15:43.278081-07:00

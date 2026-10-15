@@ -19,7 +19,6 @@
     "**/htmlcov",
     "**/.pytest_cache",
     "**/.ruff_cache",
-    "**/.mypy_cache",
     // excluded — full sweep (sub-trees not yet cleaned)
     "tests/core/compile",
     "tests/core/diagnostics",
@@ -40,9 +39,7 @@
   // dbt_charts_super_schema (private, never published) is an optional,
   // conditionally-imported extension probed via importlib.util.find_spec at
   // runtime -- resolvable in the monorepo (a real workspace member) but never
-  // installable standalone, by design. Mirrors
-  // [tool.mypy]'s ignore_missing_imports = true, which already accepts this
-  // for the same reason. This is set globally, not scoped via
+  // installable standalone, by design. This is set globally, not scoped via
   // executionEnvironments, because the probe sites span nearly all of src/ --
   // a scoped root would buy nothing. Consequence: a typo'd or genuinely-missing
   // import anywhere in the standalone tree now only warns, not errors.
@@ -59,13 +56,15 @@
   "reportUnusedVariable": "error",
   "reportArgumentType": "error",
   "reportMatchNotExhaustive": "error",
+  "reportUnreachable": "error",
+  "reportPossiblyUnboundVariable": "error",
+  "reportUnnecessaryTypeIgnoreComment": "error",
   "reportAssertTypeFailure": "error",
   "reportPrivateUsage": "warning",
   "reportMissingTypeStubs": "error",
   "reportUnknownLambdaType": "error",
   "reportMissingTypeArgument": "error",
-  // core/inspect/resolver.py is one of [tool.mypy]'s disallow_any_unimported
-  // overrides in dbt-charts/pyproject.toml: self.cache's type comes from the
+  // core/inspect/resolver.py: self.cache's type comes from the
   // optional dbt_charts_super_schema import, unresolvable standalone, so its
   // return type is partly Unknown and that propagates into a real
   // reportArgumentType finding a few lines later. Same root cause as

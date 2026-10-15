@@ -147,3 +147,52 @@ def test_self_token_in_a_keyed_collection_resolves() -> None:
     assert result.success, result.errors
     columns = result.board.chart_style_context.table.columns
     assert columns["rev"].background == DARK
+
+
+def test_palette_token_in_a_keyed_collection_resolves_on_a_board_patch() -> None:
+    result = compile_board(
+        "extends: clarity\nstyle:\n  charts:\n    table:\n      columns:\n"
+        f"        rev:\n          background: dbt-grays.accent\n{_ROWS}"
+    )
+    assert result.success, result.errors
+    columns = result.board.chart_style_context.table.columns
+    assert columns["rev"].background.startswith("#")
+
+
+def test_self_token_in_a_keyed_collection_text_field_is_left_alone() -> None:
+    result = compile_board(
+        f"{_DARK_ROOT}  charts:\n    table:\n      columns:\n        rev:\n"
+        f"          label: theme.background\n{_ROWS}"
+    )
+    assert result.success, result.errors
+    columns = result.board.chart_style_context.table.columns
+    assert columns["rev"].label == "theme.background"
+
+
+def test_self_token_walk_leaves_the_roles_table_alone() -> None:
+    from dbt_charts.core.compile.config import get_theme_style
+    from dbt_charts.core.compile.resolve.style.tokens import _resolve_self_tokens
+
+    theme = get_theme_style("clarity")
+    roles = {**theme.roles, "knock": "theme.background"}
+    resolved = _resolve_self_tokens(theme.model_copy(update={"roles": roles}), DARK)
+    assert resolved.roles["knock"] == "theme.background"
+
+
+def test_board_roles_keep_their_token_addresses() -> None:
+    result = compile_board(
+        f"extends: clarity\nstyle:\n  roles:\n    myink: chrome.heading\n{_ROWS}"
+    )
+    assert result.success, result.errors
+    assert result.board.chart_style_context.roles["myink"] == "chrome.heading"
+
+
+@pytest.mark.parametrize("text", ["U.S", "v1.2", "orders.html", "example.com"])
+def test_everyday_text_in_a_board_keyed_collection_is_left_alone(text: str) -> None:
+    result = compile_board(
+        "extends: clarity\nstyle:\n  charts:\n    table:\n      columns:\n"
+        f'        rev:\n          label: "{text}"\n{_ROWS}'
+    )
+    assert result.success, result.errors
+    columns = result.board.chart_style_context.table.columns
+    assert columns["rev"].label == text

@@ -1601,7 +1601,8 @@ def render_nested_board(
 
     # _calculate_nested_board_layout deducted variable controls height from
     # board.layout.content_height. Pass that as the layout slot hint. The actual
-    # rendered height is read back from the layout renderer below.
+    # rendered height is read back from the layout renderer below. The layout is
+    # given no background: ``bg_rect`` below already paints the fill.
     authored_bg = resolved_style.background
     layout_content, actual_layout_height = _render_layout(
         board,
@@ -1611,7 +1612,7 @@ def render_nested_board(
         layout_content_height,
         card_gap,
         gap,
-        authored_bg,
+        None,
         render_cache=render_cache,
         error_collector=error_collector,
         painted_canvas=own_canvas,

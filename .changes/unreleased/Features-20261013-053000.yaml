@@ -1,5 +1,5 @@
 kind: Features
-body: '`type: custom` draws a chart shape no built-in type has from an SVG template over the chart''s query rows, rendered by the engine: `link:` makes it clickable, the template reads the board''s style, fonts and variables, and ready-made Sankey, funnel, gauge, radial bar, XmR, isotype, waffle and radar templates ship as examples.'
+body: '`type: custom` draws a chart shape no built-in type has from an SVG template over the chart''s query rows: `link:` makes it clickable, the template reads the board''s style, fonts and variables, and ready-made Sankey, funnel, gauge, radial bar, XmR, isotype, waffle and radar templates ship as examples.'
 time: 2026-10-13T05:30:00.000000-00:00
 custom:
     DbtChartsIssue: 2

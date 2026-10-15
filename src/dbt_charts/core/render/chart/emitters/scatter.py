@@ -223,7 +223,7 @@ class ScatterEmitter:
             # applies an is_year_shaped heuristic meant for bar/line/area's
             # dimension x (year-shaped integers ARE years there); scatter's
             # canonical x is a continuous measure, where that same heuristic
-            # would misread a numeric column in the 1900-2100 band as a date
+            # would misread a numeric column in the 1700-2100 band as a date
             # axis. The common scatter case: two continuous measures. Never
             # route this through resolve_axis_x_overlap's own directive —
             # its quantitative fast path unconditionally asserts

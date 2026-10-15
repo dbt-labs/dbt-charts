@@ -1,3 +1,0 @@
-kind: Fixes
-body: The Rust chart engine paints authored field labels and keeps authored capitals in derived display text.
-time: 2026-10-09T16:37:41.934357-07:00

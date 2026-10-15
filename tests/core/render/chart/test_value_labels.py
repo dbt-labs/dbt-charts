@@ -1759,6 +1759,49 @@ def _has_joinaggregate_sum(spec: dict[str, Any]) -> bool:
     return False
 
 
+def _board_with_segment_labels_off_total_on(position: str):
+    """A theme that labels plain bars inside the top and stacks by total only."""
+    compiled = get_theme_style("clarity")
+    bar = compiled.charts.marks.bar
+    new_bar = bar.model_copy(
+        update={
+            "labels": bar.labels.model_copy(
+                update={"visible": True, "position": position, "stacked": False}
+            ),
+            "total_label": bar.total_label.model_copy(update={"visible": True}),
+        }
+    )
+    new_marks = compiled.charts.marks.model_copy(update={"bar": new_bar})
+    charts = compiled.charts.model_copy(update={"marks": new_marks})
+    return resolve_style_and_context(compiled.model_copy(update={"charts": charts}))
+
+
+class TestBarLabelsStackedOff:
+    """labels.stacked: false drops segment labels; total_label still labels the stack."""
+
+    def test_stacked_bar_keeps_only_the_total_label(self, make_chart) -> None:
+        board_rs, board_ctx = _board_with_segment_labels_off_total_on("top")
+        chart = make_chart("bar", x="month", y="revenue", color="channel", stack="zero")
+        resolve(chart, _STACKED_DATA, chart_style_context=board_ctx)
+        spec = generate_vega_lite_spec(
+            chart, _STACKED_DATA, board_style=board_rs, chart_style_context=board_ctx
+        )
+        fields = [layer["encoding"]["text"]["field"] for layer in _text_layers(spec)]
+        assert fields == ["__stack_total_text"]
+
+    def test_plain_bar_still_labels_inside_the_top(self, make_chart) -> None:
+        board_rs, board_ctx = _board_with_segment_labels_off_total_on("top")
+        rows = [{"month": "Jan", "revenue": 100}, {"month": "Feb", "revenue": 120}]
+        chart = make_chart("bar", x="month", y="revenue")
+        resolve(chart, rows, chart_style_context=board_ctx)
+        spec = generate_vega_lite_spec(
+            chart, rows, board_style=board_rs, chart_style_context=board_ctx
+        )
+        layers = _text_layers(spec)
+        assert len(layers) == 1
+        assert layers[0]["encoding"]["text"]["field"] == "__value_label_text"
+
+
 class TestBarTotalLabel:
     """Stack total label: additive text layer showing per-category segment sum."""
 

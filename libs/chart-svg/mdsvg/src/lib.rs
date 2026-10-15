@@ -17,6 +17,7 @@ pub mod pygments_lexers;
 pub mod pygments_re;
 pub mod pygments_yaml;
 pub mod renderer;
+pub mod reservation;
 pub mod style;
 pub mod types;
 pub mod unicode_unassigned;

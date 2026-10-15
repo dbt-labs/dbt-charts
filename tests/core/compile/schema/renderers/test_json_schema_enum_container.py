@@ -50,7 +50,7 @@ class _SiblingDictArm(BaseModel):
 
 def _schema_for(model: type[BaseModel], field_name: str) -> dict[str, Any]:
     fi = model.model_fields[field_name]
-    sf = _build_schema_field(field_name, fi, fi.annotation)
+    sf = _build_schema_field(field_name, fi, fi.annotation, rejects_null=False)
     return _type_schema(sf, root=model.__name__)
 
 

@@ -991,7 +991,8 @@ rows:
         result = resolve_board_or_error(Path("../outside.yml"), project)
 
         assert isinstance(result, Diagnostic)
-        assert "outside project root" in result.message
+        assert result.code == "ERR-PATH-OUTSIDE-PROJECT"
+        assert str(tmp_path) not in result.message
 
     def test_render_rejects_unknown_format(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -1863,14 +1864,14 @@ class TestRequiredProjectScopedArgs:
         with pytest.raises(TypeError, match="project"):
             render_dashboard(  # type: ignore[call-arg]
                 board=InMemoryBoard("charts: {}", path=None),
-                adapter_registry=None,  # type: ignore[arg-type]
+                adapter_registry=None,
                 result_cache=None,
             )
         with pytest.raises(TypeError, match="result_cache"):
             render_dashboard(  # type: ignore[call-arg]
                 board=InMemoryBoard("charts: {}", path=None),
                 project=local_project(Path("/tmp")),
-                adapter_registry=None,  # type: ignore[arg-type]
+                adapter_registry=None,
             )
 
     def test_render_inspect_dashboard_requires_project(self) -> None:

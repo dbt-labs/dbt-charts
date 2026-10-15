@@ -991,3 +991,69 @@ def test_column_alias_to_a_preset_keeps_its_sub_unit_pad() -> None:
     assert (
         pad("mine", FormatTable(aliases={"mine": "currency"}, currency="USD")) == direct
     )
+
+
+class TestUnformattedColumnThatDoesNotCompact:
+    """A column with no format whose vote declines to compact prints exact
+    grouped digits on every row: it never mixes compaction units (5 / 1.2 K /
+    77), and mixed fractional depths still align on the decimal point."""
+
+    def _resolve(self, values: list[float], *, allow_shared_scale: bool = True):
+        columns = {"amount": TableColumnConfig()}
+        resolved = _with_resolved_scale_stops(
+            columns,
+            text_color=None,
+            formats=None,
+            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
+            rows=[{"amount": v} for v in values],
+            allow_shared_scale=allow_shared_scale,
+            own_formats={},
+            defaults_format=None,
+            declared=None,
+            filter_variables=frozenset(),
+        )
+        assert resolved is not None
+        return resolved["amount"]
+
+    def _printed(self, column, value: float) -> str:
+        prefix, number, suffix = format_kpi_parts(
+            value, column.format, default_number=True
+        )
+        return prefix + number + suffix
+
+    def test_a_tied_vote_prints_every_row_as_exact_grouped_digits(self) -> None:
+        column = self._resolve([5, 1200, 77])
+        assert column.shared_scale is None
+        assert [self._printed(column, v) for v in (5, 1200, 77)] == [
+            "5",
+            "1,200",
+            "77",
+        ]
+
+    def test_fractional_rows_keep_decimal_alignment(self) -> None:
+        column = self._resolve([1200.5, 77, 3500])
+        assert [self._printed(column, v) for v in (1200.5, 77, 3500)] == [
+            "1,200.5",
+            "77",
+            "3,500",
+        ]
+        # Capped at the deepest printed fraction (1 digit): precision + 2 entries.
+        assert len(column.decimal_pad_table) == 3
+
+    def test_a_column_whose_rows_all_print_one_unit_keeps_compacting(self) -> None:
+        column = self._resolve([42000, 60000, 81000])
+        assert column.shared_scale is None
+        assert column.format is None
+        assert [self._printed(column, v) for v in (42000, 60000, 81000)] == [
+            "42K",
+            "60K",
+            "81K",
+        ]
+
+    def test_a_column_that_does_compact_is_untouched(self) -> None:
+        column = self._resolve([3_500_000, 4_200_000, 12_000_000])
+        assert column.shared_scale is not None
+
+    def test_a_legend_table_never_bakes_exact_digits(self) -> None:
+        column = self._resolve([5, 1200, 77], allow_shared_scale=False)
+        assert column.format is None

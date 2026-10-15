@@ -14,7 +14,7 @@ from dbt_charts.core.compile.resolve.chart.enrich import (
 class TestScatterYearShapedMeasureStaysQuantitative:
     def test_scatter_year_shaped_y_matches_non_year_y_axis_style(self) -> None:
         """A measure is never a year: scatter's y-axis style cascade for a
-        year-shaped y (values in [1900, 2100]) must be identical to a
+        year-shaped y (values in [1700, 2100]) must be identical to a
         non-year quantitative y — the year-shape check is dimension-only,
         so it must never fire on a measure channel."""
         from dbt_charts.core.compile.config import get_theme_style

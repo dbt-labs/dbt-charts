@@ -1,3 +1,0 @@
-kind: Fixes
-body: Board schema now accepts the cache, details, and duration shorthands the compiler accepts.
-time: 2026-10-07T16:34:18.464973-07:00

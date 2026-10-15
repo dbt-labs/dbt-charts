@@ -184,7 +184,7 @@ class _XhtmlSerializer(HTMLParser):
         parts = [f"<{tag}"]
         for name, value in attrs:
             # HTMLParser types value as str | None; nh3 always emits quoted values
-            # so None is unreachable here, but the branch keeps mypy happy.
+            # so None is unreachable here, but the branch keeps pyright happy.
             raw_value = name if value is None else value
             parts.append(f' {name}="{escape_xml(raw_value)}"')
         parts.append("/>" if tag in _XHTML_VOID_ELEMENTS else ">")

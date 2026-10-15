@@ -1958,7 +1958,7 @@ class TestCodeHighlighting:
         assert "<tspan" not in svg
         assert "foo bar" in svg
 
-    def test_code_highlight_on_without_pygments_falls_back(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    def test_code_highlight_on_without_pygments_falls_back(self, monkeypatch) -> None:
         """When Pygments isn't importable, highlighting silently no-ops (opt-in dep)."""
         import sys
 

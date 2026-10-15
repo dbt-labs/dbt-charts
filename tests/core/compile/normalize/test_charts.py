@@ -142,7 +142,7 @@ def test_table_authored_to_compiled() -> None:
 
 
 def test_donut_normalizes_to_pie() -> None:
-    """type: donut → PieChart compiled with inner_radius derived from style."""
+    """type: donut → PieChart flagged is_donut, with nothing injected into its style."""
     from dbt_charts.core.compile.normalize.charts import normalize_chart
 
     qr = _registry(q=_sql())
@@ -154,8 +154,8 @@ def test_donut_normalizes_to_pie() -> None:
     )
     assert isinstance(compiled, PieChart)
     assert compiled.type == "pie"
-    assert compiled.style is not None
-    assert compiled.style.inner_radius == 0.6
+    assert compiled.is_donut
+    assert compiled.style is None
 
 
 def test_donut_preserves_explicit_zero_inner_radius() -> None:

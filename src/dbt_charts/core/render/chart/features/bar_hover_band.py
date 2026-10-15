@@ -55,13 +55,6 @@ this repo's ``config.mark.invalid: "break-paths-show-domains"`` fix (see
 ``test_bar_null_bucket_axis.py``) -- so there is nothing extra for the band to
 contribute or diverge on.
 
-``tooltip: True`` in ``band_mark_props`` is load-bearing, not decorative: without
-it, a chart with a legend (``LegendToggleFeature``'s ``dct_legend`` param) marks
-the band's layer non-interactive (``translate.py`` skips opacity-0 layers when
-stamping that param), which Vega compiles straight to ``pointer-events: none`` --
-the band would then never receive a mouse event at all on any legend-bearing bar
-chart.
-
 Exclusions (all gated in ``applies_to``):
 - Histograms: their VL pipeline differs from bar charts.
 - Multi-metric (wide) bars (``y: [...]``): no single scalar measure channel.
@@ -144,10 +137,7 @@ def _band_mark_props(spec: ChartSpec) -> VLDict:
     ``{"expr": ...}``) so the band matches the real bar's own footprint.
     Without these the band can span the gutter (no "width"/"height" -> full
     slot) or be narrower than the bar (no "size" on grouped bars), both
-    causing a wrong-neighbor hit. ``tooltip: True`` is load-bearing, not
-    decorative: without it, a legend-bearing chart's ``dct_legend`` param
-    stamping skips opacity-0 layers, which Vega then compiles to
-    ``pointer-events: none`` on the band.
+    causing a wrong-neighbor hit.
     """
     band_mark_props: VLDict = {
         "opacity": 0,

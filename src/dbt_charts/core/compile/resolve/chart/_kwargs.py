@@ -12,6 +12,7 @@ from dbt_charts.core.compile.merge import merge_onto_base, to_padding_style
 from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
 from dbt_charts.core.compile.models.chart.normalized import (
     Chart,
+    PieChart,
 )
 from dbt_charts.core.compile.models.chart.normalized._base import (
     _BaseChartFields,
@@ -37,6 +38,7 @@ from dbt_charts.core.compile.models.style.theme import (
     LegendEdge,
     LegendStyle,
     PaddingStyle,
+    PieChartStyle,
     PieLegendStyle,
     SupportTableStyle,
 )
@@ -69,6 +71,7 @@ from dbt_charts.core.compile.template.display_text import (
 __all__ = [
     "AutomaticLinkCandidate",
     "_FAMILY_SLOT",
+    "donut_over_pie",
     "_base_kwargs",
     "_cartesian_kwargs",
     "_color_column_format",
@@ -419,6 +422,13 @@ _FAMILY_SLOT: dict[str, str] = {
 }
 
 
+def donut_over_pie(chart_style_context: ChartStyleContext) -> PieChartStyle:
+    """The board-wide style of a donut: the donut slot over the pie slot."""
+    pie = chart_style_context.pie
+    donut = chart_style_context.donut
+    return pie if donut is None else merge_onto_base(pie, donut)
+
+
 def preferred_chart_width(
     normalized: Chart, chart_style_context: ChartStyleContext
 ) -> float:
@@ -435,6 +445,8 @@ def preferred_chart_width(
     if normalized.type == "custom":  # no theme family slot: board-wide width
         return float(chart_style_context.preferred_width)
     family_base = getattr(chart_style_context, _FAMILY_SLOT[normalized.type])
+    if isinstance(normalized, PieChart) and normalized.is_donut:
+        family_base = donut_over_pie(chart_style_context)
     family = merge_onto_base(family_base, normalized.style)
     return float(family.preferred_width)
 

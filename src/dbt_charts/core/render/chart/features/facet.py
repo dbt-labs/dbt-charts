@@ -98,7 +98,8 @@ class FacetFeature:
         # multi-column set usually raises this same code earlier, from
         # MirrorAxisFeature, because it auto-mirrors the y-axis — but only when
         # the auto-mirror actually applies (shared scale, unset axis_y.mirror,
-        # quantitative y). A multi-column set missing any of those lands here.
+        # quantitative y, and not a horizontal bar, whose y is the category).
+        # A multi-column set missing any of those lands here.
         if spec.endpoint_label_layout is not None:
             raise ChartDataError.from_code(
                 ERR_MULTIPLES_ENDPOINT_LABELS, chart_id=chart.id

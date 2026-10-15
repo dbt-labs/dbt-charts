@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.vega_lite import VEGA_LITE_SCHEMA_URL
@@ -100,7 +100,7 @@ def _translate_standard(vl_mark: str, spec: ChartSpec) -> dict[str, Any]:
         # (e.g. axis.y independent from MirrorAxisFeature) onto the output.
         if spec.resolve:
             vl["resolve"] = spec.resolve
-            _isolate_independent_y_axis(vl, main_layer)
+            _isolate_independent_y_axis(vl, [main_layer])
 
     if spec.endpoint_label_layout is not None and spec.endpoint_label_data is not None:
         vl = _wrap_endpoint_labels(
@@ -110,16 +110,28 @@ def _translate_standard(vl_mark: str, spec: ChartSpec) -> dict[str, Any]:
     return vl
 
 
-def _isolate_independent_y_axis(vl: dict[str, Any], main_layer: dict[str, Any]) -> None:
-    """Give the main layer sole ownership of the y-axis under independent resolve.
+def _y_is_value_channel(layer: VLDict) -> bool:
+    encoding = layer.get("encoding")
+    return (
+        isinstance(encoding, dict)
+        and isinstance(encoding.get("y"), dict)
+        and "value" in encoding["y"]
+    )
+
+
+def _isolate_independent_y_axis(vl: VLDict, layers: list[VLDict]) -> None:
+    """Give the first scale-bound layer sole ownership of the y-axis under
+    independent resolve.
 
     ``MirrorAxisFeature`` sets ``resolve.axis.y = independent`` so the ghost
     layer's opposite-edge axis renders alongside the main one. But a y-axis on
     the SHARED top-level encoding is then redrawn by every layer (each inherits
     it), stacking N identical axes per edge — invisible on a standalone chart
     (they overlap exactly) but multiplied across panels once the spec is wrapped
-    in a facet. Move that axis onto the main layer alone and strip it from the
-    shared encoding so exactly one main axis (plus the ghost's opposite) renders.
+    in a facet. Move that axis onto one layer and strip it from the shared
+    encoding so exactly one main axis (plus the ghost's opposite) renders. A layer
+    whose y is a `value` channel (a full-height rule) has no scale, and VL paints
+    no axis for it, so the owner is the first layer that binds the y scale.
     """
     if vl.get("resolve", {}).get("axis", {}).get("y") != "independent":
         return
@@ -131,7 +143,8 @@ def _isolate_independent_y_axis(vl: dict[str, Any], main_layer: dict[str, Any]) 
         return
     # Attach the axis to the main layer (merging into any existing y-encoding so
     # its scale/stack props survive), then strip it from the shared encoding.
-    layer_enc = main_layer.setdefault("encoding", {})
+    owner = next(layer for layer in layers if not _y_is_value_channel(layer))
+    layer_enc = owner.setdefault("encoding", {})
     existing_y = layer_enc.get("y")
     if isinstance(existing_y, dict):
         layer_enc["y"] = {**existing_y, "axis": shared_y["axis"]}
@@ -233,7 +246,7 @@ def _translate_layered(spec: ChartSpec) -> dict[str, Any]:
     # silently vanishes for a chart with authored `layers:`.
     vl["layer"] = [_translate_layer(layer) for layer in (*spec.underlays, *spec.layers)]
     if spec.layers:
-        _isolate_independent_y_axis(vl, vl["layer"][len(spec.underlays) :][0])
+        _isolate_independent_y_axis(vl, vl["layer"][len(spec.underlays) :])
     if spec.endpoint_label_layout is not None and spec.endpoint_label_data is not None:
         vl = _wrap_endpoint_labels(
             vl, spec.endpoint_label_layout, spec.endpoint_label_data
@@ -357,40 +370,39 @@ def _spread_for_measurement(
 
 
 # Scale-probe calls in mark expressions whose scale goes child-qualified once
-# the chart is wrapped into a concat. Only x qualifies: y is shared by the
-# wrapper, and the offset channels stay top-level under their own names
-# because the label pane has no offset channel to make them independent of —
-# pinned against vl_convert by
-# test_right_pane_scale_names_match_vl_convert.
-_CONCAT_QUALIFIED_SCALE_PROBE = re.compile(r"\b(scale|bandwidth)\('(x)'")
-
-
+# the chart is wrapped into a concat: the channel the wrapper leaves independent
+# (x beside a right pane, y under a top rail). The other measure channel is
+# shared by the wrapper, and the offset channels stay top-level under their own
+# names because the label pane has no offset channel to make them independent
+# of — pinned against vl_convert by test_right_pane_scale_names_match_vl_convert.
 def _requalify_concat_scale_probes(
     node: Any,  # type-state: explicit_any — walks arbitrary VL spec fragments
     child_name: str,
+    channel: Literal["x", "y"],
 ) -> None:
     """Rewrite scale-name probes in *node*'s expressions for concat wrapping.
 
     Vega compiles a concat child's independent scales under
     ``<child>_<channel>`` names (``concat_0_x``), so a mark expression built
-    against the unwrapped spec — ``scale('x', …)``, ``bandwidth('xOffset')``
-    — addresses a scale that no longer exists and silently evaluates NaN,
+    against the unwrapped spec — ``scale('x', …)``, ``bandwidth('x')`` —
+    addresses a scale that no longer exists and silently evaluates NaN,
     painting zero-width marks. Walks every ``"expr"`` string in place. The
     child name is Vega-Lite's own deterministic concat naming
     (``concat_<index>``), pinned by the endpoint-pane tests against
     vl_convert.
     """
+    probe = re.compile(rf"\b(scale|bandwidth)\('({channel})'")
     if isinstance(node, dict):
         for key, value in node.items():
             if key == "expr" and isinstance(value, str):
-                node[key] = _CONCAT_QUALIFIED_SCALE_PROBE.sub(
+                node[key] = probe.sub(
                     lambda m: f"{m.group(1)}('{child_name}_{m.group(2)}'", value
                 )
             else:
-                _requalify_concat_scale_probes(value, child_name)
+                _requalify_concat_scale_probes(value, child_name, channel)
     elif isinstance(node, list):
         for item in node:
-            _requalify_concat_scale_probes(item, child_name)
+            _requalify_concat_scale_probes(item, child_name, channel)
 
 
 def _wrap_hconcat_label_pane(
@@ -454,7 +466,7 @@ def _wrap_hconcat_label_pane(
     # NaN → zero-width marks. y stays unqualified because it is shared below,
     # and xOffset/yOffset because the label pane has no offset channel —
     # rewriting those would inflict this exact bug on grouped bars.
-    _requalify_concat_scale_probes(main_vl, "concat_0")
+    _requalify_concat_scale_probes(main_vl, "concat_0", "x")
 
     return {
         **hoisted,
@@ -494,6 +506,9 @@ def _wrap_vconcat_label_rail(
 
     hoist_keys = ("$schema", "config", "background", "data", "title")
     hoisted = {k: main_vl.pop(k) for k in hoist_keys if k in main_vl}
+
+    # The chart pane is child 1: its y scale resolves independent under the rail.
+    _requalify_concat_scale_probes(main_vl, "concat_1", "y")
 
     return {
         **hoisted,

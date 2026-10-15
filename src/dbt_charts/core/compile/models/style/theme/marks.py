@@ -7,6 +7,8 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 
 from dbt_charts.core.compile.models.markers import (
+    AUTO,
+    Absent,
     Color,
     Format,
     InheritSlot,
@@ -151,6 +153,17 @@ class LabelsDefaultTemplate(BaseModel):
         return value
 
 
+class SliceLabelFontStyle(FontStyle):
+    """The pie slice label font. ``color`` also takes ``auto``."""
+
+    color: Annotated[str | None, Color(keywords=(AUTO,))] = Field(
+        default=None,
+        description=(
+            "Text color. 'auto' paints each label in the dark ink of its wedge's color."
+        ),
+    )
+
+
 class SliceLabelsStyle(BaseModel):
     """Pie labels: typography + positioning offsets for per-slice text."""
 
@@ -172,22 +185,18 @@ class SliceLabelsStyle(BaseModel):
     # Fires at the canonical charts.marks.slice.labels path;
     # SkipInheritSlots(cascade=True) on the parent SliceMarkStyle.labels field
     # clears the outer slot context but keeps skip_slots=False so this marker
-    # still processes correctly. ``color`` is excluded from the fill: it stays
-    # a genuine cascade-managed sentinel (None unless authored at some tier)
-    # so the engine's pie family can tell "theme filled this" from "the author set
-    # this" and prefer an authored color over the dark-companion default.
-    font: Annotated[
-        FontStyle,
-        InheritSlot(from_path="Style.charts.font", exclude=frozenset({"color"})),
-    ] = Field(
-        default_factory=FontStyle,
-        description=(
-            "Slice label font style overrides. ``color`` only takes effect "
-            "on single-series pies (no ``color:`` channel authored); "
-            "multi-series pies always paint each label with ink derived "
-            "from its own wedge color against the chart's canvas, and "
-            "ignore an authored ``color`` here."
-        ),
+    # still processes correctly.
+    font: Annotated[SliceLabelFontStyle, InheritSlot(from_path="Style.charts.font")] = (
+        Field(
+            default_factory=SliceLabelFontStyle,
+            description=(
+                "Slice label font style overrides. ``color`` only takes effect "
+                "on single-series pies (no ``color:`` channel authored); "
+                "multi-series pies always paint each label with ink derived "
+                "from its own wedge color against the chart's canvas, and "
+                "ignore an authored ``color`` here."
+            ),
+        )
     )
     # Default content (not typography). When the chart author omits ``template:``
     # under this block, the resolver picks with_color or no_color based on
@@ -202,7 +211,9 @@ class SliceLabelsStyle(BaseModel):
         default=None,
         description="Jinja2 label template. Overrides default_template when authored.",
     )
-    where: Annotated[str | None, AfterValidator(validate_label_where)] = Field(
+    where: Annotated[
+        str | None, AfterValidator(validate_label_where), Absent("every row labeled")
+    ] = Field(
         default=None,
         description="Jinja2 boolean filter; labels only render on rows where this is truthy.",
     )
@@ -229,7 +240,7 @@ class BasemapStyle(BaseModel):
 
     # None = no background layer. Point maps may omit the basemap entirely
     # when the data projection is self-explanatory (e.g. lat/lng scatter).
-    source: str | None = Field(
+    source: Annotated[str | None, Absent("no base layer")] = Field(
         default=None,
         description="Background topo source identifier; None means no base layer.",
     )
@@ -263,7 +274,11 @@ class MarkLabelsStyle(BaseModel):
     # axis_quantitative is a sparse authored-only overlay (SkipInheritSlots), so
     # the correct per-chart value only exists post-cascade, not as an inherit-
     # graph input.
-    format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
+    format: Annotated[
+        FormatAlias | str | FormatConfig | None,
+        Format(),
+        Absent("the measure axis format"),
+    ] = Field(
         default=None,
         description="Number format string for value labels.",
     )
@@ -310,7 +325,11 @@ class BarTotalLabelStyle(BaseModel):
     )
     # None here means "fall back to the resolved measure-axis format" — filled
     # at resolve time from the already-baked ResolvedAxisStyle.format.
-    format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
+    format: Annotated[
+        FormatAlias | str | FormatConfig | None,
+        Format(),
+        Absent("the measure axis format"),
+    ] = Field(
         default=None,
         description="Number format string for stack total labels.",
     )
@@ -347,6 +366,16 @@ class BarLabelsStyle(MarkLabelsStyle):
                 "'bottom' places labels just inside the bottom edge."
             ),
         )
+    )
+    # Cascade tier sentinel: None means "not specified at this tier" and labels
+    # segments, same as True.
+    stacked: bool | None = Field(
+        default=None,
+        description=(
+            "Label each segment of a stacked bar. False leaves stacked segments "
+            "unlabeled, so a stack shows a label only if total_label is visible; "
+            "plain bars keep their labels either way."
+        ),
     )
 
 
@@ -422,9 +451,11 @@ class BarMarkStyle(BaseModel):
     max_size: float | None = Field(
         default=None,
         description=(
-            "Widest a computed bar width may grow to on a continuous scale. Also "
-            "stands in for an unauthored `size` when reserving axis padding and "
-            "when budgeting a horizontal bar chart's minimum height."
+            "Thickest a bar may be, in pixels: caps a band-scale bar's band "
+            "fraction and a continuous scale's computed width. Unset, band bars "
+            "are uncapped and a continuous scale applies a built-in ceiling. Also stands in for "
+            "an unauthored `size` when reserving axis padding and when "
+            "budgeting a horizontal bar chart's minimum height."
         ),
     )
     # Cascade tier sentinel: None means "not specified at this tier".
@@ -656,7 +687,11 @@ class PointMarkStyle(BaseModel):
         description="Point size in square pixels; 0 disables points on line charts.",
     )
     color: Annotated[str | None, Color()] = Field(
-        default=None, description="Point color; None inherits the series color."
+        default=None,
+        description=(
+            "Point color. On a single-series scatter it recolors the dots, over "
+            "color.static and the palette; None inherits the series color."
+        ),
     )
     shape: str | None = Field(
         default=None,
@@ -750,7 +785,9 @@ class RectMarkStyle(BaseModel):
     )
     # SkipInheritSlots(cascade=True): apply_inherit copies the entire stroke object
     # from the parent slot when stroke is None (heatmap.marks.rect slot).
-    stroke: Annotated[StrokeStyle | None, SkipInheritSlots(cascade=True)] = Field(
+    stroke: Annotated[
+        StrokeStyle | None, SkipInheritSlots(cascade=True), Absent("no stroke")
+    ] = Field(
         default=None,
         description="Mark stroke style; None means not overridden at this level.",
     )
@@ -766,9 +803,11 @@ class CircleMarkStyle(BaseModel):
         description="Mark opacity (0–1); None means not overridden at this level.",
     )
     # SkipInheritSlots: nullable container; apply_inherit can't navigate through None parent.
-    stroke: Annotated[StrokeStyle | None, SkipInheritSlots()] = Field(
-        default=None,
-        description="Unset emits no stroke; Vega-Lite's default applies.",
+    stroke: Annotated[StrokeStyle | None, SkipInheritSlots(), Absent("no stroke")] = (
+        Field(
+            default=None,
+            description="Unset emits no stroke; Vega-Lite's default applies.",
+        )
     )
 
 
@@ -786,9 +825,9 @@ class GeoshapeMarkStyle(BaseModel):
     )
     # SkipInheritSlots(cascade=True): apply_inherit copies the entire stroke object
     # from the parent slot when stroke is None (geoshape.marks.geoshape slot).
-    stroke: Annotated[StrokeStyle | None, SkipInheritSlots(cascade=True)] = Field(
-        default=None, description="Geoshape boundary stroke style."
-    )
+    stroke: Annotated[
+        StrokeStyle | None, SkipInheritSlots(cascade=True), Absent("no stroke")
+    ] = Field(default=None, description="Geoshape boundary stroke style.")
 
 
 class GlobalMarksStyle(BaseModel):

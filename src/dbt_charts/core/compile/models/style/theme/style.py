@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from dbt_charts.core.compile.models.markers import (
+    Absent,
     Color,
     Merge,
     NotInherited,
@@ -62,12 +63,7 @@ class Style(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # FrameStyle's own docstring says it must not cascade to
-    # child boards — each board's structural frame is its own, the same as
-    # gap/margin/padding below.
-    frame: Annotated[FrameStyle, NotInherited()] = Field(
-        description="Board-level structural frame dimensions."
-    )
+    frame: FrameStyle = Field(description="Board-level structural frame dimensions.")
     background: Annotated[str, Color()] = Field(
         description="Working-surface background color (board and card fills)."
     )
@@ -95,6 +91,7 @@ class Style(BaseModel):
     )
     box_shadow: Annotated[
         str | None,
+        Absent("no shadow"),
         BeforeValidator(
             check_box_shadow,
             json_schema_input_type=Optional[  # noqa: UP045 (pyright rejects `Annotated[...] | None`)
@@ -116,14 +113,7 @@ class Style(BaseModel):
     charts: ChartsStyle = Field(
         description="Root of all chart-type styles and shared chart configuration."
     )
-    # rows/cols/grid spacing and grid column count are each
-    # board's own, not thematic identity. The marker has to sit on this
-    # whole container, not on LayoutStyle's own rows/cols/grid fields:
-    # merge_patches only checks a Merge marker on the field it walks, so an
-    # inner marker would never fire unless a nested board separately
-    # authored something else under layout: too. That also stops
-    # tabs/details styling from crossing a board boundary.
-    layout: Annotated[LayoutStyle, NotInherited()] = Field(
+    layout: LayoutStyle = Field(
         description="Spacing and arrangement inside the containers (rows, cols, grid, tabs, details)."
     )
     variables: VariablesStyle = Field(description="Variable controls chrome style.")
@@ -143,9 +133,11 @@ class Style(BaseModel):
     # while unredefined theme keys propagate. None is intentional here — unlike other
     # Compiled fields the theme populates, this sentinel distinguishes "no override"
     # from "empty override" across every cascade step, not just the base.
-    formats: dict[str, str | FormatConfig] | None = Field(
-        default=None,
-        description="Format alias map; None means no aliases at this cascade level.",
+    formats: Annotated[dict[str, str | FormatConfig] | None, Absent("no aliases")] = (
+        Field(
+            default=None,
+            description="Format alias map; None means no aliases at this cascade level.",
+        )
     )
     # Named-font registry, merged key-wise like ``formats`` (board keys win, other
     # theme keys propagate). Names are expanded into slots by
@@ -194,13 +186,8 @@ class Style(BaseModel):
             "e.g. ink: chrome.heading"
         ),
     )
-    # padding/margin/gap below: none of them are theme-populated (no shipped
-    # theme sets any of the three), matching their own "per-board"
-    # descriptions. Each is NotInherited so a nested board that authors
-    # any style of its own never inherits an ancestor's value for these —
-    # the same rows/cols/grid pattern. A nested board authoring no style at
-    # all still inherits everything, these three included, via the
-    # compile_board_resolved_style fast path (verbatim reuse of the parent).
+    # padding/margin are per-board and never theme-populated; NotInherited
+    # keeps an ancestor's value from crossing into a nested board.
     padding: Annotated[SpacingValues | None, NotInherited()] = Field(
         default=None,
         description="Per-board padding override (CSS shorthand or structured).",
@@ -209,8 +196,8 @@ class Style(BaseModel):
         default=None,
         description="Per-board margin override (CSS shorthand or structured).",
     )
-    gap: Annotated[float | None, NotInherited()] = Field(
-        default=None, description="Per-board gap between layout items in pixels."
+    gap: float | None = Field(
+        default=None, description="Gap between layout items in pixels."
     )
 
     @model_validator(mode="after")

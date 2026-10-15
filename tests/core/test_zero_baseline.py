@@ -25,7 +25,7 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from dbt_charts.core.compile.config import get_theme_style, reset_config
 from dbt_charts.core.compile.models.chart.normalized import BarChart, Chart
@@ -1228,10 +1228,13 @@ def test_zero_rule_renders_one_line_for_bar_chart():
 
     spec = _spec("bar", _POSITIVE_DATA)
     svg = vlc.vegalite_to_svg(spec)
-    rule_lines = re.findall(
-        r'<line[^>]*aria-roledescription="rule mark"[^>]*>',
-        svg,
-    )
+    rule_lines = [
+        line
+        for group in re.findall(
+            r'<g [^>]*class="mark-rule role-mark[^>]*>.*?</g>', svg, re.S
+        )
+        for line in re.findall(r"<line[^>]*>", group)
+    ]
     assert len(rule_lines) == 1, (
         f"expected exactly one rule-mark line, got {len(rule_lines)}; "
         ">1 indicates rule layer is inheriting parent data instead of using "
@@ -1392,10 +1395,13 @@ def test_zero_rule_renders_as_one_visible_horizontal_line():
 
     spec = _spec("area", _STRADDLE_ZERO_DATA, color="x")
     svg = vlc.vegalite_to_svg(spec)
-    rule_lines = re.findall(
-        r'<line[^>]*aria-roledescription="rule mark"[^>]*>',
-        svg,
-    )
+    rule_lines = [
+        line
+        for group in re.findall(
+            r'<g [^>]*class="mark-rule role-mark[^>]*>.*?</g>', svg, re.S
+        )
+        for line in re.findall(r"<line[^>]*>", group)
+    ]
     assert len(rule_lines) == 1, (
         f"expected exactly one rule-mark line, got {len(rule_lines)}; "
         ">1 indicates rule layer is inheriting parent data instead of using "
@@ -1636,21 +1642,13 @@ def test_dual_axis_overlay_authored_domain_excluding_zero_suppresses_its_rule():
     assert _nested_zero_rule_fields_by_index(spec) == {0: {"y"}}
 
 
-def test_dual_axis_overlay_empty_domain_list_does_not_crash():
-    """`LayerAxisYScale.domain` has no length constraint: `domain: []` is
-    schema-valid, and carries no bounds. Reading it as `(min, max)` must not
-    crash; it must fall back to the straddle check, same as unset."""
-    chart = TypeAdapter(Chart).validate_python(
-        _dual_axis_bar_line_chart({"position": "right", "scale": {"domain": []}})
-    )
-    spec = generate_vega_lite_spec(
-        chart,
-        _DUAL_AXIS_STRADDLE_DATA,
-        width=400,
-        board_style=_BOARD_STYLE,
-        chart_style_context=_BOARD_CTX,
-    )
-    assert _nested_zero_rule_fields_by_index(spec) == {0: {"y"}, 1: {"y2"}}
+def test_dual_axis_overlay_empty_domain_list_is_rejected():
+    """`domain` must be a `[min, max]` pair, so `domain: []` fails validation
+    instead of reaching the emitter."""
+    with pytest.raises(ValidationError, match="domain"):
+        TypeAdapter(Chart).validate_python(
+            _dual_axis_bar_line_chart({"position": "right", "scale": {"domain": []}})
+        )
 
 
 def test_dual_axis_layer_sharing_base_side_keeps_single_shared_rule():

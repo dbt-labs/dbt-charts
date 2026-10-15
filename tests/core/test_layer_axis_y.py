@@ -220,6 +220,73 @@ def test_layer_axis_y_scale_domain_emits_to_vl() -> None:
     assert scale.get("domain") == [0.0, 5000.0]
 
 
+def _layer_marks(vl: dict, domain: list[float]) -> list[dict]:
+    """Every mark dict under the VL layer whose y scale pins ``domain``."""
+
+    def marks(node: object) -> list[dict]:
+        if isinstance(node, dict):
+            own = [node["mark"]] if isinstance(node.get("mark"), dict) else []
+            return own + [m for v in node.values() for m in marks(v)]
+        if isinstance(node, list):
+            return [m for v in node for m in marks(v)]
+        return []
+
+    for layer in _walk_layers(vl):
+        scale = layer.get("encoding", {}).get("y", {}).get("scale")
+        if isinstance(scale, dict) and scale.get("domain") == domain:
+            return marks(layer)
+    raise AssertionError(f"no layer pins domain {domain}")
+
+
+@pytest.mark.parametrize(
+    ("domain", "clip", "expect_clipped"),
+    [
+        ([4200.0, 4800.0], None, True),
+        ([4200.0, 4800.0], True, True),
+        ([4200.0, 4800.0], False, False),
+        ([3000.0, 6000.0], None, False),
+    ],
+)
+def test_layer_domain_clips_line_to_plot(
+    domain: list[float], clip: bool | None, expect_clipped: bool
+) -> None:
+    """A line layer whose authored domain excludes its data is clipped to the
+    plot; `clip: false` lets it run past; an enclosing domain is untouched."""
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+
+    scale: dict = {"domain": domain}
+    if clip is not None:
+        scale["clip"] = clip
+    layer = LineLayer(
+        type="line",
+        y="target",
+        axis_y={"position": "right", "scale": scale},
+    )
+    marks = _layer_marks(_render_bar_with_layers([layer]), domain)
+    main = [m for m in marks if m.get("type") == "line" and m.get("strokeWidth")]
+    assert main
+    assert all((m.get("clip") is True) == expect_clipped for m in main)
+
+
+def test_shared_scale_layer_domain_does_not_clip() -> None:
+    """Without `position` the layer shares the base y scale and its domain is
+    never honored, so nothing may be clipped for it."""
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+
+    layer = LineLayer(
+        type="line",
+        y="target",
+        axis_y={"grid": {"visible": True}, "scale": {"domain": [4200.0, 4800.0]}},
+    )
+    vl = _render_bar_with_layers([layer])
+    assert not any(
+        m.get("clip") is True
+        for lyr in _walk_layers(vl)
+        for m in [lyr.get("mark")]
+        if isinstance(m, dict) and m.get("type") == "line"
+    )
+
+
 def test_layer_axis_y_ticks_count_emits_tickCount_to_vl() -> None:
     """axis_y.ticks.count=4 on a right-side layer sets tickCount in VL axis."""
     from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
@@ -468,6 +535,7 @@ def test_chart_level_domain_with_split_dual_axis_raises_error() -> None:
         resolve(chart, _DATA, _default_board_style())
     assert exc_info.value.code is not None
     assert exc_info.value.code.code == "ERR-LAYERS-AMBIGUOUS-Y-DOMAIN"
+    assert "sets axis_y.scale.continuous.domain=[0, 300]" in str(exc_info.value)
 
 
 def test_chart_level_domain_single_axis_does_not_raise() -> None:

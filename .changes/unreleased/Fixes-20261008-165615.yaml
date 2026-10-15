@@ -1,3 +1,3 @@
 kind: Fixes
-body: Tables no longer hang when a cell holds a very long unbroken value such as a base64 data URI.
+body: Tables with long unbroken values (URLs, data URIs, snake_case ids) no longer hang and wrap much faster.
 time: 2026-10-08T16:56:15.083403-04:00

@@ -37,7 +37,7 @@ def test_build_schema_field_reads_inherit_marker():
         color: Annotated[str, Inherit(from_path="inner.color")]
 
     fi = _Root.model_fields["color"]
-    sf = _build_schema_field("color", fi, fi.annotation)
+    sf = _build_schema_field("color", fi, fi.annotation, rejects_null=False)
 
     assert sf.inherit_from == ("inner.color",)
     assert sf.inherit_slot is None
@@ -56,7 +56,7 @@ def test_build_schema_field_reads_inherit_slot_marker():
         axis_x: Annotated[_AxisFixture, InheritSlot(from_path="charts.axis")]
 
     fi = _ChartsFixture.model_fields["axis_x"]
-    sf = _build_schema_field("axis_x", fi, fi.annotation)
+    sf = _build_schema_field("axis_x", fi, fi.annotation, rejects_null=False)
 
     assert sf.inherit_slot == "charts.axis"
     assert sf.inherit_from == ()
@@ -70,7 +70,7 @@ def test_build_schema_field_no_markers_leaves_inherit_empty():
         name: str
 
     fi = _Plain.model_fields["name"]
-    sf = _build_schema_field("name", fi, fi.annotation)
+    sf = _build_schema_field("name", fi, fi.annotation, rejects_null=False)
 
     assert sf.inherit_from == ()
     assert sf.inherit_slot is None

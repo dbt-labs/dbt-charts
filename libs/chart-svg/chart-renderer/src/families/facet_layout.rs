@@ -57,8 +57,8 @@ impl GridCell {
 /// pass the SAME `align`/`padding`/`columns` for both column and row
 /// (production's own compiled `layout.align`/`layout.padding` are bare
 /// scalars, not `{row, column}` objects, for every facet shape this port
-/// reaches — see `families/multiples.rs`'s module doc). `align: "all"` is
-/// the only mode any caller here authors — `"each"`/positional-offset and
+/// reaches — see `families/multiples.rs`'s module doc). `align: "all"` and
+/// `align: "none"` (`align_none`) are the modes callers author — `"each"`/positional-offset and
 /// `bounds: "flush"` (`bboxFlush` over the `bounds: "full"` default) are
 /// not ported; a re-added caller needing either should re-add the JS's own
 /// `Align`/`bboxFlush` alongside it, not a speculative enum with one
@@ -66,6 +66,10 @@ impl GridCell {
 pub struct GridOpt {
     pub padding: f64,
     pub columns: usize,
+    /// `align: "none"` across columns: each column advances by its own cell's
+    /// ink instead of one shared pitch (a facet whose x axis lives in every
+    /// cell).
+    pub align_none: bool,
 }
 
 /// `gridLayout` — positions `cells` into a `opt.columns`-wide grid,
@@ -99,17 +103,26 @@ pub fn grid_layout(cells: &[GridCell], opt: &GridOpt) -> (Vec<(f64, f64)>, Bound
         }
     }
 
-    // enforce column alignment constraints (`opt.align == "all"`, the only
-    // mode any caller here authors — see the module doc)
-    let mut offset = 0.0_f64;
-    for i in 0..n {
-        if i % ncols != 0 {
-            offset = offset.max(x_offset[i]);
+    // enforce column alignment constraints: `all` gives every column one
+    // shared pitch; `none` advances each column by the previous cell's own
+    // extent
+    if opt.align_none {
+        for i in 0..n {
+            if i % ncols != 0 {
+                x_offset[i] += boxes[i - 1].x2.ceil();
+            }
         }
-    }
-    for i in 0..n {
-        if i % ncols != 0 {
-            x_offset[i] = offset + x_max;
+    } else {
+        let mut offset = 0.0_f64;
+        for i in 0..n {
+            if i % ncols != 0 {
+                offset = offset.max(x_offset[i]);
+            }
+        }
+        for i in 0..n {
+            if i % ncols != 0 {
+                x_offset[i] = offset + x_max;
+            }
         }
     }
 
@@ -182,7 +195,7 @@ mod tests {
     fn rows_only_single_column_all_alignment_stacks_uniformly() {
         let panel_h = 114.57142857142857;
         let cells: Vec<GridCell> = (0..7).map(|_| cell(480.0, panel_h)).collect();
-        let opt = GridOpt { padding: 20.0, columns: 1 };
+        let opt = GridOpt { padding: 20.0, columns: 1, align_none: false };
         let (offsets, bounds) = grid_layout(&cells, &opt);
         assert_eq!(offsets.len(), 7);
         let y_max = panel_h.ceil(); // 115
@@ -199,7 +212,7 @@ mod tests {
     #[test]
     fn columns_only_row_of_n_positions_side_by_side() {
         let cells: Vec<GridCell> = (0..3).map(|_| cell(200.0, 100.0)).collect();
-        let opt = GridOpt { padding: 20.0, columns: 3 };
+        let opt = GridOpt { padding: 20.0, columns: 3, align_none: false };
         let (offsets, bounds) = grid_layout(&cells, &opt);
         assert_eq!(offsets[0], (0.0, 0.0));
         let col_step = 20.0 + 200.0; // padding + xMax
@@ -215,7 +228,7 @@ mod tests {
     fn grid_of_cells_positions_both_axes() {
         // 2x2 grid, uniform 100x50 cells, align all both directions.
         let cells: Vec<GridCell> = (0..4).map(|_| cell(100.0, 50.0)).collect();
-        let opt = GridOpt { padding: 10.0, columns: 2 };
+        let opt = GridOpt { padding: 10.0, columns: 2, align_none: false };
         let (offsets, _bounds) = grid_layout(&cells, &opt);
         // row 0: (0,0), (0,10+100=110,0)... col step = padding + xMax(100) = 110
         assert_eq!(offsets[0], (0.0, 0.0));

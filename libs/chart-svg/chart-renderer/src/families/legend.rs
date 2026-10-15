@@ -12,6 +12,8 @@ use std::fmt::Write as _;
 
 use serde::Deserialize;
 
+use crate::codes;
+use crate::diagnostic::Diagnostic;
 use crate::common::{field_display_text, truncate_label, FieldLabels, Font};
 use crate::svg::{xml_escape, xml_escape_attr, vega_escape_attr};
 use crate::text::FontBook;
@@ -117,9 +119,9 @@ pub(crate) fn legend_position<'de, D: serde::Deserializer<'de>>(d: D) -> Result<
 /// A centered legend reserves the same strip as a start-aligned one and then
 /// slides along its edge (`render/converters/legend_align.py:68-103`). Small
 /// multiples have no single plot to slide it along
-/// (`ERR-LEGEND-ALIGN-UNSUPPORTED`), and scatter's color, size and shape
-/// legends stack as one block whose geometry is not probed, so both refuse by
-/// name; line, area, bar and heatmap draw the slide on their own arms.
+/// (`ERR-LEGEND-ALIGN-UNSUPPORTED`, raised from the payload by
+/// `cartesian_errors`); line, area, bar, heatmap and scatter draw the slide on
+/// their own arms.
 ///
 /// A reserved cartesian strip supports `align: start|center` only: `end` is a
 /// floating-corner placement (a floating legend takes it as its corner) and
@@ -134,26 +136,11 @@ pub(crate) fn legend_position<'de, D: serde::Deserializer<'de>>(d: D) -> Result<
 pub fn refuse_unmodeled_slide(chart_type: &str, resolved: &serde_json::Value) -> Result<(), String> {
     let align = &resolved["legend"]["position"]["align"];
     let overlay = resolved["legend"]["position"]["overlay"] == true;
-    if align == "end" && !overlay && matches!(chart_type, "line" | "area" | "bar" | "heatmap" | "scatter") {
+    if align == "end" && !overlay && matches!(chart_type, "line" | "area" | "bar" | "histogram" | "heatmap" | "scatter") {
         return Err(format!(
             "ERR-LEGEND-POSITION-UNSUPPORTED: {chart_type}: legend.position align \"end\" overlay false — \
              a reserved strip supports align \"start\" or \"center\" only"
         ));
-    }
-    if align != "center" {
-        return Ok(());
-    }
-    if !resolved["multiples"].is_null() {
-        return Err(format!(
-            "{chart_type}: legend.position align \"center\" on small multiples: \
-             ERR-LEGEND-ALIGN-UNSUPPORTED (no single plot to align in)"
-        ));
-    }
-    if chart_type == "scatter" {
-        return Err(
-            "scatter: legend.position align \"center\" is not modeled (its legend stack is not probed)"
-                .into(),
-        );
     }
     Ok(())
 }
@@ -179,46 +166,76 @@ pub fn refuse_slide_blocker(position: &LegendPosition, family: &str, blocker: Op
 /// corner. A legend no smaller than its plot has nowhere to slide
 /// (`legend_align.py:84-97`).
 pub fn legend_slide(
+    chart_id: &str,
     position: &LegendPosition,
     legend: &VegaLegend,
     plot: (f64, f64),
-) -> Result<(f64, f64), String> {
-    slide_block(position, (legend.box_w, legend.box_h()), plot)
+) -> Result<(f64, f64), Diagnostic> {
+    slide_block(chart_id, position, (legend.box_w, legend.box_h()), plot)
 }
 
 /// A floating legend starts at its corner (`legend_overlay_origin`), and a
 /// corner is already end-aligned, so only a centered one slides
 /// (`vega_lite.py`: `needs_slide`); the slide reads the block's own start the
 /// way `legend_align.py` reads it off the scenegraph.
-fn slide_block(position: &LegendPosition, block: (f64, f64), plot: (f64, f64)) -> Result<(f64, f64), String> {
-    if position.align == LegendAlign::Start || (position.overlay && position.align == LegendAlign::End) {
+pub fn slide_block(
+    chart_id: &str,
+    position: &LegendPosition,
+    block: (f64, f64),
+    plot: (f64, f64),
+) -> Result<(f64, f64), Diagnostic> {
+    let start = if position.overlay { legend_overlay_origin(position, plot, block) } else { (0.0, 0.0) };
+    slide_union(chart_id, position, &[(start.0, start.1, block.0, block.1)], plot)
+}
+
+/// The slide of every legend in one view as a block (`legend_shifts`,
+/// `legend_align.py:80-105`): `rects` are the legends' `(x, y, w, h)` in plot
+/// coordinates, the block runs from the first start to the last end along
+/// the edge, and one shift moves them all so stacked legends keep their
+/// order. A start-aligned legend, and a floating one in its end corner,
+/// stay put.
+pub fn slide_union(
+    chart_id: &str,
+    position: &LegendPosition,
+    rects: &[(f64, f64, f64, f64)],
+    plot: (f64, f64),
+) -> Result<(f64, f64), Diagnostic> {
+    let unsupported = |reason: String| {
+        Diagnostic::new(
+            &codes::ERR_LEGEND_ALIGN_UNSUPPORTED,
+            [("chart_id", serde_json::json!(chart_id)), ("reason", serde_json::json!(reason))],
+        )
+    };
+    if position.align == LegendAlign::Start
+        || (position.overlay && position.align == LegendAlign::End)
+        || rects.is_empty()
+    {
         return Ok((0.0, 0.0));
     }
     let along_x = matches!(position.edge.as_str(), "top" | "bottom");
-    let block_start = if position.overlay {
-        let (x, y) = legend_overlay_origin(position, plot, block);
-        if along_x { x } else { y }
-    } else {
-        0.0
-    };
-    let (span, block) = if along_x { (plot.0, block.0) } else { (plot.1, block.1) };
+    let span = if along_x { plot.0 } else { plot.1 };
+    let (block_start, block_end) = rects.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &(x, y, w, h)| {
+        let (start, size) = if along_x { (x, w) } else { (y, h) };
+        (lo.min(start), hi.max(start + size))
+    });
     // `legend_align.py:89-93`: an empty span refuses before the block is compared.
     if span <= 0.0 {
-        return Err("ERR-LEGEND-ALIGN-UNSUPPORTED: its plot has no size to align in".to_string());
+        return Err(unsupported("its plot has no size to align in".to_string()));
     }
+    let block = block_end - block_start;
     if block >= span {
         // `legend_align.py:98` prints both extents through `:g`.
-        return Err(format!(
-            "ERR-LEGEND-ALIGN-UNSUPPORTED: its legend ({}px) is larger than its plot ({}px)",
+        return Err(unsupported(format!(
+            "its legend ({}px) is larger than its plot ({}px)",
             d3rs::py_float::format_g(block),
             d3rs::py_float::format_g(span),
-        ));
+        )));
     }
     // `legend_align.py:100-103`: center is `(span - block) / 2 - start` and
-    // end `span - (start + block)`; a reserved strip's block starts at 0.
+    // end `span - end`.
     let shift = match position.align {
         LegendAlign::Center => (span - block) / 2.0 - block_start,
-        LegendAlign::End => span - block - block_start,
+        LegendAlign::End => span - block_end,
         LegendAlign::Start => unreachable!("a start-aligned legend returned above"),
     };
     Ok(if along_x { (shift, 0.0) } else { (0.0, shift) })
@@ -257,7 +274,7 @@ pub fn fold_legend_token(token: &str) -> String {
 /// (`fold_legend_token`); a token matching nothing, or more than one entry at
 /// its tier, is dropped, never guessed. When no token resolves the whole
 /// domain keeps its own order. `authored` is never empty here (an explicit
-/// `values: []` draws an empty legend, which callers refuse).
+/// `values: []` draws a title-only legend, which callers handle before this).
 ///
 /// `aliases`, when given, is one extra spelling per `domain` entry (a wide
 /// fold's raw measure name for its humanized label, `wide_legend_aliases`);
@@ -328,7 +345,7 @@ pub struct LegendLabel {
 /// bounds −0.5…12.5 (boundStroke expands by the full stroke width), label
 /// bounds 0…11.
 ///
-/// **Mixed-mark exception** (`entries` carrying a `Some(symbol)` override —
+/// **Mixed-mark exception** (`entries` carrying a `Stroke` glyph —
 /// `_mixed_mark_legend_symbols`, `_overlay.py:679-687`): binding
 /// `symbolSize`/`symbolStrokeWidth` to a `datum`-conditional signal breaks
 /// Vega's own `sizeExpression` (`vega-parser/legend.js:176-183`), which
@@ -369,6 +386,7 @@ pub struct LegendGrid {
 }
 
 const VEGA_SYMBOL_SIZE: f64 = 100.0;
+const VEGA_DASH_SYMBOL_SIZE: f64 = 2000.0;
 const VEGA_SYMBOL_STROKE_WIDTH: f64 = 1.5;
 const VEGA_ROW_PADDING: f64 = 2.0;
 const VEGA_COLUMN_PADDING: f64 = 10.0;
@@ -391,20 +409,15 @@ pub fn legend_grid(
     }
     let columns = if columns == 0 { n } else { columns.min(n) };
     let rows = n.div_ceil(columns);
+    // `_mixed_mark_legend_symbols`: a stroke-family glyph collapses the cell to
+    // the font size; entries drawing only Vega's default 100-size square or
+    // circle keep the uniform row.
     let mixed = symbols
         .iter()
-        .any(|s| {
-            !matches!(
-                s,
-                None | Some(
-                    LegendSymbol::FilledCircle
-                        | LegendSymbol::FilledGlyph(_)
-                        | LegendSymbol::FilledSquare
-                        | LegendSymbol::Glyph(..)
-                )
-            )
-        });
-    let size = if mixed {
+        .any(|s| matches!(s, Some(LegendSymbol::Stroke(_) | LegendSymbol::StrokedCircle(_))));
+    let size = if symbols.iter().any(|s| matches!(s, Some(LegendSymbol::Dash(_)))) {
+        (VEGA_DASH_SYMBOL_SIZE.sqrt() + VEGA_SYMBOL_STROKE_WIDTH).ceil().max(font_size)
+    } else if mixed {
         font_size
     } else {
         (VEGA_SYMBOL_SIZE.sqrt() + VEGA_SYMBOL_STROKE_WIDTH).ceil().max(font_size)
@@ -418,17 +431,22 @@ pub fn legend_grid(
     // drawn bound by the FULL stroke width, so its horizontal half is
     // `10 + strokeWidth`; vertically the segment itself has no extent, so
     // its half is just `strokeWidth / 2`.
+    let stroke_half_extent = |half_len: f64, w: f64| (half_len + w, w / 2.0);
     let half_extent_x = |i: usize| match symbols.get(i).copied().flatten() {
-        Some(LegendSymbol::Glyph(x, _)) => x + VEGA_SYMBOL_STROKE_WIDTH,
-        Some(LegendSymbol::Stroke(w)) => 10.0 + w,
+        Some(LegendSymbol::Glyph(x, _) | LegendSymbol::Ring(.., (x, _))) => x + VEGA_SYMBOL_STROKE_WIDTH,
+        Some(LegendSymbol::Stroke(w)) => stroke_half_extent(10.0, w).0,
+        Some(LegendSymbol::ShortStroke) => stroke_half_extent(5.0, VEGA_SYMBOL_STROKE_WIDTH).0,
+        Some(LegendSymbol::Dash(_)) => VEGA_DASH_SYMBOL_SIZE.sqrt() / 2.0 + VEGA_SYMBOL_STROKE_WIDTH,
         Some(LegendSymbol::FilledCircle | LegendSymbol::FilledGlyph(_) | LegendSymbol::FilledSquare) => {
             VEGA_SYMBOL_SIZE.sqrt() / 2.0
         }
         _ => VEGA_SYMBOL_SIZE.sqrt() / 2.0 + VEGA_SYMBOL_STROKE_WIDTH,
     };
     let half_extent_y = |i: usize| match symbols.get(i).copied().flatten() {
-        Some(LegendSymbol::Glyph(_, y)) => y + VEGA_SYMBOL_STROKE_WIDTH,
-        Some(LegendSymbol::Stroke(w)) => w / 2.0,
+        Some(LegendSymbol::Glyph(_, y) | LegendSymbol::Ring(.., (_, y))) => y + VEGA_SYMBOL_STROKE_WIDTH,
+        Some(LegendSymbol::Stroke(w)) => stroke_half_extent(10.0, w).1,
+        Some(LegendSymbol::ShortStroke) => stroke_half_extent(5.0, VEGA_SYMBOL_STROKE_WIDTH).1,
+        Some(LegendSymbol::Dash(_)) => VEGA_SYMBOL_STROKE_WIDTH / 2.0,
         Some(LegendSymbol::FilledCircle | LegendSymbol::FilledGlyph(_) | LegendSymbol::FilledSquare) => {
             VEGA_SYMBOL_SIZE.sqrt() / 2.0
         }
@@ -502,11 +520,67 @@ pub struct SizeLegendGrid {
     pub width: f64,
 }
 
+/// One entry of a size legend in its legend's frame: the entry cell's top
+/// `y`, the symbol center's `(symbol_x, c)` and the label's `label_x`
+/// (the label shares the symbol's vertical center `y + c`).
+pub struct SizeCell {
+    pub y: f64,
+    pub c: f64,
+    pub symbol_x: f64,
+    pub label_x: f64,
+}
+
+/// A size legend laid out as one horizontal row, one column per entry
+/// (`direction: horizontal`): each entry's cell is its own symbol size, the
+/// columns `gridLayout`'s `columnPadding` (10) past the last column's ceiled
+/// right bound and any negative left bound of their own, and every entry
+/// vertically centered in the row (whose height is the tallest entry's ceiled
+/// bound) — a probe of Vega's `gridLayout` on production's size legend.
+pub fn size_legend_row(
+    sizes: &[f64],
+    label_ws: &[f64],
+    font_size: f64,
+    label_offset: f64,
+    glyph: (f64, f64),
+) -> (Vec<SizeCell>, f64, f64) {
+    let n = sizes.len();
+    let cell = |size: f64| (size.sqrt() + VEGA_SYMBOL_STROKE_WIDTH).ceil().max(font_size);
+    let c: Vec<f64> = sizes.iter().map(|&s| cell(s) / 2.0).collect();
+    let half_x: Vec<f64> = sizes.iter().map(|&s| s.sqrt() / 2.0 * glyph.0).collect();
+    let half_y: Vec<f64> = sizes.iter().map(|&s| s.sqrt() / 2.0 * glyph.1).collect();
+    let text_y1 = |c: f64| c + (0.3 * font_size).round() - (0.8 * font_size).round();
+    let x1: Vec<f64> = (0..n).map(|i| c[i] - half_x[i] - VEGA_SYMBOL_STROKE_WIDTH).collect();
+    let label_x: Vec<f64> = (0..n).map(|i| 2.0 * c[i] + label_offset).collect();
+    let x2: Vec<f64> = (0..n).map(|i| (c[i] + half_x[i] + VEGA_SYMBOL_STROKE_WIDTH).max(label_x[i] + label_ws[i])).collect();
+    let y1: Vec<f64> = (0..n).map(|i| (c[i] - half_y[i] - VEGA_SYMBOL_STROKE_WIDTH).min(text_y1(c[i]))).collect();
+    let y2: Vec<f64> = (0..n)
+        .map(|i| (c[i] + half_y[i] + VEGA_SYMBOL_STROKE_WIDTH).max(text_y1(c[i]) + font_size))
+        .collect();
+    let neg = |v: f64| if v < 0.0 { (-v).ceil() } else { 0.0 };
+    let mut col_x = vec![0.0; n];
+    for i in 1..n {
+        col_x[i] = col_x[i - 1] + VEGA_COLUMN_PADDING + neg(x1[i]) + x2[i - 1].ceil();
+    }
+    // The row is as tall as its tallest entry's own bounds.
+    let box_h = (0..n).map(|i| y2[i] - y1[i]).fold(0.0, f64::max).ceil();
+    let cells = (0..n)
+        .map(|i| SizeCell { y: (box_h - y2[i]) / 2.0, c: c[i], symbol_x: col_x[i] + c[i], label_x: col_x[i] + label_x[i] })
+        .collect();
+    let width = (0..n).map(|i| col_x[i] + x2[i]).fold(0.0, f64::max);
+    (cells, box_h, width)
+}
+
 /// Lay `sizes` (Vega scale values, one per legend row, row order) out under
 /// `label_ws` (matching label widths) at `font_size`, `label_offset` apart
 /// from the symbol column — Vega's `gridLayout` applied to a size legend's
 /// per-row bounds (see [`SizeLegendGrid`]).
-pub fn size_legend_grid(sizes: &[f64], label_ws: &[f64], font_size: f64, label_offset: f64) -> SizeLegendGrid {
+pub fn size_legend_grid(
+    sizes: &[f64],
+    label_ws: &[f64],
+    font_size: f64,
+    label_offset: f64,
+    glyph: (f64, f64),
+) -> SizeLegendGrid {
     let n = sizes.len();
     if n == 0 {
         return SizeLegendGrid {
@@ -522,7 +596,7 @@ pub fn size_legend_grid(sizes: &[f64], label_ws: &[f64], font_size: f64, label_o
         (size.sqrt() + VEGA_SYMBOL_STROKE_WIDTH).ceil().max(font_size)
     };
     let row_c: Vec<f64> = sizes.iter().map(|&s| cell(s) / 2.0).collect();
-    let half: Vec<f64> = sizes.iter().map(|&s| s.sqrt() / 2.0).collect();
+    let half: Vec<f64> = sizes.iter().map(|&s| s.sqrt() / 2.0 * glyph.1).collect();
     let text_y1 = |c: f64| c + (0.3 * font_size).round() - (0.8 * font_size).round();
     let y1: Vec<f64> = (0..n)
         .map(|i| (row_c[i] - half[i] - VEGA_SYMBOL_STROKE_WIDTH).min(text_y1(row_c[i])))
@@ -547,6 +621,185 @@ pub fn size_legend_grid(sizes: &[f64], label_ws: &[f64], font_size: f64, label_o
 /// same `titleFontSize + titlePadding` rule.
 pub const VEGA_LEGEND_TITLE_PADDING: f64 = 5.0;
 
+/// Vega-Lite's `gradientThickness` default: the color bar's width.
+pub(crate) const VEGA_GRADIENT_THICKNESS: f64 = 16.0;
+/// Vega-Lite's `gradientLength` default is `clamp(plot_height, 64, 200)`
+/// (probed: spec heights 700 / 200 / 140 give bars of 200 / 116 / 64).
+pub(crate) const VEGA_GRADIENT_LENGTH_MIN: f64 = 64.0;
+pub(crate) const VEGA_GRADIENT_LENGTH_MAX: f64 = 200.0;
+/// A horizontal `orient: top` gradient legend is `clamp(unit width, 100, 200)`
+/// long: Vega-Lite `defaultGradientLength` (`src/compile/legend/properties.ts`,
+/// v6.4 lines 206-243) reads `model.getSizeSignalRef('width')`
+/// (`src/compile/model.ts:493`), which for a unit inside a facet is the
+/// unit's own `child_width`, and the bounds are `legendConfig.gradientHorizontal
+/// {Min,Max}Length` (`src/legend.ts:194-195`).
+const VEGA_GRADIENT_HORIZONTAL_MIN_LENGTH: f64 = 100.0;
+/// How many ticks color a continuous legend's gradient between its two ends.
+pub(crate) const GRADIENT_STOP_TICKS: usize = 15;
+
+/// `value`'s place in `[min, max]` as d3's `normalize` puts it: a zero-width
+/// domain maps everything to the middle.
+pub(crate) fn unit_position(value: f64, min: f64, max: f64) -> f64 {
+    if max == min {
+        0.5
+    } else {
+        (value - min) / (max - min)
+    }
+}
+
+/// A vertical gradient legend's bar length beside a plot `plot_h` tall.
+pub(crate) fn gradient_length(plot_h: f64) -> f64 {
+    plot_h.clamp(VEGA_GRADIENT_LENGTH_MIN, VEGA_GRADIENT_LENGTH_MAX)
+}
+
+/// A horizontal gradient legend's length on `edge`: the same
+/// `defaultGradientLength` gives a top or bottom strip the clamped unit width
+/// and a side strip or a floating (corner orient) one
+/// `gradientHorizontalMinLength` alone.
+pub(crate) fn horizontal_gradient_length(edge: &str, overlay: bool, plot_w: f64) -> f64 {
+    if !overlay && matches!(edge, "top" | "bottom") {
+        plot_w.clamp(VEGA_GRADIENT_HORIZONTAL_MIN_LENGTH, VEGA_GRADIENT_LENGTH_MAX)
+    } else {
+        VEGA_GRADIENT_HORIZONTAL_MIN_LENGTH
+    }
+}
+
+/// How many ticks label a gradient `length` px long.
+pub(crate) fn gradient_tick_count(length: f64) -> usize {
+    ((length / 100.0).floor() as usize * 2).max(2)
+}
+
+/// A gradient legend's labeled values: the scale's ticks, or its two ends when
+/// there are fewer than three (`LegendEntries`), a one-value domain's single
+/// label drawn once (the legend's data join keys its entries by value).
+pub(crate) fn gradient_labeled_values(ticks: Vec<f64>, min: f64, max: f64) -> Vec<f64> {
+    match (ticks.len() < 3, min == max) {
+        (false, _) => ticks,
+        (true, true) => vec![min],
+        (true, false) => vec![min, max],
+    }
+}
+
+/// A vertical gradient legend's box: `ceil(max(title, bar + offset + widest
+/// label))` wide (`label_w` is `None` with no label to offset from the bar),
+/// under a title band when titled.
+pub(crate) fn gradient_legend_box(
+    title_w: f64,
+    title_size: f64,
+    label_w: Option<f64>,
+    label_offset: f64,
+    length: f64,
+) -> (f64, f64) {
+    let band = if title_w > 0.0 { title_size + VEGA_LEGEND_TITLE_PADDING } else { 0.0 };
+    let bar_w = VEGA_GRADIENT_THICKNESS + label_w.map_or(0.0, |w| label_offset + w);
+    (title_w.max(bar_w).ceil(), band + length)
+}
+
+/// The `<linearGradient>` of a continuous legend: a stop at each end and at
+/// each of the scale's 15 ticks, each in the scale's own color.
+pub(crate) fn emit_scale_gradient_def(
+    out: &mut String,
+    id: &str,
+    (min, max): (f64, f64),
+    ticks: &[f64],
+    color: impl Fn(f64) -> String,
+    vertical: bool,
+) {
+    let axis = if vertical { "x1=\"0\" x2=\"0\" y1=\"1\" y2=\"0\"" } else { "x1=\"0\" x2=\"1\" y1=\"0\" y2=\"0\"" };
+    let _ = write!(out, "<defs><linearGradient id=\"{id}\" {axis}>", id = xml_escape_attr(id));
+    let lead = ticks.first().is_none_or(|&t| t != min).then_some(min);
+    let tail = ticks.last().is_none_or(|&t| t != max).then_some(max);
+    for v in lead.into_iter().chain(ticks.iter().copied()).chain(tail) {
+        let _ = write!(out, "<stop offset=\"{}\" stop-color=\"{}\"/>", (v - min) / (max - min), color(v));
+    }
+    out.push_str("</linearGradient></defs>");
+}
+
+/// The `<linearGradient>` of a legend over a one-value domain, which has no
+/// ticks to sample: Vega runs its whole ramp across the bar in 20 even steps.
+pub(crate) fn emit_ramp_gradient_def(out: &mut String, id: &str, vertical: bool, color_at: impl Fn(f64) -> String) {
+    let axis = if vertical { "x1=\"0\" x2=\"0\" y1=\"1\" y2=\"0\"" } else { "x1=\"0\" x2=\"1\" y1=\"0\" y2=\"0\"" };
+    let _ = write!(out, "<defs><linearGradient id=\"{id}\" {axis}>", id = xml_escape_attr(id));
+    for step in 0..=20 {
+        let t = f64::from(step) / 20.0;
+        let _ = write!(out, "<stop offset=\"{t}\" stop-color=\"{}\"/>", color_at(t));
+    }
+    out.push_str("</linearGradient></defs>");
+}
+
+/// A vertical gradient legend: title, color bar (min at the bottom), and the
+/// labeled values beside it.
+pub(crate) struct VerticalGradient<'a> {
+    pub gradient_id: &'a str,
+    pub title: &'a str,
+    pub range: (f64, f64),
+    pub values: &'a [f64],
+    pub labels: &'a [String],
+    pub length: f64,
+}
+
+impl VerticalGradient<'_> {
+    /// Paint into `svg` with the group's top-left at `(x, y)`.
+    pub(crate) fn paint(&self, svg: &mut String, cfg: &LegendConfig, x: f64, y: f64) -> Result<(), String> {
+        let label_font = &cfg.label.font;
+        let label_size = label_font.size_or(11.0);
+        let label_family = label_font.family_or("sans-serif");
+        let label_offset = cfg.label.padding.ok_or("legend.label.padding absent (theme required)")?;
+        let title_size = cfg.title.font.size_or(12.0);
+        let mut bar_y = y;
+        if !self.title.is_empty() {
+            let _ = write!(
+                svg,
+                "<text x=\"{x:.2}\" y=\"{:.2}\" text-anchor=\"start\" font-family=\"{}\" \
+                 font-size=\"{title_size}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
+                y + vega_fit::baseline_shift("top", title_size),
+                vega_escape_attr(cfg.title.font.family_or("sans-serif")),
+                xml_escape_attr(&cfg.title.font.weight_str()),
+                xml_escape_attr(cfg.title.font.color.as_deref().unwrap_or("#313233")),
+                xml_escape(self.title),
+            );
+            bar_y += title_size + VEGA_LEGEND_TITLE_PADDING;
+        }
+        let _ = write!(
+            svg,
+            "<rect x=\"{x:.2}\" y=\"{bar_y:.2}\" width=\"{VEGA_GRADIENT_THICKNESS}\" height=\"{}\" fill=\"url(#{})\"/>",
+            self.length,
+            xml_escape_attr(self.gradient_id),
+        );
+        let label_color = label_font.color.as_deref().unwrap_or("#626366");
+        let label_weight = label_font.weight_str();
+        let label_x = x + VEGA_GRADIENT_THICKNESS + label_offset;
+        let (min, max) = self.range;
+        crate::contract::legend_label_open(svg, "");
+        for (v, text) in self.values.iter().zip(self.labels) {
+            let t = unit_position(*v, min, max);
+            // A label at the bar's bottom end tucks inside as `bottom`, one at
+            // the top end as `top`, every other `middle`. A date `NaN` has no
+            // position: Vega draws it at the group's origin.
+            let baseline = if t <= 0.0 {
+                "bottom"
+            } else if t >= 1.0 {
+                "top"
+            } else {
+                "middle"
+            };
+            let rise = if t.is_nan() { 0.0 } else { self.length * (1.0 - t) };
+            let label_y = bar_y + rise + vega_fit::baseline_shift(baseline, label_size);
+            let _ = write!(
+                svg,
+                "<text x=\"{label_x:.2}\" y=\"{label_y:.2}\" text-anchor=\"start\" font-family=\"{}\" \
+                 font-size=\"{label_size}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
+                vega_escape_attr(label_family),
+                xml_escape_attr(&label_weight),
+                xml_escape_attr(label_color),
+                xml_escape(text),
+            );
+        }
+        crate::contract::mark_group_close(svg);
+        Ok(())
+    }
+}
+
 /// Vega's default legend `offset` from the anchoring edge (a right legend's
 /// `ceil(x2) + offset`, a bottom's `ceil(y2) + offset`, a top's own
 /// `offset` above the plot below) — `vega-view-transforms/src/layout/
@@ -554,6 +807,25 @@ pub const VEGA_LEGEND_TITLE_PADDING: f64 = 5.0;
 /// Pinned against the compiled `bar_grouped` scenegraph (legend at
 /// y −31 = −(18 + 13), the 13 being `legend_grid`'s one-row box height).
 pub const VEGA_LEGEND_OFFSET: f64 = 18.0;
+/// The fixed gap Vega's `legend.layout` inserts between two stacked right
+/// legends (a side edge's, or a top edge's along it) — probe-confirmed constant across entry counts and label/title
+/// font sizes.
+pub const VEGA_LEGEND_GROUP_MARGIN: f64 = 8.0;
+
+/// Legend boxes `(w, h)` in registration order, stacked `VEGA_LEGEND_GROUP_MARGIN`
+/// apart along x (`along_x`) or y: each box's offset along the stack, and the
+/// stack's `(width, height)`.
+pub(crate) fn stack_legends(blocks: &[(f64, f64)], along_x: bool) -> (Vec<f64>, (f64, f64)) {
+    let mut cursor = 0.0_f64;
+    let (mut across, mut offsets) = (0.0_f64, Vec::new());
+    for &(w, h) in blocks {
+        offsets.push(cursor);
+        cursor += if along_x { w } else { h } + VEGA_LEGEND_GROUP_MARGIN;
+        across = across.max(if along_x { h } else { w });
+    }
+    let along = (cursor - VEGA_LEGEND_GROUP_MARGIN).max(0.0);
+    (offsets, if along_x { (along, across) } else { (across, along) })
+}
 
 /// A legend's start-anchored origin (its group's top-left, in plot
 /// coordinates) per `legendParams` (vega-view-transforms `layout/legend.js`):
@@ -759,7 +1031,15 @@ pub fn legend_from_widths(
     let slot_ws: Vec<f64> = order.iter().map(|&idx| label_ws[idx]).collect();
     let slot_symbols: Vec<Option<LegendSymbol>> = order.iter().map(|&idx| symbols[idx]).collect();
     let grid = legend_grid(&slot_ws, &slot_symbols, size, columns, label_offset);
-    let title_band = if title_text.is_empty() { 0.0 } else { cfg.title.font.size_or(12.0) + VEGA_LEGEND_TITLE_PADDING };
+    let title_size = cfg.title.font.size_or(12.0);
+    let title_band = if title_text.is_empty() {
+        0.0
+    } else if label_ws.is_empty() {
+        // No entries: the box is the title's own ink, clipped at the origin.
+        vega_fit::text_ink(0.0, 0.0, title_w, title_size, "left", "top").y2
+    } else {
+        title_size + VEGA_LEGEND_TITLE_PADDING
+    };
     let box_w = grid.width.max(title_w).ceil();
     Ok(VegaLegend { grid, order, title: title_text.to_string(), title_band, box_w })
 }
@@ -782,6 +1062,11 @@ pub enum LegendSymbol<'a> {
     /// `legend/encode.ts` forwards the mark `stroke` value, not its width).
     StrokedCircle(&'a str),
     FilledCircle,
+    /// Vega's default 10px stroke symbol (`M-5,0L5,0`), the legend of a line
+    /// mark outside a mixed stroke legend.
+    ShortStroke,
+    /// A default circle drawn at the given opacity: an `area` layer's entry.
+    FadedCircle(f64),
     /// A fill-only 10px square: a filled `rect` mark's legend symbol carries
     /// no stroke color (Vega-Lite `symbolType` is `square` for `rect`,
     /// `src/compile/legend/properties.ts:95-116`; a fill legend keeps only the
@@ -792,12 +1077,58 @@ pub enum LegendSymbol<'a> {
     /// paths, `scatter_shape::path`). Every Vega symbol at size 100 fits the
     /// r-5 circle's box, so it lays out as [`LegendSymbol::FilledCircle`].
     FilledGlyph(&'a str),
+    /// An unfilled point mark's legend glyph, path `d`: the mark's own interior
+    /// fill under a stroke in the entry's color, at the mark's opacity, the
+    /// glyph's half extents given for the legend grid.
+    Ring(&'a str, &'a str, f64, (f64, f64)),
     Stroke(f64),
+    /// A strokeDash legend's symbol: a size-2000 horizontal segment
+    /// (`M-22.361,0L22.361,0`) stroked in the entry's own color at 1.5 with
+    /// the series' dash pattern (`""` for a solid one), round-capped.
+    Dash(&'a str),
+    /// A strokeDash legend drawn apart from the color legend: a size-100 circle with
+    /// no fill, stroked at 1.5 in the entry's own color (the halo's canvas) with the
+    /// series' dash pattern (`""` for a solid one).
+    DashCircle(&'a str),
     /// A filled glyph whose bare half extents (x, y) are given — a shape
     /// channel's triangles are shorter than the circle along one axis. Laid
     /// out by [`legend_grid`] only; nothing draws through
     /// [`emit_vega_legend`].
     Glyph(f64, f64),
+}
+
+/// A legend dash sample's ` stroke-dasharray` attribute; empty for a solid one.
+fn dasharray_attr(pattern: &str) -> String {
+    if pattern.is_empty() {
+        String::new()
+    } else {
+        format!(" stroke-dasharray=\"{}\"", xml_escape_attr(pattern))
+    }
+}
+
+/// The legend Vega draws for a scale no theme styles: `themed`'s fonts at Vega's own
+/// defaults (`labelFontSize` 10, `titleFontSize` 11 bold, `labelOffset` 4, black text) in
+/// a vertical column at the right.
+pub fn vega_default_legend(themed: &LegendConfig) -> LegendConfig {
+    let font = |source: &Font, size: f64, weight: &str| Font {
+        family: source.family.clone(),
+        color: Some("#000".into()),
+        size: Some(size),
+        weight: Some(serde_json::Value::from(weight)),
+        ..Font::default()
+    };
+    LegendConfig {
+        visible: true,
+        position: LegendPosition { edge: "right".into(), align: LegendAlign::Start, overlay: false },
+        direction: "vertical".into(),
+        columns: None,
+        label: LegendLabel { font: font(&themed.label.font, 10.0, "400"), padding: Some(4.0), max_width: None },
+        title: LegendTitle { font: font(&themed.title.font, 11.0, "bold"), visible: None },
+        values: None,
+        symbol_limit: None,
+        symbol_shape: None,
+        symbol_fill: None,
+    }
 }
 
 /// Draw a legend the way Vega lays out a symbol legend (`VegaLegend`): the
@@ -872,6 +1203,25 @@ pub fn emit_vega_legend(
                     y + c, fill = xml_escape_attr(fill)
                 );
             }
+            LegendSymbol::ShortStroke => {
+                let _ = write!(
+                    out,
+                    "<path transform=\"translate({:.2},{:.2})\" d=\"M-5,0L5,0\" \
+                     fill=\"{fill}\" stroke=\"{fill}\" stroke-width=\"1.5\"/>",
+                    x + c,
+                    y + c, fill = xml_escape_attr(fill)
+                );
+            }
+            LegendSymbol::FadedCircle(opacity) => {
+                let _ = write!(
+                    out,
+                    "<path transform=\"translate({:.2},{:.2})\" \
+                     d=\"M5,0A5,5,0,1,1,-5,0A5,5,0,1,1,5,0\" \
+                     fill=\"{fill}\" stroke=\"{fill}\" stroke-width=\"1.5\" opacity=\"{opacity}\"/>",
+                    x + c,
+                    y + c, fill = xml_escape_attr(fill)
+                );
+            }
             LegendSymbol::StrokedCircle(stroke) => {
                 let _ = write!(
                     out,
@@ -901,6 +1251,15 @@ pub fn emit_vega_legend(
                     fill = xml_escape_attr(fill)
                 );
             }
+            LegendSymbol::Ring(d, interior, opacity, _) => {
+                let _ = write!(
+                    out,
+                    "<path transform=\"translate({:.2},{:.2})\" d=\"{d}\" fill=\"{}\" stroke=\"{}\" \
+                     stroke-width=\"1.5\" opacity=\"{opacity}\"/>",
+                    x + c,
+                    y + c, xml_escape_attr(interior), xml_escape_attr(fill)
+                );
+            }
             LegendSymbol::FilledSquare => {
                 let _ = write!(
                     out,
@@ -908,6 +1267,27 @@ pub fn emit_vega_legend(
                      fill=\"{fill}\" stroke-width=\"1.5\"/>",
                     x + c - 5.0,
                     y + c - 5.0, fill = xml_escape_attr(fill)
+                );
+            }
+            LegendSymbol::Dash(pattern) => {
+                let dash = dasharray_attr(pattern);
+                let half = VEGA_DASH_SYMBOL_SIZE.sqrt() / 2.0;
+                let _ = write!(
+                    out,
+                    "<path transform=\"translate({:.2},{:.2})\" d=\"M-{half:.3},0L{half:.3},0\" \
+                     fill=\"{fill}\" stroke=\"{fill}\" stroke-width=\"1.5\" stroke-linecap=\"round\"{dash}/>",
+                    x + c,
+                    y + c, fill = xml_escape_attr(fill)
+                );
+            }
+            LegendSymbol::DashCircle(pattern) => {
+                let dash = dasharray_attr(pattern);
+                let _ = write!(
+                    out,
+                    "<path transform=\"translate({:.2},{:.2})\" d=\"M5,0A5,5,0,1,1,-5,0A5,5,0,1,1,5,0\" \
+                     fill=\"none\" stroke=\"{fill}\" stroke-width=\"1.5\" stroke-linecap=\"round\"{dash}/>",
+                    x + c,
+                    y + c, fill = xml_escape_attr(fill)
                 );
             }
             LegendSymbol::Glyph(..) => unreachable!("a glyph symbol is laid out, never emitted here"),
@@ -1157,6 +1537,16 @@ pub fn emit_vertical_legend(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn legends_stack_a_margin_apart_along_their_axis() {
+        let blocks = [(30.0, 10.0), (20.0, 40.0), (50.0, 5.0)];
+        let (down, size) = stack_legends(&blocks, false);
+        assert_eq!((down, size), (vec![0.0, 18.0, 66.0], (50.0, 71.0)));
+        let (along, size) = stack_legends(&blocks, true);
+        assert_eq!((along, size), (vec![0.0, 38.0, 66.0], (116.0, 40.0)));
+        assert_eq!(stack_legends(&[], false), (vec![], (0.0, 0.0)));
+    }
+
+    #[test]
     fn a_reserved_strip_reads_as_its_edge_and_align() {
         let position = serde_json::json!({"edge": "right", "align": "start", "overlay": false});
         let read = legend_position(position).unwrap();
@@ -1214,13 +1604,13 @@ mod tests {
         assert_eq!(legend_position(end).unwrap().align, LegendAlign::End);
         let resolved = serde_json::json!({"legend": {"position": {"align": "end"}}, "multiples": null});
         assert!(refuse_unmodeled_slide("pie", &resolved).is_ok());
-        for family in ["line", "area", "bar", "heatmap", "scatter"] {
+        for family in ["line", "area", "bar", "histogram", "heatmap", "scatter"] {
             let err = refuse_unmodeled_slide(family, &resolved).unwrap_err();
             assert!(err.starts_with("ERR-LEGEND-POSITION-UNSUPPORTED") && err.contains("\"end\""), "{err}");
         }
         // A family that draws no legend never reads the baked placement: a
         // board-wide `end` default reaches its payload, and production renders it.
-        for family in ["table", "kpi", "callout", "spark_bar", "histogram", "sankey", "geoshape"] {
+        for family in ["table", "kpi", "callout", "spark_bar", "sankey", "geoshape"] {
             assert!(refuse_unmodeled_slide(family, &resolved).is_ok(), "{family}");
         }
     }
@@ -1261,14 +1651,14 @@ mod tests {
         let origin = legend_origin(&at("top", LegendAlign::End), (-40.0, 500.0), (-5.0, 400.0), plot, size);
         assert_eq!(origin, (209.0, 18.0));
         assert!(legend_fit_bounds(&at("top", LegendAlign::End), origin, size).is_none());
-        assert_eq!(slide_block(&at("top", LegendAlign::End), size, plot).unwrap(), (0.0, 0.0));
+        assert_eq!(slide_block("c", &at("top", LegendAlign::End), size, plot).unwrap(), (0.0, 0.0));
         // `o_top`: a 176-wide box on a 454 plot centers at 139; `o_right`: a
         // 60×62 box on the 300.67 plot centers at (300.67 − 62) / 2.
-        let (dx, _) = slide_block(&at("top", LegendAlign::Center), (176.0, 30.0), (454.0, plot.1)).unwrap();
+        let (dx, _) = slide_block("c", &at("top", LegendAlign::Center), (176.0, 30.0), (454.0, plot.1)).unwrap();
         assert_eq!(18.0 + dx, 139.0);
         let side = at("right", LegendAlign::Center);
         let (x, y) = legend_overlay_origin(&side, (454.0, plot.1), (60.0, 62.0));
-        let (_, dy) = slide_block(&side, (60.0, 62.0), (454.0, plot.1)).unwrap();
+        let (_, dy) = slide_block("c", &side, (60.0, 62.0), (454.0, plot.1)).unwrap();
         assert_eq!(x, 376.0);
         assert!((y + dy - (plot.1 - 62.0) / 2.0).abs() < 1e-9);
     }
@@ -1281,7 +1671,7 @@ mod tests {
     }
 
     #[test]
-    fn small_multiples_and_scatter_refuse_a_centered_legend() {
+    fn a_centered_legend_is_not_refused_by_the_slide_gate() {
         let at = |align: &str, multiples: serde_json::Value| {
             serde_json::json!({"legend": {"position": {"align": align}}, "multiples": multiples})
         };
@@ -1289,8 +1679,7 @@ mod tests {
             assert!(refuse_unmodeled_slide(family, &at("center", serde_json::Value::Null)).is_ok());
         }
         let faceted = at("center", serde_json::json!({"rows": "r"}));
-        assert!(refuse_unmodeled_slide("line", &faceted).unwrap_err().contains("ERR-LEGEND-ALIGN-UNSUPPORTED"));
-        assert!(refuse_unmodeled_slide("scatter", &at("center", serde_json::Value::Null)).is_err());
+        assert!(refuse_unmodeled_slide("line", &faceted).is_ok(), "the ERR is raised ahead, from the payload's facts");
         assert!(refuse_unmodeled_slide("scatter", &at("start", serde_json::Value::Null)).is_ok());
         assert!(refuse_unmodeled_slide("line", &at("start", serde_json::json!({"rows": "r"}))).is_ok());
     }
@@ -1304,14 +1693,14 @@ mod tests {
         let plot = (968.0, 354.0);
         let block = (176.0, 62.0);
         let center = LegendAlign::Center;
-        assert_eq!(slide_block(&at("right", center), block, plot), Ok((0.0, 146.0)));
-        assert_eq!(slide_block(&at("top", center), block, plot), Ok((396.0, 0.0)));
-        assert_eq!(slide_block(&at("bottom", center), block, plot), Ok((396.0, 0.0)));
-        assert_eq!(slide_block(&at("right", LegendAlign::Start), block, plot), Ok((0.0, 0.0)));
+        assert_eq!(slide_block("c", &at("right", center), block, plot), Ok((0.0, 146.0)));
+        assert_eq!(slide_block("c", &at("top", center), block, plot), Ok((396.0, 0.0)));
+        assert_eq!(slide_block("c", &at("bottom", center), block, plot), Ok((396.0, 0.0)));
+        assert_eq!(slide_block("c", &at("right", LegendAlign::Start), block, plot), Ok((0.0, 0.0)));
         // `legend_align.py:100-103`: end is `span - block`.
-        assert_eq!(slide_block(&at("right", LegendAlign::End), block, plot), Ok((0.0, 292.0)));
-        assert_eq!(slide_block(&at("bottom", LegendAlign::End), block, plot), Ok((792.0, 0.0)));
-        let err = slide_block(&at("right", center), (60.0, 354.0), plot).unwrap_err();
+        assert_eq!(slide_block("c", &at("right", LegendAlign::End), block, plot), Ok((0.0, 292.0)));
+        assert_eq!(slide_block("c", &at("bottom", LegendAlign::End), block, plot), Ok((792.0, 0.0)));
+        let err = slide_block("c", &at("right", center), (60.0, 354.0), plot).unwrap_err();
         assert!(err.contains("ERR-LEGEND-ALIGN-UNSUPPORTED") && err.contains("354px"), "{err}");
     }
 
@@ -1321,8 +1710,8 @@ mod tests {
     #[test]
     fn legend_slide_refusal_prints_extents_with_format_g() {
         let position = LegendPosition { edge: "top".into(), align: LegendAlign::Center, overlay: false };
-        let err = slide_block(&position, (120.123456, 20.0), (100.0, 50.0)).unwrap_err();
-        assert_eq!(err, "ERR-LEGEND-ALIGN-UNSUPPORTED: its legend (120.123px) is larger than its plot (100px)");
+        let err = slide_block("c", &position, (120.123456, 20.0), (100.0, 50.0)).unwrap_err();
+        assert_eq!(err.params["reason"], "its legend (120.123px) is larger than its plot (100px)");
     }
 
     /// `legend_align.py:89-93`: a plot with no span along the legend's edge
@@ -1330,8 +1719,8 @@ mod tests {
     #[test]
     fn legend_slide_refusal_names_an_empty_plot_span() {
         let position = LegendPosition { edge: "top".into(), align: LegendAlign::Center, overlay: false };
-        let err = slide_block(&position, (20.0, 20.0), (0.0, 50.0)).unwrap_err();
-        assert_eq!(err, "ERR-LEGEND-ALIGN-UNSUPPORTED: its plot has no size to align in");
+        let err = slide_block("c", &position, (20.0, 20.0), (0.0, 50.0)).unwrap_err();
+        assert_eq!(err.params["reason"], "its plot has no size to align in");
     }
 
     use super::*;
@@ -1378,6 +1767,19 @@ mod tests {
         assert_eq!(g.size, 11.0, "mixed legend's cell collapses to fontSize: {}", g.size);
         assert_eq!(g.box_h, 12.0, "row height is the square entry's own 12, not 13: {}", g.box_h);
         assert_eq!(g.row_y, vec![0.0]);
+    }
+
+    #[test]
+    fn a_square_and_circle_legend_keeps_the_uniform_cell() {
+        let symbols = [Some(LegendSymbol::Square("#40639c")), Some(LegendSymbol::Circle)];
+        let g = legend_grid(&[70.0, 90.0], &symbols, 11.0, 0, 8.0);
+        assert_eq!(g.size, 12.0, "{}", g.size);
+    }
+
+    #[test]
+    fn the_short_stroke_glyph_stays_one_stroke_tall_in_a_vertical_legend() {
+        let box_h = |symbol| legend_grid(&[70.0, 90.0], &[Some(symbol), Some(symbol)], 11.0, 1, 8.0).box_h;
+        assert!(box_h(LegendSymbol::ShortStroke) < box_h(LegendSymbol::Square("#40639c")));
     }
 
     /// A `stroke` glyph's horizontal half-extent is `10 + strokeWidth`
@@ -1428,13 +1830,39 @@ mod tests {
             324.3846153846154,
         ];
         let label_ws = [4.0; 8]; // widths are irrelevant to row_y/box_h/symbol_c
-        let g = size_legend_grid(&sizes, &label_ws, 11.0, 8.0);
+        let g = size_legend_grid(&sizes, &label_ws, 11.0, 8.0, (1.0, 1.0));
         assert_eq!(g.row_y, vec![0.0, 14.0, 28.0, 44.0, 62.0, 82.0, 103.0, 126.0]);
         assert_eq!(g.box_h, 147.0);
         assert_eq!((g.symbol_c, g.label_x), (10.0, 28.0));
         assert_eq!(g.row_c[0], 5.5, "smallest entry's own cell half: {:?}", g.row_c);
         assert_eq!(g.row_c[7], 10.0, "largest entry's own cell half: {:?}", g.row_c);
-        assert!(size_legend_grid(&[], &[], 11.0, 8.0).row_y.is_empty());
+        assert!(size_legend_grid(&[], &[], 11.0, 8.0, (1.0, 1.0)).row_y.is_empty());
+    }
+
+    /// Hand-derived from `gridLayout`'s column law for two entries at an 11px
+    /// font, 8px label offset, 4px labels: sizes 4 and 324.38 give cells 11
+    /// and 20 (centers 5.5 and 10); the first entry's right bound is
+    /// `max(8, 19 + 4) = 23`, the second's left bound is -0.505, so the second
+    /// column starts at `23 + 10 + 1 = 34`; the tallest entry's bounds
+    /// `[-0.505, 20.505]` span 21.01, so the row is 22 tall, each entry
+    /// centered in it.
+    #[test]
+    fn size_legend_row_lays_entries_out_as_columns() {
+        let (cells, box_h, width) = size_legend_row(&[4.0, 324.3846153846154], &[4.0, 4.0], 11.0, 8.0, (1.0, 1.0));
+        assert_eq!((box_h, width), (22.0, 66.0));
+        assert_eq!((cells[0].symbol_x, cells[0].label_x, cells[0].c), (5.5, 19.0, 5.5));
+        assert_eq!((cells[1].symbol_x, cells[1].label_x, cells[1].c), (44.0, 62.0, 10.0));
+        assert!((cells[0].y - 5.75).abs() < 1e-9 && (cells[1].y - 0.7475).abs() < 1e-3, "{:?}", (cells[0].y, cells[1].y));
+    }
+
+    /// `clamp(unit width, 100, 200)`: the floor holds below 100, the unit width
+    /// passes through between the bounds, the ceiling holds above 200.
+    #[test]
+    fn a_horizontal_gradient_is_the_unit_width_clamped_to_100_and_200() {
+        let probed = [(50.0, 100.0), (64.0, 100.0), (100.0, 100.0), (150.0, 150.0), (199.0, 199.0), (200.0, 200.0), (240.0, 200.0), (300.0, 200.0)];
+        for (unit, length) in probed {
+            assert_eq!(horizontal_gradient_length("top", false, unit), length, "unit width {unit}");
+        }
     }
 
     // Real font family present in InterVariable.ttf; "sans-serif" is skipped by face_for().

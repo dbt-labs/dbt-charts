@@ -1,3 +1,0 @@
-kind: Fixes
-body: SQL Server boards with date, time or checkbox variables no longer send literals T-SQL rejects.
-time: 2026-10-13T14:58:30.408009-04:00

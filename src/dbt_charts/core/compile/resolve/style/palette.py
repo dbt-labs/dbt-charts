@@ -10,7 +10,6 @@ Entry points
     color_from_theme(token, *, palettes, roles=None) -> str
     resolve_alias_chain(key, aliases, *, colors) -> str
     list_palettes(family=None) -> list[str]
-    select_default_palette(data_shape) -> str
 
 YAML palette data is loaded from ``dbt_charts/core/defaults/palettes/<directory>/``.
 Sequential and diverging palettes use a hand-authored ``<name>.yml`` spine
@@ -1280,9 +1279,6 @@ def _variant_cached(color: str, kind: Variant) -> str:
         return oklch_to_hex(PALE_L, C * PALE_CHROMA, H)
     if kind == "deep":
         return oklch_to_hex(min(L, L + (DEEP_POLE - L) * DEEP_K), C, H)
-    raise ValueError(
-        f"unknown variant {kind!r}; expected one of {', '.join(VARIANT_WORDS)}"
-    )
 
 
 def variant(color: str, kind: Variant) -> str:
@@ -1349,6 +1345,12 @@ def _try_parse_color(value: str) -> tuple[float, float, float, float] | None:
         return parse_css_color(value)
     except InvalidColorError:
         return None
+
+
+def is_translucent(value: str) -> bool:
+    """True for a parseable color with alpha below 1; an unparseable value is not."""
+    parsed = _try_parse_color(value)
+    return parsed is not None and parsed[3] < 1.0 - 1e-9
 
 
 def ink_canvas(*layers: str) -> str:
@@ -1421,31 +1423,6 @@ def list_palettes(
     if family is None:
         return sorted(idx)
     return sorted(n for n, e in idx.items() if e["family"] == family)
-
-
-# ============================================================================
-# Smart default selection
-# ============================================================================
-
-
-def select_default_palette(
-    data_shape: Literal[
-        "continuous_numeric", "signed_numeric", "discrete_enum", "status_semantic"
-    ],
-) -> str:
-    """Pick a palette name based on inferred data shape. See Session 1 §A4."""
-    if data_shape == "continuous_numeric":
-        return "dbt-seq-blue"
-    if data_shape == "signed_numeric":
-        return "dbt-div-blue-red"
-    if data_shape == "discrete_enum":
-        return "vivid-10"
-    if data_shape == "status_semantic":
-        # Upstream caller looks up the specific role (negative/warning/etc.)
-        # after this returns the tone sentinel. For now, return "negative" as
-        # the canonical default (caller should override based on field value).
-        return "negative"
-    raise ValueError(f"unknown data_shape: {data_shape}")
 
 
 # ── Continuous dark-companion lookup (sequential/diverging table swap) ──────

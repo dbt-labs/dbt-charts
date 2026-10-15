@@ -1,7 +1,7 @@
 """Tests for renderer.py's _collect_render_warnings width handling.
 
 Regression coverage for the CONFIRMED case in
-ai_notes/chart-chrome-vs-plot-dimensions-2026-07-20.md (#5): the warning-
+ai_notes/charts/chart-chrome-vs-plot-dimensions-2026-07-20.md (#5): the warning-
 detection pass rendered a throwaway spec with ``width=None``, which resolves
 to the theme-family default width — never the chart's real, laid-out slot
 width. A chart squeezed into a narrow column can render with visibly

@@ -7,6 +7,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.markers import (
+    Absent,
     InheritSlot,
 )
 from dbt_charts.core.compile.models.primitives import (
@@ -18,7 +19,7 @@ from dbt_charts.core.compile.models.primitives import (
 class ViewStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    stroke: str | None = Field(
+    stroke: Annotated[str | None, Absent("no border")] = Field(
         description="Plot area border stroke color; None means no border."
     )
     continuous_width: float = Field(

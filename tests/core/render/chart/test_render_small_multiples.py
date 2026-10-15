@@ -112,18 +112,6 @@ def _row_data() -> list[dict[str, Any]]:
     ]
 
 
-def _grouped_horizontal_bar_data() -> list[dict[str, Any]]:
-    return [
-        {"quarter": q, "region": region, "segment": segment, "revenue": 100 + i * 5}
-        for i, (region, segment, q) in enumerate(
-            (region, segment, q)
-            for region in ("West", "East")
-            for segment in ("A", "B")
-            for q in ("Q1", "Q2")
-        )
-    ]
-
-
 def _series_faceted_data() -> list[dict[str, Any]]:
     """One row per (series, month) — the 17A/17G corpus shape: a facet field
     that is ALSO bound to an inner channel (bar's ``color``, heatmap's ``y``)."""
@@ -453,11 +441,9 @@ class TestFacetMirrorDefault:
         assert resolved.style.axis_y.mirror is None
 
     def test_columns_with_layers_does_not_auto_mirror(self):
-        """The overlay assembly moves every y encoding onto the layers, so a
-        layered chart has no shared y encoding for the ghost to bind — an
-        authored mirror there is refused with ERR-MIRROR-LAYERS at render,
-        and the engine's own auto-default must never author its way into
-        that refusal. Regression: the default fired, render skipped it
+        """A layer may pin its own y axis, which an authored mirror refuses
+        with ERR-MIRROR-LAYERS at render, and the engine's own auto-default
+        must never author its way into that refusal. Regression: the default fired, render skipped it
         silently, and facet_panel_width still reserved the mirrored-edge
         gutter for an axis that never painted."""
         from dbt_charts.core.compile.resolve import resolve
@@ -491,35 +477,46 @@ class TestFacetMirrorDefault:
         )
         assert len(_y_axis_orients(spec["spec"])) == 1
 
-    def test_horizontal_grouped_bar_columns_keeps_mirrored_axis_despite_authored_endpoint_labels(
-        self,
-    ):
-        """Regression: a horizontal, grouped (stack: none) bar's endpoint-label
-        rail never renders regardless of `endpoint_labels.visible` — grouped bars
-        are excluded by `EndpointLabelFeature.applies_to`'s own
-        `chart.stack not in (None, "none")` check. Predicting "the rail will
-        render" from the authored flag alone (without that orientation- and
-        stack-dependent condition, which isn't resolved until after this bake)
-        used to wrongly suppress the auto-mirror default here, silently dropping
-        the chart's far-edge y-axis even though nothing ever collided with it.
-        The auto-mirror default must not depend on that prediction at all."""
+    def test_horizontal_bar_columns_does_not_mirror_the_category_axis(self):
+        """A horizontal bar's VL y channel is its category axis; the shared-scale
+        auto-mirror would paint the category labels a second time at the far
+        right of the board. The measure axis rides x and needs no far edge."""
+        data = [
+            {"product": p, "region": r, "revenue": 100 + i}
+            for i, (r, p) in enumerate(
+                (r, p) for r in ("West", "East") for p in ("A", "B", "C")
+            )
+        ]
+        spec = _v2_vl(_bar({"columns": "region"}, "horizontal"), data)
+        assert len(_y_axis_orients(spec["spec"])) == 1
+
+    def test_vertical_bar_columns_mirrors_the_measure_axis(self):
+        """A vertical bar's measure rides y, so the shared scale is drawn on the
+        far edge too. Authored endpoint labels with no series color render no
+        rail, so they must not suppress that auto-mirror: whether it collides
+        with a rail is decided where the rail is laid out, never predicted from
+        the authored flag."""
+        data = [
+            {"product": p, "region": r, "revenue": 100 + i}
+            for i, (r, p) in enumerate(
+                (r, p) for r in ("West", "East") for p in ("A", "B", "C")
+            )
+        ]
         chart = BarChart.model_validate(
             {
                 "id": "t",
                 "type": "bar",
                 "query_name": "q",
-                "x": "quarter",
+                "x": "product",
                 "y": "revenue",
-                "color": "segment",
-                "stack": "none",
                 "multiples": {"columns": "region"},
                 "style": {
-                    "orientation": "horizontal",
+                    "orientation": "vertical",
                     "endpoint_labels": {"visible": True},
                 },
             }
         )
-        spec = _v2_vl(chart, _grouped_horizontal_bar_data())
+        spec = _v2_vl(chart, data)
         assert {"left", "right"} <= _y_axis_orients(spec["spec"])
 
 
@@ -539,6 +536,28 @@ class TestFacetValidation:
             ChartDataError, match="each panel has its own scale"
         ) as exc_info:
             _v2_vl(chart, _grid_data())
+        assert exc_info.value.code is ERR_MULTIPLES_INDEPENDENT_SCALE_MIRROR
+
+    def test_bar_scale_independent_plus_mirror_raises(self):
+        """Bar resolves the mirror default after its orientation is known, so the
+        independent-scale contradiction must still fire for a vertical bar."""
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_MULTIPLES_INDEPENDENT_SCALE_MIRROR,
+        )
+
+        chart = _bar(
+            {"columns": "region", "scale": "independent"},
+            "vertical",
+            style={"orientation": "vertical", "axis_y": {"mirror": True}},
+        )
+        data = [
+            {"product": p, "region": r, "revenue": 100 + i}
+            for i, (r, p) in enumerate(
+                (r, p) for r in ("West", "East") for p in ("A", "B", "C")
+            )
+        ]
+        with pytest.raises(ChartDataError) as exc_info:
+            _v2_vl(chart, data)
         assert exc_info.value.code is ERR_MULTIPLES_INDEPENDENT_SCALE_MIRROR
 
     def test_scale_independent_plus_mirror_format_override_raises(self):

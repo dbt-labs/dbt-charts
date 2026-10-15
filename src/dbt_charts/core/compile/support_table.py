@@ -156,7 +156,7 @@ def bake_neutral_ink(style: SupportTableStyle) -> tuple[SupportTableStyle, bool]
     if series_ink:
         font = font.model_copy(update={"color": neutral})
     label_font = style.label.font
-    if label_font.color is None:
+    if label_font.color == AUTO:
         label_font = label_font.model_copy(update={"color": font.color})
     return (
         style.model_copy(

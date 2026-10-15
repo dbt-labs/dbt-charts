@@ -65,8 +65,7 @@ def _strip_filters(
             entries=[ChartSupportTableAggregate(aggregate="sum", source="value")]
         ),
     )
-    patches = (board_patch,) if board_patch is not None else ()
-    rs, ctx = resolve_style_and_context(get_theme_style(), *patches)
+    rs, ctx = resolve_style_and_context(get_theme_style(), board_patch)
     resolved = resolve(chart, data, chart_style_context=ctx, width=420.0)
     spec = render_resolved_chart(resolved, data, rs, width=420.0).payload
 

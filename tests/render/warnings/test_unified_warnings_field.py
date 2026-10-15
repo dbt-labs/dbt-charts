@@ -108,7 +108,7 @@ class TestBoardRenderResultUnifiedWarnings:
         renderer_mod = importlib.import_module("dbt_charts.core.render.renderer")
 
         def _run_all(ctx: WarningContext) -> list[Diagnostic]:
-            return fake.detect(ctx)  # type: ignore[no-any-return]
+            return fake.detect(ctx)
 
         monkeypatch.setattr(renderer_mod, "run_all", _run_all)
 

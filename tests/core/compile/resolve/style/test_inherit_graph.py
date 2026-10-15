@@ -140,72 +140,48 @@ def test_inherit_slot_entry_count():
     assert len(slot_entries) == 4
 
 
-def test_inherit_slot_exclude_omits_leaf_from_expansion():
-    """InheritSlot(exclude={"color"}) omits only that leaf from the per-leaf
-    expansion; sibling leaves under the same slot still link normally."""
-
-    class ExcludeFontFixture(BaseModel):
+def _links_fixture(links: dict[str, str]) -> type[BaseModel]:
+    class FontFixture(BaseModel):
         model_config = ConfigDict(extra="forbid", frozen=True)
         color: str
         size: float
 
-    class ExcludeLabelFixture(BaseModel):
+    class LabelFixture(BaseModel):
         model_config = ConfigDict(extra="forbid", frozen=True)
         font: Annotated[
-            ExcludeFontFixture,
-            InheritSlot(
-                from_path="ExcludeRootFixture.charts.font", exclude=frozenset({"color"})
-            ),
+            FontFixture, InheritSlot(from_path="LinksRoot.charts.font", links=links)
         ]
 
-    class ExcludeChartsFixture(BaseModel):
+    class ChartsFixture(BaseModel):
         model_config = ConfigDict(extra="forbid", frozen=True)
-        font: ExcludeFontFixture
-        label: ExcludeLabelFixture
+        font: FontFixture
+        ink: str
+        label: LabelFixture
 
-    class ExcludeRootFixture(BaseModel):
+    class LinksRoot(BaseModel):
         model_config = ConfigDict(extra="forbid", frozen=True)
-        charts: ExcludeChartsFixture
+        charts: ChartsFixture
 
-    graph = build_inherit_graph(ExcludeRootFixture)
-
-    assert "ExcludeRootFixture.charts.label.font.color" not in graph
-    assert (
-        graph["ExcludeRootFixture.charts.label.font.size"]
-        == "ExcludeRootFixture.charts.font.size"
-    )
+    return LinksRoot
 
 
-def test_inherit_slot_exclude_unknown_field_raises():
-    """A typo'd exclude name (not a field on the annotated slot's type) must
-    raise, not silently build a graph identical to no exclude at all — that
-    would restore the backfill the exclude was meant to suppress."""
+def test_inherit_slot_links_redirect_one_leaf():
+    """A linked leaf follows its own parent; sibling leaves keep the slot's."""
+    graph = build_inherit_graph(_links_fixture({"color": "LinksRoot.charts.ink"}))
 
-    class BadFontFixture(BaseModel):
-        model_config = ConfigDict(extra="forbid", frozen=True)
-        color: str
+    assert graph["LinksRoot.charts.label.font.color"] == "LinksRoot.charts.ink"
+    assert graph["LinksRoot.charts.label.font.size"] == "LinksRoot.charts.font.size"
 
-    class BadLabelFixture(BaseModel):
-        model_config = ConfigDict(extra="forbid", frozen=True)
-        font: Annotated[
-            BadFontFixture,
-            InheritSlot(
-                from_path="BadRootFixture.charts.font",
-                exclude=frozenset({"not_a_field"}),
-            ),
-        ]
 
-    class BadChartsFixture(BaseModel):
-        model_config = ConfigDict(extra="forbid", frozen=True)
-        font: BadFontFixture
-        label: BadLabelFixture
+def test_inherit_slot_links_unknown_field_raises():
+    """A typo'd leaf name must raise, not silently link nothing."""
+    with pytest.raises(ValueError, match="not a field"):
+        build_inherit_graph(_links_fixture({"nope": "LinksRoot.charts.ink"}))
 
-    class BadRootFixture(BaseModel):
-        model_config = ConfigDict(extra="forbid", frozen=True)
-        charts: BadChartsFixture
 
-    with pytest.raises(ValueError, match="not_a_field"):
-        build_inherit_graph(BadRootFixture)
+def test_inherit_slot_links_unknown_path_raises():
+    with pytest.raises(ValueError, match="not found in model paths"):
+        build_inherit_graph(_links_fixture({"color": "LinksRoot.charts.missing"}))
 
 
 # ── Path validation ───────────────────────────────────────────────────────────

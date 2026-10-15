@@ -5,11 +5,7 @@ Split from test_vega_lite.py — tooltip-specific tests.
 
 import re
 
-import pytest
-
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.models.chart.normalized import BarChart
-from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
@@ -185,40 +181,6 @@ class TestSpecialChartTypeTooltips:
         assert color_enc["title"] == "Count"
         # Assert a format string is present; don't pin the theme-default literal.
         assert color_enc.get("format") and isinstance(color_enc["format"], str)
-
-    def test_boxplot_rejected_by_generate_vega_lite_spec(self):
-        """boxplot is not an authorable chart type (not in the Chart union). A
-        chart forced into that state fails fast in resolve() rather than silently
-        rendering."""
-        chart = BarChart(
-            id="t",
-            type="bar",
-            x="category",
-            y="value",
-            query=SqlQuery(sql="SELECT 1", source="test"),
-            query_name="q",
-        )
-        object.__setattr__(chart, "type", "boxplot")
-        data = [{"category": "A", "value": 10}, {"category": "A", "value": 20}]
-        with pytest.raises(ValueError, match="Unknown normalized chart type"):
-            generate_vega_lite_spec(chart, data)
-
-    def test_errorbar_rejected_by_generate_vega_lite_spec(self):
-        """errorbar is not an authorable chart type (not in the Chart union). A
-        chart forced into that state fails fast in resolve() rather than silently
-        rendering."""
-        chart = BarChart(
-            id="t",
-            type="bar",
-            x="category",
-            y="value",
-            query=SqlQuery(sql="SELECT 1", source="test"),
-            query_name="q",
-        )
-        object.__setattr__(chart, "type", "errorbar")
-        data = [{"category": "A", "value": 10}]
-        with pytest.raises(ValueError, match="Unknown normalized chart type"):
-            generate_vega_lite_spec(chart, data)
 
 
 class TestEmptyDataTooltips:

@@ -19,6 +19,7 @@ from dbt_charts.core.render.chart.time_unit_detect import (
     _has_subday_component,
     _midnight_count,
     default_subday_label_expr_for,
+    default_subday_tick_interval,
     predicted_tick_count,
     predicted_tick_count_ceiling,
 )
@@ -781,3 +782,39 @@ class TestSubdayOffsetTimezoneAgreement:
             authored_domain=("2026-08-11", "2026-08-12"),
         )
         assert expr is None
+
+
+def _minutes_from_0900(count: int, every: int) -> list[str]:
+    start = dt.datetime(2026, 3, 2, 9, 0)
+    return [(start + dt.timedelta(minutes=every * i)).isoformat() for i in range(count)]
+
+
+class TestDefaultSubdayTickInterval:
+    def test_picks_the_finest_rung_that_fits(self) -> None:
+        # 2 hours at 1000px fits 14 ticks: 5-minute (24) is too many, 10-minute fits.
+        values = _minutes_from_0900(31, 4)
+        assert default_subday_tick_interval(values, None, 1000.0) == ("minutes", 10, 12)
+
+    def test_whole_hour_rungs_for_a_longer_span(self) -> None:
+        values = _minutes_from_0900(53, 15)
+        assert default_subday_tick_interval(values, None, 1000.0) == ("hours", 1, 13)
+
+    def test_authored_domain_decides_the_span(self) -> None:
+        values = _minutes_from_0900(31, 4)
+        domain = ("2026-03-02T00:00:00", "2026-03-03T00:00:00")
+        assert default_subday_tick_interval(values, domain, 1000.0) == ("hours", 2, 12)
+
+    def test_no_rung_fits_a_multi_day_span(self) -> None:
+        values = _minutes_from_0900(14 * 24 * 4, 15)
+        assert default_subday_tick_interval(values, None, 1000.0) is None
+
+    def test_no_width_no_ladder(self) -> None:
+        assert default_subday_tick_interval(_ONE_DAY_HOURLY, None, None) is None
+
+    def test_a_day_only_series_is_not_subday(self) -> None:
+        values = [f"2026-03-{d:02d}" for d in range(1, 10)]
+        assert default_subday_tick_interval(values, None, 1000.0) is None
+
+    def test_utc_anchored_values_keep_vegas_ticks(self) -> None:
+        values = [f"{v}Z" for v in _minutes_from_0900(31, 4)]
+        assert default_subday_tick_interval(values, None, 1000.0) is None

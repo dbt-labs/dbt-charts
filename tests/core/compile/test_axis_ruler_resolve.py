@@ -15,7 +15,7 @@ measured Unicode space characters to match the suffix's advance
 (``font_measure.compose_suffix_reservation``) — the tabular guarantee holds
 the column together because every digit shares one advance, not because the
 padding is figure-spaces. See "ruler" in
-``ai_notes/jul26-02-numeral-system-design.md``.
+``ai_notes/charts/jul26-02-numeral-system-design.md``.
 """
 
 from __future__ import annotations

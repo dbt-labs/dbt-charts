@@ -86,7 +86,10 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
     min_height_for_horizontal_bar_categories,
     widest_panel_distinct_count,
 )
-from dbt_charts.core.render.chart.vl_field_maps import effective_bar_size
+from dbt_charts.core.render.chart.vl_field_maps import (
+    continuous_bar_max_size,
+    effective_bar_size,
+)
 from dbt_charts.core.render.warnings.base import (
     WarningContext,
     encoding_channel_type,
@@ -118,7 +121,7 @@ def _grouped_series_count(
 
     The bar emitter (``render/chart/emitters/bar.py``) is the single source
     of truth for whether a band is subdivided — it already accounts for
-    stack mode, ``overlap: full``, wide-form grouping (``y`` as a measure
+    stack mode, wide-form grouping (``y`` as a measure
     list), and suppressing the offset channel when color is 1:1 with x (that
     would draw one solo sub-band per category, not a genuine group). Reading
     its emitted offset channel (``xOffset`` for a vertical bar, ``yOffset``
@@ -241,10 +244,6 @@ def _detect_continuous_overlap(
 
     bar = chart.style.mark
     reserved = effective_bar_size(bar)
-    assert reserved is not None, (
-        "marks.bar.size and marks.bar.max_size both unset — "
-        "theme cascade must populate at least one"
-    )
     # padding is effective_bar_size / 2 on EACH side, so the total reserved
     # chrome is one effective_bar_size, not two. Subtracting twice understates
     # every step this warning prints and fires it on charts that do not overlap.
@@ -264,11 +263,9 @@ def _detect_continuous_overlap(
             "marks.bar.min_size unset — theme cascade must populate it "
             "when marks.bar.size is unset"
         )
-        assert bar.max_size is not None, (
-            "marks.bar.max_size unset — theme cascade must populate it "
-            "when marks.bar.size is unset"
+        effective_width = min(
+            max(step_px - bar.gap, bar.min_size), continuous_bar_max_size(bar)
         )
-        effective_width = min(max(step_px - bar.gap, bar.min_size), bar.max_size)
     if effective_width <= step_px:
         return None
 

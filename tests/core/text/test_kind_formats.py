@@ -172,7 +172,7 @@ def test_duration_paints_on_the_axis() -> None:
 
 def test_axis_label_expr_comes_from_the_native_arm() -> None:
     d: dict[str, object] = {}
-    compose_axis_format(d, ResolvedFormat(spec="duration"))
+    compose_axis_format(d, ResolvedFormat(spec="duration"), True)
     assert "labelExpr" in d
     assert "format" not in d
     assert "duration" not in json.dumps(d["labelExpr"])

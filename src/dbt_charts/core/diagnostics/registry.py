@@ -88,9 +88,8 @@ class ErrorCode(DiagnosticCode):
     hint_generator; set fix_template explicitly only when the fix text is
     long enough or reusable enough to warrant its own field. (It can't be a
     narrowing override of a base field: WarningCode needs the opposite
-    variance — required, not optional — and mypy's attribute-override check
-    only tolerates narrowing, not widening, in either direction. Declaring
-    each subclass's fix_template independently sidesteps the conflict.)
+    variance — required, not optional. Declaring each subclass's
+    fix_template independently sidesteps the conflict.)
     """
 
     level: Literal["error"] = "error"

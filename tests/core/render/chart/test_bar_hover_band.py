@@ -682,13 +682,10 @@ def test_hover_band_stays_interactive_on_legend_bearing_chart() -> None:
     """A color-encoded (legend-bearing) bar chart's hover band must not get
     pointer-events:none.
 
-    Regression: LegendToggleFeature's dct_legend param stamping (translate.py)
-    skips opacity=0 layers when deciding which layers need the param bound --
-    without `tooltip: True` in the band's own mark_props, Vega compiles that
-    skip straight to `pointer-events: none` on the WHOLE band mark group, so
-    the band receives no mouse events at all on any chart with a legend. The
-    feature would then silently do nothing for exactly the multi-series charts
-    most likely to have small segments needing a wider hit target.
+    A bar layer compiled non-interactive paints `pointer-events: none` on the
+    WHOLE mark group, so the band would receive no mouse events on exactly the
+    multi-series charts most likely to have small segments needing a wider hit
+    target.
     """
     pytest.importorskip("vl_convert")
     import re

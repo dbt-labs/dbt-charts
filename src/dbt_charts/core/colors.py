@@ -50,7 +50,7 @@ _COLOR_TOKEN_PATTERN = re.compile(
 class InvalidColorError(DbtChartsError):
     """A color string is neither a valid hex color nor a recognized CSS keyword."""
 
-    def __init__(self, message: str):
+    def __init__(self, message: str) -> None:
         self.message = message
         self.fields = {}
         super().__init__(message)

@@ -326,17 +326,6 @@ class TestRenderPromptInheritLinks:
             f"Expected link to containing section #chartsstyle, got: {row}"
         )
 
-    def test_inherit_slot_exclude_appended_to_description(self) -> None:
-        # SliceLabelsStyle.font: InheritSlot(from_path="Style.charts.font",
-        # exclude={"color"}). The rendered fallback note must call out the
-        # exclusion so authors don't read it as covering every leaf.
-        result = render_prompt(introspect())
-        start = result.index("## SliceLabelsStyle\n")
-        block = result[start : result.index("\n## ", start + 1)]
-        font_rows = [r for r in block.splitlines() if r.startswith("| `font`")]
-        assert font_rows, "font not found in SliceLabelsStyle section"
-        assert "except `color`" in font_rows[0], font_rows[0]
-
     def test_inherit_leaf_produces_link_to_containing_model(self) -> None:
         # BarChartStylePatch.aspect_ratio: Inherit(from_path="Style.charts.aspect_ratio")
         # parent path "Style.charts" → ChartsStyle → link to #chartsstyle

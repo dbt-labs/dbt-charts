@@ -116,7 +116,7 @@ class TestExpandFileRefs:
         read_bytes_calls: list[Path] = []
         original_read_bytes = Path.read_bytes
 
-        def spy_read_bytes(self):  # type: ignore[no-untyped-def]
+        def spy_read_bytes(self):
             read_bytes_calls.append(self)
             return original_read_bytes(self)
 

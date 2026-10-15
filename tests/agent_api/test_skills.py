@@ -726,7 +726,7 @@ def test_surface_aliases_yaml_has_no_dead_entries() -> None:
 def test_rendered_skill_marks_its_surface() -> None:
     """`Skill.rendered_for` records which surface the body was rendered for."""
     for surface in ("tool", "cli"):
-        skill = get_skill("board-build", surface=surface)  # type: ignore[arg-type]
+        skill = get_skill("board-build", surface=surface)
         assert skill.rendered_for == surface
 
 

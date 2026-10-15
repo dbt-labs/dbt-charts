@@ -435,6 +435,22 @@ def test_top_rail_layout_produces_vconcat() -> None:
     assert "mark" in main
 
 
+def test_top_rail_requalifies_the_chart_panes_band_probe() -> None:
+    """The rail makes the chart pane vega's `concat_1`, whose independent y scale
+    is `concat_1_y`: a band-size expression probing `y` would evaluate to zero."""
+    spec = ChartSpec(
+        mark="bar",
+        mark_props={"height": {"expr": "min(0.8 * bandwidth('y'), 24.0)"}},
+        encoding={"x": {"field": "revenue", "type": "quantitative"}},
+        endpoint_label_layout="top_rail",
+        endpoint_label_data=_make_label_data("top_rail"),
+    )
+    _rail, main = translate_to_vl(spec)["vconcat"]
+    assert main["mark"]["height"] == {
+        "expr": "min(0.8 * bandwidth('concat_1_y'), 24.0)"
+    }
+
+
 def test_top_rail_uses_configured_rail_height() -> None:
     """Rail height must come from EndpointLabelData.height, not a hardcoded literal."""
     label_data = EndpointLabelData(

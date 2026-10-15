@@ -23,7 +23,7 @@ class ChartDataError(DbtChartsError):
 
     chart_id: str | None = None
 
-    def __init__(self, message: str, chart_id: str | None = None):
+    def __init__(self, message: str, chart_id: str | None = None) -> None:
         self.message = message
         self.chart_id = chart_id
         # `fields` is typed on the DbtChartsError base (dict[str, Any]); no

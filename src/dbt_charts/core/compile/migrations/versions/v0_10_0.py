@@ -57,18 +57,30 @@ Changes in this release:
   (``ERR-TIME-FORMAT-NOT-TEMPORAL``, ``ERR-LABEL-FORMAT-AXIS-MISMATCH``). A heatmap's
   keys, and ``style.charts.<family>.number_format`` / ``time_format`` (never
   read), are ``Deletion``s with a reason.
+- **`column_defaults.label` is removed** from table style, at the chart, board
+  and theme tiers (`Deletion`s). Set `label` on each column instead.
 - **A board's own `rows`, `cols`, `grid`, `tabs` or `tags` replace the ones it
   inherits** from a `meta.yml` or an `extends:` parent instead of being added
   after them. Not mechanically migratable: the inherited items live in another
   file, so no rewrite of the board can restore them. `WARN-INHERITED-LAYOUT-REPLACED`
   marks every board where the old reading differed.
+- **Style `null` is accepted only where it means no value** (no link, solid
+  line, no cap, no stroke): a field carrying `Absent`. Elsewhere it rejects, so a
+  board that wrote it is migrated: the `null` is dropped, which also lifts a
+  value an inherited tier had pinned. A map entry such as `formats: {name: null}`
+  is untouched. A `null` on `legend.title.visible` becomes `auto`.
 """
 
 from __future__ import annotations
 
 import copy
 import dataclasses
+import functools
 from collections.abc import Callable
+from typing import Any, Literal, get_args, get_origin
+
+from pydantic import BaseModel
+from pydantic.fields import FieldInfo
 
 from dbt_charts.core.compile.migrations.migrations import (
     DROP,
@@ -81,12 +93,15 @@ from dbt_charts.core.compile.migrations.migrations import (
     _child_positions,
     _declared_names,
     _declares_tail,
+    _nested_models,
     _relative_field_paths,
     _schema_path_exists,
     _without_composition,
     board_nesting_prefixes,
     suffix_rename_moves,
 )
+from dbt_charts.core.compile.models.factories import _PatchBase
+from dbt_charts.core.compile.models.markers import Absent
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     JsonObject,
     JsonValue,
@@ -176,6 +191,7 @@ def moves(
         + _divider_moves(source_schema, target_schema, catalog)
         + _kpi_moves(source_schema, target_schema, catalog)
         + _chart_format_moves(source_schema, target_schema, catalog)
+        + _style_null_moves(source_schema, target_schema, catalog)
         + tuple(
             dataclasses.replace(
                 move,
@@ -549,6 +565,169 @@ _KPI_DELETIONS: list[tuple[YamlKeyPath, str | None, str | None]] = [
 ]
 
 
+_STYLE_NULL_NOTE = (
+    "style null is accepted only where it means no value (no link, solid line, "
+    "no stroke). Elsewhere it was dropped; where it had cleared a value from the "
+    "theme or a parent, write the value you want instead."
+)
+
+
+def _models_in(
+    annotation: Any,  # type-state: explicit_any — a runtime type annotation
+) -> tuple[type[BaseModel], ...]:
+    found: list[type[BaseModel]] = []
+    pending = [annotation]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, type) and issubclass(node, BaseModel):
+            found.append(node)
+        pending.extend(get_args(node))
+    return tuple(found)
+
+
+def _is_open_map(
+    annotation: Any,  # type-state: explicit_any — a runtime type annotation
+) -> bool:
+    return any(get_origin(node) is dict for node in [annotation, *get_args(annotation)])
+
+
+def _accepts_null(model: type[BaseModel], field: FieldInfo) -> bool:
+    rejecting = issubclass(model, _PatchBase) and model.rejects_null
+    return not rejecting or any(isinstance(meta, Absent) for meta in field.metadata)
+
+
+def _rewrite_style_nulls(
+    value: JsonValue, models: tuple[type[BaseModel], ...]
+) -> JsonValue | Dropped:
+    """Drop each ``null`` that is not a value; a legend title one becomes ``auto``.
+
+    ``models`` are the classes a ``style`` mapping at this position can be
+    (a chart position names one per chart type); a ``null`` stays when any of
+    them accepts it, so a choice between chart types errs toward a loud
+    validation error rather than a lost value.
+    """
+
+    def rewrite(
+        node: JsonValue, owners: tuple[type[BaseModel], ...], path: YamlKeyPath
+    ) -> JsonValue:
+        if not isinstance(node, dict):
+            return node
+        out: dict[str, JsonValue] = {}
+        for key, child in node.items():
+            declared = [
+                (owner, field)
+                for owner in owners
+                for name, field in owner.model_fields.items()
+                if (field.alias or name) == key
+            ]
+            child_path = (*path, key)
+            if not declared:
+                out[key] = child
+            elif child is None:
+                if any(_accepts_null(owner, field) for owner, field in declared):
+                    out[key] = None
+                elif child_path[-len(_NULL_IS_AUTO) :] == _NULL_IS_AUTO:
+                    out[key] = "auto"
+            else:
+                nested = tuple(
+                    dict.fromkeys(
+                        model
+                        for _owner, field in declared
+                        for model in _models_in(field.annotation)
+                    )
+                )
+                if isinstance(child, dict) and any(
+                    _is_open_map(field.annotation) for _owner, field in declared
+                ):
+                    out[key] = {
+                        entry: rewrite(entry_value, nested, (*child_path, "*"))
+                        for entry, entry_value in child.items()
+                    }
+                else:
+                    out[key] = rewrite(child, nested, child_path)
+        return out
+
+    return rewrite(value, models, ())
+
+
+# A null here left the choice to the engine, as `auto` does.
+_NULL_IS_AUTO: YamlKeyPath = ("legend", "title", "visible")
+
+
+@functools.cache
+def _style_owners() -> dict[YamlKeyPath, tuple[tuple[str, type[BaseModel]], ...]]:
+    """Each ``style`` key of a board that holds no board: the model it holds, per ``type:``.
+
+    A chart or layer position holds a different style model per ``type:``; the
+    others (the board, a tab) hold one under ``""``, as they carry no type.
+    A board inside a board is reached through ``sub_board_prefixes``.
+    """
+    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+
+    owners: dict[YamlKeyPath, list[tuple[str, type[BaseModel]]]] = {}
+
+    def walk(model: type[BaseModel], path: YamlKeyPath, seen: frozenset[type]) -> None:
+        if model in seen:
+            return
+        type_field = model.model_fields.get("type")
+        types = (
+            get_args(type_field.annotation)
+            if type_field is not None and get_origin(type_field.annotation) is Literal
+            else ("",)
+        )
+        for name, field in model.model_fields.items():
+            if field.annotation is None:
+                continue
+            for nested, suffix in _nested_models(field.annotation):
+                if name == "style":
+                    owners.setdefault((*path, name, *suffix), []).extend(
+                        (chart_type, nested) for chart_type in types
+                    )
+                else:
+                    walk(nested, (*path, name, *suffix), seen | {model})
+
+    walk(AuthoredBoard, (), frozenset())
+    return {path: tuple(dict.fromkeys(found)) for path, found in owners.items()}
+
+
+def _style_null_moves(
+    source_schema: str, target_schema: str, catalog: YamlSchemaCatalog
+) -> tuple[Move, ...]:
+    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+
+    owners = _style_owners()
+    nesting = board_nesting_prefixes(AuthoredBoard)
+    return tuple(
+        dataclasses.replace(
+            move,
+            chart_type=chart_type,
+            rewrite=functools.partial(_rewrite_style_nulls, models=(model,)),
+            rewrite_note=_STYLE_NULL_NOTE,
+            sub_board_prefixes=nesting,
+        )
+        for move in suffix_rename_moves(
+            AuthoredBoard,
+            source_schema,
+            target_schema,
+            [(("style",), ("style",))],
+            catalog=catalog,
+        )
+        if move.new_path in owners  # a `style` key that holds no model (`font.style`)
+        for chart_type, model in owners[move.new_path]
+    )
+
+
+_COLUMN_DEFAULTS_LABEL_REASON = (
+    "One header text for every column has no use. Set label on each column "
+    "under style.columns instead."
+)
+
+_COLUMN_DEFAULTS_LABEL_TAILS: list[tuple[YamlKeyPath, str | None]] = [
+    (("style", "column_defaults", "label"), "table"),
+    (("style", "charts", "table", "column_defaults", "label"), None),
+]
+
+
 def _heading_ramp_moves(
     source_schema: str, target_schema: str, catalog: YamlSchemaCatalog
 ) -> tuple[Move, ...]:
@@ -605,8 +784,8 @@ def _chart_families_with_title_ramp(schema: JsonObject) -> tuple[str, ...]:
 def deletions(
     source_schema: str, target_schema: str, *, catalog: YamlSchemaCatalog
 ) -> tuple[Deletion, ...]:
-    """Return the Deletions of chart-level ``title.sizes``, retired KPI keys, and
-    the format keys no slot ever read."""
+    """Return the Deletions of chart-level ``title.sizes``, retired KPI keys, the
+    format keys no slot ever read, and ``column_defaults.label``."""
     source_schema_obj = catalog.grammar_for(source_schema)
     tails = [
         (*prefix, "title", "sizes")
@@ -636,6 +815,16 @@ def deletions(
     deletions.extend(
         Deletion(source_schema, target_schema, tail, reason=reason, chart_type=family)
         for tail, reason, family in _KPI_DELETIONS
+    )
+    deletions.extend(
+        Deletion(
+            source_schema,
+            target_schema,
+            tail,
+            reason=_COLUMN_DEFAULTS_LABEL_REASON,
+            chart_type=chart_type,
+        )
+        for tail, chart_type in _COLUMN_DEFAULTS_LABEL_TAILS
     )
     for key in ("number_format", "time_format"):
         deletions.extend(

@@ -58,6 +58,9 @@ struct Resolved {
     background: String,
     palette: Vec<String>,
     dark_companion_stops: Vec<String>,
+    /// `(pinned color, ink)` pairs for the `category_colors` pins outside the
+    /// palette (`common::category_ink`).
+    pin_companions: Vec<(String, String)>,
     /// (#7167) the board's plan for a `series`-mode field when one binds
     /// it; `literal` stays on the palette-by-index status quo (no data
     /// field to bind). `mode == "conditional"` is checked once, at
@@ -207,6 +210,7 @@ fn render_attached_table_svg(
         measuring: false,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
+        authored_height: None,
     };
     let svg = crate::families::table::render(&table_payload, fonts).map_err(|e| e.to_string())?;
     let height = crate::board::extract_svg_height(&svg)?;
@@ -607,7 +611,7 @@ fn draw_pie_fit(
                 (Some(scale), Some(cf))
                     if !matches!(payload_rows[idx].get(cf), None | Some(Value::Null)) =>
                 {
-                    Some(category_ink(scale, &row_str(&payload_rows[idx], cf), &r.dark_companion_stops)?)
+                    Some(category_ink(scale, &row_str(&payload_rows[idx], cf), &r.dark_companion_stops, &r.pin_companions)?)
                 }
                 _ => None,
             };
@@ -638,12 +642,7 @@ fn draw_pie_fit(
         frame.avail_w(),
         fonts,
     )?;
-    crate::common::warn_title_truncations(
-        title.block(),
-        &r.id,
-        title.text.as_deref(),
-        r.subtitle.as_deref(),
-    );
+    title.warn_truncated(&r.id);
 
     let arc_stroke_w = r
         .style
@@ -977,7 +976,7 @@ fn draw_pie_fit(
     // for `align` center/end (`legend_align.py`), against the plot rect the
     // scenegraph reports rather than the drawn one.
     if let Some(lg) = &legend {
-        let (dx, dy) = legend_slide(&r.legend.position, &lg.layout, m.scenegraph_plot)?;
+        let (dx, dy) = legend_slide(&r.id, &r.legend.position, &lg.layout, m.scenegraph_plot).map_err(|d| d.to_string())?;
         emit_vega_legend(
             &mut svg,
             &lg.entries(),
@@ -1333,7 +1332,7 @@ mod tests {
                 "title_style": null,
                 "background": "#FAFAFA",
                 "palette": ["#3164a3", "#779bc9", "#ad9c7f"],
-                "dark_companion_stops": ["#183253", "#3c4d65"],
+                "dark_companion_stops": ["#183253", "#3c4d65"], "pin_companions": [],
                 "outer_fraction": 0.9,
                 "slice_label_indices": [],
                 "total": total,
@@ -1640,6 +1639,36 @@ mod tests {
         assert_eq!(label_fill("Electronics"), Some("#dark2".into()), "{svg}");
         assert_eq!(label_fill("Accessories"), Some("#dark0".into()), "{svg}");
         assert_eq!(label_fill("Tools"), Some("#dark1".into()), "{svg}");
+    }
+
+    /// A slice pinned to a color outside the palette is labeled in that
+    /// color's own ink, not the companion of the slot it does not paint.
+    #[test]
+    fn a_pinned_slice_label_takes_its_pinned_colors_ink() {
+        let mut p = make_pie_payload(Value::Null);
+        p["resolved"]["dark_companion_stops"] = json!(["#dark0", "#dark1", "#dark2"]);
+        p["resolved"]["pin_companions"] = json!([["#999999", "#pinink"]]);
+        p["resolved"]["slice_label_indices"] = json!([0, 1, 2]);
+        p["resolved"]["style"]["slice_mark"]["labels"] = json!({
+            "template": "{{ category }}",
+            "offset": 8.0,
+            "line_height": 1.25,
+            "font": {"family": "Inter", "color": null, "size": 14.0, "weight": "500", "line_height": 1.25}
+        });
+        p["resolved"]["resolved_channels"] =
+            json!({"color": {"channel": "color", "mode": "series", "data_field": "category"}});
+        p["resolved"]["category_colors"] = json!([{
+            "field": "category",
+            "slots": {"Electronics": 2, "Accessories": 0, "Tools": 1},
+            "overrides": {"Electronics": "#999999"}
+        }]);
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        let label_fill = |name: &str| -> Option<String> {
+            let tag = svg.split("<text").find(|t| t.contains(name)).expect(name).split('>').next().unwrap();
+            tag.split("fill=\"").nth(1).map(|f| f.split('"').next().unwrap().to_string())
+        };
+        assert_eq!(label_fill("Electronics"), Some("#pinink".into()), "{svg}");
+        assert_eq!(label_fill("Accessories"), Some("#dark0".into()), "{svg}");
     }
 
     /// The deleted conditional-fill implementation covered two paint sites
@@ -1990,7 +2019,7 @@ mod tests {
         payload_json["resolved"]["attached_row_indices"] = json!([0, 1, 2]);
         // The wheel renders at the theme's view height (the sweep envelope's
         // board_style.continuous_height), never at the slot height.
-        payload_json["board_style"] = json!({"continuous_height": 300.0, "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()});
+        payload_json["board_style"] = json!({ "text_mark_font": {"family": "sans-serif", "size": 11.0},"continuous_height": 300.0, "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()});
         payload_json
     }
 
@@ -2264,7 +2293,7 @@ mod tests {
     #[test]
     fn attached_table_missing_continuous_height_errors() {
         let mut payload_json = make_pie_payload_with_attached_table("bottom", "");
-        payload_json["board_style"] = json!({"format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()});
+        payload_json["board_style"] = json!({ "text_mark_font": {"family": "sans-serif", "size": 11.0},"format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()});
         let payload = make_payload(payload_json);
         let err = render(&payload, &test_fonts()).expect_err("no view height to render the wheel at");
         assert!(err.contains("continuous_height"), "{err}");
@@ -2445,7 +2474,7 @@ mod tests {
     #[test]
     fn a_placeholder_fades_the_wheel_and_paints_the_overlay() {
         let mut json = make_pie_payload(Value::Null);
-        json["board_style"] = json!({
+        json["board_style"] = json!({ "text_mark_font": {"family": "sans-serif", "size": 11.0},
             "format_locale": crate::number_locale::en_us_wire(),
             "time_locale": crate::time_locale::en_us_wire(),
             "placeholder": {

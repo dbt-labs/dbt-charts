@@ -1104,7 +1104,7 @@ def test_scatter_month_date_x_row_reads_its_grain():
 
 def test_scatter_year_band_measure_x_row_stays_a_number():
     """Scatter's emitter plots a numeric x as a quantitative measure even when
-    its values sit in the 1900-2100 year band, so the x row must format it as
+    its values sit in the 1700-2100 year band, so the x row must format it as
     the number the axis shows -- never a date the axis doesn't."""
     chart = ScatterChart(id="t", type="scatter", x="score", y="revenue")
     data = [

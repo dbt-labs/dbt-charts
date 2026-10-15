@@ -497,7 +497,7 @@ class DbtAdapter(BaseAdapter):
         dbt_project_path: Path,
         target_name: str,
         profile_name: str | None = None,
-    ):
+    ) -> None:
         """Initialize dbt adapter.
 
         Args:

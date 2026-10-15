@@ -240,6 +240,7 @@ def _resolve_area(
     dataset: ChartDataset,
     chart_style_context: ChartStyleContext,
     width: float,
+    title_width: float,
     datasets: LayerDatasets,
     automatic_link_candidate: AutomaticLinkCandidate,
     x_date_range: tuple[date, date] | None,
@@ -663,7 +664,7 @@ def _resolve_area(
     resolved_line_mark = _build_resolved_area_line(
         line_mark_merged, resolved_area_line_labels
     )
-    _tf = resolve_title_font(chart_local_style_context, width)
+    _tf = resolve_title_font(chart_local_style_context, title_width)
     bkw = _base_kwargs(
         normalized,
         chart_style_context,

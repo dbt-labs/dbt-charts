@@ -5,6 +5,14 @@
 
 use d3rs::js_math::js_round;
 
+/// Where a band-step row's two vertices sit across its band: the whole band,
+/// or — `connect: false` — each plateau's inset share of it
+/// (`step_band.py`'s `offset_range`).
+pub(crate) fn band_step_edges(plateau_share: f64) -> (f64, f64) {
+    let inset = (1.0 - plateau_share) / 2.0;
+    (inset, 1.0 - inset)
+}
+
 /// The authored list: whitespace-separated lengths, as `_dasharray_to_vl`
 /// splits it. A list SVG cannot paint (empty, negative, non-finite) refuses.
 pub(crate) fn parse(family: &str, raw: &str) -> Result<Vec<f64>, String> {

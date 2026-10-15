@@ -114,6 +114,7 @@ pub struct FrameTitle {
     pub font_size: f64,
     /// The title with `font.case` applied.
     pub text: Option<String>,
+    subtitle: Option<String>,
 }
 
 impl FrameTitle {
@@ -147,7 +148,16 @@ impl FrameTitle {
             wrap_w,
             fonts,
         )?;
-        Ok(FrameTitle { block, style, font_size, text })
+        Ok(FrameTitle { block, style, font_size, text, subtitle: subtitle.map(str::to_string) })
+    }
+
+    /// `WARN-CHART-TITLE-TRUNCATED` for each row the pre-pass cut.
+    pub fn warn_truncated(&self, chart_id: &str) {
+        crate::common::warn_title_truncations(
+            chart_id,
+            (self.text.as_deref(), self.block.title_truncated),
+            (self.subtitle.as_deref(), self.block.subtitle_truncated),
+        );
     }
 
     pub fn ink(&self) -> Option<&TitleInk> {

@@ -2,28 +2,28 @@
 #
 # Single-hue categorical palette anchored on vivid-10 slot 8 (brown, H≈64°
 # in OKLCH). Variant of the F template with a hue-wobble in extended slots
-# (4-5) toward H≈78° to land in dbt-creams territory — i.e., the lightest
+# (5-6) toward H≈78° to land in dbt-creams territory — i.e., the lightest
 # extended stops visually bridge into the cream theme's chrome.
 
 name: category-6-tonal-brown
 description: |
   Tonal monochromatic brown palette. 6 stops in the brown family, designed
   to bridge into the dbt-creams scaffold for cream-themed dashboards.
-  Slots 0-3 are saturated browns at H≈64° (sepia, mushroom, brown, dark brown);
-  slots 4-5 wobble +14° to H≈78° to land between cream-30 and cream-60 in
+  Slots 1-4 are saturated browns at H≈64° (sepia, mushroom, brown, dark brown);
+  slots 5-6 wobble +14° to H≈78° to land between cream-30 and cream-60 in
   perceptual space — the extended stops feel continuous with the cream-theme
   chrome rather than as separate "near-neutrals."
 
-  Strict-safe core: slots 0-3 (Leonardo ΔE ≥ 11 pairwise).
-  Extended: slots 4-5 (require form redundancy past slot 4; live in cream
+  Strict-safe core: slots 1-4 (Leonardo ΔE ≥ 11 pairwise).
+  Extended: slots 5-6 (require form redundancy past slot 4; live in cream
   territory and may have low contrast against cream-025 / cream-theme
   backgrounds — that's the bridge, not a bug).
   See docs/guides/palettes.md#tonal-monochrome-category-6-tonal-.
 
 colors:
-  - "#9a642b"    # 0 — sepia (anchor)
-  - "#c9a687"    # 1 — mushroom (light tan tint)
-  - "#683b01"    # 2 — brown (dark saturated)
-  - "#321c04"    # 3 — dark brown (very dark)
-  - "#908472"    # 4 — brown gray (extended; cream-bridge)
-  - "#d8d0c3"    # 5 — light gray (extended; cream-bridge)
+  - "#9a642b"    # 1 — sepia (anchor)
+  - "#c9a687"    # 2 — mushroom (light tan tint)
+  - "#683b01"    # 3 — brown (dark saturated)
+  - "#321c04"    # 4 — dark brown (very dark)
+  - "#908472"    # 5 — brown gray (extended; cream-bridge)
+  - "#d8d0c3"    # 6 — light gray (extended; cream-bridge)

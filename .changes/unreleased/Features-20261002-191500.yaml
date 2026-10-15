@@ -1,3 +1,0 @@
-kind: Features
-body: 'A `style.fonts` entry can now extend or alias another font, for example `tag: {extends: label, weight: 600}`.'
-time: 2026-10-02T19:15:00.000000-07:00

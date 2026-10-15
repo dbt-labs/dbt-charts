@@ -1,3 +1,3 @@
 kind: Fixes
-body: Validate no longer warns about possible fan-out on every join with an aggregate; the check flagged lookup joins and never a real fan-out.
+body: Validate's join and re-aggregation warnings stop flagging lookup joins, window functions, single-row joins and SUM-of-SUM, name both functions when they fire, and now cover SQL using `ref()` or `source()`.
 time: 2026-10-07T15:50:00.000000-07:00

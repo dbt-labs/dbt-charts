@@ -276,6 +276,25 @@ class TestScatterPointWiring:
         assert _get_mark(spec_a).get("opacity") != _get_mark(spec_b).get("opacity")
 
 
+class TestScatterPointColorWiring:
+    """marks.point.color paints a single-series scatter's dots; fill is a hollow dot's interior."""
+
+    def test_point_color_paints_the_dots(self):
+        spec = _spec_with_global_point_override("scatter", color="#ff0000")
+        assert _get_mark(spec).get("fill") == "#ff0000"
+
+    def test_hollow_point_rings_in_color_around_its_fill(self):
+        spec = _spec_with_global_point_override(
+            "scatter", color="#ff0000", fill="#00ff00", filled=False
+        )
+        mark = _get_mark(spec)
+        assert (mark.get("fill"), mark.get("color")) == ("#00ff00", "#ff0000")
+
+    def test_unauthored_color_keeps_the_single_series_ink(self):
+        spec = _spec_with_global_point_override("scatter", size=60.0)
+        assert _get_mark(spec).get("fill") == "#284980"
+
+
 _PIE_DATA = [
     {"month": "Jan", "rev": 100},
     {"month": "Feb", "rev": 60},

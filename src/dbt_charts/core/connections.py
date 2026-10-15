@@ -18,7 +18,7 @@ dataset just to construct one. The BigQuery client needs no dataset at all.
 test_connection, list_datasets, and dataset_location share one classification
 boundary: every warehouse-outcome exception they can produce is turned into a
 WarehouseProbeError (or a classified subclass), mirroring
-apps.cloud.apps.projects.git_providers.GitRemoteError — test_connection
+apps.cloud.apps.projects.git_errors.GitRemoteError — test_connection
 returns it, the discovery pair raises it. Each function carves out an
 authored setup/environment error that propagates unclassified instead of
 being genericized into warehouse-probe copy it doesn't describe:

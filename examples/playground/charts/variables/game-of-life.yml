@@ -596,8 +596,9 @@ charts:
     style:
       pagination:
         enabled: false
+      header:
+        visible: false
       column_defaults:
-        label: ' '
         width: 36
         align: center
       columns:

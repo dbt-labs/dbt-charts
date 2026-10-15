@@ -3,9 +3,9 @@ what magnitude.
 
 Ladders come from ``nice_tick_values(lo, hi, 6)``, the ``editorial`` tick cap,
 so cases build ticks the way the engine does rather than hand-listing them.
-See ``ai_notes/jul26-02-numeral-system-design.md`` ("ruler" under Form policy
+See ``ai_notes/charts/jul26-02-numeral-system-design.md`` ("ruler" under Form policy
 per destination, "When to compact") and
-``ai_notes/jul26-02-phase-1-plan.md`` for the design this pins.
+``ai_notes/charts/jul26-02-phase-1-plan.md`` for the design this pins.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from dbt_charts.core.text.numeral_scale import (
     _precision_for_step,
     column_shares_one_printed_unit,
     fractional_digit_count,
+    has_symbol,
     non_compacting_tick_format,
     shared_scale_for_column,
     shared_scale_for_ladder,
@@ -568,3 +569,11 @@ def test_sub_unit_scientific_floor_matches_non_compacting_tick_format_boundary()
         is not None
     )
     assert non_compacting_tick_format(".3~s", SUB_UNIT_SCIENTIFIC_FLOOR / 10)[2] is None
+
+
+def test_has_symbol_reads_the_currency_flag_not_the_spelling() -> None:
+    assert has_symbol("$,.0f")
+    assert has_symbol("+$.3~s")
+    assert not has_symbol("0=+10,.2f")
+    assert not has_symbol("<")
+    assert not has_symbol("%b %Y")

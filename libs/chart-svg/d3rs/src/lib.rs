@@ -4,10 +4,13 @@
 //! numeric-parity primitive every port shares.
 
 pub mod arc;
+pub mod color;
+pub mod css_colors;
 pub mod format;
 pub mod js_math;
 pub mod js_sort;
 pub mod native;
+pub mod numeral_pad;
 pub mod path;
 pub mod pie;
 pub mod predefined_formats;
@@ -16,3 +19,4 @@ pub mod sankey;
 pub mod sankey_circular;
 pub mod shape;
 pub mod ticks;
+pub mod vega_schemes;

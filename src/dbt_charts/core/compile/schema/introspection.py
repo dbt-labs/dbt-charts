@@ -101,12 +101,12 @@ class SchemaField:
     )
     inherit_from: tuple[str, ...] = ()  # ordered fallback dot-paths (Inherit marker)
     inherit_slot: str | None = None  # source subtree path (InheritSlot marker)
-    inherit_slot_exclude: frozenset[str] = (
-        frozenset()
-    )  # leaf names InheritSlot excludes
     # Semantic facets declared on the field — what the value *means*, which the
     # type and the description cannot say. See `Facet`'s subclasses.
     facets: tuple[Facet, ...] = ()
+    # False on an authored patch field that takes no explicit null: the schema
+    # then omits the null arm the Optional annotation would add.
+    null_allowed: bool = True
 
 
 @dataclasses.dataclass
@@ -933,11 +933,15 @@ def _drop_schema_skipped_arms(
 
 
 def _build_schema_field(
-    name: str, field_info: FieldInfo, annotation: Any
+    name: str,
+    field_info: FieldInfo,
+    annotation: Any,  # type-state: explicit_any — a runtime type annotation
+    *,
+    rejects_null: bool,
 ) -> SchemaField:
     """Convert one Pydantic field into a SchemaField."""
     annotation = _drop_schema_skipped_arms(annotation)
-    from dbt_charts.core.compile.models.markers import Inherit, InheritSlot
+    from dbt_charts.core.compile.models.markers import Absent, Inherit, InheritSlot
 
     required = field_info.is_required()
     default = field_info.default if not required else dataclasses.MISSING
@@ -969,10 +973,8 @@ def _build_schema_field(
         arm_length_constraints=_arm_length_constraints(name, annotation),
         inherit_from=(inherit.from_path,) if inherit is not None else (),
         inherit_slot=inherit_slot.from_path if inherit_slot is not None else None,
-        inherit_slot_exclude=(
-            inherit_slot.exclude if inherit_slot is not None else frozenset()
-        ),
         facets=tuple(m for m in metadata if isinstance(m, Facet)),
+        null_allowed=not rejects_null or any(isinstance(m, Absent) for m in metadata),
     )
 
 
@@ -1012,7 +1014,12 @@ def _collect_models(
             continue
         annotation = _authored_annotation(field_info)
         display_name = field_info.alias or field_name
-        sf = _build_schema_field(display_name, field_info, annotation)
+        sf = _build_schema_field(
+            display_name,
+            field_info,
+            annotation,
+            rejects_null=issubclass(model_cls, _PatchBase) and model_cls.rejects_null,
+        )
         fields.append(sf)
 
     # Synthesize a '<name>' field for models with typed __pydantic_extra__.

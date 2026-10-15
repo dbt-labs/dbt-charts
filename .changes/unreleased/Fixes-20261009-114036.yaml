@@ -1,3 +1,0 @@
-kind: Fixes
-body: The syntax guide no longer lists query limit, filters and pivot as common fields, and the board-build skill no longer calls record-shape inline rows invalid.
-time: 2026-10-09T11:40:36.693818-07:00

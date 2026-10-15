@@ -509,3 +509,38 @@ def test_stack_order_data_on_temporal_x_follows_first_appearance(
     calc = next(t["calculate"] for t in pane["transform"] if t.get("as") == field)
     ranks = {name: calc.index(f'"{name}" ?') for name in expected}
     assert sorted(ranks, key=ranks.__getitem__) == list(expected), calc
+
+
+@pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
+def test_wide_stack_order_data_on_temporal_x_follows_first_appearance(
+    orientation: str,
+):
+    """Wide ``y: [...]`` with ``color:`` ranks the dimension over the query's own
+    rows; gap-fill's buckets x sorted(dimension) rebuild would make it alphabetical."""
+    rows = [
+        {"month": month, "region": region, "a": 1, "b": 2}
+        for month in ("2024-01-01", "2024-02-01", "2024-04-01")
+        for region in ("west", "east")
+    ]
+    chart = BarChart(
+        id="t",
+        query=SqlQuery(sql="SELECT 1", source="t"),
+        query_name="q",
+        type="bar",
+        x="month",
+        y=["a", "b"],
+        color="region",
+        style=BarChartStylePatch(
+            stack="zero",
+            stack_order="data",
+            orientation=orientation,
+            axis_x={"time_unit": "yearmonth"},
+        ),
+    )
+    spec = generate_vega_lite_spec(
+        chart, rows, board_style=_BOARD_STYLE, chart_style_context=_BOARD_CTX
+    )
+    pane = chart_pane(spec)
+    field = pane["encoding"]["order"]["field"]
+    calc = next(t["calculate"] for t in pane["transform"] if t.get("as") == field)
+    assert calc.index('"west') < calc.index('"east'), calc

@@ -272,6 +272,7 @@ def _resolve_with_runtime_inputs(
     width: float,
     chart_style_context: ChartStyleContext,
     pie_title_font: ResolvedFontStyle | EllipsisType = ...,
+    title_width: float | None = None,
 ) -> ResolvedChart:
     """Fetch the chart's data and resolve it at ``width``, touching no cache.
 
@@ -338,6 +339,7 @@ def _resolve_with_runtime_inputs(
         table_column_rows=table_column_rows,
         pie_title_font=pie_title_font,
         filter_variables=get_filter_variables_context(),
+        title_width=title_width,
     )
 
 
@@ -349,6 +351,7 @@ def _require_resolved(
     width: float,
     resolved_style: ResolvedStyle,
     chart_style_context: ChartStyleContext,
+    title_width: float | None = None,
 ) -> ResolvedChart | None:
     """Return the resolved chart for this exact placement, or None if it failed.
 
@@ -413,6 +416,7 @@ def _require_resolved(
             width,
             chart_style_context,
             _canonical_pie_title_font(canonical if canonical is not None else ...),
+            title_width,
         )
     except DbtChartsError as exc:
         _log.warning("Chart %r failed to resolve: %s", chart_id, exc)
@@ -1038,8 +1042,8 @@ def _make_data_aware_height_provider(
                                         item.chart, width, resolved_style
                                     )
                                 shrunk_width = max(would_be_width, 1.0)
-                                # Resolve at the corrected spec width so title
-                                # typography matches the emitted chart.
+                                # Resolve at the corrected spec width; the title
+                                # keeps the card's typography tier.
                                 canonical_key = canonical_resolved_key(
                                     item.chart.id,
                                     resolved_style,
@@ -1054,6 +1058,7 @@ def _make_data_aware_height_provider(
                                     shrunk_width,
                                     resolved_style,
                                     style_contexts[id(resolved_style)],
+                                    title_width=render_inner_width,
                                 )
                                 # Only reachable if resolution ever becomes
                                 # width-conditional: the same chart resolved at

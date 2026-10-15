@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Annotated, Literal
 if TYPE_CHECKING:
     # These authored types are injected into theme/__init__.py's module globals at
     # runtime by dbt_charts.core.compile.models.style.authored (after authored.py
-    # finishes executing). The import here is TYPE_CHECKING-only to give mypy and
+    # finishes executing). The import here is TYPE_CHECKING-only to give pyright and
     # ruff the static definitions they need without creating a circular import.
     from dbt_charts.core.compile.models.style.authored import (  # noqa: PLC0415
         EndpointLabelsConfig,

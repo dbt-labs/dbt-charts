@@ -37,7 +37,7 @@ use crate::sizing::{
 use crate::svg::{attr_name, html_escape, num_full, py_float_str, xml_escape_attr};
 use crate::text::FontBook;
 use crate::title;
-use crate::{render_fitted, BoardStyle, Padding, Payload};
+use crate::{render_fitted_natural, BoardStyle, Padding, Payload};
 
 mod row_shifts;
 pub use row_shifts::{derive_title_shifts, RowShift};
@@ -315,6 +315,10 @@ struct ItemDoc {
     user_width: Option<String>,
     #[serde(default)]
     layout_height: Option<String>,
+    /// The slot height an ancestor's literal `height:` assigned this chart
+    /// (the sizing pass's `authored_slot_heights`); absent when none did.
+    #[serde(default)]
+    authored_height: Option<f64>,
     #[serde(default)]
     row: Option<i64>,
     #[serde(default)]
@@ -1439,6 +1443,9 @@ struct RenderedItem {
 /// recurse.
 struct RenderChrome<'a> {
     bg: &'a str,
+    /// The layout's own background rect fill: the board's background on the root,
+    /// empty on a nested board, whose own `bg_rect` already paints it.
+    layout_bg: &'a str,
     card_pad: f64,
     card_gap: f64,
     /// The gap `render_rows` accumulates between stacked items — NOT always
@@ -2029,6 +2036,7 @@ fn render_error_card_svg(
         measuring: false,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
+        authored_height: None,
     };
     crate::families::callout::render(&placard, fonts).map(|(svg, _)| svg)
 }
@@ -2319,9 +2327,31 @@ fn render_chart_item(
         interactive_controls: Default::default(),
         link_context: None,
         is_placeholder: false,
+        authored_height: item.authored_height,
         measuring: fresh_render.contains(chart_id),
     };
-    let chart_svg = match render_fitted(&chart_payload, fonts) {
+    // Production keeps a support_table chart's sizing-time render while its
+    // box still holds that height, and corrects it only against an
+    // overshoot (`_correct_support_table_height`). The render cache is keyed
+    // by title shift too, so a shifted chart renders fresh.
+    let natural_payload = if !fresh_render.contains(chart_id)
+        && item.title_shift == crate::TitleShift::default()
+        && crate::is_support_table_arm(&chart_payload)?
+    {
+        let mut natural = chart_payload.clone();
+        natural.height = sizing::static_slot_estimate(
+            chart_json,
+            item.authored_height,
+            item_box.width,
+            chrome.root_card_padding,
+            &payload.chart_defaults,
+        )?;
+        natural.measuring = true;
+        Some(natural)
+    } else {
+        None
+    };
+    let chart_svg = match render_fitted_natural(natural_payload.as_ref().unwrap_or(&chart_payload), &chart_payload, fonts) {
         Ok(output) => {
             payload.report.borrow_mut().push(ChartStatusEntry {
                 chart_id: chart_id.to_string(),
@@ -2515,7 +2545,7 @@ fn render_rows(
         current_y += r.height + chrome.item_gap + chrome.card_gap;
     }
 
-    let bg = layout_bg_rect(layout.content_width, actual_total_height, chrome.bg);
+    let bg = layout_bg_rect(layout.content_width, actual_total_height, chrome.layout_bg);
     Ok((format!("{bg}\n{rendered}"), actual_total_height))
 }
 
@@ -2558,7 +2588,7 @@ fn render_cols(
         max_height = max_height.max(r.height);
     }
 
-    let bg = layout_bg_rect(layout.content_width, max_height, chrome.bg);
+    let bg = layout_bg_rect(layout.content_width, max_height, chrome.layout_bg);
     Ok((format!("{bg}\n{rendered}"), max_height))
 }
 
@@ -2604,7 +2634,7 @@ fn render_grid(
         max_bottom_edge = max_bottom_edge.max(item_box.y + r.height);
     }
 
-    let bg = layout_bg_rect(layout.content_width, max_bottom_edge, chrome.bg);
+    let bg = layout_bg_rect(layout.content_width, max_bottom_edge, chrome.layout_bg);
     Ok((format!("{bg}\n{rendered}"), max_bottom_edge))
 }
 
@@ -2654,6 +2684,7 @@ fn render_tabs_layout(
     // never `chrome`'s own values.
     let tab_chrome = RenderChrome {
         bg: chrome.bg,
+        layout_bg: chrome.layout_bg,
         card_pad: chrome.card_pad,
         card_gap: 0.0,
         item_gap: 0.0,
@@ -2732,7 +2763,7 @@ fn render_tabs_layout(
         translate_group("0", &num_full(px(content_y)), item_svg, "")
     };
     let actual_height = content_y + actual_item_height;
-    let bg_rect = layout_bg_rect(available_width, actual_height, chrome.bg);
+    let bg_rect = layout_bg_rect(available_width, actual_height, chrome.layout_bg);
     Ok((
         format!("{bg_rect}\n{tab_bar_svg}\n{content_svg}"),
         actual_height,
@@ -4092,6 +4123,7 @@ fn render_nested_board(
         )?;
         let chrome = RenderChrome {
             bg: &nested.style.background,
+            layout_bg: "",
             card_pad,
             card_gap,
             item_gap: child_gap,
@@ -4375,6 +4407,7 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
     // independently-authorable page-canvas source.
     let chrome = RenderChrome {
         bg: &board.style.background,
+        layout_bg: &board.style.background,
         card_pad: card_padding,
         card_gap,
         item_gap: board.layout.gap,
@@ -5541,7 +5574,7 @@ mod nested_box_sidecar_tests {
             "resolved": resolved, "chart_datasets": {}, "background": null, "fonts_dir": null,
             "render_timestamp_text": "", "render_time_iso": "2026-01-01T00:00:00Z",
             "defs_styles_block": "", "hover_attributes": "",
-            "board_style": {"muted": null, "tones": null, "title_case": null, "continuous_height": null, "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()},
+            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"muted": null, "tones": null, "title_case": null, "continuous_height": null, "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()},
             "chart_defaults": {
                 "default_chart_height": 300.0, "default_table_height": 250.0,
                 "min_height": 200.0, "max_height": 600.0,

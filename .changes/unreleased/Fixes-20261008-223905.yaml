@@ -1,3 +1,0 @@
-kind: Fixes
-body: A YAML syntax error from an unquoted colon in a title or note now comes with the schema and query errors that follow it, so one check shows them all.
-time: 2026-10-08T22:39:05.353767-07:00

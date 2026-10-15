@@ -26,6 +26,7 @@ from dbt_charts.core.compile.models.constraints import (
     ValueIn,
 )
 from dbt_charts.core.compile.models.markers import (
+    Absent,
     Color,
     Format,
     InheritSlot,
@@ -155,9 +156,11 @@ class BaseAxisGridStyle(BaseModel):
         default=None, description="Grid line color; None uses Vega-Lite's default."
     )
     # SkipInheritSlots: dash is not inherited — axis family variants each own their dash independently.
-    dash: Annotated[list[float] | None, SkipInheritSlots()] = Field(
-        default=None,
-        description="Dash pattern for grid lines; None renders a solid line.",
+    dash: Annotated[list[float] | None, SkipInheritSlots(), Absent("solid line")] = (
+        Field(
+            default=None,
+            description="Dash pattern for grid lines; None renders a solid line.",
+        )
     )
     # Threshold sub-block. None means "no override at this level"; the
     # cascade fills individual threshold.* fields from the parent axis.
@@ -232,7 +235,11 @@ class AxisTicksStyle(BaseModel):
         description="Pixel offset of ticks from their default position; None means no offset.",
     )
     # SkipInheritSlots: count is not inherited — axis family variants each set their own count.
-    count: Annotated[int | Literal["auto"] | None, SkipInheritSlots()] = Field(
+    count: Annotated[
+        int | Literal["auto"] | None,
+        SkipInheritSlots(),
+        Absent("Vega-Lite picks the ticks"),
+    ] = Field(
         default=None,
         description=(
             "Target number of axis ticks, or 'auto' for the engine's own sparse "
@@ -439,7 +446,11 @@ class AxisLabelStyle(BaseModel):
         default=None,
         description="Pixel offset of the label from its tick anchor; None uses Vega-Lite's default.",
     )
-    format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
+    format: Annotated[
+        FormatAlias | str | FormatConfig | None,
+        Format(),
+        Absent("no format emitted"),
+    ] = Field(
         default=None, description="Tick value format string; None uses auto-format."
     )
 
@@ -965,7 +976,10 @@ class AxisMirrorStyle(ConstrainedModel):
         ),
     )
 
-    format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
+    format: Annotated[
+        FormatAlias | str | FormatConfig | None,
+        Format(),
+    ] = Field(
         default=None,
         description="Tick value format string for the mirrored edge; None reuses the primary axis's format.",
     )

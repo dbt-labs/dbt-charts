@@ -1,3 +1,0 @@
-kind: Fixes
-body: Demo Zendesk data now builds populated ticket metrics, SLA and CSAT models under the dbt_zendesk quickstart package.
-time: 2026-10-08T10:41:28.165669-07:00

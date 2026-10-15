@@ -55,7 +55,7 @@ options:
 {% set ph = height - legend_h %}
 {% set cx = width / 2 %}
 {% set cy = ph / 2 %}
-{% set rad = [width / 2 - lw.w - 10, ph / 2 - small * 1.8] | min %}
+{% set rad = [width / 2 - lw.w - 10, ph / 2 - 8 - small * 2.2] | min %}
 {% if rad <= 0 %}{{ raise_error("The chart is too small to fit its spoke labels.") }}{% endif %}
 {% set step = 2 * math.pi / n %}
 {% macro pt(i, r) %}{{ (cx + r * math.sin(step * i))|round(2) }},{{ (cy - r * math.cos(step * i))|round(2) }}{% endmacro %}

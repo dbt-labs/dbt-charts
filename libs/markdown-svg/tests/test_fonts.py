@@ -221,7 +221,7 @@ class TestFontMeasurerWeight:
         is how the advances were obtained. The tolerance covers the instancer rounding
         advances to whole font units while HVAR keeps the unrounded interpolation.
         """
-        from fontTools.ttLib import (  # pyright: ignore[reportMissingTypeStubs]
+        from fontTools.ttLib import (
             TTFont,
         )
         from fontTools.varLib.instancer import (  # pyright: ignore[reportMissingTypeStubs]

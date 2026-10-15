@@ -201,10 +201,10 @@ class TestSubdayClockRenderedTicks:
         anywhere on the axis, so a viewer cannot tell 9am from 9pm. The
         anchor rule forces the first tick to a full label regardless of its
         own minutes -- and that full label must include the minutes: the
-        first data point is 09:05, so the anchor must read "9:05am", never
-        the bare "9am" a reader would mis-scale the 5-minute-gapped axis
-        against (the anchor's own first fix printed "9am" for a tick that
-        is not on the hour).
+        first drawn tick is 09:10 (ticks sit on the clock, not on the first
+        data point), so the anchor must read "9:10am", never the bare "9am" a
+        reader would mis-scale the axis against (the anchor's own first fix
+        printed "9am" for a tick that is not on the hour).
         """
         start = dt.datetime(2026, 8, 11, 9, 5)
         data = [
@@ -213,8 +213,35 @@ class TestSubdayClockRenderedTicks:
         ]
         labels = _rendered_x_tick_labels(data)
         assert labels, "expected Vega to draw some ticks for this domain"
-        assert labels[0] == "9:05am"
+        assert labels[0] == "9:10am"
         assert all(label.startswith(":") for label in labels[1:])
+
+    def test_four_minute_readings_tick_on_the_clock_and_name_the_hour(self) -> None:
+        """Readings every 4 minutes used to tick every 5 minutes from the first
+        reading and drop alternate labels, so no hour was ever named. The ladder
+        picks the 10-minute rung for this width and span: every tick sits on a
+        multiple of ten minutes and each whole hour prints its hour."""
+        start = dt.datetime(2026, 3, 2, 9, 5)
+        data = [
+            {"ts": (start + dt.timedelta(minutes=4 * i)).isoformat(), "value": i}
+            for i in range(31)
+        ]
+        labels = _rendered_x_tick_labels(data, width=1000.0)
+        assert labels == [
+            ":10", ":20", ":30", ":40", ":50", "10am", ":10", ":20", ":30",
+            ":40", ":50", "11am",
+        ]  # fmt: skip
+
+    def test_thirteen_hour_series_ticks_hourly_with_the_hour_shown(self) -> None:
+        """A series opening at 08:30 used to label every tick ":30" with no hour."""
+        start = dt.datetime(2026, 3, 2, 8, 30)
+        data = [
+            {"ts": (start + dt.timedelta(minutes=15 * i)).isoformat(), "value": i}
+            for i in range(53)
+        ]
+        labels = _rendered_x_tick_labels(data, width=1000.0)
+        assert labels[:3] == ["9am", "10am", "11am"]
+        assert not any(label.startswith(":") for label in labels)
 
     def test_two_row_date_context_case_wrap_keeps_both_rows_separate(self) -> None:
         """Regression: `labels.font.case: upper` used to stringify the

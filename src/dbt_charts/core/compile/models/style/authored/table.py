@@ -95,10 +95,6 @@ class TableColumnDefaultsConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    label: Annotated[str | None, DisplayText()] = Field(
-        default=None,
-        description="One header text applied to every column, unless a column sets its own.",
-    )
     width: PixelWidth = Field(
         default=None,
         description="Override column width in pixels (integer) or a CSS width string.",

@@ -114,7 +114,7 @@ def classify_column_type(
             pass
         elif isinstance(val, (int, float, Decimal)):
             numeric_count += 1
-        elif isinstance(val, datetime):
+        elif isinstance(val, (datetime, date)):
             temporal_count += 1
         elif isinstance(val, str):
             if _is_temporal_value(val):

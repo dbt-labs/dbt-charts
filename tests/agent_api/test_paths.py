@@ -99,7 +99,7 @@ def test_resolve_board_path_absolute_outside_project_dir_raises(
     project.mkdir()
     outside = tmp_path / "other" / "sneaky.yml"
 
-    with pytest.raises(ValueError, match="outside project root"):
+    with pytest.raises(ValueError, match="outside the project root"):
         resolve_board_path(outside, FilesystemProject(project))
 
 

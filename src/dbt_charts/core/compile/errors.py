@@ -64,7 +64,7 @@ class CompilationError(DbtChartsError):
         field_path: str = "",
         context: str | None = None,
         suggestion: str | None = None,
-    ):
+    ) -> None:
         self.message = message
         self.location = location
         self.line = line
@@ -106,7 +106,7 @@ class ParseError(CompilationError):
         column: int | None = None,
         context: str | None = None,
         suggestion: str | None = None,
-    ):
+    ) -> None:
         super().__init__(
             message,
             line=line,
@@ -153,7 +153,7 @@ class ValidationError(CompilationError):
         field_path: str | None = None,
         invalid_value: str | None = None,
         valid_values: list[str] | None = None,
-    ):
+    ) -> None:
         self.field_path = field_path if field_path is not None else ""
         self.invalid_value = invalid_value
         self.valid_values = valid_values
@@ -196,7 +196,7 @@ class ReferenceError(CompilationError):
         ref: str,
         context: str | None = None,
         ref_path: Sequence[str] = (),
-    ):
+    ) -> None:
         from dbt_charts.core.diagnostics.codes_compile import (
             ERR_UNRESOLVED_REFERENCE,
         )
@@ -234,7 +234,7 @@ class JinjaError(CompilationError):
 
     template: str | None = None
 
-    def __init__(self, message: str, template: str | None = None):
+    def __init__(self, message: str, template: str | None = None) -> None:
         from dbt_charts.core.diagnostics.codes_compile import ERR_JINJA_ERROR
 
         self.template = template

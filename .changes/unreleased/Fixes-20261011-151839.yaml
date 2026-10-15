@@ -1,3 +1,0 @@
-kind: Fixes
-body: Importing a chart that is itself a cross-file ref now follows the chain instead of failing with an internal error.
-time: 2026-10-11T15:18:39.130012-07:00

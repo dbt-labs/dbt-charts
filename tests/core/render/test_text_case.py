@@ -148,16 +148,6 @@ def test_title_empty_string() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Unknown case raises ValueError
-# ---------------------------------------------------------------------------
-
-
-def test_unknown_case_raises() -> None:
-    with pytest.raises(ValueError, match="Unknown case"):
-        apply_case("some text", "preserve")  # type: ignore[arg-type]
-
-
-# ---------------------------------------------------------------------------
 # slug — machine identifier form
 # ---------------------------------------------------------------------------
 
@@ -181,3 +171,29 @@ def test_camel_basic() -> None:
 
 def test_camel_single_word() -> None:
     assert apply_case("revenue", "camel") == "revenue"
+
+
+def test_sentence_keeps_leading_dbt_lowercase() -> None:
+    assert apply_case("dbt models grew 12%", "sentence") == "dbt models grew 12%"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "dbt-labs/dbt-charts issues since launch",
+            "dbt-labs/dbt-charts Issues Since Launch",
+        ),
+        ("src/core/case.py rules", "src/core/case.py Rules"),
+        ("x/y-axis chart", "X/Y-Axis Chart"),
+        ("a/b-test results", "A/B-Test Results"),
+        ("price/unit-cost analysis", "Price/Unit-Cost Analysis"),
+        ("pie/donut.", "Pie/Donut."),
+        ("pie/donut", "Pie/Donut"),
+        ("dbt-labs/dbt-charts", "dbt-labs/dbt-charts"),
+        ("pie/donut table", "Pie/Donut Table"),
+        ("a/b testing results", "A/B Testing Results"),
+    ],
+)
+def test_title_slash_words(text: str, expected: str) -> None:
+    assert apply_case(text, "title") == expected

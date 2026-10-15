@@ -85,7 +85,7 @@ class QueryResult:
         error: DbtChartsError | None = None,
         resolved_relations: list[ResolvedRelation] | None = None,
         truncated_reason: Literal["max_rows"] | None = None,
-    ):
+    ) -> None:
         """Initialize query result.
 
         Args:

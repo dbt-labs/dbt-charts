@@ -12,6 +12,8 @@ read the collected dict via ``WarningContext.text_truncations``.
   "kpi_label"    — KPI card label (engine)
   "kpi_support"  — KPI support explainer (engine)
   "kpi_inline_fallback" — inline KPI variant fell back to stacked (engine)
+  "kpi_align_overflow" — KPI value run wider than its card, so authored
+    ``align`` was not applied (engine); no text was cut, ``authored_text`` is empty
   "table_cell"   — table header or body cell (engine)
   "callout_text" — callout title, message, or hint (callout family)
   "spark_label"  — spark-bar row label (engine)

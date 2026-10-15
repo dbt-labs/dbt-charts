@@ -8,10 +8,7 @@ import re
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.models.chart.normalized import PieChart
-from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.resolve.style.board import resolve_style
-from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
 from ._engine_render import render_pie_svg
 
@@ -46,23 +43,6 @@ class TestArcChartNoHiddenAggregation:
             {"category": "B", "value": 70},
         ]
         assert len(_wedges(render_pie_svg(chart, data))) == 3
-
-    def test_arc_type_rejected_by_generate_vega_lite_spec(self):
-        """arc is not an authorable chart type (not in the Chart union). A chart
-        forced into that state (e.g. by a bug elsewhere) fails fast in resolve()
-        rather than silently rendering."""
-        chart = PieChart(
-            id="t",
-            type="pie",
-            theta="value",
-            color="category",
-            query=SqlQuery(sql="SELECT 1", source="test"),
-            query_name="q",
-        )
-        object.__setattr__(chart, "type", "arc")
-        data = [{"category": "A", "value": 30}]
-        with pytest.raises(ValueError, match="Unknown normalized chart type"):
-            generate_vega_lite_spec(chart, data)
 
 
 class TestArcChartSpacing:

@@ -33,24 +33,29 @@ _SCAN_SINGLE_FILES = (DBT_CHARTS_PKG_DIR / "cli" / "_error_format.py",)
 # site means routing it through ``posix_relpath``/``.relpath`` and deleting
 # the entry, not widening this allowlist to paper over a new ad-hoc call.
 ALLOWED: dict[tuple[str, int], str] = {
-    ("agent_api/describe.py", 340): (
+    ("agent_api/describe.py", 342): (
         "describe_board() except ValueError: resolve_board_path failed, path "
         "never became a ProjectPath — no root to relativize against via "
         "posix_relpath. Echoes the raw caller input, POSIX-normalized for "
         "display consistency, not a resolved project identity."
     ),
-    ("agent_api/describe.py", 520): (
+    ("agent_api/describe.py", 521): (
         "_describe_one_path() except ValueError: same shape as "
         "describe_board() above — resolution failed, nothing to relativize."
     ),
-    ("agent_api/validate.py", 114): (
+    ("agent_api/validate.py", 117): (
         "_validate_one_path() except ValueError: resolve_board_path failed, "
         "raw_path never became a ProjectPath — no root to relativize "
         "against. Echoes the raw caller input, POSIX-normalized."
     ),
-    ("agent_api/validate.py", 157): (
+    ("agent_api/validate.py", 156): (
         "validate() except ValueError: same shape — resolution failed, "
         "nothing to relativize against."
+    ),
+    ("agent_api/_paths.py", 446): (
+        "resolve_board_or_error() ERR_PATH_OUTSIDE_PROJECT: the path lies "
+        "outside the project, so no ProjectPath or root exists to relativize "
+        "against. Echoes the raw caller input, POSIX-normalized."
     ),
     ("agent_api/mcp_install.py", 160): (
         "resolve_dct_executable(): venv_bin is a real filesystem executable "

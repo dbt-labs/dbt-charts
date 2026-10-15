@@ -108,13 +108,13 @@ ALLOWED: dict[tuple[str, int], str] = {
         "create_server: core_project inferred FilesystemProject from the parameter; "
         "the live-reload watch is opened over the project root"
     ),
-    ("core/serve/server.py", 1248): (
+    ("core/serve/server.py", 1250): (
         "_reload_on_change: project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1349): (
+    ("core/serve/server.py", 1351): (
         "profile_table: inspect_project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1541): (
+    ("core/serve/server.py", 1543): (
         "get_board: project explicitly typed FilesystemProject just above"
     ),
     (
@@ -133,13 +133,13 @@ ALLOWED: dict[tuple[str, int], str] = {
         "agent_api/pack.py",
         459,
     ): "apply_proposal(project: FilesystemProject) — already FS-typed",
-    ("agent_api/_paths.py", 374): (
+    ("agent_api/_paths.py", 412): (
         "_relpath_for_fs_location: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/_paths.py", 429): (
+    ("agent_api/_paths.py", 471): (
         "resolve_board_or_error: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/_paths.py", 573): (
+    ("agent_api/_paths.py", 615): (
         "compile_editor_buffer: project = FilesystemProject(root) constructed above"
     ),
     ("agent_api/project_session.py", 325): (

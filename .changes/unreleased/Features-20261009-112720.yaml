@@ -1,3 +1,0 @@
-kind: Features
-body: "A board's `regional.locale.time` names its months, weekdays and AM/PM in a d3 time locale (`de-DE` prints `Mrz`), by name or as a full definition, and starts a date picker's week on the locale's first day."
-time: 2026-10-09T11:27:20.220103-07:00

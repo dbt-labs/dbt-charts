@@ -708,6 +708,25 @@ class TestHelperArguments:
         assert ">True</text>" in out.output
 
 
+class TestStyleTreeWeights:
+    def test_weight_tokens_reach_the_template_as_integers(self, tmp_path: Path) -> None:
+        yaml_text = re.sub(
+            r"    x: from_stage\n    y: visitors\nrows:",
+            "rows:",
+            _board_yaml(),
+            flags=re.S,
+        )
+        template = (
+            '<text id="w">{{ style.charts.title.font.weight }} '
+            "{{ style.charts.legend.title.font.weight }} "
+            "{{ style.charts.series_label.font.compact_weight }}</text>"
+        )
+        out = _render(_project(tmp_path, template), yaml_text)
+        assert out.chart_errors == []
+        [weights] = re.findall(r'<text id="w">([^<]*)</text>', out.output)
+        assert re.fullmatch(r"\d+ \d+ \d+", weights), weights
+
+
 class TestColumnOptions:
     def test_column_option_is_checked_against_the_result(self, tmp_path: Path) -> None:
         template = "{#---\noptions:\n  by:\n    type: column\n---#}<g/>"
@@ -875,7 +894,7 @@ class TestDrawingBox:
             """The card's padded box (`dbt-box-inner`) and the body the template
             drew into, each as ``(x, y, height)``."""
             body = re.search(
-                r'<g transform="translate\(([\d.]+), ([\d.]+)\)">'
+                r'<g transform="translate\(([\d.]+), ([\d.]+)\)"[^>]*>'
                 r'<rect height="([\d.]+)"/>',
                 svg,
             )
@@ -920,7 +939,7 @@ class TestReviewRegressions:
             query_registry=result.query_registry,
         )
         # One chart's output fits; two do not.
-        with template_output_budget(600):
+        with template_output_budget(800):
             out = render(result.board, executor, format="svg")
         assert [d.code for d in out.chart_errors] == ["ERR-CUSTOM-RENDER"]
         assert "exceeded" in out.chart_errors[0].message

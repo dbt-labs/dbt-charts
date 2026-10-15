@@ -434,7 +434,7 @@ class TestEndpointLabelsHconcatEmitted:
         label pane hasn't been reserved from it yet) — wrapping the title
         against that width overstates how much room the title actually has,
         which is why a wide subtitle can floor the plot in the original bug
-        (ai_notes/chart-chrome-vs-plot-dimensions-2026-07-20.md, case B#1).
+        (ai_notes/charts/chart-chrome-vs-plot-dimensions-2026-07-20.md, case B#1).
         render_vega_spec must defer the wrap until after _correct_concat_overshoot
         has shrunk pane[0] to its real, chrome-aware width.
         """

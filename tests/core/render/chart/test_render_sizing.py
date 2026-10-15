@@ -412,7 +412,7 @@ class TestTitleLimit:
         convert ignores autosize:fit on hconcat children, so the label pane
         hasn't been reserved from it yet. Wrapping the title against that width
         would overstate the room it actually has (the ordering bug documented
-        in ai_notes/chart-chrome-vs-plot-dimensions-2026-07-20.md, case B#1).
+        in ai_notes/charts/chart-chrome-vs-plot-dimensions-2026-07-20.md, case B#1).
         render_vega_spec applies the wrap after correcting pane[0]'s width —
         see test_line_endpoint_labels.py::test_hconcat_title_limit_shrinks_after_pane_correction.
         """

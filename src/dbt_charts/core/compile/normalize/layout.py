@@ -27,6 +27,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     _BaseChartFields,
 )
 from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
 from dbt_charts.core.compile.models.primitives import HtmlPolicy, Regional
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -686,7 +687,9 @@ def _resolve_board_file_import(
         )
 
     # Convert raw YAML dict to AuthoredBoard; model_validate handles all nested models.
-    nested_board = AUTHORED_BOARD_ADAPTER.validate_python(board_data)
+    nested_board = AUTHORED_BOARD_ADAPTER.validate_python(
+        board_data, context=AUTHORED_INPUT
+    )
 
     # An imported file never reaches validate_board — it is loaded here, after
     # validation ran on the importing board. Its `theme:`/`extends:` is inert
@@ -902,7 +905,9 @@ def _resolve_tab_items(
             # Tab is a nested board. Pop TabItem-only fields not on AuthoredBoard,
             # then model_validate so style errors include the "style." loc prefix.
             tab_dict.pop("icon", None)
-            nested_board = AUTHORED_BOARD_ADAPTER.validate_python(tab_dict)
+            nested_board = AUTHORED_BOARD_ADAPTER.validate_python(
+                tab_dict, context=AUTHORED_INPUT
+            )
             tab_path = _tab_source_path(path_prefix, idx)
             compiled_nested = normalize_board(
                 nested_board,

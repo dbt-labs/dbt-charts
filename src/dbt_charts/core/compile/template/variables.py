@@ -99,7 +99,7 @@ _BOOL_TRUE = frozenset({"true", "1", "yes", "on"})
 _BOOL_FALSE = frozenset({"false", "0", "no", "off"})
 
 # The scalar runtime domain a single-value coercer may receive. Spelled out (not
-# `Any`/`object`) so the coercers stay typed for mypy without tripping the
+# `Any`/`object`) so the coercers stay typed for pyright without tripping the
 # dbt_charts/core type-state gate, which blocks both; broad enough that every
 # isinstance below is meaningful and the trailing type-error raise stays reachable.
 # Container inputs (daterange lists) are dispatched inline in the loop, not

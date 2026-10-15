@@ -59,7 +59,7 @@ def test_install_extension_installs_by_marketplace_id(tmp_path: Path) -> None:
 
     install_calls: list[list[str]] = []
 
-    def fake_run(cmd, **_kwargs):  # type: ignore[no-untyped-def]
+    def fake_run(cmd, **_kwargs):
         install_calls.append(list(cmd))
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
@@ -90,7 +90,7 @@ def test_install_extension_cursor_installs_by_marketplace_id(tmp_path: Path) -> 
 
     install_calls: list[list[str]] = []
 
-    def fake_run(cmd, **_kwargs):  # type: ignore[no-untyped-def]
+    def fake_run(cmd, **_kwargs):
         install_calls.append(list(cmd))
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 

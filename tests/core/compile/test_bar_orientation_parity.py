@@ -409,7 +409,7 @@ class TestClassifyToChannelTypeStrict:
 
     def test_year_shaped_measure_is_not_temporal(self) -> None:
         """The year-shape check is dimension/x-only — a measure column (e.g. a
-        scatter's y field) that happens to hold values in [1900, 2100] must
+        scatter's y field) that happens to hold values in [1700, 2100] must
         stay quantitative, never bake the band/temporal axis-style cascade.
         A measure is never a year."""
         from dbt_charts.core.compile.resolve.chart._channels import (

@@ -1,5 +1,7 @@
 """Tests for TrivialDuckDBCache: replace-on-write, truncation, failures."""
 
+import pytest
+
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure, CacheHit
 from dbt_charts.core.execute.duckdb_cache import (
     compute_query_hash,
@@ -110,6 +112,17 @@ class TestTruncatedReasonPersists:
             hit = cache.get(_SH, _QH, _VH)
             assert isinstance(hit, CacheHit)
             assert hit.truncated_reason is None
+        finally:
+            cache.close()
+
+    def test_unknown_stored_reason_raises_on_read(self) -> None:
+        cache = TrivialDuckDBCache()
+        try:
+            _put(cache, [{"v": 1}])
+            with cache._connection() as conn:
+                conn.execute("UPDATE _query_outcomes SET truncated_reason = 'oops'")
+            with pytest.raises(ValueError, match="truncated_reason.*'oops'"):
+                cache.get(_SH, _QH, _VH)
         finally:
             cache.close()
 

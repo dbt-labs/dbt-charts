@@ -538,7 +538,7 @@ class DuckDBAdapter(BaseAdapter):
         allow_external_access_in_readonly: bool = False,
         dbt_project_path: str | None = None,
         project: Project | None = None,
-    ):
+    ) -> None:
         """Initialize DuckDB adapter.
 
         Args:

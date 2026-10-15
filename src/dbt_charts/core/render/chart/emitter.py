@@ -30,7 +30,7 @@ ResolvedChartT = TypeVar("ResolvedChartT", bound=ResolvedChart)
 
 
 @runtime_checkable
-class ChartEmitter(Protocol[ResolvedChartT]):  # type: ignore[misc]  # mypy: generic runtime_checkable Protocol not supported
+class ChartEmitter(Protocol[ResolvedChartT]):
     """Protocol for a per-family chart emitter.
 
     An emitter translates a fully resolved chart model into a ``ChartSpec``

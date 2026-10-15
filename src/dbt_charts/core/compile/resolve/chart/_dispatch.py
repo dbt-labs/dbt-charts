@@ -77,6 +77,7 @@ def resolve(
     display_text: ChartDisplayText = None,
     filter_variables: frozenset[str] = frozenset(),
     x_date_range: tuple[date, date] | None = None,
+    title_width: float | None = None,
 ) -> ResolvedChart:
     """Dispatch a normalized chart → ResolvedChart.
 
@@ -108,6 +109,8 @@ def resolve(
             chart-level title decision shared by every placement of that chart.
         x_date_range: Calendar range the x column is proven filtered to; baked
             onto bar/line/area charts.
+        title_width: Card width for bar/line/area title typography when ``width`` is
+            the narrower spec width a support table leaves the plot; ``width`` when None.
 
     Returns:
         The matching ResolvedXxxChart instance with palette/dashes/channels populated.
@@ -125,6 +128,7 @@ def resolve(
             else float(chart_style_context.preferred_width)
         )
     )
+    effective_title_width = effective_width if title_width is None else title_width
     if isinstance(
         normalized,
         (AreaChart, BarChart, HeatmapChart, LineChart, ScatterChart, SparkBarChart),
@@ -138,6 +142,7 @@ def resolve(
                     partition(normalized.multiples, data),
                     chart_style_context,
                     effective_width,
+                    effective_title_width,
                     datasets,
                     automatic_link_candidate,
                     x_date_range,
@@ -158,6 +163,7 @@ def resolve(
                     partition(normalized.multiples, data),
                     chart_style_context,
                     effective_width,
+                    effective_title_width,
                     datasets,
                     automatic_link_candidate,
                     x_date_range,
@@ -169,6 +175,7 @@ def resolve(
                     partition(normalized.multiples, data),
                     chart_style_context,
                     effective_width,
+                    effective_title_width,
                     datasets,
                     automatic_link_candidate,
                     x_date_range,
@@ -264,8 +271,6 @@ def resolve(
                     automatic_link_candidate,
                     display_text,
                 )
-            case _:
-                raise ValueError(f"Unknown normalized chart type: {normalized.type!r}")
     except UnknownColorError as exc:
         # Every chart-local color token (style, layers, conditional_formatting)
         # resolves under one of these resolvers; naming the chart here keeps a

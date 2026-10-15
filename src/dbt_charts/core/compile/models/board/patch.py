@@ -20,9 +20,12 @@ from dbt_charts.core.compile.models.board.authored import (
     AuthoredBoard,
     desugar_theme,
 )
-from dbt_charts.core.compile.models.factories import build_patch_model_ext
+from dbt_charts.core.compile.models.factories import (
+    BoardPatchBase,
+    build_patch_model_ext,
+)
 
-BoardPatch = build_patch_model_ext(AuthoredBoard)
+BoardPatch = build_patch_model_ext(AuthoredBoard, base_cls=BoardPatchBase)
 
 # All-None sentinel: no fields set, safe as the identity element for merge_patches.
 EMPTY_PATCH: BoardPatch = BoardPatch.model_construct()  # type: ignore[valid-type]
@@ -32,5 +35,5 @@ EMPTY_PATCH: BoardPatch = BoardPatch.model_construct()  # type: ignore[valid-typ
 # SchemaSugar marker here -- BoardPatch is never schema-walked by introspection,
 # and a fragment validated through the bare BoardPatch class (e.g. a nested
 # item's own recursive field type) never sees a top-level `theme:` key.
-BoardPatchInput = Annotated[BoardPatch, BeforeValidator(desugar_theme)]  # type: ignore[valid-type]  # type-state: type_ignore — BoardPatch is a runtime-built class (build_patch_model_ext), not a static type expression; same shape as EMPTY_PATCH's annotation above
+BoardPatchInput = Annotated[BoardPatch, BeforeValidator(desugar_theme)]
 BOARD_PATCH_ADAPTER: TypeAdapter[BoardPatch] = TypeAdapter(BoardPatchInput)  # type: ignore[valid-type]  # type-state: type_ignore — BoardPatch is a runtime-built class (build_patch_model_ext), not a static type expression; same shape as EMPTY_PATCH's annotation above

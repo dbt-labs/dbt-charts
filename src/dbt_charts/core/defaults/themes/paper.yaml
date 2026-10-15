@@ -48,7 +48,7 @@ style:
         # roles preserve the intended hues if the family is reordered again.
         single_series_palette: [category.brown.deep, category.gold.deep, category.orange.deep]
     # bar.border.color now tracks theme.background via self-reference at the
-    # structural-root level (see stark.yaml), so the cream knockout
+    # structural-root level (see _base.yaml), so the cream knockout
     # falls out of theme.background = cream-025 automatically. No explicit
     # override needed here.
     marks:

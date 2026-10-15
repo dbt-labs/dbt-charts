@@ -1,0 +1,3 @@
+kind: Fixes
+body: Nested boards now inherit the parent's frame, layout gaps and gap whether or not they set their own style.
+time: 2026-10-14T17:07:45.990323-07:00

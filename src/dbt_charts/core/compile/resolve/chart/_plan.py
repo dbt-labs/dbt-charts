@@ -142,8 +142,10 @@ def plan_cartesian(
     family-supplied rather than read off ``normalized`` here: heatmap
     hardcodes both channel types to "nominal" instead of classifying the
     data, and histogram passes ``multiples=None, y=None`` regardless of what
-    its (reused ``BarChart``-typed) ``normalized.multiples``/``.y`` carry —
-    both are family decisions, not branches inside this function.
+    its (reused ``BarChart``-typed) ``normalized.multiples``/``.y`` carry, and
+    bar passes them as ``None`` too because its mirror default depends on
+    orientation, resolved afterward — all are family decisions, not branches
+    inside this function.
 
     ``has_quantitative_axis`` is likewise family-supplied: heatmap passes
     False because both its axes are nominal, so its style patch structurally

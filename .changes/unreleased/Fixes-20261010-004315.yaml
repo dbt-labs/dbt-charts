@@ -1,3 +1,0 @@
-kind: Fixes
-body: Re-aggregation warnings now cover boards whose SQL uses ref() or source().
-time: 2026-10-10T00:43:15.691228-07:00

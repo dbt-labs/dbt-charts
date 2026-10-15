@@ -42,15 +42,10 @@ dev = [
     "openai>=1.0.0",  # OpenAI client construction tests
     "ruff>=0.16.10",  # Static-rule tests invoke Ruff directly
     "pymdown-extensions>=10.0",  # Markdown superfence integration tests
-    # >=1.17: earlier releases silently drop extra_checks, disable_error_code,
-    # and several enable_error_code entries below (exhaustive-match needs
-    # 1.17+ specifically) rather than erroring, so a looser floor would pass
-    # green while checking less than this config says it does.
-    "mypy>=1.17",  # Type checking (see [tool.mypy] below)
     "types-pyyaml>=6.0",  # Type stubs for PyYAML (core/utils.py, core/compile/parse/source_map.py)
     "tach==0.35.3",  # Import-boundary enforcement; see tach.toml. Matches the root pin.
     "vulture>=2.16",  # Dead-code finder; see [tool.vulture] below. Matches the root pin.
-    "pyright==1.1.414",  # CI gate on rules mypy structurally can't catch; see oss/pyrightconfig.json. Matches the root pin.
+    "pyright==1.1.414",  # Type checker; see oss/pyrightconfig.json. Matches the root pin.
 ]
 
 [project]
@@ -286,18 +281,9 @@ markers = [
 # is a published [project] bound instead, see plotext above). uv only honors
 # constraint-dependencies from the workspace root, so these entries protect
 # the standalone export, where dbt-charts is its own root. The root
-# pyproject.toml carries the same numpy/openai ceilings for the
+# pyproject.toml carries the same openai ceiling for the
 # monorepo's shared lock.
 constraint-dependencies = [
-    # Transitive only (duckdb's stub surface pulls it in) — no direct
-    # import in src/dbt_charts needs it. numpy>=2.5 ships __init__.pyi with
-    # unconditional PEP 695 `type` statements, which mypy cannot parse
-    # under python_version = "3.11" (that syntax needs 3.12+ regardless of
-    # the *running* interpreter) — dying before it checks a single file.
-    # Capped at the last release before that stub change so `[tool.mypy]`
-    # below can target 3.11 without vendoring a numpy pin the rest of the
-    # dependency tree doesn't otherwise need.
-    "numpy<2.5",
     # openai>=3 swapped its HTTP transport from httpx to the separate httpx2
     # fork, so its exception constructors (APITimeoutError, RateLimitError, …)
     # now type their request/response params as httpx2.Request/Response. The
@@ -481,53 +467,3 @@ allowed_external_imports = [
 #   `msgpack` — used by `mashumaro` inside `dbt-adapters`' manifest
 #       serializer (cache load/store path). Removing it breaks dbt builds.
 transitively_required_dependencies = ["msgpack"]
-
-[tool.mypy]
-python_version = "3.11"
-# Hand stubs for libraries that ship none (nanoarrow); relative to this file so
-# mypy finds them from any working directory.
-mypy_path = "$MYPY_CONFIG_FILE_DIR/typings"
-namespace_packages = true
-warn_return_any = false
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-ignore_missing_imports = true
-no_implicit_optional = true
-strict_equality = true
-warn_unused_ignores = true
-extra_checks = true
-disallow_untyped_calls = true
-warn_unreachable = true
-disallow_any_unimported = true
-disable_error_code = ["import-untyped"]
-enable_error_code = [
-    "truthy-bool",
-    "redundant-expr",
-    "possibly-undefined",
-    "redundant-self",
-    "unused-awaitable",
-    "narrowed-type-not-subtype",
-    "deprecated",
-    "unimported-reveal",
-    "exhaustive-match",
-    "ignore-without-code",
-]
-exclude = ["tests/"]
-
-# Modules that interact with untyped third-party libraries (pygments, dbt_charts_super_schema)
-# have no stubs available; suppress disallow_any_unimported only where unavoidable.
-[[tool.mypy.overrides]]
-module = [
-    "dbt_charts.integrations.highlighting",
-    "dbt_charts.core.inspect.resolver",
-    "dbt_charts.core.inspect.cache_factory",
-    "dbt_charts.core.execute.cache_backend",
-]
-disallow_any_unimported = false
-
-# trino.dbapi ships no annotations on connect().
-[[tool.mypy.overrides]]
-module = ["dbt_charts.core.execute.drivers.trino"]
-disallow_untyped_calls = false

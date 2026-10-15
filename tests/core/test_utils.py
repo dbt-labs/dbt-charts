@@ -35,8 +35,8 @@ class TestIsYearShaped:
         assert is_year_shaped([100, 200, 300]) is False
 
     def test_year_boundaries_inclusive(self) -> None:
-        assert is_year_shaped([1900, 2100]) is True
-        assert is_year_shaped([1899]) is False
+        assert is_year_shaped([1700, 2100]) is True
+        assert is_year_shaped([1699]) is False
         assert is_year_shaped([2101]) is False
 
     def test_mixed_year_and_non_year_not_year(self) -> None:

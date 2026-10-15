@@ -3,7 +3,8 @@
 //! per-panel renders into one faceted card without a
 //! second reading of Vega's own `gridLayout`/`layoutHeaders`
 //! closed-form reduction. `bar.rs::render_facet` and `line.rs::render_facet`
-//! now do exactly two things: refuse the shapes their own arm doesn't
+//! now do exactly two things: refuse
+//! the shapes their own arm doesn't
 //! model, then hand this module a `render_pass` closure (their own
 //! per-panel renderer, called once per `(panel_w, panel_h)` probe) plus a
 //! `FacetSpec` describing the facet's own shape (row/column axis counts,
@@ -73,13 +74,14 @@
 //! callback for `layoutHeaders`'s column-footer pass, `grid.js:268`) —
 //! never a per-column value, despite painting once per column.
 
+use crate::diagnostic::Diagnostic;
 use std::fmt::Write as _;
 
 use serde_json::Value;
 
 use crate::common::AxisStyle;
 use crate::families::bar::{BandXAxis, ContinuousXAxis};
-use crate::families::legend::VEGA_LEGEND_OFFSET;
+use crate::families::legend::{stack_legends, VEGA_LEGEND_OFFSET};
 use crate::families::facet_layout;
 use crate::families::heatmap::AXIS_TRANSLATE;
 use crate::families::heatmap_facet::HeatmapXAxis;
@@ -120,9 +122,19 @@ impl PanelXAxis {
         }
     }
 
+    /// The reach of a rotated label column below the plot, which no painted
+    /// `y` attribute carries.
+    fn rotated_footer_reach(&self) -> Option<f64> {
+        match self {
+            PanelXAxis::Band(x) => x.rotated_footer_reach(),
+            PanelXAxis::Heat(x) => x.rotated_footer_reach(),
+            PanelXAxis::Continuous(_) | PanelXAxis::Line(_) | PanelXAxis::Temporal(_) => None,
+        }
+    }
+
     /// Paints at the CALLER's own `plot_left`/`plot_w`/`plot_bottom` — the
     /// facet composite's own footer-band geometry, not the panel's own.
-    pub(crate) fn paint(&self, svg: &mut String, ax_x: &AxisStyle, plot_left: f64, plot_w: f64, plot_bottom: f64) {
+    pub(crate) fn paint(&self, svg: &mut String, ax_x: &AxisStyle, plot_left: f64, plot_w: f64, plot_bottom: f64) -> Result<(), String> {
         match self {
             PanelXAxis::Band(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom),
             PanelXAxis::Continuous(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom),
@@ -250,8 +262,8 @@ pub(crate) struct PanelGeometry {
     /// must not let a stale call's overhang survive into the next one's
     /// measurement).
     pub(crate) top_axis_overhang: f64,
-    /// `None` on an arm with no color legend; every panel of a colored bar
-    /// facet carries the same one, and the family lifts panel 0's into the
+    /// `None` on an arm with no color legend; every panel of a colored bar or
+    /// line facet carries the same one, and the family lifts panel 0's into the
     /// composite's `LegendChrome`.
     pub(crate) legend: Option<FacetLegend>,
 }
@@ -304,6 +316,13 @@ pub(crate) struct FacetSpec<'a> {
     pub(crate) row_axis_idx: Option<usize>,
     pub(crate) col_axis_idx: Option<usize>,
     pub(crate) has_mirror: bool,
+    /// Every panel draws its own x axis inside its cell and no shared
+    /// `column-footer` exists (a narrowed x domain): `gridLayout` then runs
+    /// `align: none` across the columns.
+    pub(crate) cell_x_axis: bool,
+    /// What each panel's own y axis costs the flat per-panel width guess
+    /// (`facet_extra_axis_width_px`): `0.0` while the value axis is shared.
+    pub(crate) extra_axis_px: f64,
     pub(crate) axis_x: &'a AxisStyle,
     /// The value axis's tick style: the mirror ghost copies the primary's
     /// marks (`mirror_axis.py` keeps `ticks`/`tickSize`).
@@ -340,17 +359,15 @@ pub(crate) struct FacetSpec<'a> {
 /// with a spy that records its own probe/target/corrected floats while
 /// rendering each board through the real production pipeline.
 ///
-/// Unlike production, a corrected extent that lands non-positive is not
-/// silently skipped here (production's own docstring: "A shrink that would
-/// leave a panel non-positive is skipped rather than raised... the card
-/// boundary still wins, this correction just gets it closer") — this
-/// composer's every other collapse guard (`panel_w`, the old closed-form
-/// `child_height`) already returns `Err` rather than ship a silently
-/// unfixed too-small panel, and this correction keeps that same convention:
-/// the caller checks `child_height <= 0.0` itself and refuses.
+/// Like production, a shrink that would leave the panel non-positive is
+/// skipped rather than raised: the naive extent stays and the card boundary
+/// still wins.
 fn correct_facet_child_extent(naive: f64, probed_composite: f64, target: f64, panel_count: usize) -> f64 {
     let overshoot = probed_composite - target;
-    if overshoot > 0.0 { naive - overshoot / panel_count as f64 } else { naive }
+    // A shrink that would leave the panel non-positive is skipped, not raised
+    // (`_correct_facet_overshoot`): the card boundary still wins.
+    let corrected = naive - overshoot / panel_count as f64;
+    if overshoot > 0.0 && corrected > 0.0 { corrected } else { naive }
 }
 
 /// Composes N panels (one `render_pass(pw, ph, row_footer_overhang)` call
@@ -383,7 +400,7 @@ fn correct_facet_child_extent(naive: f64, probed_composite: f64, target: f64, pa
 /// to the ink fold that reserves canvas width for it; a multi-column
 /// facet's `composite_axis_reserve` already reserves that width at the
 /// composer level, so it takes no ink change — only the anchor moves.
-type RenderPass<'a> = dyn Fn(f64, f64, f64) -> Result<Vec<(String, PanelGeometry)>, String> + 'a;
+type RenderPass<'a> = dyn Fn(f64, f64, f64) -> Result<Vec<(String, PanelGeometry)>, Diagnostic> + 'a;
 
 /// A shared category axis drawn once per grid row in the `row_header` role,
 /// left of column 0 (a band y axis every panel shares). Each row's panel
@@ -401,26 +418,73 @@ pub(crate) struct RowAxisSpec {
 /// plus a paint closure handed the absolute origin of its group.
 pub(crate) struct FacetChrome<'a> {
     pub(crate) title: Option<TitleChrome<'a>>,
-    pub(crate) legend: Option<LegendChrome<'a>>,
+    /// Same-edge legends stack in this order (`FacetChrome::stack`).
+    pub(crate) legends: Vec<LegendChrome<'a>>,
 }
 
 pub(crate) struct TitleChrome<'a> {
     pub(crate) ink: vega_fit::TitleInk,
-    /// A title row Vega cut to its native `limit`: the view then reserves that
-    /// limit exactly, which `ink.width` (the measured string) does not
-    /// reproduce, so the composite refuses to widen for it.
-    pub(crate) truncated: bool,
     pub(crate) paint: Box<dyn Fn(&mut String, f64, f64) + 'a>,
 }
 
+/// The edge a facet's legend sits on: above the grid, or beside the whole
+/// view (left of every header, right of the value axis), top-aligned with it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LegendEdge {
+    Top,
+    Left,
+    Right,
+    /// `orient: top-left`: inside the frame at `(offset, offset)`, reserving nothing.
+    TopLeftInside,
+}
+
+/// Where a facet's color legend sits, from its resolved position: a side edge
+/// beside the view, the top above the grid, or the top-left floating corner.
+/// Every other placement has no composite law.
+pub(crate) fn facet_legend_edge(
+    family: &str,
+    position: &crate::families::legend::LegendPosition,
+) -> Result<LegendEdge, String> {
+    use crate::families::legend::LegendAlign;
+    match (position.edge.as_str(), position.overlay) {
+        ("top", true) if position.align == LegendAlign::Start => Ok(LegendEdge::TopLeftInside),
+        (_, true) => Err(format!("{family}: multiples with a floating legend not supported — only the top-left corner")),
+        ("top", false) => Ok(LegendEdge::Top),
+        ("left", false) => Ok(LegendEdge::Left),
+        ("right", false) => Ok(LegendEdge::Right),
+        (edge, false) => {
+            Err(format!("{family}: multiples with legend.position {edge:?} not supported — only top, left or right"))
+        }
+    }
+}
+
 pub(crate) struct LegendChrome<'a> {
-    /// The legend's width beside a unit `panel_w` wide: a gradient legend is
-    /// as long as the unit (clamped), a symbol legend ignores it.
-    pub(crate) width: Box<dyn Fn(f64) -> f64 + 'a>,
-    pub(crate) height: f64,
+    pub(crate) edge: LegendEdge,
+    /// The legend's width beside a unit `panel_w` x `panel_h`: a gradient
+    /// legend is as long as the unit (clamped), so its labels, and a vertical
+    /// one's width, follow it; a symbol legend ignores both.
+    pub(crate) width: Box<dyn Fn(f64, f64) -> f64 + 'a>,
+    /// The legend's height beside a unit `panel_h` tall: only a vertical
+    /// gradient legend depends on it.
+    pub(crate) height: Box<dyn Fn(f64) -> f64 + 'a>,
     /// Paints at the absolute `(x, y)` of the legend group, beside a unit
-    /// `panel_w` wide.
-    pub(crate) paint: Box<dyn Fn(&mut String, f64, f64, f64) + 'a>,
+    /// `panel_w` wide and `panel_h` tall.
+    pub(crate) paint: Box<dyn Fn(&mut String, f64, f64, f64, f64) + 'a>,
+}
+
+impl FacetChrome<'_> {
+    /// The legends on `edge`, each `VEGA_LEGEND_GROUP_MARGIN` past the last:
+    /// beside a unit `panel_w` x `panel_h`, their offsets along the stack (x
+    /// for a top stack, y for a side one) and the stack's `(width, height)`.
+    fn stack(&self, edge: LegendEdge, panel_w: f64, panel_h: f64) -> (Vec<f64>, (f64, f64)) {
+        let blocks: Vec<(f64, f64)> = self
+            .legends
+            .iter()
+            .filter(|l| l.edge == edge)
+            .map(|l| ((l.width)(panel_w, panel_h), (l.height)(panel_h)))
+            .collect();
+        stack_legends(&blocks, matches!(edge, LegendEdge::Top | LegendEdge::TopLeftInside))
+    }
 }
 
 /// Where the composite's top-anchored chrome lands, in the frame's own
@@ -428,6 +492,9 @@ pub(crate) struct LegendChrome<'a> {
 /// that holds it.
 struct ChromeStack {
     margin_top: f64,
+    /// How far the frame's own content reaches above its origin: a side
+    /// legend aligns to it.
+    frame_top: f64,
     legend_y: f64,
     title_y: f64,
 }
@@ -438,19 +505,20 @@ struct ChromeStack {
 /// `title.offset` above everything before it (`layout/title.js`, `case Top`);
 /// the view's top margin is `ceil(−viewBounds.y1)` (`viewSizeLayout`).
 /// `frame_top` is how far the frame's own content reaches above its origin.
-fn stack_chrome_above(frame_top: f64, chrome: Option<&FacetChrome>) -> ChromeStack {
+fn stack_chrome_above(frame_top: f64, chrome: Option<&FacetChrome>, panel_h: f64) -> ChromeStack {
     let mut y1 = -frame_top;
     let mut legend_y = 0.0;
     let mut title_y = 0.0;
-    if let Some(legend) = chrome.and_then(|c| c.legend.as_ref()) {
-        legend_y = y1.floor() - VEGA_LEGEND_OFFSET - legend.height;
+    if let Some(chrome) = chrome.filter(|c| c.legends.iter().any(|l| l.edge == LegendEdge::Top)) {
+        let (_, (_, height)) = chrome.stack(LegendEdge::Top, 0.0, panel_h);
+        legend_y = y1.floor() - VEGA_LEGEND_OFFSET - height;
         y1 = y1.min(legend_y);
     }
     if let Some(title) = chrome.and_then(|c| c.title.as_ref()) {
         title_y = y1 - title.ink.ink_h - title.ink.offset;
         y1 = y1.min(title_y + title.ink.dy_quirk);
     }
-    ChromeStack { margin_top: (-y1).max(0.0).ceil(), legend_y, title_y }
+    ChromeStack { margin_top: (-y1).max(0.0).ceil(), frame_top, legend_y, title_y }
 }
 
 /// Composes the facet against `payload.height` as the box the chart must
@@ -472,7 +540,7 @@ pub(crate) fn compose_facet_with_chrome(
     spec: &FacetSpec,
     chrome: Option<&FacetChrome>,
     render_pass: &RenderPass,
-) -> Result<String, String> {
+) -> Result<String, Diagnostic> {
     compose_facet_full(payload, fonts, spec, chrome, None, render_pass)
 }
 
@@ -484,9 +552,9 @@ pub(crate) fn compose_facet_full(
     chrome: Option<&FacetChrome>,
     row_axis: Option<&RowAxisSpec>,
     render_pass: &RenderPass,
-) -> Result<String, String> {
+) -> Result<String, Diagnostic> {
     if spec.has_mirror && row_axis.is_some() {
-        return Err(format!("{}: a mirrored value axis and a shared row axis cannot share the row header", spec.family));
+        return Err(format!("{}: a mirrored value axis and a shared row axis cannot share the row header", spec.family).into());
     }
     const SIZING_CLAMP_PX: f64 = 2.0;
     const MAX_SOLVES: usize = 24;
@@ -509,7 +577,7 @@ pub(crate) fn compose_facet_full(
     Err(format!(
         "{}: no estimate within {MAX_SOLVES}px below the {} box lands the composite canvas on it (last {canvas_h})",
         spec.family, payload.height
-    ))
+    ).into())
 }
 
 /// One probe-correct-render pass against `payload.height`; returns the
@@ -521,25 +589,24 @@ fn compose_facet_at(
     chrome: Option<&FacetChrome>,
     row_axis: Option<&RowAxisSpec>,
     render_pass: &RenderPass,
-) -> Result<(String, f64), String> {
+) -> Result<(String, f64), Diagnostic> {
     let panel_cols_n = spec.panel_cols_n;
     let panel_rows_n = spec.panel_rows_n;
     let has_mirror = spec.has_mirror;
     let bg = spec.background;
 
     // `extra_axis_px` (facet_extra_axis_width_px) budgets a narrowed per-panel
-    // axis forced by `facet_independent_channels` — unreached here: x is
-    // always shared for a rows/columns facet (nothing narrows it to a
-    // per-panel subset), so `0.0` is the correct input, not an unmodeled
-    // gap. This is only an INITIAL guess for the probe below —
+    // axis forced by `facet_independent_channels`. This is only an INITIAL
+    // guess for the probe below —
     // `facet_panel_width`'s own flat `FACET_CHROME_PX` doesn't know whether
     // the shared value axis carries a title, so it is replaced with a
     // measured value before any panel is drawn for real.
-    let panel_w_guess = multiples::facet_panel_width(payload.width, panel_cols_n, has_mirror, 0.0);
+    let panel_w_guess = multiples::facet_panel_width(payload.width, panel_cols_n, has_mirror, spec.extra_axis_px);
     let panel_h_guess = if payload.height > 0.0 { payload.height / panel_rows_n as f64 } else { 0.0 };
     if panel_w_guess <= 0.0 || panel_h_guess <= 0.0 {
-        return Err(format!("{}: panel width/height collapsed to zero or below — the card is too small for this many panels", spec.family));
+        return Err(format!("{}: panel width/height collapsed to zero or below — the card is too small for this many panels", spec.family).into());
     }
+    multiples::warn_panel_below_minimum(payload.chart_id()?, panel_cols_n, panel_w_guess);
 
     // `multiples.scale: "shared"` computes the measure domain off the
     // WHOLE chart's rows; `render_pass` itself already closed over that
@@ -555,10 +622,16 @@ fn compose_facet_at(
     // `ceil(cell x2)` like the final render's: the marks' own right reach
     // (unknown until a first render measures it) is part of the width the
     // width correction reads.
+    // A panel that draws its own x axis reaches right as far as that axis's
+    // ink, the last label's overhang included, not just its marks.
+    let right_reach = |panels: &[(String, PanelGeometry)], plot_w: f64| -> f64 {
+        let g = &panels[if spec.cell_x_axis { panels.len() - 1 } else { 0 }].1;
+        if spec.cell_x_axis { (g.ink.x2 - g.left_mark_overhang - plot_w).max(0.0) } else { g.raw_right_reach }
+    };
     let probe = render_pass(
         panel_w_guess,
         panel_h_guess,
-        (panel_w_guess + unanchored_probe[0].1.raw_right_reach).ceil() - panel_w_guess,
+        (panel_w_guess + right_reach(&unanchored_probe, panel_w_guess)).ceil() - panel_w_guess,
     )?;
 
     // Real Vega's `gridLayout` (`grid.js`) feeds each cell's own REAL,
@@ -572,7 +645,7 @@ fn compose_facet_at(
     // its own former call site below: `margin_top`/`probe_margin_top`
     // (just below) need this SAME grid union too, to read the topmost
     // row's own upward-reaching ink from every column, not just column 0.
-    let grid_opt = facet_layout::GridOpt { padding: 20.0, columns: panel_cols_n };
+    let grid_opt = facet_layout::GridOpt { padding: 20.0, columns: panel_cols_n, align_none: spec.cell_x_axis };
     // Vega lays out a cell in its own frame, whose origin is the plot's: the
     // panel canvas starts `left_mark_overhang` left of it.
     let cell_for = |g: &PanelGeometry| {
@@ -677,11 +750,12 @@ fn compose_facet_at(
     // just column 0's — the SAME union, never a second, separately-
     // computed term: reading it here is the ONLY place that ink is
     // counted toward the composite's own top margin.
-    let probe_margin_top = stack_chrome_above(
+    let probe_stack = stack_chrome_above(
         header_band.max(probe[0].1.top_axis_overhang).max((-probe_bounds.y1).max(0.0)),
         chrome,
-    )
-    .margin_top;
+        panel_h_guess,
+    );
+    let probe_margin_top = probe_stack.margin_top;
     // `axis_y.mirror`'s ghost copy: `packages/vega-view-transforms`'
     // axis-label encoder positions BOTH the primary and the ghost's own
     // anchor at `sign*(tickSize + labelPadding)`, identical config on both
@@ -715,12 +789,15 @@ fn compose_facet_at(
     // on the shared band x-scale (never the per-panel value domain), so
     // it is uniform across every panel regardless of `multiples.scale`,
     // and `probe[0]`'s own measurement stands for the composite.
-    let left_mark_overhang = probe[0].1.left_mark_overhang;
+    // The widest left ink over the column-0 panels: each row's plot sits at
+    // the shared origin, so the row header clears the widest of them.
+    let left_mark_overhang =
+        probe.iter().step_by(panel_cols_n).map(|(_, g)| g.left_mark_overhang).fold(0.0_f64, f64::max);
     // See `PanelGeometry.raw_right_reach`'s own doc comment — the UNCEILED
     // twin of `left_mark_overhang`, read the same way (uniform across
     // every panel for the same band-x-scale reason, so `probe[0]`'s own
     // measurement stands for the composite).
-    let raw_right_reach = probe[0].1.raw_right_reach;
+    let raw_right_reach = right_reach(&probe, panel_w_guess);
     // A row facet's own row-header role holds the row's own facet-value
     // title (e.g. "East"/"West"), the ghost axis when mirrored, and
     // `left_mark_overhang` — every panel's own plot-origin gap from its
@@ -755,7 +832,20 @@ fn compose_facet_at(
         row_header_offset
     }
     .max(footer_left_reach);
-    let margin_left = frame_left_extent.ceil();
+    // A side legend sits `VEGA_LEGEND_OFFSET` outside the view's bounds
+    // (`layout/legend.js`), widening the view on its own side.
+    let side_w = |edge: LegendEdge| -> f64 {
+        chrome
+            .into_iter()
+            .flat_map(|c| c.legends.iter())
+            .filter(|l| l.edge == edge)
+            .map(|l| VEGA_LEGEND_OFFSET + (l.width)(panel_w_guess, panel_h_guess).ceil())
+            .fold(0.0, f64::max)
+    };
+    let left_legend_w = side_w(LegendEdge::Left);
+    let right_legend_w = side_w(LegendEdge::Right);
+    let view_left = frame_left_extent + left_legend_w;
+    let margin_left = view_left.ceil();
     // `grid_opt` is defined early, above (needed there by `margin_top`/
     // `probe_margin_top` too) — reused here verbatim.
     // A multi-column row's own axis gutter is NOT folded into any column's
@@ -776,8 +866,8 @@ fn compose_facet_at(
         match chrome {
             None => grid_canvas_w,
             Some(chrome) => {
-                let title_right = chrome.title.as_ref().map_or(0.0, |t| (t.ink.width - frame_left_extent).ceil());
-                let legend_right = chrome.legend.as_ref().map_or(0.0, |l| (l.width)(panel_w).ceil());
+                let title_right = chrome.title.as_ref().map_or(0.0, |t| (t.ink.width - view_left).ceil());
+                let legend_right = chrome.stack(LegendEdge::Top, panel_w, panel_h_guess).1 .0.ceil();
                 grid_canvas_w.max(frame_origin_x + title_right.max(legend_right) + pad_r)
             }
         }
@@ -792,14 +882,12 @@ fn compose_facet_at(
         let probed_canvas_w = widen_for_chrome(
             pad_l + margin_left - left_mark_overhang
                 + (probe_bounds.x2 - probe_bounds.x1 + composite_axis_reserve)
+                + right_legend_w
                 + pad_r,
             panel_w_guess,
         );
         correct_facet_child_extent(panel_w_guess, probed_canvas_w, payload.width, panel_cols_n)
     };
-    if panel_w <= 0.0 {
-        return Err(format!("{}: panel width collapsed to zero or below after reserving the row-header column and the shared value axis", spec.family));
-    }
 
     // How far below its own `plot_bottom` the shared footer axis paints
     // (tick + label + title) — measured from a real render rather than
@@ -807,13 +895,15 @@ fn compose_facet_at(
     // reserve this or the footer's own labels paint past the declared card
     // height.
     let mut footer_probe = String::new();
+    if !spec.cell_x_axis {
     probe.last().expect("panels is non-empty (checked by the caller)").1.axis.paint(
         &mut footer_probe,
         spec.axis_x,
         0.0,
         panel_w,
         0.0,
-    );
+    )?;
+    }
     // `max_y_attr` reads the label text's own drawn `y` attribute, which is
     // its "top"-anchored BASELINE, not the bottom of its own glyph box —
     // `vega_fit::text_ink`'s box law puts that box's own bottom edge
@@ -821,10 +911,21 @@ fn compose_facet_at(
     // facet ledger for the live scenegraph probe this correction is built
     // from).
     let x_label_fs = spec.axis_x.labels.font.size_or(11.0);
+    // Without labels the axis bounds end at the tick rule's own stroke edge.
+    let label_descent = if spec.axis_x.labels.visible == Some(false) {
+        spec.axis_x.ticks.width.unwrap_or(1.0) / 2.0
+    } else {
+        x_label_fs - (0.8 * x_label_fs).round()
+    };
     // The axis group is drawn `AXIS_TRANSLATE` past its layout position, but its
     // bounds are translated by `x`/`y` alone (`vega-view-transforms/src/layout/
     // axis.js:77`), so the measured reach drops that half pixel for every arm.
-    let footer_reach = max_y_attr(&footer_probe) + (x_label_fs - (0.8 * x_label_fs).round()) - AXIS_TRANSLATE;
+    let footer_reach = if spec.cell_x_axis {
+        0.0
+    } else {
+        (max_y_attr(&footer_probe) + label_descent - AXIS_TRANSLATE)
+            .max(probe[0].1.axis.rotated_footer_reach().unwrap_or(0.0))
+    };
 
     // Vega's own view-level `autosize: {type: "pad"}` arithmetic
     // (`vega_fit::pad_plot`'s law, ported here for the facet composite):
@@ -845,8 +946,25 @@ fn compose_facet_at(
     // widened every rows-only canvas by exactly `left_mark_overhang` (03:
     // 597 vs the reference's 595; 02: 564 vs 561, the extra pixel there the
     // ledger's own pre-existing font-measurement epsilon).
-    let canvas_for = |content_w: f64, content_h: f64, margin_top: f64| -> (f64, f64) {
-        (pad_l + margin_left - left_mark_overhang + content_w + pad_r, pad_t + margin_top + content_h + pad_b)
+    // The shared footer sits at `ceil` of the last row's ink bottom
+    // (`grid.js:13`'s `agg`), so its own reach starts from a whole pixel.
+    let footer_bottom = |y2: f64| if footer_reach > 0.0 { y2.ceil() } else { y2 };
+    // A side legend hangs from the view's top, so a legend taller than the
+    // grid and its footer stretches the view down to its own bottom.
+    let side_legend_bottom = |panel_h: f64, frame_top: f64| -> f64 {
+        chrome.map_or(0.0, |c| {
+            [LegendEdge::Left, LegendEdge::Right]
+                .into_iter()
+                .filter(|&edge| c.legends.iter().any(|l| l.edge == edge))
+                .map(|edge| c.stack(edge, panel_w_guess, panel_h).1 .1 - frame_top)
+                .fold(0.0, f64::max)
+        })
+    };
+    let canvas_for = |content_w: f64, content_h: f64, margin_top: f64, legend_bottom: f64| -> (f64, f64) {
+        (
+            pad_l + margin_left - left_mark_overhang + content_w + right_legend_w + pad_r,
+            pad_t + margin_top + content_h.max(legend_bottom) + pad_b,
+        )
     };
     // A panel's own SVG canvas starts `left_mark_overhang` LEFT of its own
     // plot — `render_pass`'s per-panel callee bakes that margin in (`pad:
@@ -875,7 +993,10 @@ fn compose_facet_at(
     // names. `header_right_edge` needs no matching
     // change, since it reads no `dx` (a row header's own reserve is already a
     // fixed offset from `pad_l`, independent of any panel).
-    let canvas_x = |dx: f64| -> f64 { pad_l + margin_left + dx - left_mark_overhang };
+    let plot_x = |dx: f64| -> f64 { pad_l + margin_left + dx };
+    let canvas_x = |dx: f64, g: &PanelGeometry| -> f64 {
+        plot_x(dx) - g.left_mark_overhang
+    };
 
     // `cell_for`/`grid_opt` are defined early, above (needed there by
     // `margin_top`/`probe_margin_top` too) — reused here verbatim, never
@@ -928,8 +1049,9 @@ fn compose_facet_at(
     // second, hand-derived formula.
     let (_, probed_canvas_h) = canvas_for(
         probe_bounds.x2 - probe_bounds.x1 + composite_axis_reserve,
-        probe_bounds.y2 - probe_bounds.y1.max(0.0) + footer_reach,
+        footer_bottom(probe_bounds.y2) - probe_bounds.y1.max(0.0) + footer_reach,
         probe_margin_top,
+        side_legend_bottom(panel_h_guess, probe_stack.frame_top),
     );
     // Production's own probe height (`probe["height"]`, `vlc.
     // vegalite_to_scenegraph`) is Vega's own integer VIEW height —
@@ -941,9 +1063,6 @@ fn compose_facet_at(
     // here to reproduce that same integer quantity, mirroring the `.ceil()`
     // the real final canvas already applies below.
     let child_height = correct_facet_child_extent(panel_h_guess, probed_canvas_h.ceil(), payload.height, panel_rows_n);
-    if child_height <= 0.0 {
-        return Err(format!("{}: panel height collapsed to zero or below after correcting for the composite's own measured overshoot", spec.family));
-    }
 
     // `row_footer`'s own `ceil(cell x2)` anchor (`grid.js:262`, `:13`)
     // applies at every column count — `layoutHeaders`'s `start = ncols-1,
@@ -984,18 +1103,17 @@ fn compose_facet_at(
     let chrome_stack = stack_chrome_above(
         header_band.max(final_panels[0].1.top_axis_overhang).max((-bounds.y1).max(0.0)),
         chrome,
+        child_height,
     );
     let margin_top = chrome_stack.margin_top;
     let (canvas_w, canvas_h) = canvas_for(
         bounds.x2 - bounds.x1 + composite_axis_reserve,
-        bounds.y2 - bounds.y1.max(0.0) + footer_reach,
+        footer_bottom(bounds.y2) - bounds.y1.max(0.0) + footer_reach,
         margin_top,
+        side_legend_bottom(child_height, chrome_stack.frame_top),
     );
-    if let Some(title) = chrome.and_then(|c| c.title.as_ref()).filter(|t| t.truncated) {
-        if frame_origin_x - frame_left_extent + title.ink.width > canvas_w.ceil() - pad_r {
-            return Err(format!("{}: multiples with a truncated title wider than the panel grid not supported", spec.family));
-        }
-    }
+    // A side legend anchors to the grid, not to a canvas a wide title widened.
+    let grid_canvas_w = canvas_w;
     let canvas_w = widen_for_chrome(canvas_w, panel_w);
     let canvas_h = canvas_h.ceil();
 
@@ -1019,7 +1137,7 @@ fn compose_facet_at(
         let header_top = pad_t + margin_top - COLUMN_HEADER_BAND_HEIGHT;
         for col_i in 0..panel_cols_n {
             let (dx, _) = offsets[col_i];
-            let text_x = canvas_x(dx) + left_mark_overhang + panel_w / 2.0;
+            let text_x = plot_x(dx) + panel_w / 2.0;
             let text_y = header_top + vega_fit::baseline_shift("top", HEADER_FONT_SIZE);
             crate::contract::facet_header_open(&mut svg, &col_labels[col_i]);
             let _ = write!(
@@ -1045,13 +1163,13 @@ fn compose_facet_at(
         for row_i in 0..panel_rows_n {
             let panel_idx = row_i * panel_cols_n;
             let (dx, dy) = offsets[panel_idx];
-            let ghost_x = canvas_x(dx) - primary_reserve;
             let geom = &final_panels[panel_idx].1;
+            let ghost_x = canvas_x(dx, geom) - primary_reserve;
             let style = geom
                 .mirror_style
                 .as_ref()
                 .expect("has_mirror: true requires every panel to supply its own mirror_style");
-            crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (canvas_x(dx) + 0.5, pad_t + margin_top + dy));
+            crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (canvas_x(dx, geom) + 0.5, pad_t + margin_top + dy));
             for (abs_y, label) in &geom.val_ticks {
                 let text_y = pad_t + margin_top + dy + abs_y;
                 let _ = write!(
@@ -1069,15 +1187,15 @@ fn compose_facet_at(
                 &mut svg,
                 &spec.axis_y.ticks,
                 geom.val_tick_marks.iter().map(|mark_y| pad_t + margin_top + dy + mark_y),
-                canvas_x(dx) + 0.5,
+                canvas_x(dx, geom) + 0.5,
                 -1.0,
                 geom.val_tick_size,
-            );
+            )?;
             crate::contract::axis_group_close(&mut svg);
         }
     }
     // A shared category axis: the labels of column 0's panel in every grid
-    // row, left-anchored `label_x` from the plot's left edge.
+    // row, left-anchored `label_x` from the cell's ink edge (`bounds.x1`).
     if let Some(axis) = row_axis {
         for row_i in 0..panel_rows_n {
             let panel_idx = row_i * panel_cols_n;
@@ -1087,13 +1205,21 @@ fn compose_facet_at(
                 .mirror_style
                 .as_ref()
                 .expect("a shared row axis requires every panel to supply its own label style");
-            crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (canvas_x(dx) + left_mark_overhang, pad_t + margin_top + dy));
+            crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (canvas_x(dx, geom), pad_t + margin_top + dy));
+            crate::common::emit_value_ticks(
+                &mut svg,
+                &spec.axis_y.ticks,
+                geom.val_tick_marks.iter().map(|mark_y| pad_t + margin_top + dy + mark_y),
+                canvas_x(dx, geom) + 0.5,
+                -1.0,
+                geom.val_tick_size,
+            );
             for (abs_y, label) in &geom.val_ticks {
                 let _ = write!(
                     svg,
                     "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"start\" \
                      font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
-                    canvas_x(dx) + left_mark_overhang + axis.label_x,
+                    canvas_x(dx, geom) + axis.label_x,
                     pad_t + margin_top + dy + abs_y,
                     vega_escape_attr(&style.val_family),
                     style.val_font_size,
@@ -1134,7 +1260,7 @@ fn compose_facet_at(
         let _ = write!(
             cell,
             "<g transform=\"translate({:.2},{:.2})\">{content}</g>",
-            canvas_x(dx),
+            canvas_x(dx, geom),
             pad_t + margin_top + dy
         );
     }
@@ -1156,18 +1282,38 @@ fn compose_facet_at(
     let last_row_start = panel_rows_n.saturating_sub(1) * panel_cols_n;
     let footer_bottom = pad_t + margin_top + footer_y(&final_panels, &offsets, last_row_start);
     for col_i in 0..panel_cols_n {
+        if spec.cell_x_axis {
+            break;
+        }
         let panel_idx = last_row_start + col_i;
         let (dx, _) = offsets[panel_idx];
-        let footer_left = canvas_x(dx) + left_mark_overhang;
-        final_panels[panel_idx].1.axis.paint(&mut svg, spec.axis_x, footer_left, panel_w, footer_bottom);
+        let footer_left = plot_x(dx);
+        final_panels[panel_idx].1.axis.paint(&mut svg, spec.axis_x, footer_left, panel_w, footer_bottom)?;
     }
 
     if let Some(chrome) = chrome {
-        if let Some(legend) = &chrome.legend {
-            (legend.paint)(&mut svg, frame_origin_x, pad_t + margin_top + chrome_stack.legend_y, panel_w);
+        let mut next_offset = std::collections::HashMap::new();
+        for edge in [LegendEdge::Top, LegendEdge::TopLeftInside, LegendEdge::Left, LegendEdge::Right] {
+            next_offset.insert(edge as u8, chrome.stack(edge, panel_w, child_height).0.into_iter());
+        }
+        for legend in &chrome.legends {
+            let along = next_offset.get_mut(&(legend.edge as u8)).and_then(Iterator::next).unwrap_or(0.0);
+            let (x, y) = match legend.edge {
+                LegendEdge::Top => (frame_origin_x + along, pad_t + margin_top + chrome_stack.legend_y),
+                LegendEdge::TopLeftInside => (
+                    frame_origin_x + VEGA_LEGEND_OFFSET + along,
+                    pad_t + margin_top + VEGA_LEGEND_OFFSET,
+                ),
+                LegendEdge::Left => (frame_origin_x - view_left, pad_t + margin_top - chrome_stack.frame_top + along),
+                LegendEdge::Right => (
+                    grid_canvas_w - pad_r - right_legend_w + VEGA_LEGEND_OFFSET,
+                    pad_t + margin_top - chrome_stack.frame_top + along,
+                ),
+            };
+            (legend.paint)(&mut svg, x, y, panel_w, child_height);
         }
         if let Some(title) = &chrome.title {
-            (title.paint)(&mut svg, frame_origin_x - frame_left_extent, pad_t + margin_top + chrome_stack.title_y);
+            (title.paint)(&mut svg, frame_origin_x - view_left, pad_t + margin_top + chrome_stack.title_y);
         }
     }
 
@@ -1182,6 +1328,31 @@ mod tests {
     };
     use serde_json::Value;
 
+    /// Same-edge legends stack `VEGA_LEGEND_GROUP_MARGIN` apart: along a top
+    /// edge, floating top-left corner included, down a side one.
+    #[test]
+    fn same_edge_legends_stack_along_their_edge() {
+        let legend = |edge, w, h| LegendChrome {
+            edge,
+            width: Box::new(move |_, _| w),
+            height: Box::new(move |_| h),
+            paint: Box::new(|_, _, _, _, _| {}),
+        };
+        let chrome = FacetChrome {
+            title: None,
+            legends: vec![
+                legend(super::LegendEdge::TopLeftInside, 50.0, 20.0),
+                legend(super::LegendEdge::TopLeftInside, 30.0, 25.0),
+                legend(super::LegendEdge::Right, 40.0, 60.0),
+                legend(super::LegendEdge::Right, 70.0, 10.0),
+            ],
+        };
+        let (offsets, size) = chrome.stack(super::LegendEdge::TopLeftInside, 0.0, 0.0);
+        assert_eq!((offsets, size), (vec![0.0, 58.0], (88.0, 25.0)));
+        let (offsets, size) = chrome.stack(super::LegendEdge::Right, 0.0, 0.0);
+        assert_eq!((offsets, size), (vec![0.0, 68.0], (70.0, 78.0)));
+    }
+
     /// `layout/legend.js:60-64`: a top legend's bottom edge is
     /// `floor(yBounds.y1) - offset`, so a fractional union top (`-20.5`) is
     /// floored to `-21` before the 18px offset and the 13px legend height.
@@ -1189,15 +1360,39 @@ mod tests {
     fn a_top_legend_anchors_at_the_floor_of_the_union_top() {
         let chrome = FacetChrome {
             title: None,
-            legend: Some(LegendChrome {
-                width: Box::new(|_| 0.0),
-                height: 13.0,
-                paint: Box::new(|_, _, _, _| {}),
-            }),
+            legends: vec![LegendChrome {
+                edge: super::LegendEdge::Top,
+                width: Box::new(|_, _| 0.0),
+                height: Box::new(|_| 13.0),
+                paint: Box::new(|_, _, _, _, _| {}),
+            }],
         };
-        let stack = stack_chrome_above(20.5, Some(&chrome));
+        let stack = stack_chrome_above(20.5, Some(&chrome), 0.0);
         assert_eq!(stack.legend_y, -52.0);
         assert_eq!(stack.margin_top, 52.0);
+    }
+
+    #[test]
+    fn a_facet_legend_edge_names_its_side_or_refuses() {
+        use super::{facet_legend_edge, LegendEdge};
+        use crate::families::legend::{LegendAlign, LegendPosition};
+        let position = |edge: &str, overlay: bool| LegendPosition {
+            edge: edge.into(),
+            align: LegendAlign::Start,
+            overlay,
+        };
+        assert!(facet_legend_edge("bar", &position("top", false)).unwrap() == LegendEdge::Top);
+        assert!(facet_legend_edge("bar", &position("left", false)).unwrap() == LegendEdge::Left);
+        assert!(facet_legend_edge("bar", &position("right", false)).unwrap() == LegendEdge::Right);
+        assert!(facet_legend_edge("bar", &position("top", true)).unwrap() == LegendEdge::TopLeftInside);
+        assert_eq!(
+            facet_legend_edge("line", &position("bottom", false)).err().unwrap(),
+            "line: multiples with legend.position \"bottom\" not supported — only top, left or right"
+        );
+        assert_eq!(
+            facet_legend_edge("area", &position("left", true)).err().unwrap(),
+            "area: multiples with a floating legend not supported — only the top-left corner"
+        );
     }
 
     #[test]

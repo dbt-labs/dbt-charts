@@ -186,6 +186,7 @@ def test_pie_constructs(pie_style: ResolvedPieStyle) -> None:
         theta="share",
         style=pie_style,
         dark_companion_stops=(),
+        pin_companions=(),
         **_B,
         field_labels={},
     )
@@ -206,6 +207,7 @@ def test_pie_rejects_partial_attachment(pie_style: ResolvedPieStyle) -> None:
             theta="share",
             style=pie_style,
             dark_companion_stops=(),
+            pin_companions=(),
             attached_table_width=200.0,
             **_B,
             field_labels={},
@@ -495,6 +497,7 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
                 "slice_label_indices": [],
                 "theta": "share",
                 "dark_companion_stops": [],
+                "pin_companions": [],
                 "style": {
                     "inner_radius": 0.0,
                     "slice_mark": {},
@@ -642,6 +645,7 @@ def test_pie_rejects_x() -> None:
             theta="share",
             x="month",
             dark_companion_stops=(),
+            pin_companions=(),
             **_B,
             field_labels={},
         )

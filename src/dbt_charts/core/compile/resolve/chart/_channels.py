@@ -172,7 +172,7 @@ def _bar_orientation(
     """
     authored = bar.orientation
     if authored in ("horizontal", "vertical"):
-        return authored  # type: ignore[return-value]
+        return authored
     if normalized.layers:
         return "vertical"
     if bucketed_time:

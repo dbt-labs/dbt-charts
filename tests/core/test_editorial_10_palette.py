@@ -4,7 +4,7 @@ Editorial-10 is the default categorical palette for the clarity and paper
 themes. stark keeps vivid-10. The palette ships under the
 core defaults catalog (resolved via `dbt_charts.core.compile.resolve.style.palette.palette`)
 and the studio rationale lives in
-`ai_notes/palette_studio/session7_editorial_categorical/BRIEF.md`.
+`ai_notes/charts/editorial-10-palette-brief.md`.
 
 Regression contracts pinned here, for the base palette:
 
@@ -99,7 +99,7 @@ def test_editorial_10_stops_match_locked_set():
     assert stops == EDITORIAL_10_STOPS, (
         "editorial-10 palette has drifted from the locked set. If this is "
         "intentional, update EDITORIAL_10_STOPS in this test AND "
-        "ai_notes/palette_studio/session7_editorial_categorical/BRIEF.md AND "
+        "ai_notes/charts/editorial-10-palette-brief.md AND "
         "docs/guides/palettes.md#editorial-10-default-for-editorial-themes to match."
     )
 

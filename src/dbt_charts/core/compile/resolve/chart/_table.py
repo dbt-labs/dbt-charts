@@ -79,6 +79,7 @@ from dbt_charts.core.fonts import (
 )
 from dbt_charts.core.text.format_d3 import d3_format, is_d3_si_spec
 from dbt_charts.core.text.numeral_scale import (
+    UNCOMPACTED_COLUMN_SPEC,
     build_decimal_pad_table,
     column_digit_format,
     column_shares_one_printed_unit,
@@ -247,6 +248,22 @@ def _materialize_table_columns(
     return result
 
 
+def _per_cell_texts(
+    values: list[float],
+    si_check_fmt: str,
+    raw: str | None,
+    formats: FormatTable | None,
+) -> list[tuple[float, str]]:
+    """Each value paired with the text its own per-cell SI spec prints."""
+    return [
+        (
+            v,
+            d3_format(sub_unit_spec_for_value(raw, si_check_fmt, v, formats))(v),
+        )
+        for v in values
+    ]
+
+
 def _unscaled_decimal_pad_table(
     values: list[float],
     si_check_fmt: str,
@@ -273,13 +290,7 @@ def _unscaled_decimal_pad_table(
     Returns ``()`` when every cell already prints the same number of
     fractional digits (nothing to align).
     """
-    texts = [
-        (
-            v,
-            d3_format(sub_unit_spec_for_value(raw, si_check_fmt, v, formats))(v),
-        )
-        for v in values
-    ]
+    texts = _per_cell_texts(values, si_check_fmt, raw, formats)
     if not column_shares_one_printed_unit(texts):
         return ()
     fracs = {fractional_digit_count(t) for _, t in texts}
@@ -441,6 +452,35 @@ def _with_resolved_scale_stops(
                             digit_spec=digit_spec,
                         )
 
+        baked_exact_digits = False
+        # The vote declined to compact a column whose spec is the engine's
+        # default (no format, or an affix with no spec) AND its rows would
+        # print mixed SI units: print every row as exact grouped digits
+        # rather than letting each row pick its own tier (5 / 1.2 K / 77). A
+        # column whose rows all print one unit (42K / 81K) keeps compacting.
+        # A board that redefined `number` as SI keeps it.
+        if (
+            allow_shared_scale
+            and shared_scale is None
+            and coerced_values
+            and is_d3_si_spec(si_check_fmt)
+            and not column_shares_one_printed_unit(
+                _per_cell_texts(coerced_values, si_check_fmt, raw_format_name, formats)
+            )
+        ):
+            exact = column_format(
+                "number",
+                formats,
+                own,
+                board=defaults_format,
+                column=declared_name,
+                engine_default=lambda: UNCOMPACTED_COLUMN_SPEC,
+            )
+            if not is_d3_si_spec(exact.spec):
+                _col_parts = exact
+                resolved_fmt = si_check_fmt = exact.spec
+                baked_exact_digits = True
+
         # A shared-scale column's cells format through digit_spec (fixed-point,
         # trim-enabled), not the original SI spec -- so the mixed-depth gate
         # must also run against digit_spec and the scaled values, mirroring
@@ -463,18 +503,19 @@ def _with_resolved_scale_stops(
             pad_table: tuple[str, ...]
             if len(actual_fracs) <= 1:
                 pad_table = ()
-            elif shared_scale is not None:
+            elif shared_scale is not None or baked_exact_digits:
                 # Rebuild capped at the observed max, not digit_spec's full
                 # (possibly sig-figs-default-6) precision: a shared_scale
                 # column with no explicit precision on its format can bake a
                 # far-wider-than-ever-needed digit_spec (e.g. 5 decimals),
                 # and every row's trimmed depth is already known here -- no
                 # row can ever need more padding than the deepest one
-                # actually observed. Scoped to shared_scale columns only:
-                # this bake knows its own digit_spec produced every cell it
-                # measured, so the observed depths really do bound what the
-                # pad must cover. A plain fixed-point column has no such
-                # guarantee, so its table stays at the declared precision.
+                # actually observed. Scoped to the columns this bake formats
+                # itself (shared_scale, exact digits): it knows its own spec
+                # produced every cell it measured, so the observed depths
+                # really do bound what the pad must cover. A plain
+                # fixed-point column has no such guarantee, so its table
+                # stays at the declared precision.
                 pad_table = decimal_pad_table_for(
                     pad_fmt, font_family, max_precision=max(actual_fracs)
                 )
@@ -599,7 +640,7 @@ def _resolve_table(
     primary = _with_color_tokens(normalized.style, chart_style_context)
     table = merge_onto_base(chart_style_context.table, primary)
     channels = _channels_for(normalized, data)
-    column_defaults_val = primary.column_defaults if primary is not None else None
+    column_defaults_val = table.column_defaults
     # Table-specific promoted field, lifted to the top level here so the
     # renderer can read a typed, already-final field instead of reaching into
     # style.table or re-merging defaults/FK links itself.

@@ -27,7 +27,14 @@ class LayerAxisYScale(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     domain: list[float] | None = Field(
-        default=None, description="Explicit [min, max] domain for this layer's y scale."
+        default=None,
+        min_length=2,
+        max_length=2,
+        description="Explicit [min, max] domain for this layer's y scale.",
+    )
+    clip: bool = Field(
+        default=True,
+        description="Whether marks outside the domain are cut off at the plot edge. False lets them run past the plot.",
     )
 
 

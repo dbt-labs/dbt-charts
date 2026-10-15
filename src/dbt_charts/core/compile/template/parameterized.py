@@ -189,7 +189,7 @@ class _ParameterCollector:
         variables: dict[str, Any],
         dialect: SQLDialect,
         exclude_vars: set[str] | None = None,
-    ):
+    ) -> None:
         """Initialize parameter collector.
 
         Args:
@@ -355,7 +355,12 @@ class _ParameterizedValue:
     When rendered by Jinja, returns the parameter placeholder.
     """
 
-    def __init__(self, name: str, value: Any, collector: _ParameterCollector):
+    def __init__(
+        self,
+        name: str,
+        value: Any,  # type-state: explicit_any — user-supplied parameter value
+        collector: _ParameterCollector,
+    ) -> None:
         self._name = name
         self._value = value
         self._collector = collector

@@ -1,6 +1,6 @@
 """Tests for table-level column defaults (style.column_defaults).
 
-A table author can set label/width/align/format/background/font once at the
+A table author can set width/align/format/background/font once at the
 chart style level; every column inherits those values unless the column
 config explicitly overrides them. Materialization happens once, during chart
 resolution — ``ResolvedTableChart.columns`` always carries the complete,
@@ -15,6 +15,7 @@ from dbt_charts.core.compile.config import (
     get_theme_style,
 )
 from dbt_charts.core.compile.models.chart.normalized import TableChart
+from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
@@ -37,7 +38,7 @@ class TestColumnDefaultsMaterializedAtResolve:
     def test_defaults_applied_when_no_per_column_override(self) -> None:
         resolved = _resolve_table(
             {
-                "column_defaults": {"label": " ", "width": 36, "align": "center"},
+                "column_defaults": {"width": 36, "align": "center"},
                 "columns": {"c1": {}, "c2": {}, "c3": {}},
             },
             data=[{"c1": 1, "c2": 2, "c3": 3}],
@@ -46,14 +47,13 @@ class TestColumnDefaultsMaterializedAtResolve:
         assert set(resolved.columns) == {"c1", "c2", "c3"}
         for col in ("c1", "c2", "c3"):
             cfg = resolved.columns[col]
-            assert cfg.label == " "
             assert cfg.width == 36
             assert cfg.align == "center"
 
     def test_per_column_value_wins_over_default(self) -> None:
         resolved = _resolve_table(
             {
-                "column_defaults": {"label": " ", "width": 36, "align": "center"},
+                "column_defaults": {"width": 36, "align": "center"},
                 "columns": {
                     "c1": {},
                     "c2": {"align": "right", "background": "#fee2e2"},
@@ -62,11 +62,9 @@ class TestColumnDefaultsMaterializedAtResolve:
             data=[{"c1": 1, "c2": 2}],
         )
         assert resolved.columns is not None
-        assert resolved.columns["c1"].label == " "
         assert resolved.columns["c1"].width == 36
         assert resolved.columns["c1"].align == "center"
         assert resolved.columns["c1"].background is None
-        assert resolved.columns["c2"].label == " "
         assert resolved.columns["c2"].width == 36
         assert resolved.columns["c2"].align == "right"
         assert resolved.columns["c2"].background == "#fee2e2"
@@ -94,19 +92,16 @@ class TestColumnDefaultsMaterializedAtResolve:
         """No columns: authored — column_defaults materializes over every
         query-inferred column, the "no columns list" authoring shape."""
         resolved = _resolve_table(
-            {"column_defaults": {"label": " ", "width": 36, "align": "center"}},
+            {"column_defaults": {"width": 36, "align": "center"}},
             data=[{"a": 1, "b": 2, "c": 3}],
         )
         assert resolved.columns is not None
         assert set(resolved.columns) == {"a", "b", "c"}
-        assert resolved.columns["a"].label == " "
         assert resolved.columns["b"].width == 36
         assert resolved.columns["c"].align == "center"
 
     def test_defaults_without_columns_or_data_yields_empty_mapping(self) -> None:
-        resolved = _resolve_table(
-            {"column_defaults": {"label": " ", "width": 36}}, data=[]
-        )
+        resolved = _resolve_table({"column_defaults": {"width": 36}}, data=[])
         assert resolved.columns == {}
 
     def test_no_defaults_no_explicit_columns_no_links_still_classifies_align(
@@ -139,7 +134,6 @@ class TestColumnDefaultsMaterializedAtResolve:
         resolved = _resolve_table(
             {
                 "column_defaults": {
-                    "label": "default-label",
                     "width": 100,
                     "background": "#eeeeee",
                 },
@@ -149,7 +143,6 @@ class TestColumnDefaultsMaterializedAtResolve:
         )
         assert resolved.columns is not None
         assert resolved.columns["c1"].width == 50  # per-column wins
-        assert resolved.columns["c1"].label == "default-label"  # default fills
         assert resolved.columns["c1"].background == "#eeeeee"  # default fills
 
     def test_font_default_propagates(self) -> None:
@@ -432,7 +425,7 @@ class TestColumnDefaultsThroughRender:
         """render_table_svg renders column_defaults applied to all query columns
         when no explicit style.columns is authored — the no-columns-list shape."""
         resolved = _resolve_table(
-            {"column_defaults": {"label": " ", "width": 50, "align": "center"}},
+            {"column_defaults": {"width": 50, "align": "center"}},
             data=[{"x": 1, "y": 2}, {"x": 3, "y": 4}],
         )
         svg = render_table_svg(
@@ -441,3 +434,39 @@ class TestColumnDefaultsThroughRender:
             board_style=resolve_style(get_theme_style()),
         )
         assert isinstance(svg, str) and "<svg" in svg
+
+
+class TestHeaderVisibleFalse:
+    """style.header.visible: false drops the header row and its height."""
+
+    @staticmethod
+    def _svg(style: dict) -> str:
+        data = [{"alpha_col": 1, "beta_col": 2}]
+        resolved = _resolve_table(style, data=data)
+        return render_table_svg(
+            resolved, data, board_style=resolve_style(get_theme_style())
+        )
+
+    def test_hidden_header_renders_no_header_text(self) -> None:
+        assert ">Alpha Col<" in self._svg({})
+        assert "Alpha Col" not in self._svg({"header": {"visible": False}})
+
+
+class TestBoardLevelColumnDefaults:
+    """column_defaults authored above the chart reach every table column."""
+
+    def test_board_level_defaults_apply_to_chart_columns(self) -> None:
+        patch = StylePatch.model_validate(
+            {"charts": {"table": {"column_defaults": {"width": 36, "align": "center"}}}}
+        )
+        board_style = resolve_chart_style_context(get_theme_style(), patch)
+        chart = TableChart(
+            id="test", type="table", style={"columns": {"c1": {}, "c2": {}}}
+        )
+
+        resolved = resolve(chart, [{"c1": 1, "c2": 2}], chart_style_context=board_style)
+
+        assert resolved.columns is not None
+        for col in ("c1", "c2"):
+            assert resolved.columns[col].width == 36
+            assert resolved.columns[col].align == "center"

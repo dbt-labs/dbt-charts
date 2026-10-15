@@ -478,7 +478,7 @@ def build_resolved_axis(
     )
     # _resolve_own_side_align("right", ...) always returns "right" (absolute values
     # pass through unchanged); typed as Literal["left","right","center"] | None
-    # so mypy accepts it without a local `| None` annotation, which the counter's
+    # so pyright accepts it without a local `| None` annotation, which the counter's
     # `optional` category would still count (report-only, not gate-blocking, but
     # avoided here for a clean return type).
     resolved_label_align = (
@@ -746,7 +746,7 @@ def build_resolved_axis(
 
     ticks_visible = axis.ticks.visible
     # "auto" is only ever declared on DimensionTicksStyle (axis_x's own tick
-    # slot) -- the isinstance guard is what lets mypy see that arm at all;
+    # slot) -- the isinstance guard is what lets pyright see that arm at all;
     # AxisYStyle's ticks.visible is bool | None and can never compare equal.
     if isinstance(axis, AxisXStyle) and axis.ticks.visible == "auto":
         if axis.grid.visible is not True:

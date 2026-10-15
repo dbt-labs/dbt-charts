@@ -44,7 +44,7 @@ def test_render_command_routes_through_agent_api(
     fake_project.render_board.return_value = mock_result
 
     @contextmanager
-    def fake_from_project(project, *, cache, **_kwargs):  # type: ignore[no-untyped-def]
+    def fake_from_project(project, *, cache, **_kwargs):
         yield fake_project
 
     with patch(
@@ -84,7 +84,7 @@ def test_render_command_from_yaml_routes_through_agent_api(
     fake_project.render_board.return_value = mock_result
 
     @contextmanager
-    def fake_from_project(project, *, cache, **_kwargs):  # type: ignore[no-untyped-def]
+    def fake_from_project(project, *, cache, **_kwargs):
         yield fake_project
 
     with patch(

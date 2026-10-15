@@ -9,12 +9,15 @@ legend) has shaped the layer stack, and can refuse the endpoint-label combinatio
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
 from dbt_charts.core.compile.models.chart.resolved._base import (
     _CartesianResolvedChartFields,
 )
+from dbt_charts.core.compile.models.chart.resolved._layer import ResolvedLayer
+from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.heatmap import (
     ResolvedHeatmapChart,
 )
@@ -34,6 +37,7 @@ from dbt_charts.core.diagnostics.codes_render import (
     ERR_MIRROR_UNMEASURABLE_ALIGN,
     ERR_MULTIPLES_ENDPOINT_LABELS,
 )
+from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.emitters._measured_label_padding import (
     estimated_quantitative_tick_labels,
     numeric_values,
@@ -58,14 +62,51 @@ from dbt_charts.core.utils import (
 )
 
 
-def _primary_y_orient(spec: ChartSpec) -> str:
+def _primary_y_orient(main_y: VLDict) -> str:
     """The concrete edge (left/right) the main y-axis already sits on."""
-    enc = spec.encoding.get("y")
-    if isinstance(enc, dict) and isinstance(enc.get("axis"), dict):
-        orient = enc["axis"].get("orient")
-        if orient in ("left", "right"):
-            return orient
+    axis = main_y.get("axis")
+    if isinstance(axis, dict) and axis.get("orient") in ("left", "right"):
+        return axis["orient"]
     return "left"
+
+
+def _y_encodings(spec: ChartSpec) -> Iterator[VLDict]:
+    """Every y encoding in the spec tree, outer spec first."""
+    y = spec.encoding.get("y")
+    if isinstance(y, dict):
+        yield y
+    for sub in (*spec.underlays, *spec.layers):
+        yield from _y_encodings(sub)
+
+
+def _layered_main_y(
+    spec: ChartSpec, chart: ResolvedChart, layers: tuple[ResolvedLayer, ...]
+) -> VLDict:
+    """The one y encoding a layered chart's layers share, with the other layers'
+    own copies of its axis nulled so each edge paints one axis.
+
+    Mirror reflects a single scale: a layer that pins its own y axis has a scale
+    of its own, and a horizontal base measures along x, so both refuse. The
+    owner is the first y encoding bound to the scale (a ``value`` y, such as a
+    full-height rule, has none and paints no axis). A datum-bound layer, such as
+    the zero rule, would grow an axis of its own under independent resolution, so
+    every other scaled y gets an explicit null axis.
+    """
+    horizontal = (
+        isinstance(chart, ResolvedBarChart) and chart.orientation == "horizontal"
+    )
+    scaled = [y for y in _y_encodings(spec) if "value" not in y]
+    owner = next((y for y in scaled if isinstance(y.get("axis"), dict)), None)
+    if (
+        horizontal
+        or owner is None
+        or any(layer.axis_y.position is not None for layer in layers)
+    ):
+        raise ChartDataError.from_code(ERR_MIRROR_LAYERS, chart_id=chart.id)
+    for y in scaled:
+        if y is not owner:
+            y["axis"] = None
+    return owner
 
 
 def _mirror_on(chart: ResolvedChart) -> bool:
@@ -97,9 +138,7 @@ class MirrorAxisFeature:
         # that decides whether there is anything to reflect. The resolved
         # chart's `y` is the wrong proxy: a histogram resolves y=None yet
         # emits a count y encoding (must mirror). With no SHARED y encoding,
-        # the resolved model says WHY it is missing, and the cases are not
-        # the same (`layers:` is refused above, before the encoding is read
-        # at all): a multi-measure
+        # the resolved model says WHY it is missing: a multi-measure
         # heatmap folds its list y into per-measure sublayers (the
         # multi-series refusal, naming the fields the author wrote); a chart
         # with no y anywhere is inert, not an error (the design panel
@@ -110,18 +149,14 @@ class MirrorAxisFeature:
         # field/type/scale (quantitative and categorical y alike); only the
         # axis edge differs. `layers` is structurally absent on
         # ResolvedHeatmapChart, hence the getattr.
-        # Checked before the encoding shape, not through it: `layers:` moves the
-        # measure encoding onto the sublayers on BOTH orientations, but a
-        # horizontal base still leaves its category on the outer `y`. Reading
-        # "no outer y" as the proxy therefore stopped refusing the horizontal
-        # case the moment the overlay began hoisting the category channel, and
-        # silently mirrored the category axis while the measure axis the layers
-        # live on got nothing.
-        if getattr(
+        layers = getattr(
             chart, "layers", ()
-        ):  # type-state: silent_fallback — layers is structurally absent on ResolvedHeatmapChart; absent means "no overlays", not missing data
-            raise ChartDataError.from_code(ERR_MIRROR_LAYERS, chart_id=chart.id)
-        main_y = spec.encoding.get("y")
+        )  # type-state: silent_fallback — layers is structurally absent on ResolvedHeatmapChart; absent means "no overlays", not missing data
+        main_y: VLDict | None
+        if layers:
+            main_y = _layered_main_y(spec, chart, layers)
+        else:
+            main_y = spec.encoding.get("y")
         if not isinstance(main_y, dict):
             if isinstance(chart.y, list):
                 raise ChartDataError.from_code(
@@ -154,7 +189,12 @@ class MirrorAxisFeature:
                 else ERR_MIRROR_ENDPOINT_LABELS
             )
             raise ChartDataError.from_code(code, chart_id=chart.id)
-        primary = _primary_y_orient(spec)
+        measure_fields = tuple(
+            field
+            for field in (chart.y, *(la.y for la in layers))
+            if isinstance(field, str)
+        )
+        primary = _primary_y_orient(main_y)
         opposite = "left" if primary == "right" else "right"
         # Match the primary axis's tick format on the opposite edge; suppress its
         # title and grid so the mirrored edge doesn't duplicate them. Use an
@@ -216,7 +256,7 @@ class MirrorAxisFeature:
                 ghost_axis = inject_axis_numeral_expr(
                     ghost_axis, None, mirror.tick_label, mirror.format
                 )
-            compose_axis_format(ghost_axis, mirror.format)
+            compose_axis_format(ghost_axis, mirror.format, True)
         if mirror.expr is not None:
             ghost_axis["labelExpr"] = mirror.expr
         # The ghost inherited the primary's labelExpr, built for the primary's
@@ -237,7 +277,7 @@ class MirrorAxisFeature:
         # PRIMARY axis, and the ghost inherits its labelExpr wholesale via
         # dict(primary_axis) above — see authored_unmeasurable below.
         ghost_align = ghost_axis.get("labelAlign")
-        if ghost_align in (opposite, "center"):
+        if ghost_align == opposite:
             ghost_tick_label: ResolvedTickLabel | None = None
             # Whether the ghost's text is re-measurable: `mirror.expr` never is;
             # `mirror.format` replaces the primary's paint; otherwise it paints
@@ -267,11 +307,7 @@ class MirrorAxisFeature:
             if ghost_fmt is not None and ghost_fmt.spec in PYTHON_ONLY_NATIVE_NAMES:
                 ghost_fmt = None
             labels: list[str] = []
-            if (
-                ghost_align == opposite
-                and not authored_unmeasurable
-                and ghost_fmt is not None
-            ):
+            if not authored_unmeasurable and ghost_fmt is not None:
                 if axis_y.tick_values:
                     labels = quantitative_tick_labels(
                         axis_y.drawn_tick_values,
@@ -279,7 +315,7 @@ class MirrorAxisFeature:
                         ruler=ghost_ruler,
                         tick_label=ghost_tick_label,
                     )
-                elif isinstance(chart.y, str):
+                elif measure_fields:
                     _ay_cont_m = (
                         axis_y.scale.continuous if axis_y.scale is not None else None
                     )
@@ -299,7 +335,7 @@ class MirrorAxisFeature:
                         # what the primary axis itself measures from
                         # (vl_field_maps.py).
                         values = numeric_values(
-                            chart_rows(chart, datasets).all_rows(), (chart.y,)
+                            chart_rows(chart, datasets).all_rows(), measure_fields
                         )
                     labels = estimated_quantitative_tick_labels(
                         values,

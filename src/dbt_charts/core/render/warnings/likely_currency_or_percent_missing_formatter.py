@@ -4,7 +4,7 @@ in core/diagnostics/codes_render.py for what this fires on.
 Detection rule (v1, name-match only):
 
   Currency signals — field name (lowercased) ends in:
-    _usd, _dollars, _revenue, _amount, _price, _cost, _spend, _value,
+    _usd, _dollars, _revenue, _amount, _price, _cost, _spend,
     _gmv, _arr, _mrr
   or contains the substrings: revenue, dollars, usd.
 
@@ -15,7 +15,7 @@ Detection rule (v1, name-match only):
   Either set also matches a bare field name (no prefix) that reliably implies
   money/percent standalone — currency: usd, dollars, revenue, price, gmv, arr,
   mrr; percent: pct, percent, percentage, share. Generic nouns that only
-  signal a kind when prefixed (value, amount, rate, cost, spend) are excluded
+  signal a kind when prefixed (amount, rate, cost, spend) are excluded
   from the bare set; only their `_`-prefixed suffix form still matches.
 
   Fire when a matching field's effective y-axis format does not suit its kind.
@@ -46,7 +46,7 @@ Table columns: a visible column with no resolved format whose non-null values
 are all numbers warns when its name classifies (the same ``_classify``), else
 when the values are all real numbers in [0, 1] and not all exactly 0 or 1
 (a flag), a likely fraction; unformatted it renders as plain digits ("0.4367"
--> "0.44"). One warning per column. Pivot measure columns are not materialized
+-> "0.4367"). One warning per column. Pivot measure columns are not materialized
 at resolve and are not checked.
 
 Out of scope for v1: value-range secondary signal for the y-axis (median >100 for
@@ -72,7 +72,8 @@ from dbt_charts.core.diagnostics import (
     Diagnostic,
 )
 from dbt_charts.core.render.warnings.base import WarningContext
-from dbt_charts.core.utils import _UNIT_SUFFIXES, Rows, coerce_numeric_cell
+from dbt_charts.core.text.numeral_scale import UNCOMPACTED_COLUMN_SPEC
+from dbt_charts.core.utils import UNIT_SUFFIXES, Rows, coerce_numeric_cell
 
 # Cartesian chart types whose y-axis renders and may need a format. Overlay
 # layers ride on one of these base types, so they need no entry of their own.
@@ -96,7 +97,6 @@ _CURRENCY_SUFFIXES: frozenset[str] = frozenset(
         "_price",
         "_cost",
         "_spend",
-        "_value",
         "_gmv",
         "_arr",
         "_mrr",
@@ -123,7 +123,7 @@ _PERCENT_BARE_NAMES: frozenset[str] = frozenset(
 )
 
 # Trailing "_<code>" tokens whose symbol the fix suggestion names (from
-# core/utils.py's _UNIT_SUFFIXES). "usd" is excluded: the dollar spec fits.
+# core/utils.py's UNIT_SUFFIXES). "usd" is excluded: the dollar spec fits.
 _CURRENCY_CODE_TOKENS = ("eur", "gbp")
 
 
@@ -171,7 +171,7 @@ def _currency_format_hint(field: str) -> str:
     code = tokens[-1] if len(tokens) > 1 else ""
     if code not in _CURRENCY_CODE_TOKENS:
         return "a currency format (e.g. `$,.2f`)"
-    symbol = _UNIT_SUFFIXES[code].strip("()")
+    symbol = UNIT_SUFFIXES[code].strip("()")
     return f"a `,.2f` format with `prefix: {symbol!r}`"
 
 
@@ -314,7 +314,10 @@ def _table_column_warnings(
     if chart.columns is None:
         return warnings
     for name, column in chart.columns.items():
-        if column.format is not None or column.visible is False:
+        # A column the resolver baked exact digits onto is still unformatted.
+        if (
+            column.format is not None and column.format.raw != UNCOMPACTED_COLUMN_SPEC
+        ) or column.visible is False:
             continue
         format_key = f"style.columns.{name}.format"
         if (kind := _classify(name)) is not None:

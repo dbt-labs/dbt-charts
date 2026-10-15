@@ -95,6 +95,7 @@ struct Spec {
     align: char,           // '>' (default), '<', '^', '='
     sign: char,            // '-' (default), '+', ' ', '('
     symbol: char,          // '\0', '$'
+    symbol_at: Option<usize>,
     zero: bool,
     width: Option<usize>,
     comma: bool,
@@ -110,6 +111,7 @@ impl Default for Spec {
             align: '>',
             sign: '-',
             symbol: '\0',
+            symbol_at: None,
             zero: false,
             width: None,
             comma: false,
@@ -151,6 +153,7 @@ fn parse_spec(s: &str) -> Result<Spec, String> {
     // symbol: '$' supported; '#' (alternate form) not needed
     if i < n && bytes[i] == b'$' {
         spec.symbol = '$';
+        spec.symbol_at = Some(i);
         i += 1;
     } else if i < n && bytes[i] == b'#' {
         return Err(format!("unsupported alternate form '#' in d3 spec {s:?}"));
@@ -508,6 +511,16 @@ pub fn parse_parts(spec: &str) -> Result<SpecParts, String> {
     })
 }
 
+/// `spec` without its `$` currency flag (`numeral_scale.without_symbol`):
+/// the digits a bare zero tick paints.
+pub fn without_symbol(spec: &str) -> Result<String, String> {
+    let mut out = spec.to_string();
+    if let Some(i) = parse_spec(spec)?.symbol_at {
+        out.remove(i);
+    }
+    Ok(out)
+}
+
 /// `numeral_scale.py`'s `sub_unit_digit_format` (:646) and
 /// `sub_unit_scientific_format` (:690): the two specs a sub-1 value paints
 /// with where an SI spec would print milli/micro prefixes — a ladder-less
@@ -811,6 +824,14 @@ fn pad(s: &Spec, locale: &Locale, prefix: &str, value: String, suffix: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn without_symbol_drops_only_the_currency_flag() {
+        assert_eq!(without_symbol("$,.0f").unwrap(), ",.0f");
+        assert_eq!(without_symbol("+$,.1~f").unwrap(), "+,.1~f");
+        assert_eq!(without_symbol("$>$10,.0f").unwrap(), "$>10,.0f");
+        assert_eq!(without_symbol(",.2f").unwrap(), ",.2f");
+    }
 
     // All expected strings verified against:
     //   uv run python -c "from d3_format import format as d3fmt; print(d3fmt(spec, val))"

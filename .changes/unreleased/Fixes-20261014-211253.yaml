@@ -1,0 +1,3 @@
+kind: Fixes
+body: Slugs and paths, such as repo names and file paths, keep their authored case under title case.
+time: 2026-10-14T21:12:53.717387-07:00

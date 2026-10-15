@@ -5,6 +5,10 @@
 //! types, compute their own margins (by measuring label text with FontBook), and
 //! call the scale structs to place marks and axis decorations.
 
+use crate::codes;
+use crate::diagnostic::Diagnostic;
+use serde_json::json;
+
 /// Ordinal band scale: maps string values to pixel bands.
 ///
 /// Follows the d3-scale band formula exactly:
@@ -344,12 +348,10 @@ pub fn log_nice_domain(lo: f64, hi: f64) -> (f64, f64) {
 ///   on the EXPONENTS, mapped back through `10^x` — reuses `d3_ticks`, the
 ///   same linear-ticks primitive Vega's own unbaked ladder already ports.
 ///
-/// Refuses (`Err`) the sparse-decade fallback (`z.length * 2 < count`,
-/// `log.js`'s own recursion into a plain linear `ticks()` over the raw
-/// domain) — this only fires when a single nice'd decade yields very few
-/// multiples inside `[lo, hi]`, a shape no swept corpus case reaches and
-/// this port does not model.
-pub fn log_ticks(lo: f64, hi: f64, count: usize) -> Result<Vec<f64>, String> {
+/// A single nice'd decade that yields very few multiples inside `[lo, hi]`
+/// (`z.length * 2 < count`) falls back to a plain linear `ticks()` over the
+/// domain, as `log.js` does.
+pub fn log_ticks(lo: f64, hi: f64, count: usize) -> Vec<f64> {
     let exp_lo = lo.log10().round() as i32;
     let exp_hi = hi.log10().round() as i32;
     let decades = (exp_hi - exp_lo) as f64;
@@ -369,17 +371,15 @@ pub fn log_ticks(lo: f64, hi: f64, count: usize) -> Result<Vec<f64>, String> {
             }
         }
         if z.len() * 2 < count {
-            return Err(format!(
-                "log_ticks: sparse-decade fallback not supported (lo={lo}, hi={hi}, count={count})"
-            ));
+            return d3rs::ticks::d3_ticks(lo, hi, count);
         }
-        Ok(z)
+        z
     } else {
         let n = (decades as usize).min(count);
-        Ok(d3rs::ticks::d3_ticks(exp_lo as f64, exp_hi as f64, n)
+        d3rs::ticks::d3_ticks(exp_lo as f64, exp_hi as f64, n)
             .into_iter()
             .map(|e| 10f64.powi(e.round() as i32))
-            .collect())
+            .collect()
     }
 }
 
@@ -434,7 +434,7 @@ mod log_scale_tests {
         // Oracle: vl_convert scenegraph over [1e8, 1e10] (2 decades, count
         // 10) — 9 multiples per decade for the first two decades, 1 for the
         // partial third (only 1e10 itself lies inside the closed domain).
-        let ticks = log_ticks(1e8, 1e10, 10).unwrap();
+        let ticks = log_ticks(1e8, 1e10, 10);
         assert_eq!(ticks.len(), 19);
         assert_eq!(ticks[0], 1e8);
         assert_eq!(ticks[8], 9e8);
@@ -447,7 +447,7 @@ mod log_scale_tests {
     fn ticks_use_coarse_exponent_steps_when_decades_exceed_count() {
         // Oracle: vl_convert scenegraph over [1, 1e12] (12 decades > count
         // 10) — one tick per decade exponent, per d3-array's own ticks().
-        let ticks = log_ticks(1.0, 1e12, 10).unwrap();
+        let ticks = log_ticks(1.0, 1e12, 10);
         assert_eq!(ticks, vec![1.0, 10.0, 100.0, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12]);
     }
 
@@ -456,7 +456,7 @@ mod log_scale_tests {
         // Oracle: vl_convert scenegraph over [1e8, 1e10] at the default
         // count 10 — k = 10*10/19 ≈ 5.263, so mantissas 1..5 stay labeled
         // (100M..500M, 1G..5G, 10G) and 6..9 blank.
-        let ticks = log_ticks(1e8, 1e10, 10).unwrap();
+        let ticks = log_ticks(1e8, 1e10, 10);
         let visible = log_tick_mantissa_visible(&ticks, 10);
         let expected = [
             true, true, true, true, true, false, false, false, false, // 1e8..9e8
@@ -667,72 +667,246 @@ pub(crate) fn rail_pane_width(
     fonts: &crate::text::FontBook,
     chart_w: f64,
 ) -> Result<(f64, f64), String> {
-    const RAIL_LABEL_GAP: f64 = 4.0;
     let widest = series.iter().try_fold(0.0_f64, |acc, s| {
         crate::common::measure_at_css_weight(fonts, s, font_family, font_size, font_weight)
             .map(|w| acc.max(w))
     })?;
-    Ok((widest, (widest + RAIL_LABEL_GAP).min(chart_w * crate::constants::marks::ENDPOINT_LABEL_MAX_WIDTH_FRACTION)))
+    Ok((widest, (widest + RAIL_LABEL_GAP).min(rail_cap(chart_w))))
+}
+
+const RAIL_LABEL_GAP: f64 = 4.0;
+
+/// The widest a rail may grow: `endpoint_labels.max_width_fraction` of the chart.
+fn rail_cap(chart_w: f64) -> f64 {
+    chart_w * crate::constants::marks::ENDPOINT_LABEL_MAX_WIDTH_FRACTION
+}
+
+/// `WARN-AXIS-LABEL-COLLISION`: every enabled skip/tilt strategy was tried
+/// and the `label_count` labels measured still collide on the x axis.
+pub(crate) fn warn_axis_label_collision(chart_id: &str, field: &str, label_count: usize) {
+    crate::diagnostic::warn(Diagnostic::new(
+        &codes::WARN_AXIS_LABEL_COLLISION,
+        [("chart_id", json!(chart_id)), ("field", json!(field)), ("label_count", json!(label_count))],
+    ));
+}
+
+/// `WARN-LAYER-X-DOMAIN-PAINT-ORDER`: a layer contributed `layer_only` x values
+/// the base states no order to place, so the shared domain stays in paint order.
+pub(crate) fn warn_x_domain_paint_order(chart_id: &str, x_field: &str, layer_only: &[serde_json::Value]) {
+    const SAMPLE: usize = 3;
+    let mut sample: Vec<String> = layer_only.iter().take(SAMPLE).map(crate::diagnostic::py_repr).collect();
+    if layer_only.len() > SAMPLE {
+        sample.push("…".to_string());
+    }
+    crate::diagnostic::warn(
+        Diagnostic::new(
+            &codes::WARN_LAYER_X_DOMAIN_PAINT_ORDER,
+            [
+                ("chart_id", json!(chart_id)),
+                ("n_new", json!(layer_only.len())),
+                ("plural", json!(if layer_only.len() == 1 { "y" } else { "ies" })),
+                ("sample", json!(sample.join(", "))),
+                ("x_field", json!(x_field)),
+            ],
+        )
+        .with_sink_param("layer_only", json!(layer_only)),
+    );
+}
+
+/// `WARN-SERIES-LABEL-TRUNCATED` for the rail names wider than the rail's cap
+/// (`measure_label_pane_width`): Vega cuts them at the pane's mark limit.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn warn_rail_labels_cut(
+    chart_id: &str,
+    authored_field: &str,
+    series: &[String],
+    font_family: &str,
+    font_size: f64,
+    font_weight: &str,
+    fonts: &crate::text::FontBook,
+    chart_w: f64,
+) -> Result<(), String> {
+    let cap = rail_cap(chart_w);
+    let mut cut = Vec::new();
+    // Production lists the cut names in sorted order.
+    let mut series: Vec<&String> = series.iter().collect();
+    series.sort();
+    for name in series {
+        if crate::common::measure_at_css_weight(fonts, name, font_family, font_size, font_weight)? > cap {
+            cut.push(name.as_str());
+        }
+    }
+    if cut.is_empty() {
+        return Ok(());
+    }
+    let many = cut.len() != 1;
+    let quoted: Vec<String> = cut.iter().map(|n| crate::diagnostic::py_repr(&json!(n))).collect();
+    let labels = match quoted.split_at_checked(3) {
+        Some((head, rest)) if !rest.is_empty() => format!("{} and {} more", head.join(", "), rest.len()),
+        _ => quoted.join(", "),
+    };
+    crate::diagnostic::warn(
+        Diagnostic::new(
+            &codes::WARN_SERIES_LABEL_TRUNCATED,
+            [
+                ("authored_field", json!(authored_field)),
+                ("chart_id", json!(chart_id)),
+                ("count", json!(cut.len())),
+                ("labels", json!(labels)),
+                ("labels_noun", json!(if many { "labels" } else { "label" })),
+                ("were", json!(if many { "were" } else { "was" })),
+            ],
+        )
+        .with_sink_param("series_names", json!(cut)),
+    );
+    Ok(())
 }
 
 /// Bidirectional greedy collision-avoidance over a set of rail anchors, in
 /// data-space y units. Mirrors production's `_apply_label_cascade`
-/// (`render/chart/features/endpoint_labels.py:76-102`): every anchor is
+/// (`render/chart/features/endpoint_labels.py`): every anchor is
 /// clamped into the caller's y-domain first — an anchor outside
 /// `[y_domain_min, y_domain_max]` is off-domain, not a collision — then the
 /// branch is chosen by comparing the anchor mean to the *domain* midpoint
 /// (not the anchor span's own midpoint), and packed anchors are pushed no
-/// closer than `min_gap` to the previously *placed* anchor, so one label
-/// that doesn't fit is dropped on its own without displacing the rest.
-/// Simplified from production (no eviction pass) — fine for the small
-/// series counts (2-6) endpoint labels realistically carry.
+/// closer than `min_gap` to the previously *placed* anchor. Returns the placed
+/// labels and the names it dropped.
 pub(crate) fn cascade_rail_anchors(
     anchors: &[(String, f64)],
     min_gap: f64,
     y_domain_min: f64,
     y_domain_max: f64,
-) -> Vec<(String, f64)> {
-    if anchors.is_empty() {
-        return Vec::new();
-    }
+) -> (Vec<(String, f64)>, Vec<String>) {
     let clamped: Vec<(String, f64)> = anchors
         .iter()
         .map(|(name, v)| (name.clone(), v.clamp(y_domain_min, y_domain_max)))
         .collect();
     if clamped.len() <= 1 || min_gap <= 0.0 {
-        return clamped;
+        return (clamped, Vec::new());
     }
     let domain_mid = (y_domain_min + y_domain_max) / 2.0;
     let mean = clamped.iter().map(|(_, v)| *v).sum::<f64>() / clamped.len() as f64;
 
     let mut items = clamped;
-    let mut placed: Vec<(String, f64)> = Vec::with_capacity(items.len());
     if mean >= domain_mid {
         items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        for (name, anchor) in items {
-            let y = match placed.last() {
-                None => anchor,
-                Some((_, prev)) => anchor.min(prev - min_gap),
-            };
-            if y < y_domain_min {
-                continue; // dropped: no room left before the domain floor
-            }
-            placed.push((name, y));
-        }
+        pack_against_bound(items, |anchor, prev| anchor.min(prev - min_gap), |y| y < y_domain_min)
     } else {
         items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        for (name, anchor) in items {
-            let y = match placed.last() {
-                None => anchor,
-                Some((_, prev)) => anchor.max(prev + min_gap),
-            };
-            if y > y_domain_max {
-                continue; // dropped: no room left before the domain ceiling
-            }
-            placed.push((name, y));
+        pack_against_bound(items, |anchor, prev| anchor.max(prev + min_gap), |y| y > y_domain_max)
+    }
+}
+
+/// `_pack_against_bound`: greedy-pack extremity-first `items` against a bound.
+/// An item that would cross the bound evicts placed items off the top of the
+/// stack, but only ones that were themselves pushed off their own anchor, so a
+/// label with real room is never dropped for a neighbor's crowding.
+fn pack_against_bound(
+    items: Vec<(String, f64)>,
+    push: impl Fn(f64, f64) -> f64,
+    overflows: impl Fn(f64) -> bool,
+) -> (Vec<(String, f64)>, Vec<String>) {
+    let mut stack: Vec<(String, f64, f64)> = Vec::new(); // (name, forced_y, own_anchor)
+    let mut dropped = Vec::new();
+    for (name, anchor) in items {
+        let forced = |stack: &[(String, f64, f64)]| stack.last().map_or(anchor, |top| push(anchor, top.1));
+        let mut y = forced(&stack);
+        while overflows(y) && stack.last().is_some_and(|top| top.1 != top.2) {
+            dropped.push(stack.pop().expect("checked non-empty").0);
+            y = forced(&stack);
         }
+        if overflows(y) {
+            dropped.push(name);
+            continue;
+        }
+        stack.push((name, y, anchor));
+    }
+    (stack.into_iter().map(|(name, y, _)| (name, y)).collect(), dropped)
+}
+
+/// `_distribute_evenly`: the labels spread evenly across the domain in anchor
+/// order, top first. Needs no slope.
+fn spread_evenly(anchors: &[(String, f64)], y_domain_min: f64, y_domain_max: f64) -> Vec<(String, f64)> {
+    let step = (y_domain_max - y_domain_min) / (anchors.len() - 1) as f64;
+    let mut ordered: Vec<&(String, f64)> = anchors.iter().collect();
+    ordered.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    let mut placed: Vec<(String, f64)> =
+        ordered.iter().enumerate().map(|(i, (name, _))| (name.clone(), y_domain_min + i as f64 * step)).collect();
+    placed.reverse();
+    placed
+}
+
+/// `recascade_endpoint_labels`: the rail's final label positions for an
+/// intended `pixel_gap`, converted to data units through `px_per_unit` (`None`
+/// when the y scale has no slope). A gap that cannot be honored spreads the
+/// labels evenly across the domain, and a label that finds no room is
+/// dropped; each is reported as the warning production records.
+pub(crate) fn recascade_rail_anchors(
+    chart_id: &str,
+    anchors: &[(String, f64)],
+    pixel_gap: f64,
+    px_per_unit: Option<f64>,
+    y_domain_min: f64,
+    y_domain_max: f64,
+) -> Vec<(String, f64)> {
+    let n = anchors.len();
+    if n <= 1 {
+        return cascade_rail_anchors(anchors, 0.0, y_domain_min, y_domain_max).0;
+    }
+    // Tied anchors spread across a cascade domain with no span still tie, so no
+    // slope is measurable from them either.
+    let Some(px_per_unit) = px_per_unit.filter(|_| y_domain_max > y_domain_min) else {
+        crate::diagnostic::warn(
+            Diagnostic::new(&codes::WARN_ENDPOINT_LABEL_RAIL_TIED, [("chart_id", json!(chart_id)), ("series_count", json!(n))])
+                .with_sink_param("gap_px", json!(pixel_gap)),
+        );
+        return spread_evenly(anchors, y_domain_min, y_domain_max);
+    };
+    let min_data_gap = pixel_gap / px_per_unit;
+    let span = y_domain_max - y_domain_min;
+    if span > 0.0 && (n - 1) as f64 * min_data_gap > span {
+        crate::diagnostic::warn(Diagnostic::new(
+            &codes::WARN_ENDPOINT_LABEL_GAP_OVERFLOW,
+            [("chart_id", json!(chart_id)), ("gap_px", json!(pixel_gap)), ("series_count", json!(n))],
+        ));
+        return spread_evenly(anchors, y_domain_min, y_domain_max);
+    }
+    let (placed, dropped) = cascade_rail_anchors(anchors, min_data_gap, y_domain_min, y_domain_max);
+    if !dropped.is_empty() {
+        crate::diagnostic::warn(
+            Diagnostic::new(
+                &codes::WARN_ENDPOINT_LABEL_RAIL_OVERFLOW,
+                [
+                    ("chart_id", json!(chart_id)),
+                    ("dropped_count", json!(dropped.len())),
+                    ("gap_px", json!(pixel_gap)),
+                    ("series_count", json!(n)),
+                ],
+            )
+            .with_sink_param("dropped_series", json!(dropped)),
+        );
     }
     placed
+}
+
+#[cfg(test)]
+mod recascade_tests {
+    use super::recascade_rail_anchors;
+    use crate::diagnostic::collect;
+    use serde_json::json;
+
+    #[test]
+    fn a_rail_on_a_scale_with_no_slope_spreads_evenly_and_reports_it() {
+        let anchors = vec![("a".to_string(), 5.0), ("b".to_string(), 5.0), ("c".to_string(), 5.0)];
+        let (placed, warnings) = collect(|| recascade_rail_anchors("c1", &anchors, 18.2, None, 0.0, 10.0));
+        assert_eq!(placed, vec![("c".into(), 10.0), ("b".into(), 5.0), ("a".into(), 0.0)]);
+        let [tied] = warnings.as_slice() else { panic!("{warnings:?}") };
+        assert_eq!(tied.code, "WARN-ENDPOINT-LABEL-RAIL-TIED");
+        assert_eq!(
+            serde_json::to_value(&tied.params).unwrap(),
+            json!({"chart_id": "c1", "series_count": 3, "gap_px": 18.2})
+        );
+    }
 }
 
 #[cfg(test)]

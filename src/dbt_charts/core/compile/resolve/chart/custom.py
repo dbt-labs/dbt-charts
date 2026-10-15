@@ -71,12 +71,17 @@ _ENGINE_DECIDED_PLACEMENT = ("edge", "align", "overlay")
 def _concrete(node: JsonValue, path: tuple[str, ...] = ()) -> JsonValue:
     """*node* with each remaining engine-decided leaf resolved the way the
     resolvers do: ``auto`` ticks to the engine target, ``auto`` legend values to
-    the decided placement, and an axis title that shows when labeled to hidden."""
+    the decided placement, and an axis title that shows when labeled to hidden.
+    Whole-number font weights are ints: SVG ignores ``font-weight="600.0"``."""
     if isinstance(node, list):
         return [_concrete(v, path) for v in node]
     if not isinstance(node, dict):
         return node
     out = {k: _concrete(v, (*path, k)) for k, v in node.items()}
+    for key in ("weight", "compact_weight"):
+        weight = out.get(key)
+        if isinstance(weight, float) and weight.is_integer():
+            out[key] = int(weight)
     if path[-1:] == ("ticks",) and out.get("count") == "auto":
         out["count"] = target_tick_count("auto")
     if path[-1:] == ("title",) and out.get("visible") == "auto":
@@ -110,6 +115,9 @@ def _style_tree(context: ChartStyleContext) -> dict[str, JsonValue]:
     charts = cascaded.charts.model_copy(
         update={
             "title": concrete_title_style(context),
+            "marks": defaults.marks,
+            "pie": defaults.pie,
+            "kpi": defaults.kpi,
             "support_table": defaults.support_table,
             "bar": defaults.bar,
             "line": defaults.line,

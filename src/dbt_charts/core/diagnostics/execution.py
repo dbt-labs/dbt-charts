@@ -40,7 +40,7 @@ class ExecutionError(DbtChartsError):
     # Class-level None default keeps `from_code`-constructed instances safe.
     query_name: str | None = None
 
-    def __init__(self, message: str, query_name: str | None = None):
+    def __init__(self, message: str, query_name: str | None = None) -> None:
         self.message = message
         self.query_name = query_name
         self.fields: dict[str, Any] = {}
@@ -83,7 +83,7 @@ class QueryError(ExecutionError):
         sql: str | None = None,
         *,
         code: "ErrorCode | None" = None,
-    ):
+    ) -> None:
         self.sql = sql
         if code is not None:
             self.code = code
@@ -107,7 +107,7 @@ class AdapterError(ExecutionError):
 
     adapter_type: str | None = None
 
-    def __init__(self, message: str, adapter_type: str | None = None):
+    def __init__(self, message: str, adapter_type: str | None = None) -> None:
         self.adapter_type = adapter_type
         super().__init__(f"Adapter error: {message}")
 
@@ -129,7 +129,7 @@ class ConnectionError(ExecutionError):
 
     source: str | None = None
 
-    def __init__(self, message: str, source: str | None = None):
+    def __init__(self, message: str, source: str | None = None) -> None:
         self.source = source
         super().__init__(f"Connection failed: {message}")
 
@@ -155,7 +155,7 @@ class QueryTimeoutError(ExecutionError):
         elapsed: float,
         sql_preview: str,
         query_name: str | None = None,
-    ):
+    ) -> None:
         self.elapsed = elapsed
         self.sql_preview = sql_preview
         super().__init__(
@@ -196,7 +196,7 @@ class MutatingSqlError(ExecutionError):
         fragment_preview: str,
         *,
         allowlist_label: str = "query",
-    ):
+    ) -> None:
         self.rejected_node_kind = rejected_node_kind
         self.fragment_preview = fragment_preview
         self.allowlist_label = allowlist_label
@@ -258,7 +258,7 @@ class UnparseableSqlError(ExecutionError):
         cause: Exception | str,
         *,
         sql_position: SqlErrorPosition | None = None,
-    ):
+    ) -> None:
         self.cause = cause
         self.sql_position = sql_position
         self.code = ERR_UNPARSEABLE_SQL

@@ -35,6 +35,7 @@ from dbt_charts.core.compile.models.board.authored import (
     AUTHORED_BOARD_ADAPTER,
     AuthoredBoard,
 )
+from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
 from dbt_charts.core.utils import BoardLoader, UniqueKeyLoader
 
 # This module only sees raw content, so the file is unknown here; the compiler
@@ -289,7 +290,9 @@ def parse_mapping(parsed_data: dict[str, Any], content: str = "") -> AuthoredBoa
     from pydantic import ValidationError as PydanticValidationError
 
     try:
-        return AUTHORED_BOARD_ADAPTER.validate_python(parsed_data)
+        return AUTHORED_BOARD_ADAPTER.validate_python(
+            parsed_data, context=AUTHORED_INPUT
+        )
     except PydanticValidationError as e:
         # compiler._parse_error_to_diagnostics re-reads e.__cause__ as a
         # PydanticValidationError and routes through format_validation_errors_structured

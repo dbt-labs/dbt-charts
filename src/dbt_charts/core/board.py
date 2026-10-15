@@ -355,9 +355,7 @@ def render_dashboard(
         if result.errors:
             # Ref/source errors land here: this arm has no execution layer to
             # catch them per chart, and a board that cannot execute must not
-            # come back "ok" with a preview URL. (Checked on `errors` rather
-            # than `success` — mypy narrows the property from the guard above
-            # and calls the branch unreachable.)
+            # come back "ok" with a preview URL.
             return _compile_failed(result, ignore_codes, _warnings_ignore)
         active, suppressed = partition_compile_warnings(
             list(result.warnings), result.board, ignore_codes, _warnings_ignore

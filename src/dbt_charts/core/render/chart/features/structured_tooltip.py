@@ -182,9 +182,17 @@ def _cartesian_roles(
         # run. Drop that histogram gate and this line becomes a crash inside a
         # tooltip feature.
         header_data = normalize_labeled_temporal(data, chart.x)
+        # An own-query layer draws marks from other rows whose header would
+        # have to match this one string for string, so none gets a time of day.
         header = (
             header_tooltip_field(
-                chart.x, x_title, header_data, style.axis_x.grain_formats
+                chart.x,
+                x_title,
+                header_data,
+                style.axis_x,
+                time_of_day=all(
+                    lay.query_name == chart.query_name for lay in chart.layers
+                ),
             ),
         )
 
@@ -521,7 +529,7 @@ def _scatter_roles(
     y_title = chart.y_label or field_title(chart.y, chart.field_labels)
     # Mirrors the scatter emitter's x gate, decided on the same raw rows: a
     # quantitative x stays a measure (canonicalizing it would misread a
-    # 1900-2100 numeric column as years); anything else the emitter runs
+    # 1700-2100 numeric column as years); anything else the emitter runs
     # through normalize_labeled_temporal before encoding, so Vega coerces a
     # labeled bucket ("Q1 2024") to epoch-ms. The row must format that same
     # canonical value with its grain, as the cartesian header does. The call
@@ -542,9 +550,7 @@ def _scatter_roles(
         )
     else:
         x_data = normalize_labeled_temporal(data, chart.x)
-        x_row = header_tooltip_field(
-            chart.x, x_title, x_data, style.axis_x.grain_formats
-        )
+        x_row = header_tooltip_field(chart.x, x_title, x_data, style.axis_x)
     values = [_value_tooltip_field(chart.y, y_title, data, fmt), x_row]
 
     color_ch = chart.resolved_channels.get("color")
@@ -573,8 +579,8 @@ def _heatmap_roles(
     x_title = chart.x_label or field_title(chart.x, chart.field_labels)
     y_title = chart.y_label or field_title(chart.y, chart.field_labels)
     header = (
-        header_tooltip_field(chart.x, x_title, data, style.axis_x.grain_formats),
-        header_tooltip_field(chart.y, y_title, data, style.axis_x.grain_formats),
+        header_tooltip_field(chart.x, x_title, data, style.axis_x),
+        header_tooltip_field(chart.y, y_title, data, style.axis_x),
     )
     color_ch = chart.resolved_channels.get("color")
     assert color_ch is not None and color_ch.data_field  # heatmap's value channel

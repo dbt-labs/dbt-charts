@@ -84,7 +84,7 @@ def test_project_lookup_board_query_sql_forwards_project_root_as_project_dir(
 ) -> None:
     captured: dict[str, object] = {}
 
-    def fake_lookup(  # type: ignore[no-untyped-def]
+    def fake_lookup(
         name: str,
         path: Path,
         *,

@@ -21,6 +21,12 @@ select = [
     "BLE001",  # flake8-blind-except: catch broad Exception/BaseException without re-raising
     "TRY002",  # flake8-tryceratops: raise-vanilla-class
     "PT",    # flake8-pytest-style
+    "ANN001",  # flake8-annotations: missing parameter type
+    "ANN201",  # flake8-annotations: missing public return type
+    "ANN202",  # flake8-annotations: missing private return type
+    "ANN002",  # flake8-annotations: missing *args type
+    "ANN003",  # flake8-annotations: missing **kwargs type
+    "ANN204",  # flake8-annotations: missing special-method return type
 ]
 ignore = [
     "E501",  # line too long (the formatter handles this)
@@ -46,6 +52,9 @@ extend-select = [
 # (oss/vulture-whitelist.py) and the post-export path (vulture-whitelist.py
 # at the standalone repo root).
 "**/vulture-whitelist.py" = ["B018", "F821"]
+# "Annotate everything" is enforced on shipped source; tests are unannotated.
+"**/tests/**" = ["ANN"]
+"**/conftest.py" = ["ANN"]
 
 [lint.isort]
 # Combine aliased imports from same module into single statement

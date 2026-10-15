@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from dbt_charts.agent_api._paths import resolve_board_path
+from dbt_charts.agent_api._paths import (
+    resolution_error_diagnostic,
+    resolve_board_path,
+)
 from dbt_charts.core.board import partition_compile_warnings
 from dbt_charts.core.compile.format import missing_format_columns
 from dbt_charts.core.compile.normalize.charts import _FIELD_CHANNEL_KEYS
@@ -112,11 +115,7 @@ def _validate_one_path(
             ValidateResult(
                 success=False,
                 path=raw_path.as_posix(),
-                errors=[
-                    DbtChartsError.from_code(
-                        ERR_INTERNAL, message=str(exc)
-                    ).to_diagnostic()
-                ],
+                errors=[resolution_error_diagnostic(exc)],
             )
         ]
 
@@ -155,9 +154,7 @@ def validate(path: Path, *, project: Project) -> ValidateResult:
         return ValidateResult(
             success=False,
             path=path.as_posix(),
-            errors=[
-                DbtChartsError.from_code(ERR_INTERNAL, message=str(exc)).to_diagnostic()
-            ],
+            errors=[resolution_error_diagnostic(exc)],
         )
 
     return _validate_resolved(resolved, project)

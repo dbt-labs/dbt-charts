@@ -619,7 +619,7 @@ def test_cli_validate_command_calls_project_session_validate(tmp_path: Path) -> 
     ]
 
     @contextmanager
-    def fake_from_project(project, *, cache=None, **_kwargs):  # type: ignore[no-untyped-def]
+    def fake_from_project(project, *, cache=None, **_kwargs):
         yield fake_project
 
     with patch(

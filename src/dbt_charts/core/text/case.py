@@ -7,7 +7,8 @@ Supported values (matching FontStyle.case):
   none       — no-op; string emitted as authored / as normalized by slug_to_text.
   upper      — str.upper() (Unicode-aware).
   lower      — str.lower() (Unicode-aware).
-  sentence   — first character uppercased, remainder unchanged.
+  sentence   — first character uppercased, remainder unchanged, except a
+               leading token that is exactly `dbt`, which stays lowercase.
                Preserves acronyms and proper nouns that the author
                already capitalized.  Does NOT lowercase the rest of the
                string — that would corrupt ARR, iOS, etc.
@@ -20,7 +21,8 @@ Supported values (matching FontStyle.case):
                stopwords (a, an, and, as, at, but, by, en, for, if, in,
                of, on, or, the, to, v[.], vs[.], via — plus the
                extended set above). Always capitalizes first and last
-               words. Preserves any token with internal capitals
+               words, except a path-like token (slug, path, URL), which
+               keeps its authored case. Preserves any token with internal capitals
                (iPhone, YoY).
   slug       — Machine identifier form: spaces/hyphens → underscore, lower.
                "Order Status" → "order_status".
@@ -58,10 +60,25 @@ _EXTRA_SMALL_WORDS: frozenset[str] = frozenset(
 _FORCE_LOWERCASE: frozenset[str] = frozenset({"dbt"})
 
 
+def _is_path_like(word: str) -> bool:
+    """A slug, path, or URL, as opposed to a prose pair like ``pie/donut``."""
+    token = word.rstrip(".,;:!?")
+    segments = token.split("/")
+    if len(segments) > 2:
+        return True
+    return len(segments) == 2 and (
+        any("_" in seg or "." in seg[:-1] for seg in segments)
+        or all("-" in seg for seg in segments)
+    )
+
+
 def _acronym_callback(word: str, **_kwargs: object) -> str | None:
     """Callback for the `titlecase` library — preserves embedded all-caps
     acronyms the library's built-in detection doesn't cover, and forces
     known non-acronym tokens (``_FORCE_LOWERCASE``) to stay lowercase.
+    Path-like words (see ``_is_path_like``: repo slugs, paths, URLs) keep
+    their authored case; prose pairs such as ``pie/donut`` or ``x/y-axis``
+    fall through to the library's per-side ``/`` handling.
 
     The library has a special-case for all-consonant tokens of length > 2
     (uppercases them — that's how ``MRR``, ``SQL`` survive). It misses
@@ -77,6 +94,8 @@ def _acronym_callback(word: str, **_kwargs: object) -> str | None:
     ``"per"`` for a first-word ``Per`` would wrongly leave it
     lowercase).
     """
+    if _is_path_like(word):
+        return word
     if word.lower() in _FORCE_LOWERCASE:
         return word.lower()
     if word.isupper() and len(word) > 1 and word.isalpha():
@@ -116,9 +135,6 @@ def apply_case(text: str, case: CaseValue) -> str:
 
     Returns:
         The transformed string.
-
-    Raises:
-        ValueError: If *case* is not a recognized value.
     """
     if case == "none":
         return text
@@ -128,8 +144,12 @@ def apply_case(text: str, case: CaseValue) -> str:
         return text.lower()
     if case == "sentence":
         # Cautious sentence case: uppercase only the first character, leave
-        # the rest unchanged.  Preserves acronyms/proper nouns.
-        return text[:1].upper() + text[1:] if text else text
+        # the rest unchanged (preserves acronyms/proper nouns), except a
+        # leading forced-lowercase token such as "dbt".
+        first, sep, rest = text.partition(" ")
+        if first.lower() in _FORCE_LOWERCASE:
+            return first.lower() + sep + rest
+        return text[:1].upper() + text[1:]
     if case == "title":
         # The titlecase library detects a whole-string ``all_caps`` shape
         # at line scope (titlecase/__init__.py:102) and lowercases it
@@ -154,10 +174,6 @@ def apply_case(text: str, case: CaseValue) -> str:
         if not words:
             return text
         return words[0].lower() + "".join(w.capitalize() for w in words[1:])
-    raise ValueError(
-        f"Unknown case: {case!r}. Expected one of 'none', 'upper', "
-        "'lower', 'sentence', 'title', 'slug', 'camel'."
-    )
 
 
 def apply_case_to_runs(runs: list[str], case: CaseValue) -> list[str]:

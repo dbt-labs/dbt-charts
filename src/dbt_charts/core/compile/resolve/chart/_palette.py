@@ -28,6 +28,7 @@ __all__ = [
     "_effective_palette",
     "_effective_requested_alias_palette",
     "_effective_single_series_fill",
+    "_pin_companions",
     "_resolved_series_label",
     "_with_color_tokens",
 ]
@@ -36,7 +37,8 @@ __all__ = [
 class _HasColor(Protocol):
     """Structural contract for style patches that carry color config."""
 
-    color: ColorStyle | StaticGradientColorStyle | None
+    @property
+    def color(self) -> ColorStyle | StaticGradientColorStyle | None: ...
 
 
 def _resolve_patch_categorical(
@@ -147,6 +149,22 @@ def _effective_single_series_fill(
     return ink[rhythm_slot % len(ink)]
 
 
+def _pin_companions(
+    chart_style_context: ChartStyleContext, canvas: str
+) -> tuple[tuple[str, str], ...]:
+    """``(pinned color, ink)`` pairs for every color a ``category_colors`` pin
+    names, the ink derived against ``canvas`` the way the palette's is."""
+    return tuple(
+        sorted(
+            {
+                (color, mark_ink(color, canvas))
+                for scale in chart_style_context.category_colors
+                for color in scale.overrides.values()
+            }
+        )
+    )
+
+
 def _resolved_series_label(
     chart_style_context: ChartStyleContext,
     primary: _HasColor | None,
@@ -184,15 +202,7 @@ def _resolved_series_label(
         font_weight=font_weight_as_css(font.compact_weight if compact else font.weight),
         font_style=font.style,
         dark_companion_palette=tuple(mark_ink(c, canvas) for c in eff_palette),
-        pin_companions=tuple(
-            sorted(
-                {
-                    (color, mark_ink(color, canvas))
-                    for scale in chart_style_context.category_colors
-                    for color in scale.overrides.values()
-                }
-            )
-        ),
+        pin_companions=_pin_companions(chart_style_context, canvas),
         gap_px=font_size * ENDPOINT_LABEL_LINE_HEIGHT_MULTIPLIER,
     )
 

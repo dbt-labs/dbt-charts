@@ -9,11 +9,15 @@ Not in scope: _build_chart_style_context, resolved_axis_style.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from functools import cache
-from typing import Any, TypeVar
+from typing import Any, TypeVar, get_args
 
 from pydantic import BaseModel, TypeAdapter
+from pydantic.fields import FieldInfo
 
+from dbt_charts.core.compile.models.factories import _PatchBase
+from dbt_charts.core.compile.models.markers import Absent
 from dbt_charts.core.compile.models.style.theme import Style
 from dbt_charts.core.compile.resolve.style.inherit_graph import InheritGraph
 
@@ -71,40 +75,6 @@ def defer_base_none_children(
         patch_type.model_construct(_fields_set=held_fields, **held_values),
         paths,
     )
-
-
-def null_paths(patch: BaseModel, prefix: str) -> list[str]:
-    """Paths *patch* explicitly sets to None, rooted at *prefix*."""
-    found: list[str] = []
-    for name in patch.model_fields_set:
-        value = getattr(patch, name)
-        path = f"{prefix}.{name}"
-        if value is None:
-            found.append(path)
-        elif isinstance(value, BaseModel):
-            found.extend(null_paths(value, path))
-    return found
-
-
-def prune_path(patch: BaseModel, path: str, prefix: str) -> BaseModel:
-    """Return *patch* without the write at *path* (rooted at *prefix*) or below it.
-
-    Children left empty by the pruning are dropped too.
-    """
-    values: dict[str, Any] = {}  # type-state: explicit_any — patch field values
-    fields_set: set[str] = set()
-    for name in patch.model_fields_set:
-        value = getattr(patch, name)
-        child_path = f"{prefix}.{name}"
-        if child_path == path:
-            continue
-        if isinstance(value, BaseModel) and path.startswith(f"{child_path}."):
-            value = prune_path(value, path, child_path)
-            if not value.model_fields_set:
-                continue
-        values[name] = value
-        fields_set.add(name)
-    return type(patch).model_construct(_fields_set=fields_set, **values)
 
 
 def _path_depth(path: str) -> int:
@@ -253,3 +223,36 @@ def _model_copy_paths(model: _ModelT, updates_by_path: dict[str, _ValueT]) -> _M
         model_updates[field_name] = field_value
 
     return model.model_copy(update=model_updates)
+
+
+def _is_sparse(field: FieldInfo) -> bool:
+    pending = [field.annotation]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, type) and issubclass(node, _PatchBase):
+            return True
+        pending.extend(get_args(node))
+    return False
+
+
+def _none_paths(model: BaseModel, path: str) -> Iterator[str]:
+    for name, field in type(model).model_fields.items():
+        if _is_sparse(field):
+            continue
+        value = getattr(model, name)
+        child = f"{path}.{name}"
+        if value is None:
+            if not any(isinstance(meta, Absent) for meta in field.metadata):
+                yield child
+        elif isinstance(value, BaseModel):
+            yield from _none_paths(value, child)
+
+
+def assert_style_total(style: Style) -> None:
+    """Raise when a style field is ``None`` where a value was required.
+
+    ``None`` is legal on a field carrying ``Absent`` and anywhere inside a sparse
+    (``*Patch``-typed) slot.
+    """
+    if missing := list(_none_paths(style, "Style")):
+        raise ValueError("Style fields left unset:\n" + "\n".join(missing))

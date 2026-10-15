@@ -631,7 +631,7 @@ mod tests {
             "background": null,
             "fonts_dir": null,
             "padding": null,
-            "board_style": {
+            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},
                 "muted": "#626366", "tones": null, "title_case": "title",
                 "format_locale": crate::number_locale::en_us_wire(),
                 "time_locale": crate::time_locale::en_us_wire(),

@@ -24,12 +24,15 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style_and_context,
 )
 
+from .._board_utils import merged_patch
+
 KNOWN = "body, caption, code, heading, label, numeral, subtitle"
 
 
 def _pre_style(*patches: dict[str, Any]):
     return resolve_style_and_context(
-        get_theme_style(), *(StylePatch.model_validate(p) for p in patches)
+        get_theme_style(),
+        merged_patch(*(StylePatch.model_validate(p) for p in patches)),
     )[1].pre_style
 
 
@@ -38,6 +41,13 @@ def test_theme_ships_the_seven_named_fonts() -> None:
     assert fonts is not None
     assert sorted(fonts) == sorted(KNOWN.split(", "))
     assert fonts["heading"].sizes == [24, 18, 14, 14, 11, 11]
+
+
+def test_subtitle_font_sets_no_case() -> None:
+    """Authored subtitles paint as typed in both engines, so the theme sets no case."""
+    fonts = get_theme_style().fonts
+    assert fonts is not None
+    assert fonts["subtitle"].case is None
 
 
 def test_resolved_font_has_no_extends() -> None:
@@ -401,7 +411,7 @@ def test_shipped_schema_registry_entries_take_extends_and_a_name() -> None:
     schema = _shipped_schema()
     assert "extends" in _definition(schema, "NamedFont")["properties"]
     registry = _definition(schema, "StylePatch")["properties"]["fonts"]
-    assert {"type": "string"} in registry["anyOf"][0]["additionalProperties"]["anyOf"]
+    assert {"type": "string"} in registry["additionalProperties"]["anyOf"]
 
 
 def test_font_alias_is_described_as_a_font_name() -> None:
@@ -413,7 +423,7 @@ def test_font_alias_is_described_as_a_font_name() -> None:
 def test_shipped_schema_root_font_takes_no_name() -> None:
     schema = _shipped_schema()
     slot = _definition(schema, "StylePatch")["properties"]["font"]
-    assert {"type": "string"} not in slot["anyOf"]
+    assert {"type": "string"} not in slot.get("anyOf", [])
     assert "extends" not in _definition(schema, "RootFontStylePatch")["properties"]
 
 

@@ -1,6 +1,6 @@
 """Fast-lane regression tests for chart property propagation.
 
-Derived from the chart property audit (ai_notes/research/chart-property-audit-2026-03-27.md).
+Derived from the chart property audit (ai_notes/charts/chart-property-audit-2026-03-27.md).
 These tests assert that authored properties reach the final Vega-Lite spec through
 both the chart-authored and style-authored control paths.
 

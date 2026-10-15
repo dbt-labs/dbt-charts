@@ -225,7 +225,7 @@ def check_file(path: pathlib.Path) -> list[Violation]:
     try:
         tree = ast.parse(source, str(path))
     except SyntaxError as exc:
-        # Not our problem to report syntax errors; let ruff/mypy handle them.
+        # Not our problem to report syntax errors; let ruff/pyright handle them.
         print(f"WARNING: could not parse {path}: {exc}", file=sys.stderr)
         return violations
 

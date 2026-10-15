@@ -46,6 +46,7 @@ from pydantic.fields import FieldInfo
 
 from dbt_charts.core.compile.errors import CompilationError, FileValidationError
 from dbt_charts.core.compile.file_refs import anchor_images, resolve_ref
+from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
 from dbt_charts.core.compile.models.markers import (
     Exclusive,
     Merge,
@@ -290,18 +291,16 @@ def scope_patch(
 ) -> StylePatch | None:
     """The patch in force inside a nested scope, given its parent's.
 
-    A scope that authors nothing (``own is None``) inherits the parent's
-    patch unchanged. A scope with nothing to inherit from (``inherited is
-    None``, the root or an unstyled lineage) takes its own patch as-is.
-    Otherwise ``own`` merges onto ``inherited`` once the fields marked
-    ``NotInherited`` are dropped from it.
+    A scope with nothing to inherit from (``inherited is None``, the root or
+    an unstyled lineage) takes its own patch as-is. Otherwise the fields
+    marked ``NotInherited`` are dropped from ``inherited``, and ``own`` (when
+    the scope authors a style) merges onto what is left. A scope that authors
+    nothing therefore inherits exactly what a styled one would.
 
     Shared by the compile cascade (``compile_board_resolved_style``) and any
     read-only walk that needs to mirror it (design-verb scope offering) —
     both must derive the same in-force patch from the same lineage.
     """
-    if own is None:
-        return inherited
     if inherited is None:
         return own
     dropped = _not_inherited_fields(type(inherited))
@@ -312,7 +311,7 @@ def scope_patch(
             for name in type(inherited).model_fields
         },
     )
-    return merge_patches(kept, own)
+    return kept if own is None else merge_patches(kept, own)
 
 
 # ---------------------------------------------------------------------------
@@ -530,7 +529,7 @@ def _fragment_from_yaml(
         data = prepare_board_mapping(data, model=BoardPatch)
         anchor_images(data, written_in)
     try:
-        return BOARD_PATCH_ADAPTER.validate_python(data)
+        return BOARD_PATCH_ADAPTER.validate_python(data, context=AUTHORED_INPUT)
     except PydanticValidationError as e:
         raise FileValidationError.from_pydantic(
             f"extends: schema error in {relpath}", e, content, relpath
@@ -555,7 +554,7 @@ def _fragment_own_patch(fragment: BaseModel) -> BaseModel:
     from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
 
     data = fragment.model_dump(exclude_unset=True, exclude=_EXTENDS_STRIP)
-    return BOARD_PATCH_ADAPTER.validate_python(data)
+    return BOARD_PATCH_ADAPTER.validate_python(data, context=AUTHORED_INPUT)
 
 
 def _named_board_path(entry: str, ctx: _ExtendCtx) -> ProjectPath | None:
@@ -880,7 +879,9 @@ def merge_metas(
             try:
                 meta_mapping = prepare_board_mapping(meta_data, model=BoardPatch)
                 anchor_images(meta_mapping, meta_path.parent)
-                fragment = BOARD_PATCH_ADAPTER.validate_python(meta_mapping)
+                fragment = BOARD_PATCH_ADAPTER.validate_python(
+                    meta_mapping, context=AUTHORED_INPUT
+                )
             except PydanticValidationError as e:
                 raise FileValidationError.from_pydantic(
                     f"meta schema error in {meta_path.relpath}",
@@ -1025,9 +1026,8 @@ def to_padding_style(padding: PaddingStyle | PaddingStylePatch) -> PaddingStyle:
 
     (``isinstance(padding, PaddingStyle)`` is not a usable guard here:
     ``PaddingStylePatch``'s ``TYPE_CHECKING`` stub declares it a subclass of
-    ``PaddingStyle`` — the same lie that let the underlying bug through
-    mypy in the first place — so a real subclass check would statically
-    "prove" the patch branch unreachable.)
+    ``PaddingStyle``, so a real subclass check would statically "prove" the
+    patch branch unreachable.)
     """
     sides = padding.model_dump()
     missing = [side for side, value in sides.items() if value is None]

@@ -33,9 +33,9 @@
 //! of any shape, a continuous x, or a mirror `format` or `expr`).
 
 use crate::constants::estimates::{FACET_CHROME_PX, FACET_MIRROR_AXIS_PX};
+use crate::constants::layout::FACET_MIN_PANEL_PX;
 use serde::Deserialize;
 use serde_json::{Map, Value};
-
 
 /// `chart.multiples` — the authored partition config (`_base.py::MultiplesConfig`,
 /// as it lands in a resolved chart's own `multiples` field: `rows`/`columns`
@@ -241,6 +241,23 @@ pub fn facet_panel_width(
     let chrome = FACET_CHROME_PX + if has_mirror { FACET_MIRROR_AXIS_PX } else { 0.0 };
     let usable = (width - chrome).max(0.0);
     (usable / panel_cols as f64 - extra_axis_px).max(0.0)
+}
+
+/// `WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM` (`facet_panel_width_below_minimum.py`):
+/// production judges the `facet_panel_width` its spec gives each panel, before
+/// any composite width correction.
+pub fn warn_panel_below_minimum(chart_id: &str, panel_cols: usize, panel_width: f64) {
+    if panel_width < FACET_MIN_PANEL_PX {
+        crate::diagnostic::warn(crate::diagnostic::Diagnostic::new(
+            &crate::codes::WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM,
+            [
+                ("chart_id", Value::from(chart_id)),
+                ("min_panel_px", Value::from(FACET_MIN_PANEL_PX)),
+                ("panel_cols", Value::from(panel_cols)),
+                ("panel_width", Value::from(panel_width)),
+            ],
+        ));
+    }
 }
 
 #[cfg(test)]

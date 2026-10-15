@@ -11,9 +11,14 @@ from dbt_charts.core.compile.merge import scope_patch
 from dbt_charts.core.compile.models.style.authored import StylePatch
 
 
-def test_own_none_returns_inherited_unchanged() -> None:
-    inherited = StylePatch.model_validate({"muted": "#111111"})
-    assert scope_patch(inherited, None) is inherited
+def test_own_none_strips_not_inherited_fields_from_inherited() -> None:
+    inherited = StylePatch.model_validate(
+        {"muted": "#111111", "gap": 60, "margin": {"left": 4}}
+    )
+
+    scoped = scope_patch(inherited, None)
+
+    assert scoped.model_dump(exclude_unset=True) == {"muted": "#111111", "gap": 60}
 
 
 def test_inherited_none_returns_own_unchanged() -> None:
@@ -27,7 +32,7 @@ def test_both_none_returns_none() -> None:
 
 def test_both_set_strips_not_inherited_fields_then_merges() -> None:
     inherited = StylePatch.model_validate(
-        {"muted": "#111111", "gap": 60, "frame": {"card_padding": 90}}
+        {"muted": "#111111", "gap": 60, "margin": {"left": 4}}
     )
     own = StylePatch.model_validate({"accent": "#222222"})
 
@@ -35,5 +40,6 @@ def test_both_set_strips_not_inherited_fields_then_merges() -> None:
 
     assert merged.model_dump(exclude_unset=True) == {
         "muted": "#111111",
+        "gap": 60,
         "accent": "#222222",
     }

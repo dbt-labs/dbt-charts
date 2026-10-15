@@ -1311,6 +1311,14 @@ class TestBuildCartesianXEncodingIntervalStep:
         with pytest.raises(ChartDataError, match="ticks.time_unit"):
             build_cartesian_x_encoding(_rows(dates), "date", ax, {}, "bar")
 
+    def test_tick_unit_without_a_calendar_cadence_raises_its_registered_code(self):
+        # A tick unit that names no calendar grain has no step-anchored cadence.
+        ax = _axis(ticks_time_unit="hour")
+        dates = _monthly_dates(24)
+        with pytest.raises(ChartDataError) as exc:
+            build_cartesian_x_encoding(_rows(dates), "date", ax, {}, "line")
+        assert exc.value.code.code == "ERR-TICKS-TIME-UNIT-NO-CADENCE"
+
     def test_nominal_axis_with_interval_raises(self):
         ax = _axis(ticks_time_unit="year")
         data = [{"category": "foo"}, {"category": "bar"}]

@@ -13,7 +13,11 @@ import pytest
 import yaml
 
 from dbt_charts.core.compile.compiler import compile as compile_board
-from dbt_charts.core.text.format_d3 import PYTHON_STRFTIME_DIRECTIVES, format_d3
+from dbt_charts.core.text.format_d3 import (
+    PYTHON_STRFTIME_DIRECTIVES,
+    VEGA_SAFE_TIME_DIRECTIVES,
+    format_d3,
+)
 
 from ..._svg_render import render_board_to_svg
 
@@ -2329,21 +2333,46 @@ def test_unsupported_strftime_directive_fails_compile_not_at_render() -> None:
     assert "%b" in error.message, "the accepted directives should be listed"
 
 
-def test_compile_accepted_time_directives_are_the_python_strftime_set() -> None:
-    """The directives ERR-FORMAT-INVALID lists as accepted are exactly
-    PYTHON_STRFTIME_DIRECTIVES (d3's letters are a subset), and %L/%Q/%q
-    still compile on an axis_x format.
+def test_vega_slot_lists_only_directives_that_compile_there() -> None:
+    """A Vega-painted slot's ERR-FORMAT-INVALID lists VEGA_SAFE_TIME_DIRECTIVES,
+    so every letter it offers compiles on the same slot (no second failed compile).
     """
     result = compile_board(_board_with_axis_x_format('"%K"'))
     assert not result.success
     error = result.errors[0]
     assert error.code == "ERR-FORMAT-INVALID"
-    assert "K" not in PYTHON_STRFTIME_DIRECTIVES
+    listed = set(re.findall(r"%(\w)", error.message.split("Accepted directives:")[1]))
+    assert listed == VEGA_SAFE_TIME_DIRECTIVES
+
+    for directive in sorted(listed):
+        result = compile_board(_board_with_axis_x_format(f'"%{directive}"'))
+        assert result.success, f"%{directive}: {result.errors}"
+
+
+def test_python_slot_lists_the_python_strftime_set() -> None:
+    board = """
+title: T
+queries:
+  q:
+    source: db
+    sql: SELECT '2024-01-01'::DATE AS month, 100 AS revenue
+charts:
+  detail:
+    query: q
+    type: table
+    style:
+      columns:
+        month:
+          format: "%K"
+rows:
+  - detail
+"""
+    result = compile_board(board)
+    assert not result.success
+    error = result.errors[0]
+    assert error.code == "ERR-FORMAT-INVALID"
     listed = set(re.findall(r"%(\w)", error.message.split("Accepted directives:")[1]))
     assert listed == PYTHON_STRFTIME_DIRECTIVES
-
-    for directive in "LQq":
-        assert compile_board(_board_with_axis_x_format(f'"%{directive}"')).success
 
 
 def test_unsupported_directive_on_axis_format_also_fails_compile() -> None:

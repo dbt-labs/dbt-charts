@@ -653,6 +653,7 @@ def build_cartesian_x_encoding(
         BUCKETED_CALENDAR_UNITS,
         default_label_expr_for,
         default_subday_label_expr_for,
+        default_subday_tick_interval,
         enumerated_axis_values,
         label_opener_values,
         ordinal_axis_values,
@@ -1087,12 +1088,14 @@ def build_cartesian_x_encoding(
         if _ticks_time_unit is not None:
             if _ticks_time_unit not in _TEMPORAL_TICK_INTERVAL:
                 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+                from dbt_charts.core.diagnostics.codes_render import (
+                    ERR_TICKS_TIME_UNIT_NO_CADENCE,
+                )
 
-                raise ChartDataError(
-                    f"ticks.time_unit: {_ticks_time_unit!r} has no step-anchored "
-                    "cadence — only a calendar-bucketing grain "
-                    f"({', '.join(_TEMPORAL_TICK_INTERVAL)}) names a VL tick "
-                    "interval."
+                raise ChartDataError.from_code(
+                    ERR_TICKS_TIME_UNIT_NO_CADENCE,
+                    time_unit=_ticks_time_unit,
+                    grains=", ".join(_TEMPORAL_TICK_INTERVAL),
                 )
             interval, _ = _TEMPORAL_TICK_INTERVAL[_ticks_time_unit]
             tick_count: dict[str, Any] = {"interval": interval}
@@ -1134,6 +1137,9 @@ def build_cartesian_x_encoding(
                 if domain_values is not None
                 else [row.get(x_field) for row in data]
             )
+            available_width = (
+                plot_width if plot_width is not None else outer_chart_width
+            )
             resolved_tick_count = result.get("tickCount")
             subday_tick_count_ceiling: int | None
             if isinstance(resolved_tick_count, int):
@@ -1147,10 +1153,17 @@ def build_cartesian_x_encoding(
                 # midnight or coarser — the vocabulary never applies.
                 subday_tick_count = None
                 subday_tick_count_ceiling = None
-            else:
-                available_width = (
-                    plot_width if plot_width is not None else outer_chart_width
+            elif "values" not in result and (
+                ladder := default_subday_tick_interval(
+                    subday_values, authored_domain, available_width
                 )
+            ):
+                # The default cadence: a clock-aligned step, so the tick count
+                # is exact rather than predicted.
+                interval, step, subday_tick_count = ladder
+                subday_tick_count_ceiling = subday_tick_count
+                result["tickCount"] = {"interval": interval, "step": step}
+            else:
                 subday_tick_count = predicted_tick_count(available_width)
                 subday_tick_count_ceiling = predicted_tick_count_ceiling(
                     available_width

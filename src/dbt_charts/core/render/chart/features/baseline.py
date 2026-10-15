@@ -466,7 +466,6 @@ class BaselineFeature:
                     measure_field=measure_field,
                     color=threshold_style.color,
                     width=threshold_style.width,
-                    announce=False,
                 ),
                 chart,
             )

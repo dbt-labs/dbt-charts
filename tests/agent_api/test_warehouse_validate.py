@@ -554,8 +554,8 @@ class TestNoWarehouseWithoutFlag:
             raise AssertionError("warehouse I/O without --warehouse")
 
         registry = session.adapter_registry
-        registry.execute = _boom  # type: ignore[method-assign]
-        registry.resolve_query_source = _boom  # type: ignore[method-assign]
+        registry.execute = _boom
+        registry.resolve_query_source = _boom
 
         results = session.validate_paths([tmp_path / "charts" / "test_board.yml"])
         assert len(results) == 1

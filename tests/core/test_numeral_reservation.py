@@ -20,7 +20,7 @@ more than half a digit; floor undershoots by nearly as much). Composing a
 short run of the Unicode space vocabulary — each occupying a different,
 measured fraction of a digit's advance — reaches sub-pixel error instead.
 See "the reservation is exact in slots, approximate in width" in
-``ai_notes/jul26-02-numeral-system-design.md`` (corrected 2026-08-06).
+``ai_notes/charts/jul26-02-numeral-system-design.md`` (corrected 2026-08-06).
 """
 
 from __future__ import annotations

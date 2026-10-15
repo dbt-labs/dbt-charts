@@ -1,9 +1,6 @@
-"""Version-migration module for the unreleased 0.5.0 -> current boundary.
+"""Version-migration module for the 0.5.0 -> 0.6.0 boundary.
 
-Declares the pending structural changes since the 0.5.0 freeze. Authored as
-``versions/current.py`` while unreleased (the ``catalog.latest.version ->
-current`` boundary); renamed to ``versions/v<new_version>.py`` at release time
-with no content edit, same convention as ``v0_4_0.py``/``v0_5_0.py``.
+Declares the structural changes since the 0.5.0 freeze.
 
 THIS FILE IS SCHEMA CHANGES ONLY. Do not add an entry here for anything that
 is not a key rename, a key removal, or an authored value's meaning changing

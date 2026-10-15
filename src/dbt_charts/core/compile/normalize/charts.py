@@ -44,6 +44,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     SparkBarChart,
     TableChart,
 )
+from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.query.authored import _BaseQueryFields
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
@@ -75,7 +76,6 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_CUSTOM_TEMPLATE,
     ERR_MULTIPLES_SELF_CROSSED,
 )
-from dbt_charts.core.text.case import apply_case, inferred_display_name
 
 _AUTHORED_CHART_ADAPTER: TypeAdapter[AuthoredChart] = TypeAdapter(AuthoredChart)
 
@@ -106,7 +106,9 @@ class RegisteredChart:
     def visible(self) -> bool | str | SingleRowBoolProbe | None:
         """The layout `visible:` the chart authored, for any item placing it."""
         return authored_visible(
-            _AUTHORED_CHART_ADAPTER.validate_python(self.definition)
+            _AUTHORED_CHART_ADAPTER.validate_python(
+                self.definition, context=AUTHORED_INPUT
+            )
         )
 
 
@@ -158,7 +160,9 @@ def normalize_chart(
                 f"Valid types: {sorted(SUPPORTED_AUTHORED_CHART_TYPES)}"
             )
         try:
-            authored = _AUTHORED_CHART_ADAPTER.validate_python(chart_def)
+            authored = _AUTHORED_CHART_ADAPTER.validate_python(
+                chart_def, context=AUTHORED_INPUT
+            )
         except ValidationError as exc:
             raise CompilationError(
                 f"Chart '{chart_id}' failed validation: {exc}"
@@ -430,40 +434,6 @@ def normalize_chart(
                 raise CompilationError(
                     f"Chart '{chart_id}' (pie) requires 'theta' field."
                 )
-            # Apply donut default inner_radius if this was authored as "donut"
-            pie_style = authored_style
-            if is_donut and pie_style is not None:
-                if pie_style.inner_radius is None:
-                    pie_style = pie_style.model_copy(update={"inner_radius": 0.6})
-            elif is_donut and pie_style is None:
-                from dbt_charts.core.compile.models.style.authored import (
-                    PieChartStylePatch,
-                )
-
-                pie_style = PieChartStylePatch(inner_radius=0.6)  # type: ignore[call-arg]
-            # Donut center total label auto-injection. The value's format
-            # defaults separately, at resolve time (compile/resolve/chart/pie.py),
-            # once it's a style-cascade field and the full theme/board/chart-local
-            # merge is available.
-            total = authored.total
-            inner_radius = pie_style.inner_radius if pie_style is not None else None
-            is_donut_shape = isinstance(inner_radius, (int, float)) and inner_radius > 0
-            if is_donut_shape and theta and (total is None or total.label is None):
-                label = authored.field_labels.get(theta)
-                if label is None:
-                    slug = inferred_display_name(theta)
-                    label = (
-                        slug
-                        if slug.isupper() and " " not in slug
-                        else apply_case(slug, "title")
-                    )
-                auto_label = label if "total" in label.lower() else f"Total {label}"
-                from dbt_charts.core.compile.models.chart.authored import ChartTotal
-
-                if total is None:
-                    total = ChartTotal(visible=True, label=auto_label)
-                else:
-                    total = total.model_copy(update={"label": auto_label})
             return PieChart(
                 **base,
                 **shared,
@@ -471,10 +441,11 @@ def normalize_chart(
                 theta=theta,
                 field_labels=authored.field_labels,
                 color=authored.color,
-                total=total,
+                total=authored.total,
                 height=authored.height,
                 width=authored.width,
-                style=pie_style,
+                style=authored_style,
+                is_donut=is_donut,
             )
         case "kpi":
             value = authored.value

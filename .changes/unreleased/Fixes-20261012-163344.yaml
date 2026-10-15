@@ -1,3 +1,0 @@
-kind: Fixes
-body: The generated error, warning, and YAML schema reference pages now write the product name as `dbt Charts`.
-time: 2026-10-12T16:33:44.242415-07:00

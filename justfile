@@ -34,7 +34,7 @@ default:
     @echo "━━━ CODE QUALITY ━━━"
     @echo "  just fix                Format + lint with auto-fix"
     @echo "  just lint               Format check, lint, model conventions, vulture"
-    @echo "  just typecheck          Static type checking (pyright + mypy)"
+    @echo "  just typecheck          Static type checking (pyright)"
     @echo "  just tach               Import-boundary checks"
     @echo "  just type-state         Type-state ratchet vs merge-base"
     @echo "  just ci                 lint + typecheck + tach + test"
@@ -118,12 +118,9 @@ lint:
     @echo "▶ dead code (vulture)"
     uv run vulture
 
-# Static type checking: pyright + mypy. mypy resolves its own config from
-# pyproject.toml in cwd; --config-file makes that explicit rather than
-# implicit, matching the monorepo's invocation.
+# Static type checking (pyright; config in pyrightconfig.json).
 typecheck:
     uv run pyright
-    uv run mypy --config-file pyproject.toml src/dbt_charts
 
 # Import-boundary checks. `check` enforces internal layering; `check-external`
 # enforces the wheel-outbound allowlist against declared dependencies.

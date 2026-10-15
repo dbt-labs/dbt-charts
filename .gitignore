@@ -12,7 +12,6 @@ uv.lock.bak
 .DS_Store
 .pytest_cache/
 .ruff_cache/
-.mypy_cache/
 htmlcov/
 .coverage
 # just demo's scratch project (justfile's demo_dir)

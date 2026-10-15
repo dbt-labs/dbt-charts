@@ -427,7 +427,7 @@ const FIXED_ASPECT_PIE_TYPES: [&str; 2] = ["pie", "arc"];
 const RERENDER_MIN_DELTA_PX: f64 = 1.0;
 
 /// Whether a chart that sized to `natural` and sits at `height` was re-rendered.
-fn height_moved(natural: f64, height: f64) -> bool {
+pub(crate) fn height_moved(natural: f64, height: f64) -> bool {
     (height - natural).abs() >= RERENDER_MIN_DELTA_PX
 }
 
@@ -515,6 +515,7 @@ fn rendered_vega_height(
         measuring: true,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
+        authored_height: None,
     };
     // `render_width_fitted`, not bare `render` and not the full
     // `render_fitted`: a support_table chart's outer canvas must already be
@@ -534,7 +535,7 @@ fn rendered_vega_height(
 
 /// The clamp/trust split itself, isolated from the render call so it's
 /// unit-testable without a real chart render (`layout_sizing.py`'s `provider()`).
-fn clamp_render_first_height(chart_type: &str, actual: f64, static_estimate: f64) -> f64 {
+pub(crate) fn clamp_render_first_height(chart_type: &str, actual: f64, static_estimate: f64) -> f64 {
     if FIXED_ASPECT_PIE_TYPES.contains(&chart_type) {
         if (0.0..=2.0).contains(&(actual - static_estimate)) {
             return static_estimate;
@@ -585,6 +586,7 @@ fn spark_bar_natural_height(
         measuring: false,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
+        authored_height: None,
     };
     // Same reasoning as `render_first_vega_height`'s own fallback above: a
     // spark_bar shape this port refuses must not fail sizing, since the
@@ -704,8 +706,41 @@ fn get_table_height_from_data(
         measuring: false,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
+        authored_height: None,
     };
     Ok(crate::table_natural_height(&payload, ctx.fonts).ok())
+}
+
+/// layout_sizing.py's `static_estimate`: the FULL slot height (content +
+/// inset) of a Vega-family chart before any render, because it doubles as the
+/// render's own `height` arg (slot_height) AND the clamp baseline; the
+/// render-first result is returned as-is (`provider()`'s bare `return
+/// actual_height`), never re-added to inset.
+pub fn static_slot_estimate(
+    chart_json: &Value,
+    authored_height: Option<f64>,
+    width: f64,
+    card_padding: f64,
+    defaults: &ChartDefaultsDoc,
+) -> Result<f64, String> {
+    let chart_type =
+        chart_json.get("chart_type").and_then(Value::as_str).ok_or("chart missing chart_type")?;
+    let (padding_top, padding_bottom) = layout_padding_vertical(chart_json)?;
+    let inset = vertical_inset(card_padding, padding_top, padding_bottom);
+    let aspect_ratio = chart_json.get("aspect_ratio").and_then(Value::as_f64);
+    let min_height = chart_json.get("min_height").and_then(Value::as_f64);
+    let max_height = chart_json.get("max_height").and_then(Value::as_f64);
+    let content_estimate = get_chart_content_height(
+        chart_type,
+        authored_height,
+        aspect_ratio,
+        min_height,
+        max_height,
+        Some(width),
+        None,
+        defaults,
+    )?;
+    Ok(content_estimate + inset)
 }
 
 /// layout_sizing.py::_make_data_aware_height_provider's `provider()`
@@ -756,6 +791,7 @@ pub fn resolve_chart_item_height(
             measuring: false,
             title_shift: crate::TitleShift::default(),
             is_placeholder: false,
+            authored_height: None,
         };
         let (_, natural_height) = crate::families::callout::render(&payload, ctx.fonts)
             .map_err(|e| format!("chart refused during sizing: {e}"))?;
@@ -798,25 +834,7 @@ pub fn resolve_chart_item_height(
         return spark_bar_natural_height(chart_json, chart_id, rows, width, inset, ctx);
     }
 
-    // layout_sizing.py's `static_estimate` is the FULL slot height
-    // (content + inset), because it doubles as the render's own `height` arg
-    // (slot_height) AND the clamp baseline; the render-first result is
-    // returned as-is (`provider()`'s bare `return actual_height`),
-    // never re-added to inset.
-    let aspect_ratio = chart_json.get("aspect_ratio").and_then(Value::as_f64);
-    let min_height = chart_json.get("min_height").and_then(Value::as_f64);
-    let max_height = chart_json.get("max_height").and_then(Value::as_f64);
-    let content_estimate = get_chart_content_height(
-        chart_type,
-        authored_height,
-        aspect_ratio,
-        min_height,
-        max_height,
-        Some(width),
-        None,
-        ctx.defaults,
-    )?;
-    let static_estimate = content_estimate + inset;
+    let static_estimate = static_slot_estimate(chart_json, authored_height, width, card_padding, ctx.defaults)?;
     render_first_vega_height(
         chart_json,
         chart_id,

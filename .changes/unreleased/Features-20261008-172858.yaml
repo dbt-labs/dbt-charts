@@ -1,5 +1,5 @@
 kind: Features
-body: 'A dbt project that declares no sources: now runs sourceless SQL against its dbt profile, so dbt_charts.yml is optional.'
+body: 'A dbt project needs no `dbt_charts.yml`: sourceless SQL runs against the dbt profile, and a `dbt_profile` source''s profile name defaults to `DBT_PROFILE`, then the project''s profile.'
 time: 2026-10-08T17:28:58.859685-07:00
 custom:
     DbtChartsIssue: "63"

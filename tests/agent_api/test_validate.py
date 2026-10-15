@@ -237,7 +237,9 @@ class TestValidatePathResolutionRejectsEscape:
 
         assert result.success is False
         assert len(result.errors) >= 1
-        assert any("outside project root" in e.message for e in result.errors)
+        [error] = result.errors
+        assert error.code == "ERR-PATH-OUTSIDE-PROJECT"
+        assert str(tmp_path) not in error.message
 
 
 class TestValidateWarningsPassThrough:
@@ -709,6 +711,21 @@ class TestValidateMetaYamlSingleFile:
         assert all(e.code == "ERR-META-SCHEMA" for e in result.errors), (
             f"expected ERR-META-SCHEMA, got {[e.code for e in result.errors]}"
         )
+
+    def test_style_null_is_rejected_where_it_means_no_value_only(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """validate applies the same authored-null rule as compile."""
+        from dbt_charts.agent_api.validate import validate
+
+        meta = tmp_path / "meta.yml"
+        meta.write_text("style:\n  footer:\n    link: null\n")
+        assert validate(meta, project=local_project(tmp_path)).success is True
+
+        meta.write_text("style:\n  charts:\n    pie:\n      inner_radius: null\n")
+        result = validate(meta, project=local_project(tmp_path))
+        assert result.success is False
+        assert "inner_radius: null is not accepted" in result.errors[0].message
 
     def test_nested_schema_error_uses_dot_separated_path(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]

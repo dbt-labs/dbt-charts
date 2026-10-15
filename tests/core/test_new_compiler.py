@@ -4,6 +4,7 @@ These tests verify the new architecture works correctly.
 """
 
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 
@@ -14,11 +15,17 @@ from dbt_charts.core.compile import (
     LayoutItem,
     compile,
 )
+from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import _BaseChartFields
+from dbt_charts.core.compile.models.chart.resolved import ResolvedPieChart
+from dbt_charts.core.compile.models.query.normalized import ValuesQuery
+from dbt_charts.core.compile.models.style.authored import StylePatch
+from dbt_charts.core.compile.normalize.charts import normalize_chart
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.chart.label_data import (
     default_slice_label_template,
 )
+from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 
 
 class TestCompileBasic:
@@ -1390,12 +1397,53 @@ rows:
         assert result.success, f"Compilation failed: {result.errors}"
         chart = result.board.charts["dog_donut"]
         assert chart.type == "pie", "donut should normalize to pie"
-        assert chart.style is not None
-        assert chart.style.inner_radius == pytest.approx(0.6), (
-            "donut sets style.inner_radius=0.6"
-        )
+        assert chart.is_donut
+        assert chart.style is None, "a donut injects nothing into chart-local style"
         assert chart.theta == "score"
         assert chart.color == "dog_name"
+
+    @staticmethod
+    def _inner_radius(
+        chart_type: str,
+        board_style: dict[str, Any] | None = None,
+        chart_style: dict[str, Any] | None = None,
+    ) -> float:
+        """The resolved hole of one chart under an optional board and chart style."""
+        patch = (
+            None
+            if board_style is None
+            else StylePatch.model_validate({"charts": board_style})
+        )
+        _, board_ctx = resolve_style_and_context(
+            get_theme_style(get_default_theme_name()), patch
+        )
+        rows = [{"share": 3}]
+        chart_def: dict[str, Any] = {"type": chart_type, "query": "q", "theta": "share"}
+        if chart_style is not None:
+            chart_def["style"] = chart_style
+        flat = normalize_chart(
+            "chart1", chart_def, {"q": ValuesQuery(rows=rows)}, sources={}
+        )
+        resolved = resolve(flat, rows, chart_style_context=board_ctx)
+        assert isinstance(resolved, ResolvedPieChart)
+        return resolved.style.inner_radius
+
+    def test_board_donut_inner_radius_reaches_donuts(self):
+        radius = self._inner_radius("donut", {"donut": {"inner_radius": 0.3}})
+        assert radius == pytest.approx(0.3)
+        assert self._inner_radius("pie", {"donut": {"inner_radius": 0.3}}) == 0
+
+    def test_board_pie_inner_radius_reaches_donuts_without_donut_override(self):
+        pie = {"pie": {"inner_radius": 0.4}}
+        assert self._inner_radius("donut", pie) == pytest.approx(0.4)
+        both = {**pie, "donut": {"inner_radius": 0.3}}
+        assert self._inner_radius("donut", both) == pytest.approx(0.3)
+        assert self._inner_radius("pie", both) == pytest.approx(0.4)
+
+    def test_pie_with_zero_inner_radius_stays_a_pie(self):
+        assert self._inner_radius("pie") == 0
+        assert self._inner_radius("donut") == pytest.approx(0.6)
+        assert self._inner_radius("pie", chart_style={"inner_radius": 0}) == 0
 
     def test_pie_theta_and_color(self):
         """Pie chart uses theta for values, color for categories."""
@@ -1504,16 +1552,40 @@ charts:
 rows:
   - my_donut
 """
-        result = compile(yaml_content)
-
-        assert result.success, f"Compilation failed: {result.errors}"
-        chart = result.board.charts["my_donut"]
+        chart, _ = self._resolved_chart(yaml_content, "my_donut")
         assert chart.total is not None, "donut must auto-fill chart.total when omitted"
         assert chart.total.visible is True
         assert chart.total.label == "Total Score", (
             f"auto label should prefix 'Total ' before the slug-titled theta; "
             f"got {chart.total.label!r}"
         )
+
+    @pytest.mark.parametrize("slot", ["pie", "donut"])
+    def test_donut_with_a_board_solid_hole_gets_no_auto_total(self, slot):
+        """A board hole of 0 makes the donut solid; the total it never wrote
+        must not be auto-filled and then rejected for lacking a hole."""
+        yaml_content = f"""
+queries:
+  data:
+    columns: [category, score]
+    values:
+      - ["A", 30]
+      - ["B", 70]
+charts:
+  my_donut:
+    query: data
+    type: donut
+    theta: score
+    color: category
+rows:
+  - my_donut
+style:
+  charts:
+    {slot}:
+      inner_radius: 0
+"""
+        resolved, _ = self._resolved_chart(yaml_content, "my_donut")
+        assert resolved.total is None
 
     def test_donut_auto_total_defaults_format_to_integer_preset(self):
         """Auto-filled donut center total must resolve to the ``integer``
@@ -1687,10 +1759,7 @@ charts:
 rows:
   - my_donut
 """
-        result = compile(yaml_content)
-
-        assert result.success, f"Compilation failed: {result.errors}"
-        chart = result.board.charts["my_donut"]
+        chart, _ = self._resolved_chart(yaml_content, "my_donut")
         assert chart.total is not None
         assert chart.total.label == "Total ARR", (
             f"acronym must survive slug-titling AND the Total prefix; "
@@ -1717,9 +1786,7 @@ charts:
 rows:
   - my_donut
 """
-        result = compile(yaml_content)
-        assert result.success, f"Compilation failed: {result.errors}"
-        return result.board.charts["my_donut"]
+        return self._resolved_chart(yaml_content, "my_donut")[0]
 
     def test_donut_auto_label_includes_unit_suffix_with_total_prefix(self):
         """Unit-suffix expansion still survives the prefix wrap.
@@ -1855,10 +1922,7 @@ charts:
 rows:
   - pie_with_hole
 """
-        result = compile(yaml_content)
-
-        assert result.success, f"Compilation failed: {result.errors}"
-        chart = result.board.charts["pie_with_hole"]
+        chart, _ = self._resolved_chart(yaml_content, "pie_with_hole")
         assert chart.total is not None, (
             "type: pie + inner_radius > 0 is donut-shaped and must auto-fill "
             "chart.total — firing predicate is shape, not authoring alias"

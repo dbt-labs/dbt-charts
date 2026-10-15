@@ -148,7 +148,14 @@ def _primitive_schema(
 
 def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
     """Build the JSON Schema type object for a single field."""
-    nullable = "None" in field.type_repr
+    type_repr = (
+        field.type_repr
+        if field.null_allowed
+        else " | ".join(
+            token for token in _split_union(field.type_repr) if token.strip() != "None"
+        )
+    )
+    nullable = "None" in type_repr
 
     extra = [
         _primitive_schema(t, field.extra_union_type_keywords)
@@ -196,7 +203,7 @@ def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
         # Otherwise a list[...]/dict[...] may still sit as a *sibling* union
         # arm (e.g. `ThemeName | str | list[str]`) — add its shape so it
         # isn't dropped from the anyOf, deduped on the mapped shape.
-        for token in sibling_container_tokens(field.type_repr):
+        for token in sibling_container_tokens(type_repr):
             arm = _schema_for_token(token, field.extra_union_type_keywords)
             if arm and arm not in branches:
                 branches.append(arm)
@@ -273,7 +280,7 @@ def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
             all_branches.append({"type": "null"})
         return {"anyOf": all_branches} if len(all_branches) > 1 else all_branches[0]
 
-    return _map_type_repr(field.type_repr, field.extra_union_type_keywords)
+    return _map_type_repr(type_repr, field.extra_union_type_keywords)
 
 
 def _map_type_repr(
@@ -357,11 +364,7 @@ def _constraint_keywords(
 def _inherit_note(field: SchemaField) -> str:
     """Return the fallback sentence for a field that carries an inheritance marker."""
     if field.inherit_slot:
-        exception = ""
-        if field.inherit_slot_exclude:
-            names = ", ".join(f"`{n}`" for n in sorted(field.inherit_slot_exclude))
-            exception = f" (except {names})"
-        return f"Unset fields fall back to `{schema_path_to_yaml(field.inherit_slot)}`{exception}."
+        return f"Unset fields fall back to `{schema_path_to_yaml(field.inherit_slot)}`."
     if field.inherit_from:
         return f"Falls back to `{schema_path_to_yaml(field.inherit_from[0])}`."
     return ""

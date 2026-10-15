@@ -16,11 +16,12 @@ does on any such directive.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
 from dbt_charts.core.text.format_d3 import (
+    PYTHON_STRFTIME_DIRECTIVES,
     _apply_padding_modifiers,
     portable_strftime,
     unsupported_time_directives,
@@ -29,14 +30,14 @@ from dbt_charts.core.text.format_d3 import (
 
 def _raise_like_windows_crt(fmt: str) -> None:
     """Windows' CRT rejects any unresolved %-/%_/%0 directive, and
-    `%C %e %G %j %k %l %L %q %Q %u %V %W` even bare (no modifier) — it has
+    `%C %e %G %j %k %l %L %P %q %Q %u %V %W` even bare (no modifier) — it has
     never implemented the glibc/BSD extensions among these, and does not
     implement `%L`/`%Q`/`%q` at all. Shared by both fake-CRT classes below
     so a directive added to one and not the other can't silently pass.
     """
     stripped = fmt.replace("%%", "")
     if re.search(r"%[-_0][A-Za-z]", stripped) or re.search(
-        r"%[CeGjkLlqQuVW]", stripped
+        r"%[CeGjkLlPqQuVW]", stripped
     ):
         raise ValueError("Invalid format string")
 
@@ -381,3 +382,19 @@ def test_is_d3_fixed_decimal_spec_totality_over_compile_accepted_formats():
 def test_error_remedies_are_themselves_supported() -> None:
     for remedy in ("%-m/%-d/%Y", "%-I:%M:%S %p", "%-m/%-d/%Y, %-I:%M:%S %p", "%e %b"):
         assert unsupported_time_directives(remedy) == []
+
+
+@pytest.mark.parametrize("letter", sorted(PYTHON_STRFTIME_DIRECTIVES))
+def test_every_accepted_directive_paints_something_real(letter: str) -> None:
+    """A directive the compile gate accepts must not fall through to the host
+    libc, where an unimplemented one prints its own letter (%P on macOS/Windows)."""
+    d = datetime(2024, 3, 5, 14, 7, 9, tzinfo=UTC)
+    assert portable_strftime(d, f"%{letter}") != letter
+
+
+@pytest.mark.parametrize(("hour", "expected"), [(9, "am"), (14, "pm")])
+def test_percent_P_is_lowercase_period(hour: int, expected: str) -> None:
+    d = _WindowsLikeDatetime(2024, 3, 5, hour)
+    assert _apply_padding_modifiers(d, "%P") == expected
+    assert portable_strftime(d, "%P") == expected
+    assert portable_strftime(d, "%-P") == expected

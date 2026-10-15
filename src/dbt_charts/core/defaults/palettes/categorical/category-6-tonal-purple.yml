@@ -8,14 +8,14 @@ name: category-6-tonal-purple
 description: |
   Tonal monochromatic purple palette. 6 stops at fixed hue (H≈319.1°), all in
   the purple family. Use for editorial / brand-restrained dashboards that want
-  one hue throughout. Strict-safe core: slots 0-3 (Leonardo ΔE ≥ 11 pairwise).
-  Extended: slots 4-5 (require dash, marker, or pattern redundancy past slot 4).
+  one hue throughout. Strict-safe core: slots 1-4 (Leonardo ΔE ≥ 11 pairwise).
+  Extended: slots 5-6 (require dash, marker, or pattern redundancy past slot 4).
   See docs/guides/palettes.md#tonal-monochrome-category-6-tonal-.
 
 colors:
-  - "#9650a8"    # 0 — medium purple (anchor)
-  - "#c79cd2"    # 1 — pale purple (light tint)
-  - "#642a73"    # 2 — darkish purple (dark saturated)
-  - "#301536"    # 3 — eggplant (very dark)
-  - "#947d9a"    # 4 — purpley gray (extended; form-redundant)
-  - "#dacbde"    # 5 — pale lavender (extended; form-redundant)
+  - "#9650a8"    # 1 — medium purple (anchor)
+  - "#c79cd2"    # 2 — pale purple (light tint)
+  - "#642a73"    # 3 — darkish purple (dark saturated)
+  - "#301536"    # 4 — eggplant (very dark)
+  - "#947d9a"    # 5 — purpley gray (extended; form-redundant)
+  - "#dacbde"    # 6 — pale lavender (extended; form-redundant)

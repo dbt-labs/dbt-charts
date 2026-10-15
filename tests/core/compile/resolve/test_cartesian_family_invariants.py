@@ -67,7 +67,9 @@ _FAMILIES = ("bar", "line", "area", "scatter", "heatmap", "histogram")
 # calls cartesian_series_naming(): no color-series legend, no multiples-facet
 # top legend, no endpoint-label rail. Every invariant below is downstream of
 # either that call or a per-family guard histogram never runs; each skip below
-# names the specific reason, not this shared root cause alone.
+# names the specific reason, not this shared root cause alone. (bar also passes
+# multiples=None, y=None, but only to defer its orientation-dependent mirror
+# default, which it applies itself afterward; its invariants still hold.)
 _HISTOGRAM_NO_SERIES_LEGEND = (
     "histogram never calls cartesian_series_naming() (plan_cartesian is called "
     "with multiples=None, y=None by design) -- there is no series legend for "

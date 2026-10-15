@@ -1219,7 +1219,9 @@ def create_server(
     _refresh_lock = asyncio.Lock()
 
     @app.exception_handler(DbtChartsError)
-    async def _dbt_charts_error_handler(request: Request, exc: DbtChartsError) -> Response:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
+    async def _dbt_charts_error_handler(
+        request: Request, exc: DbtChartsError
+    ) -> Response:
         logger.error(
             "Unhandled DbtChartsError serving %s",
             request.url.path,
@@ -1231,7 +1233,7 @@ def create_server(
         )
 
     @app.middleware("http")
-    async def _reload_on_change(  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration
+    async def _reload_on_change(
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
@@ -1279,17 +1281,17 @@ def create_server(
     )
 
     @app.get("/health")
-    async def health() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
+    async def health() -> dict[str, str]:
         """Health check endpoint."""
         return {"status": "ok", "service": "dbt-charts-server"}
 
     @app.get("/templates")
-    async def list_templates() -> dict[str, Any]:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
+    async def list_templates() -> dict[str, list[str]]:
         """List available inspect templates."""
         return {"inspect_templates": INSPECT_TEMPLATES}
 
     @app.get("/__livereload")
-    async def livereload(request: Request) -> StreamingResponse:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
+    async def livereload(request: Request) -> StreamingResponse:
         """SSE endpoint: emits a reload event when watched files change.
 
         Browser tabs opened via ``dct serve`` connect here via EventSource.
@@ -1311,7 +1313,7 @@ def create_server(
         )
 
     @app.post("/inspect/profile/", response_class=HTMLResponse)
-    def profile_table(request: Request) -> str:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
+    def profile_table(request: Request) -> str:
         """Run table profiling, save results, and render the dashboard.
 
         Requires ``dbt-charts-super-schema`` to be installed. Without the private
@@ -1370,7 +1372,7 @@ def create_server(
         )
 
     @app.get("/inspect/exists/")
-    def table_exists(model: str) -> Response:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
+    def table_exists(model: str) -> Response:
         """Check if a table exists in the warehouse without reading profile data.
 
         Requires ``dbt-charts-super-schema`` to be installed.
@@ -1413,7 +1415,7 @@ def create_server(
         )
 
     @app.get("/{path:path}", response_class=HTMLResponse)
-    def get_board(path: str, request: Request) -> Response:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
+    def get_board(path: str, request: Request) -> Response:
         """Serve any board file with query params as variables.
 
         URL path maps to file path:

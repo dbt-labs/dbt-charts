@@ -782,11 +782,8 @@ def _render(
     board_error: Diagnostic | None = None
     render_warnings: list[Diagnostic] = []
     suppressed_warnings: list[Diagnostic] = []
-    # Declared here rather than inside the try below so they stay defined for
-    # the `if board_error is None:` read further down on every path — mypy's
-    # possibly-undefined check can't otherwise prove they survive a `with`
-    # target that a chained context manager's own __enter__ could in theory
-    # raise before assigning.
+    # Declared before the try: the except arm records board_error and falls
+    # through, so these are read below even when the `with` never bound them.
     _table_overflows: dict[str, TableOverflow] = {}
     _table_crampings: dict[str, TableCramping] = {}
     _text_truncations: dict[str, list[TextTruncation]] = {}

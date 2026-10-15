@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from dbt_charts.core.compile import compile
+from dbt_charts.core.compile.models.markers import AUTO
 from dbt_charts.core.compile.models.style.theme import SupportTableStyle
 
 _BOARD = """
@@ -38,9 +39,9 @@ def _compiles(style: str) -> bool:
         "  font:\n    color: auto",
         "  charts:\n    axis:\n      labels:\n        font:\n          color: auto",
         "  charts:\n    support_table:\n      neutral_color: auto",
-        "  charts:\n    support_table:\n      label:\n        font:\n          color: auto",
+        "  charts:\n    kpi:\n      value:\n        font:\n          color: auto",
     ],
-    ids=["font", "axis-labels-font", "neutral-color", "label-font"],
+    ids=["font", "axis-labels-font", "neutral-color", "kpi-value-font"],
 )
 def test_auto_color_is_rejected_outside_the_support_table_font(style: str) -> None:
     assert not _compiles(style)
@@ -50,8 +51,11 @@ def test_auto_color_is_rejected_outside_the_support_table_font(style: str) -> No
     "style",
     [
         "  charts:\n    support_table:\n      font:\n        color: auto",
+        "  charts:\n    support_table:\n      label:\n        font:\n          color: auto",
+        "  charts:\n    kpi:\n      support:\n        font:\n          color: auto",
+        "  charts:\n    kpi:\n      support:\n        glyph:\n          font:\n            color: auto",
     ],
-    ids=["font"],
+    ids=["font", "label-font", "kpi-support-font", "kpi-support-glyph-font"],
 )
 def test_auto_color_is_accepted_on_the_support_table_fonts(style: str) -> None:
     assert _compiles(style)
@@ -110,7 +114,7 @@ def _baked_bar_table(
 
     def unlabeled(style: SupportTableStyle) -> SupportTableStyle:
         label = style.label.model_copy(
-            update={"font": style.label.font.model_copy(update={"color": None})}
+            update={"font": style.label.font.model_copy(update={"color": AUTO})}
         )
         return style.model_copy(update={"label": label})
 

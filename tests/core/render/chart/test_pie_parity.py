@@ -17,6 +17,7 @@ from dbt_charts.core.compile.config import get_default_theme_name, get_theme_sty
 from dbt_charts.core.compile.models.chart.authored import ChartTotal
 from dbt_charts.core.compile.models.chart.normalized import PieChart
 from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
+from dbt_charts.core.compile.models.markers import AUTO
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
@@ -341,13 +342,13 @@ def test_no_slice_labels_when_labels_are_none() -> None:
     assert ">Total Value</text>" in svg
 
 
-def test_resolved_slice_labels_font_color_stays_none_when_unauthored() -> None:
-    """Cascade-managed sentinel regression guard: family/size/weight still
-    inherit from charts.font when unauthored, while color does not."""
+def test_resolved_slice_labels_font_color_is_auto_when_unauthored() -> None:
+    """Family/size/weight inherit from charts.font when unauthored, while color
+    stays `auto` instead of the card ink."""
     board = _make_pie_style()
     labels = board.pie.marks.slice.labels
 
-    assert labels.font.color is None
+    assert labels.font.color == AUTO
     assert labels.font.family is not None
     assert labels.font.size is not None
     assert labels.font.weight is not None

@@ -1,6 +1,7 @@
 pub mod area;
 pub mod bar;
 mod bar_hover_band;
+pub mod color_scale;
 pub mod callout;
 pub mod custom;
 pub mod empty;
@@ -20,6 +21,8 @@ pub mod table;
 mod table_dates;
 
 pub mod cartesian;
+pub mod cartesian_errors;
+pub mod cartesian_x_errors;
 pub mod support_table_columns;
 pub mod support_table_strip;
 pub mod facet_compose;
@@ -30,3 +33,4 @@ pub mod legend;
 pub mod layers;
 pub mod multiples;
 pub mod temporal;
+pub mod x_type;

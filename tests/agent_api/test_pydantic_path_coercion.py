@@ -132,7 +132,7 @@ class TestDispatchPathContract:
     These tests pin that specific crash class — the case where a migrated
     production function directly calls a Path-only method on a raw str without
     wrapping. They do NOT trap silent type divergence when the production
-    function internally wraps via Path() or resolve_scoped_path; mypy covers
+    function internally wraps via Path() or resolve_scoped_path; pyright covers
     that case instead.
     """
 

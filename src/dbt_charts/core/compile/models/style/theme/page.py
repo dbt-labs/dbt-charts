@@ -14,6 +14,7 @@ from dbt_charts.core.compile.models.constraints import (
     ValueIn,
 )
 from dbt_charts.core.compile.models.markers import (
+    Absent,
     Color,
     Inherit,
     InheritSlot,
@@ -109,7 +110,7 @@ class FooterStyle(ConstrainedModel):
     # brand phrase renders unlinked (still set heavier — that is brand styling,
     # not a link affordance). When set, the *first* occurrence of the brand
     # phrase links here; a second occurrence is left plain.
-    link: Annotated[str | None, Url()] = Field(
+    link: Annotated[str | None, Url(), Absent("no link")] = Field(
         default=None,
         description="URL the footer brand phrase 'dbt charts' links to; null renders plain text.",
     )

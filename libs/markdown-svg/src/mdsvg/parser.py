@@ -321,7 +321,7 @@ class MarkdownParser:
                 or self.BLOCKQUOTE.match(line)
                 or self.UNORDERED_LIST_ITEM.match(line)
                 or self.ORDERED_LIST_ITEM.match(line)
-                or self.TABLE_ROW.match(line)
+                or (self.TABLE_ROW.match(line) and para_lines)
                 or (line.startswith("    ") and not para_lines)
                 or self.HTML_BLOCK_START.match(line)
             ):

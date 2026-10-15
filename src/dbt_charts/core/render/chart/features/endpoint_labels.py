@@ -28,7 +28,9 @@ from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_ENDPOINT_LABELS_CENTER_STACK,
     ERR_ENDPOINT_LABELS_NEGATIVE_STACK,
+    ERR_ENDPOINT_LABELS_RECASCADE_RATIO,
     ERR_ENDPOINT_LABELS_UNORDERABLE_SORT,
+    ERR_LAYERED_NO_COLOR_SCALE,
 )
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
@@ -414,9 +416,8 @@ def recascade_endpoint_labels(
     if len(anchors) <= 1:
         return RecascadeResult(positions=list(anchors.items()), outcome="fit")
     if height_correction_ratio <= 0:
-        raise ChartDataError(
-            "could not re-cascade endpoint labels: height_correction_ratio "
-            f"must be positive, got {height_correction_ratio}"
+        raise ChartDataError.from_code(
+            ERR_ENDPOINT_LABELS_RECASCADE_RATIO, ratio=height_correction_ratio
         )
     domain_span = y_domain_max - y_domain_min
     n = len(anchors)
@@ -703,10 +704,7 @@ def _layer_color_scale(spec: ChartSpec, chart_id: str) -> dict[str, str]:
         )
         if fill_by_series is not None:
             return fill_by_series
-    raise ChartDataError(
-        "layered chart has no shared color scale for its endpoint-label rail",
-        chart_id=chart_id,
-    )
+    raise ChartDataError.from_code(ERR_LAYERED_NO_COLOR_SCALE, chart_id=chart_id)
 
 
 def _layered_y_domain(

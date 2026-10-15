@@ -1,5 +1,22 @@
 name: Set up Rust
-description: Rust toolchain and a source-keyed cache for the dbt_charts._engine extension
+description: Rust toolchain and a source-keyed cargo target cache
+
+inputs:
+  target:
+    description: The cargo target directory to cache
+    required: false
+    default: libs/chart-svg/python/target
+  profile:
+    description: >-
+      Names what the job builds in `target` (ext, release, dev). One cache per
+      profile, so a job restores only the artifacts it uses. `ext` is the
+      dbt_charts._engine build, which is also keyed on the Python version.
+    required: false
+    default: ext
+  key-suffix:
+    description: Build settings that change the artifacts (e.g. debuginfo off), so they key the cache
+    required: false
+    default: default
 
 runs:
   using: composite
@@ -20,35 +37,44 @@ runs:
     # of keying on "".
     - name: Resolve the build interpreter
       id: python
+      if: inputs.profile == 'ext'
       run: |
         version="$(uv run --no-project python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
         echo "version=$version" >> "$GITHUB_OUTPUT"
       shell: bash
 
-    # Keyed on every extension input, so an exact hit is a build of these sources.
-    - name: Restore cargo registry and extension build
+    # Only main saves (a PR's or merge group's entries are unreadable elsewhere
+    # and evict main's); both restore main's exact entry, else the newest of the
+    # prefix so only changed crates rebuild. Keyed on every build input, so an
+    # exact hit is a build of these sources. The registry's unpacked src/ and
+    # incremental state are regenerable and stay out.
+    - name: Restore cargo registry and target
       id: cargo-restore
-      if: github.event_name == 'merge_group'
+      if: github.event_name == 'merge_group' || github.event_name == 'pull_request'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       with:
         path: |
           ~/.cargo/registry
+          !~/.cargo/registry/src
           ~/.cargo/git
-          libs/chart-svg/python/target
-        key: cargo-${{ runner.os }}-py${{ steps.python.outputs.version }}-${{ hashFiles('.github/actions/setup-rust/action.yml', 'libs/chart-svg/**', 'dbt-charts/src/dbt_charts/core/defaults/palettes/tone/*.yml') }}
-        restore-keys: cargo-${{ runner.os }}-py${{ steps.python.outputs.version }}-
+          ${{ inputs.target }}
+          !${{ inputs.target }}/**/incremental
+        key: cargo-${{ runner.os }}-${{ inputs.profile }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-${{ hashFiles('.github/actions/setup-rust/action.yml', 'libs/chart-svg/**', 'dbt-charts/src/dbt_charts/core/defaults/palettes/tone/*.yml') }}
+        restore-keys: cargo-${{ runner.os }}-${{ inputs.profile }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-
 
-    - name: Cache cargo registry and extension build
+    - name: Cache cargo registry and target
       id: cargo-cache
-      if: github.event_name != 'merge_group'
+      if: github.event_name != 'merge_group' && github.event_name != 'pull_request'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       with:
         path: |
           ~/.cargo/registry
+          !~/.cargo/registry/src
           ~/.cargo/git
-          libs/chart-svg/python/target
-        key: cargo-${{ runner.os }}-py${{ steps.python.outputs.version }}-${{ hashFiles('.github/actions/setup-rust/action.yml', 'libs/chart-svg/**', 'dbt-charts/src/dbt_charts/core/defaults/palettes/tone/*.yml') }}
-        restore-keys: cargo-${{ runner.os }}-py${{ steps.python.outputs.version }}-
+          ${{ inputs.target }}
+          !${{ inputs.target }}/**/incremental
+        key: cargo-${{ runner.os }}-${{ inputs.profile }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-${{ hashFiles('.github/actions/setup-rust/action.yml', 'libs/chart-svg/**', 'dbt-charts/src/dbt_charts/core/defaults/palettes/tone/*.yml') }}
+        restore-keys: cargo-${{ runner.os }}-${{ inputs.profile }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-
 
     # Cargo decides freshness of local crates by mtime, and checkout stamps
     # every file new, so without this an exact hit still recompiles and

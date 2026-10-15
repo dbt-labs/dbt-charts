@@ -819,8 +819,9 @@ class Project(ABC):
 
         The delete counterpart of ``write_text``: an embedding host implements it
         against its own backing store (``FilesystemProject`` unlinks the file;
-        Cloud deletes the git-blob-store board via ``Branch.delete_board``). Raises
-        ``FileNotFoundError`` if the path does not exist — no silent no-op.
+        Cloud deletes the git-blob-store board via the projects service's
+        ``delete_board``). Raises ``FileNotFoundError`` if the path does not
+        exist — no silent no-op.
         Implementations own their own containment check and may restrict which
         paths are deletable — raise ``ValueError`` to refuse (a path that escapes
         the root, or a store that only accepts certain subtrees).

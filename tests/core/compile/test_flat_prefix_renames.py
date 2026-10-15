@@ -138,10 +138,9 @@ def test_scale_patch_mark_size_group_rejected() -> None:
         BaseScaleStylePatch.model_validate({"mark_size": {"min_size": 5.0}})
 
 
-# ── TableColumnDefaultsConfig: label still supported ─────────────────────────
+# ── TableColumnDefaultsConfig: label rejected ────────────────────────────────
 
 
-def test_table_column_defaults_label_accepted() -> None:
-    """label field is still supported on TableColumnDefaultsConfig."""
-    cfg = TableColumnDefaultsConfig.model_validate({"label": "My Column"})
-    assert cfg.label == "My Column"
+def test_table_column_defaults_label_rejected() -> None:
+    with pytest.raises(ValidationError):
+        TableColumnDefaultsConfig.model_validate({"label": "My Column"})

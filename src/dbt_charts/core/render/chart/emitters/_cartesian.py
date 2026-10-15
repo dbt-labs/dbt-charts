@@ -1225,7 +1225,7 @@ def count_horizontal_bar_categories(
 def min_height_for_horizontal_bar_categories(
     n_categories: int,
     axis_x: ResolvedAxisStyle,
-    bar_size: float | None,
+    bar_size: float,
 ) -> float:
     """Minimum chart height so every categorical band can show a flat y label.
 
@@ -1251,10 +1251,6 @@ def min_height_for_horizontal_bar_categories(
     )
     assert padding is not None, (
         "axis_x.labels.padding unset — theme cascade must populate it"
-    )
-    assert bar_size is not None, (
-        "marks.bar.size and marks.bar.max_size both unset — "
-        "theme cascade must populate at least one"
     )
     label_line = font_size + 2 * padding
     band_step = max(bar_size, label_line) + min_gap
@@ -1430,9 +1426,14 @@ def full_rule_at(
     measure_field: str,
     color: str,
     width: float,
-    announce: bool = True,
 ) -> ChartSpec:
     """Return a full VL ``rule`` sub-spec spanning the full plot width/height.
+
+    A reference rule (zero, threshold, a normalize stack's top) is hidden from
+    the accessibility tree: Vega-Lite derives its label as ``NaN`` for a
+    ``datum: 0`` rule and a bare ``1`` for an unformatted ``datum: 1``, neither
+    of which says anything the axis does not. A rule that carries meaning of
+    its own (an annotation) is built by its own function, not this one.
 
     ``axis`` controls orientation:
     - ``"x"``: rule at x=value spanning full y height (horizontal bar zero line)
@@ -1444,11 +1445,6 @@ def full_rule_at(
     its auto aria description announces ``NaN``. ``size`` is nulled too: a
     rule mark accepts it as stroke width, so an inherited bubble ``size``
     narrows the shared size scale to the rule's stroke-width range.
-
-    ``announce=False`` hides the rule from the accessibility tree. The
-    normalize-stack rules ``_insert_top_rules`` adds need it: Vega-Lite derives
-    the ``datum: 0`` rule's label as ``NaN`` and an unformatted ``datum: 1`` as
-    a bare ``1``, neither of which says anything the axis does not.
     """
     datum_channel = axis  # "x" or "y" — the channel carrying the datum value
     datum_enc: VLDict = {"datum": value, "type": "quantitative"}
@@ -1477,9 +1473,8 @@ def full_rule_at(
         "strokeWidth": width,
         "opacity": 1,
         "tooltip": False,
+        "aria": False,
     }
-    if not announce:
-        mark_props["aria"] = False
     return ChartSpec(
         mark="rule",
         mark_props=mark_props,

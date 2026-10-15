@@ -7,6 +7,8 @@
 use crate::text::FontBook;
 use crate::Payload;
 
-pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
+use crate::diagnostic::Diagnostic;
+
+pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
     crate::families::line::render_inner(payload, fonts, true)
 }

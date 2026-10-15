@@ -187,15 +187,6 @@ class TestRenderJsonSchemaInheritance:
         assert "Unset fields fall back to" in desc
         assert "style.charts.marks" in desc
 
-    def test_inherit_slot_exclude_appended_to_description(self) -> None:
-        # SliceLabelsStyle.font carries InheritSlot(exclude={"color"}) — the
-        # generated description must say so, not claim color falls back too.
-        defs = render_json_schema(introspect()).get("$defs", {})
-        prop = defs["SliceLabelsStyle"]["properties"]["font"]
-        desc = prop.get("description", "")
-        assert "Unset fields fall back to" in desc
-        assert "except `color`" in desc
-
     def test_plain_field_unaffected(self) -> None:
         # A field with no inheritance must not gain spurious fallback text.
         defs = render_json_schema(introspect()).get("$defs", {})

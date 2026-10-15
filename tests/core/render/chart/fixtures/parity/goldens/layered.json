@@ -396,6 +396,7 @@
         "y2": null
       },
       "mark": {
+        "aria": false,
         "color": "#8A8C8F",
         "opacity": 1,
         "strokeWidth": 2.0,

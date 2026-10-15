@@ -202,15 +202,15 @@ def create_server(context: DbtChartsAIContext) -> Any:
     def _uri(value: str) -> AnyUrl:
         return TypeAdapter(AnyUrl).validate_python(value)
 
-    @server.list_resources()  # type: ignore[no-untyped-call]
-    async def handle_list_resources() -> list[Resource]:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
+    @server.list_resources()
+    async def handle_list_resources() -> list[Resource]:
         return [
             Resource(uri=_uri(u), mimeType=m, name=n, description=d)
             for u, m, n, d in (*_BASE_RESOURCES, *_docs_topic_resources())
         ]
 
-    @server.list_resource_templates()  # type: ignore[no-untyped-call]
-    async def handle_list_resource_templates() -> list[ResourceTemplate]:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
+    @server.list_resource_templates()
+    async def handle_list_resource_templates() -> list[ResourceTemplate]:
         return [
             ResourceTemplate(
                 uriTemplate="dct://board/{path}",
@@ -226,12 +226,12 @@ def create_server(context: DbtChartsAIContext) -> Any:
             ),
         ]
 
-    @server.read_resource()  # type: ignore[no-untyped-call]
-    async def handle_read_resource(uri: AnyUrl) -> str:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
+    @server.read_resource()
+    async def handle_read_resource(uri: AnyUrl) -> str:
         return _read_resource_content(str(uri), context=context)
 
-    @server.list_tools()  # type: ignore[no-untyped-call]
-    async def handle_list_tools() -> list[Tool]:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
+    @server.list_tools()
+    async def handle_list_tools() -> list[Tool]:
         return [
             Tool(
                 name=cast(str, t["name"]),
@@ -243,7 +243,7 @@ def create_server(context: DbtChartsAIContext) -> Any:
         ]
 
     @server.call_tool()
-    async def handle_call_tool(  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration
+    async def handle_call_tool(
         name: str, arguments: dict[str, Any] | None
     ) -> CallToolResult:
         arguments = arguments or {}

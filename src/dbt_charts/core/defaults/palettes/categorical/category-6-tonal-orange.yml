@@ -8,14 +8,14 @@ description: |
   Tonal monochromatic orange palette. 6 stops at fixed hue (H≈41°), all in
   the orange family (warm reds drifting into chestnut/chocolate browns at the
   dark end). Use for editorial / brand-restrained dashboards that want one
-  hue throughout. Strict-safe core: slots 0-3 (Leonardo ΔE ≥ 11 pairwise).
-  Extended: slots 4-5 (require dash, marker, or pattern redundancy past slot 4).
+  hue throughout. Strict-safe core: slots 1-4 (Leonardo ΔE ≥ 11 pairwise).
+  Extended: slots 5-6 (require dash, marker, or pattern redundancy past slot 4).
   See docs/guides/palettes.md#tonal-monochrome-category-6-tonal-.
 
 colors:
-  - "#b74c1f"    # 0 — brick orange (anchor)
-  - "#df9b82"    # 1 — pinkish tan (light tint)
-  - "#7b2900"    # 2 — chestnut (dark saturated)
-  - "#3c1303"    # 3 — chocolate brown (very dark)
-  - "#a17d6f"    # 4 — reddish gray (extended; form-redundant)
-  - "#e3cbc2"    # 5 — pinkish gray (extended; form-redundant)
+  - "#b74c1f"    # 1 — brick orange (anchor)
+  - "#df9b82"    # 2 — pinkish tan (light tint)
+  - "#7b2900"    # 3 — chestnut (dark saturated)
+  - "#3c1303"    # 4 — chocolate brown (very dark)
+  - "#a17d6f"    # 5 — reddish gray (extended; form-redundant)
+  - "#e3cbc2"    # 6 — pinkish gray (extended; form-redundant)

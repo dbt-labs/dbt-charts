@@ -14,7 +14,6 @@ import yaml
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
-from dbt_charts.core.compile.models.chart.normalized import PieChart
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
 from dbt_charts.core.execute import Executor
@@ -513,39 +512,29 @@ def test_pie_legend_and_tooltip_rows_use_field_labels() -> None:
 
 
 def test_donut_total_label_uses_field_label() -> None:
-    result = compile_board(
-        _board(
-            {
-                "type": "donut",
-                "theta": "MTok_cost",
-                "color": "seg",
-                "field_labels": {"MTok_cost": "spend"},
-            },
-            _SEG_ROWS,
-        )
+    chart = _resolved(
+        {
+            "type": "donut",
+            "theta": "MTok_cost",
+            "color": "seg",
+            "field_labels": {"MTok_cost": "spend"},
+        },
+        _SEG_ROWS,
     )
-    assert result.board is not None, result.errors
-    chart = result.board.charts["c"]
-    assert isinstance(chart, PieChart)
     assert chart.total is not None
     assert chart.total.label == "Total spend"
 
 
 def test_donut_total_label_is_not_prefixed_twice() -> None:
-    result = compile_board(
-        _board(
-            {
-                "type": "donut",
-                "theta": "MTok_cost",
-                "color": "seg",
-                "field_labels": {"MTok_cost": "Total spend"},
-            },
-            _SEG_ROWS,
-        )
+    chart = _resolved(
+        {
+            "type": "donut",
+            "theta": "MTok_cost",
+            "color": "seg",
+            "field_labels": {"MTok_cost": "Total spend"},
+        },
+        _SEG_ROWS,
     )
-    assert result.board is not None, result.errors
-    chart = result.board.charts["c"]
-    assert isinstance(chart, PieChart)
     assert chart.total is not None
     assert chart.total.label == "Total spend"
 

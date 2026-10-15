@@ -43,6 +43,7 @@ from dbt_charts.core.compile.models.factories import (
     register_shorthand,
 )
 from dbt_charts.core.compile.models.markers import (
+    Absent,
     Color,
     FontFamily,
     FontWeightValue,
@@ -750,7 +751,7 @@ class SingleLineFontStyle(FontSlotBase):
     anything downstream reads the slot, so ``extends`` never survives it.
     """
 
-    extends: FontAlias | None = Field(
+    extends: Annotated[FontAlias | None, Absent("no named font")] = Field(
         default=None,
         description=(
             "Name of a ``style.fonts`` entry this slot starts from; the fields "
@@ -888,7 +889,7 @@ class DividerStyle(BaseModel):
     color: Annotated[str, Color()] = Field(description="Divider color.")
     width: float = Field(gt=0, description="Divider line width in pixels.")
     # Optional on purpose: unset is a solid line, so no theme has to say so.
-    dasharray: Dasharray | None = Field(
+    dasharray: Annotated[Dasharray | None, Absent("solid line")] = Field(
         default=None,
         description=(
             'Dash pattern in pixels, such as "6 3" (6 drawn, 3 gap); '
@@ -909,7 +910,7 @@ class BorderStyle(BaseModel):
     theme YAML; dash_array/line_cap/dash_offset are optional authoring opt-ins
     (unset means solid) and no theme is required to supply them.
 
-    Does NOT cascade (ADR-003: box properties reset per level).
+    Does NOT cascade: box properties reset per level.
     'No border' is expressed as width=0, color='transparent', radius=0.
     """
 
@@ -921,7 +922,7 @@ class BorderStyle(BaseModel):
     # dash_array/line_cap/dash_offset are genuinely optional, not a theme-population
     # gap: unset means a solid border (the common case, and every built-in theme's
     # default); dashing is an authoring opt-in, not something themes must supply.
-    dash_array: list[float] | None = Field(
+    dash_array: Annotated[list[float] | None, Absent("solid border")] = Field(
         default=None,
         description=(
             "SVG stroke-dasharray pattern in pixels (e.g. [4, 4]). "
@@ -1012,7 +1013,7 @@ _BORDER_DASHES: dict[str, dict[str, list[float] | str]] = {
 @register_patch(BorderStyle)
 class BorderStylePatch(BaseModel):
     # Hand-written (not build_patch_model): carries from_css() classmethod
-    """Box border. Does NOT cascade (ADR-003: box properties reset per level).
+    """Box border. Does NOT cascade: box properties reset per level.
 
     Doubles as CSS shorthand parser via from_css() for StylePatch.border.
     """
@@ -1026,7 +1027,7 @@ class BorderStylePatch(BaseModel):
         default=None, description="Border color (CSS color string)."
     )
     width: float | None = Field(default=None, description="Border width in pixels.")
-    dash_array: list[float] | None = Field(
+    dash_array: Annotated[list[float] | None, Absent("solid border")] = Field(
         default=None,
         description=(
             "SVG stroke-dasharray pattern in pixels (e.g. [4, 4]). "
@@ -1124,7 +1125,7 @@ class StrokeStyle(BaseModel):
         default=None,
         description="How two stroke segments are joined (miter, round, or bevel).",
     )
-    dasharray: str | None = Field(
+    dasharray: Annotated[str | None, Absent("solid line")] = Field(
         default=None,
         description="Lengths of the dashes and the blanks between them (e.g. '4 2').",
     )

@@ -325,8 +325,10 @@ def describe_board(
 
     With ``chart``, describe only that chart and the board context it needs.
     """
-    from dbt_charts.agent_api._paths import resolve_board_path
-    from dbt_charts.core.diagnostics.base import DbtChartsError
+    from dbt_charts.agent_api._paths import (
+        resolution_error_diagnostic,
+        resolve_board_path,
+    )
 
     try:
         resolved = resolve_board_path(path, project)
@@ -338,9 +340,7 @@ def describe_board(
         return DescribeBoardResult(
             success=False,
             path=path.as_posix(),
-            errors=[
-                DbtChartsError.from_code(ERR_INTERNAL, message=str(exc)).to_diagnostic()
-            ],
+            errors=[resolution_error_diagnostic(exc)],
         )
 
     return _describe_resolved(resolved, chart)
@@ -503,6 +503,7 @@ def _describe_one_path(
     """Per-argv expansion: file → [one], dir → walk."""
     from dbt_charts.agent_api._paths import (
         iter_expanded_board_files,
+        resolution_error_diagnostic,
         resolve_board_path,
     )
     from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -518,11 +519,7 @@ def _describe_one_path(
             DescribeBoardResult(
                 success=False,
                 path=path.as_posix(),
-                errors=[
-                    DbtChartsError.from_code(
-                        ERR_INTERNAL, message=str(exc)
-                    ).to_diagnostic()
-                ],
+                errors=[resolution_error_diagnostic(exc)],
             )
         ]
 

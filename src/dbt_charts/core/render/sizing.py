@@ -313,12 +313,13 @@ def get_chart_content_height(
         if chart_aspect_ratio is not None:
             return aspect_ratio_height(width, chart_aspect_ratio, min_h, max_h)
         # Steps 3–4: per-family resolved-style aspect_ratio, then global default.
-        # _FAMILY_SLOT routes type aliases (donut→pie, map→geoshape,
-        # bubble_map→point_map) to the family that actually carries the
-        # style — ResolvedChartDefaults declares no attribute under the
-        # alias name itself, so this must go through the slot map, not the
-        # bare chart_type.
-        type_config = getattr(resolved_style.chart_defaults, _FAMILY_SLOT[chart_type])
+        # The donut slot is not a chart type, so it cannot go through _FAMILY_SLOT.
+        type_config = getattr(
+            resolved_style.chart_defaults,
+            "donut"
+            if isinstance(chart, PieChart) and chart.is_donut
+            else _FAMILY_SLOT[chart_type],
+        )
         aspect = (
             float(type_config.aspect_ratio)
             if type_config.aspect_ratio

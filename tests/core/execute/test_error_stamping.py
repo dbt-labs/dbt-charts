@@ -50,6 +50,8 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # variable value can produce it, so there is no author-facing diagnostic
         # to stamp it with. The message names the field and the contract.
         ("cache_backend.py", "_require_aware"),
+        # cache_backend.py — an unknown truncated_reason is the same contract breach
+        ("cache_backend.py", "CacheHit.__post_init__"),
         # cache_composition.py
         ("cache_composition.py", "compose_over_named_rows"),
         # chart_resolution.py — _LayerRows is a Mapping, so __getitem__ must raise
@@ -67,12 +69,6 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("drivers/trino.py", "arrow_column_type"),
         # duckdb_config.py
         ("duckdb_config.py", "normalize_duckdb_config"),
-        # executor.py — an adapter/test-double's truncated_reason failing
-        # Literal validation is an implementer contract breach (the value
-        # crosses an adapter boundary with no runtime type enforcement), not
-        # an authoring mistake: no board YAML, CLI flag, or variable value can
-        # produce it, so there is no author-facing diagnostic to stamp it with.
-        ("executor.py", "Executor._enforce_result_limits"),
         # arrow_ingest.py: TypeError/ValueError are the row-to-Arrow contract;
         # composition wraps them, and the cache's rows are pre-coerced to fit.
         ("arrow_ingest.py", "_kind"),

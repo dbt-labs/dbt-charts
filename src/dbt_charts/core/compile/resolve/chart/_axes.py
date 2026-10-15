@@ -95,6 +95,7 @@ __all__ = [
     "_bake_ay_orient",
     "_bake_ay_position_left",
     "_bake_ay_position_right",
+    "_apply_multiples_mirror",
     "_bake_cartesian_axes",
     "_edge_or_none",
     "_endpoint_labels_off_for_layers",
@@ -242,8 +243,10 @@ def _bake_cartesian_axes(
     ``chart`` supplies each axis's column-format layer via ``axis_layer_format()``: the
     query's declared format for the axis column.
 
-    ``multiples`` / ``y`` are the small-multiples inputs. This is the ONE home
-    for the multiples↔mirror interaction: it (a) supplies a default value for
+    ``multiples`` / ``y`` are the small-multiples inputs. This is the home
+    for the multiples↔mirror interaction (bar defers it: its default depends on
+    orientation, so ``_resolve_bar`` passes ``None`` here and calls
+    ``_apply_multiples_mirror`` itself once orientation is known): it (a) supplies a default value for
     the shipped ``axis_y.mirror`` flag on a wide grid, and (b) rejects the
     scale-independent-plus-mirror contradiction. It never introduces a second
     mirror mechanism — explicit author/theme mirror always wins. Whether that
@@ -341,6 +344,7 @@ def _bake_cartesian_axes(
                 chart, "layers", []
             )  # type-state: silent_fallback — layers is structurally absent on HeatmapChart, which does resolve through plan_cartesian; absent means "no overlays", not missing data
         ),
+        measure_on_y=True,
     )
     return BakedCartesianAxes(x=baked_x, y=replace(baked_y, style=mirrored))
 
@@ -602,6 +606,7 @@ def _apply_multiples_mirror(
     y_channel_type: str,
     chart_id: str,
     has_layers: bool,
+    measure_on_y: bool,
 ) -> AxisYStyle:
     """Resolve the both-edge y-axis for a small-multiples chart.
 
@@ -618,6 +623,10 @@ def _apply_multiples_mirror(
     only known once ``EndpointLabelFeature`` has run, which is after resolve
     is long done. ``MirrorAxisFeature`` decides the collision at render time
     instead, from the composed spec it already holds.
+
+    ``measure_on_y`` is False for a horizontal bar, whose y channel carries the
+    category: the auto-default would repaint the category labels at the far
+    edge of the board, so it stays off (an authored mirror is left as written).
 
     Operates on the merged, pre-build ``AxisYStyle`` — see ``_bake_ay_orient``.
     """
@@ -641,13 +650,12 @@ def _apply_multiples_mirror(
     # hardcode "quantitative"), passed even when no y is authored at all —
     # and with no y there is no y encoding, so a defaulted mirror would give
     # MirrorAxisFeature nothing to reflect. `layers:` likewise backs the
-    # default off: the overlay assembly moves every y encoding onto the
-    # layers, leaving no shared y encoding for the ghost to bind — an
-    # AUTHORED mirror on that shape is refused with ERR-MIRROR-LAYERS at
-    # render, and the engine's own default must never author its way into a
-    # refusal.
+    # default off: a layer may pin its own y axis, which an AUTHORED mirror
+    # refuses with ERR-MIRROR-LAYERS at render, and the engine's own default
+    # must never author its way into a refusal.
     if (
-        has_columns
+        measure_on_y
+        and has_columns
         and multiples.scale == "shared"
         and ay.mirror is None
         and y_channel_type == "quantitative"

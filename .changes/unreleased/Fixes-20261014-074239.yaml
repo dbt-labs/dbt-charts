@@ -1,0 +1,3 @@
+kind: Fixes
+body: A bar chart with a full overlap over a color that repeats within a category now raises an error instead of drawing the series past the axis.
+time: 2026-10-14T07:42:39.74797-07:00

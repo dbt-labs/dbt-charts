@@ -278,6 +278,7 @@ def _pie(pie_style: ResolvedPieStyle) -> ResolvedPieChart:
         theta="value",
         style=pie_style,
         dark_companion_stops=(),
+        pin_companions=(),
         **_B,
         field_labels={},
     )

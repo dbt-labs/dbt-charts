@@ -12,7 +12,7 @@ import typer
 
 from dbt_charts.agent_api import Diagnostic, RenderFormat
 from dbt_charts.agent_api._paths import (
-    invalid_ignore_code_diagnostics,
+    ignore_code_diagnostics,
     render_crash_diagnostic,
 )
 from dbt_charts.cli._error_format import emit_diagnostics_jsonl, print_diagnostics
@@ -77,15 +77,16 @@ def _report_failure(
 
 
 def _validate_ignore_codes(ignore_codes: set[str], *, diagnostics_json: bool) -> None:
-    invalid = invalid_ignore_code_diagnostics(ignore_codes)
-    if not invalid:
+    diagnostics = ignore_code_diagnostics(ignore_codes)
+    if not diagnostics:
         return
     if diagnostics_json:
-        emit_diagnostics_jsonl(invalid)
+        emit_diagnostics_jsonl(diagnostics)
     else:
-        for diag in invalid:
+        for diag in diagnostics:
             print(diag.message, file=sys.stderr)
-    sys.exit(1)
+    if any(d.level == "error" for d in diagnostics):
+        sys.exit(1)
 
 
 def _print_warnings(warnings: list[Diagnostic]) -> None:
@@ -259,9 +260,6 @@ def render_command(
         resolve_board_or_error,
     )
     from dbt_charts.agent_api.cache import project_cache_ctx
-
-    if ignore_codes:
-        _validate_ignore_codes(ignore_codes, diagnostics_json=diagnostics_json)
 
     # Resolved here rather than on the argument: `--output` templates and the
     # "Rendered …" line both read the board path as typed.

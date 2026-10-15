@@ -127,28 +127,19 @@ class TestPassthrough:
     def test_body_without_macros_passes_through(self) -> None:
         body = "Just a normal SKILL.md\nwith **markdown** and `code`."
         for surface in ("tool", "cli"):
-            assert (
-                render_skill_body(body, surface=surface)  # type: ignore[arg-type]
-                == body
-            )
+            assert render_skill_body(body, surface=surface) == body
 
     def test_plain_variable_no_s_prefix_passes_through(self) -> None:
         """{{ variable }} without s_ prefix is a board-YAML template token — must be untouched."""
         body = "SELECT * FROM {{ region }}"
         for surface in ("tool", "cli"):
-            assert (
-                render_skill_body(body, surface=surface)  # type: ignore[arg-type]
-                == body
-            )
+            assert render_skill_body(body, surface=surface) == body
 
     def test_board_yaml_variable_in_fenced_block_passes_through(self) -> None:
         """board-YAML {{ variable }} tokens inside fenced SQL blocks must not be consumed."""
         body = "```sql\nSELECT * FROM orders WHERE region = '{{ region }}'\n```"
         for surface in ("tool", "cli"):
-            assert (
-                render_skill_body(body, surface=surface)  # type: ignore[arg-type]
-                == body
-            )
+            assert render_skill_body(body, surface=surface) == body
 
 
 # Old skill-ID prefixes the board rename retires in one cut. No aliases
@@ -166,7 +157,7 @@ class TestNoStaleDashboardVocabularyInSkills:
     def test_no_skill_references_old_dashboard_skill_ids(self) -> None:
         skills_root = files("dbt_charts.ai.skills")
         offenders: list[str] = []
-        for entry in skills_root.iterdir():  # type: ignore[attr-defined]
+        for entry in skills_root.iterdir():
             skill_md = entry / "SKILL.md"
             if not skill_md.is_file():
                 continue
@@ -195,7 +186,7 @@ class TestNoBareInstallSetNameInSkillBodies:
         )
         skills_root = files("dbt_charts.ai.skills")
         offenders: list[str] = []
-        for entry in skills_root.iterdir():  # type: ignore[attr-defined]
+        for entry in skills_root.iterdir():
             skill_md = entry / "SKILL.md"
             if not skill_md.is_file():
                 continue

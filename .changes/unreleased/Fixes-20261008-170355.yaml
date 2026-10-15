@@ -1,3 +1,3 @@
 kind: Fixes
-body: 'Common authoring mistakes such as theme: with extends:, YAML syntax errors, and unresolvable style color tokens now report a specific error code instead of ERR-INTERNAL or a traceback.'
+body: YAML syntax errors report `ERR-YAML-SYNTAX` with the line alongside the other errors in the file, and `theme:` with `extends:` or an unknown color token reports a specific code instead of `ERR-INTERNAL`.
 time: 2026-10-08T17:03:55.454853-07:00

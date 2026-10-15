@@ -21,6 +21,7 @@ from importlib_resources import files
 from jsonschema.validators import validator_for
 from pydantic import BaseModel, ValidationError
 
+from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     JsonObject,
     JsonValue,
@@ -162,9 +163,10 @@ class Move:
         default=None, hash=False
     )
     drop_notes: Mapping[str, str] = dataclasses.field(default_factory=dict, hash=False)
-    # Where a board holds another board (`board_nesting_prefixes`): an expansion
+    # Where a board holds another board (`board_nesting_prefixes`): the move
     # follows these in the document, since `_relative_field_paths` stops at the
-    # first self-nesting.
+    # first self-nesting. A nested board's locations lead their bindings with
+    # that board's concrete path (`_move_path`).
     sub_board_prefixes: tuple[YamlKeyPath, ...] = ()
     # Rebuilds the moved value from the old one, for shapes a rename plus a
     # scalar map cannot say. An identity-path Move fires only where the rewrite
@@ -177,7 +179,8 @@ class Move:
     # rewrite discarded, for the author.
     rewrite_note: str | None = None
     # Set to a chart `type:` literal to fire only inside charts of that family,
-    # for a path other families keep (`style.title.overflow`).
+    # for a path other families keep (`style.title.overflow`). ``""`` fires only
+    # outside any chart, where a path also holds a board.
     chart_type: str | None = None
     # Tails, relative to the mapping holding the source key, that must be
     # absent: a value there is a competing spelling the move would silently
@@ -652,7 +655,7 @@ def prepare_board_mapping(
             mapping = _apply_identity_moves(mapping, registry, catalog)
 
     try:
-        currency_model.model_validate(mapping)
+        currency_model.model_validate(mapping, context=AUTHORED_INPUT)
     except ValidationError:
         if not _board_has_historical_schemas():
             return dict(mapping)
@@ -1149,12 +1152,12 @@ def migrate_yaml_text(
                 ):
                     expansion_source = (
                         *at,
-                        *_substitute_wildcards(move.old_path, bindings),
+                        *_move_path(move, move.old_path, bindings),
                     )
                     expanded, _notes = _expanded_value(
                         node,
                         move,
-                        _substitute_wildcards(move.new_path, bindings),
+                        _move_path(move, move.new_path, bindings),
                         catalog,
                     )
                     yaml_text = set_board_values(
@@ -1192,8 +1195,8 @@ def migrate_yaml_text(
                 else:
                     assert isinstance(key, str)
                     value = parent[key]
-                source = _substitute_wildcards(move.old_path, bindings)
-                destination = _substitute_wildcards(move.new_path, bindings)
+                source = _move_path(move, move.old_path, bindings)
+                destination = _move_path(move, move.new_path, bindings)
                 if move.rewrite is not None:
                     yaml_text = _replay_rewrite(
                         yaml_text, move, value, source, destination
@@ -1665,8 +1668,8 @@ def retired_keys(
             for _parent, _key, bindings in move_source_locations(
                 document, move, catalog
             ):
-                path = tuple(_substitute_wildcards(move.old_path, bindings))
-                successor = tuple(_substitute_wildcards(move.new_path, bindings))
+                path = tuple(_move_path(move, move.old_path, bindings))
+                successor = tuple(_move_path(move, move.new_path, bindings))
                 found.setdefault(
                     path, RetiredKey(path, move.target_schema, successor, None)
                 )
@@ -2668,7 +2671,7 @@ def _apply_move(
             expansion_locations(mapping, move, catalog)
         ):
             expanded, notes = _expanded_value(
-                node, move, _substitute_wildcards(move.new_path, bindings), catalog
+                node, move, _move_path(move, move.new_path, bindings), catalog
             )
             notices.extend(notes)
             if isinstance(parent, dict):
@@ -2679,7 +2682,7 @@ def _apply_move(
                 parent[key] = expanded
         return notices
     for parent, key, bindings in list(move_source_locations(mapping, move, catalog)):
-        destination = _substitute_wildcards(move.new_path, bindings)
+        destination = _move_path(move, move.new_path, bindings)
         if isinstance(parent, dict):
             for tail in move.conflicts_with:
                 if _tail_present(parent, tail):
@@ -2910,33 +2913,49 @@ def move_source_locations(
     identity_move = move.old_path == move.new_path and (
         move.value_map is not None or move.rewrite is not None
     )
-    for parent, key, bindings in _source_locations(
-        document, move.old_path, source_schema, [source_schema], live, [live]
-    ):
-        if identity_move:
-            if isinstance(parent, dict):
-                assert isinstance(key, str)
-                current_value = parent[key]
-            else:
-                assert isinstance(key, int)
-                current_value = parent[key]
-            if move.rewrite is not None:
-                if move.rewrite(current_value) == current_value:
-                    continue
-            else:
-                assert move.value_map is not None
-                if not _identity_value_would_change(move.value_map, current_value):
-                    continue
-        if move.chart_type is not None and move.chart_type != _enclosing_type(
-            document, _substitute_wildcards(move.old_path, bindings)
+    seen: set[tuple[int, str | int]] = set()
+    for at, board in _board_nodes(document, move.sub_board_prefixes):
+        for parent, key, inner in _source_locations(
+            board, move.old_path, source_schema, [source_schema], live, [live]
         ):
-            continue
-        yield parent, key, bindings
+            if (id(parent), key) in seen:
+                continue
+            seen.add((id(parent), key))
+            bindings = (*at, *inner)
+            if _location_applies(document, move, identity_move, parent, key, bindings):
+                yield parent, key, bindings
+
+
+def _location_applies(
+    document: JsonObject,
+    move: Move,
+    identity_move: bool,
+    parent: JsonObject | list[JsonValue],
+    key: str | int,
+    bindings: tuple[str, ...],
+) -> bool:
+    if identity_move:
+        if isinstance(parent, dict):
+            assert isinstance(key, str)
+            current_value = parent[key]
+        else:
+            assert isinstance(key, int)
+            current_value = parent[key]
+        if move.rewrite is not None:
+            if move.rewrite(current_value) == current_value:
+                return False
+        else:
+            assert move.value_map is not None
+            if not _identity_value_would_change(move.value_map, current_value):
+                return False
+    return move.chart_type is None or move.chart_type == _enclosing_type(
+        document, _move_path(move, move.old_path, bindings)
+    )
 
 
 def _enclosing_type(board: JsonObject, path: Sequence[str]) -> JsonValue:
-    """``type:`` of the innermost mapping along *path* that carries one."""
-    found: JsonValue = None
+    """``type:`` of the innermost mapping along *path* that carries one, else ``""``."""
+    found: JsonValue = ""
     for depth in range(1, len(path)):
         node = _value_at(board, path[:depth])
         if isinstance(node, dict) and "type" in node:
@@ -3020,6 +3039,13 @@ def _source_locations(
             _child_positions(live, live_positions, part),
             bindings,
         )
+
+
+def _move_path(move: Move, parts: YamlKeyPath, bindings: tuple[str, ...]) -> list[str]:
+    """*parts* at the location *bindings* name; a nested board's location leads
+    with the concrete path of that board (``move.sub_board_prefixes``)."""
+    lead = len(bindings) - parts.count("*") if move.sub_board_prefixes else 0
+    return [*bindings[:lead], *_substitute_wildcards(parts, bindings[lead:])]
 
 
 def _substitute_wildcards(parts: YamlKeyPath, bindings: tuple[str, ...]) -> list[str]:

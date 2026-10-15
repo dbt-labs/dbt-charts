@@ -1,5 +1,7 @@
 """Tests for the Markdown parser."""
 
+import pytest
+
 from mdsvg import (
     Blockquote,
     CodeBlock,
@@ -250,6 +252,12 @@ class TestTables:
             "center",
             "right",
         )
+
+    @pytest.mark.timeout(5)
+    def test_lone_pipe_row_is_a_paragraph(self) -> None:
+        """A pipe row without a separator row is text, not a table."""
+        doc = parse("Intro paragraph\n\n|---|---|\n\nTail")
+        assert [type(block) for block in doc] == [Paragraph, Paragraph, Paragraph]
 
 
 class TestImages:

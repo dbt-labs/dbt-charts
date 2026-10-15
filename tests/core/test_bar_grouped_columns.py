@@ -142,8 +142,9 @@ class TestGroupedBarOverlap:
             style=BarChartStylePatch(orientation="vertical", overlap=0.5),
         )
         data = [dict(row, cost=row["revenue"] // 2) for row in MULTI_SERIES_DATA]
-        with pytest.raises(ChartDataError, match="exactly 2 series \\(got 4\\)"):
+        with pytest.raises(ChartDataError, match="exactly 2 series \\(got 4\\)") as exc:
             generate_vega_lite_spec(chart, data)
+        assert exc.value.code.code == "ERR-BAR-OVERLAP-SERIES-COUNT"
 
     def test_auto_two_series_uses_partial_band(self):
         # auto + 2 series, vertical → partial (0.25) → width band 1.25.
@@ -187,15 +188,31 @@ class TestGroupedBarOverlap:
         spec = self._spec(MULTI_SERIES_DATA, overlap="flush")
         assert _get_mark(spec)["width"]["band"] == pytest.approx(1.0)
 
-    def test_full_drops_offset_to_coincide(self):
-        spec = self._spec(MULTI_SERIES_DATA, overlap="full")
-        assert "xOffset" not in _get_encoding(spec)
+    @pytest.mark.parametrize("overlap", ["full", 1.0, 1.5])
+    def test_full_overlap_over_a_non_unique_color_raises(self, overlap):
+        """A full overlap would stack the series end to end past the axis."""
+        with pytest.raises(ChartDataError) as err:
+            self._spec(MULTI_SERIES_DATA, overlap=overlap)
+        assert err.value.code.code == "ERR-BAR-OVERLAP-FULL-NON-UNIQUE-COLOR"
+        assert "'region'" in str(err.value)
 
-    def test_above_one_clamps_to_full(self):
-        # 1 is the maximum: a fraction >1 coincides exactly like 'full' (bars
-        # never cross past each other), so the offset is dropped, not amplified.
-        spec = self._spec(MULTI_SERIES_DATA, overlap=1.5)
-        assert "xOffset" not in _get_encoding(spec)
+    def test_full_overlap_over_wide_measures_names_the_measures(self):
+        chart = BarChart(
+            id="test_bar",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            type="bar",
+            x="category",
+            y=["revenue", "cost"],
+            stack="none",
+            style=BarChartStylePatch(orientation="vertical", overlap="full"),
+        )
+        data = [
+            {"category": "Alpha", "revenue": 10, "cost": 4},
+            {"category": "Beta", "revenue": 12, "cost": 6},
+        ]
+        with pytest.raises(ChartDataError, match="revenue, cost"):
+            generate_vega_lite_spec(chart, data)
 
     def test_vertical_numeric_overlap_uses_band(self):
         spec = self._spec(MULTI_SERIES_DATA, overlap=0.5)
@@ -276,11 +293,12 @@ class TestGroupedBarOverlap:
         )
 
     def test_three_series_positive_overlap_raises(self):
-        with pytest.raises(ChartDataError, match="2 series"):
+        with pytest.raises(ChartDataError, match="2 series") as exc:
             generate_vega_lite_spec(
                 _chart(overlap="partial"),
                 THREE_SERIES_DATA,
             )
+        assert exc.value.code.code == "ERR-BAR-OVERLAP-SERIES-COUNT"
 
     def test_single_series_default_does_not_raise(self):
         # Regression: a bar with color encoding where every x maps to the same
@@ -757,8 +775,9 @@ class TestGroupedBarQuantitativeX:
             style=BarChartStylePatch(orientation="vertical", overlap=overlap),
         )
         resolve(chart, NUMERIC_X_DATA, chart_style_context=_BOARD_STYLE)
-        with pytest.raises(ChartDataError, match="continuous x-axis"):
+        with pytest.raises(ChartDataError, match="continuous x-axis") as exc:
             generate_vega_lite_spec(chart, NUMERIC_X_DATA)
+        assert exc.value.code.code == "ERR-BAR-OVERLAP-CONTINUOUS-AXIS"
 
     @pytest.mark.parametrize("overlap", [None, "auto"])
     def test_renderer_default_overlap_on_a_continuous_x_does_not_raise(self, overlap):

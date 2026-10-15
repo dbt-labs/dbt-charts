@@ -34,7 +34,12 @@ from dbt_charts.core.compile.resolve.chart.tick_values import numeric_domain_bou
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_LAYER_AXIS_POSITION_ORIENTATION,
+    ERR_LAYER_LABEL_COLLISION,
+    ERR_LAYER_ORDER_TRANSFORM_MISSING,
     ERR_LAYER_STEP_ORIENTATION,
+    ERR_LAYER_X_DOMAIN_MISMATCH,
+    ERR_LAYER_X_NOT_QUANTITATIVE,
+    ERR_LAYERED_NO_PALETTE,
 )
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.emitters._cartesian import (
@@ -201,12 +206,13 @@ def _resolve_layer_x_encoding(
         and x_field in rows[0]
         and layer_type != "quantitative"
     ):
-        raise ChartDataError(
-            f"chart '{chart_id}': layer x '{x_field}' resolved to a "
-            f"{layer_type} scale, but the base x '{base_x_enc.get('field')}' is "
-            f"{base_type} — a layer sharing the x axis with a quantitative "
-            "base must itself resolve to a quantitative type.",
+        raise ChartDataError.from_code(
+            ERR_LAYER_X_NOT_QUANTITATIVE,
             chart_id=chart_id,
+            x_field=x_field,
+            layer_type=layer_type,
+            base_field=base_x_enc.get("field"),
+            base_type=base_type,
         )
     if base_type not in _CATEGORICAL_X_TYPES:
         return {"field": x_field, "type": layer_type}
@@ -214,12 +220,13 @@ def _resolve_layer_x_encoding(
         return {"field": x_field, "type": base_type}
     if layer_type == "temporal" and base_domain_is_date_shaped:
         return {"field": x_field, "type": base_type}
-    raise ChartDataError(
-        f"chart '{chart_id}': layer x '{x_field}' resolved to a "
-        f"{layer_type} scale, but the base x '{base_x_enc.get('field')}' is "
-        f"{base_type} — layers sharing the x axis with the base must "
-        "resolve to the same discrete-label domain.",
+    raise ChartDataError.from_code(
+        ERR_LAYER_X_DOMAIN_MISMATCH,
         chart_id=chart_id,
+        x_field=x_field,
+        layer_type=layer_type,
+        base_field=base_x_enc.get("field"),
+        base_type=base_type,
     )
 
 
@@ -594,36 +601,53 @@ _BAR_CORNER_RADIUS_PROPS: tuple[str, ...] = (
 )
 
 
-def _paints_outside_domain(
+def painted_float(
     value: object,  # type-state: object_annotation — duck-types an arbitrary row value through float()
-    domain: tuple[float, float],
-) -> bool:
-    """True iff Vega-Lite's own quantitative-encoding parse would paint
-    ``value`` (VL parses anything JS's ``Number()`` accepts, including a
-    numeric string, and drops non-finite/non-numeric values) AND that value
-    lands outside ``domain`` — the pinned ``[0, 1]`` normalize domain, or an
-    author's own wider/narrower pin (``authored_measure_domain``): a value
-    inside an authored ``[0, 1.2]`` must not be clipped just because it
-    exceeds the un-authored default.
+) -> float | None:
+    """The finite float Vega-Lite would paint for ``value``, else ``None``.
 
-    Mirrors VL's own validity/coercion rule with ``float()`` rather than
-    checking Python types directly — VL parses a numeric *string* (a
-    ``::text``-cast or CSV-sourced column) the same as a real number, so a
-    type check alone under-clips it and the plot still collapses; a
-    ``Decimal("NaN")`` passes an ``isinstance`` check but raises on ``<=``,
-    while ``float("nan")`` correctly sorts as not-finite instead. All three
-    ``except`` members are load-bearing: ``ArithmeticError`` also catches
+    VL parses anything JS's ``Number()`` accepts, including a numeric string,
+    and drops non-finite/non-numeric values. Mirrors that with ``float()``
+    rather than checking Python types — a numeric *string* (a ``::text``-cast
+    or CSV-sourced column) paints like a real number, so a type check alone
+    under-clips it; a ``Decimal("NaN")`` passes an ``isinstance`` check but
+    raises on ``<=``, while ``float("nan")`` sorts as not-finite instead. All
+    three ``except`` members are load-bearing: ``ArithmeticError`` also catches
     ``OverflowError`` from a Python ``int`` too large to represent as a
     ``float`` — reachable via an authored inline ``values:`` query, which
-    passes rows through unchanged and so preserves arbitrary-precision
-    YAML integers all the way to this call.
+    passes rows through unchanged.
     """
     try:
         f = float(value)  # type: ignore[arg-type]  # type-state: type_ignore — duck-typed row value; the except below is the real type guard
     except (TypeError, ValueError, ArithmeticError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def paints_outside_domain(
+    value: object,  # type-state: object_annotation — duck-typed row value, see painted_float
+    domain: tuple[float, float],
+) -> bool:
+    """True iff ``painted_float(value)`` lands outside ``domain`` — the pinned
+    ``[0, 1]`` normalize domain, or an author's own wider/narrower pin
+    (``authored_measure_domain``): a value inside an authored ``[0, 1.2]`` must
+    not be clipped just because it exceeds the un-authored default.
+    """
+    painted = painted_float(value)
+    if painted is None:
         return False
     lo, hi = domain
-    return math.isfinite(f) and not lo <= f <= hi
+    return not lo <= painted <= hi
+
+
+def layers_have_own_y_scale(layers: tuple[ResolvedLayer, ...]) -> bool:
+    """True iff the layers get independent y scales, so a layer's authored
+    ``scale.domain`` is honored and clipped.
+
+    Chart-wide: one layer pinning ``axis_y.position`` (either side) makes every
+    layer independent; with none pinned they all share the base scale.
+    """
+    return _resolved_layer_y_orients(layers) is not None
 
 
 def _baseline_outside_shared_domain(axis_y: ResolvedAxisStyle) -> bool:
@@ -799,7 +823,8 @@ def _layer_tooltip_description(
     color_field: str | None,
     span_start: str | None,
     field_labels: Mapping[str, str],
-    grain_formats: Mapping[str, str],
+    axis_x: ResolvedAxisStyle,
+    time_of_day: bool,
 ) -> tuple[str, list[VLDict]]:
     """Build this overlay layer's own structured-tooltip description expr, and
     the transforms it reads.
@@ -850,7 +875,11 @@ def _layer_tooltip_description(
     """
     header: tuple[TooltipField, ...] = ()
     if "field" in x_enc:
-        header = (header_tooltip_field(x_enc["field"], "", rows, grain_formats),)
+        header = (
+            header_tooltip_field(
+                x_enc["field"], "", rows, axis_x, time_of_day=time_of_day
+            ),
+        )
     end = TooltipField(y_field, label, kind="quantitative", format=tooltip_format)
     values = [end]
     transforms: list[VLDict] = []
@@ -919,7 +948,9 @@ def _fix_bar_band_width(spec: ChartSpec, x_is_banded: bool) -> None:
         # the rewrite below would replace it with the full band and discard
         # both the author's width and the theme's gutter. An absent width
         # still needs the explicit bandwidth() the degraded shorthand loses.
-        if width_prop is not None and not isinstance(width_prop, dict):
+        if width_prop is not None and not (
+            isinstance(width_prop, dict) and "band" in width_prop
+        ):
             return
         band_frac = width_prop.get("band") if width_prop is not None else None
         bandwidth_scale = "xOffset" if "xOffset" in spec.encoding else "x"
@@ -1249,18 +1280,16 @@ def render_cartesian_overlay(
                 t for t in base_spec.layers[0].transforms if t.get("as") == order_field
             ]
             if not moved:
-                raise ChartDataError(
-                    f"base spec carries order encoding for field {order_field!r} "
-                    "but no matching calculate transform was found"
+                raise ChartDataError.from_code(
+                    ERR_LAYER_ORDER_TRANSFORM_MISSING, order_field=order_field
                 )
             for sub in base_spec.layers:
                 sub.transforms = [
                     t for t in sub.transforms if t.get("as") != order_field
                 ]
         else:
-            raise ChartDataError(
-                f"base spec carries order encoding for field {order_field!r} "
-                "but no matching calculate transform was found"
+            raise ChartDataError.from_code(
+                ERR_LAYER_ORDER_TRANSFORM_MISSING, order_field=order_field
             )
         outer_transforms.extend(moved)
         # The outer spec carries the same rows (data= on the ChartSpec returned
@@ -1413,9 +1442,7 @@ def render_cartesian_overlay(
         # regardless of which branch supplies the base's own range, so an
         # empty palette is fatal here unconditionally.
         if not palette:
-            raise ChartDataError(
-                "layered chart has no color palette", chart_id=chart_id
-            )
+            raise ChartDataError.from_code(ERR_LAYERED_NO_PALETTE, chart_id=chart_id)
         existing_scale = base_color_enc.get("scale")
         existing_domain = (
             existing_scale.get("domain") if isinstance(existing_scale, dict) else None
@@ -1564,7 +1591,7 @@ def render_cartesian_overlay(
                 else (0.0, 1.0)
             )
             clip_layer = any(
-                _paints_outside_domain(row.get(y_field), normalize_domain)
+                paints_outside_domain(row.get(y_field), normalize_domain)
                 for row in rows_for_layer
             )
         # A bar/area mark paints from the value-0 baseline, so on a zoomed
@@ -1646,12 +1673,27 @@ def render_cartesian_overlay(
                 layer_ay_vl = inject_axis_numeral_expr(
                     layer_ay_vl, None, layer_axis_y.tick_label, layer_labels_format
                 )
-            compose_axis_format(layer_ay_vl, layer_labels_format)
+            compose_axis_format(layer_ay_vl, layer_labels_format, True)
 
         # #11: per-layer scale.domain sets the VL y encoding scale.
         layer_y_scale: VLDict | None = None
         if layer_axis_y.scale is not None and layer_axis_y.scale.domain is not None:
             layer_y_scale = {"domain": list(layer_axis_y.scale.domain)}
+            authored_bounds = (
+                min(layer_axis_y.scale.domain),
+                max(layer_axis_y.scale.domain),
+            )
+            # Only an independent layer scale honors the authored domain; a
+            # shared-scale layer paints on the base axis, so nothing is cut off.
+            if (
+                layers_have_own_y_scale(layers)
+                and layer_axis_y.scale.clip
+                and any(
+                    paints_outside_domain(row.get(y_field), authored_bounds)
+                    for row in rows_for_layer
+                )
+            ):
+                clip_layer = True
 
         # "" (not a real description -- same empty-string-means-unset
         # convention as TooltipField.format) when the base family doesn't
@@ -1667,7 +1709,8 @@ def render_cartesian_overlay(
                 layer.color,
                 layer.y_start if isinstance(layer, ResolvedBarLayer) else None,
                 field_labels,
-                axis_x.grain_formats,
+                axis_x,
+                all(lay.query_name == base_query_name for lay in layers),
             )
             if base_mark_type in _STRUCTURED_TOOLTIP_BASE_FAMILIES
             else ("", [])
@@ -1723,8 +1766,8 @@ def render_cartesian_overlay(
             )
             if use_shared_scale:
                 if not palette:
-                    raise ChartDataError(
-                        "layered chart has no color palette", chart_id=chart_id
+                    raise ChartDataError.from_code(
+                        ERR_LAYERED_NO_PALETTE, chart_id=chart_id
                     )
                 for value in layer_color_values:
                     if value in scale_domain:
@@ -1748,11 +1791,8 @@ def render_cartesian_overlay(
             # or another layer is unremarkable — VL just reuses that color
             # scale slot — so it must not raise.
             if (field_color_base or layered_rail_may_fire) and label in scale_domain:
-                raise ChartDataError(
-                    f"layer label {label!r} collides with an existing color "
-                    "scale entry. To fix: give this layer (or the colliding "
-                    "series) a distinct label:.",
-                    chart_id=chart_id,
+                raise ChartDataError.from_code(
+                    ERR_LAYER_LABEL_COLLISION, label=label, chart_id=chart_id
                 )
             authored_fill = _layer_series_color(layer)
             if isinstance(layer, ResolvedLineLayer) and authored_fill is not None:

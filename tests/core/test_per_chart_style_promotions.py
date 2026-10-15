@@ -886,19 +886,16 @@ class TestKpiFontInheritPropagates:
             f"chart-local patch"
         )
 
-    @pytest.mark.parametrize(
-        "slot",
-        ["value", "label", "value.affix", "value.glyph", "support", "support.glyph"],
-    )
-    def test_kpi_font_color_stays_a_sentinel(self, slot):
+    @pytest.mark.parametrize("slot", ["value", "label", "value.affix", "value.glyph"])
+    def test_kpi_font_color_propagates(self, slot):
         result = self._patched(color=_KPI_SENTINEL)
         assert result.kpi.font.color == _KPI_SENTINEL
-        got = _slot(result.kpi, slot).font.color
-        assert got is None, (
-            f"kpi.{slot}.font.color must stay None — the renderer reads it as "
-            f"\"the author named this slot's ink\" and resolves the KPI's own "
-            f"ink itself; got {got!r}"
-        )
+        assert _slot(result.kpi, slot).font.color == _KPI_SENTINEL
+
+    @pytest.mark.parametrize("slot", ["support", "support.glyph"])
+    def test_support_ink_is_the_tone_not_the_card_ink(self, slot):
+        result = self._patched(color=_KPI_SENTINEL)
+        assert _slot(result.kpi, slot).font.color == "auto"
 
 
 class TestTableFontInheritPropagates:

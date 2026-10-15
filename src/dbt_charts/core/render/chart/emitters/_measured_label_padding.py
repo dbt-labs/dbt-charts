@@ -93,6 +93,7 @@ from dbt_charts.core.text.numeral_scale import (
     SuffixMode,
     decimal_pad_for,
     with_symbol,
+    without_symbol,
 )
 from dbt_charts.core.text.predefined_formats import VEGA_ARMS
 
@@ -156,8 +157,9 @@ def quantitative_tick_labels(
     format_spec = tick_label.format if tick_label is not None else fmt.spec
     if ruler is None:
         if tick_label is None:
+            # A zero tick stays bare, as compose_axis_format paints it.
+            bare = d3_format(without_symbol(format_spec))
             if fmt.has_affix:
-                # A zero tick stays bare, as compose_axis_format paints it.
                 return [
                     format_d3(
                         v,
@@ -168,10 +170,11 @@ def quantitative_tick_labels(
                         fmt.placement,
                     )
                     if v != 0
-                    else d3_format(format_spec)(v)
+                    else bare(v)
                     for v in tick_values
                 ]
-            return [d3_format(format_spec)(v) for v in tick_values]
+            painted = d3_format(format_spec)
+            return [painted(v) if v != 0 else bare(v) for v in tick_values]
         prefix = tick_label.prefix
         anchor_at_start = tick_label.anchor_at_start
         pad_table = tick_label.decimal_pad_table

@@ -10,7 +10,7 @@ module never re-derives orientation) -- and produces the label text from
 ``datum.value``. It is the innermost layer, wrapped by
 ``inject_axis_label_case`` / ``inject_axis_label_values_filter`` exactly as
 they already wrap the temporal smart-cadence producer. See "ruler" in
-``ai_notes/jul26-02-numeral-system-design.md``.
+``ai_notes/charts/jul26-02-numeral-system-design.md``.
 
 The end-to-end tests render through real ``vl_convert`` rather than
 asserting on the expression string alone: a labelExpr that reads right in
@@ -18,7 +18,7 @@ Python can still render wrong (or lose its reservation, or its composed
 padding characters) once Vega actually evaluates it. See
 ``TestReservationSurvivesVlConvert`` -- a bare trailing U+2007 run is
 stripped from the rendered ``<text>`` content by ``vl_convert``
-(``ai_notes/jul26-02-phase-1-plan.md`` has the full investigation) -- and
+(``ai_notes/charts/jul26-02-phase-1-plan.md`` has the full investigation) -- and
 ``TestNegativeLadderAnchor`` -- the anchor is the tick that is the extreme
 by absolute value, baked as a POSITION (``ruler.anchor_at_start``) rather
 than the tick's raw value, because Vega may drop a baked ``tick_values``
@@ -893,7 +893,9 @@ class TestComposeAxisFormatRealVegaRendering:
     ) -> None:
         d: dict = {}
         compose_axis_format(
-            d, ResolvedFormat(spec=",.0f", prefix="€", sign_placement="before_prefix")
+            d,
+            ResolvedFormat(spec=",.0f", prefix="€", sign_placement="before_prefix"),
+            True,
         )
         labels = _render_axis_labels(
             [-50_000.0, 0.0, 50_000.0], (-50_000.0, 50_000.0), d["labelExpr"]
@@ -903,7 +905,9 @@ class TestComposeAxisFormatRealVegaRendering:
     def test_after_prefix_paints_the_sign_after_the_prefix(self) -> None:
         d: dict = {}
         compose_axis_format(
-            d, ResolvedFormat(spec=",.0f", prefix="EUR ", sign_placement="after_prefix")
+            d,
+            ResolvedFormat(spec=",.0f", prefix="EUR ", sign_placement="after_prefix"),
+            True,
         )
         labels = _render_axis_labels(
             [-50_000.0, 0.0, 50_000.0], (-50_000.0, 50_000.0), d["labelExpr"]
@@ -912,9 +916,27 @@ class TestComposeAxisFormatRealVegaRendering:
 
     def test_zero_tick_is_bare_like_the_ladder_paths(self) -> None:
         d: dict = {}
-        compose_axis_format(d, ResolvedFormat(spec=",.0f", suffix=" €"))
+        compose_axis_format(d, ResolvedFormat(spec=",.0f", suffix=" €"), True)
         labels = _render_axis_labels([0.0, 50_000.0], (0.0, 50_000.0), d["labelExpr"])
         assert labels == ["0", "50,000 €"]
+
+    def test_zero_tick_drops_the_spec_currency_symbol(self) -> None:
+        fmt = ResolvedFormat(spec="$,.0f")
+        d: dict = {}
+        compose_axis_format(d, fmt, True)
+        ticks = [-1_000.0, 0.0, 1_000.0]
+        labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), d["labelExpr"])
+        assert labels == ["−$1,000", "0", "$1,000"]
+        assert labels == quantitative_tick_labels(tuple(ticks), fmt, None, None)
+
+    def test_notated_zero_tick_drops_the_spec_currency_symbol(self) -> None:
+        fmt = ResolvedFormat(spec="$.3~s", notation="analytic")
+        d: dict = {}
+        compose_axis_format(d, fmt, True)
+        ticks = [0.0, 2_000.0]
+        labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), d["labelExpr"])
+        assert labels == ["0", "$2K"]
+        assert labels == quantitative_tick_labels(tuple(ticks), fmt, None, None)
 
     def test_ladderless_si_zero_tick_is_bare(self) -> None:
         from dbt_charts.core.compile.resolve.style.axis_cascade import (
@@ -980,7 +1002,7 @@ class TestComposeAxisFormatRealVegaRendering:
 
     def test_authored_suffix_trails_the_digits_sign_still_leads(self) -> None:
         d: dict = {}
-        compose_axis_format(d, ResolvedFormat(spec=",.0f", suffix=" €"))
+        compose_axis_format(d, ResolvedFormat(spec=",.0f", suffix=" €"), True)
         labels = _render_axis_labels(
             [-50_000.0, 50_000.0], (-50_000.0, 50_000.0), d["labelExpr"]
         )
@@ -996,6 +1018,7 @@ class TestComposeAxisFormatRealVegaRendering:
                 notation="narrative",
                 sign_placement="before_prefix",
             ),
+            True,
         )
         labels = _render_axis_labels([1_200_000.0], (0.0, 1_200_000.0), d["labelExpr"])
         assert labels == ["€1.2mn"]
@@ -1005,7 +1028,7 @@ class TestComposeAxisFormatRealVegaRendering:
         labelExpr.
         """
         d: dict = {}
-        compose_axis_format(d, ResolvedFormat(spec=",.0f"))
+        compose_axis_format(d, ResolvedFormat(spec=",.0f"), True)
         assert d == {"format": ",.0f"}
         assert "labelExpr" not in d
 
@@ -1015,7 +1038,9 @@ class TestComposeAxisFormatRealVegaRendering:
         """
         d = {"labelExpr": "'ZZ' + datum.label"}
         compose_axis_format(
-            d, ResolvedFormat(spec=",.0f", prefix="€", sign_placement="before_prefix")
+            d,
+            ResolvedFormat(spec=",.0f", prefix="€", sign_placement="before_prefix"),
+            True,
         )
         assert d["labelExpr"] == "'ZZ' + datum.label"
         assert d["format"] == ",.0f"
@@ -1025,7 +1050,7 @@ class TestComposeAxisFormatRealVegaRendering:
     ) -> None:
         """No prefix/suffix/notation authored, so there is nothing to compose."""
         d = {"labelExpr": "datum.label + ' u'"}
-        compose_axis_format(d, ResolvedFormat(spec=",.0f"))
+        compose_axis_format(d, ResolvedFormat(spec=",.0f"), True)
         assert d == {"labelExpr": "datum.label + ' u'", "format": ",.0f"}
 
     def test_notation_on_a_non_si_spec_is_a_true_no_op(self) -> None:
@@ -1033,7 +1058,7 @@ class TestComposeAxisFormatRealVegaRendering:
         (numeral_vega_expr's own no-op condition).
         """
         d: dict = {}
-        compose_axis_format(d, ResolvedFormat(spec=",.0f", notation="narrative"))
+        compose_axis_format(d, ResolvedFormat(spec=",.0f", notation="narrative"), True)
         assert d == {"format": ",.0f"}
         assert "labelExpr" not in d
 

@@ -41,6 +41,7 @@ from dbt_charts.core.compile.models.style.authored import (
     BandAxisStylePatch,
     BaseAxisStylePatch,
     PaginationConfig,
+    PieChartStylePatch,
     QuantitativeAxisStylePatch,
 )
 
@@ -201,6 +202,7 @@ class ChartStyleContext:
     area: AreaChartStyle
     scatter: ScatterChartStyle
     pie: PieChartStyle
+    donut: PieChartStylePatch | None
     geoshape: GeoshapeChartStyle
     point_map: PointMapChartStyle
     histogram: HistogramChartStyle
@@ -261,8 +263,9 @@ class ChartStyleContext:
     # chart-local color override.
     color: str | None = None
     # Materialized chart background: chart-local style.background when authored,
-    # otherwise the board/board background propagated from ResolvedStyle.background
-    # at compile time. Raw -- may be translucent (rgba(...)), a CSS name, or
+    # otherwise the board background propagated from ResolvedStyle.background
+    # at compile time (transparent when that is translucent: the board paints it).
+    # Raw -- may be translucent (rgba(...)), a CSS name, or
     # transparent; label ink never reads this directly, see ink_canvas below.
     background: str = ""
     # The CHART canvas: `background` (above) composited over `board_canvas`

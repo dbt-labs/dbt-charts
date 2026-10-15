@@ -77,6 +77,12 @@ impl TonesStyle {
     }
 }
 
+#[derive(Deserialize, Clone)]
+pub struct TextMarkFont {
+    pub family: String,
+    pub size: f64,
+}
+
 /// Board-level `ResolvedStyle` tokens shared across families — the muted
 /// ink and the tone palette. Production hands the whole `ResolvedStyle` to
 /// every renderer alongside the chart; this envelope carries only the
@@ -111,6 +117,14 @@ pub struct BoardStyle {
     /// when it is absent.
     #[serde(default)]
     pub font_color: Option<String>,
+    /// The theme's text-mark font (`chart_defaults.marks.text.font`): the face a
+    /// value label measures in when it authors none.
+    pub text_mark_font: TextMarkFont,
+    /// `chart_defaults.dark_companion_palette`: the board's label ink per palette
+    /// stop, which a grouped per_series column ranks its series into. Optional in
+    /// the envelope; that column errors when it is absent.
+    #[serde(default)]
+    pub dark_companion_palette: Option<Vec<String>>,
     /// The root board's width, which `WARN-TABLE-CRAMPED`'s suggested width is
     /// sized against. Optional in the envelope; a cramped table renders without
     /// the suggested width when it is absent.
@@ -130,6 +144,10 @@ pub struct BoardStyle {
     /// Optional in the envelope; a table errors when it is absent.
     #[serde(default)]
     pub pagination_control_height: Option<f64>,
+    /// `chart_rendering.support_table.column_block_share_warn_ratio`: the share
+    /// of its card a support_table column block may claim before it warns.
+    #[serde(default)]
+    pub column_block_share_warn_ratio: Option<f64>,
     /// `SPARK_BAR_TITLE_HEIGHT_PX` / `SPARK_BAR_TITLE_BASELINE_Y_PX`.
     /// Optional in the envelope; a titled spark_bar errors when it is absent.
     #[serde(default)]
@@ -253,6 +271,10 @@ fn with_required_board_fields(mut style: Value) -> Value {
     fields.entry("format_locale").or_insert_with(number_locale::en_us_wire);
     fields.entry("time_locale").or_insert_with(time_locale::en_us_wire);
     fields.entry("pagination_control_height").or_insert(serde_json::json!(28.0));
+    fields.entry("text_mark_font").or_insert_with(|| {
+        serde_json::json!({"family": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif", "size": 11.0})
+    });
+    fields.entry("column_block_share_warn_ratio").or_insert(serde_json::json!(0.4));
     fields
         .entry("sub_unit_specs")
         .or_insert_with(|| serde_json::json!({"currency": "$,.2f", "number": ",.2f"}));
@@ -366,6 +388,11 @@ pub struct Payload {
     /// the "add data" overlay over it.
     #[serde(default)]
     pub is_placeholder: bool,
+    /// The slot height an ancestor's literal `height:` assigned this chart
+    /// (`authored_chart_heights`); absent when no ancestor authored one. The
+    /// horizontal bar's category floor is judged against it.
+    #[serde(default)]
+    pub authored_height: Option<f64>,
     /// `execution.max_template_output_bytes`: the most SVG a custom chart's
     /// template may emit for one render. Only the custom family reads it.
     #[serde(default)]
@@ -374,6 +401,16 @@ pub struct Payload {
     /// value) in `rows`, by row and column; filled when the payload is parsed.
     #[serde(skip)]
     pub cell_text: common::CellText,
+}
+
+impl Payload {
+    /// The id of the chart this payload renders, for the diagnostics it raises.
+    pub(crate) fn chart_id(&self) -> Result<&str, String> {
+        self.resolved
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "payload.resolved.id missing".to_string())
+    }
 }
 
 /// The one place the wire's cell markers are decoded (`common::decode_cells`):
@@ -450,6 +487,7 @@ fn render_in_scope(
     if payload.rows.is_empty() && chart_type != "callout" {
         return families::empty::render(chart_type, payload, fonts).map(|svg| (svg, None));
     }
+    families::cartesian_errors::check(payload, chart_type)?;
     // A Vega-family root is `class="marks"`, the host of the hover markers.
     if chart_type == "callout" {
         let (svg, natural_height) = families::callout::render(payload, fonts)?;
@@ -457,13 +495,16 @@ fn render_in_scope(
     }
     let svg = match chart_type {
         "pie" => families::pie::render(payload, fonts).and_then(contract::stamp_view_root)?,
-        "bar" => families::bar::render(payload, fonts).and_then(contract::stamp_view_root)?,
-        "line" => families::line::render(payload, fonts).and_then(contract::stamp_view_root)?,
-        "area" => families::area::render(payload, fonts).and_then(contract::stamp_view_root)?,
-        "scatter" => families::scatter::render(payload, fonts).and_then(contract::stamp_view_root)?,
-        "heatmap" => families::heatmap::render(payload, fonts).and_then(contract::stamp_view_root)?,
+        "bar" => {
+            families::bar::production_errors(payload)?;
+            families::bar::render(payload, fonts).and_then(|svg| Ok(contract::stamp_view_root(svg)?))?
+        }
+        "line" => families::line::render(payload, fonts).and_then(|svg| Ok(contract::stamp_view_root(svg)?))?,
+        "area" => families::area::render(payload, fonts).and_then(|svg| Ok(contract::stamp_view_root(svg)?))?,
+        "scatter" => families::scatter::render(payload, fonts).and_then(|svg| Ok(contract::stamp_view_root(svg)?))?,
+        "heatmap" => families::heatmap::render(payload, fonts).and_then(|svg| Ok(contract::stamp_view_root(svg)?))?,
         "geoshape" => families::geoshape::render(payload, fonts)?,
-        "histogram" => families::histogram::render(payload, fonts).and_then(contract::stamp_view_root)?,
+        "histogram" => families::histogram::render(payload, fonts).and_then(|svg| Ok(contract::stamp_view_root(svg)?))?,
         "kpi" => families::kpi::render(payload, fonts)?,
         "table" => families::table::render(payload, fonts)?,
         "spark_bar" => families::spark_bar::render(payload, fonts)?,
@@ -528,7 +569,7 @@ pub fn render_output(payload: &Payload, fonts: &text::FontBook) -> Result<Render
 /// at a corrected width OR height, or a family with its OWN unrelated
 /// height-fitting law (`table.rs`'s own pagination re-flow chief among
 /// them) sees its slot height silently shrunk by this gate's math.
-fn is_support_table_arm(payload: &Payload) -> Result<bool, String> {
+pub(crate) fn is_support_table_arm(payload: &Payload) -> Result<bool, String> {
     let chart_type = payload
         .resolved
         .get("chart_type")
@@ -569,9 +610,8 @@ fn render_width_fitted(
         Some(shrunk_width) => {
             let mut corrected_payload = payload.clone();
             corrected_payload.width = shrunk_width;
-            let svg = render(&corrected_payload, fonts).map_err(|e| {
-                format!("chart {chart_id} refused during width-correction re-render: {e}")
-            })?;
+            let svg = render(&corrected_payload, fonts)
+                .map_err(|e| e.in_context(&format!("chart {chart_id} refused during width-correction re-render")))?;
             Ok((svg, Some(corrected_payload)))
         }
     }
@@ -596,43 +636,72 @@ fn render_width_fitted(
 /// itself. Applying it here too would size the box off the CORRECTED
 /// (shrunk) height where production sizes it off the uncorrected one.
 pub fn render_fitted(payload: &Payload, fonts: &text::FontBook) -> Result<RenderOutput, Diagnostic> {
-    if !is_support_table_arm(payload)? {
-        return render_output(payload, fonts);
+    render_fitted_natural(payload, payload, fonts)
+}
+
+/// `render_fitted` for a slot rendered first from `natural`, the payload at
+/// the chart's sizing-time height. Production keeps that cached render while
+/// the box still holds its height (`abs(natural_h - item.height) < 1`) and
+/// corrects it against the box only if the canvas overshoots
+/// (`_correct_support_table_height`); a box moved away from it re-renders
+/// at the box height (`_fix_slot_heights_in_tree`), which is `slot` itself.
+pub fn render_fitted_natural(
+    natural: &Payload,
+    slot: &Payload,
+    fonts: &text::FontBook,
+) -> Result<RenderOutput, Diagnostic> {
+    if !is_support_table_arm(slot)? {
+        return render_output(slot, fonts);
     }
-    // The support_table families (bar/line/area) record no warnings.
-    let (svg, _) = render_fitted_with_payload(payload, fonts)?;
-    Ok(RenderOutput { svg, warnings: Vec::new(), natural_height: None })
+    let (svg, _, rendered) = render_fitted_with_payload(natural, slot, fonts)?;
+    // Production's warning pass renders the spec at the layout width, before any
+    // support_table correction, so the warnings are that first render's; its
+    // own refusal, if any, is the corrected render's to raise.
+    let (_, warnings) = diagnostic::collect(|| render_sized(rendered, fonts));
+    Ok(RenderOutput { svg, warnings, natural_height: None })
 }
 
 /// `render_fitted`, also handing back the payload of the render that produced
 /// the SVG — the width/height-corrected one on a support_table chart, the
-/// caller's own otherwise — so `render_layout` describes that render.
+/// caller's own otherwise — so `render_layout` describes that render, and the
+/// payload (`natural` or `slot`) the first render was made from.
 fn render_fitted_with_payload<'a>(
-    payload: &'a Payload,
+    natural: &'a Payload,
+    slot: &'a Payload,
     fonts: &text::FontBook,
-) -> Result<(String, Cow<'a, Payload>), Diagnostic> {
-    let (svg, width_corrected_payload) = render_width_fitted(payload, fonts)?;
-    if !is_support_table_arm(payload)? {
-        return Ok((svg, Cow::Borrowed(payload)));
+) -> Result<(String, Cow<'a, Payload>, &'a Payload), Diagnostic> {
+    let (svg, width_corrected_payload) = render_width_fitted(natural, fonts)?;
+    if !is_support_table_arm(natural)? {
+        return Ok((svg, Cow::Borrowed(natural), natural));
     }
-    let chart_id = payload.resolved.get("id").and_then(Value::as_str).unwrap_or("<unknown>");
+    let chart_id = natural.resolved.get("id").and_then(Value::as_str).unwrap_or("<unknown>");
     // layout_sizing.py's `_correct_support_table_height` (the title
     // offset is a closed-form `plot_top` term, not part of this correction —
     // `support_table_strip::support_table_title_offset_correction`): the
     // SAME autosize:pad overshoot the width correction above measures on
     // the horizontal axis also overshoots vertically, so measure the
     // (possibly width-corrected) render's actual height and shrink again if
-    // it overshoots `payload.height`.
+    // it overshoots the slot.
     let actual_height = board::extract_svg_height(&svg)?;
-    match sizing::support_table_height_correction(payload.height, actual_height) {
-        None => Ok((svg, width_corrected_payload.map_or(Cow::Borrowed(payload), Cow::Owned))),
+    if natural.height != slot.height {
+        let chart_type = natural
+            .resolved
+            .get("chart_type")
+            .and_then(Value::as_str)
+            .expect("is_support_table_arm already required chart_type");
+        let natural_box = sizing::clamp_render_first_height(chart_type, actual_height, natural.height);
+        if sizing::height_moved(natural_box, slot.height) {
+            return render_fitted_with_payload(slot, slot, fonts);
+        }
+    }
+    match sizing::support_table_height_correction(slot.height, actual_height) {
+        None => Ok((svg, width_corrected_payload.map_or(Cow::Borrowed(natural), Cow::Owned), natural)),
         Some(shrunk_height) => {
-            let mut corrected_payload = width_corrected_payload.unwrap_or_else(|| payload.clone());
+            let mut corrected_payload = width_corrected_payload.unwrap_or_else(|| natural.clone());
             corrected_payload.height = shrunk_height;
-            let svg = render(&corrected_payload, fonts).map_err(|e| {
-                format!("chart {chart_id} refused during height-correction re-render: {e}")
-            })?;
-            Ok((svg, Cow::Owned(corrected_payload)))
+            let svg = render(&corrected_payload, fonts)
+                .map_err(|e| e.in_context(&format!("chart {chart_id} refused during height-correction re-render")))?;
+            Ok((svg, Cow::Owned(corrected_payload), natural))
         }
     }
 }
@@ -644,15 +713,15 @@ fn render_fitted_with_payload<'a>(
 /// A support_table chart on line's legacy splice refuses: the splice
 /// composes its strip after the negotiation, so no rect is known to
 /// describe the written SVG.
-pub fn render_layout(payload: &Payload, fonts: &text::FontBook) -> Result<Value, String> {
+pub fn render_layout(payload: &Payload, fonts: &text::FontBook) -> Result<Value, Diagnostic> {
     match &payload.board_style {
         Some(style) => style.scoped(|| layout_in_scope(payload, fonts)),
         None => layout_in_scope(payload, fonts),
     }
 }
 
-fn layout_in_scope(payload: &Payload, fonts: &text::FontBook) -> Result<Value, String> {
-    let (_, fitted) = render_fitted_with_payload(payload, fonts).map_err(|e| e.to_string())?;
+fn layout_in_scope(payload: &Payload, fonts: &text::FontBook) -> Result<Value, Diagnostic> {
+    let (_, fitted, _) = render_fitted_with_payload(payload, payload, fonts)?;
     let chart_type = fitted
         .resolved
         .get("chart_type")
@@ -665,16 +734,19 @@ fn layout_in_scope(payload: &Payload, fonts: &text::FontBook) -> Result<Value, S
             return Err(format!(
                 "layout dump: {other} does not hand its plot rect out of its render — only \
                  line and area do"
-            ))
+            ).into())
         }
     };
+    if !fitted.resolved["multiples"].is_null() {
+        return Err("layout dump: multiples has no single plot rect, a facet composite has many".into());
+    }
     let (_, plot) = families::line::render_with_layout(&fitted, fonts, draw_areas)?;
     if is_support_table_arm(&fitted)? && plot.composed_rows.is_none() {
         return Err("layout dump: this support_table chart took line's legacy splice, which \
                     composes its strip after the negotiation — not modeled"
             .into());
     }
-    serde_json::to_value(plot).map_err(|e| format!("layout dump: {e}"))
+    Ok(serde_json::to_value(plot).map_err(|e| format!("layout dump: {e}"))?)
 }
 
 #[cfg(test)]

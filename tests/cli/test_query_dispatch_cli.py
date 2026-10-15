@@ -591,7 +591,7 @@ def test_cli_query_command_execute_path_uses_project_session_with_block(
     )
 
     @contextmanager
-    def fake_from_project(project, **_kwargs):  # type: ignore[no-untyped-def]
+    def fake_from_project(project, **_kwargs):
         yield fake_project
 
     with patch(
@@ -631,7 +631,7 @@ def test_raw_sql_validate_uses_project_session_open(tmp_path: Path) -> None:
     fake_project.validate_query.return_value = []
 
     @contextmanager
-    def fake_from_project(project, **_kwargs):  # type: ignore[no-untyped-def]
+    def fake_from_project(project, **_kwargs):
         yield fake_project
 
     with patch(

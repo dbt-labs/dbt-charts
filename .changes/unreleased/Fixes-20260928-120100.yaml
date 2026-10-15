@@ -1,3 +1,3 @@
 kind: Fixes
-body: 'A layout import, cross-file `x.queries.q`/`x.charts.c`/`x.variables.v` ref, `file.yml#query` file, or `extends:` path that is missing, absolute, or climbs above the project now reports `ERR-UNRESOLVED-REFERENCE` naming the ref and the path it resolved to, as does an inline file `source:` with an unsupported suffix or no candidate inside the project (a missing inline data file is still reported per chart at execution). A missing or escaping layout import, a missing `file.yml#query` file or `x.queries.q` target in a cross-file chart, and a missing `extends:` file used to surface as `ERR-INTERNAL`, and an escaping `extends:` path raised an unhandled `ValueError`.'
+body: Missing, absolute or out-of-project file references (imports, cross-file refs, `extends:`, file sources) report `ERR-UNRESOLVED-REFERENCE` naming the path instead of `ERR-INTERNAL`.
 time: 2026-09-28T12:01:00-07:00

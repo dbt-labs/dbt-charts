@@ -1,3 +1,0 @@
-kind: Fixes
-body: A number prefix or suffix repeated on one tick now lands on a drawn tick when the value axis has no headroom.
-time: 2026-10-09T14:26:01.695361-07:00

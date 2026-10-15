@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.markers import (
+    Absent,
     InheritSlot,
 )
 from dbt_charts.core.compile.models.primitives import (
@@ -156,7 +157,7 @@ class _LegendStyleBase(BaseModel):
             "keeps it beside direct labels and false hides it."
         ),
     )
-    symbol_limit: int | None = Field(
+    symbol_limit: Annotated[int | None, Absent("no cap")] = Field(
         default=None,
         ge=1,
         description=(

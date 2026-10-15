@@ -24,6 +24,8 @@ from dbt_charts.core.compile.config import (
 from dbt_charts.core.compile.resolve.style.inherit_graph import get_inherit_graph
 from dbt_charts.core.compile.resolve.style.inherit_resolver import apply_inherit
 
+from ._board_utils import merged_patch
+
 # =============================================================================
 # Leaf types
 # =============================================================================
@@ -317,7 +319,7 @@ def test_resolve_style_last_patch_wins():
 
     p1 = StylePatch.model_validate({"background": "#111111"})
     p2 = StylePatch.model_validate({"background": "#222222"})
-    resolved = resolve_style(get_theme_style(), p1, p2)
+    resolved = resolve_style(get_theme_style(), merged_patch(p1, p2))
     assert resolved.background == "#222222"
 
 
@@ -693,8 +695,7 @@ def test_cascade_root_to_kpi_font():
 def test_cascade_kpi_font_to_value_font():
     """kpi.font cascades into kpi.value.font for unset fields.
 
-    `color` is the exception — kpi.value.font excludes it from the fill so it
-    stays a sentinel meaning "no author named the headline's ink".
+    `color` fills from kpi.font too: the headline takes the card's ink.
     """
     from dbt_charts.core.compile.models.primitives import FontStyle
 
@@ -712,7 +713,7 @@ def test_cascade_kpi_font_to_value_font():
     )
     cascaded = apply_inherit(seed, get_inherit_graph())
     assert cascaded.charts.kpi.value.font.weight == 771.0
-    assert cascaded.charts.kpi.value.font.color is None
+    assert cascaded.charts.kpi.value.font.color == cascaded.charts.kpi.font.color
 
 
 def test_cascade_charts_font_to_in_cell_spark_bar():

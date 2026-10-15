@@ -7,6 +7,7 @@ use std::fmt::Write as _;
 use crate::families::legend::{legend_grid, LegendGrid, LegendSymbol};
 use crate::svg::{vega_escape_attr, xml_escape, xml_escape_attr};
 use crate::text::FontBook;
+use crate::Payload;
 use crate::vega_fit::baseline_shift;
 
 /// Vega's default `range.symbol` — the named range a Vega-Lite shape scale
@@ -106,9 +107,13 @@ pub fn path(symbol: &str, r: f64) -> Result<String, String> {
 /// encode.ts:63-74`): beside a color channel the fill is a field reference
 /// and becomes `symbolBaseFillColor`'s black; with none the mark's own static
 /// fill survives.
+#[derive(Clone, Copy)]
 pub enum SymbolFill<'a> {
     Static(&'a str),
     Field,
+    /// An unfilled mark's glyph: its interior fill, under the mark's own stroke
+    /// color; a color channel leaves the stroke a field ref and so unset.
+    Ring { interior: &'a str, stroke: Option<&'a str> },
 }
 
 /// A shape channel's own legend when no color legend carries it: Vega-Lite
@@ -120,7 +125,7 @@ pub enum SymbolFill<'a> {
 pub struct ShapeLegend {
     title: String,
     labels: Vec<String>,
-    symbols: Vec<&'static str>,
+    paths: Vec<String>,
     family: String,
     grid: LegendGrid,
     /// The legend's ink width, ceiled, and its height.
@@ -140,17 +145,19 @@ const SYMBOL_STROKE_WIDTH: f64 = 1.5;
 const INK: &str = "#000";
 
 impl ShapeLegend {
-    /// `family` is `config.font`, the font of Vega-Lite's `guide-title` and
+    /// The legend of a shape encoding on `title`'s field: one symbol per
+    /// `labels` entry in `range.symbol` order. The font is `config.font`
+    /// (`board_style.font`), that of Vega-Lite's `guide-title` and
     /// `guide-label` styles (`config.ts:505-512`). The title is measured at the
     /// default weight: vl-convert's text layout does not re-instance a variable
     /// font for the title's bold (`text.rs` `measure_shaped`).
-    pub fn new(
-        fonts: &FontBook,
-        family: &str,
-        title: String,
-        labels: Vec<String>,
-        symbols: Vec<&'static str>,
-    ) -> Result<Self, String> {
+    pub fn new(fonts: &FontBook, payload: &Payload, title: String, labels: Vec<String>) -> Result<Self, String> {
+        let family = payload
+            .board_style
+            .as_ref()
+            .and_then(|b| b.font.as_deref())
+            .ok_or("scatter: a shape legend needs board_style.font")?;
+        let symbols: Vec<&'static str> = (0..labels.len()).map(symbol_for).collect();
         let label_ws = labels
             .iter()
             .map(|l| fonts.measure(l, family, LABEL_SIZE))
@@ -162,6 +169,7 @@ impl ShapeLegend {
                 Some(LegendSymbol::Glyph(x, y))
             })
             .collect();
+        let paths = symbols.iter().map(|s| path(s, SYMBOL_RADIUS)).collect::<Result<Vec<_>, _>>()?;
         let grid = legend_grid(&label_ws, &glyphs, LABEL_SIZE, 1, LABEL_OFFSET);
         let title_w = fonts.measure_shaped(&title, family, TITLE_SIZE)?;
         let w = title_w.max(grid.width).ceil();
@@ -169,7 +177,7 @@ impl ShapeLegend {
         Ok(Self {
             title,
             labels,
-            symbols,
+            paths,
             family: family.to_string(),
             grid,
             w,
@@ -185,10 +193,15 @@ impl ShapeLegend {
         y: f64,
         fill: SymbolFill,
         opacity: f64,
-    ) -> Result<(), String> {
+    ) {
         let fill_attrs = match fill {
             SymbolFill::Static(color) => format!("fill=\"{}\"", xml_escape_attr(color)),
             SymbolFill::Field => "fill=\"black\" fill-opacity=\"1\"".to_string(),
+            SymbolFill::Ring { interior, stroke } => format!(
+                "fill=\"{}\"{}",
+                xml_escape_attr(interior),
+                stroke.map(|s| format!(" stroke=\"{}\"", xml_escape_attr(s))).unwrap_or_default()
+            ),
         };
         let family = vega_escape_attr(&self.family);
         let _ = write!(
@@ -200,7 +213,7 @@ impl ShapeLegend {
         );
         let entries_y = y + TITLE_SIZE + TITLE_PADDING;
         let c = self.grid.size / 2.0;
-        for (i, (label, symbol)) in self.labels.iter().zip(&self.symbols).enumerate() {
+        for (i, (label, path)) in self.labels.iter().zip(&self.paths).enumerate() {
             let row_y = entries_y + self.grid.row_y[i];
             let _ = write!(
                 svg,
@@ -210,13 +223,12 @@ impl ShapeLegend {
                  font-size=\"{LABEL_SIZE}\" fill=\"{INK}\">{}</text>",
                 x + c,
                 row_y + c,
-                path(symbol, SYMBOL_RADIUS)?,
+                path,
                 x + self.grid.label_x,
                 row_y + c + baseline_shift("middle", LABEL_SIZE),
                 xml_escape(label)
             );
         }
-        Ok(())
     }
 }
 

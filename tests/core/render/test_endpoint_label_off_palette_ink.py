@@ -116,3 +116,33 @@ def test_root_and_nested_pins_for_one_field_both_get_companions() -> None:
 """
     svg = render_board_to_svg(_NESTED_BOARD.replace("{root_style}", root_style))
     assert _label_ink(svg, "Coal")
+
+
+_PIE_BOARD = """
+queries:
+  q:
+    type: values
+    rows:
+      - {source: Coal, twh: 30}
+      - {source: Solar, twh: 10}
+charts:
+  wheel:
+    query: q
+    type: pie
+    theta: twh
+    color: source
+rows:
+  - wheel
+style:
+  charts:
+    category_colors:
+      source:
+        values:
+          Coal: "#4a4a4a"
+"""
+
+
+def test_pie_bakes_the_companion_ink_of_a_pinned_color() -> None:
+    resolved_board, _ = _resolve_board(_PIE_BOARD)
+    wheel = resolved_board.charts["wheel"]
+    assert wheel.pin_companions == (("#4a4a4a", mark_ink("#4a4a4a", wheel.canvas)),)

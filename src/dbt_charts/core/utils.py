@@ -47,7 +47,7 @@ DEFAULT_VL_LABEL_LIMIT: float = 180.0
 
 _MERGE_TAG = "tag:yaml.org,2002:merge"
 
-_YEAR_MIN = 1900
+_YEAR_MIN = 1700
 _YEAR_MAX = 2100
 _YEAR_STRING_PATTERN = re.compile(r"^\d{4}$")
 
@@ -176,7 +176,7 @@ def to_plain_dict(obj: object) -> Any:
     return obj
 
 
-_UNIT_SUFFIXES: dict[str, str] = {
+UNIT_SUFFIXES: dict[str, str] = {
     "usd": "($)",
     "eur": "(€)",
     "gbp": "(£)",
@@ -243,8 +243,8 @@ def slug_to_text(slug: str) -> str:
     tokens = [t for t in tokens if t]
 
     suffix_label = ""
-    if len(tokens) > 1 and tokens[-1].lower() in _UNIT_SUFFIXES:
-        suffix_label = _UNIT_SUFFIXES[tokens[-1].lower()]
+    if len(tokens) > 1 and tokens[-1].lower() in UNIT_SUFFIXES:
+        suffix_label = UNIT_SUFFIXES[tokens[-1].lower()]
         tokens = tokens[:-1]
 
     words = []
@@ -302,7 +302,7 @@ def is_year_shaped(samples: list[Any]) -> bool:
     """True iff every non-null sample is a year-range value.
 
     Value-only heuristic (no column-name signal): an ``int`` in
-    ``[1900, 2100]``, a ``str`` matching ``^\\d{4}$`` in that range, or an
+    ``[1700, 2100]``, a ``str`` matching ``^\\d{4}$`` in that range, or an
     integral ``Decimal`` (``v == v.to_integral_value()``) in range — warehouses
     (BigQuery NUMERIC, Snowflake NUMBER) return year integers as ``Decimal``.
     A non-integral ``Decimal`` (e.g. ``2024.5``) is not a year. ``bool`` and

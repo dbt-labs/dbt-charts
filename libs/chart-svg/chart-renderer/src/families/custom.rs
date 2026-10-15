@@ -34,7 +34,7 @@ use crate::common::{Font, TitleStyle};
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::diagnostic::Diagnostic;
 use crate::href;
-use crate::svg::{num, xml_escape, xml_escape_attr};
+use crate::svg::{num, vega_escape_attr, xml_escape, xml_escape_attr};
 use crate::text::FontBook;
 use crate::Payload;
 
@@ -852,19 +852,14 @@ struct Job {
     budget: u64,
 }
 
-/// The title fonts the resolved custom chart always carries: the frame's
-/// shared title code would otherwise paint a missing slot in its own default.
-fn require_font(font: &Font, what: &str) -> Result<(), String> {
-    for (field, absent) in [
-        ("size", font.size.is_none()),
-        ("family", font.family.is_none()),
-        ("color", font.color.is_none()),
-    ] {
-        if absent {
-            return Err(format!("custom: {what}.{field} absent"));
-        }
-    }
-    Ok(())
+/// The fonts the resolved custom chart always carries (title, subtitle and the
+/// body text the wrapper paints): a missing slot would fall back to a default.
+fn require_font<'a>(font: &'a Font, what: &str) -> Result<(&'a str, f64, &'a str), String> {
+    let absent = |field: &str| format!("custom: {what}.{field} absent");
+    let size = font.size.ok_or_else(|| absent("size"))?;
+    let family = font.family.as_deref().ok_or_else(|| absent("family"))?;
+    let color = font.color.as_deref().ok_or_else(|| absent("color"))?;
+    Ok((family, size, color))
 }
 
 /// The chart in the shared frame: root `<svg>`, background and title band are
@@ -878,6 +873,9 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         let subtitle = r.title_style.subtitle.as_ref().map(|s| &s.font);
         require_font(subtitle.ok_or("custom: title_style.subtitle absent")?, "title_style.subtitle.font")?;
     }
+    let body_font: Font = serde_json::from_value(r.style.tree["font"].clone())
+        .map_err(|e| format!("custom: style.font: {e}"))?;
+    let (body_family, body_size, body_color) = require_font(&body_font, "style.font")?;
     let frame = ChartFrame::of(payload, &r.background);
     let title = FrameTitle::new(
         r.title.as_deref(),
@@ -913,14 +911,24 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         .map_err(|reason| diagnostic(&codes::ERR_CUSTOM_RENDER, &r.id, reason))?;
     let content = checked_svg_content(&content)
         .map_err(|reason| diagnostic(&codes::ERR_CUSTOM_SVG, &r.id, reason))?;
+    // The id is the box itself: equal ids always name equal shapes.
+    let clip_id = format!("custom-clip-{}-{}", num(m.plot_w), num(m.plot_h));
     let mut svg = String::new();
     frame.open(&mut svg);
+    svg.push_str(&format!(
+        "<defs><clipPath id=\"{clip_id}\"><rect width=\"{}\" height=\"{}\"/></clipPath></defs>",
+        num(m.plot_w),
+        num(m.plot_h),
+    ));
     title.paint(&mut svg, m.title_pos, origin);
     svg.push_str(&format!(
-        "{}<g transform=\"translate({}, {})\">{content}</g>{}</svg>",
+        "{}<g transform=\"translate({}, {})\" clip-path=\"url(#{clip_id})\" font-family=\"{}\" font-size=\"{}\" fill=\"{}\">{content}</g>{}</svg>",
         href::anchor_open(anchor.as_deref()),
         num(origin.0),
         num(origin.1),
+        vega_escape_attr(body_family),
+        num(body_size),
+        xml_escape_attr(body_color),
         href::anchor_close(anchor.as_deref()),
     ));
     Ok(svg)
@@ -937,6 +945,10 @@ mod tests {
     }
 
     const FAMILY: &str = "'Inter Variable', Inter, system-ui, sans-serif";
+    const BODY_PAINT: &str =
+        "font-family=\"'Inter Variable', Inter, system-ui, sans-serif\" font-size=\"12\" fill=\"#222222\"";
+
+    const CLIP: &str = "clip-path=\"url(#custom-clip-300-176)\"";
 
     fn payload(svg: &str, patch: impl FnOnce(&mut Json)) -> Payload {
         let mut resolved = json!({
@@ -971,7 +983,7 @@ mod tests {
             "background": null,
             "fonts_dir": format!("{}/../../../src/dbt_charts/core/render/fonts", env!("CARGO_MANIFEST_DIR")),
             "padding": null,
-            "board_style": {
+            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},
                 "font": FAMILY,
                 "format_locale": crate::number_locale::en_us_wire(),
                 "time_locale": crate::time_locale::en_us_wire(),
@@ -1001,7 +1013,38 @@ mod tests {
             "{svg}"
         );
         // Vega's title band: 14px title + the 10px default offset.
-        assert!(svg.contains("<g transform=\"translate(0, 24)\"><text y=\"10\">Ana: 1.5</text><text y=\"20\">Ben: 2</text></g>"), "{svg}");
+        assert!(svg.contains(&format!("<g transform=\"translate(0, 24)\" {CLIP} {BODY_PAINT}><text y=\"10\">Ana: 1.5</text><text y=\"20\">Ben: 2</text></g>")), "{svg}");
+    }
+
+    #[test]
+    fn the_wrapper_clips_the_template_to_its_drawing_box() {
+        let svg = render(&payload("<rect y=\"-30\" width=\"5\" height=\"5\"/>", |_| {}), &test_fonts()).unwrap();
+        assert!(
+            svg.contains("<defs><clipPath id=\"custom-clip-300-176\"><rect width=\"300\" height=\"176\"/></clipPath></defs>"),
+            "{svg}"
+        );
+        assert!(
+            svg.contains(&format!("<g transform=\"translate(0, 24)\" {CLIP} {BODY_PAINT}>")),
+            "{svg}"
+        );
+    }
+
+    #[test]
+    fn the_wrapper_paints_the_board_text_defaults() {
+        let svg = render(&payload("<text>t</text>", |_| {}), &test_fonts()).unwrap();
+        assert!(
+            svg.contains(&format!(
+                "<g transform=\"translate(0, 24)\" {CLIP} {BODY_PAINT}><text>t</text></g>"
+            )),
+            "{svg}"
+        );
+    }
+
+    #[test]
+    fn a_style_font_without_a_color_is_refused() {
+        let p = payload("<rect/>", |r| r["style"]["tree"]["font"]["color"] = Json::Null);
+        let err = render(&p, &test_fonts()).unwrap_err();
+        assert!(format!("{err:?}").contains("custom: style.font.color absent"), "{err:?}");
     }
 
     #[test]
@@ -1029,7 +1072,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            svg.contains("<g transform=\"translate(0, 0)\"><rect height=\"200.0\"/></g>"),
+            svg.contains(&format!("<g transform=\"translate(0, 0)\" clip-path=\"url(#custom-clip-300-200)\" {BODY_PAINT}><rect height=\"200.0\"/></g>")),
             "{svg}"
         );
     }
@@ -1333,7 +1376,7 @@ mod tests {
         assert!(!svg.contains("<a href=\"https://x.test/reps/{{"), "{svg}");
         assert!(svg.contains("<a href=\"https://x.test/reps/Ana?q=1\"><rect/></a><a href=\"https://x.test/reps/Ben?q=1\">"), "{svg}");
         assert!(
-            svg.contains("<g transform=\"translate(0, 24)\"><a href"),
+            svg.contains(&format!("<g transform=\"translate(0, 24)\" {CLIP} {BODY_PAINT}><a href")),
             "no whole-chart anchor for a per-row link: {svg}"
         );
     }

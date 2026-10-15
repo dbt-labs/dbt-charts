@@ -1,3 +1,3 @@
 kind: Features
-body: "`dct cloud status` is now the full preflight: a \"This checkout\" section reports this checkout's own path, git state, boards, and declared sources before any network call, then which org/project it's tied to once an org resolves; a \"Human steps ahead\" list names the sign-in/GitHub/warehouse/push actions still needed, marking the server-dependent ones as unconfirmed before sign-in; and `--project` narrows the project rows to one slug (a display filter, not the inferred-then-defaulted context every sibling verb's `--project` resolves)."
+body: '`dct cloud status` works before login: it reports this checkout, the linked org and project, and the setup steps still needed.'
 time: 2026-09-26T23:38:04.978461-07:00

@@ -15,7 +15,7 @@ from dbt_charts.core.execute.executor import Executor
 def _executor_is_a_provider(executor: Executor) -> ChartDataProvider:
     """Type-level assertion that ``Executor`` satisfies the Protocol.
 
-    This is enforced by pyright/mypy in CI, which is stronger than any runtime
+    This is enforced by pyright in CI, which is stronger than any runtime
     check available here: ``issubclass`` is unusable on a Protocol with
     non-method members (``cache_hit_ats`` is a property), and ``isinstance``
     only checks attribute presence, not signatures. If ``Executor`` drifts from

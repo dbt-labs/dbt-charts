@@ -71,6 +71,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     _CartesianChartFields,
 )
 from dbt_charts.core.compile.models.config import ProjectCacheConfig
+from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
 from dbt_charts.core.compile.models.primitives import IncrementalValue
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, is_sql_query
 from dbt_charts.core.compile.models.refs import (
@@ -1117,7 +1118,9 @@ def _compile_file(
             #     meta (root→leaf) < board extends chain < board own fields
             # Merge strategy per field comes from each Merge(...) marker via
             # merge_patches — the single source of truth, no dict-level duplicate.
-            board_node = BOARD_PATCH_ADAPTER.validate_python(board_data)
+            board_node = BOARD_PATCH_ADAPTER.validate_python(
+                board_data, context=AUTHORED_INPUT
+            )
             theme_sink: list[str] = []
             merged = merged_patch(
                 board_node,
@@ -1908,7 +1911,9 @@ def _load_chart_ref_with_lexical_queries(
         # (`charts.<name>...`) — the formatter's key hints and the source map
         # both resolve paths from the board root.
         try:
-            BOARD_PATCH_ADAPTER.validate_python({"charts": {item_name: item_def}})
+            BOARD_PATCH_ADAPTER.validate_python(
+                {"charts": {item_name: item_def}}, context=AUTHORED_INPUT
+            )
         except PydanticValidationError as e:
             raise FileValidationError.from_pydantic(
                 f"{chart_ref.ref!r}: schema error in {resolved_path.relpath}",

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
 if TYPE_CHECKING:
     # These authored types are injected into theme/__init__.py's module globals at
     # runtime by dbt_charts.core.compile.models.style.authored (after authored.py
-    # finishes executing). The import here is TYPE_CHECKING-only to give mypy and
+    # finishes executing). The import here is TYPE_CHECKING-only to give pyright and
     # ruff the static definitions they need without creating a circular import.
     from dbt_charts.core.compile.models.style.authored import (  # noqa: PLC0415
         PaginationConfig,
@@ -24,6 +24,7 @@ from dbt_charts.core.compile.models.constraints import (
 )
 from dbt_charts.core.compile.models.markers import (
     AUTO,
+    Absent,
     Color,
     Inherit,
     InheritSlot,
@@ -101,14 +102,14 @@ class TableHeaderStyle(BaseModel):
     font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.table.font")] = (
         Field(default_factory=FontStyle, description="Header font style overrides.")
     )
-    font_compact: FontStyle | None = Field(
+    font_compact: Annotated[FontStyle | None, Absent("no compact override")] = Field(
         default=None,
         description="Compact-tier font overrides applied when body size ≤11px; None means no compact override.",
     )  # None = no compact-tier override; header uses font at all body sizes
     # None = no header fill. The header divider alone separates header from body.
     # Themes may set a fill (cream, dark) when paper-warmth or
     # contrast demands it.
-    background: Annotated[str | None, Color()] = Field(
+    background: Annotated[str | None, Color(), Absent("no fill")] = Field(
         default=None,
         description="Header background color; None means no fill (the divider alone separates header from body).",
     )
@@ -128,7 +129,7 @@ class TableRowRoleStyle(BaseModel):
         default=None,
         description="Per-role font style override; None uses the default row font.",
     )
-    background: Annotated[str | None, Color()] = Field(
+    background: Annotated[str | None, Color(), Absent("no fill")] = Field(
         default=None,
         description="Per-role row background color; None means no override.",
     )
@@ -146,7 +147,7 @@ class TableRowStripeStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    color: Annotated[str | None, Color()] = Field(  # None = no alternating row fill
+    color: Annotated[str | None, Color(), Absent("no fill")] = Field(
         default=None,
         description="Alternating stripe background color; None means no alternating row fill.",
     )
@@ -156,12 +157,12 @@ class TableRowStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     height: float = Field(description="Body row height in pixels.")
-    stripe: TableRowStripeStyle | None = Field(  # None = no alternating row fill
+    stripe: Annotated[TableRowStripeStyle | None, Absent("no stripe")] = Field(
         default=None,
         description="Alternating row stripe style; None means no stripe.",
     )
     divider: TableDividerStyle = Field(description="Line under each body row.")
-    role: str | None = Field(
+    role: Annotated[str | None, Absent("plain body row")] = Field(
         default=None,
         description="Default row role assignment; None means plain body row.",
     )
@@ -592,18 +593,14 @@ class SupportTableLabelStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # InheritSlot: support_table.label.font fills from support_table.font, except
-    # color: an unset label color takes the table's baked ink at resolve.
+    # An `auto` color is the table's ink, baked at resolve.
     font: Annotated[
-        FontStyle,
-        InheritSlot(
-            from_path="Style.charts.support_table.font", exclude=frozenset({"color"})
-        ),
+        SupportTableFontStyle, InheritSlot(from_path="Style.charts.support_table.font")
     ] = Field(
-        default_factory=FontStyle,
+        default_factory=SupportTableFontStyle,
         description=(
-            "Row label font style overrides. An unset color follows the table's "
-            "own font color, or `neutral_color` when that is 'auto'."
+            "Row label font style overrides. An 'auto' color follows the table's "
+            "own font color, or `neutral_color` when that is also 'auto'."
         ),
     )
 

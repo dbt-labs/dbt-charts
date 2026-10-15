@@ -1575,7 +1575,7 @@ class ValueLabelFeature:
     ) -> None:
         """Append the per-segment value-label text layer, if visible."""
         labels = chart.style.mark.labels
-        if labels.visible is not True:
+        if labels.visible is not True or (is_stacked and labels.stacked is False):
             return
         # Every bit of stack geometry comes off the emitted bar encoding — see
         # _emitted_stack. The label must land on what VL actually lays out.

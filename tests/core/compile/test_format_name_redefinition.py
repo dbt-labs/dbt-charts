@@ -16,6 +16,7 @@ from dbt_charts.core.compile.models.primitives import FormatConfig, FormatTable
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
+from .._board_utils import merged_patch
 from .._svg_render import render_board_to_svg
 
 _KPI_COMPACT = get_theme_style().charts.kpi.value.compact
@@ -161,8 +162,10 @@ def test_nearest_layer_wins_key_by_key() -> None:
     )
     formats = resolve_chart_style_context(
         base,
-        StylePatch.model_validate({"formats": {"currency": "$,.1f"}}),
-        StylePatch.model_validate({"formats": {"currency": "$,.0f"}}),
+        merged_patch(
+            StylePatch.model_validate({"formats": {"currency": "$,.1f"}}),
+            StylePatch.model_validate({"formats": {"currency": "$,.0f"}}),
+        ),
     ).formats
     assert formats is not None
     assert formats.aliases == {"currency": "$,.0f", "number": ".1f"}

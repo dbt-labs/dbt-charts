@@ -8,6 +8,7 @@ from typing import Any, Literal
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import column_format, resolve_format_parts
 from dbt_charts.core.compile.merge import merge_onto_base
+from dbt_charts.core.compile.models.chart.authored import ChartTotal
 from dbt_charts.core.compile.models.chart.normalized import (
     PieChart,
     TableChart,
@@ -41,10 +42,12 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     _base_kwargs,
     _bound_scales,
     _shared_kwargs,
+    donut_over_pie,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
     _effective_requested_alias_palette,
+    _pin_companions,
     _with_color_tokens,
 )
 from dbt_charts.core.compile.resolve.chart._table import (
@@ -66,6 +69,7 @@ from dbt_charts.core.compile.resolve.chart.pie_attachment import (
     resolve_hybrid_heading_font,
     validate_theta_values,
 )
+from dbt_charts.core.compile.resolve.style.board import slice_ink_decided
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
     declared_column_format,
@@ -86,11 +90,22 @@ from dbt_charts.core.constants.pie import (
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import ERR_PIE_TOTAL_WITHOUT_HOLE
+from dbt_charts.core.text.case import apply_case, inferred_display_name
 from dbt_charts.core.text.predefined_formats import PredefinedNumberFormat
 
 __all__ = [
     "_resolve_pie",
 ]
+
+
+def _auto_total_label(normalized: PieChart) -> str:
+    label = normalized.field_labels.get(normalized.theta)
+    if label is None:
+        slug = inferred_display_name(normalized.theta)
+        label = (
+            slug if slug.isupper() and " " not in slug else apply_case(slug, "title")
+        )
+    return label if "total" in label.lower() else f"Total {label}"
 
 
 def _resolve_pie(
@@ -107,7 +122,12 @@ def _resolve_pie(
         chart_style_context, normalized
     )
     primary = _with_color_tokens(normalized.style, chart_style_context)
-    pie = merge_onto_base(chart_style_context.pie, primary)
+    board_pie = (
+        donut_over_pie(chart_style_context)
+        if normalized.is_donut
+        else chart_style_context.pie
+    )
+    pie = merge_onto_base(board_pie, primary)
     # The center total and every slice tooltip vote on one set (theta values
     # plus their sum) so they never disagree about the same sub-$1 value --
     # see resolve_format_parts_for_values's per-set contract.
@@ -117,9 +137,9 @@ def _resolve_pie(
         normalized, normalized.theta, chart_style_context.formats, time=False
     )
     channels = _channels_for(normalized, data)
-    # Pie patches are radial (_RadialChartStyle). Use _effective_palette to pick up
-    # chart-local color.categorical override or the board-level palette.
-    eff_palette = _effective_palette(chart_style_context, primary)
+    # `pie` is the family merged over its board tier, so the chart's own
+    # color.categorical beats the board family's, which beats the global palette.
+    eff_palette = _effective_palette(chart_style_context, pie)
     if not eff_palette:
         raise ChartDataError(
             f"Pie chart {normalized.id!r} needs a resolved palette.",
@@ -176,6 +196,8 @@ def _resolve_pie(
     # actually used to build ResolvedPieStyle below — no separate chart-level
     # labels model.
     _slice_labels = pie.marks.slice.labels
+    if _slice_labels is not None:
+        _slice_labels = slice_ink_decided(_slice_labels)
     if _slice_labels is None:
         raise ValueError(
             "pie.marks.slice.labels is None after cascade — check theme defaults"
@@ -205,12 +227,28 @@ def _resolve_pie(
         where=_slice_labels.where,
     )
 
-    total = normalized.total
-
     # Voted against the slice tooltip's set so the two never disagree.
     is_donut_shape = pie.inner_radius is not None and pie.inner_radius > 0
+    total = normalized.total
     # Resolved here, not at normalize: the hole can come from the board or theme
     # cascade, which normalize never sees.
+    if (
+        is_donut_shape
+        and (
+            normalized.is_donut
+            or (
+                normalized.style is not None
+                and normalized.style.inner_radius is not None
+            )
+        )
+        and (total is None or total.label is None)
+    ):
+        auto_label = _auto_total_label(normalized)
+        total = (
+            ChartTotal(visible=True, label=auto_label)
+            if total is None
+            else total.model_copy(update={"label": auto_label})
+        )
     if total is not None and total.visible and not is_donut_shape:
         raise CompilationError.from_code(
             ERR_PIE_TOTAL_WITHOUT_HOLE, field_path=f"charts.{normalized.id}.total"
@@ -220,7 +258,7 @@ def _resolve_pie(
         if primary is not None and primary.total is not None and primary.total.value
         else None
     )
-    board_total_format = chart_style_context.pie.total.value.format
+    board_total_format = board_pie.total.value.format
     total_format = (
         None
         if chart_total_format is None
@@ -396,7 +434,7 @@ def _resolve_pie(
             pie.legend,
             eff_palette,
             requested_alias_palette=_effective_requested_alias_palette(
-                chart_style_context, primary
+                chart_style_context, pie
             ),
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=pie.padding,
@@ -428,6 +466,7 @@ def _resolve_pie(
             title_font=_tf,
         ),
         dark_companion_stops=dark_stops,
+        pin_companions=_pin_companions(chart_style_context, canvas),
         resolution_width=width,
         outer_fraction=OUTER_FRACTION,
         attached_table_gap=ATTACHED_TABLE_GAP_PX,

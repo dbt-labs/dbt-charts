@@ -7,7 +7,7 @@ are picked up by introspection.py to enrich the schema IR.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from enum import StrEnum
 from typing import Any
 
@@ -39,6 +39,18 @@ class Inherit:
 
 
 @dataclasses.dataclass(frozen=True)
+class Absent:
+    """``None`` is a real state of this field, not an unfilled leaf.
+
+    Attached via ``Annotated[T | None, Absent("no link")]``. ``meaning`` says
+    which state ``None`` is. Every other style field is concrete after the
+    cascade, and an authored ``null`` is accepted only on a field carrying this.
+    """
+
+    meaning: str
+
+
+@dataclasses.dataclass(frozen=True)
 class InheritSlot:
     """Marks that an entire nested slot mirrors another subtree.
 
@@ -52,29 +64,18 @@ class InheritSlot:
                    subtree with the same leaf structure as the annotated field's
                    type.  Validation occurs at graph-build time.
                    Example: ``"charts.axis"`` on an ``axis_x`` field.
-        exclude: Bare field names to omit from the per-leaf expansion, even
-                 though the rest of the nested field still inherits. Matched
-                 by name at every depth of the annotated field's subtree (not
-                 just its direct fields), so a same-named leaf nested deeper
-                 is excluded too. Each name must be a real field on the
-                 annotated field's type — validated at graph-build time like
-                 ``from_path``. The excluded leaf stays a genuine
-                 cascade-managed sentinel (``None`` unless some tier's raw
-                 YAML sets it) instead of being unconditionally backfilled
-                 from ``from_path``. Example: ``SliceLabelsStyle.font``
-                 inherits ``family``/``size``/``weight`` from ``charts.font``
-                 but excludes ``color`` so an author's explicit override (or
-                 its absence) survives the cascade. Only takes effect where
-                 this ``InheritSlot`` establishes a *new* slot context (its
-                 ``from_path`` is used); at a derived slot position that
-                 preserves an outer slot (e.g. ``axis_x`` reusing ``axis``'s
-                 inner ``InheritSlot``), the outer slot's ``exclude`` applies
-                 instead — an inner exclude there would break the tier chain
-                 that lets a further-out tier's authored value flow through.
+        links: Leaf field name to the absolute path it inherits from in place
+               of the slot's own source, so one leaf of the slot follows a
+               different parent than its siblings. Matched by name at every
+               depth of the annotated field's subtree. Each name must be a real
+               field on the annotated field's type and each path must exist,
+               both validated at graph-build time. Example: a KPI affix font
+               inherits ``family``/``size`` from ``charts.kpi.font`` but its
+               ``color`` from the headline value's.
     """
 
     from_path: str
-    exclude: frozenset[str] = frozenset()
+    links: Mapping[str, str] = dataclasses.field(default_factory=dict, hash=False)
 
 
 @dataclasses.dataclass(frozen=True)

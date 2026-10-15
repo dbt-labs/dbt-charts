@@ -175,7 +175,7 @@ def test_cli_render_command_uses_project_with_block(tmp_path: Path) -> None:
     )
 
     @contextmanager
-    def fake_from_project(project, *, cache, **_kwargs):  # type: ignore[no-untyped-def]
+    def fake_from_project(project, *, cache, **_kwargs):
         yield fake_project
 
     with patch(
@@ -874,7 +874,7 @@ class TestRenderCommandWalkRootWhenNoProjectDir:
         captured_project_dir: list[Path] = []
 
         @contextmanager
-        def fake_from_project(project: FilesystemProject, **kwargs: object):  # type: ignore[no-untyped-def]
+        def fake_from_project(project: FilesystemProject, **kwargs: object):
             captured_project_dir.append(project.root)
             yield fake_project
 
@@ -1566,6 +1566,22 @@ class TestDiagnosticsJsonStderrIsOnlyJsonl:
             + ["--project-dir", str(tmp_path)]
         )
         assert [d["code"] for d in diags] == [expected]
+
+    def test_retired_ignore_code_is_a_warning_diagnostic(self, tmp_path: Path) -> None:
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        (tmp_path / "b.yml").write_text("title: B\n")
+        result = runner.invoke(
+            app,
+            ["render", str(tmp_path / "b.yml"), "--format", "html", "--output", "-"]
+            + ["--project-dir", str(tmp_path)]
+            + ["--ignore-warning", "WARN-PIE-TOO-MANY-SEGMENTS", "--diagnostics-json"],
+        )
+        assert result.exit_code == 0
+        diags = [json.loads(ln) for ln in result.stderr.splitlines() if ln.strip()]
+        assert [(d["code"], d["level"]) for d in diags] == [
+            ("WARN-RETIRED-IGNORE-CODE", "warning")
+        ]
+        assert "WARN-PIE-TOO-MANY-SEGMENTS" in diags[0]["message"]
 
     def test_per_board_crash(self, tmp_path: Path) -> None:
         (tmp_path / "dbt_charts.yml").write_text("# project marker\n")

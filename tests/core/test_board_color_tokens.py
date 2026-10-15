@@ -289,11 +289,9 @@ def test_ancestor_font_color_reaches_childs_title_ink_across_a_theme_switch():
     assert child_rs.title.font.color == "#a1a1a1"
 
 
-def test_gap_margin_padding_do_not_cascade_to_styled_child():
-    """gap/margin/padding are per-board authoring, never theme-populated
-    (Style.gap/margin/padding are NotInherited) — a nested
-    board authoring its own unrelated style patch must not inherit an
-    ancestor's spacing, even though it does inherit the ancestor's color."""
+def test_margin_padding_do_not_cascade_but_gap_does_to_styled_child():
+    """margin/padding are per-board (NotInherited); gap is part of the
+    inheriting board spacing system, like frame and layout."""
     child_rs = _compile_and_get_child_resolved(
         parent_style={
             "gap": 60,
@@ -303,28 +301,22 @@ def test_gap_margin_padding_do_not_cascade_to_styled_child():
         },
         child_style={"frame": {"card_padding": 20}},
     )
-    assert child_rs.gap is None
+    assert child_rs.gap == 60
     assert child_rs.margin is None
     assert child_rs.padding is None
     assert child_rs.font.color == "#a1a1a1"
 
 
-def test_frame_does_not_cascade_to_styled_child():
-    """FrameStyle's own docstring says it must not cascade to child boards —
-    Style.frame is NotInherited for the same reason as
-    gap/margin/padding: each board's structural frame is its own."""
+def test_frame_cascades_to_styled_child():
     theme_default = resolve_style(get_theme_style()).frame.card_padding
     child_rs = _compile_and_get_child_resolved(
         parent_style={"frame": {"card_padding": theme_default + 100}},
         child_style={"background": "#eeeeee"},
     )
-    assert child_rs.frame.card_padding == theme_default
+    assert child_rs.frame.card_padding == theme_default + 100
 
 
-def test_layout_rows_cols_grid_gap_do_not_cascade_to_styled_child():
-    """Row/col/grid spacing and grid column count are each board's own
-    arrangement, not thematic identity, even though every theme happens to
-    populate them via _base.yaml's structural floor."""
+def test_layout_cascades_to_styled_child():
     theme_default = resolve_style(get_theme_style()).layout
     child_rs = _compile_and_get_child_resolved(
         parent_style={
@@ -335,47 +327,26 @@ def test_layout_rows_cols_grid_gap_do_not_cascade_to_styled_child():
                     "gap": theme_default.grid.gap + 100,
                     "columns": theme_default.grid.columns + 10,
                 },
+                "tabs": {"bar_height": theme_default.tabs.bar_height + 100},
+                "details": {
+                    "summary_height": theme_default.details.summary_height + 100
+                },
             }
         },
         child_style={"background": "#eeeeee"},
     )
-    assert child_rs.layout.rows.gap == theme_default.rows.gap
-    assert child_rs.layout.cols.gap == theme_default.cols.gap
-    assert child_rs.layout.grid.gap == theme_default.grid.gap
-    assert child_rs.layout.grid.columns == theme_default.grid.columns
-
-
-def test_layout_tabs_bar_height_does_not_cascade_to_styled_child():
-    """Style.layout carries a single container-level NotInherited: a
-    nested board's own tab bar and details-accordion styling resolve against
-    its own theme too, not an ancestor's, same as rows/cols/grid gap."""
-    theme_default = resolve_style(get_theme_style()).layout.tabs.bar_height
-    child_rs = _compile_and_get_child_resolved(
-        parent_style={"layout": {"tabs": {"bar_height": theme_default + 100}}},
-        child_style={"background": "#eeeeee"},
+    assert child_rs.layout.rows.gap == theme_default.rows.gap + 100
+    assert child_rs.layout.cols.gap == theme_default.cols.gap + 100
+    assert child_rs.layout.grid.gap == theme_default.grid.gap + 100
+    assert child_rs.layout.grid.columns == theme_default.grid.columns + 10
+    assert child_rs.layout.tabs.bar_height == theme_default.tabs.bar_height + 100
+    assert (
+        child_rs.layout.details.summary_height
+        == theme_default.details.summary_height + 100
     )
-    assert child_rs.layout.tabs.bar_height == theme_default
 
 
-def test_layout_details_summary_height_does_not_cascade_to_styled_child():
-    """Same whole-container NotInherited on Style.layout, exercised
-    for details (the other layout.* widget) rather than tabs."""
-    theme_default = resolve_style(get_theme_style()).layout.details.summary_height
-    child_rs = _compile_and_get_child_resolved(
-        parent_style={"layout": {"details": {"summary_height": theme_default + 100}}},
-        child_style={"background": "#eeeeee"},
-    )
-    assert child_rs.layout.details.summary_height == theme_default
-
-
-def test_layout_field_authored_by_child_does_not_pull_in_ancestor_layout_field():
-    """A nested board authoring its own layout.cols.gap still drops
-    the ancestor's layout as a whole: its own cols.gap wins,
-    and an ancestor's layout.details.summary_height resolves from its own
-    theme, not the ancestor's -- NotInherited drops the whole field from the
-    ancestor's patch, it does not merge sibling sub-fields from the ancestor
-    in underneath it.
-    """
+def test_child_layout_field_merges_over_ancestor_layout():
     theme_default = resolve_style(get_theme_style()).layout
     child_rs = _compile_and_get_child_resolved(
         parent_style={
@@ -389,14 +360,15 @@ def test_layout_field_authored_by_child_does_not_pull_in_ancestor_layout_field()
     )
     assert child_rs.layout.cols.gap == theme_default.cols.gap + 50
     assert (
-        child_rs.layout.details.summary_height == theme_default.details.summary_height
+        child_rs.layout.details.summary_height
+        == theme_default.details.summary_height + 100
     )
 
 
 def test_footer_timestamp_do_not_cascade_to_styled_child():
     """footer/timestamp are root-board-only chrome: a nested board has no
     footer or timestamp line of its own, so Style.footer/timestamp carry
-    NotInherited like layout/frame."""
+    NotInherited."""
     theme_default = resolve_style(get_theme_style())
     child_rs = _compile_and_get_child_resolved(
         parent_style={
@@ -435,13 +407,10 @@ def test_authored_board_style_description_names_every_not_inherited_field() -> N
 
 
 _NOT_INHERITED_CASES = {
-    "frame": ({"card_padding": 150}, lambda rs: rs.frame.card_padding),
-    "layout": ({"rows": {"gap": 150}}, lambda rs: rs.layout.rows.gap),
     "footer": ({"text": "parent footer"}, lambda rs: rs.footer.text),
     "timestamp": ({"format": "%Y"}, lambda rs: rs.timestamp.format),
     "padding": ({"top": 30}, lambda rs: rs.padding),
     "margin": ({"left": 40}, lambda rs: rs.margin),
-    "gap": (60, lambda rs: rs.gap),
 }
 
 
@@ -466,12 +435,32 @@ def test_styled_nested_board_inherits_named_fonts() -> None:
     assert child_rs.title.font.color == "#a1a1a1"
 
 
-def test_unstyled_nested_board_inherits_the_parent_patch_unchanged() -> None:
-    child_rs = _compile_and_get_child_resolved(
-        parent_style={"gap": 33, "layout": {"rows": {"gap": 60}}}
+def test_unstyled_nested_board_resolves_like_a_styled_one() -> None:
+    theme_default = resolve_style(get_theme_style())
+    parent_style = {
+        "gap": 33,
+        "margin": {"left": 40},
+        "padding": {"top": 30},
+        "frame": {"card_padding": theme_default.frame.card_padding + 100},
+        "layout": {"rows": {"gap": theme_default.layout.rows.gap + 100}},
+        "footer": {"text": "parent footer"},
+        "timestamp": {"format": "%Y"},
+        "font": {"color": "#a1a1a1"},
+    }
+    unstyled = _compile_and_get_child_resolved(parent_style=parent_style)
+    styled = _compile_and_get_child_resolved(
+        parent_style=parent_style, child_style={"muted": "#888888"}
     )
-    assert child_rs.layout.rows.gap == 60
-    assert child_rs.gap == 33
+    assert unstyled.gap == styled.gap == 33
+    assert unstyled.frame.card_padding == theme_default.frame.card_padding + 100
+    assert unstyled.layout.rows.gap == theme_default.layout.rows.gap + 100
+    assert unstyled.margin is None
+    assert unstyled.padding is None
+    assert unstyled.footer == theme_default.footer
+    assert unstyled.timestamp == theme_default.timestamp
+    assert unstyled.font.color == "#a1a1a1"
+    for field in ("gap", "margin", "padding", "frame", "layout", "footer", "timestamp"):
+        assert getattr(unstyled, field) == getattr(styled, field)
 
 
 def test_nested_board_does_not_inherit_tags() -> None:

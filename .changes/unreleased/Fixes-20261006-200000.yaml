@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'Testing a Databricks connection now fails when its catalog does not exist or the token cannot use it, instead of passing and leaving boards to fail later.'
-time: 2026-10-06T20:00:00.000000-04:00

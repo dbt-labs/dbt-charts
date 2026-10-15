@@ -677,6 +677,8 @@ class ResolvedChartDefaults:
     area: AreaChartStyle
     scatter: ScatterChartStyle
     pie: PieChartStyle
+    # `pie` with the donut slot applied.
+    donut: PieChartStyle
     geoshape: GeoshapeChartStyle
     point_map: PointMapChartStyle
     histogram: HistogramChartStyle

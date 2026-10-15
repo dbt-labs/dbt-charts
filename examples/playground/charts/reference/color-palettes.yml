@@ -1807,7 +1807,7 @@ rows:
       The Economist, and Apache ECharts.
 
       **Named hue roles.** Beyond positional access (`category[3]`), the two
-      default categorical palettes and their companions name each slot by hue:
+      default categorical palettes name each slot by hue:
       `category.blue`, `category.green`, `category.gold`, `category.purple`,
       `category.orange`, `category.gray`, `category.charcoal`, plus
       `category.sky` and `category.sage` for the two lighter cool slots, also
@@ -1827,7 +1827,7 @@ rows:
 
       The five `category-6-tonal-*` palettes hold a single hue across
       6 stops — useful for editorial dashboards that want one hue throughout.
-      Slots 0–3 are CVD-strict-safe; slots 4–5 are extended and require
+      Slots 1–4 are CVD-strict-safe; slots 5–6 are extended and require
       redundant form encoding (dash, marker, or pattern).
 
       `tableau` and `hero-6` are kept for users who want the familiar

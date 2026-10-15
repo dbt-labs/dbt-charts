@@ -582,33 +582,6 @@ def test_horizontal_bar_row_facet_divides_layout_height_across_panels() -> None:
     assert "12 series" in warnings[0].message
 
 
-def test_no_fire_on_full_overlap_grouped_bar() -> None:
-    """overlap: full coincides the series into one visual column per x — the
-    real emitter drops the xOffset channel entirely in this case, even though
-    the chart is still 'grouped' (stack: none). Same 30x6 shape that fires
-    without the override.
-    """
-    chart = BarChart(
-        id="c1",
-        type="bar",
-        query_name="q",
-        x="month",
-        y="val",
-        color="series",
-        width=600,
-        style=BarChartStylePatch.model_construct(
-            orientation="vertical", overlap="full"
-        ),
-    )
-    rows = _grouped_rows(n_x=30, n_series=6)
-    resolved = make_test_resolved_chart(chart, rows)
-    assert isinstance(resolved, ResolvedBarChart)
-    assert resolved.style.overlap == "full"
-    # The real emitter pops the offset channel for overlap: full — mirror that.
-    ctx = _grouped_ctx(chart, rows, width=600, offset_field=None)
-    assert detector.detect(ctx) == []
-
-
 def test_fires_when_faceted_by_the_color_field() -> None:
     """Small multiples partitioned on the same field bound to color.
 

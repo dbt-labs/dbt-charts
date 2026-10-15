@@ -456,7 +456,7 @@ class Executor:
         file_materializer: "FileSourceMaterializer | None" = None,
         file_materializer_factory: "Callable[[], FileSourceMaterializer] | None" = None,
         clock: Callable[[], datetime] = utc_now,
-    ):
+    ) -> None:
         """Initialize executor.
 
         Args:
@@ -1688,15 +1688,6 @@ class Executor:
         bounded); it is the primary check on the warm-cache path, where a lowered
         ceiling could otherwise serve more rows than the new limit allows.
 
-        ``seed_reason`` is validated here rather than trusted: it crosses an
-        adapter boundary (``QueryResult.truncated_reason``) whose Literal
-        annotation has zero runtime effect, so a test double standing in for
-        an adapter's result that doesn't set the attribute explicitly hands
-        back a truthy ``Mock`` object instead of a real value. That would
-        otherwise be stored verbatim into ``TruncationInfo.reason`` and
-        formatted straight into the user-visible WARN-QUERY-RESULT-TRUNCATED
-        message.
-
         Byte size is checked by accumulating each row's serialized size
         incrementally and cutting the moment the running total crosses
         max_result_bytes — never by serializing the whole result to measure
@@ -1706,16 +1697,6 @@ class Executor:
             resolve_max_result_bytes,
             resolve_max_rows,
         )
-
-        if seed_reason is not None and seed_reason not in (
-            "max_rows",
-            "max_result_bytes",
-        ):
-            raise ValueError(
-                f"query {query_name!r}: seed_reason must be 'max_rows', "
-                f"'max_result_bytes', or None, got {seed_reason!r} "
-                f"({type(seed_reason).__name__})"
-            )
 
         reason: TruncatedReason | None = seed_reason
         max_rows = resolve_max_rows()

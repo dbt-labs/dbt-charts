@@ -653,16 +653,17 @@ ERR_LAYERS_AMBIGUOUS_Y_DOMAIN = REGISTRY.register(
         domain="compile",
         title="Chart-level y domain is ambiguous with independent layer scales",
         message_template=(
-            "Chart {chart_id!r} sets axis_y.scale.domain={domain!r} but a layer "
-            "pins its y axis to one side, so the chart has two independent y "
-            "scales and one chart-level domain cannot apply to both. Remove the "
+            "Chart {chart_id!r} sets axis_y.scale.continuous.domain={domain!r} but "
+            "a layer pins its y axis to one side, so the chart has two independent "
+            "y scales and one chart-level domain cannot apply to both. Remove the "
             "chart-level axis_y.scale.continuous.domain and set "
             "axis_y.scale.domain on each layer's own axis_y; the base series' "
             "domain cannot be pinned once a layer sets axis_y.position."
         ),
         doc=(
-            "Fired when a chart sets `axis_y.scale.domain` at the chart level and "
-            "any layer pins its y axis to a side with `axis_y.position`. The base "
+            "Fired when a chart sets `axis_y.scale.continuous.domain` at the chart "
+            "level and any layer pins its y axis to a side with `axis_y.position`. "
+            "The base "
             "chart takes the opposite side, so the chart has two independent y "
             "scales and a single chart-level domain is ambiguous. Remove the "
             "chart-level `axis_y.scale.continuous.domain` and set "
@@ -1028,6 +1029,21 @@ ERR_FILE_NOT_FOUND = REGISTRY.register(
     )
 )
 
+ERR_PATH_OUTSIDE_PROJECT = REGISTRY.register(
+    ErrorCode(
+        code="ERR-PATH-OUTSIDE-PROJECT",
+        domain="compile",
+        title="Board path is outside the project",
+        message_template="Board path {path} is outside the project root.",
+        doc=(
+            "Fired when a board path given to a dbt charts verb resolves "
+            "outside the project root. Pass a path to a board inside the "
+            "project, or run the verb from the project that owns the board."
+        ),
+        docs_topic="errors",
+    )
+)
+
 ERR_EMPTY_YAML_DOCUMENT = REGISTRY.register(
     ErrorCode(
         code="ERR-EMPTY-YAML-DOCUMENT",
@@ -1113,6 +1129,26 @@ ERR_UNKNOWN_WARNING_CODE = REGISTRY.register(
     )
 )
 
+WARN_RETIRED_IGNORE_CODE = REGISTRY.register(
+    WarningCode(
+        code="WARN-RETIRED-IGNORE-CODE",
+        domain="compile",
+        title="--ignore-warning names a retired warning code",
+        message_template=(
+            "--ignore-warning: {code} no longer exists and suppresses nothing"
+        ),
+        fix_template="Remove it from the ignore list.",
+        doc=(
+            "Fired when `dct render --ignore-warning` names a warning code an "
+            "earlier release shipped and a later one removed. The code can no "
+            "longer fire, so the flag is dead weight rather than a typo, and "
+            "the render proceeds."
+        ),
+        summary="Fired when --ignore-warning names a retired warning code.",
+        docs_topic="board",
+    )
+)
+
 ERR_IGNORE_ERROR_CODE = REGISTRY.register(
     ErrorCode(
         code="ERR-IGNORE-ERROR-CODE",
@@ -1159,7 +1195,7 @@ ERR_PALETTE_UNKNOWN = REGISTRY.register(
         domain="compile",
         title="Palette name is not a theme palette role or a shipped palette",
         message_template=(
-            "Unknown palette {name!r} at {field_path}. Palette roles are "
+            "Unknown palette {name!r} (authored as {authored!r}) at {field_path}. Palette roles are "
             "theme-scoped, resolved only from a theme's `palettes:` block; "
             "this name is not a role the active theme binds, and not a "
             "shipped dbt charts palette."

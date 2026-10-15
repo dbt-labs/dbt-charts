@@ -100,10 +100,17 @@ queries:
       - [Integrations, Enterprise, 9]
       - [Ease of use, Enterprise, 6]
       - [Price, Enterprise, 4]
-  campaign_goal:
-    columns: [raised, target]
+  trade:
+    columns: [year, exports, imports]
     values:
-      - [68400, 90000]
+      - [1700, 60, 40]
+      - [1710, 75, 50]
+      - [1720, 80, 55]
+      - [1730, 110, 60]
+      - [1740, 125, 80]
+      - [1750, 150, 95]
+      - [1760, 170, 115]
+      - [1770, 200, 130]
   warehouse_share:
     columns: [warehouse, projects]
     values:
@@ -196,27 +203,47 @@ charts:
     options:
       max: 10
       rings: 5
-  # Inline: the template lives under `svg:` instead of templates/, takes no
-  # channels or options, and reads columns straight off `rows`.
-  goal_ring:
+  # Inline: the template, header included, lives under `svg:` instead of templates/.
+  trade_balance:
     type: custom
-    query: campaign_goal
-    title: Fundraising goal
+    query: trade
+    title: Exports and imports
     subtitle: Drawn by an inline template
     svg: |
-      {% set r0 = rows[0] %}
-      {% set share = [(r0.raised | float) / (r0.target | float), 1] | min %}
-      {% set cx = width / 2 %}{% set cy = height / 2 %}
-      {% set rad = [width, height] | min / 2 - 10 %}
-      {% set a = 2 * math.pi * share %}
-      <circle cx="{{ cx }}" cy="{{ cy }}" r="{{ rad }}" fill="none"
-              stroke="{{ style.charts.axis.grid.color }}" stroke-width="{{ rad * 0.22 }}"/>
-      <path fill="none" stroke="{{ style.accent }}" stroke-width="{{ rad * 0.22 }}"
-            d="M{{ cx }},{{ cy - rad }}A{{ rad }},{{ rad }} 0 {{ 1 if share > 0.5 else 0 }} 1 {{ cx + rad * math.sin(a) }},{{ cy - rad * math.cos(a) }}">
-        <title>{{ r0.raised | format('$,.0f') }} of {{ r0.target | format('$,.0f') }}</title>
-      </path>
-      <text x="{{ cx }}" y="{{ cy }}" text-anchor="middle" dy="0.35em" font-family="{{ style.font.family }}"
-            font-size="{{ rad * 0.36 }}" font-weight="600" fill="{{ style.font.color }}">{{ share | format('.0%') }}</text>
+      {#---
+      description: Two lines with the gap between them filled and labeled.
+      channels:
+        x:
+          description: Column holding the period.
+        y:
+          description: The upper line's column, then the lower line's.
+          multiple: true
+      ---#}
+      {% set up = channels.y[0] %}{% set lo = channels.y[1] %}
+      {% set n = rows | length %}{% set pad = 40 %}
+      {% set ymax = [rows | map(attribute=up) | max, rows | map(attribute=lo) | max] | max * 1.1 %}
+      <g font-family="{{ style.font.family }}" font-size="{{ style.font.size }}" fill="{{ style.font.color }}">
+        <polygon fill="{{ style.tones.positive }}" fill-opacity="0.3"
+          points="{% for r in rows %}{{ pad + loop.index0 * (width - 2 * pad) / (n - 1) }},{{ height - pad - r[up] / ymax * (height - 2 * pad) }} {% endfor %}{% for r in rows | reverse %}{{ pad + (n - 1 - loop.index0) * (width - 2 * pad) / (n - 1) }},{{ height - pad - r[lo] / ymax * (height - 2 * pad) }} {% endfor %}"/>
+        <polyline fill="none" stroke="{{ style.accent }}" stroke-width="2"
+          points="{% for r in rows %}{{ pad + loop.index0 * (width - 2 * pad) / (n - 1) }},{{ height - pad - r[up] / ymax * (height - 2 * pad) }} {% endfor %}"/>
+        <polyline fill="none" stroke="{{ style.muted }}" stroke-width="2"
+          points="{% for r in rows %}{{ pad + loop.index0 * (width - 2 * pad) / (n - 1) }},{{ height - pad - r[lo] / ymax * (height - 2 * pad) }} {% endfor %}"/>
+        {% for r in rows %}
+        <text x="{{ pad + loop.index0 * (width - 2 * pad) / (n - 1) }}" y="{{ height - pad / 3 }}"
+              text-anchor="middle">{{ r[channels.x] }}</text>
+        {% endfor %}
+        {% set mid = rows[n // 2] %}
+        <text x="{{ pad + (n // 2) * (width - 2 * pad) / (n - 1) }}"
+              y="{{ height - pad - (mid[up] + mid[lo]) / 2 / ymax * (height - 2 * pad) }}"
+              text-anchor="middle" dy="0.35em" font-style="italic">Balance in our favor</text>
+        <text x="{{ width - pad }}" y="{{ height - pad - rows[n - 1][up] / ymax * (height - 2 * pad) - 8 }}"
+              text-anchor="end" fill="{{ style.accent }}">{{ up }}</text>
+        <text x="{{ width - pad }}" y="{{ height - pad - rows[n - 1][lo] / ymax * (height - 2 * pad) + 22 }}"
+              text-anchor="end" fill="{{ style.muted }}">{{ lo }}</text>
+      </g>
+    x: year
+    y: [exports, imports]
 rows:
 - text: |
     Each chart below is `type: custom`. A template in `templates/` turns the
@@ -231,9 +258,12 @@ rows:
   rows:
   - cols:
     - nps_gauge
-    - goal_ring
     - channel_rings
     - warehouse_waffle
+- title: Inline template
+  rows:
+  - cols:
+    - trade_balance
 - title: Process behavior and profiles
   rows:
   - cols:

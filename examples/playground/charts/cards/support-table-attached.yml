@@ -98,6 +98,10 @@ charts:
       - source: orders
         format: ",d"
         label: Orders
+    style:
+      axis_y:
+        labels:
+          format: currency_compact
   weekly_bar_grouped:
     query: weekly_revenue_by_category
     type: bar
@@ -122,6 +126,9 @@ charts:
         format: ",d"
         label: Units
     style:
+      axis_y:
+        labels:
+          format: currency_compact
       stack: zero
   weekly_line:
     query: weekly_revenue
@@ -143,6 +150,10 @@ charts:
       - source: orders
         format: ",d"
         label: Orders
+    style:
+      axis_y:
+        labels:
+          format: currency_compact
   weekly_line_by_category:
     query: weekly_revenue_by_category
     type: line
@@ -157,6 +168,10 @@ charts:
         source: revenue
         format: currency_whole
         label: Total
+    style:
+      axis_y:
+        labels:
+          format: currency_compact
   weekly_area_stacked:
     query: weekly_revenue_by_category
     type: area
@@ -176,6 +191,11 @@ charts:
         source: units
         format: ",d"
         label: Units
+    style:
+      axis_y:
+        labels:
+          format: currency_compact
+      stack: zero
   product_bar:
     query: product_totals
     type: bar
@@ -197,11 +217,14 @@ charts:
         format: currency_whole
         label: Avg/order
     style:
+      axis_y:
+        labels:
+          format: currency_compact
       orientation: vertical
   region_bar_grouped:
     query: region_by_category
     type: bar
-    title: Revenue by Region (grouped by category)
+    title: Revenue by Region (stacked by category)
     x: region
     y: revenue
     color: category
@@ -219,6 +242,9 @@ charts:
         format: ",d"
         label: Units
     style:
+      axis_y:
+        labels:
+          format: currency_compact
       stack: zero
       orientation: vertical
 
@@ -241,6 +267,10 @@ charts:
       - source: revenue_share
         format: percent
         label: Share
+    style:
+      axis_y:
+        labels:
+          format: currency_compact
 rows:
   - weekly_bar
   - weekly_line

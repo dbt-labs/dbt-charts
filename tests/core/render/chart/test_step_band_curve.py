@@ -866,10 +866,11 @@ def test_step_on_band_x_multi_metric_chart_raises(family):
             "query_name": "q",
         }
     )
-    with pytest.raises(ChartDataError, match="multi-metric"):
+    with pytest.raises(ChartDataError, match="multi-metric") as exc_info:
         generate_vega_lite_spec(
             chart, BARS, board_style=board_rs, chart_style_context=board_ctx
         )
+    assert exc_info.value.code.code == "ERR-BAND-STEP-MULTI-METRIC"
 
 
 def test_step_on_temporal_x_multi_metric_chart_does_not_raise():
@@ -918,10 +919,11 @@ def test_step_on_band_x_with_multi_series_color_raises(family):
             "query_name": "q",
         }
     )
-    with pytest.raises(ChartDataError, match="multi-series color"):
+    with pytest.raises(ChartDataError, match="multi-series color") as exc_info:
         generate_vega_lite_spec(
             chart, MULTI_SERIES, board_style=board_rs, chart_style_context=board_ctx
         )
+    assert exc_info.value.code.code == "ERR-STEP-BAND-MULTI-SERIES"
 
 
 # ── Non-band area curve emits interpolate on fill + top-edge line ────────────

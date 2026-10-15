@@ -7,6 +7,8 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.markers import (
+    AUTO,
+    Absent,
     Color,
     Format,
     Inherit,
@@ -25,10 +27,11 @@ from dbt_charts.core.compile.models.style.theme._chart_base import (
 )
 from dbt_charts.core.compile.models.style.theme.board import OverflowMode
 
-# Every KPI slot font fills from ``kpi.font`` except ``color``: that leaf stays
-# a cascade-managed sentinel so "author named this slot's ink" is
-# distinguishable from "the KPI's ink cascaded down" (see _resolve_kpi_colors).
-_KPI_FONT = InheritSlot(from_path="Style.charts.kpi.font", exclude=frozenset({"color"}))
+_KPI_FONT = InheritSlot(from_path="Style.charts.kpi.font")
+_KPI_VALUE_INK_FONT = InheritSlot(
+    from_path="Style.charts.kpi.font",
+    links={"color": "Style.charts.kpi.value.font.color"},
+)
 
 
 class KpiTextSlotStyle(BaseModel):
@@ -36,7 +39,7 @@ class KpiTextSlotStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    font: Annotated[SingleLineFontStyle, _KPI_FONT] = Field(
+    font: Annotated[SingleLineFontStyle, _KPI_VALUE_INK_FONT] = Field(
         default_factory=SingleLineFontStyle, description="Slot font."
     )
 
@@ -97,17 +100,26 @@ class KpiLabelStyle(BaseModel):
     ] = Field(default=None, description="How a label too wide for the card is fit.")
 
 
+class KpiSupportFontStyle(SingleLineFontStyle):
+    """The support row and glyph font. ``color`` also takes ``auto``."""
+
+    color: Annotated[str | None, Color(keywords=(AUTO,))] = Field(
+        default=None,
+        description=(
+            "Text color. 'auto' is the support tone's color, or the muted ink "
+            "when the row has no tone."
+        ),
+    )
+
+
 class KpiSupportGlyphStyle(BaseModel):
     """KPI support-row glyph slot."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     font: Annotated[
-        SingleLineFontStyle,
-        InheritSlot(
-            from_path="Style.charts.kpi.support.font", exclude=frozenset({"color"})
-        ),
-    ] = Field(default_factory=SingleLineFontStyle, description="Glyph font.")
+        KpiSupportFontStyle, InheritSlot(from_path="Style.charts.kpi.support.font")
+    ] = Field(default_factory=KpiSupportFontStyle, description="Glyph font.")
 
 
 class KpiSupportStyle(BaseModel):
@@ -115,8 +127,8 @@ class KpiSupportStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    font: Annotated[SingleLineFontStyle, _KPI_FONT] = Field(
-        default_factory=SingleLineFontStyle,
+    font: Annotated[KpiSupportFontStyle, _KPI_FONT] = Field(
+        default_factory=KpiSupportFontStyle,
         description="Support row font; its color paints the support value.",
     )
     # None = inferred: a date value defaults to date_short, a number to the
@@ -126,7 +138,7 @@ class KpiSupportStyle(BaseModel):
         description="How the support value is written: a D3 spec, a preset name, or a format block.",
     )
     # None = no semantic color; the support row paints in muted ink.
-    tone: ToneLiteral | None = Field(
+    tone: Annotated[ToneLiteral | None, Absent("muted ink")] = Field(
         default=None,
         description="Semantic color for the support value and glyph.",
     )

@@ -47,7 +47,10 @@ from dbt_charts.core.compile.resolve.chart._palette import (
     _with_color_tokens,
 )
 from dbt_charts.core.compile.resolve.chart.channel import kpi_support_rule_column
-from dbt_charts.core.compile.resolve.style.board import _build_resolved_callout_chart
+from dbt_charts.core.compile.resolve.style.board import (
+    _build_resolved_callout_chart,
+    bake_kpi_support_ink,
+)
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
     declared_column_format,
@@ -75,7 +78,11 @@ def _resolve_kpi(
     primary = _with_color_tokens(normalized.style, chart_style_context)
     # The chart-local context re-runs inherit, so a chart's own `style.font`
     # reaches every slot font.
-    kpi = build_chart_style_context(chart_style_context, normalized).kpi
+    kpi = bake_kpi_support_ink(
+        build_chart_style_context(chart_style_context, normalized).kpi,
+        chart_style_context.tones,
+        chart_style_context.cascaded.muted,
+    )
     channels = _channels_for(normalized, data)
     formats = chart_style_context.formats
     headline = _headline_numeric_value(normalized.value, data)

@@ -502,7 +502,7 @@ def test_heatmap_sub_daily_x_columns_stay_distinct(make_chart) -> None:
 
 # ---------------------------------------------------------------------------
 # Regression: a genuinely quantitative scatter x whose integer values happen
-# to fall in the year-shaped 1900-2100 band must stay quantitative. Scatter's
+# to fall in the year-shaped 1700-2100 band must stay quantitative. Scatter's
 # quantitative gate must run before canonicalization ever touches the raw
 # rows, since normalize_labeled_temporal's is_year_shaped heuristic is meant
 # for bar/line/area's dimension x, not scatter's continuous measure x.

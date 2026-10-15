@@ -1,3 +1,3 @@
 kind: Features
-body: 'Added a `databricks` source type: `type: databricks` with `host`, `http_path`, `token`, `catalog`, and an optional `schema`. `http_path` must name a SQL warehouse (`/sql/1.0/warehouses/<id>`), not an all-purpose cluster path.'
+body: 'Added a `databricks` source type: `type: databricks` with `host`, `http_path`, `catalog`, an optional `schema`, and either a personal access `token` or an OAuth service principal (client ID and secret). `http_path` must name a SQL warehouse (`/sql/1.0/warehouses/<id>`), and `connect_timeout` bounds how long a connection retries while the warehouse starts.'
 time: 2026-09-18T23:26:07Z

@@ -8,16 +8,23 @@ fields at every call site.
 
 from __future__ import annotations
 
-from functools import cache
+from functools import cache, reduce
 from typing import Any
 
 from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.merge import merge_patches
 from dbt_charts.core.compile.models.board.normalized import Board, Layout
 from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
+from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
+
+
+def merged_patch(*patches: StylePatch) -> StylePatch | None:
+    """Several board patches as the one patch the cascade takes."""
+    return reduce(merge_patches, patches) if patches else None
 
 
 @cache

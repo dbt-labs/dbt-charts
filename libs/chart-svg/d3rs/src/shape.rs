@@ -6,6 +6,9 @@
 //! - https://github.com/d3/d3-shape/blob/main/src/curve/linear.js
 //! - https://github.com/d3/d3-shape/blob/main/src/curve/monotone.js
 //! - https://github.com/d3/d3-shape/blob/main/src/curve/step.js
+//! - https://github.com/d3/d3-shape/blob/main/src/curve/basis.js
+//! - https://github.com/d3/d3-shape/blob/main/src/curve/natural.js
+//! - https://github.com/d3/d3-shape/blob/main/src/curve/cardinal.js
 
 use crate::path::{Path, WITH_PATH_DIGITS};
 
@@ -18,9 +21,16 @@ use crate::path::{Path, WITH_PATH_DIGITS};
 pub enum Curve {
     Linear,
     MonotoneX,
+    /// d3's `curveMonotoneY`: `MonotoneX` over the swapped axes, Vega's
+    /// `monotone` on a horizontal mark.
+    MonotoneY,
     Step,
     StepBefore,
     StepAfter,
+    Basis,
+    Natural,
+    /// d3's `curveCardinal` at its default tension 0.
+    Cardinal,
 }
 
 impl Curve {
@@ -116,10 +126,14 @@ pub fn stacked_area_path(runs: &[Vec<(f64, f64, f64)>], curve: Curve) -> String 
 fn append_edge(path: &mut Path, points: &[(f64, f64)], curve: Curve, edge: Edge) {
     let drawn = match curve {
         Curve::Linear => linear_edge(path, points, edge),
-        Curve::MonotoneX => monotone_x_edge(path, points, edge),
+        Curve::MonotoneX => monotone_edge(path, points, edge, false),
+        Curve::MonotoneY => monotone_edge(path, points, edge, true),
         Curve::Step => step_edge(path, points, 0.5, edge),
         Curve::StepBefore => step_edge(path, points, 0.0, edge),
         Curve::StepAfter => step_edge(path, points, 1.0, edge),
+        Curve::Basis => basis_edge(path, points, edge),
+        Curve::Natural => natural_edge(path, points, edge),
+        Curve::Cardinal => cardinal_edge(path, points, edge),
     };
     // Every d3 curve ends `lineEnd` with the same tail:
     // `if (_line || (_line !== 0 && _point === 1)) closePath()` — the
@@ -141,25 +155,72 @@ fn linear_edge(path: &mut Path, points: &[(f64, f64)], edge: Edge) -> usize {
     points.len()
 }
 
-/// d3's `curveMonotoneX`, returning its `_point` count.
+/// d3's `curveMonotoneX` (`swap` false) or `curveMonotoneY` (`swap` true: the
+/// same machine over `(y, x)`, its output reflected back), returning its
+/// `_point` count.
 ///
 /// Each segment is a cubic whose control points sit a third of the segment's
 /// dx either side of its ends, lifted by that dx times the tangent there:
 /// interior tangents come from [`slope3`], the two endpoints' from
 /// [`slope2`]. A run too short for a tangent falls back to `lineEnd`'s own
 /// shapes — a straight `L` for two points, nothing for one.
-fn monotone_x_edge(path: &mut Path, points: &[(f64, f64)], edge: Edge) -> usize {
+fn monotone_edge(path: &mut Path, points: &[(f64, f64)], edge: Edge, swap: bool) -> usize {
+    let at = |path: &mut Path, x: f64, y: f64, line: bool| match (swap, line) {
+        (false, false) => path.move_to(x, y),
+        (false, true) => path.line_to(x, y),
+        (true, false) => path.move_to(y, x),
+        (true, true) => path.line_to(y, x),
+    };
     let (mut x0, mut y0) = (f64::NAN, f64::NAN);
     let (mut x1, mut y1) = (f64::NAN, f64::NAN);
     let mut t0 = f64::NAN;
     let mut drawn = 0_usize;
-    for &(x, y) in points {
+    for &(px, py) in points {
+        let (x, y) = if swap { (py, px) } else { (px, py) };
         // d3 drops a point identical to its predecessor before any state moves.
         if x == x1 && y == y1 {
             continue;
         }
         let mut t1 = f64::NAN;
         match drawn {
+            0 => at(path, x, y, edge == Edge::AreaBottom),
+            1 => {}
+            2 => {
+                t1 = slope3(x0, y0, x1, y1, x, y);
+                bezier(path, x0, y0, x1, y1, slope2(x0, y0, x1, y1, t1), t1, swap);
+            }
+            _ => {
+                t1 = slope3(x0, y0, x1, y1, x, y);
+                bezier(path, x0, y0, x1, y1, t0, t1, swap);
+            }
+        }
+        drawn += 1;
+        (x0, y0, x1, y1, t0) = (x1, y1, x, y, t1);
+    }
+    match drawn {
+        0 | 1 => {}
+        2 => at(path, x1, y1, true),
+        _ => bezier(path, x0, y0, x1, y1, t0, slope2(x0, y0, x1, y1, t0), swap),
+    }
+    drawn
+}
+
+/// d3's `curveBasis` (uniform cubic B-spline), returning its `_point` count.
+fn basis_edge(path: &mut Path, points: &[(f64, f64)], edge: Edge) -> usize {
+    let (mut x0, mut y0, mut x1, mut y1) = (f64::NAN, f64::NAN, f64::NAN, f64::NAN);
+    let mut n = 0_usize;
+    let seg = |path: &mut Path, x0: f64, y0: f64, x1: f64, y1: f64, x: f64, y: f64| {
+        path.bezier_curve_to(
+            (2.0 * x0 + x1) / 3.0,
+            (2.0 * y0 + y1) / 3.0,
+            (x0 + 2.0 * x1) / 3.0,
+            (y0 + 2.0 * y1) / 3.0,
+            (x0 + 4.0 * x1 + x) / 6.0,
+            (y0 + 4.0 * y1 + y) / 6.0,
+        );
+    };
+    for &(x, y) in points {
+        match n {
             0 => {
                 if edge == Edge::AreaBottom {
                     path.line_to(x, y);
@@ -169,23 +230,115 @@ fn monotone_x_edge(path: &mut Path, points: &[(f64, f64)], edge: Edge) -> usize 
             }
             1 => {}
             2 => {
-                t1 = slope3(x0, y0, x1, y1, x, y);
-                bezier(path, x0, y0, x1, y1, slope2(x0, y0, x1, y1, t1), t1);
+                path.line_to((5.0 * x0 + x1) / 6.0, (5.0 * y0 + y1) / 6.0);
+                seg(path, x0, y0, x1, y1, x, y);
             }
-            _ => {
-                t1 = slope3(x0, y0, x1, y1, x, y);
-                bezier(path, x0, y0, x1, y1, t0, t1);
-            }
+            _ => seg(path, x0, y0, x1, y1, x, y),
         }
-        drawn += 1;
-        (x0, y0, x1, y1, t0) = (x1, y1, x, y, t1);
+        n += 1;
+        (x0, y0, x1, y1) = (x1, y1, x, y);
     }
-    match drawn {
-        0 | 1 => {}
+    match n {
+        3.. => {
+            seg(path, x0, y0, x1, y1, x1, y1);
+            path.line_to(x1, y1);
+        }
         2 => path.line_to(x1, y1),
-        _ => bezier(path, x0, y0, x1, y1, t0, slope2(x0, y0, x1, y1, t0)),
+        _ => {}
     }
-    drawn
+    n
+}
+
+/// d3's `controlPoints` for `curveNatural`: the first and second Bezier
+/// control coordinates of each of the `n - 1` segments through `x`.
+fn natural_control_points(x: &[f64]) -> (Vec<f64>, Vec<f64>) {
+    let n = x.len() - 1;
+    let (mut a, mut b, mut r) = (vec![0.0; n], vec![0.0; n], vec![0.0; n]);
+    a[0] = 0.0;
+    b[0] = 2.0;
+    r[0] = x[0] + 2.0 * x[1];
+    for i in 1..n.saturating_sub(1) {
+        a[i] = 1.0;
+        b[i] = 4.0;
+        r[i] = 4.0 * x[i] + 2.0 * x[i + 1];
+    }
+    a[n - 1] = 2.0;
+    b[n - 1] = 7.0;
+    r[n - 1] = 8.0 * x[n - 1] + x[n];
+    for i in 1..n {
+        let m = a[i] / b[i - 1];
+        b[i] -= m;
+        r[i] -= m * r[i - 1];
+    }
+    a[n - 1] = r[n - 1] / b[n - 1];
+    for i in (0..n.saturating_sub(1)).rev() {
+        a[i] = (r[i] - a[i + 1]) / b[i];
+    }
+    b[n - 1] = (x[n] + a[n - 1]) / 2.0;
+    for i in 0..n.saturating_sub(1) {
+        b[i] = 2.0 * x[i + 1] - a[i + 1];
+    }
+    (a, b)
+}
+
+/// d3's `curveNatural` (natural cubic spline), returning its point count.
+fn natural_edge(path: &mut Path, points: &[(f64, f64)], edge: Edge) -> usize {
+    let n = points.len();
+    if n == 0 {
+        return 0;
+    }
+    let xs: Vec<f64> = points.iter().map(|p| p.0).collect();
+    let ys: Vec<f64> = points.iter().map(|p| p.1).collect();
+    if edge == Edge::AreaBottom {
+        path.line_to(xs[0], ys[0]);
+    } else {
+        path.move_to(xs[0], ys[0]);
+    }
+    if n == 2 {
+        path.line_to(xs[1], ys[1]);
+    } else if n > 2 {
+        let (px0, px1) = natural_control_points(&xs);
+        let (py0, py1) = natural_control_points(&ys);
+        for i in 0..n - 1 {
+            path.bezier_curve_to(px0[i], py0[i], px1[i], py1[i], xs[i + 1], ys[i + 1]);
+        }
+    }
+    n
+}
+
+/// d3's `curveCardinal` at tension 0 (`k = 1/6`), returning its `_point` count.
+fn cardinal_edge(path: &mut Path, points: &[(f64, f64)], edge: Edge) -> usize {
+    const K: f64 = 1.0 / 6.0;
+    let (mut x0, mut y0, mut x1, mut y1, mut x2, mut y2) = (f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN);
+    let mut n = 0_usize;
+    let seg = |path: &mut Path, x0: f64, y0: f64, x1: f64, y1: f64, x2: f64, y2: f64, x: f64, y: f64| {
+        path.bezier_curve_to(x1 + K * (x2 - x0), y1 + K * (y2 - y0), x2 + K * (x1 - x), y2 + K * (y1 - y), x2, y2);
+    };
+    for &(x, y) in points {
+        match n {
+            0 => {
+                if edge == Edge::AreaBottom {
+                    path.line_to(x, y);
+                } else {
+                    path.move_to(x, y);
+                }
+            }
+            1 => {
+                x1 = x;
+                y1 = y;
+            }
+            2 => seg(path, x0, y0, x1, y1, x2, y2, x, y),
+            _ => seg(path, x0, y0, x1, y1, x2, y2, x, y),
+        }
+        n += 1;
+        (x0, y0, x1, y1, x2, y2) = (x1, y1, x2, y2, x, y);
+    }
+    match n {
+        2 => path.line_to(x2, y2),
+        3.. => seg(path, x0, y0, x1, y1, x2, y2, x1, y1),
+        _ => {}
+    }
+    n
 }
 
 /// d3's `Step(context, t)`: a riser at each segment's `t`-fraction of its
@@ -193,7 +346,7 @@ fn monotone_x_edge(path: &mut Path, points: &[(f64, f64)], edge: Edge) -> usize 
 /// (`step-before`), `t=1` at its end (`step-after`). Returns the point count
 /// fed in: d3's own `_point` counter saturates at 2 after the second call
 /// (every point past the first runs the same riser code) and, unlike
-/// [`monotone_x_edge`], `Step` never drops a coincident point.
+/// [`monotone_edge`], `Step` never drops a coincident point.
 fn step_edge(path: &mut Path, points: &[(f64, f64)], t: f64, edge: Edge) -> usize {
     let (mut x_prev, mut y_prev) = (f64::NAN, f64::NAN);
     let mut drawn = 0_usize;
@@ -226,9 +379,14 @@ fn step_edge(path: &mut Path, points: &[(f64, f64)], t: f64, edge: Edge) -> usiz
 }
 
 /// One cubic segment — d3's `point(that, t0, t1)`.
-fn bezier(path: &mut Path, x0: f64, y0: f64, x1: f64, y1: f64, t0: f64, t1: f64) {
+fn bezier(path: &mut Path, x0: f64, y0: f64, x1: f64, y1: f64, t0: f64, t1: f64, swap: bool) {
     let dx = (x1 - x0) / 3.0;
-    path.bezier_curve_to(x0 + dx, y0 + dx * t0, x1 - dx, y1 - dx * t1, x1, y1);
+    let (ax, ay, bx, by) = (x0 + dx, y0 + dx * t0, x1 - dx, y1 - dx * t1);
+    if swap {
+        path.bezier_curve_to(ay, ax, by, bx, y1, x1);
+    } else {
+        path.bezier_curve_to(ax, ay, bx, by, x1, y1);
+    }
 }
 
 /// The Fritsch–Carlson tangent at the middle of three points: the harmonic
@@ -241,7 +399,7 @@ fn slope3(x0: f64, y0: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
     let p = (s0 * h1 + s1 * h0) / (h0 + h1);
     let t = (sign(s0) + sign(s1)) * js_min(s0.abs(), js_min(s1.abs(), 0.5 * p.abs()));
     // d3's trailing `|| 0`: a coincident pair leaves the slope NaN, and a
-    // tangent must be a number. Unreachable from this renderer — `monotone_x_edge`
+    // tangent must be a number. Unreachable from this renderer — `monotone_edge`
     // has already dropped the coincident point — but it is d3's code, and the
     // port's job is d3, not the corpus. Same for [`span`] and [`js_min`].
     if t.is_nan() {
@@ -417,6 +575,37 @@ mod tests {
         );
     }
 
+    /// `curveMonotoneY` is `curveMonotoneX` over `(y, x)` with every printed
+    /// coordinate pair reflected back: a swapped control-point order breaks the
+    /// equality.
+    #[test]
+    fn monotone_y_is_monotone_x_reflected() {
+        let swap_pairs = |path: &str| -> String {
+            let mut out = String::new();
+            let mut numbers: Vec<&str> = Vec::new();
+            let flush = |out: &mut String, numbers: &mut Vec<&str>| {
+                let pairs: Vec<String> = numbers.chunks(2).map(|c| format!("{},{}", c[1], c[0])).collect();
+                out.push_str(&pairs.join(","));
+                numbers.clear();
+            };
+            let mut rest = path;
+            while !rest.is_empty() {
+                let end = rest[1..].find(|c: char| c.is_ascii_alphabetic()).map_or(rest.len(), |i| i + 1);
+                let (segment, tail) = rest.split_at(end);
+                out.push_str(&segment[..1]);
+                numbers.extend(segment[1..].split(',').filter(|n| !n.is_empty()));
+                flush(&mut out, &mut numbers);
+                rest = tail;
+            }
+            out
+        };
+        let swapped: Vec<(f64, f64)> = MONO_PTS.iter().map(|&(x, y)| (y, x)).collect();
+        assert_eq!(
+            line_path(&one_run(&swapped), Curve::MonotoneY),
+            swap_pairs(&line_path(&one_run(&MONO_PTS), Curve::MonotoneX))
+        );
+    }
+
     /// d3's area generator runs BOTH edges through the curve: the top edge
     /// forward, then the flat bottom back through every x, then one `Z`.
     #[test]
@@ -561,5 +750,30 @@ mod tests {
     #[test]
     fn a_lone_point_under_step_after_draws_only_its_moveto() {
         assert_eq!(line_path(&one_run(&STEP_PTS[..1]), Curve::StepAfter), "M0,0Z");
+    }
+
+    const SPLINE_PTS: [(f64, f64); 3] = [(0.0, 0.0), (1.0, 2.0), (2.0, 0.0)];
+
+    /// Two points are a plain segment under `natural`; a lone point closes.
+    #[test]
+    fn natural_draws_two_points_straight_and_closes_a_lone_point() {
+        assert_eq!(line_path(&one_run(&SPLINE_PTS[..2]), Curve::Natural), "M0,0L1,2");
+        assert_eq!(line_path(&one_run(&SPLINE_PTS[..1]), Curve::Natural), "M0,0Z");
+    }
+
+    /// Three points under `basis` open with a line to the first B-spline knot
+    /// and end on the last vertex.
+    #[test]
+    fn basis_starts_with_a_knot_line_and_ends_on_the_last_vertex() {
+        let d = line_path(&one_run(&SPLINE_PTS), Curve::Basis);
+        assert!(d.starts_with("M0,0L0.167,0.333C"), "{d}");
+        assert!(d.ends_with("2,0"), "{d}");
+    }
+
+    /// `cardinal` starts with a flat control at the first vertex.
+    #[test]
+    fn cardinal_starts_with_its_first_vertex_as_control_point() {
+        let d = line_path(&one_run(&SPLINE_PTS), Curve::Cardinal);
+        assert!(d.starts_with("M0,0C0,0,"), "{d}");
     }
 }

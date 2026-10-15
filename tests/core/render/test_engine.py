@@ -913,6 +913,24 @@ def test_static_pagination_is_recorded_with_no_cap_note_in_any_slot(
     }
 
 
+_MONTHS = [{"month": m, "revenue": i * 10} for i, m in enumerate(["Jan", "Feb"], 1)]
+
+
+@pytest.mark.parametrize("chart_type", ["bar", "line", "area", "scatter", "heatmap"])
+def test_cartesian_chart_title_truncation_lands_in_the_text_sink(
+    chart_type: str,
+) -> None:
+    title = "Quarterly Revenue Growth " * 12
+    chart = {"type": chart_type, "query": "q", "x": "month", "y": "revenue"}
+    if chart_type == "heatmap":
+        chart["color"] = "revenue"
+    with _sinks() as sinks:
+        _native({**chart, "title": title}, _MONTHS, width=600.0, height=320.0)
+    assert [(t.surface, t.authored_field) for t in sinks.truncations["c1"]] == [
+        ("chart_title", "title")
+    ]
+
+
 def test_no_open_sink_is_a_noop() -> None:
     _native(
         {**_KPI, "label": "A Very Long KPI Label That Cannot Possibly Fit"},
@@ -1150,7 +1168,7 @@ def test_board_style_envelope_carries_the_sizers_pagination_control_height() -> 
     assert envelope["pagination_control_height"] == TABLE_PAGINATION_CONTROL_HEIGHT
 
 
-def test_board_style_envelope_carries_the_text_mark_font() -> None:
+def test_board_style_envelope_carries_the_resolved_text_mark_font() -> None:
     from dbt_charts.core.render.engine import board_style_envelope
     from dbt_charts.core.text.format_d3 import active_format_locale, active_time_locale
 

@@ -718,7 +718,7 @@ class SqlAdapter(BaseAdapter):
         dbt_project_path: str | None,
         profile_type: str,
         max_workers: int | None = None,
-    ):
+    ) -> None:
         """Initialize SQL adapter.
 
         Args:

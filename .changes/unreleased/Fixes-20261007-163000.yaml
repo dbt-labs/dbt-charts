@@ -1,3 +1,0 @@
-kind: Fixes
-body: Validate no longer warns that LAG, running sums, FILTER pivots, or a SUM of a SUM or COUNT re-aggregate a column; it now flags only averages, medians, and percentiles over an aggregate, a SUM over an average, and any DISTINCT aggregate over an aggregate, and names both functions.
-time: 2026-10-07T16:30:00.000000-07:00

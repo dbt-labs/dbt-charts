@@ -55,7 +55,10 @@ class _LenientUndefined(Undefined):
     def __ne__(self, other: Any) -> bool:
         return not self.__eq__(other)
 
-    def __getitem__(self, key: Any) -> _LenientUndefined:  # type: ignore[override]
+    def __getitem__(
+        self,
+        key: Any,  # type-state: explicit_any — Jinja subscripts with any key
+    ) -> _LenientUndefined:
         return self
 
     def __getattr__(self, name: str) -> _LenientUndefined:
@@ -128,7 +131,10 @@ class _QueryNamespace:
     when the query is not found.
     """
 
-    def __init__(self, queries: dict[str, Any]):
+    def __init__(
+        self,
+        queries: dict[str, Any],  # type-state: explicit_any — per-caller query objects
+    ) -> None:
         self._queries = queries
 
     def __getattr__(self, name: str) -> _QueryProxy:

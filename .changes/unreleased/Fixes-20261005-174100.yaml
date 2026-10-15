@@ -1,3 +1,0 @@
-kind: Fixes
-body: Clock axes that span exactly one day, midnight to midnight, no longer add a date row.
-time: 2026-10-05T17:41:00.000000-07:00

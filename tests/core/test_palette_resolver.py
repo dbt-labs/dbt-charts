@@ -34,7 +34,6 @@ from dbt_charts.core.compile.resolve.style.palette import (
     list_palettes,
     palette,
     resolve_palette_alias,
-    select_default_palette,
     variant,
 )
 from dbt_charts.core.constants.color import DARK_K, DARK_POLE
@@ -331,7 +330,7 @@ class TestPaletteTonal:
         that still passes Leonardo).
         """
         for hx in palette(name):
-            _, _, hue = _checker.hex_to_oklch(hx)
+            _, _, hue = hex_to_oklch(hx)
             # Circular distance, in case anchor is near the 0/360 boundary.
             delta = min(abs(hue - anchor_hue), 360 - abs(hue - anchor_hue))
             assert delta <= wobble_tolerance, (
@@ -478,22 +477,6 @@ class TestDiscovery:
         assert "warning" in tone_names
         assert "info" in tone_names
         assert len(tone_names) == 4
-
-
-# ============================================================================
-# select_default_palette
-# ============================================================================
-
-
-class TestSelectDefault:
-    def test_continuous_numeric(self):
-        assert select_default_palette("continuous_numeric") == "dbt-seq-blue"
-
-    def test_signed_numeric(self):
-        assert select_default_palette("signed_numeric") == "dbt-div-blue-red"
-
-    def test_discrete_enum(self):
-        assert select_default_palette("discrete_enum") == "vivid-10"
 
 
 # ============================================================================
@@ -970,10 +953,6 @@ class TestVariant:
         light = variant(base, "light")
         assert light != "#000000", base
         assert hex_to_oklch(light)[0] >= hex_to_oklch(base)[0] - 1e-6, base
-
-    def test_variant_raises_on_an_unknown_kind(self) -> None:
-        with pytest.raises(ValueError, match="unknown variant"):
-            variant("#0073c2", "darker")  # intentionally not a valid Variant
 
     @pytest.mark.parametrize("name", sorted(_all_palettes()))
     def test_separation_gate_dark_tier(self, name: str) -> None:

@@ -16,8 +16,8 @@ from dbt_charts.core.compile.resolve.style.board import resolve_style_and_contex
 
 
 def _kpi(style: dict[str, Any] | None = None) -> tuple[KpiChartStyle, Any]:
-    patches = [] if style is None else [StylePatch.model_validate(style)]
-    resolved, ctx = resolve_style_and_context(get_theme_style(), *patches)
+    patch = None if style is None else StylePatch.model_validate(style)
+    resolved, ctx = resolve_style_and_context(get_theme_style(), patch)
     assert isinstance(ctx, ChartStyleContext)
     return ctx.kpi, resolved
 

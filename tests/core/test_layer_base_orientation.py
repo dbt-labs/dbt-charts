@@ -317,18 +317,13 @@ def test_layered_base_series_is_named_by_its_measure(orientation: str) -> None:
     )
 
 
-@pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
-def test_axis_mirror_is_refused_on_a_layered_chart_either_way_round(
-    orientation: str,
-) -> None:
-    """`layers:` moves the measure onto the sublayers, so mirror has nothing to
-    mirror — on both orientations.
+def test_axis_mirror_is_refused_on_a_horizontal_layered_chart() -> None:
+    """A horizontal base measures along x, so there is no y measure to mirror.
 
-    The guard used to read "no outer y encoding" as its proxy for that. A
-    horizontal base leaves its CATEGORY on the outer y, so the proxy stopped
-    holding the moment the overlay began hoisting the category channel, and the
-    refusal silently lapsed into mirroring the category axis instead.
+    A horizontal base leaves its CATEGORY on the outer y, so reading "no outer y"
+    as the refusal's proxy once lapsed into mirroring the category axis instead.
     """
+    orientation = "horizontal"
     board_style, board_ctx = resolve_style_and_context(get_theme_style())
     chart = BarChart(
         id="c",

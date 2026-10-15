@@ -1,0 +1,3 @@
+kind: Fixes
+body: A currency axis prints a bare 0 on its zero tick, not $0.
+time: 2026-10-15T11:59:58.243154-07:00

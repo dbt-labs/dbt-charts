@@ -28,6 +28,10 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
+    ERR_BAR_MULTI_METRIC_NO_X,
+    ERR_BAR_OVERLAP_CONTINUOUS_AXIS,
+    ERR_BAR_OVERLAP_FULL_NON_UNIQUE_COLOR,
+    ERR_BAR_OVERLAP_SERIES_COUNT,
     ERR_HISTOGRAM_NON_NUMERIC,
     ERR_LABEL_VALUES_NOT_TEMPORAL,
 )
@@ -277,6 +281,43 @@ def _resolve_overlap_fraction(
     return float(overlap)
 
 
+def _bar_mark_props(spec: ChartSpec) -> list[VLDict]:
+    """Mark props of every painted bar mark in a flat bar spec.
+
+    A mixed-sign measure splits each bar into a positive and a negative
+    sub-layer; the outer layered spec's own mark_props is never painted.
+    """
+    if spec.mark == "layered":
+        return [layer.mark_props for layer in spec.layers if layer.mark == "bar"]
+    return [spec.mark_props]
+
+
+def cap_band_bar_size(chart: ResolvedBarChart, spec: ChartSpec) -> None:
+    """Clamp band-scale bar thickness to ``marks.bar.max_size``.
+
+    Runs on the flat spec after grouped spacing has settled each bar's band
+    fraction. A literal ``size`` is left alone (authored wins) and a continuous
+    categorical axis keeps its own gap/min_size/max_size ladder.
+    """
+    max_size = chart.style.mark.max_size
+    if max_size is None:
+        return
+    is_horizontal = chart.orientation == "horizontal"
+    cat_ch = "y" if is_horizontal else "x"
+    offset_ch = f"{cat_ch}Offset"
+    scale = offset_ch if offset_ch in spec.encoding else cat_ch
+    size_dim = "height" if is_horizontal else "width"
+    for mark_props in _bar_mark_props(spec):
+        band = mark_props.get(size_dim)
+        if isinstance(band, dict) and "band" in band:
+            mark_props[size_dim] = {
+                "expr": f"min({band['band']} * bandwidth('{scale}'), {max_size})"
+            }
+        overlap_size = mark_props.get("size")
+        if isinstance(overlap_size, dict):
+            mark_props["size"] = {"expr": f"min({overlap_size['expr']}, {max_size})"}
+
+
 def apply_grouped_bar_spacing(
     chart: ResolvedBarChart,
     spec: ChartSpec,
@@ -293,7 +334,8 @@ def apply_grouped_bar_spacing(
 
     ``overlap`` fraction: negative = gap, 0 = touching, positive = overlap.
     * Gap/touching (≤0): emit ``mark.{width|height}: {band: 1+f}`` (responsive).
-    * Full (≥1): drop the offset channel so series coincide.
+    * Full (≥1): refused; the offset channel is only present when the color is
+      not 1:1 with the category, where series cannot coincide.
     * Positive overlap (0 < f < 1): restricted to exactly 2 series.
       - Vertical: ``width: {band: 1+f}`` — band > 1 overflows in Vega.
       - Horizontal: ``size: {expr: "(1+f) * bandwidth('yOffset')"}`` — the
@@ -315,13 +357,7 @@ def apply_grouped_bar_spacing(
         return
 
     cat_ch = "y" if is_horizontal else "x"
-    # A mixed-sign measure splits each bar into a positive and a negative
-    # sub-layer; the outer layered spec's own mark_props is never painted.
-    bar_mark_props = (
-        [layer.mark_props for layer in spec.layers if layer.mark == "bar"]
-        if spec.mark == "layered"
-        else [spec.mark_props]
-    )
+    bar_mark_props = _bar_mark_props(spec)
     if cat_ch in encoding and not x_encoding_is_banded(encoding[cat_ch]):
         # A continuous categorical channel (quantitative, or a temporal x
         # promoted past MAX_ORDINAL_BUCKETS) has no band scale for the offset
@@ -346,13 +382,8 @@ def apply_grouped_bar_spacing(
         # bar — but that is a property of the emitter, not an invariant worth
         # baking in a second time here.
         if chart.style.overlap is not None and chart.style.overlap != "auto":
-            raise ChartDataError(
-                f"Bar chart '{chart.id}': style.overlap is not supported on a "
-                f"continuous {cat_ch}-axis — overlap is a fraction of the "
-                "categorical band width, and a quantitative (or wide temporal) "
-                f"{cat_ch} has no band to divide. Group the {cat_ch} into "
-                "categories or buckets, or drop the overlap setting.",
-                chart_id=chart.id,
+            raise ChartDataError.from_code(
+                ERR_BAR_OVERLAP_CONTINUOUS_AXIS, chart_id=chart.id, axis=cat_ch
             )
         return
 
@@ -369,8 +400,13 @@ def apply_grouped_bar_spacing(
     fraction = _resolve_overlap_fraction(chart.style.overlap, n_series)
 
     if fraction >= _OVERLAP_FULL:
-        encoding.pop(offset_ch, None)
-        return
+        raise ChartDataError.from_code(
+            ERR_BAR_OVERLAP_FULL_NON_UNIQUE_COLOR,
+            chart_id=chart.id,
+            series=", ".join(chart.wide_measures)
+            if chart.wide_measures
+            else chart.color,
+        )
 
     encoding[offset_ch].setdefault("scale", {})["paddingInner"] = 0
     size_dim = "height" if is_horizontal else "width"
@@ -382,11 +418,8 @@ def apply_grouped_bar_spacing(
 
     # Positive overlap: only supported for exactly 2 series.
     if n_series != 2:
-        raise ChartDataError(
-            f"Bar chart '{chart.id}': positive overlap is only supported for "
-            f"exactly 2 series (got {n_series}) — 3+ series buries the middle one. "
-            "Use 'none'/'flush', or rely on the 'auto' default.",
-            chart_id=chart.id,
+        raise ChartDataError.from_code(
+            ERR_BAR_OVERLAP_SERIES_COUNT, chart_id=chart.id, n_series=n_series
         )
 
     if not is_horizontal:
@@ -664,8 +697,8 @@ class BarEmitter:
 
         if chart.wide_measures:
             if chart.x is None:
-                raise ChartDataError(
-                    f"Bar chart '{chart.id}': multi-metric (y: [...]) charts require an x field."
+                raise ChartDataError.from_code(
+                    ERR_BAR_MULTI_METRIC_NO_X, chart_id=chart.id
                 )
             spec = _emit_wide_bar(chart, box, data, config, mutated_dataset)
             if gap_fired:
@@ -685,6 +718,7 @@ class BarEmitter:
                     )
                 ),
             )
+            cap_band_bar_size(chart, spec)
             return spec
 
         tooltip_format = chart.style.tooltip_format
@@ -744,6 +778,7 @@ class BarEmitter:
             spec.data = normalize_data_types(data)
 
         apply_grouped_bar_spacing(chart, spec, data)
+        cap_band_bar_size(chart, spec)
 
         if chart.layers:
             base_label = spec.base_series_label
@@ -828,7 +863,9 @@ def _emit_wide_bar(
         # humanizes), so the stack-order grouping has to run against the
         # matching raw identity, not `series` (already humanized) -- humanize
         # the RESULT afterward, per entry.
-        folded = unfold_wide_rows(data, measures, dimension)
+        # Pre-fill rows: gap-fill rebuilds `data` as buckets x sorted(dimension),
+        # which would turn `stack_order: data` into alphabetical.
+        folded = unfold_wide_rows(dataset.all_rows(), measures, dimension)
         raw_baseline_order = sorted_series_by_stack_order(
             raw_series,
             folded,
@@ -1072,10 +1109,6 @@ def _emit_vertical(
         # unauthored (computed-default) bar reserves against max_size, the
         # ceiling continuous_bar_size_prop's clamp can never exceed.
         bar_width_estimate = effective_bar_size(bar_mark)
-        assert bar_width_estimate is not None, (
-            "marks.bar.size and marks.bar.max_size both unset — "
-            "theme cascade must populate at least one"
-        )
         # An absent "padding" key means no gutter was resolved at all, so the
         # half-bar reservation stands alone; when one was resolved, the larger
         # of the two wins so an author's own wider padding still applies.

@@ -1,3 +1,0 @@
-kind: Features
-body: "Databricks sources can authenticate as an OAuth service principal (client ID and client secret) as well as with a personal access token."
-time: 2026-10-07T15:00:00.000000-07:00

@@ -255,12 +255,15 @@ def pie_style() -> ResolvedPieStyle:
     from dbt_charts.core.compile.resolve.chart.label_data import (
         default_slice_label_template,
     )
-    from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+        slice_ink_decided,
+    )
 
     rcs = resolve_chart_style_context(get_theme_style())
     slice_mark = rcs.pie.marks.slice
-    labels = slice_mark.labels
-    assert labels is not None
+    assert slice_mark.labels is not None
+    labels = slice_ink_decided(slice_mark.labels)
     tooltip_format = ResolvedFormat(
         spec=resolve_format(rcs.tooltip.format, rcs.formats)
     )

@@ -74,7 +74,7 @@ def style_to_vega_lite(
     # No config.bar/line/area/point keys emitted here.
 
     # Generic mark types: map opacity/stroke/strokeWidth where set.
-    # After ADR-015, these live under charts.marks.* instead of charts.*.
+    # These live under charts.marks.* instead of charts.*.
     def _mark_config(m: Any) -> dict[str, Any]:
         d: dict[str, Any] = {}
         if getattr(m, "opacity", None) is not None:

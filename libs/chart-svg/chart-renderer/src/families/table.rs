@@ -38,6 +38,7 @@ use serde_json::{json, Value};
 
 use crate::codes;
 use crate::common::{
+    ScaleTarget,
     card_box, css_color, format_kpi_parts, format_numeric_auto, py_rstrip, tag_at, CellRow,
     CellTag, Divider, Font, FormatParts, FormatSlot, PartsOptions, ScaledColumn, SUFFIX_GAP,
     TAB_FONT, TAB_STYLE,
@@ -65,11 +66,13 @@ pub(crate) use d3rs::native::NULL_DISPLAY;
 /// font once dropped into this attribute verbatim and silently falls back —
 /// every glyph in the table then renders in a different font, which is
 /// pixel-visible everywhere text paints. A Source Serif family also gains the
-/// `Source Serif 4 Web` alias so browsers prefer the bundled woff2.
+/// `Source Serif 4 Web` alias so browsers prefer the bundled woff2, and both
+/// names stay quoted: a name with a digit token is not a CSS identifier, so
+/// unquoted it falls back to Times in a rasterized render.
 fn svg_font_family(family: &str) -> String {
     let normalized = family.replace(['\'', '"'], "");
     if normalized.contains("Source Serif 4") && !normalized.contains("Source Serif 4 Web") {
-        return normalized.replace("Source Serif 4", "Source Serif 4 Web, Source Serif 4");
+        return normalized.replace("Source Serif 4", "'Source Serif 4 Web', 'Source Serif 4'");
     }
     normalized
 }
@@ -140,12 +143,9 @@ struct Spanner {
 
 /// Table-level defaults applied to a pivot leaf that has no `style.columns`
 /// entry of its own (no leaf-keyed entry, and — single-measure pivots only —
-/// no measure-keyed fallback either). Mirrors the label/format subset of
-/// `TableColumnDefaultsConfig` this renderer's `ColConfig` already models;
-/// the other fields (width/align/background/…) are consumed by neither.
+/// no measure-keyed fallback either). Mirrors `TableColumnDefaultsConfig`.
 #[derive(Deserialize, Default)]
 struct ColumnDefaults {
-    label: Option<String>,
     #[serde(default, deserialize_with = "column_format")]
     format: Option<FormatSlot>,
     #[serde(default)]
@@ -823,30 +823,6 @@ struct ColumnScale {
     color: Option<ScaleTarget>,
 }
 
-/// `ResolvedScaleTarget` (`resolve_hinge`/`compute_scale_domain`/`interpolate_scale_color` all take
-/// this as `target`). `resolved_stops` is present only when the palette
-/// resolved to a named, WCAG-baked gradient (`ResolvedNamedPaletteScaleTargetConfig`
-/// — every corpus scale column); an inline literal hex list arrives as
-/// `palette` itself and is used directly. `nice`/`domain` are theme-cascade
-/// bookkeeping a table cell never reads (`nice`
-/// only widens a GRADIENT LEGEND's ticks — tables paint no legend) and are
-/// not deserialized here.
-#[derive(Deserialize, Clone)]
-pub(super) struct ScaleTarget {
-    pub(super) palette: Value,
-    #[serde(default)]
-    pub(super) resolved_stops: Option<Vec<String>>,
-    #[serde(default)]
-    pub(super) min: Option<f64>,
-    #[serde(default)]
-    pub(super) max: Option<f64>,
-    #[serde(default)]
-    pub(super) null_color: Option<String>,
-    #[serde(default)]
-    pub(super) hinge: Option<Value>,
-    pub(super) arm_mode: String,
-}
-
 /// `FieldConditionalFormatting` — a column's ordered `when:` rule list.
 #[derive(Deserialize, Clone, Default)]
 struct FieldConditionalFormatting {
@@ -1267,6 +1243,17 @@ pub(super) fn resolve_hinge(hinge: Option<&Value>, lo: f64, hi: f64, col_format:
     Some((lo + hi) / 2.0)
 }
 
+/// `diverging_arm_denominators`: the distance each arm's ramp runs over, one
+/// shared wider-arm width when asymmetric.
+pub(super) fn arm_denominators(pivot: f64, (lo, hi): (f64, f64), asymmetric: bool) -> (f64, f64) {
+    let (neg, pos) = (pivot - lo, hi - pivot);
+    if asymmetric {
+        let wider = neg.max(pos).max(1e-12);
+        return (wider, wider);
+    }
+    (neg.max(1e-12), pos.max(1e-12))
+}
+
 /// Interpolate at normalized position `t` (clamped to
 /// `[0, 1]`) along one arm's stop list.
 fn interpolate_arm(t: f64, stops: &[String]) -> String {
@@ -1309,29 +1296,16 @@ pub(super) fn interpolate_scale_color(
         ));
     }
     let hinge = hinge.clamp(min_val, max_val);
+    let (neg_denom, pos_denom) = arm_denominators(hinge, (min_val, max_val), arm_mode == "asymmetric");
     let mid = palette.len() / 2;
     let mut neg_stops: Vec<String> = palette[..=mid].to_vec();
     neg_stops.reverse();
     let pos_stops: Vec<String> = palette[mid..].to_vec();
     let clamped = value.clamp(min_val, max_val);
-    let neg_width = hinge - min_val;
-    let pos_width = max_val - hinge;
     if clamped <= hinge {
-        let distance = hinge - clamped;
-        let denom = if arm_mode == "asymmetric" {
-            neg_width.max(pos_width).max(1e-12)
-        } else {
-            neg_width.max(1e-12)
-        };
-        Ok(interpolate_arm(distance / denom, &neg_stops))
+        Ok(interpolate_arm((hinge - clamped) / neg_denom, &neg_stops))
     } else {
-        let distance = clamped - hinge;
-        let denom = if arm_mode == "asymmetric" {
-            neg_width.max(pos_width).max(1e-12)
-        } else {
-            pos_width.max(1e-12)
-        };
-        Ok(interpolate_arm(distance / denom, &pos_stops))
+        Ok(interpolate_arm((clamped - hinge) / pos_denom, &pos_stops))
     }
 }
 
@@ -2134,10 +2108,8 @@ fn calculate_column_layout_port(
 /// `fractional_digit_count` (`numeral_scale.py:431`): the digits after the
 /// active locale's decimal mark. Only digits count, so a trailing non-digit
 /// (an accounting `)`) does not corrupt the depth.
-fn count_decimals(s: &str) -> usize {
-    let locale = crate::number_locale::active_number_locale();
-    s.split_once(locale.locale.decimal.as_str())
-        .map_or(0, |(_, fraction)| fraction.chars().filter(|c| c.is_numeric()).count())
+pub(crate) fn count_decimals(s: &str) -> usize {
+    d3rs::numeral_pad::fractional_digit_count(s, &crate::number_locale::active_number_locale().locale.decimal)
 }
 
 /// Select the trailing decimal-alignment pad for `num_str` from a pre-built
@@ -2208,7 +2180,7 @@ fn is_summary_role(role: RowRole) -> bool {
 /// no reachable input — every `Value::Number` this parses is finite. The
 /// string arm can still parse to a non-finite value (`"inf"`, `"1e999"`),
 /// which production's own guard (`math.isfinite(result)`) rejects too.
-fn coerce_numeric_cell(value: Option<&Value>) -> Option<f64> {
+pub(crate) fn coerce_numeric_cell(value: Option<&Value>) -> Option<f64> {
     match value? {
         Value::Number(n) => n.as_f64(),
         Value::String(s) => s.trim().parse().ok().filter(|v: &f64| v.is_finite()),
@@ -3452,39 +3424,18 @@ fn dim_value(cell: &Value, tag: Option<&CellTag>) -> Value {
 /// A row-dimension cell as a Python dict key: `None`, a
 /// number under Python's cross-type equality (`True == 1 == 1.0`, an int
 /// and a float equal only when exactly equal), or a string.
-#[derive(Clone, PartialEq, Eq, Hash)]
-enum PyKey {
-    None,
-    Int(i128),
-    Float(u64),
-    Str(String),
-}
+use crate::common::{py_scalar_key, PyKey};
 
 /// A list or object cell is unhashable: production's row-key lookup raises
 /// `TypeError`, so it is refused by name.
 fn py_key(column: &str, cell: &Value) -> Result<PyKey, Diagnostic> {
-    Ok(match cell {
-        Value::Null => PyKey::None,
-        Value::Bool(b) => PyKey::Int(i128::from(*b)),
-        Value::String(s) => PyKey::Str(s.clone()),
-        Value::Number(n) if n.is_f64() => {
-            let x = n.as_f64().expect("an f64 number");
-            // Every JSON int fits in i128, so an integral double past it
-            // equals no int.
-            if x.fract() == 0.0 && x.abs() < 2f64.powi(127) {
-                PyKey::Int(x as i128)
-            } else {
-                PyKey::Float(x.to_bits())
-            }
-        }
-        Value::Number(n) => PyKey::Int(n.as_i64().map_or_else(|| i128::from(n.as_u64().expect("a u64")), i128::from)),
-        Value::Array(_) | Value::Object(_) => {
-            return Err(format!(
-                "table: pivot row dimension '{column}' holds a list or object cell, which Python cannot key a wide row by"
-            )
-            .into())
-        }
-    })
+    if matches!(cell, Value::Array(_) | Value::Object(_)) {
+        return Err(format!(
+            "table: pivot row dimension '{column}' holds a list or object cell, which Python cannot key a wide row by"
+        )
+        .into());
+    }
+    Ok(py_scalar_key(cell))
 }
 
 /// Reshape long-form rows into a wide pivot matrix.
@@ -5529,6 +5480,9 @@ struct TitleBand {
     /// The title as drawn: one entry per tspan.
     title_lines: Vec<String>,
     subtitle_lines: Vec<String>,
+    /// Whether the pre-pass cut the title / subtitle (`WARN-CHART-TITLE-TRUNCATED`).
+    title_truncated: bool,
+    subtitle_truncated: bool,
     subtitle_font_size: f64,
     subtitle_family: String,
     subtitle_color: String,
@@ -5537,8 +5491,9 @@ struct TitleBand {
     area_h: f64,
 }
 
-/// The lines a title or subtitle draws in `limit` px; no limit leaves the text
-/// whole, and an empty result falls back to the text (`splitlines() or [text]`).
+/// The lines a title or subtitle draws in `limit` px, and whether the pre-pass
+/// cut it; no limit leaves the text whole, and an empty result falls back to
+/// the text (`splitlines() or [text]`).
 fn wrap_title(
     text: &str,
     mode: Option<&str>,
@@ -5546,12 +5501,12 @@ fn wrap_title(
     font_size: f64,
     family: &str,
     fonts: &FontBook,
-) -> Result<Vec<String>, String> {
+) -> Result<(Vec<String>, bool), String> {
     let Some(limit) = limit.filter(|_| !text.is_empty()) else {
-        return Ok(vec![text.to_string()]);
+        return Ok((vec![text.to_string()], false));
     };
-    let (lines, _) = crate::common::prepare_title_lines(text, mode, limit, font_size, family, fonts)?;
-    Ok(if lines.is_empty() { vec![text.to_string()] } else { lines })
+    let (lines, truncated) = crate::common::prepare_title_lines(text, mode, limit, font_size, family, fonts)?;
+    Ok((if lines.is_empty() { vec![text.to_string()] } else { lines }, truncated))
 }
 
 fn title_band(
@@ -5617,7 +5572,7 @@ fn title_band(
         (table_width > 0.0 && l > 0.0).then_some(l.max(1.0))
     };
     let title_line_h = title_font_size.trunc() + 2.0;
-    let title_lines = match cased_title.as_deref().filter(|_| has_title) {
+    let (title_lines, title_truncated) = match cased_title.as_deref().filter(|_| has_title) {
         Some(t) => wrap_title(
             t,
             title_style.overflow.as_deref(),
@@ -5626,7 +5581,7 @@ fn title_band(
             crate::common::measure_family_stand_in(title_family),
             fonts,
         )?,
-        None => Vec::new(),
+        None => (Vec::new(), false),
     };
     let last_title_text_y = title_text_y + (title_lines.len().max(1) - 1) as f64 * title_line_h;
     let natural_title_area_h_raw = if has_title {
@@ -5658,7 +5613,7 @@ fn title_band(
     // ascent, not a baseline-to-baseline distance — both descent and ascent
     // are derived from their own font size via the same 0.8 ascent ratio the
     // title baseline itself approximates (title_text_y above).
-    let subtitle_lines = match subtitle.filter(|_| has_subtitle) {
+    let (subtitle_lines, subtitle_truncated) = match subtitle.filter(|_| has_subtitle) {
         Some(sub) => wrap_title(
             sub,
             subtitle_style.overflow.as_deref(),
@@ -5667,7 +5622,7 @@ fn title_band(
             crate::common::measure_family_stand_in(&subtitle_family),
             fonts,
         )?,
-        None => Vec::new(),
+        None => (Vec::new(), false),
     };
     let subtitle_baseline_below = |title_baseline: f64| {
         python_round(title_baseline + title_font_size * 0.2 + th.title_subtitle_gap + subtitle_font_size * 0.8)
@@ -5719,6 +5674,8 @@ fn title_band(
         text_y: title_text_y + shift.title_dy,
         title_lines,
         subtitle_lines,
+        title_truncated,
+        subtitle_truncated,
         subtitle_font_size,
         subtitle_family,
         subtitle_color: subtitle_color.to_string(),
@@ -5759,6 +5716,16 @@ pub fn title_geometry(resolved: &Value, width: f64, fonts: &FontBook) -> Result<
         fonts,
     )?;
     Ok((th.outer_padding.trunc() + band.text_y, band.area_h - band.text_y))
+}
+
+impl TitleBand {
+    fn warn_truncations(&self, chart_id: &str) {
+        crate::common::warn_title_truncations(
+            chart_id,
+            (self.cased_title.as_deref(), self.title_truncated),
+            (self.subtitle.as_deref(), self.subtitle_truncated),
+        );
+    }
 }
 
 fn emit_title_band(xml: &mut Xml, band: &TitleBand, outer: f64) {
@@ -5829,6 +5796,8 @@ fn emit_title_band(xml: &mut Xml, band: &TitleBand, outer: f64) {
 #[derive(Deserialize)]
 struct EmptyResolved {
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
+    id: Option<String>,
+    #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
     title: Option<String>,
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
     subtitle: Option<String>,
@@ -5871,6 +5840,9 @@ pub fn render_empty(payload: &Payload, fonts: &FontBook) -> Result<String, Strin
         payload.title_shift,
         fonts,
     )?;
+    if let Some(id) = r.id.as_deref() {
+        band.warn_truncations(id);
+    }
     // `:655`: a hidden header collapses both the band and the
     // header/body gap.
     let (header_height, header_body_gap) = if th.header.visible {
@@ -6063,13 +6035,9 @@ fn visible_columns<'a>(
                 cfg.width = None;
                 cfg.max_width = None;
             }
-            // column_defaults fills each field independently — a column with
-            // its own format but no label still gets the default label, and
-            // vice versa (never gated on the other field).
+            // column_defaults fills each field independently (never gated on
+            // another field).
             if let Some(defaults) = &r.column_defaults {
-                if cfg.label.is_none() {
-                    cfg.label = defaults.label.clone();
-                }
                 if cfg.format.is_none() {
                     cfg.format = defaults.format.clone();
                 }
@@ -6965,6 +6933,9 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         payload.title_shift,
         fonts,
     )?;
+    if !chart_id.is_empty() {
+        band.warn_truncations(chart_id);
+    }
     let title_area_h = band.area_h;
     // `render_table_svg`: the slot grows by the band's
     // `body_dy` so no row is squeezed out to make room; `if height` leaves an
@@ -8648,10 +8619,9 @@ pub(crate) mod tests {
         assert!(resolve_row_roles(&rows, Some("nonsense")).iter().all(|r| matches!(r, RowRole::Value)));
     }
 
-    // column_defaults fills label and format independently — a column with
-    // its own format still receives the default label, and vice versa.
+    // column_defaults.format fills only columns that set no format of their own.
     #[test]
-    fn column_defaults_fill_label_and_format_independently() {
+    fn column_defaults_format_fills_only_columns_without_one() {
         let rows = vec![json!({"amt": 58396.0, "qty": 3400.0})];
         let columns = json!({
             "amt": {"format": "currency_whole"},
@@ -8664,7 +8634,7 @@ pub(crate) mod tests {
                 "title": "Test Table",
                 "title_style": resolved_title_style(),
                 "columns": columns,
-                "column_defaults": {"label": "Default Label", "format": "integer"},
+                "column_defaults": {"format": "integer"},
                 "style": {"table": theme, "title_font": resolved_title_font()},
                 "pivot_columns": null,
                 "conditional_formatting": null,
@@ -8679,15 +8649,11 @@ pub(crate) mod tests {
         let payload: Payload = crate::test_payload(payload_json);
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("renders");
-        assert!(
-            svg.contains("Default Label"),
-            "amt (own format, no label) still takes the default label:\n{svg}"
-        );
         assert!(svg.contains(">$</tspan>") && svg.contains(">58,396<"), "amt keeps its own format over the default:\n{svg}");
         assert!(svg.contains("Quantity"), "qty keeps its own label:\n{svg}");
         assert!(
             svg.contains(">3,400<"),
-            "qty (own label, no format) takes the default integer format, not .3~s's 3.4k:\n{svg}"
+            "qty (no format) takes the default integer format, not .3~s's 3.4k:\n{svg}"
         );
     }
 
@@ -10027,6 +9993,32 @@ pub(crate) mod tests {
         let svg = render_themed(themed_resolved()).expect("renders");
         assert!(svg.contains("fill=\"#494A4C\""), "title ink:\n{svg}");
         assert!(svg.contains("fill=\"#8A8C8F\""), "subtitle ink:\n{svg}");
+    }
+
+    #[test]
+    fn a_cut_title_or_subtitle_warns_title_truncated() {
+        let cut = |field: &str, text: &str| {
+            crate::diagnostic::Diagnostic::new(
+                &crate::codes::WARN_CHART_TITLE_TRUNCATED,
+                [
+                    ("authored_field", json!(field)),
+                    ("authored_text", json!(text)),
+                    ("chart_id", json!("t")),
+                ],
+            )
+        };
+        let long = "word ".repeat(200);
+        let warned = |title: &str, subtitle: &str| {
+            let mut resolved = themed_resolved();
+            resolved["id"] = json!("t");
+            resolved["title"] = json!(title);
+            resolved["subtitle"] = json!(subtitle);
+            resolved["title_style"]["overflow"] = json!("truncate");
+            crate::diagnostic::collect(|| render_themed(resolved)).1
+        };
+        assert_eq!(warned(&long, "short"), vec![cut("title", &long)]);
+        assert_eq!(warned("Short", &long), vec![cut("subtitle", &long)]);
+        assert!(warned("Short", "short").is_empty());
     }
 
     #[test]
@@ -12100,7 +12092,7 @@ pub(crate) mod tests {
             "background": "#ffffff",
             "fonts_dir": null,
             "padding": null,
-            "board_style": {"board_width": 600.0, "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()},
+            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"board_width": 600.0, "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()},
         });
         let payload: Payload = crate::test_payload(payload_json);
         let fonts = test_fonts();
@@ -13215,7 +13207,7 @@ mod conditional_formatting_tests {
             "background": "#eeeeee",
             "fonts_dir": null,
             "padding": null,
-            "board_style": {"format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire(), "tones": {
+            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire(), "tones": {
                 "positive": "#00884d", "negative": "#94001e",
                 "warning": "#e69812", "info": "#008cdd"
             }},
@@ -13828,7 +13820,7 @@ mod conditional_formatting_tests {
                 "background": "#eeeeee",
                 "fonts_dir": null,
                 "padding": null,
-                "board_style": {"format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire(), "tones": {
+                "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire(), "tones": {
                     "positive": "#00884d", "negative": "#94001e",
                     "warning": "#e69812", "info": "#008cdd"
                 }},
@@ -13885,7 +13877,7 @@ mod conditional_formatting_tests {
             "background": "#eeeeee",
             "fonts_dir": null,
             "padding": null,
-            "board_style": {"format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire(), "tones": {
+            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire(), "tones": {
                 "positive": "#00884d", "negative": "#94001e",
                 "warning": "#e69812", "info": "#008cdd"
             }},
@@ -15130,7 +15122,7 @@ mod link_paint_tests {
             "background": "#ffffff",
             "fonts_dir": null,
             "padding": null,
-            "board_style": {"font_color": "#123456"},
+            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"font_color": "#123456"},
         });
         crate::test_payload(payload_json)
     }
@@ -15562,7 +15554,7 @@ mod background_and_font_family_tests {
             "background": "#ffffff",
             "fonts_dir": null,
             "padding": null,
-            "board_style": {"font_color": "#222222"},
+            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"font_color": "#222222"},
         });
         crate::test_payload(payload_json)
     }
@@ -15673,7 +15665,7 @@ mod background_and_font_family_tests {
         table["font"]["family"] = json!("'Source Serif 4', Georgia, serif");
         table["header"]["font"]["family"] = json!("'Inter Variable', Inter, sans-serif");
         let svg = render(&payload, &test_fonts()).unwrap();
-        let serif = "font-family=\"Source Serif 4 Web, Source Serif 4, Georgia, serif\"";
+        let serif = "font-family=\"&apos;Source Serif 4 Web&apos;, &apos;Source Serif 4&apos;, Georgia, serif\"";
         assert_eq!(svg.matches(serif).count(), 2, "text cell and numeral:\n{svg}");
         assert!(svg.contains("font-family=\"Inter Variable, Inter, sans-serif\">A</text>"), "{svg}");
     }

@@ -1265,7 +1265,7 @@ def apply_color_legend(
             if drop_values:
                 legend_val.pop("values", None)
             if color_format is not None and enc.get("type") == "quantitative":
-                compose_axis_format(legend_val, color_format)
+                compose_axis_format(legend_val, color_format, True)
             enc["legend"] = legend_val
 
 

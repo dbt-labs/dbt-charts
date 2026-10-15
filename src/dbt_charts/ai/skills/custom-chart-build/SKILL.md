@@ -36,32 +36,46 @@ A `template:` name with no file lists the templates the project does have.
 ## 2. Author the chart
 
 ```yaml
+queries:
+  stages:
+    columns: [stage, visitors]
+    values:
+      - [Visited, 4200]
+      - [Signed up, 3100]
+      - [Upgraded, 740]
 charts:
   signup_flow:
     type: custom
-    query: flows
-    # template: sankey          # templates/sankey.svg.j2, or the template inline
+    query: stages
+    # template: funnel          # templates/funnel.svg.j2, or the template inline
     svg: |                      # under svg: (exactly one of the two)
       {#---
-      description: Flow between two stages
+      description: One bar per stage, each a link.
       channels:
-        x:
-          multiple: true
-        value: {}
+        x: {}
+        y: {}
       options:
-        node_width:
+        bar_height:
           type: integer
-          default: 12
+          default: 24
       ---#}
-      <rect width="{{ width }}" height="{{ height }}" fill="{{ style.muted }}"/>
+      {% set top = rows | map(attribute=channels.y) | max %}
+      {% for r in rows %}
+        <a href="{{ href(r) }}">
+          <rect y="{{ loop.index0 * (options.bar_height + 8) }}" height="{{ options.bar_height }}"
+                width="{{ r[channels.y] / top * width }}" fill="{{ style.muted }}"/>
+        </a>
+      {% endfor %}
     title: Where visitors go
-    x: [from_stage, to_stage]   # channels sit at the chart root, as on any chart
-    value: visitors
+    x: stage                    # channels sit at the chart root, as on any chart
+    y: visitors
     options:
-      node_width: 12            # the template's own settings
-    link: /boards/flows/{{ x }} # optional: a click-through, like every chart
+      bar_height: 24            # the template's own settings
+    link: /boards/stage/{{ x }} # optional: a click-through, like every chart
     style:
       aspect_ratio: 2           # sizing only: aspect_ratio, min_height, max_height
+rows:
+  - signup_flow
 ```
 
 Channels use the built-in names (`x`, `y`, `color`, `size`, `shape`, `theta`,
@@ -96,8 +110,8 @@ options:
 
 No `default` means required; `default: null` means optional (`none` in the
 template). Option types: `column`, `columns`, `string`, `number`, `integer`,
-`boolean`, `color`. An inline `svg:` template has no header and takes no
-channels or options; it reads columns by name (`r.revenue`).
+`boolean`, `color`. An inline `svg:` template takes the same header; without
+one it declares no channels or options and reads columns by name (`r.revenue`).
 
 ## 4. What the template sees
 
@@ -151,7 +165,8 @@ that reads only `style` follows every theme, dark ones included.
 The engine draws the title and subtitle, then places the template's output
 in a group translated below them, inside the card's padding. `width` and
 `height` are that box, so a template never allows for the title or padding
-itself. A template that wants the full card height omits `title:`.
+itself. Output outside that box is clipped. A template that wants the full
+card height omits `title:`.
 
 ## 8. What the output may contain
 
@@ -159,11 +174,12 @@ Well-formed SVG from drawing elements only: shapes (`rect`, `circle`,
 `ellipse`, `line`, `polyline`, `polygon`, `path`), text (`text`, `tspan`,
 `textPath`), grouping (`g`, `defs`, `symbol`, `use`), paint
 (`linearGradient`, `radialGradient`, `stop`, `pattern`, `clipPath`, `mask`,
-`marker`), `title` and `desc` (a `<title>` inside a shape is its tooltip),
+`marker`), `title` and `desc` (a `<title>` inside a shape is a native browser tooltip, not the board's tooltip card),
 and `a` with an `href` the link rules above accept.
 
 Refused, never stripped (`ERR-CUSTOM-SVG` names the construct): `script`,
-`foreignObject`, `style`, `image`, animation elements, `on*` attributes, the
+`foreignObject`, `style`, `image`, `filter` (shadow and blur and raster images
+stay unsupported: vector-only, sandboxed output), animation elements, `on*` attributes, the
 board's own hooks (`role`, `aria-*`, `data-*`, classes starting with `role-`
 or `dbt-`), a paint attribute that is not a color or `url(#id)`, an `href` or
 `url()` that is not `#local` outside `<a>`, `javascript:`, CSS escapes and

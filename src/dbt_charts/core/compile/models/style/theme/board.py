@@ -19,6 +19,7 @@ from dbt_charts.core.compile.models.factories import (
 )
 from dbt_charts.core.compile.models.markers import (
     AUTO,
+    Absent,
     Color,
     FontFamily,
     FontWeightValue,
@@ -138,7 +139,7 @@ class TextColumnStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    max_number: int | None = Field(
+    max_number: Annotated[int | None, Absent("no ceiling")] = Field(
         default=None,
         ge=1,
         description=(
@@ -225,7 +226,7 @@ register_patch(RootFontStyle)(
 
 
 class FrameStyle(BaseModel):
-    """Board-level structural dimensions. Do NOT cascade to child boards."""
+    """Board-level structural dimensions; cascades to child boards."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -377,7 +378,10 @@ class ChartTitleFontStyle(FontSlotBase):
     )
     case: (
         Literal["none", "sentence", "title", "upper", "lower", "slug", "camel"] | None
-    ) = Field(default=None, description="Letter-case transform applied at render time.")
+    ) = Field(
+        default=None,
+        description="Letter-case transform applied at render time.",
+    )
     line_height: float | None = Field(
         default=None,
         description="Line height as a unitless multiple of font size.",

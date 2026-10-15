@@ -21,7 +21,9 @@ from typing import Any
 import pytest
 import yaml
 
+from dbt_charts.agent_api import ProjectSession
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.board import raise_on_dashboard_failure
 from dbt_charts.core.compile.config import load_project_sources
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 
@@ -505,6 +507,52 @@ def test_corpus_block_compiles(
         f"\n\n{filename}:{start_line} — dct validate failed under "
         f"{len(candidates)} mount(s):\n{joined}"
     )
+
+
+def _custom_board_fences() -> list[tuple[str, int, str]]:
+    """Corpus fences that are complete boards drawing a ``type: custom`` chart."""
+    found = []
+    for label, line, body in _CORPUS_BLOCKS:
+        parsed = yaml.safe_load(body)
+        if isinstance(parsed, dict) and {"queries", "charts", "rows"} <= set(parsed):
+            if "type: custom" in body:
+                found.append((label, line, body))
+    return found
+
+
+_CUSTOM_BOARD_FENCES = _custom_board_fences()
+
+
+def test_custom_board_fences_are_discovered() -> None:
+    assert _CUSTOM_BOARD_FENCES
+
+
+@pytest.mark.parametrize(
+    ("filename", "start_line", "fence_body"),
+    _CUSTOM_BOARD_FENCES,
+    ids=[f"{fn}:{ln}" for fn, ln, _ in _CUSTOM_BOARD_FENCES],
+)
+def test_custom_board_fence_renders(
+    filename: str,
+    start_line: int,
+    fence_body: str,
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+) -> None:
+    """Validation cannot see a template that fails while drawing (a link
+    channel the template never reads through ``href``), so render it."""
+    board_file = tmp_path / "board.yml"
+    board_file.write_text(fence_body)
+    project = local_project(tmp_path)
+    session = ProjectSession.from_project(project)
+    try:
+        rendered = session.render_board(
+            board=project.path_for_fspath(board_file).read_board(), format="html"
+        )
+        raise_on_dashboard_failure(rendered)
+        assert rendered.status == "ok", rendered.chart_errors
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------

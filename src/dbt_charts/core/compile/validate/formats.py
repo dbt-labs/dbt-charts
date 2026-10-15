@@ -334,6 +334,11 @@ def _validate_spec(
         # literal, unrendered letter (Vega-painted slots).
         bad_directive = find_unsupported_directive(spec)
         if bad_directive is not None:
+            accepted = (
+                VEGA_SAFE_TIME_DIRECTIVES
+                if vega_painted
+                else PYTHON_STRFTIME_DIRECTIVES
+            )
             raise CompilationError.from_code(
                 ERR_FORMAT_INVALID,
                 spec=spec,
@@ -342,7 +347,7 @@ def _validate_spec(
                 explanation=(
                     f"%{bad_directive} is not a strftime directive the engine "
                     "implements. Accepted directives: "
-                    f"{', '.join('%' + d for d in sorted(PYTHON_STRFTIME_DIRECTIVES))}."
+                    f"{', '.join('%' + d for d in sorted(accepted))}."
                 ),
             )
         if reject_time_affix:

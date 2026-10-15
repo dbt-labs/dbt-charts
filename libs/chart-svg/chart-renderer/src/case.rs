@@ -7,10 +7,11 @@
 //! `title` mirrors the `titlecase` PyPI library (v2.4.1) plus the
 //! project's callback/post-process (small-words extension, `dbt`
 //! brand-token lowering via `_FORCE_LOWERCASE`, standalone-acronym guard).
-//! `/`-joined tokens ARE ported (`"/" in word and "//" not in word` splits
-//! and recurses each side, same as the hyphen branch beside it — found
-//! missing via a real corpus title, "pie/donut", rendering "Pie/donut"
-//! instead of "Pie/Donut"). Inline periods (`rev.usd`), apostrophe-second
+//! A path-like word (2+ slashes, or a slash with `-`, `_` or `.`: repo slugs,
+//! paths, URLs) keeps its authored case: `_acronym_callback` returns it
+//! verbatim, ahead of the library's own `/` split. Prose pairs
+//! (`pie/donut` → `Pie/Donut`) take the `/` branch: each side is
+//! title-cased. Inline periods (`rev.usd`), apostrophe-second
 //! words (`o'brien` → `O'Brien`), and Mc-prefixed surnames (`mcdonald` →
 //! `McDonald`) are also ported — a board variable's inferred label runs
 //! slug text through this same `title` branch (`variables.rs`), so these
@@ -142,10 +143,34 @@ fn is_all_consonants(word: &str) -> bool {
             .all(|c| c.is_ascii_alphabetic() && !"aeiouyAEIOUY".contains(c))
 }
 
+/// A slug or path (`dbt-labs/dbt-charts`, `src/core/case.py`, a URL), as
+/// opposed to a prose pair like `pie/donut` or `x/y-axis`. Trailing sentence
+/// punctuation is ignored; one slash needs `_`, an inner `.`, or `-` in every
+/// segment. Mirrors `_is_path_like` in `core/text/case.py`.
+fn is_path_like(word: &str) -> bool {
+    let token = word.trim_end_matches(['.', ',', ';', ':', '!', '?']);
+    let segments: Vec<&str> = token.split('/').collect();
+    match segments.len() {
+        0 | 1 => false,
+        2 => {
+            segments.iter().any(|seg| {
+                seg.contains('_')
+                    || seg
+                        .char_indices()
+                        .any(|(i, c)| c == '.' && i + 1 < seg.len())
+            }) || segments.iter().all(|seg| seg.contains('-'))
+        }
+        _ => true,
+    }
+}
+
 /// Callback for the acronym/brand overrides (`_acronym_callback`). Returns
 /// the immutable replacement, or `None` to defer to the standard per-word
 /// rules.
 fn acronym_callback(word: &str) -> Option<String> {
+    if is_path_like(word) {
+        return Some(word.to_string());
+    }
     let lower = word.to_lowercase();
     if force_lowercase(&lower) {
         return Some(lower);
@@ -368,10 +393,9 @@ fn process_line(line: &str, small_first_last: bool) -> String {
         }
         // titlecase's own `"/" in word and "//" not in word` branch (checked
         // BEFORE the hyphen split): a slash-joined token title-cases each
-        // side independently and rejoins with "/" — a URL's "//" opts out so
-        // "https://example.com/path" survives untouched (falls through to
-        // the INLINE_PERIOD check above via "example.com").
-        if word.contains('/') && !word.contains("//") {
+        // side independently and rejoins with "/".
+        // URL-shaped words (`//`) are path-like and caught by the callback earlier.
+        if word.contains('/') {
             let joined = word
                 .split('/')
                 .map(|part| process_line(part, false))
@@ -462,6 +486,10 @@ pub fn apply_case(text: &str, case: &str) -> Result<String, String> {
         "upper" => Ok(text.to_uppercase()),
         "lower" => Ok(text.to_lowercase()),
         "sentence" => {
+            let first_word = text.split(' ').next().unwrap_or("");
+            if force_lowercase(&first_word.to_lowercase()) {
+                return Ok(first_word.to_lowercase() + &text[first_word.len()..]);
+            }
             let mut chars = text.chars();
             match chars.next() {
                 None => Ok(String::new()),
@@ -566,6 +594,53 @@ mod inline_period_tests {
             apply_case("both slots named, no shared style.font.color", "title").unwrap(),
             "Both Slots Named, No Shared style.font.color"
         );
+    }
+
+    #[test]
+    fn sentence_case_keeps_a_leading_dbt_lowercase() {
+        assert_eq!(
+            apply_case("dbt models grew 12%", "sentence").unwrap(),
+            "dbt models grew 12%"
+        );
+        assert_eq!(apply_case("DBT", "sentence").unwrap(), "dbt");
+        // Only a bare leading token counts: `dbt-charts` is one word.
+        assert_eq!(
+            apply_case("dbt-charts usage", "sentence").unwrap(),
+            "Dbt-charts usage"
+        );
+        assert_eq!(
+            apply_case("models in dbt", "sentence").unwrap(),
+            "Models in dbt"
+        );
+    }
+
+    #[test]
+    fn title_case_keeps_slash_words_as_authored() {
+        for (input, expected) in [
+            (
+                "dbt-labs/dbt-charts issues since launch",
+                "dbt-labs/dbt-charts Issues Since Launch",
+            ),
+            (
+                "year-over-year growth in docs/Foo",
+                "Year-Over-Year Growth in Docs/Foo",
+            ),
+            (
+                "https://example.com/path is up",
+                "https://example.com/path Is Up",
+            ),
+            ("src/core/case.py rules", "src/core/case.py Rules"),
+            ("x/y-axis chart", "X/Y-Axis Chart"),
+            ("a/b-test results", "A/B-Test Results"),
+            ("price/unit-cost analysis", "Price/Unit-Cost Analysis"),
+            ("pie/donut.", "Pie/Donut."),
+            ("pie/donut", "Pie/Donut"),
+            ("dbt-labs/dbt-charts", "dbt-labs/dbt-charts"),
+            ("pie/donut table", "Pie/Donut Table"),
+            ("a/b testing results", "A/B Testing Results"),
+        ] {
+            assert_eq!(apply_case(input, "title").unwrap(), expected, "{input:?}");
+        }
     }
 
     #[test]

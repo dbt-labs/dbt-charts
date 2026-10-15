@@ -455,8 +455,8 @@ class TestMirrorNeverNarrows:
     to narrow a mirrored "y" is the only option that cannot overflow."""
 
     def test_horizontal_bar_mirrored_category_axis_stays_shared(self):
-        """Horizontal bar's category rides VL "y" post-flip; a columns facet
-        auto-mirrors it to both edges. Even though each region panel here
+        """Horizontal bar's category rides VL "y" post-flip; an authored
+        `axis_y.mirror` puts it on both edges. Even though each region panel here
         holds a proper subset of the product domain (a real narrowing
         candidate on data grounds alone), the mirror guard must still
         refuse it."""
@@ -480,14 +480,15 @@ class TestMirrorNeverNarrows:
                 "x": "product",
                 "y": "revenue",
                 "multiples": {"columns": "region"},
-                "style": {"orientation": "horizontal"},
+                "style": {
+                    "orientation": "horizontal",
+                    "axis_y": {"mirror": True},
+                },
             }
         )
         board_rs, ctx = _board()
         resolved = resolve(chart, data, chart_style_context=ctx, width=1200.0)
-        assert resolved.style.axis_y.mirror, (
-            "fixture no longer auto-mirrors — mirror guard is untested"
-        )
+        assert resolved.style.axis_y.mirror, "mirror guard is untested without a mirror"
         assert resolved.multiples is not None
         assert "y" not in facet_bound_position_channels(
             resolved, resolved.multiples, data, _unnarrowed_width(resolved, 1200.0)

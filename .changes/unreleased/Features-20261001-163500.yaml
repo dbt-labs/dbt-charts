@@ -1,3 +1,3 @@
 kind: Features
-body: '`legend.position` is now a mapping of `edge` (`left`, `right`, `top`, `bottom`), `align` (`start`, `center`, `end`) and `overlay` (float over the plot or reserve a strip), so a legend can be centered along its edge and whether it covers data is explicit. A pie or donut takes `edge` and `align` only, never `overlay`.'
+body: '`legend.position` is now a mapping of `edge` (`left`, `right`, `top`, `bottom`), `align` (`start`, `center`, `end`) and `overlay` (float over the plot or reserve a strip), so a legend can be centered along its edge and whether it covers data is explicit. Without an authored `direction`, `top` and `bottom` legends lay out horizontally and `left` and `right` vertically, so a `top` legend hides its title unless `title.visible: true`. A pie or donut takes `edge` and `align` only.'
 time: 2026-10-01T16:35:00.000000-07:00

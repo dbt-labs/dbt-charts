@@ -12,12 +12,16 @@ from __future__ import annotations
 
 import textwrap
 from collections.abc import Generator
+from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from dbt_charts.core.compile.config import get_theme_style, reset_config
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.resolve.style.board import resolve_style
+
+from .._board_utils import merged_patch
 
 
 @pytest.fixture(autouse=True)
@@ -270,8 +274,10 @@ def test_charts_title_fill_is_independent_of_patch_order() -> None:
     )
     family_patch = StylePatch.model_validate({"title": {"font": {"style": "italic"}}})
 
-    forward = resolve_chart_style_context(base, color_patch, family_patch)
-    backward = resolve_chart_style_context(base, family_patch, color_patch)
+    forward = resolve_chart_style_context(base, merged_patch(color_patch, family_patch))
+    backward = resolve_chart_style_context(
+        base, merged_patch(family_patch, color_patch)
+    )
 
     assert forward.title == backward.title
     for ctx in (forward, backward):
@@ -295,53 +301,31 @@ def test_charts_title_writes_at_two_cascade_levels_both_survive() -> None:
 
     base = get_theme_style()
     both = resolve_chart_style_context(
-        base, patch(color="#222222"), patch(family="Helvetica")
+        base, merged_patch(patch(color="#222222"), patch(family="Helvetica"))
     )
     assert both.title.font.color == "#222222"
     assert both.title.font.family.startswith("Helvetica")
 
     later_wins = resolve_chart_style_context(
-        base, patch(color="#222222"), patch(color="#333333")
+        base, merged_patch(patch(color="#222222"), patch(color="#333333"))
     )
     assert later_wins.title.font.color == "#333333"
 
 
-def test_later_null_is_not_undone_by_the_held_write_replay() -> None:
-    from dbt_charts.core.compile.config import get_theme_style
+@pytest.mark.parametrize(
+    "style",
+    [
+        {"charts": {"marks": {"bar": {"border": None}}}},
+        {"charts": {"title": None}},
+    ],
+    ids=["bar border", "chart title"],
+)
+def test_authored_null_on_a_slot_is_rejected(style: dict[str, Any]) -> None:
+    from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
     from dbt_charts.core.compile.models.style.authored import StylePatch
-    from dbt_charts.core.compile.resolve.style.board import merge_style
 
-    base = get_theme_style()
-    assert base.charts.marks.bar.border is not None
-    first = StylePatch.model_validate(
-        {
-            "charts": {
-                "marks": {"bar": {"border": {"color": "#111111"}}},
-                "title": {"font": {"color": "#222222"}},
-            }
-        }
-    )
-    second = StylePatch.model_validate({"charts": {"marks": {"bar": {"border": None}}}})
-
-    merged = merge_style(base, first, second)
-
-    assert merged.charts.marks.bar.border is None
-    assert merged.charts.title is not None
-    assert merged.charts.title.font.color == "#222222"
-
-
-def test_later_null_on_a_held_slot_is_not_undone() -> None:
-    from dbt_charts.core.compile.models.style.authored import StylePatch
-    from dbt_charts.core.compile.resolve.style.board import merge_style
-
-    first = StylePatch.model_validate(
-        {"charts": {"title": {"font": {"color": "#222222"}}}}
-    )
-    second = StylePatch.model_validate({"charts": {"title": None}})
-
-    merged = merge_style(get_theme_style(), first, second)
-
-    assert merged.charts.title is None
+    with pytest.raises(ValidationError, match="null is not accepted"):
+        StylePatch.model_validate(style, context=AUTHORED_INPUT)
 
 
 def test_switch_slot_charts_color_gradient_still_errors_on_partial_write() -> None:

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from dbt_charts.core.compile.models.factories import build_patch_model
 from dbt_charts.core.compile.models.markers import (
+    Absent,
     Color,
     Inherit,
     InheritSlot,
@@ -119,6 +121,18 @@ class HoverEmphasisStyle(BaseModel):
     drop_line_width: float = Field(
         description="Width, in pixels, of the vertical drop line from a hovered line/area datum down to its axis."
     )
+
+
+# A sparse patch: a donut starts from the pie slot and only what a theme or board
+# writes under `donut` differs. build_patch_model is cached, so the authored
+# surface's own PieChartStylePatch is this same class.
+if TYPE_CHECKING:
+
+    class PieChartStylePatch(PieChartStyle):
+        pass
+
+else:
+    PieChartStylePatch = build_patch_model(PieChartStyle)
 
 
 class ChartsStyle(_PaintedChartStyleBase, _LegendedChartStyleBase):
@@ -241,7 +255,7 @@ class ChartsStyle(_PaintedChartStyleBase, _LegendedChartStyleBase):
     # — no per-family slot carries dashes; the render layer reads
     # ChartStyleContext.dashes (passed through from this field) and skips emission
     # when None.
-    dashes: list[list[int]] | None = Field(
+    dashes: Annotated[list[list[int]] | None, Absent("solid lines")] = Field(
         default=None,
         description="Ordered list of Vega-Lite strokeDash arrays for line-family categorical encoding; None disables dash emission.",
     )
@@ -307,6 +321,13 @@ class ChartsStyle(_PaintedChartStyleBase, _LegendedChartStyleBase):
     )
     point_map: PointMapChartStyle = Field(description="Point map chart style.")
     pie: PieChartStyle = Field(description="Pie/donut chart style.")
+    donut: Annotated[PieChartStylePatch | None, SkipInheritSlots()] = Field(
+        default=None,
+        description=(
+            "Donut overrides, applied over `pie`: a board's pie or donut style "
+            "reaches every donut, and `donut` styles donuts only."
+        ),
+    )
 
     # Series-label primitive — typography for Cartesian series-naming text marks
     # (endpoint labels and direct stack labels).

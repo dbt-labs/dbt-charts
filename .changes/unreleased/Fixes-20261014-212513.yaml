@@ -1,0 +1,3 @@
+kind: Fixes
+body: A board path outside the project root now reports a clear path error instead of an internal error.
+time: 2026-10-14T21:25:13.002488-07:00

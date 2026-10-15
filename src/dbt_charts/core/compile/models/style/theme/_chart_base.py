@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Annotated
 if TYPE_CHECKING:
     # These authored types are injected into theme/__init__.py's module globals at
     # runtime by dbt_charts.core.compile.models.style.authored (after authored.py
-    # finishes executing). The import here is TYPE_CHECKING-only to give mypy and
+    # finishes executing). The import here is TYPE_CHECKING-only to give pyright and
     # ruff the static definitions they need without creating a circular import.
     from dbt_charts.core.compile.models.style.authored import (  # noqa: PLC0415
         AxisXStylePatch,
@@ -112,7 +112,7 @@ class _ChartStyleBase(BaseModel):
 
 if TYPE_CHECKING:
     # build_patch_model_ext returns a dynamically-created type[BaseModel] at
-    # runtime; mypy needs a real class definition to accept it as a base class
+    # runtime; pyright needs a real class definition to accept it as a base class
     # (KpiChartStyle, TableChartStyle). No color narrowing needed here anymore
     # — color moved to _PaintedChartStyleBase, so every field on this class
     # keeps its _ChartStyleBase-declared type.
@@ -352,15 +352,11 @@ class _RadialChartStyle(
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # Optional sentinel: None means 'no inner radius' (solid pie); float means donut.
-    # The None state is meaningful in the resolved model — NOT a 'theme failed to populate'
-    # fallback. Cascade preserves None through merge so the renderer can branch on solid
-    # vs. donut without re-reading raw YAML.
     inner_radius: float | None = Field(
         default=None,
         ge=0,
         le=1,
-        description="Hole-to-disk ratio 0–1 (inner radius / outer radius). None = solid pie; `type: donut` overrides this with a chart-local 0.6 patch, beating a theme value.",
+        description="Hole-to-disk ratio 0–1 (inner radius / outer radius). 0 is a solid pie. A `type: donut` chart reads `charts.donut` over this.",
     )
     total: TotalStyle = Field(description="Donut center total paint (value and label).")
 

@@ -1,3 +1,3 @@
 kind: Fixes
-body: A streamgraph endpoint label for a series pinned to a color outside the palette now takes its ink from that color instead of a palette slot's.
+body: Slice and endpoint labels on a series pinned to an off-palette color take their ink from that color.
 time: 2026-10-05T16:01:00.000000-07:00

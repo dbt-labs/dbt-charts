@@ -234,12 +234,11 @@ class HouseLocale(FormatLocale):
     narrative: MagnitudeWords
 
     def magnitudes(self, register: Notation) -> dict[str, str]:
-        if register == "analytic":
-            words = self.analytic
-        elif register == "narrative":
-            words = self.narrative
-        else:
-            raise ValueError(f"Unknown notation: {register!r}")
+        match register:
+            case "analytic":
+                words = self.analytic
+            case "narrative":
+                words = self.narrative
         return {**dict(zip(_SI_WORD_LETTERS, words, strict=True)), **_SI_PAST_TRILLIONS}
 
 
@@ -549,7 +548,7 @@ _DIRECTIVE_COMPUTERS: dict[str, Callable[[date | datetime], str]] = {
 # modified) is decided in `_substitute`, not by the regex.
 _TIME_DIRECTIVE_RE = re.compile(r"%%|%([-_0])?([A-Za-z])")
 
-_NAME_DIRECTIVES = frozenset("aAbBp")
+_NAME_DIRECTIVES = frozenset("aAbBpP")
 
 # The d3-time-format directive alphabet portable_strftime renders byte-
 # identical to Vega's utcFormat, bare and under every padding modifier --
@@ -589,7 +588,7 @@ def _apply_padding_modifiers(d: date | datetime, fmt: str) -> str:
     """Resolve `-`/`_`/`0` padding modifiers and the twelve CRT-unsupported
     directives (bare or modified) in ``fmt`` to plain text.
 
-    Name directives (`%a %A %b %B %p`, modified or not) become the active
+    Name directives (`%a %A %b %B %p %P`, modified or not) become the active
     locale's words. Every other directive (including `%%`) passes through
     untouched, so the result is still a valid strftime spec.
     """
@@ -648,6 +647,7 @@ def _locale_word(d: date | datetime, letter: str, locale: TimeLocaleDefinition) 
         "b": locale["shortMonths"][d.month - 1],
         "B": locale["months"][d.month - 1],
         "p": locale["periods"][pm],
+        "P": locale["periods"][pm].lower(),
     }[letter]
     return word.replace("%", "%%")
 

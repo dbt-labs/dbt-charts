@@ -37,15 +37,18 @@ import contextlib
 import datetime as dt
 import json
 import math
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
+from dbt_charts.core.compile.models.style.resolved._base import ResolvedAxisStyle
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.time_unit_detect import (
+    SubdayHeader,
     detect_time_unit,
+    subday_header_expr,
+    subday_header_for,
     tooltip_header_date_expr,
 )
 from dbt_charts.core.render.chart.type_inference import infer_vega_type_from_data
@@ -112,6 +115,8 @@ class TooltipField:
     # unset convention as `format` above). Only meaningful when
     # kind == "temporal" — selects the header's date-format vocabulary.
     time_unit: str = ""
+    # Set on a continuous temporal header whose short span earns the time of day.
+    subday: SubdayHeader | None = None
     # When True this row's VALUE renders at the low-contrast label color, not
     # the loud value color — a companion/context number beside a percent lead
     # (see MUTED). Structural, set by the role builder; never authored.
@@ -175,7 +180,9 @@ def header_tooltip_field(
     field: str,
     title: str,
     data: ChartRenderData,
-    grain_formats: Mapping[str, str],
+    axis_x: ResolvedAxisStyle,
+    *,
+    time_of_day: bool = True,
 ) -> TooltipField:
     """One identity field for ``field`` -- temporal (with detected grain) when
     the data is date-like, nominal otherwise.
@@ -203,7 +210,7 @@ def header_tooltip_field(
         except ValueError:
             time_unit = ""
     if field_type == "temporal" or time_unit != "":
-        grain_spec = grain_formats.get(time_unit)
+        grain_spec = axis_x.grain_formats.get(time_unit)
         return TooltipField(
             field,
             title,
@@ -212,6 +219,11 @@ def header_tooltip_field(
             if grain_spec is None
             else ResolvedFormat(spec=grain_spec),
             time_unit=time_unit,
+            subday=(
+                subday_header_for([row.get(field) for row in data], axis_x.labels.clock)
+                if time_unit == "" and time_of_day
+                else None
+            ),
         )
     return TooltipField(field, title, kind="nominal")
 
@@ -247,6 +259,8 @@ def _value_expr(tf: TooltipField) -> str:
     if tf.kind == "quantitative":
         return format_quantitative_expr(ref, tf.format)
     if tf.kind == "temporal":
+        if tf.subday is not None:
+            return subday_header_expr(ref, tf.subday)
         if tf.format.spec:
             return f"utcFormat(toDate({ref}), {json.dumps(tf.format.spec)})"
         return tooltip_header_date_expr(ref, tf.time_unit)

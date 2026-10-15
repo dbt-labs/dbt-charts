@@ -47,11 +47,47 @@ impl Diagnostic {
         self
     }
 
+    /// A refusal gains `context` ahead of its message; a registered code is
+    /// the finding itself and passes through unchanged.
+    pub fn in_context(self, context: &str) -> Self {
+        if self.code == codes::ERR_ENGINE_REFUSED.id {
+            Diagnostic::refused(format!("{context}: {self}"))
+        } else {
+            self
+        }
+    }
+
     pub fn refused(message: impl Into<String>) -> Self {
         Diagnostic::new(
             &codes::ERR_ENGINE_REFUSED,
             [("message", Value::String(message.into()))],
         )
+    }
+}
+
+/// Unit tests compare a refusal by its text.
+#[cfg(test)]
+impl Diagnostic {
+    pub fn contains(&self, needle: &str) -> bool {
+        self.to_string().contains(needle)
+    }
+
+    pub fn starts_with(&self, prefix: &str) -> bool {
+        self.to_string().starts_with(prefix)
+    }
+}
+
+#[cfg(test)]
+impl PartialEq<String> for Diagnostic {
+    fn eq(&self, other: &String) -> bool {
+        self.to_string() == *other
+    }
+}
+
+#[cfg(test)]
+impl PartialEq<&str> for Diagnostic {
+    fn eq(&self, other: &&str) -> bool {
+        self.to_string() == *other
     }
 }
 

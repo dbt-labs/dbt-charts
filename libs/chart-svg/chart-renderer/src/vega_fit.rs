@@ -130,6 +130,12 @@ pub fn baseline_shift(baseline: &str, font_size: f64) -> f64 {
     .round()
 }
 
+/// How far a `middle`-baselined text hangs above its anchor: the ink rise
+/// (`0.8 * font_size`, rounded) less Vega's baseline shift.
+pub fn middle_rise(font_size: f64) -> f64 {
+    (0.8 * font_size).round() - baseline_shift("middle", font_size)
+}
+
 /// The advance between the rows of a stacked axis label (Vega's default
 /// `lineHeight`: the font size plus 2).
 pub fn label_row_advance(font_size: f64) -> f64 {
@@ -154,7 +160,7 @@ pub fn text_ink(x: f64, y: f64, width: f64, font_size: f64, align: &str, baselin
 /// port of `_max_pair` (`emitters/_label_overlap.py`): a lone label is its
 /// own width; otherwise only adjacent pairs' means count, never a single
 /// wide label on its own. Shared by bar's ordinal tilt ladder
-/// (`category_label_angle`) and line/area's native temporal generic layout
+/// (`category_label_layout`) and line/area's native temporal generic layout
 /// (L1's `_generic_layout`/`_fits_flat`).
 pub fn max_pair(widths: &[f64]) -> f64 {
     if widths.len() == 1 {
@@ -172,65 +178,99 @@ pub fn fits_flat(widths: &[f64], band: f64) -> bool {
     max_pair(widths) <= band
 }
 
+/// A rung off the tilt ladder: its angle and whether its rotated footprint
+/// fits one band (the last rung when none does).
+pub struct TiltPick {
+    pub angle: f64,
+    pub fits: bool,
+}
+
 /// Shallowest ladder angle whose rotated footprint fits one `band` — port of
 /// `_pick_tilt_for_widths` (`emitters/_label_overlap.py`), shared by bar's
 /// ordinal category axis and line/area's native temporal labels (L1).
 /// `band` is already divided by `widths.len()` (production recomputes it
 /// against whatever `widths` slice — full or parity-halved — is passed in).
-pub fn pick_tilt(widths: &[f64], band: f64, increments: &[f64], font_size: f64) -> f64 {
+pub fn pick_tilt(widths: &[f64], band: f64, increments: &[f64], font_size: f64) -> TiltPick {
     if increments.is_empty() || widths.is_empty() {
-        return 0.0;
+        return TiltPick { angle: 0.0, fits: true };
     }
     let max_width = widths.iter().cloned().fold(0.0, f64::max);
     let fits = |angle: &&f64| {
         let (sin, cos) = angle.abs().to_radians().sin_cos();
         max_width * cos + font_size * sin <= band
     };
-    increments.iter().find(fits).or(increments.last()).copied().unwrap_or(0.0)
+    match increments.iter().find(fits) {
+        Some(&angle) => TiltPick { angle, fits: true },
+        None => TiltPick { angle: increments.last().copied().unwrap_or(0.0), fits: false },
+    }
+}
+
+/// An ordinal category axis's label layout: the tilt angle and, when every
+/// enabled strategy was tried and the labels still collide, how many labels
+/// were measured (`AxisLabelLayout.collision_label_count`).
+pub struct CategoryLabels {
+    pub angle: f64,
+    pub collision: Option<usize>,
 }
 
 /// Production's ordinal branch of `resolve_axis_x_overlap`
 /// (`emitters/_label_overlap.py`), reached once an authored
-/// `labels.angle` and a date-valued axis are ruled out: with
-/// `overlap.tilt`, labels measured in the Inter stand-in plus one word
-/// space are tested flat — the widest adjacent pair's mean advance
-/// against one band of `chart_width × label_usable_ratio` — and, failing
-/// that, the theme's `tilt_increments` are walked to the first angle
-/// whose rotated footprint fits the band (the last rung when none does).
-/// The labels and the space are measured at the axis labels' painted weight
+/// `labels.angle` and a date-valued axis are ruled out: labels measured in
+/// the Inter stand-in plus one word space are tested flat — the widest
+/// adjacent pair's mean advance against one band of `chart_width ×
+/// label_usable_ratio` — and, failing that, with `overlap.tilt` the theme's
+/// `tilt_increments` are walked to the first angle whose rotated footprint
+/// fits the band (the last rung when none does). The labels and the space
+/// are measured at the axis labels' painted weight
 /// (`_label_overlap.py:907`: `get_weighted_font_measurer(font.family,
 /// font.weight)`), so a bold category is not fitted flat at its regular
 /// width. An absent `overlap` stays flat. Shared by bar's category axis; moved
 /// here so line/area's native temporal generic layout (L1) can reuse the
 /// same `fits_flat`/`pick_tilt` primitives without duplicating them.
-pub fn category_label_angle(
+pub fn category_label_layout(
     labels: &crate::common::AxisLabels,
     cats: &[String],
     chart_width: f64,
     usable_ratio: Option<f64>,
     fonts: &crate::text::FontBook,
     font_size: f64,
-) -> Result<f64, String> {
-    let Some(overlap) = &labels.overlap else { return Ok(0.0) };
-    if !overlap.tilt || cats.is_empty() {
-        return Ok(0.0);
+) -> Result<CategoryLabels, String> {
+    let flat = CategoryLabels { angle: 0.0, collision: None };
+    let Some(overlap) = &labels.overlap else { return Ok(flat) };
+    if cats.is_empty() {
+        return Ok(flat);
     }
-    let gap = labels.font.measure_weighted(fonts, " ", font_size)?;
-    let widths: Vec<f64> = cats
-        .iter()
-        .map(|c| labels.font.measure_weighted(fonts, c, font_size).map(|w| w + gap))
-        .collect::<Result<_, String>>()?;
-    let ratio = usable_ratio
-        .ok_or("bar: label_usable_ratio absent (theme required for overlap.tilt)")?;
+    let widths = category_label_widths(labels, cats, fonts, font_size, true)?;
+    let ratio = usable_ratio.ok_or("bar: label_usable_ratio absent (theme required for overlap)")?;
     let band = chart_width * ratio / widths.len() as f64;
     if fits_flat(&widths, band) {
-        return Ok(0.0);
+        return Ok(flat);
+    }
+    if !overlap.tilt {
+        return Ok(CategoryLabels { angle: 0.0, collision: Some(widths.len()) });
     }
     let increments = labels
         .tilt_increments
         .as_deref()
         .ok_or("bar: labels.tilt_increments absent (theme required for overlap.tilt)")?;
-    Ok(pick_tilt(&widths, band, increments, font_size))
+    let tilt = pick_tilt(&widths, band, increments, font_size);
+    Ok(CategoryLabels { angle: tilt.angle, collision: (!tilt.fits).then_some(widths.len()) })
+}
+
+/// The category labels' advances at the axis labels' painted weight, each
+/// padded by one word space when `with_gap` (the tilt resolver's measure; an
+/// authored angle measures them bare, `_pinned_angle_block_height`). The one
+/// reading of those widths: the tilt pick and a bottom strip's tilted axis gap
+/// both come from here.
+pub fn category_label_widths(
+    labels: &crate::common::AxisLabels,
+    cats: &[String],
+    fonts: &crate::text::FontBook,
+    font_size: f64,
+    with_gap: bool,
+) -> Result<Vec<f64>, String> {
+    let gap = if with_gap { labels.font.measure_weighted(fonts, " ", font_size)? } else { 0.0 };
+    cats.iter().map(|c| labels.font.measure_weighted(fonts, c, font_size).map(|w| w + gap)).collect()
 }
 
 /// Vega's `labelOverlap` parity transform (vega-encode overlap.js) over
@@ -607,6 +647,19 @@ mod tests {
         .expect("axis labels parse")
     }
 
+    /// The tilt resolver pads each label by one word space; an authored angle
+    /// measures them bare. A bottom strip's axis gap reads the same widths.
+    #[test]
+    fn category_label_widths_pad_by_a_word_space_only_when_asked() {
+        let fonts = shipped_fonts();
+        let labels = tilting_labels(serde_json::json!("400"));
+        let cats = vec!["North".to_string()];
+        let bare = category_label_widths(&labels, &cats, &fonts, 11.0, false).unwrap()[0];
+        let padded = category_label_widths(&labels, &cats, &fonts, 11.0, true).unwrap()[0];
+        let space = labels.font.measure_weighted(&fonts, " ", 11.0).unwrap();
+        assert!(space > 0.0 && ((padded - bare) - space).abs() < 1e-9, "{bare} {padded} {space}");
+    }
+
     /// `_label_overlap.py:907`: the ordinal crowding test measures the labels at
     /// the weight they paint at, so a band that holds the regular labels flat
     /// tilts the bold ones.
@@ -627,7 +680,7 @@ mod tests {
         assert!(bold_band > regular_band + 1.0, "{regular_band} vs {bold_band}");
         let chart_width = (regular_band + bold_band) / 2.0 * cats.len() as f64;
         let angle = |weight| {
-            category_label_angle(&tilting_labels(weight), &cats, chart_width, Some(1.0), &fonts, 11.0).unwrap()
+            category_label_layout(&tilting_labels(weight), &cats, chart_width, Some(1.0), &fonts, 11.0).unwrap().angle
         };
         assert_eq!(angle(serde_json::json!("400")), 0.0);
         assert_ne!(angle(serde_json::json!("800")), 0.0);

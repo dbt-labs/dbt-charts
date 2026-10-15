@@ -71,17 +71,28 @@ def _self_token_replacement(token: str, canvas: str) -> str:
 def _resolve_self_tokens(
     node: Any,  # type-state: explicit_any — recursive walk over heterogeneous Style nodes
     canvas: str,
+    in_keyed_collection: bool = False,
 ) -> Any:  # type-state: explicit_any — the same node shape, substituted
     """Walk a Style subtree and substitute theme-self tokens with ``canvas``.
 
     ``canvas`` is the opaque canvas the board paints on (see
     ``resolve_style_and_context``), so a knockout tracks what the reader sees
-    rather than the base theme's own fill.
+    rather than the base theme's own fill. The resolver's lookup tables and the
+    non-color text of keyed-collection models are skipped, as in
+    ``_resolve_color_tokens``.
     """
     if isinstance(node, BaseModel):
         updates: dict[str, Any] = {}
         for name, value in node:
-            new = _resolve_self_tokens(value, canvas)
+            if isinstance(node, Style) and name in _RESOLUTION_CONTEXT_FIELDS:
+                continue
+            if (
+                in_keyed_collection
+                and isinstance(value, str)
+                and name not in _COLOR_FIELD_NAMES
+            ):
+                continue
+            new = _resolve_self_tokens(value, canvas, in_keyed_collection)
             if new is not value:
                 updates[name] = new
         return node.model_copy(update=updates) if updates else node
@@ -90,14 +101,16 @@ def _resolve_self_tokens(
             return _self_token_replacement(node, canvas)
         return node
     if isinstance(node, list):
-        new_list = [_resolve_self_tokens(item, canvas) for item in node]
+        new_list = [
+            _resolve_self_tokens(item, canvas, in_keyed_collection) for item in node
+        ]
         return (
             new_list
             if any(a is not b for a, b in zip(new_list, node, strict=True))
             else node
         )
     if isinstance(node, dict):
-        new_dict = {k: _resolve_self_tokens(v, canvas) for k, v in node.items()}
+        new_dict = {k: _resolve_self_tokens(v, canvas, True) for k, v in node.items()}
         return new_dict if any(new_dict[k] is not v for k, v in node.items()) else node
     return node
 
@@ -479,6 +492,7 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
     def _walk(
         node: Any,  # type-state: explicit_any — any Style patch node: model, list, dict, or leaf
         path: str,
+        in_keyed_collection: bool = False,
     ) -> Any:  # type-state: explicit_any — returns the same node shape it was given
         if isinstance(node, CategoryColorBinding):
             return node.model_copy(
@@ -493,6 +507,14 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
             updates: dict[str, Any] = {}
             for name, value in node:
                 if value is None:
+                    continue
+                if node is patch and name in _RESOLUTION_CONTEXT_FIELDS:
+                    continue
+                if (
+                    in_keyed_collection
+                    and isinstance(value, str)
+                    and name not in _COLOR_FIELD_NAMES
+                ):
                     continue
                 # `palette`/`single_series_palette`'s *string* form names the
                 # whole list (a family name or, now, a role + trailing
@@ -511,7 +533,7 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
                     raise CompilationError.from_code(
                         ERR_COLOR_TOKEN, scope=f"{path}.{name}", reason=reason
                     )
-                new = _walk(value, f"{path}.{name}")
+                new = _walk(value, f"{path}.{name}", in_keyed_collection)
                 if node is patch and name == "background" and new in _THEME_SELF_TOKENS:
                     new = _self_token_replacement(new, base.background)
                 if new is not value:
@@ -532,20 +554,18 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
                     ) from exc
             return node
         if isinstance(node, list):
-            new_list = [_walk(item, f"{path}.{i}") for i, item in enumerate(node)]
+            new_list = [
+                _walk(item, f"{path}.{i}", in_keyed_collection)
+                for i, item in enumerate(node)
+            ]
             return (
                 new_list
                 if any(a is not b for a, b in zip(new_list, node, strict=True))
                 else node
             )
         if isinstance(node, dict):
-            # Bindings only — see the matching branch in _resolve_color_tokens
-            # for why every other dict on Style is left alone.
             return {
-                key: _walk(value, f"{path}.{key}")
-                if isinstance(value, CategoryColorBinding)
-                else value
-                for key, value in node.items()
+                key: _walk(value, f"{path}.{key}", True) for key, value in node.items()
             }
         return node
 
@@ -575,15 +595,22 @@ _PALETTE_FIELDS = frozenset({"palette", "single_series_palette"})
 _NAME_ONLY_FIELDS = frozenset({"gradient", "scale"})
 
 
-def _unknown_palette(value: str, field: str, palettes: Mapping[str, str]) -> Exception:
-    """Build the ERR-PALETTE-UNKNOWN error for an unresolvable palette name."""
+def _unknown_palette(
+    ref: str, authored: str, field: str, palettes: Mapping[str, str]
+) -> Exception:
+    """Build the ERR-PALETTE-UNKNOWN error for an unresolvable palette name.
+
+    ``ref`` is the palette the lookup failed on; ``authored`` is what the author
+    wrote, which differs when a role was substituted.
+    """
     from dbt_charts.core.compile.errors import CompilationError
     from dbt_charts.core.compile.resolve.style.palette import list_palettes
     from dbt_charts.core.diagnostics.codes_compile import ERR_PALETTE_UNKNOWN
 
     return CompilationError.from_code(
         ERR_PALETTE_UNKNOWN,
-        name=value,
+        name=ref,
+        authored=authored,
         field_path=field,
         available=sorted({*palettes, *list_palettes()}),
     )
@@ -600,7 +627,7 @@ def _stops(value: str, ref: str, field: str, palettes: Mapping[str, str]) -> lis
         # (color-token only), an over-request, a surface it cannot carve. Any
         # of them escaping here becomes ERR-INTERNAL, which AGENTS.md classes
         # as a defect tier.
-        raise _unknown_palette(value, field, palettes) from e
+        raise _unknown_palette(ref, value, field, palettes) from e
 
 
 def _check_resolvable(
@@ -628,7 +655,7 @@ def _resolve_palette_leaf(
     try:
         ref = resolve_palette_ref(value, palettes)
     except ValueError as e:  # malformed :N/_r shorthand
-        raise _unknown_palette(value, field, palettes) from e
+        raise _unknown_palette(value, value, field, palettes) from e
     # A gradient keeps its *name*: `bake_scale_target_stops` bakes it later,
     # and a Vega scheme is forwarded to Vega-Lite by name and has no stops at
     # all. Expanding either here would change what render receives — but the

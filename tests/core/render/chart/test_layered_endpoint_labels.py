@@ -745,8 +745,11 @@ def test_duplicate_layer_label_raises(make_chart):
         layers=[LineLayer(type="line", y="cumulative", label="Cumulative")],
         style={"endpoint_labels": {"visible": True}},
     )
-    with pytest.raises(ChartDataError, match="collides with an existing color scale"):
+    with pytest.raises(
+        ChartDataError, match="collides with an existing color scale"
+    ) as exc_info:
         _resolve_and_render(chart, _bar_with_layers_data())
+    assert exc_info.value.code.code == "ERR-LAYER-LABEL-COLLISION"
 
 
 # --------------------------------------------------------------------------

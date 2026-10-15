@@ -715,10 +715,6 @@ class TestNotationFamilies:
         # Dict format without notation= takes the native-d3 path: no substitution.
         assert format_value(1_500_000, {"spec": ",.2s"}) == "1.5M"
 
-    def test_unknown_notation_raises(self):
-        with pytest.raises(ValueError, match="Unknown notation"):
-            format_d3(1_500, ",.2s", notation="scientific")
-
     def test_notation_only_affects_si_format(self):
         config = FormatConfig(spec=",.2f", notation="narrative")
         assert format_value(1_500_000, config) == "1,500,000.00"

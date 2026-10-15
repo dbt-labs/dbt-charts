@@ -102,11 +102,8 @@ class TestTableTransposeRender:
         assert "Dollars Used" in svg, "Expected label 'Dollars Used' in SVG"
         assert "Dollars Balance" in svg, "Expected label 'Dollars Balance' in SVG"
 
-    def test_transpose_with_column_defaults_bakes_labels_and_output_style(self):
-        """column_defaults.label bakes into each source column's resolved
-        config (unaffected by the fixed "Metric"/"Value" header labels since
-        those are already explicitly set), so it flows into the transposed
-        metric labels. column_defaults' presentation fields (background here)
+    def test_transpose_with_column_defaults_styles_output_columns(self):
+        """column_defaults' presentation fields (background here)
         reach the two synthetic __metric__/__value__ output columns too —
         render applies column_defaults to them directly, since they are its
         own render-native key space (see `_transpose_data_for_render` /
@@ -121,17 +118,14 @@ class TestTableTransposeRender:
             type="table",
             style={
                 "transpose": True,
-                "column_defaults": {"label": "Custom Label", "background": "#ff00ff"},
+                "column_defaults": {"background": "#ff00ff"},
             },
         )
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
         svg = render_table_svg(
             resolved, data, width=400, board_style=resolve_style(get_theme_style())
         )
-        assert svg.count("Custom Label") == 2
         assert "#ff00ff" in svg
-        # The fixed "Metric"/"Value" headers are already-set source values —
-        # column_defaults.label must not override them.
         assert "Metric" in svg and "Value" in svg
 
     def test_transpose_multirow_raises_chart_data_error(self, make_chart):

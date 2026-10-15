@@ -350,6 +350,27 @@ class TestDateSpans:
         assert enc["x2"] == {"field": "start_date"}
         assert enc["y"].get("sort") in (None, ["Scope", "Design", "Build"])
 
+    def test_columns_named_without_a_date_word_still_draw_a_temporal_span(self):
+        rows = [
+            {
+                "task": r["task"],
+                "started": r["start_date"],
+                "finished": r["finish_date"],
+            }
+            for r in _PLAN
+        ]
+        spec = _spec(
+            rows,
+            x="task",
+            y="finished",
+            y_start="started",
+            style={"orientation": "horizontal"},
+        )
+        (enc,) = _bar_encodings(spec)
+        assert enc["x"]["field"] == "finished"
+        assert enc["x"]["type"] == "temporal"
+        assert enc["x2"] == {"field": "started"}
+
     def test_date_y_without_y_start_still_refuses(self):
         with pytest.raises(CompilationError, match="ERR-BAR-Y-NOT-NUMERIC|numeric"):
             _spec(_PLAN, x="task", y="finish_date", y_start=None)
@@ -805,3 +826,29 @@ def test_span_label_and_tooltip_place_the_sign_by_the_prefix(prefix, gain, loss)
     assert any(f"Δ: {loss}" in t for t in painted), painted
     resolved = resolve_format_parts(FormatConfig(**fmt), None)
     assert painted_span_label_text(126, 148, resolved, False) == loss
+
+
+class TestNativeDateDimension:
+    """A native DATE x is classified temporal whatever the column is named, so
+    it takes the temporal axis arm and skips ``style.axis_band`` -- exactly as a
+    column named ``order_date`` always has."""
+
+    @staticmethod
+    def _label_padding(rows: list[dict[str, Any]], x: str) -> float:
+        spec = _spec(
+            rows,
+            x=x,
+            y="revenue",
+            y_start=None,
+            style={"axis_band": {"labels": {"padding": 33}}},
+        )
+        return _bar_encodings(spec)[0]["x"]["axis"]["labelPadding"]
+
+    @pytest.mark.parametrize("x", ["cohort", "order_date"])
+    def test_native_date_x_skips_axis_band(self, x: str):
+        rows = [{x: dt.date(2026, m, 1), "revenue": m} for m in (1, 2, 3, 4)]
+        assert self._label_padding(rows, x) != 33
+
+    def test_category_x_still_takes_axis_band(self):
+        rows = [{"cohort": c, "revenue": i} for i, c in enumerate("abcd")]
+        assert self._label_padding(rows, "cohort") == 33

@@ -248,6 +248,29 @@ ERR_BAR_DUPLICATE_ROWS = REGISTRY.register(
     )
 )
 
+ERR_BAR_OVERLAP_FULL_NON_UNIQUE_COLOR = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BAR-OVERLAP-FULL-NON-UNIQUE-COLOR",
+        domain="render",
+        title="overlap: full needs a color with one value per category",
+        message_template=(
+            "Bar chart {chart_id!r}: style.overlap: full cannot lay out "
+            "{series!r}, which has several values within one category; "
+            "the series would stack end to end past the axis instead of "
+            "overlapping. Use a color that is unique per category, a "
+            "smaller overlap, or stack: zero."
+        ),
+        doc=(
+            "Fired when a bar chart authors a full overlap (`overlap: full` or "
+            "a fraction of 1 or more) over a color field with several values "
+            "inside one category. A full overlap draws every series on top of "
+            "the others, which only reads correctly when each category holds "
+            "one color. Group the bars with a smaller overlap, or stack them."
+        ),
+        docs_topic="charts",
+    )
+)
+
 ERR_GAP_FILL_BUCKET_COLLISION = REGISTRY.register(
     ErrorCode(
         code="ERR-GAP-FILL-BUCKET-COLLISION",
@@ -1362,26 +1385,28 @@ ERR_MIRROR_LAYERS = REGISTRY.register(
     ErrorCode(
         code="ERR-MIRROR-LAYERS",
         domain="render",
-        title="axis_y.mirror is not supported with layers",
+        title="axis_y.mirror needs layers that share the base's y scale",
         message_template=(
-            "Chart {chart_id!r}: axis_y.mirror is not supported on a chart "
-            "with `layers:`; each layer owns its own y encoding, so there is "
-            "no single shared y encoding for the mirrored edge to restate. "
-            "Drop `style.axis_y.mirror` or the `layers:`."
+            "Chart {chart_id!r}: axis_y.mirror cannot reflect this chart's "
+            "`layers:`. Mirror needs one shared y scale on a vertical chart: "
+            "a layer that sets its own `axis_y` has a scale of its own, and a "
+            "horizontal bar measures along x. Drop `style.axis_y.mirror`, the "
+            "layer's `axis_y`, or the `layers:`."
         ),
         doc=(
             "Fired when a chart carries `layers:` while `style.axis_y.mirror` "
-            "is on. Overlay layers move the y encodings onto the layers "
-            "themselves (the base's own y included), so the composed spec has "
-            "no shared y encoding for the ghost axis to bind; yet a real y "
-            "axis paints, so silently skipping the mirror would be a wrong "
-            "result that looks right. Reported at render rather than by "
+            "is on and the layers do not share one y scale: a layer sets its "
+            "own `axis_y`, or the base is a horizontal bar, whose measure runs "
+            "along x. Layers that share the base's y scale mirror normally. "
+            "Silently skipping the mirror would be a wrong result that looks "
+            "right, so it refuses. Reported at render rather than by "
             "`dct validate` because mirror is cascade-resolved: a theme layer "
             "can turn it on for a chart that never authored it."
         ),
         summary=(
             "Fired when a chart with `layers:` also has `style.axis_y.mirror` "
-            "on, from either the chart or its theme."
+            "on, from either the chart or its theme, and a layer sets its own "
+            "`axis_y` or the base is horizontal."
         ),
         docs_topic="charts",
     )
@@ -1844,7 +1869,9 @@ WARN_DUAL_AXIS_COMPETING_SCALES = REGISTRY.register(
             "`style.axis_y.mirror` and an `expr` that converts the value (for "
             "example `format(datum.value * 1.8 + 32, '.0f')`): one scale, two "
             "unit labels. Where the audience expects this form, list the code in the "
-            "chart's `warnings_ignore:`."
+            "chart's `warnings_ignore:`. Both scales draw full-width gridlines, "
+            "which interleave into an uneven ladder; set "
+            "`axis_y.grid.visible: false` on the pinned layer to keep one set."
         ),
         doc=(
             "Fires on a layered chart where a layer is pinned to its own y-axis "
@@ -1855,6 +1882,32 @@ WARN_DUAL_AXIS_COMPETING_SCALES = REGISTRY.register(
             "Classic example: revenue bars with a headcount line on the right "
             "axis. A layer that sets only `axis_y.title` shares the base scale and "
             "never fires."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_LAYER_DATA_OUTSIDE_DOMAIN = REGISTRY.register(
+    WarningCode(
+        code="WARN-LAYER-DATA-OUTSIDE-DOMAIN",
+        domain="render",
+        title="Layer data falls outside its authored y domain",
+        message_template=(
+            "Chart {chart_id!r}: layer {layer_col!r} has values from {data_min} "
+            "to {data_max}, but its `axis_y.scale.domain` is [{lo}, {hi}], so "
+            "the marks outside the domain are cut off at the plot edge."
+        ),
+        fix_template=(
+            "Widen `axis_y.scale.domain` to cover the data, or filter the rows "
+            "in the query. To let the marks run past the plot deliberately, set "
+            "`axis_y.scale.clip: false` on the layer."
+        ),
+        doc=(
+            "Fires on a layer whose authored y domain excludes some of the "
+            "layer's own values while its clip is on, which is the default. "
+            "Those marks are clipped at the plot edge, so the data they carry "
+            "is not visible. Set `axis_y.scale.clip: false` on the layer to let "
+            "them run past the plot."
         ),
         docs_topic="charts",
     )
@@ -2014,7 +2067,7 @@ WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER = REGISTRY.register(
             "number format and its name looks like money or a percentage, "
             "or, whatever its name, its non-null values are all numbers between "
             "0 and 1 and not all exactly 0 or 1 (a flag): left unformatted it "
-            "renders as a bare fraction (0.4367 shows as `0.44`). The fix is to set "
+            "renders as a bare fraction (0.4367 shows as `0.4367`, not a percentage). The fix is to set "
             "`style.columns.<name>.format`, e.g. `.1%`; a KPI takes "
             "`style.value.format` or `style.support.format`. Pivot measure columns "
             "are not checked."
@@ -3660,6 +3713,196 @@ ERR_CUSTOM_SVG = REGISTRY.register(
             "stripped; the chart fails."
         ),
         summary="Fired when a custom chart's output is malformed or uses disallowed SVG.",
+        docs_topic="charts",
+    )
+)
+
+ERR_STEP_BAND_MULTI_SERIES = REGISTRY.register(
+    ErrorCode(
+        code="ERR-STEP-BAND-MULTI-SERIES",
+        domain="render",
+        title="Step curve with a multi-series color split on a band x-axis",
+        message_template="curve: step does not support a multi-series color encoding on a band x-axis (chart '{chart_id}'). It is a single-series target-overlay idiom; drop the color split or pick a different curve.",
+        doc="Fired when `curve: step` on a band x-axis is combined with a data-driven color split. Step is a single-series target-overlay idiom there; drop the color split or choose another curve.",
+        docs_topic="charts",
+    )
+)
+
+ERR_BAND_STEP_MULTI_METRIC = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BAND-STEP-MULTI-METRIC",
+        domain="render",
+        title="Band-aware step curve on a multi-metric chart",
+        message_template="{chart_type} chart '{chart_id}': band-aware step curve is not supported for multi-metric (y: [...]) charts -- use a single y field or choose a different curve style.",
+        doc="Fired when a line or area chart with several y fields uses `curve: step` on a band x-axis. Use a single y field or another curve.",
+        docs_topic="charts",
+    )
+)
+
+ERR_BAR_OVERLAP_CONTINUOUS_AXIS = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BAR-OVERLAP-CONTINUOUS-AXIS",
+        domain="render",
+        title="Bar overlap on a continuous axis",
+        message_template="Bar chart '{chart_id}': style.overlap is not supported on a continuous {axis}-axis -- overlap is a fraction of the categorical band width, and a quantitative (or wide temporal) {axis} has no band to divide. Group the {axis} into categories or buckets, or drop the overlap setting.",
+        summary="Fired when bar overlap is authored on a continuous categorical axis.",
+        doc="Fired when `style.overlap` is authored on a bar chart whose categorical axis is continuous and has no band to divide.",
+        docs_topic="charts",
+    )
+)
+
+ERR_BAR_OVERLAP_SERIES_COUNT = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BAR-OVERLAP-SERIES-COUNT",
+        domain="render",
+        title="Positive bar overlap needs exactly two series",
+        message_template="Bar chart '{chart_id}': positive overlap is only supported for exactly 2 series (got {n_series}) -- 3+ series buries the middle one. Use 'none'/'flush', or rely on the 'auto' default.",
+        summary="Fired when a positive bar overlap is authored without exactly two series.",
+        doc="Fired when a positive `style.overlap` is authored on a bar chart that does not have exactly two series.",
+        docs_topic="charts",
+    )
+)
+
+ERR_BAR_MULTI_METRIC_NO_X = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BAR-MULTI-METRIC-NO-X",
+        domain="render",
+        title="Multi-metric bar chart without an x field",
+        message_template="Bar chart '{chart_id}': multi-metric (y: [...]) charts require an x field.",
+        doc="Fired when a bar chart with several y fields has no x field.",
+        docs_topic="charts",
+    )
+)
+
+ERR_TICKS_TIME_UNIT_NO_CADENCE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TICKS-TIME-UNIT-NO-CADENCE",
+        domain="render",
+        title="Tick time unit without a step-anchored cadence",
+        message_template="ticks.time_unit: {time_unit!r} has no step-anchored cadence -- only a calendar-bucketing grain ({grains}) names a VL tick interval.",
+        summary="Fired when a tick time unit cannot anchor a temporal tick interval.",
+        doc="Fired when `ticks.time_unit` names a grain that cannot anchor a temporal tick interval.",
+        docs_topic="charts",
+    )
+)
+
+ERR_ENDPOINT_LABELS_RECASCADE_RATIO = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ENDPOINT-LABELS-RECASCADE-RATIO",
+        domain="render",
+        title="Endpoint-label re-cascade needs a positive height ratio",
+        message_template="could not re-cascade endpoint labels: height_correction_ratio must be positive, got {ratio}",
+        doc="Fired when the endpoint-label rail is re-cascaded against a non-positive height correction ratio.",
+        docs_topic="charts",
+    )
+)
+
+ERR_LAYERED_NO_COLOR_SCALE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LAYERED-NO-COLOR-SCALE",
+        domain="render",
+        title="Layered chart has no shared color scale for its endpoint-label rail",
+        message_template="layered chart has no shared color scale for its endpoint-label rail",
+        doc="Fired when a layered chart with endpoint labels has no layer carrying a categorical color scale.",
+        docs_topic="charts",
+    )
+)
+
+ERR_LAYERED_NO_PALETTE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LAYERED-NO-PALETTE",
+        domain="render",
+        title="Layered chart has no color palette",
+        message_template="layered chart has no color palette",
+        doc="Fired when layers need palette colors and the resolved palette is empty.",
+        docs_topic="charts",
+    )
+)
+
+ERR_LAYER_X_NOT_QUANTITATIVE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LAYER-X-NOT-QUANTITATIVE",
+        domain="render",
+        title="Layer x resolved to a non-quantitative scale under a quantitative base",
+        message_template="chart '{chart_id}': layer x '{x_field}' resolved to a {layer_type} scale, but the base x '{base_field}' is {base_type} -- a layer sharing the x axis with a quantitative base must itself resolve to a quantitative type.",
+        doc="Fired when a layer's x field is not quantitative while the base x axis is.",
+        docs_topic="charts",
+    )
+)
+
+ERR_LAYER_X_DOMAIN_MISMATCH = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LAYER-X-DOMAIN-MISMATCH",
+        domain="render",
+        title="Layer x does not share the base's discrete-label domain",
+        message_template="chart '{chart_id}': layer x '{x_field}' resolved to a {layer_type} scale, but the base x '{base_field}' is {base_type} -- layers sharing the x axis with the base must resolve to the same discrete-label domain.",
+        doc="Fired when a layer's x field resolves to a type that cannot share the base's discrete x domain.",
+        docs_topic="charts",
+    )
+)
+
+ERR_LAYER_ORDER_TRANSFORM_MISSING = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LAYER-ORDER-TRANSFORM-MISSING",
+        domain="render",
+        title="Base order encoding has no matching calculate transform",
+        message_template="base spec carries order encoding for field {order_field!r} but no matching calculate transform was found",
+        doc="Fired when a layered chart's base order encoding has no calculate transform to hoist.",
+        docs_topic="charts",
+    )
+)
+
+ERR_LAYER_LABEL_COLLISION = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LAYER-LABEL-COLLISION",
+        domain="render",
+        title="Layer label collides with an existing color scale entry",
+        message_template="layer label {label!r} collides with an existing color scale entry. To fix: give this layer (or the colliding series) a distinct label:.",
+        doc="Fired when a layer's label equals an existing color scale entry on a chart whose endpoint-label rail or field color would silently merge them.",
+        docs_topic="charts",
+    )
+)
+
+ERR_SUPPORT_TABLE_NO_X_ENCODING = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SUPPORT-TABLE-NO-X-ENCODING",
+        domain="render",
+        title="support_table attachment has no x-encoding",
+        message_template="support_table attachment requires an x-encoding on the chart spec or its layers; none found.",
+        doc="Fired when a support_table strip cannot find an x-encoding on the chart or any layer.",
+        docs_topic="charts",
+    )
+)
+
+ERR_SUPPORT_TABLE_INDEPENDENT_X = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SUPPORT-TABLE-INDEPENDENT-X",
+        domain="render",
+        title="support_table strip on layers with independent x scales",
+        message_template="support_table strip cannot anchor to a layer spec with resolve.scale.x == 'independent'; the layers have per-dataset x scales and the strip cannot anchor coherently.",
+        doc="Fired when a support_table strip is attached to layers with independent x scales.",
+        docs_topic="charts",
+    )
+)
+
+ERR_SUPPORT_TABLE_X_FIELD_DISAGREE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SUPPORT-TABLE-X-FIELD-DISAGREE",
+        domain="render",
+        title="support_table strip on layers with disagreeing x fields",
+        message_template="support_table strip cannot anchor to a layer spec whose per-layer x-encodings disagree on field; lift x to chart level or remove support_table.",
+        doc="Fired when layers carry different x fields under a support_table strip.",
+        docs_topic="charts",
+    )
+)
+
+ERR_SUPPORT_TABLE_NO_Y_ENCODING = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SUPPORT-TABLE-NO-Y-ENCODING",
+        domain="render",
+        title="support_table column attachment has no category y-encoding",
+        message_template="support_table column attachment requires a category y-encoding on the chart spec; none found.",
+        doc="Fired when a support_table column block cannot find a category y-encoding.",
         docs_topic="charts",
     )
 )

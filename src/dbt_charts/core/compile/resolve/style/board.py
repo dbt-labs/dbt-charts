@@ -24,7 +24,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from pydantic import BaseModel
 
 from dbt_charts.core.colors import BY_TONE
-from dbt_charts.core.compile.merge import merge_onto_base
+from dbt_charts.core.compile.merge import merge_onto_base, merge_patches
+from dbt_charts.core.compile.models.markers import AUTO
 from dbt_charts.core.compile.models.primitives import (
     DEFAULT_REGIONAL,
     FontStyle,
@@ -36,6 +37,7 @@ from dbt_charts.core.compile.models.primitives import (
 from dbt_charts.core.compile.models.style.authored import (
     EndpointLabelsConfig,
     PaginationConfig,
+    StylePatch,
     SupportTableStylePatch,
 )
 from dbt_charts.core.compile.models.style.resolved._base import (
@@ -54,12 +56,16 @@ from dbt_charts.core.compile.models.style.theme import (
     CalloutChartStyle,
     ChartsStyle,
     ChartTitleStyle,
+    GlobalMarksStyle,
     HeatmapChartStyle,
     HistogramChartStyle,
+    KpiChartStyle,
     KpiTonesStyle,
     LegendStyle,
     LineChartStyle,
+    PieChartStyle,
     ScatterChartStyle,
+    SliceLabelsStyle,
     SparkStyle,
     Style,
     SupportTableStyle,
@@ -76,14 +82,17 @@ from dbt_charts.core.compile.resolve.style.inherit_graph import (
 from dbt_charts.core.compile.resolve.style.inherit_resolver import (
     apply_inherit,
     defer_base_none_children,
-    null_paths,
-    prune_path,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import (
     decide_legend_direction,
     decide_legend_position,
 )
-from dbt_charts.core.compile.resolve.style.palette import color, ink_canvas, mark_ink
+from dbt_charts.core.compile.resolve.style.palette import (
+    color,
+    ink_canvas,
+    is_translucent,
+    mark_ink,
+)
 from dbt_charts.core.compile.resolve.style.tokens import (
     _EMOJI_MODE_TO_FAMILY,
     _append_emoji_family,
@@ -402,11 +411,17 @@ def _build_chart_style_context(
     # `charts.background` above is merely the Inherit(from_path=
     # "Style.background") echo of own_background, already fully present in
     # board_canvas; compositing that echo again would double it.
+    card_authored = pre_style.charts.background is not None
     board_canvas, chart_canvas = _canvases(
         own_background,
-        charts.background if pre_style.charts.background is not None else None,
+        charts.background if card_authored else None,
         base_background,
     )
+    # A translucent echo is not repainted as the card fill: the board already
+    # paints it. An opaque echo covers identical pixels, so it stays.
+    card_fill = charts.background
+    if not card_authored and is_translucent(card_fill):
+        card_fill = "transparent"
     return ChartStyleContext(
         **passthrough,
         palette=resolved_palette,
@@ -435,7 +450,7 @@ def _build_chart_style_context(
         title=title,
         spark=spark,
         pagination=pagination,
-        background=charts.background,
+        background=card_fill,
         formats=formats,
         palettes=palettes,
         roles=roles,
@@ -465,42 +480,47 @@ def _links_under(paths: list[str]) -> InheritGraph:
     }
 
 
-def merge_style(
-    base: Style,
-    *patches: Any,  # type-state: explicit_any — heterogeneous cascade patch fragments
-) -> Style:
-    """Deep-merge patches onto base.
+def _pie_reaches_donut(
+    patch: Any,  # type-state: explicit_any — heterogeneous cascade patch fragment
+) -> Any:  # type-state: explicit_any — the same patch, donut layered
+    """Layer a patch's ``charts.pie`` under its ``charts.donut``.
+
+    A layer's pie style reaches donuts, and its own donut style wins over it,
+    so a board's pie beats the theme's donut default.
+    """
+    charts = patch.charts
+    if charts is None or charts.pie is None:
+        return patch
+    donut = (
+        charts.pie if charts.donut is None else merge_patches(charts.pie, charts.donut)
+    )
+    return patch.model_copy(
+        update={"charts": charts.model_copy(update={"donut": donut})}
+    )
+
+
+def merge_style(base: Style, patch: StylePatch | None = None) -> Style:
+    """Deep-merge a patch onto base.
 
     A partial write into an empty slot that inherits from a parent is merged
     only after the slot is filled from that parent, so it never has to be
     complete on its own.
 
     The base comes from ``get_theme_style``, which already ran
-    ``_resolve_color_tokens`` at theme-load time. Pre-resolving patches before
-    the deep-merge resolves their color tokens to hex; theme-self tokens stay
+    ``_resolve_color_tokens`` at theme-load time. Pre-resolving the patch before
+    the deep-merge resolves its color tokens to hex; theme-self tokens stay
     in place for ``_resolve_canvas_tokens``.
     """
-    merged: Style = base
-    held_patches: list[BaseModel] = []
-    held: list[str] = []
-    for patch in patches:
-        resolved_patch = _resolve_tokens_on_patch(patch, base)
-        for null_path in null_paths(resolved_patch, "Style"):
-            held_patches = [prune_path(h, null_path, "Style") for h in held_patches]
-            held = [
-                h for h in held if h != null_path and not h.startswith(f"{null_path}.")
-            ]
-        remainder, held_patch, deferred = defer_base_none_children(
-            merged, resolved_patch, "Style"
-        )
-        held_patches.append(held_patch)
-        held.extend(deferred)
-        merged = merge_onto_base(merged, remainder)
-
+    if patch is None:
+        return base
+    resolved_patch = _pie_reaches_donut(_resolve_tokens_on_patch(patch, base))
+    remainder, held_patch, held = defer_base_none_children(
+        base, resolved_patch, "Style"
+    )
+    merged = merge_onto_base(base, remainder)
     if held:
         merged = apply_inherit(merged, _links_under(held))
-        for held_patch in held_patches:
-            merged = merge_onto_base(merged, held_patch)
+        merged = merge_onto_base(merged, held_patch)
     return merged
 
 
@@ -598,10 +618,52 @@ def _finalize_chart_style_context(
     )
 
 
+def slice_ink_decided(labels: SliceLabelsStyle) -> SliceLabelsStyle:
+    """An `auto` slice label ink is each wedge's own: no ink is set."""
+    if labels.font.color != AUTO:
+        return labels
+    return labels.model_copy(
+        update={"font": labels.font.model_copy(update={"color": None})}
+    )
+
+
+def bake_kpi_support_ink(
+    kpi: KpiChartStyle, tones: KpiTonesStyle, muted: str
+) -> KpiChartStyle:
+    """Replace the support row's ``auto`` inks with concrete colors.
+
+    The row takes the tone's color, else the muted ink. The glyph keeps the tone
+    over an authored row color, and follows the row without one.
+    """
+    support = kpi.support
+    tone = None if support.tone is None else getattr(tones, support.tone)
+    row_color = support.font.color
+    if row_color == AUTO:
+        row_color = tone or muted
+    glyph_color = support.glyph.font.color
+    if glyph_color == AUTO:
+        glyph_color = tone or row_color
+    glyph_font = support.glyph.font.model_copy(update={"color": glyph_color})
+    return kpi.model_copy(
+        update={
+            "support": support.model_copy(
+                update={
+                    "font": support.font.model_copy(update={"color": row_color}),
+                    "glyph": support.glyph.model_copy(update={"font": glyph_font}),
+                }
+            )
+        }
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class ConcreteFamilyDefaults:
     """Board-wide family styles with the engine-decided leaves made concrete."""
 
+    marks: GlobalMarksStyle
+    pie: PieChartStyle
+    donut: PieChartStyle
+    kpi: KpiChartStyle
     support_table: SupportTableStyle
     bar: BarChartStyle
     line: LineChartStyle
@@ -634,7 +696,49 @@ def concrete_family_defaults(
     bar, line, area = chart_context.bar, chart_context.line, chart_context.area
     heatmap, histogram = chart_context.heatmap, chart_context.histogram
     scatter = chart_context.scatter
+
+    def slice_mark(marks: GlobalMarksStyle) -> GlobalMarksStyle:
+        labels = marks.slice.labels
+        return (
+            marks
+            if labels is None
+            else marks.model_copy(
+                update={
+                    "slice": marks.slice.model_copy(
+                        update={"labels": slice_ink_decided(labels)}
+                    )
+                }
+            )
+        )
+
+    pie = chart_context.pie
+    pie_labels = pie.marks.slice.labels
+    concrete_pie = (
+        pie
+        if pie_labels is None
+        else pie.model_copy(
+            update={
+                "marks": pie.marks.model_copy(
+                    update={
+                        "slice": pie.marks.slice.model_copy(
+                            update={"labels": slice_ink_decided(pie_labels)}
+                        )
+                    }
+                )
+            }
+        )
+    )
     return ConcreteFamilyDefaults(
+        marks=slice_mark(chart_context.marks),
+        kpi=bake_kpi_support_ink(
+            chart_context.kpi, chart_context.tones, chart_context.cascaded.muted
+        ),
+        pie=concrete_pie,
+        donut=(
+            concrete_pie
+            if chart_context.donut is None
+            else merge_onto_base(concrete_pie, chart_context.donut)
+        ),
         support_table=table(chart_context.support_table),
         bar=bar.model_copy(
             update={
@@ -707,6 +811,10 @@ def _finalize_style(
             if f.name not in overridden
         },
         title=concrete_title_style(chart_context),
+        marks=concrete.marks,
+        pie=concrete.pie,
+        donut=concrete.donut,
+        kpi=concrete.kpi,
         support_table=concrete.support_table,
         bar=concrete.bar,
         line=concrete.line,
@@ -738,23 +846,26 @@ def _finalize_style(
     return resolved, chart_context
 
 
-def resolve_style(base: Style, *patches: Any) -> ResolvedStyle:
-    """Merge compiled base with patches, apply cascade, return the final board style."""
-    return resolve_style_and_context(base, *patches)[0]
+def resolve_style(base: Style, patch: StylePatch | None = None) -> ResolvedStyle:
+    """Merge compiled base with a patch, apply cascade, return the final board style."""
+    return resolve_style_and_context(base, patch)[0]
 
 
-def resolve_chart_style_context(base: Style, *patches: Any) -> ChartStyleContext:
-    """Merge compiled base with patches, apply cascade, return the chart cascade context.
+def resolve_chart_style_context(
+    base: Style, patch: StylePatch | None = None
+) -> ChartStyleContext:
+    """Merge compiled base with a patch, apply cascade, return the chart cascade context.
 
     Consumed only by runtime chart resolution (``compile/resolve/chart/``,
     ``compile/resolve/style/chart_context.py``, ``compile/support_table.py``) — never by render.
     """
-    return resolve_style_and_context(base, *patches)[1]
+    return resolve_style_and_context(base, patch)[1]
 
 
 def resolve_style_and_context(
     base: Style,
-    *patches: Any,  # type-state: explicit_any — heterogeneous patch types (StylePatch, ...) merged in sequence
+    patch: StylePatch | None = None,
+    *,
     base_background: str | None = None,
     currency: CurrencyCode | None = DEFAULT_REGIONAL.currency,
 ) -> tuple[ResolvedStyle, ChartStyleContext]:
@@ -781,9 +892,9 @@ def resolve_style_and_context(
     scope's canvas equals its parent's unchanged with no separate flag.
     """
     background = base.background if base_background is None else base_background
-    if patches:
+    if patch is not None:
         return _finalize_style(
-            _resolve_canvas_tokens(base, merge_style(base, *patches), background),
+            _resolve_canvas_tokens(base, merge_style(base, patch), background),
             background,
             currency,
         )

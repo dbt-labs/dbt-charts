@@ -927,8 +927,11 @@ def test_categorical_overlay_color_requires_a_palette() -> None:
     )
     resolved = resolve(chart, _OVERLAY_COLOR_DATA, _default_board_style())
 
-    with pytest.raises(ChartDataError, match="layered chart has no color palette"):
+    with pytest.raises(
+        ChartDataError, match="layered chart has no color palette"
+    ) as exc_info:
         BarEmitter().emit(resolved, _DEFAULT_BOX, regroup((), _OVERLAY_COLOR_DATA))
+    assert exc_info.value.code.code == "ERR-LAYERED-NO-PALETTE"
 
 
 def test_categorical_scatter_overlay_uses_circle_legend_glyph() -> None:
@@ -1758,3 +1761,29 @@ def test_overlay_layer_text_caption_is_drawn_from_its_own_rows(
     for enc in captions:
         assert enc["type"] == "nominal", enc
         assert "format" not in enc, enc
+
+
+def test_layered_color_base_with_an_empty_palette_raises_its_registered_code() -> None:
+    from dbt_charts.core.compile.models.chart.normalized import BarChart as NBarChart
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError
+    from dbt_charts.core.render.chart.emitters.bar import BarEmitter
+
+    layer = _layer_ta.validate_python({"type": "line", "y": "target"})
+    chart = NBarChart(
+        id="bar1",
+        type="bar",
+        x="month",
+        y="revenue",
+        color="kind",
+        query=_sql(),
+        query_name="q",
+        variable_dependencies=set(),
+        layers=[layer],
+    )
+    resolved = resolve(chart, _COLOR_LAYER_DATA, _default_board_style())
+    resolved = resolved.model_copy(update={"palette": ()})
+    with pytest.raises(ChartDataError) as exc:
+        BarEmitter().emit(resolved, _DEFAULT_BOX, regroup((), _COLOR_LAYER_DATA))
+    assert exc.value.code is not None
+    assert exc.value.code.code == "ERR-LAYERED-NO-PALETTE"

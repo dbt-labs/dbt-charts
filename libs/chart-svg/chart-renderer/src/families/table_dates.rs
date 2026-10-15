@@ -111,6 +111,15 @@ impl Moment {
         Moment { year, month, day, hour: 0, minute: 0, second: 0, micro: 0, utc: false }
     }
 
+    /// Milliseconds since 1970-01-01T00:00:00Z; a naive moment reads as UTC.
+    fn epoch_millis(self) -> i64 {
+        let days = days_from_epoch(self.year, self.month, self.day)
+            - days_from_epoch(1970, 1, 1);
+        let seconds = days * 86_400
+            + i64::from(self.hour * 3600 + self.minute * 60 + self.second);
+        seconds * 1000 + i64::from(self.micro / 1000)
+    }
+
     fn day_of_year(self) -> u32 {
         (1..self.month)
             .map(|m| days_in_month(self.year, m))
@@ -349,7 +358,7 @@ pub(super) fn is_time_format(spec: &str) -> bool {
 /// The text `d.strftime("%<letter>")` gives for the single-field numeric
 /// directives `_PADDED_NUMERIC_DIRECTIVES` (`text/format_d3.py`) carries, in
 /// the padding the unmodified directive has (`_DIRECTIVE_COMPUTERS` for the
-/// nine the CRT lacks, glibc for the rest).
+/// twelve the CRT lacks, glibc for the rest).
 fn padded_numeric(m: Moment, letter: char) -> Option<String> {
     Some(match letter {
         'C' => format!("{:02}", m.year / 100),
@@ -361,8 +370,11 @@ fn padded_numeric(m: Moment, letter: char) -> Option<String> {
         'j' => format!("{:03}", m.day_of_year()),
         'k' => format!("{:2}", m.hour),
         'l' => format!("{:2}", m.hour12()),
+        'L' => format!("{:03}", m.micro / 1000),
         'm' => format!("{:02}", m.month),
         'M' => format!("{:02}", m.minute),
+        'q' => ((m.month - 1) / 3 + 1).to_string(),
+        'Q' => m.epoch_millis().to_string(),
         'S' => format!("{:02}", m.second),
         'u' => (m.weekday() + 1).to_string(),
         'U' => format!("{:02}", m.week_sunday_first()),
@@ -431,14 +443,15 @@ fn locale_word(m: Moment, letter: char) -> Result<String, String> {
     let locale = active_time_locale()?;
     let weekday = (m.weekday() + 1) % 7;
     let month = m.month as usize - 1;
+    let period = &locale.periods[usize::from(m.hour >= 12)];
     Ok(match letter {
-        'a' => &locale.short_days[weekday],
-        'A' => &locale.days[weekday],
-        'b' => &locale.short_months[month],
-        'B' => &locale.months[month],
-        _ => &locale.periods[usize::from(m.hour >= 12)],
-    }
-    .clone())
+        'a' => locale.short_days[weekday].clone(),
+        'A' => locale.days[weekday].clone(),
+        'b' => locale.short_months[month].clone(),
+        'B' => locale.months[month].clone(),
+        'P' => period.to_lowercase(),
+        _ => period.clone(),
+    })
 }
 
 /// `portable_strftime(d, spec)` (`text/format_d3.py`): the `-`/`_`/`0` padding
@@ -472,7 +485,7 @@ pub(super) fn strftime(m: Moment, spec: &str) -> Result<String, String> {
             modifier.map(String::from).unwrap_or_default()
         );
         let unsupported = || format!("directive {name} is not supported");
-        if matches!(letter, 'a' | 'A' | 'b' | 'B' | 'p') {
+        if matches!(letter, 'a' | 'A' | 'b' | 'B' | 'p' | 'P') {
             out.push_str(&locale_word(m, letter)?);
             continue;
         }
@@ -496,7 +509,6 @@ pub(super) fn strftime(m: Moment, spec: &str) -> Result<String, String> {
             'F' => strftime(m, "%Y-%m-%d")?,
             'g' => format!("{:02}", m.iso_week().0 % 100),
             'n' => "\n".to_string(),
-            'P' => (if m.hour < 12 { "am" } else { "pm" }).to_string(),
             'r' => format!(
                 "{} {}",
                 strftime(m, "%I:%M:%S")?,
@@ -601,6 +613,17 @@ mod tests {
     }
 
     #[test]
+    fn percent_p_lowercase_follows_the_locale_period() {
+        let mut locale = en_us();
+        locale.periods = ["VORM.".into(), "NACHM.".into()];
+        let afternoon = moment("2024-03-05T14:30:00");
+        assert_eq!(
+            in_locale(&locale, afternoon, "%p|%P|%-P").unwrap(),
+            "NACHM.|nachm.|nachm."
+        );
+    }
+
+    #[test]
     fn composites_that_never_terminate_refuse() {
         let mut locale = en_us();
         locale.date = "%x".into();
@@ -633,8 +656,8 @@ mod tests {
 
     #[test]
     fn a_directive_production_rejects_refuses() {
-        // `PYTHON_STRFTIME_DIRECTIVES` holds no `t`, `E`, `O`, `L`, `q` or `Q`.
-        for spec in ["%t", "%E", "%Oe", "%L", "%q", "%Q"] {
+        // `PYTHON_STRFTIME_DIRECTIVES` holds no `t`, `E` or `O`.
+        for spec in ["%t", "%E", "%Oe"] {
             assert!(en_strftime(moment("2024-03-05"), spec).is_err(), "{spec}");
         }
     }
@@ -728,10 +751,8 @@ mod tests {
     #[test]
     fn directives_that_depend_on_the_time_zone_refuse_by_name() {
         let m = moment("2024-03-05T14:30:00");
-        for spec in ["%s", "%q", "%Q"] {
-            let err = en_strftime(m, spec).unwrap_err();
-            assert!(err.contains(&spec[..spec.len()]), "{spec}: {err}");
-        }
+        let err = en_strftime(m, "%s").unwrap_err();
+        assert!(err.contains("%s"), "{err}");
         assert!(en_strftime(m, "100%").unwrap_err().contains("trailing"));
     }
 

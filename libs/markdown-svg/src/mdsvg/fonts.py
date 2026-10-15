@@ -349,7 +349,7 @@ class FontMeasurer:
         weight.
         """
         try:
-            from fontTools.ttLib import (  # pyright: ignore[reportMissingTypeStubs]
+            from fontTools.ttLib import (
                 TTFont,
                 TTLibError,
             )
@@ -373,11 +373,11 @@ class FontMeasurer:
             self._hmtx = font["hmtx"]
             # fonttools table attrs are dynamic (__getattr__); no upstream stubs
             head = font["head"]
-            upm = head.unitsPerEm  # pyright: ignore[reportAttributeAccessIssue]
+            upm = head.unitsPerEm
             self._units_per_em = upm
             hhea = font["hhea"]
-            self._ascent_raw = hhea.ascent  # pyright: ignore[reportAttributeAccessIssue]
-            self._descent_raw = hhea.descent  # pyright: ignore[reportAttributeAccessIssue]
+            self._ascent_raw = hhea.ascent
+            self._descent_raw = hhea.descent
             self._available = True
         except (FileNotFoundError, OSError, TTLibError):
             # Font file not found, unreadable, or invalid. A file that loads but

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import functools
 import typing
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any
 
 from pydantic import BaseModel
@@ -90,16 +92,15 @@ def _build_graph(
     slot_at: StylePath | None = None,
     slot_from: StylePath | None = None,
     skip_slots: bool = False,
-    slot_exclude: frozenset[str] = frozenset(),
+    slot_links: Mapping[str, str] = MappingProxyType({}),
 ) -> None:
     """Walk *model_cls* recursively and populate *graph* from Inherit/InheritSlot markers.
 
     ``skip_slots=True`` suppresses InheritSlot expansion for the entire subtree —
     used when a shared model's slot annotations must not apply at a particular path.
 
-    ``slot_exclude`` carries the active slot's ``InheritSlot.exclude`` leaf names
-    down through the recursion; a leaf whose field name is in this set gets no
-    graph entry, leaving it a genuine cascade-managed sentinel.
+    ``slot_links`` carries the active slot's ``InheritSlot.links`` down through the
+    recursion; a leaf named there links to its own parent instead of the slot's.
     """
     if model_cls in seen:
         return
@@ -158,7 +159,9 @@ def _build_graph(
                     slot_at=slot_at if skip_marker.cascade else None,
                     slot_from=slot_from if skip_marker.cascade else None,
                     skip_slots=not skip_marker.cascade,
-                    slot_exclude=slot_exclude if skip_marker.cascade else frozenset(),
+                    slot_links=slot_links
+                    if skip_marker.cascade
+                    else MappingProxyType({}),
                 )
             elif slot_marker is not None and not skip_slots:
                 if slot_at is not None and slot_from is not None:
@@ -188,7 +191,7 @@ def _build_graph(
                         graph,
                         slot_at=slot_at,
                         slot_from=slot_from,
-                        slot_exclude=slot_exclude,
+                        slot_links=slot_links,
                     )
                 else:
                     from_path = slot_marker.from_path
@@ -197,11 +200,23 @@ def _build_graph(
                         raise ValueError(
                             f"InheritSlot from_path {from_path!r} does not match any path in the model"
                         )
-                    unknown_exclude = slot_marker.exclude - nested.model_fields.keys()
-                    if unknown_exclude:
+                    unknown_links = (
+                        slot_marker.links.keys() - nested.model_fields.keys()
+                    )
+                    if unknown_links:
                         raise ValueError(
-                            f"InheritSlot exclude {sorted(unknown_exclude)!r} on "
+                            f"InheritSlot links {sorted(unknown_links)!r} on "
                             f"{_path_str(current)!r} not a field of {nested.__name__}"
+                        )
+                    missing_links = [
+                        path
+                        for path in slot_marker.links.values()
+                        if path not in valid_paths
+                    ]
+                    if missing_links:
+                        raise ValueError(
+                            f"InheritSlot links {missing_links!r} on "
+                            f"{_path_str(current)!r} not found in model paths"
                         )
                     # Nullable InheritSlot (T | None): emit a container-level copy
                     # link so apply_inherit can copy the whole parent object when
@@ -219,7 +234,7 @@ def _build_graph(
                         graph,
                         slot_at=current,
                         slot_from=from_tuple,
-                        slot_exclude=slot_marker.exclude,
+                        slot_links=slot_marker.links,
                     )
             else:
                 _build_graph(
@@ -231,7 +246,7 @@ def _build_graph(
                     slot_at=slot_at,
                     slot_from=slot_from,
                     skip_slots=skip_slots,
-                    slot_exclude=slot_exclude,
+                    slot_links=slot_links,
                 )
         else:
             # Leaf node.
@@ -247,12 +262,8 @@ def _build_graph(
             #    slot (which authors may override independently).
             # 2. Explicit Inherit: fires at canonical (non-slot) positions only,
             #    establishing the "ultimate fallback" for the entire slot family.
-            #
-            # A leaf named in the active slot's exclude set gets no link at
-            # all: it stays a genuine cascade-managed sentinel (None unless
-            # some tier's raw YAML sets it) rather than being backfilled.
-            if field_name in slot_exclude:
-                pass
+            if field_name in slot_links:
+                graph[_path_str(current)] = slot_links[field_name]
             elif slot_at is not None and slot_from is not None and skip_marker is None:
                 leaf_suffix: StylePath = current[len(slot_at) :]
                 fallback_path = _path_str(slot_from + leaf_suffix)

@@ -412,8 +412,8 @@ def cap_html_policy(policy: HtmlPolicy, ceiling: HtmlPolicy) -> HtmlPolicy:
 def resolve_max_query_duration_seconds(source_config: Mapping[str, Any] | None) -> int:
     """Resolve the per-query duration cap: per-source override → global config default.
 
-    ``source_config`` is the raw dumped source dict (typed field or ADR-009
-    passthrough key alike — both surface the same way in the dict), so this
+    ``source_config`` is the raw dumped source dict (typed field or passthrough
+    key alike — both surface the same way in the dict), so this
     works uniformly whether the warehouse has a typed
     ``max_query_duration_seconds`` field or not.
 
@@ -1084,7 +1084,7 @@ class ProjectSourcesConfig:
         self,
         sources: dict[str, dict[str, Any]] | None = None,
         implicit_source: str | None = None,
-    ):
+    ) -> None:
         self.sources = sources or {}
         self.implicit_source = implicit_source
 

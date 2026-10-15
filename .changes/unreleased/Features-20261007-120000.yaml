@@ -1,3 +1,3 @@
 kind: Features
-body: "A board's `regional:` section sets its number locale (`locale.number`), by name (`fr-FR` prints `1 234,5`) or as a d3 locale definition, and the currency symbol its money formats print, for one board or a whole folder through `charts/meta.yml`."
+body: 'A board''s `regional:` section sets its locale, for one board or a whole folder through `charts/meta.yml`: `locale.number` by name (`fr-FR` prints `1 234,5`) or as a d3 locale definition, including its thousand, million and billion abbreviations; `locale.time` for month, weekday and AM/PM names and a date picker''s first weekday; and the currency symbol money formats print.'
 time: 2026-10-07T12:00:00.000000-07:00

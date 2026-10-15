@@ -8,20 +8,20 @@ from __future__ import annotations
 
 from typing import Any
 
+from dbt_charts.core.compile.models.chart.normalized import PieChart
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedBarChart,
     ResolvedBarStyle,
-    ResolvedPieChart,
-    ResolvedPieStyle,
     ResolvedStyleChannel,
 )
+from dbt_charts.core.compile.models.style.authored import PieChartStylePatch
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
-from dbt_charts.core.compile.resolve.chart.label_data import (
-    pie_presentation_fingerprint,
-)
+from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 from dbt_charts.core.render.chart.spec import RenderBox
 
+from ..._engine_render import render_pie_svg
+from ..._svg_render import legend_label_order
 from ...conftest import baked_format
 
 _DEFAULT_BOX = RenderBox(width=600.0, height=300.0)
@@ -120,51 +120,10 @@ def _bar_with_color(
         legend=legend,
         background=_default_charts().background,
         canvas=_default_charts().ink_canvas,
-        title_style=_default_charts().title,
+        title_style=concrete_title_style(_default_charts()),
         layout_padding=_ZERO_PADDING,
         field_labels={},
     )
-
-
-def _pie_with_color(
-    pie_style: ResolvedPieStyle, legend_title_visible: bool | None = None
-) -> ResolvedPieChart:
-    color_ch = ResolvedStyleChannel(
-        channel="color", mode="series", data_field="category"
-    )
-    legend = _make_legend(legend_title_visible)
-    data = [
-        {"sales": 100, "category": "A"},
-        {"sales": 200, "category": "B"},
-    ]
-    return ResolvedPieChart(
-        id="pie_color",
-        chart_type="pie",
-        resolution_width=600.0,
-        outer_fraction=0.9,
-        attached_table_gap=12.0,
-        hybrid_heading_gap=6.0,
-        presentation_fingerprint=pie_presentation_fingerprint(data),
-        slice_label_indices=(),
-        theta="sales",
-        color="category",
-        style=pie_style,
-        dark_companion_stops=(),
-        variable_dependencies=frozenset(),
-        palette=(),
-        resolved_channels={"color": color_ch},
-        legend=legend,
-        background=_default_charts().background,
-        canvas=_default_charts().ink_canvas,
-        title_style=_default_charts().title,
-        layout_padding=_ZERO_PADDING,
-        field_labels={},
-    )
-
-
-# ---------------------------------------------------------------------------
-# bar: legend.title.visible: false → encoding.color.legend.title == null
-# ---------------------------------------------------------------------------
 
 
 def test_bar_legend_title_visible_false_emits_null_title(
@@ -221,29 +180,24 @@ def test_bar_legend_title_visible_default_no_title_suppression(
 # ---------------------------------------------------------------------------
 
 
-def test_pie_legend_title_visible_false_still_works(
-    pie_style: ResolvedPieStyle,
-) -> None:
-    """Pie with color channel + legend.title.visible:false → title:null in VL encoding."""
-    from dbt_charts.core.render.chart.emitters import get_emitter
+def test_pie_legend_title_visible_false_still_works() -> None:
+    """legend.title.visible: false drops the engine-drawn legend's title, and
+    only the title."""
+    rows = [{"sales": 100, "category": "A"}, {"sales": 200, "category": "B"}]
 
-    chart = _pie_with_color(pie_style, legend_title_visible=False)
-    data = [
-        {"sales": 100, "category": "A"},
-        {"sales": 200, "category": "B"},
-    ]
-    spec = get_emitter(chart).emit(chart, _DEFAULT_BOX, regroup((), data))
-    # Pie emitter returns a layered spec; arc layer is layers[0]
-    arc_spec = spec.layers[0]
-    color_enc = arc_spec.encoding.get("color")
-    assert color_enc is not None, "pie arc must have color encoding"
-    legend_enc = color_enc.get("legend")
-    assert isinstance(legend_enc, dict), (
-        f"expected legend to be a dict for pie when title.visible=False, got {legend_enc!r}"
-    )
-    assert "title" in legend_enc, (
-        f"expected legend.title key for pie when title.visible=False, got {legend_enc!r}"
-    )
-    assert legend_enc["title"] is None, (
-        f"expected legend.title=null for pie when title.visible=False, got {legend_enc!r}"
-    )
+    def svg(legend: dict[str, object]) -> str:
+        chart = PieChart(
+            id="pie_color",
+            type="pie",
+            theta="sales",
+            color="category",
+            query_name="q",
+            style=PieChartStylePatch.model_validate({"legend": legend}),
+        )
+        return render_pie_svg(chart, rows)
+
+    shown = svg({"visible": True})
+    hidden = svg({"visible": True, "title": {"visible": False}})
+    assert ">Category</text>" in shown
+    assert ">Category</text>" not in hidden
+    assert legend_label_order(hidden) == ["A", "B"]

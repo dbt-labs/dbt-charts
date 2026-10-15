@@ -195,7 +195,7 @@ def _build_spec_axis_y_time_format_on_scatter() -> dict[str, Any]:
     Site B.y (``_utc_time_label_expr`` replacing ``formatType: "time"`` on
     the non-temporal-y leak path).
 
-    y values are nominal strings ("Jan", "Feb") so the type inference does
+    y values are ISO month bands ("2024-01") so the type inference does
     not pre-route this through the temporal path; the leak block fires.
     """
     chart = ScatterChart(
@@ -208,9 +208,9 @@ def _build_spec_axis_y_time_format_on_scatter() -> dict[str, Any]:
         ),
     )
     data = [
-        {"value": 1, "month_str": "Jan"},
-        {"value": 2, "month_str": "Feb"},
-        {"value": 3, "month_str": "Mar"},
+        {"value": 1, "month_str": "2024-01"},
+        {"value": 2, "month_str": "2024-02"},
+        {"value": 3, "month_str": "2024-03"},
     ]
     return generate_vega_lite_spec(
         chart, data, board_style=_BOARD_RS, chart_style_context=_BOARD_CTX

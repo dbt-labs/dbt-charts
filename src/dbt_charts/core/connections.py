@@ -621,6 +621,7 @@ def _bulk_rows_for_config(
     from dbt_charts.core.dialects import get_dialect
     from dbt_charts.core.execute.adapters.base import (
         apply_row_limit_truncation,
+        reject_duplicate_columns,
         resolve_effective_row_limit,
     )
     from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
@@ -659,6 +660,7 @@ def _bulk_rows_for_config(
                 sql, auto_begin=False, fetch=True, limit=driver_limit
             )
         rows, truncated_reason = apply_row_limit_truncation(list(table.rows), row_limit)
+        reject_duplicate_columns(table.column_names)
         result_rows = [dict(zip(table.column_names, row, strict=True)) for row in rows]
     except (
         Exception  # noqa: BLE001 — normalize driver errors to RuntimeError

@@ -151,7 +151,7 @@ _ATTACHED_TABLE_DONUT_YAML = _DONUT_NARROW_SLOT_YAML.replace(
 )
 
 # Two data rows where one slice has < 2% share. That triggers hybrid (attached-
-# table) mode in classify_arc_render_mode (invisible_slice_share default = 0.02).
+# table) mode in classify_arc_render_mode (INVISIBLE_SLICE_SHARE default = 0.02).
 # Total = 1,000,000 → "1,000,000" (~86px at 18px) overflows a 150px wheel hole
 # (min(wheel_width, continuousHeight=300) × 0.9 × 0.6 ≤ 81px).
 _ATTACHED_TABLE_ROWS = [{"amount": 999_990}, {"amount": 10}]

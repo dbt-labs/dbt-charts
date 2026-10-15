@@ -2635,3 +2635,30 @@ rows:
 """
     result = compile_board(board)
     assert result.success, f"Compile failed: {result.errors}"
+
+
+def test_alias_named_auto_is_reserved() -> None:
+    """`auto` on an axis means the engine's default, so an alias of that name
+    would be silently ignored there."""
+    result = compile_board(
+        """
+title: T
+style:
+  formats:
+    auto: "$,.0f"
+queries:
+  q:
+    source: db
+    sql: SELECT 'Jan' AS month, 100 AS revenue
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+rows:
+  - revenue
+"""
+    )
+    assert not result.success
+    assert "reserved" in str(result.errors)

@@ -44,6 +44,7 @@ def test_resolved_line_mark_style_rejects_invalid_curve(bad_curve):
             halo_multiplier=2.0,
             curve=bad_curve,
             labels=PointLabelsStyle(),
+            disconnected_width=0.9,
         )
 
 

@@ -42,7 +42,6 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     _base_kwargs,
     _resolve_text,
     _shared_kwargs,
-    _title_font,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _with_color_tokens,
@@ -53,6 +52,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
     declared_column_format,
 )
+from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.text.predefined_formats import PREDEFINED_TEXT_NAMES
 from dbt_charts.core.utils import coerce_numeric_cell
@@ -105,7 +105,12 @@ def _resolve_kpi(
     cf = base["conditional_formatting"]
     support_rules = cf[support_column] if cf and support_column in cf else None
     value_format = finalize_kpi_value_format(
-        chart_value, headline, formats, board=board_value, column=declared
+        chart_value,
+        headline,
+        formats,
+        compact=kpi.value.compact,
+        board=board_value,
+        column=declared,
     )
     text_link = _kpi_text_link(
         value_format, data, normalized.value, normalized.id, bool(base["link"])
@@ -203,7 +208,7 @@ def _resolve_spark_bar(
         y: str | None = normalized.y[0]
     else:
         y = normalized.y
-    _tf = _title_font(normalized, chart_local_style_context, width)
+    _tf = resolve_title_font(chart_local_style_context, width)
     return ResolvedSparkBarChart(
         **_base_kwargs(
             normalized,

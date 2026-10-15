@@ -26,6 +26,7 @@ from dbt_charts.core.compile.models.source import (
     ParquetSourceConfig,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_DUPLICATE_COLUMN
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
@@ -123,6 +124,21 @@ def test_exact_file_version_is_read_once_per_materializer(
         source, "SELECT COUNT(*) AS total FROM sales", {}, "sales"
     ) == [{"total": 2}]
     assert reads == ["data/sales.csv"]
+
+
+def test_duplicate_result_columns_keep_their_registered_code(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    project = _make_project(tmp_path, {"data/sales.csv": "amount\n1\n"}, local_project)
+    materializer = FileSourceMaterializer(project)
+    with pytest.raises(DbtChartsError) as excinfo:
+        materializer.materialize_and_run(
+            _csv_source({"sales": "data/sales.csv"}),
+            "SELECT amount AS a, amount AS a FROM sales",
+            {},
+            "sales",
+        )
+    assert excinfo.value.code is ERR_RESULT_DUPLICATE_COLUMN
 
 
 def test_changed_file_version_replaces_loaded_table(
@@ -885,8 +901,8 @@ charts:
 
 class TestFileTableTypeFidelity:
     """A file table exposes the file's own column types to SQL — the result
-    cache's storage encoding (a VARCHAR sidecar for uniformly-Decimal columns,
-    see ``_uniform_decimal_columns``) must never leak into it.
+    cache's storage encoding (a uniformly-Decimal column kept as exact text
+    inside the payload) must never leak into it.
 
     The query-result half of that contract — a uniformly-Decimal *query* result
     still round-tripping exactly through ``get()`` — is pinned by

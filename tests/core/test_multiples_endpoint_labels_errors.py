@@ -51,14 +51,20 @@ def _values_query() -> str:
 
 
 def _render(
-    tmp_path: Path, chart_type: str, chart_extra: dict[str, Any]
+    tmp_path: Path,
+    chart_type: str,
+    chart_extra: dict[str, Any],
+    board_style: dict[str, Any] | None = None,
 ) -> BoardRenderResult:
     project = FilesystemProject(tmp_path)
     registry = build_adapter_registry(project, read_only=False)
     extra_yaml = "\n".join(f"    {k}: {json.dumps(v)}" for k, v in chart_extra.items())
+    board_style_yaml = (
+        f"style: {json.dumps(board_style)}\n" if board_style is not None else ""
+    )
     yaml_content = f"""
 title: multiples + endpoint labels
-queries:
+{board_style_yaml}queries:
   data:
     {_values_query()}
 charts:
@@ -138,6 +144,17 @@ class TestAuthoredEndpointLabelsCollision:
         result = self._render_multiples(tmp_path, "bar", {"rows": "region"})
         diagnostic = _diagnostic(result)
         assert diagnostic.code == "ERR-MULTIPLES-ENDPOINT-LABELS"
+
+    def test_board_level_opt_in_raises_typed_code(self, tmp_path: Path) -> None:
+        """A board-level `charts.line.endpoint_labels.visible: true` is as
+        concrete as a chart-local one."""
+        result = _render(
+            tmp_path,
+            "line",
+            {"multiples": {"rows": "region"}},
+            board_style={"charts": {"line": {"endpoint_labels": {"visible": True}}}},
+        )
+        assert _diagnostic(result).code == "ERR-MULTIPLES-ENDPOINT-LABELS"
 
     @staticmethod
     def _render_multiples(

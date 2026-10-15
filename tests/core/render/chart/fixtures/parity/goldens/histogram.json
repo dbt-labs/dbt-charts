@@ -98,7 +98,25 @@
   "encoding": {
     "color": {
       "field": "kind",
-      "legend": null,
+      "legend": {
+        "direction": "vertical",
+        "labelColor": "#626366",
+        "labelFont": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif",
+        "labelFontSize": 11.0,
+        "labelFontWeight": "400",
+        "labelLimit": 200.0,
+        "labelOffset": 8.0,
+        "orient": "right",
+        "symbolLimit": 20,
+        "titleColor": "#313233",
+        "titleFont": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif",
+        "titleFontSize": 12.0,
+        "titleFontWeight": 600.0,
+        "values": [
+          "B",
+          "A"
+        ]
+      },
       "scale": {
         "domain": [
           "B",

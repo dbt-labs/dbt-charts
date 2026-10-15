@@ -30,6 +30,24 @@ ERR_UNKNOWN_VARIABLE = REGISTRY.register(
     )
 )
 
+ERR_TAB_DEFAULT_UNKNOWN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TAB-DEFAULT-UNKNOWN",
+        domain="compile",
+        title="tabs.default names no tab",
+        message_template=(
+            "`tabs.default: {default}` slugs to {slug!r}, which is not a tab on "
+            "this board (tabs: {slugs})."
+        ),
+        doc=(
+            "Fired when the `default:` of a `tabs:` layout matches no tab title. It is "
+            "compared by slug: the title lowercased with spaces replaced by "
+            "underscores."
+        ),
+        docs_topic="layout",
+    )
+)
+
 ERR_UNKNOWN_QUERY = REGISTRY.register(
     ErrorCode(
         code="ERR-UNKNOWN-QUERY",
@@ -367,6 +385,24 @@ ERR_PROJECT_CONFIG_SCHEMA = REGISTRY.register(
             "value. Check the project config reference for the supported keys."
         ),
         summary="Fired when dbt_charts.yml contains a field the project config schema doesn't recognize.",
+        docs_topic="board",
+    )
+)
+
+ERR_CONFIG_KEY_MOVED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CONFIG-KEY-MOVED",
+        domain="compile",
+        title="dbt_charts.yml key moved out of project config",
+        message_template="dbt_charts.yml key {key!r} has moved: {replacement}",
+        doc=(
+            "Fired when dbt_charts.yml sets a key that no longer exists there. "
+            "Design values (formerly under `chart_rendering:`, and the `vega:` "
+            "block) are theme fields: set the successor named in the message "
+            "under `style:` in charts/meta.yml. Engine constants are not "
+            "configurable; delete the key."
+        ),
+        summary="Fired when dbt_charts.yml sets a key that moved to the theme or was removed.",
         docs_topic="board",
     )
 )
@@ -957,23 +993,23 @@ ERR_AREA_STACKED_STROKE_INCOMPLETE = REGISTRY.register(
     ErrorCode(
         code="ERR-AREA-STACKED-STROKE-INCOMPLETE",
         domain="compile",
-        title="marks.area.stacked.stroke is missing cap or join",
+        title="marks.area.stacked.stroke is missing, or lacks width, cap or join",
         message_template=(
             "Chart {chart_id!r} (area): `marks.area.stacked.stroke` must "
-            "declare both `cap` and `join`. Stacked and single-series area "
+            "declare `width`, `cap` and `join`. Stacked and single-series area "
             "charts replace `marks.line.stroke` with it wholesale, so a "
             "property it omits is dropped rather than inherited and the edge "
-            "falls back to SVG butt/miter, spiking each vertex. Set both "
-            "explicitly (`cap: butt` for the renderer's own default)."
+            "falls back to SVG butt/miter, spiking each vertex. Set all "
+            "three explicitly (`cap: butt` for the renderer's own default)."
         ),
         doc=(
-            "Fired when the area stacked recipe's stroke is missing a cap or "
-            "a join, usually because a board or chart authored one of them as "
-            "null. The recipe's stroke replaces the top-edge line stroke "
+            "Fired when the area stacked recipe's stroke is null or is "
+            "missing a width, cap or join, usually because a board or chart "
+            "authored one of them as null. The recipe's stroke replaces the top-edge line stroke "
             "wholesale rather than merging into it, so an omitted property is "
-            "not inherited. Set both cap and join explicitly."
+            "not inherited. Set width, cap and join explicitly."
         ),
-        summary="Fired when the area stacked recipe's stroke omits cap or join.",
+        summary="Fired when the area stacked recipe's stroke is null or omits width, cap or join.",
         docs_topic="charts",
     )
 )
@@ -1763,25 +1799,25 @@ WARN_UNREFERENCED_CHART = REGISTRY.register(
     )
 )
 
-WARN_EXTENDS_LAYOUT_APPENDED = REGISTRY.register(
+WARN_INHERITED_LAYOUT_REPLACED = REGISTRY.register(
     WarningCode(
-        code="WARN-EXTENDS-LAYOUT-APPENDED",
+        code="WARN-INHERITED-LAYOUT-REPLACED",
         domain="compile",
-        title="A board's rows or cols are appended to the ones it extends",
+        title="A board's own layout or tags replace the inherited ones",
         message_template=(
-            "`{axis}:` here is appended to the {inherited_count} {axis} "
-            "inherited from {parents}, not substituted for them."
+            "`{field}:` {replacer} replaces {inherited} inherited from {source}."
         ),
         fix_template=(
-            "To replace the inherited layout, use a different layout axis, or "
-            "move the shared parts into a partial and import it from both boards."
+            "To keep the inherited items, move the shared parts into a "
+            "partial and import it from both boards."
         ),
         doc=(
-            "Fired when a board sets `rows:` or `cols:` and a board it "
-            "`extends:` already sets the same one. Same-axis layouts append, "
-            "so the board shows the parent's items followed by its own."
+            "Fired when a `meta.yml`, an extended board or the board itself sets "
+            "`rows:`, `cols:`, `grid:`, `tabs:` or `tags:` over a non-empty "
+            "value a lower layer set. The closer value replaces it; nothing "
+            "is appended."
         ),
-        summary="Fired when a board restates a rows or cols layout that an extended board already sets.",
+        summary="Fired when a board restates a layout or tag list that a meta.yml or extended board already sets.",
         docs_topic="layout",
     )
 )

@@ -35,25 +35,24 @@ def _reset():
 
 
 class TestEditorialThemeBarLegend:
-    """editorial theme: bar.legend.visible overrides the global visible:false default."""
+    """editorial theme: the global legend is `auto`; families inherit it unless they set a value."""
 
     def test_editorial_theme_loads_without_validation_error(self):
         """get_theme_style('clarity') must not raise ValidationError."""
         theme = get_theme_style("clarity")
         assert theme is not None
 
-    def test_editorial_global_legend_visible_false(self):
-        """editorial global legend has visible: false (suppress legend by default)."""
+    def test_editorial_global_legend_visible_auto(self):
+        """editorial global legend is `auto` (shown unless direct labels retire it)."""
         from dbt_charts.core.compile.resolve.style.board import (
             resolve_chart_style_context,
         )
 
         resolved = resolve_chart_style_context(get_theme_style("clarity"))
-        # Global legend from the theme (not per-chart override)
-        assert resolved.legend.visible is False
+        assert resolved.pre_style.charts.legend.visible == "auto"
 
-    def test_editorial_bar_legend_visible_true(self):
-        """bar charts in editorial theme should show a legend (visible: true)."""
+    def test_editorial_bar_legend_inherits_auto(self):
+        """bar charts in editorial theme inherit the global `auto` legend."""
         from dbt_charts.core.compile.resolve.style.board import (
             resolve_chart_style_context,
         )
@@ -64,8 +63,6 @@ class TestEditorialThemeBarLegend:
         board = resolve_chart_style_context(get_theme_style("clarity"))
         # No chart-local overrides -- just the theme cascade
         effective = build_chart_style_context(board, BarChart(id="t", type="bar"))
-        # bar charts should have visible=True (legend shown), overriding
-        # the global visible=False from editorial.charts.legend.visible
         assert effective.legend.visible is True
 
     def test_editorial_scatter_legend_visible_true(self):
@@ -102,8 +99,8 @@ class TestEditorialThemeBarLegend:
         )
         assert effective.legend.visible is True
 
-    def test_line_legend_visible_false_inherits_global(self):
-        """line charts in editorial theme inherit the global visible: false."""
+    def test_line_legend_inherits_global_auto(self):
+        """line charts in editorial theme inherit the global `auto` legend."""
         from dbt_charts.core.compile.resolve.style.board import (
             resolve_chart_style_context,
         )
@@ -113,8 +110,8 @@ class TestEditorialThemeBarLegend:
 
         board = resolve_chart_style_context(get_theme_style("clarity"))
         effective = build_chart_style_context(board, LineChart(id="t", type="line"))
-        # line has no per-family legend override -- inherits global visible=False
-        assert effective.legend.visible is False
+        assert effective.pre_style.charts.line.legend is None
+        assert board.pre_style.charts.legend.visible == "auto"
 
     def test_no_chart_type_returns_base_charts(self):
         """Without per-family legend overrides and no style, returns board.charts unchanged."""

@@ -767,6 +767,7 @@ dependencies = [
     { name = "msgpack" },
     { name = "nanoarrow" },
     { name = "nh3" },
+    { name = "platformdirs" },
     { name = "plotext" },
     { name = "pydantic" },
     { name = "pygments" },
@@ -800,7 +801,6 @@ fabric = [
 ]
 lakecompute = [
     { name = "adbc-driver-manager" },
-    { name = "platformdirs" },
     { name = "zstandard" },
 ]
 mcp = [
@@ -908,7 +908,7 @@ requires-dist = [
     { name = "msgpack", specifier = ">=1.0.0" },
     { name = "nanoarrow", specifier = ">=0.9.0" },
     { name = "nh3", specifier = ">=0.3.3" },
-    { name = "platformdirs", marker = "extra == 'lakecompute'", specifier = ">=4.0" },
+    { name = "platformdirs", specifier = ">=4.0" },
     { name = "plotext", specifier = ">=5.0.0,<6" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pygments", specifier = ">=2.21.0" },

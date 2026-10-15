@@ -17,6 +17,7 @@ from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.models.style.theme import FontStyle
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
+from dbt_charts.core.constants.bar import LABEL_FIT_LINE_HEIGHT_MULTIPLIER
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart.features.value_labels import _house_register_expr
 from dbt_charts.core.render.chart.vega_lite import (
@@ -5909,14 +5910,12 @@ _LABEL_FONT_SIZE = 11.0  # authored on the fixture below, not read from the them
 
 
 def _required_px() -> float:
-    """One line of label, in pixels: the authored font size x the live multiplier.
+    """One line of label, in pixels: the authored font size x the engine constant.
 
-    Read rather than pinned — `label_fit_line_height_multiplier` is tunable
-    config, and hardcoding it here would silently rot if it moved.
+    Read rather than pinned — `LABEL_FIT_LINE_HEIGHT_MULTIPLIER` is tunable, and hardcoding it here would silently rot if it moved.
     """
-    from dbt_charts.core.compile.config import get_chart_rendering
 
-    return _LABEL_FONT_SIZE * get_chart_rendering().bar.label_fit_line_height_multiplier
+    return _LABEL_FONT_SIZE * LABEL_FIT_LINE_HEIGHT_MULTIPLIER
 
 
 _WEDGE_SEGMENT = 40  # > 35.67, so today it is kept; < the true threshold

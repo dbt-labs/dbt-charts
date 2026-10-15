@@ -11,7 +11,7 @@ description: >
   can't say why' findings. More expensive than structural review (render +
   vision cost). Do NOT use for YAML schema or data-shape problems (use
   {{ s_skill_name_structural_review }}). Do NOT use for comparing two versions
-  of the same board (use the looker-compare-diff pattern).
+  of the same board.
 metadata:
   author: fivetran
 ---

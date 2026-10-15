@@ -64,11 +64,11 @@ class TestLegendMergeContract:
         assert result.legend is board.legend
 
     def test_visible_patch_only_inherits_all_other_fields(self) -> None:
-        """A patch with only visible=False inherits position, direction, label, title from base."""
+        """A patch with only symbol_limit inherits position, direction, label, title from base."""
         base = _board().legend
-        merged = _merge_line({"visible": False})
+        merged = _merge_line({"symbol_limit": 3})
 
-        assert merged.visible is False
+        assert merged.symbol_limit == 3
         assert merged.position == base.position
         assert merged.direction == base.direction
         # Nested element style fields inherited

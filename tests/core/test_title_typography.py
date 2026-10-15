@@ -703,7 +703,7 @@ class TestVegaLiteTitleTypography:
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
         from dbt_charts.core.compile.models.style.authored import (
             BarChartStylePatch,
-            TitleStylePatch,
+            ChartTitleStylePatch,
         )
         from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
@@ -715,7 +715,7 @@ class TestVegaLiteTitleTypography:
             y="revenue",
             query=SqlQuery(sql="SELECT 1", source="test_db"),
             style=BarChartStylePatch(
-                title=TitleStylePatch(font={"family": "Helvetica"})
+                title=ChartTitleStylePatch(font={"family": "Helvetica"})
             ),
         )
         spec = generate_vega_lite_spec(chart, self._data, width=1152.0)

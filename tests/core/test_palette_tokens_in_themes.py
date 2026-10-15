@@ -234,14 +234,13 @@ class TestBuiltInThemesResolveCleanly:
 
 class TestThemeBackgroundSelfToken:
     """``arc.stroke: theme.background`` in stark propagates the
-    theme's own ``style.background`` into ``charts.arc.stroke`` at compile
-    time. Every theme — regardless of canvas color — gets a knockout-stroke
+    theme's own ``style.background`` into ``charts.arc.stroke`` when the
+    style is resolved. Every theme — regardless of canvas color — gets a knockout-stroke
     separator that matches its own canvas, with no per-theme override.
 
-    The substituted value can be either a palette token or a literal hex;
-    ``_resolve_self_tokens`` runs before ``_resolve_color_tokens`` so
-    palette-token backgrounds (e.g. ``dbt-creams.canvas``) are still
-    resolved to concrete hex on the way out.
+    The loaded theme keeps the sentinel; ``resolve_style`` substitutes it
+    against the merged canvas, so palette-token backgrounds (e.g.
+    ``dbt-creams.canvas``) arrive already resolved to concrete hex.
     """
 
     @pytest.mark.parametrize(
@@ -249,7 +248,7 @@ class TestThemeBackgroundSelfToken:
         ["stark", "paper", "neon"],
     )
     def test_arc_stroke_tracks_theme_background(self, theme_name: str):
-        compiled = get_theme_style(theme_name)
+        compiled = resolve_chart_style_context(get_theme_style(theme_name)).pre_style
         assert compiled.charts.marks.slice.stroke is not None
         assert compiled.charts.marks.slice.stroke.color == compiled.background, (
             f"charts.marks.slice.stroke.color did not track style.background on {theme_name}: "
@@ -263,7 +262,9 @@ class TestThemeBackgroundSelfToken:
         did, downstream consumers (VL emit, etc.) would render the literal
         token text and fail."""
         for theme_name in ("stark", "paper", "neon"):
-            compiled = get_theme_style(theme_name)
+            compiled = resolve_chart_style_context(
+                get_theme_style(theme_name)
+            ).pre_style
             assert compiled.charts.marks.slice.stroke is not None
             assert compiled.charts.marks.slice.stroke.color != "theme.background"
 
@@ -280,12 +281,11 @@ class TestThemeBackgroundSelfToken:
     def test_no_self_token_residue_anywhere_in_compiled_tree(self, theme_name: str):
         """Walk every string field in every theme's compiled tree and assert
         no ``_THEME_SELF_TOKENS`` value survives. Catches the case where a
-        future field is migrated to ``theme.background`` but only one of the
-        two resolver call sites (theme-load, resolve_style) handled it, or
-        where a new ``_THEME_SELF_TOKENS`` member is added without a
+        future field is migrated to ``theme.background`` but the merged-style
+        resolver misses it, or where a new ``_THEME_SELF_TOKENS`` member is added without a
         matching ``_self_token_replacement`` branch.
         """
-        compiled = get_theme_style(theme_name)
+        compiled = resolve_chart_style_context(get_theme_style(theme_name)).pre_style
         residue: list[str] = []
 
         def walk(node: object, path: str) -> None:
@@ -311,9 +311,8 @@ class TestThemeBackgroundSelfToken:
         loudly — not silently leak the literal sentinel into output."""
         from dbt_charts.core.compile.resolve.style.tokens import _self_token_replacement
 
-        compiled = get_theme_style()
         with pytest.raises(ValueError, match="Unknown theme-self token"):
-            _self_token_replacement("theme.no-such-thing", compiled)
+            _self_token_replacement("theme.no-such-thing", "#ffffff")
 
 
 # =============================================================================

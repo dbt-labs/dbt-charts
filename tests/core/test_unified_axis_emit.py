@@ -156,7 +156,7 @@ def test_axis_to_vl_mapper_emits_offset():
 
     base = resolve_chart_style_context(get_theme_style())
     axis_y = resolved_axis_style(
-        base, "axis_y", "quantitative", chart_type="", label_authored=False
+        base, "axis_y", "quantitative", chart_type="", labeled=False
     )
     new_ticks = dataclasses.replace(axis_y.ticks, offset=99.0)
     new_axis = dataclasses.replace(axis_y, ticks=new_ticks)
@@ -206,8 +206,8 @@ def test_chart_local_axis_band_at_encoding_not_config():
     )
 
 
-def test_chart_local_axis_y_wins_over_axis_quantitative():
-    """chart.style.axis_y (channel-specific) overrides axis_quantitative for y."""
+def test_chart_local_axis_quantitative_wins_over_axis_y():
+    """chart.style.axis_quantitative (type slot) overrides axis_y (channel slot)."""
     from dbt_charts.core.compile.models.style.authored import BaseAxisGridStylePatch
 
     patch = BarChartStylePatch(
@@ -219,8 +219,8 @@ def test_chart_local_axis_y_wins_over_axis_quantitative():
     )
     spec = _spec(style=patch)
     y_axis = spec.get("encoding", {}).get("y", {}).get("axis", {})
-    assert y_axis.get("gridColor") == "#c485d2", (
-        f"axis_y must win over axis_quantitative; got {y_axis}"
+    assert y_axis.get("gridColor") == "#ee8570", (
+        f"axis_quantitative must win over axis_y; got {y_axis}"
     )
 
 

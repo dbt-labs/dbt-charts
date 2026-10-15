@@ -5,8 +5,7 @@ Real ``resolve()`` calls on a ``BarChart`` — see
 ``estimate_plot_height`` unit tests this wires
 up, ``tests/render/warnings/test_plot_height_below_minimum.py`` for the
 ``WARN-PLOT-HEIGHT-BELOW-MINIMUM`` detector that reads the fields asserted
-here, and ``ChartRenderingConfig.BarConfig`` (compile/models/config.py) for
-the calibration sweep behind the constants.
+here, and ``constants/estimates.py`` for the constants.
 
 No authored chrome is ever removed: this only asserts the resolved
 ``style.plot_height_below_floor`` fact (and its supporting
@@ -16,12 +15,12 @@ in what renders.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Iterator
 
 import pytest
 
 from dbt_charts.core.compile.config import (
-    get_chart_rendering,
     get_theme_style,
     reset_config,
 )
@@ -30,12 +29,14 @@ from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.chart.resolved import ResolvedBarChart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
+from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved.bar import ResolvedBarStyle
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.chart._axes import legend_wrap_marginal_height_px
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
 )
+from dbt_charts.core.constants.estimates import ROW_LEGEND_TOTAL_PX
 
 _CTX = resolve_chart_style_context(get_theme_style())
 
@@ -70,8 +71,10 @@ def _resolved(
     orientation: str | None = None,
     series: int = 5,
     hide_legend: bool = False,
+    patch_extra: dict[str, object] | None = None,
+    ctx: ChartStyleContext = _CTX,
 ) -> ResolvedBarChart:
-    patch: dict[str, object] = {}
+    patch: dict[str, object] = dict(patch_extra or {})
     if hide_legend:
         patch["legend"] = {"visible": False}
     if hide_axis_title:
@@ -94,7 +97,7 @@ def _resolved(
         height=height,
         style=style,
     )
-    resolved = resolve(chart, _grouped_data(series), _CTX, width=width)
+    resolved = resolve(chart, _grouped_data(series), ctx, width=width)
     assert isinstance(resolved, ResolvedBarChart)
     return resolved
 
@@ -297,9 +300,7 @@ def test_a_single_row_legend_is_charged_at_a_wide_card() -> None:
     """
     with_legend = _resolved(640.0).style.estimated_plot_height_px
     without = _resolved(640.0, hide_legend=True).style.estimated_plot_height_px
-    assert without - with_legend == pytest.approx(
-        get_chart_rendering().bar.plot_height_floor_row_legend_total_px
-    )
+    assert without - with_legend == pytest.approx(ROW_LEGEND_TOTAL_PX)
 
 
 def test_the_row_legends_charge_does_not_track_series_count() -> None:
@@ -328,9 +329,7 @@ def test_a_chart_with_nothing_to_name_is_charged_no_legend() -> None:
     """
     named = _resolved(640.0).style.estimated_plot_height_px
     unnamed = _resolved(640.0, color=None, series=1).style.estimated_plot_height_px
-    assert unnamed - named == pytest.approx(
-        get_chart_rendering().bar.plot_height_floor_row_legend_total_px
-    )
+    assert unnamed - named == pytest.approx(ROW_LEGEND_TOTAL_PX)
 
 
 def test_a_layered_bar_is_charged_for_the_legend_its_layers_earn() -> None:
@@ -370,7 +369,7 @@ def test_a_layered_bar_is_charged_for_the_legend_its_layers_earn() -> None:
     assert isinstance(without, ResolvedBarChart)
     assert (
         without.style.estimated_plot_height_px - resolved.style.estimated_plot_height_px
-    ) == pytest.approx(get_chart_rendering().bar.plot_height_floor_row_legend_total_px)
+    ) == pytest.approx(ROW_LEGEND_TOTAL_PX)
 
 
 def test_measuring_a_layered_bar_never_suppresses_its_legend() -> None:
@@ -537,3 +536,58 @@ def test_a_layer_with_its_own_color_adds_no_entry_of_its_own() -> None:
     same_domain = _colored_overlay(rows, layer_color="region", with_layer=True)
     assert same_domain.estimated_plot_height_px == plain.estimated_plot_height_px
     assert same_domain.plot_height_below_floor is False
+
+
+def test_chrome_costs_derive_from_the_theme_fonts() -> None:
+    """A subtitle costs its font size plus Vega's subtitle gap (11 + 3) and the
+    horizontal rail's axis title its font size plus padding (11 + 10)."""
+    baseline = _resolved(300.0, orientation="vertical").style
+    no_subtitle = _resolved(300.0, orientation="vertical", subtitle="").style
+    no_axis_title = _resolved(
+        300.0, orientation="vertical", hide_axis_title="axis_x"
+    ).style
+    assert no_subtitle.estimated_plot_height_px - baseline.estimated_plot_height_px == (
+        pytest.approx(14.0)
+    )
+    assert (
+        no_axis_title.estimated_plot_height_px - baseline.estimated_plot_height_px
+        == (pytest.approx(21.0))
+    )
+
+
+def test_an_authored_axis_title_font_size_changes_the_estimate() -> None:
+    baseline = _resolved(300.0, orientation="vertical").style
+    larger = _resolved(
+        300.0,
+        orientation="vertical",
+        patch_extra={"axis_x": {"title": {"font": {"size": 20}}}},
+    ).style
+    assert baseline.estimated_plot_height_px - larger.estimated_plot_height_px == (
+        pytest.approx(9.0)
+    )
+
+
+def test_a_larger_subtitle_font_size_changes_the_estimate() -> None:
+    subtitle = _CTX.title.subtitle
+    larger_font = subtitle.font.model_copy(update={"size": 20})
+    title = _CTX.title.model_copy(
+        update={"subtitle": subtitle.model_copy(update={"font": larger_font})}
+    )
+    ctx = dataclasses.replace(_CTX, title=title)
+    baseline = _resolved(300.0, orientation="vertical").style
+    larger = _resolved(300.0, orientation="vertical", ctx=ctx).style
+    assert baseline.estimated_plot_height_px - larger.estimated_plot_height_px == (
+        pytest.approx(9.0)
+    )
+
+
+def test_a_null_axis_title_padding_charges_the_vega_lite_default() -> None:
+    baseline = _resolved(300.0, orientation="vertical").style
+    unset = _resolved(
+        300.0,
+        orientation="vertical",
+        patch_extra={"axis_x": {"title": {"padding": None}}},
+    ).style
+    assert unset.estimated_plot_height_px - baseline.estimated_plot_height_px == (
+        pytest.approx(6.0)
+    )

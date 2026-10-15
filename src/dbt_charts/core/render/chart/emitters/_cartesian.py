@@ -19,7 +19,6 @@ from collections.abc import Callable, Mapping
 from datetime import date
 from typing import Any, Literal, NamedTuple
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.chart.authored._annotations import ChartSort
 from dbt_charts.core.compile.models.chart.authored._base import MultiplesConfig
 from dbt_charts.core.compile.models.chart.resolved import (
@@ -51,6 +50,7 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import wide_measure_labe
 from dbt_charts.core.compile.resolve.chart.tick_values import (
     numeric_domain_bounds,
 )
+from dbt_charts.core.constants.layout import FACET_MIN_PANEL_PX
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_SCALE_DOMAIN_REQUIRES_CONTINUOUS_X,
@@ -132,7 +132,7 @@ def x_encoding_is_banded(x_enc: VLDict) -> bool:
     temporal (``timeUnit`` present).
 
     False for a genuinely continuous position: quantitative, or a temporal
-    channel wide enough to have been promoted past ``max_ordinal_buckets``
+    channel wide enough to have been promoted past ``MAX_ORDINAL_BUCKETS``
     (raw temporal, no ``timeUnit``). A discrete scale is what an ``xOffset``/
     ``yOffset`` sub-scale needs to divide bars within — on a continuous
     position there is no band step for it to divide, so any offset channel
@@ -1014,7 +1014,7 @@ def extra_axis_is_affordable(
     unnarrowed_panel_width: float, extra_axis_px: float
 ) -> bool:
     """True when reserving ``extra_axis_px`` for the extra per-column-panel
-    axis still leaves at least ``chart_rendering.facet.min_panel_px`` of
+    axis still leaves at least ``FACET_MIN_PANEL_PX`` of
     panel width — the SAME floor ``WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM``
     (``render/warnings/facet_panel_width_below_minimum.py``) already reads,
     not a separate constant. Narrowing a position channel is an improvement
@@ -1025,8 +1025,7 @@ def extra_axis_is_affordable(
     """
     if extra_axis_px <= 0.0:
         return True
-    min_panel_px = get_chart_rendering().facet.min_panel_px
-    return unnarrowed_panel_width - extra_axis_px >= min_panel_px
+    return unnarrowed_panel_width - extra_axis_px >= FACET_MIN_PANEL_PX
 
 
 def facet_bound_position_channels(

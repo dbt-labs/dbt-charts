@@ -45,6 +45,7 @@ from dbt_charts.core.compile.models.factories import (
 from dbt_charts.core.compile.models.markers import (
     Color,
     FontFamily,
+    FontWeightValue,
     Inherit,
     Merge,
     Palette,
@@ -763,7 +764,7 @@ class SingleLineFontStyle(FontSlotBase):
         default=None, description="Text color as a CSS color string."
     )
     size: float | None = Field(default=None, description="Font size in pixels.")
-    weight: str | float | None = Field(
+    weight: Annotated[str | float | None, FontWeightValue()] = Field(
         default=None,
         description="How heavy the type is drawn (e.g., 'bold', 400, 700).",
     )
@@ -815,7 +816,7 @@ class ColumnFontStyle(FontStyle):
 class NamedFont(FontStyle):
     """A ``style.fonts`` registry entry: a font other slots reference by name."""
 
-    sizes: Annotated[list[float] | None, Merge(Strategy.OVERRIDE)] = Field(
+    sizes: list[float] | None = Field(
         default=None,
         description=(
             "The H1–H6 heading ramp (six sizes, indexed by heading level - 1). "
@@ -920,7 +921,7 @@ class BorderStyle(BaseModel):
     # dash_array/line_cap/dash_offset are genuinely optional, not a theme-population
     # gap: unset means a solid border (the common case, and every built-in theme's
     # default); dashing is an authoring opt-in, not something themes must supply.
-    dash_array: Annotated[list[float] | None, Merge(Strategy.OVERRIDE)] = Field(
+    dash_array: list[float] | None = Field(
         default=None,
         description=(
             "SVG stroke-dasharray pattern in pixels (e.g. [4, 4]). "
@@ -1025,7 +1026,7 @@ class BorderStylePatch(BaseModel):
         default=None, description="Border color (CSS color string)."
     )
     width: float | None = Field(default=None, description="Border width in pixels.")
-    dash_array: Annotated[list[float] | None, Merge(Strategy.OVERRIDE)] = Field(
+    dash_array: list[float] | None = Field(
         default=None,
         description=(
             "SVG stroke-dasharray pattern in pixels (e.g. [4, 4]). "
@@ -1103,9 +1104,8 @@ class StrokeStyle(BaseModel):
     None semantics per field:
       - color: line/area use the mark's own fill color; other families require it.
       - width: absent = VL default (1 px) for most compiled families; line and
-        area instead fall back to chart_rendering.stroke.fallback_width /
-        .stacked_fallback_width once the cascade and adaptive bake both leave
-        it unset — see _apply_line_width.
+        area instead fall back to STROKE_FALLBACK_WIDTH once the cascade and
+        adaptive bake both leave it unset; see _apply_line_width.
       - cap/join: absent = VL default (butt/miter). Only line/arc set these.
       - dasharray: absent = solid line. Only spark.empty sets this.
     """
@@ -1260,7 +1260,6 @@ class ScaleTargetConfig(ScaleTargetPaletteValidationMixin):
 
     palette: Annotated[
         ScalePaletteName | list[str] | list[float] | str,
-        Merge(Strategy.OVERRIDE),
         Palette(),
     ] = Field(
         description="Which colors the scale draws from: a built-in palette name or Vega scheme, a CSS color list for categorical, or a float list for relative stops."
@@ -1421,16 +1420,13 @@ class CategoricalColorStyle(BaseModel):
     # survives onto a compiled instance. Stops-only, not every shipped name:
     # a tone resolves to no stops, so offering one is an authored board that
     # parses and dies at resolve.
-    palette: Annotated[
-        StopsPaletteName | list[str] | str | None, Merge(Strategy.OVERRIDE), Palette()
-    ] = Field(
+    palette: Annotated[StopsPaletteName | list[str] | str | None, Palette()] = Field(
         default=None,
         description="Categorical color palette: list of stops or a named palette. Expanded to list[str] at validation time.",
     )
     # Empty would break the spark cascade and the single-series render path.
     single_series_palette: Annotated[
         StopsPaletteName | Annotated[list[str], Field(min_length=1)] | str | None,
-        Merge(Strategy.OVERRIDE),
         Palette(),
         one_error(
             "single_series_palette must be a palette name or a non-empty list of "

@@ -65,7 +65,7 @@ class ResolvedPieChart(_PieResolvedChartFields):
         description="Card width used to finalize pie presentation policy.",
     )
     outer_fraction: float = Field(
-        description="Final wheel radius fraction used by the pie emitter.",
+        description="Final wheel radius fraction the pie renders at.",
     )
     attached_table_gap: float = Field(
         description="Final gap between the wheel and companion table.",

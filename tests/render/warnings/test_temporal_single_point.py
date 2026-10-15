@@ -11,9 +11,6 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from dbt_charts.core.compile.models.chart.normalized import BarChart, Chart
-from dbt_charts.core.compile.models.chart.resolved._base import (
-    _CartesianResolvedChartFields,
-)
 from dbt_charts.core.diagnostics import WARN_TEMPORAL_SINGLE_POINT, Diagnostic
 from dbt_charts.core.render.warnings import (
     WarningContext,
@@ -43,27 +40,11 @@ def _make_chart(**kwargs: object) -> Chart:
     )
 
 
-def _make_ctx(
-    chart: Chart,
-    rows: list[dict[str, Any]],
-    x_vega_type: str = "temporal",
-) -> WarningContext:
+def _make_ctx(chart: Chart, rows: list[dict[str, Any]]) -> WarningContext:
     resolved = make_test_resolved_chart(chart, rows)
     board = make_test_resolved_board(charts={resolved.id: resolved})
-    x_field = (
-        resolved.x if isinstance(resolved, _CartesianResolvedChartFields) else None
-    )
-    vega_spec: dict[str, Any] = {
-        "mark": resolved.chart_type,
-        "encoding": {
-            "x": {"field": x_field or "date", "type": x_vega_type},
-            "y": {"field": "value", "type": "quantitative"},
-        },
-    }
     return WarningContext(
-        board_spec=board,
-        chart_results={resolved.id: rows},
-        vega_specs={resolved.id: vega_spec},
+        board_spec=board, chart_results={resolved.id: rows}, vega_specs={}
     )
 
 
@@ -129,7 +110,7 @@ def test_no_fire_for_line_temporal_ten_rows() -> None:
 def test_no_fire_for_line_ordinal_one_row() -> None:
     """Ordinal x-axis (categorical) with one row must not fire."""
     chart = _make_chart(x="category")
-    ctx = _make_ctx(chart, [{"category": "A", "value": 10}], x_vega_type="ordinal")
+    ctx = _make_ctx(chart, [{"category": "A", "value": 10}])
     assert detector.detect(ctx) == []
 
 
@@ -167,34 +148,21 @@ def test_no_fire_when_chart_not_in_chart_results() -> None:
     chart = _make_chart(x="date")
     resolved = make_test_resolved_chart(chart)
     board = make_test_resolved_board(charts={resolved.id: resolved})
-    vega_spec: dict[str, Any] = {
-        "mark": "line",
-        "encoding": {
-            "x": {"field": "date", "type": "temporal"},
-            "y": {"field": "value", "type": "quantitative"},
-        },
-    }
     ctx = WarningContext(
         board_spec=board,
         chart_results={},  # chart absent from results
-        vega_specs={resolved.id: vega_spec},
+        vega_specs={},
     )
     assert detector.detect(ctx) == []
 
 
-# ---------------------------------------------------------------------------
-# Guard: chart id absent from vega_specs
-# ---------------------------------------------------------------------------
+def test_fires_for_a_colored_line_with_one_row() -> None:
+    chart = _make_chart(x="date", color="grp")
+    ctx = _make_ctx(chart, [{**_ONE_ROW[0], "grp": "a"}])
+    assert len(detector.detect(ctx)) == 1
 
 
-def test_no_fire_when_chart_not_in_vega_specs() -> None:
-    """Detector must skip charts absent from ctx.vega_specs (sparse dict)."""
-    chart = _make_chart(x="date")
-    resolved = make_test_resolved_chart(chart, _ONE_ROW)
-    board = make_test_resolved_board(charts={resolved.id: resolved})
-    ctx = WarningContext(
-        board_spec=board,
-        chart_results={resolved.id: _ONE_ROW},
-        vega_specs={},  # chart absent from vega_specs
-    )
-    assert detector.detect(ctx) == []
+def test_fires_for_a_wide_line_with_one_row() -> None:
+    chart = _make_chart(x="date", y=["value", "other"])
+    ctx = _make_ctx(chart, [{**_ONE_ROW[0], "other": 1}])
+    assert len(detector.detect(ctx)) == 1

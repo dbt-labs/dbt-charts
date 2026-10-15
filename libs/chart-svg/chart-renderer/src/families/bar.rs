@@ -61,6 +61,7 @@
 //!   surface can no longer produce this from a real board; guards a
 //!   hand-written or stale resolved-JSON fixture instead)
 
+use crate::constants::{axis::MAX_ORDINAL_BUCKETS, bar::LABEL_FIT_LINE_HEIGHT_MULTIPLIER};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -74,7 +75,6 @@ use crate::common::{
     AxisStyle, ChartSort, FormatSlot, Font, MarkLabels, SortAggregate, StyleChannel, TitleStyle,
     AXIS_FREE_EDGE_PAD, VALUE_AXIS_BREATHING_ROOM,
 };
-use crate::step_band::STEP_BAND_DISCONNECTED_WIDTH;
 use crate::families::bar_hover_band::HoverBand;
 use crate::families::cartesian::{vl_default_tick_count, BandScale, LinearScale};
 use crate::families::facet_compose::{self, GhostStyle, PanelGeometry};
@@ -104,30 +104,21 @@ use crate::{Padding, Payload};
 
 // Fixed chrome (title + value axis label row) in pixels — matches _LAYOUT_CHROME_PX in Python.
 pub(crate) const CHROME_PX: f64 = 72.0;
-// Grouped-bar outer band padding from dbt_charts default_config.yml
-const GROUPED_PADDING_INNER: f64 = 0.2;
-const GROUPED_PADDING_OUTER: f64 = 0.2;
 // Legend geometry
 const LEGEND_SWATCH: f64 = 10.0;
 const LEGEND_LABEL_GAP: f64 = 8.0;
 const LEGEND_ITEM_GAP: f64 = 16.0;
 const LEGEND_ROW_H: f64 = 14.0;
 const LEGEND_BELOW: f64 = 8.0;
-/// `chart_rendering.type_inference.max_ordinal_buckets` (default_config.yml):
-/// the coarse-grain band cap and the fine-grain scaffold budget's floor.
-const MAX_ORDINAL_BUCKETS: usize = 60;
 // Default quartile tick grid for a `stack = "normalize"` value axis —
 // matches `_NORMALIZE_QUARTILE_TICKS` in `emitters/bar.py`.
 const NORMALIZE_QUARTILE_TICKS: [f64; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
-/// Vertical room one value label needs inside its segment, as a multiple of
-/// its font size (`chart_rendering.bar.label_fit_line_height_multiplier`,
-/// `default_config.yml`).
-const LABEL_FIT_LINE_HEIGHT_MULTIPLIER: f64 = 1.15;
 
 // ── Payload structs ──────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 pub(crate) struct BarResolved {
+    id: String,
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
     title: Option<String>,
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
@@ -226,6 +217,11 @@ pub(crate) struct BarResolved {
     /// `support_table` is (baked at `compile.resolve.chart._kwargs`).
     #[serde(default)]
     effective_support_table_style: Option<support_table_strip::SupportTableStyle>,
+    /// Whether a per_series cell paints its series' dark ink (`font.color:
+    /// auto`); every other cell paints `effective_support_table_style.font.color`,
+    /// already the baked neutral color or the authored one.
+    #[serde(default)]
+    support_table_series_ink: Option<bool>,
     /// Resolved chart's own baked axis-label gap, required (non-null) when
     /// `effective_support_table_style.position == "bottom"` — see
     /// `support_table_strip::wrap_with_strip`'s doc comment.
@@ -254,8 +250,17 @@ impl BarResolved {
     }
 }
 
+/// Band-scale padding of a grouped (side-by-side) bar
+/// (`style.charts.bar.grouped`).
+#[derive(Deserialize)]
+struct GroupedPadding {
+    padding_inner: f64,
+    padding_outer: f64,
+}
+
 #[derive(Deserialize)]
 struct BarStyle {
+    grouped: GroupedPadding,
     axis_x: AxisStyle,
     axis_y: AxisStyle,
     /// The resolved measure format the structured tooltip's value row paints
@@ -771,7 +776,7 @@ fn validate_layers(
 /// (unchanged), and — new — a colorless, disconnected `curve: "step"` goal-
 /// marker line over a `stack: "zero"` `color`-grouped base
 /// (`charts/extensibility_1`'s `bullet`'s own `Goal` layer): a plain
-/// two-point plateau per category, inset by `STEP_BAND_DISCONNECTED_WIDTH`
+/// two-point plateau per category, inset by `line_mark.disconnected_width`
 /// of the band, on the SAME shared value scale the base's own stack already
 /// nices — `_apply_layer_step_band`'s `connect: false` branch
 /// (`step_band.py`'s `offset_range`), ported from `line.rs`'s own base-chart
@@ -2088,14 +2093,7 @@ fn value_domain_and_ticks(
         return Ok((0.0, 1.0, NORMALIZE_QUARTILE_TICKS.to_vec(), 0.0));
     }
     if let Some((lo, hi)) = ax_y.authored_continuous_domain() {
-        if start_field.is_some() {
-            return Err(
-                "bar: y_start beside an authored y-axis domain is not modeled — the \
-                 fitted extent of both ends is the resolver's to bake"
-                    .into(),
-            );
-        }
-        return authored_domain_and_ticks(rows, val_field, ax_y, stack, lo, hi)
+        return authored_domain_and_ticks(rows, val_field, start_field, ax_y, stack, vertical, lo, hi)
             .map(|(floor, top, ticks)| (floor, top, ticks, floor));
     }
 
@@ -2231,12 +2229,26 @@ fn value_domain_and_ticks(
         // no floor and takes the ladder-floor arms below).
         baked_floor
     } else if stack == "none" && ax_y.is_zero_false() {
-        ax_y.domain_min.ok_or_else(|| {
-            "bar: axis_y.scale.continuous.zero: false on a bar with no baked \
-             domain_min — the zoomed (non-zero-anchored) measure-domain floor is not \
-             modeled here"
-                .to_string()
-        })?
+        match (ax_y.domain_min, start_field) {
+            (Some(baked), _) => baked,
+            // A ranged bar with no baked floor: Vega fits the axis to the data
+            // extent of both ends.
+            (None, Some(_)) if ax_y.scale.get("nice").and_then(Value::as_bool) == Some(true) => {
+                return Err("bar: a ranged bar with scale.nice: true and no baked floor is not modeled: \
+                     Vega rounds a positive fitted floor too"
+                    .to_string())
+            }
+            (None, Some(start)) => rows
+                .iter()
+                .flat_map(|row| [val_field, start].into_iter().filter_map(|f| row_num(row, f)))
+                .fold(f64::INFINITY, f64::min),
+            (None, None) => {
+                return Err("bar: axis_y.scale.continuous.zero: false on a bar with no baked \
+                     domain_min — the zoomed (non-zero-anchored) measure-domain floor is not \
+                     modeled here"
+                    .to_string())
+            }
+        }
     } else if stack == "zero" && (!ax_y.is_zero_anchored() || unbaked) {
         // Vega's stackZero law (`vega-transforms/Stack.js`): a stacked axis
         // with no pinned floor fits it to the DATA's own negative extent —
@@ -2311,48 +2323,55 @@ fn value_domain_and_ticks(
 ///
 /// Refused by name: a stacked axis (the stacked arms read the baked stacked
 /// max and the rail's own nice ladder, never the authored pair), a domain
-/// that excludes 0 — the two orientations compile that to different scales
-/// (probed: the vertical scale carries `zero: false`, the horizontal one
-/// `zero: true`, which widens it to 0) with different bar baselines — and a
-/// value outside the pair, whose bar Vega draws unclipped past the plot edge
-/// while autosize fit grows the view around it.
+/// that excludes 0 on a vertical bar (its scale carries `zero: false`, so the
+/// zero-based bars hang past the plot edge; the horizontal scale widens to 0),
+/// and a value outside the axis, which Vega draws unclipped past the plot edge.
 fn authored_domain_and_ticks(
     rows: &[serde_json::Map<String, Value>],
     val_field: &str,
+    start_field: Option<&str>,
     ax_y: &AxisStyle,
     stack: &str,
+    vertical: bool,
     lo: f64,
     hi: f64,
 ) -> Result<(f64, f64, Vec<f64>), String> {
+    if (lo > 0.0 || hi < 0.0) && vertical {
+        return Err(format!(
+            "bar: an authored y-axis domain [{lo}, {hi}] that excludes 0 is not modeled on a \
+             vertical bar — the zero-based bars hang past the plot edge"
+        ));
+    }
     if stack != "none" {
         return Err(format!(
             "bar: an authored y-axis domain on a stack={stack:?} bar is not modeled — the \
              stacked arms scale from the baked stacked_domain_max, never the authored pair"
         ));
     }
-    if lo > 0.0 || hi < 0.0 {
-        return Err(format!(
-            "bar: an authored y-axis domain [{lo}, {hi}] that excludes 0 is not modeled — \
-             the vertical and horizontal scales compile it differently (zero: false vs \
-             zero: true)"
-        ));
-    }
     let (lo, hi) = crate::families::cartesian::authored_domain_pair(ax_y, lo, hi);
     if hi <= lo {
         return Err(format!("bar: the authored y-axis domain [{lo}, {hi}] is empty"));
     }
-    if let Some(v) = rows.iter().filter_map(|row| row_num(row, val_field)).find(|&v| v < lo || v > hi) {
+    // A horizontal bar axis reaches 0 (`zero: true`), so a pair that excludes it
+    // is widened; a baked ladder still draws only the rungs inside the pair.
+    let (axis_lo, axis_hi) = (lo.min(0.0), hi.max(0.0));
+    if let Some(v) = rows
+        .iter()
+        .flat_map(|row| [Some(val_field), start_field].into_iter().flatten().filter_map(|f| row_num(row, f)))
+        .find(|&v| v < axis_lo || v > axis_hi)
+    {
         return Err(format!(
             "bar: a measure value ({v}) outside the authored y-axis domain [{lo}, {hi}] is \
-             not modeled — Vega draws the bar past the plot edge and fits the view around it"
+             not modeled — Vega draws the bar past the plot edge and fits the view around it, \
+             where this arm clamps it"
         ));
     }
     let ticks = if ax_y.tick_values.is_empty() {
-        crate::families::cartesian::unbaked_ticks(ax_y, lo, hi, ax_y.ticks.count.map_or(10, |c| c as usize))
+        crate::families::cartesian::unbaked_ticks(ax_y, axis_lo, axis_hi, ax_y.ticks.count.map_or(10, |c| c as usize))
     } else {
         crate::families::cartesian::ladder_within_domain(&ax_y.tick_values, lo, hi)
     };
-    Ok((lo, hi, ticks))
+    Ok((axis_lo, axis_hi, ticks))
 }
 
 /// The most negative per-category running sum under Vega's `stackZero`
@@ -2876,7 +2895,6 @@ fn render_horizontal(
         wide_series,
         &layers,
         support_table,
-        payload.board_style.as_ref().and_then(|b| b.support_table_font_color.as_deref()),
     )
 }
 
@@ -2900,7 +2918,6 @@ fn render_horizontal_panel(
     wide_series: &[String],
     scatter_layers: &[(&OverlayScatterLayer, &[serde_json::Map<String, Value>])],
     support_table: Option<&support_table_strip::SupportTableConfig>,
-    board_support_font_color: Option<&str>,
 ) -> Result<String, String> {
     let eff_title_style = crate::common::effective_title_style(
         r.style.title_font.as_ref(),
@@ -3267,10 +3284,18 @@ fn render_horizontal_panel(
     let val_title_text = if r.wide_measures.is_empty() {
         axis_title_text(val_field, r.y_label.as_deref(), &r.field_labels)
     } else {
-        r.y_label.clone().unwrap_or_else(|| crate::common::wide_measures_title(&r.wide_measures, &r.field_labels))
+        r.y_label.as_deref().map(crate::common::collapse_title_newlines).unwrap_or_else(|| crate::common::wide_measures_title(&r.wide_measures, &r.field_labels))
     };
-    let cat_title_band = axis_title_band(&ax_x.title, &cat_title_text);
-    let val_title_band = axis_title_band(&ax_y.title, &val_title_text);
+    let cat_title_paint =
+        crate::common::wrapped_axis_title(&r.id, "x_label", &cat_title_text, &ax_x.title.font, h, fonts)?;
+    let val_title_paint =
+        crate::common::wrapped_axis_title(&r.id, "y_label", &val_title_text, &ax_y.title.font, w, fonts)?;
+    let cat_title_band = axis_title_band(&ax_x.title, &cat_title_paint);
+    let val_title_band = axis_title_band(&ax_y.title, &val_title_paint);
+    // Vega measures the title itself; it reaches past the plot's ends when
+    // wider than the plot.
+    let cat_title_w = crate::common::widest_title_line(&ax_x.title, &cat_title_paint, fonts)?;
+    let val_title_w = crate::common::widest_title_line(&ax_y.title, &val_title_paint, fonts)?;
 
     let val_font_size = ax_y.labels.font.size_or(11.0);
     let val_pad = ax_y.labels.padding.unwrap_or(6.0);
@@ -3349,7 +3374,7 @@ fn render_horizontal_panel(
         && !is_stacked
         && color_1to1_with_cat(rows, cat_field, color_field.expect("is_grouped implies color"));
     let (band_pi, band_po) = if is_grouped && !is_stacked && !one_to_one {
-        (GROUPED_PADDING_INNER, GROUPED_PADDING_OUTER)
+        (r.style.grouped.padding_inner, r.style.grouped.padding_outer)
     } else {
         (0.0, 0.0)
     };
@@ -3398,18 +3423,11 @@ fn render_horizontal_panel(
             // Column series: a stacked bar's segments share one band, so a
             // per_series entry gets a column per series, in stack order.
             let series_order: Vec<String> = if has_per_series { stack_order.clone() } else { Vec::new() };
-            // A per_series column paints its series' companion ink unless the
-            // chart authors a uniform `support_table.font.color`, told apart
-            // from the theme's default by the board-wide value
-            // (`uniform_ink_authored`).
+            // A per_series column paints its series' companion ink while
+            // `font.color` is `auto`; an explicit color paints every cell.
             let series_ink: Option<Vec<String>> = if has_per_series {
-                let board_color = board_support_font_color.ok_or(
-                    "bar: a per_series column needs board_style.support_table_font_color to \
-                     tell an authored uniform ink from the default",
-                )?;
-                let own_color =
-                    style.font.color.as_deref().ok_or("bar: support_table.font.color absent")?;
-                (own_color == board_color)
+                r.support_table_series_ink
+                    .ok_or("bar: a per_series column needs resolved.support_table_series_ink")?
                     .then(|| {
                         series_order
                             .iter()
@@ -3514,13 +3532,8 @@ fn render_horizontal_panel(
         // past its anchor at −(labelPadding + titlePadding); bottom title:
         // one text row (with its own baseline-rounding quirk) below
         // labels + titlePadding.
-        let cat_title_extra = crate::common::y_title_extra(&ax_x.title, &cat_title_text);
-        let val_title_extra = if val_title_band > 0.0 {
-            let fs = ax_y.title.font.size_or(11.0);
-            ax_y.title.padding.unwrap_or(10.0) + fs + (0.79 * fs).round() - (0.8 * fs).round()
-        } else {
-            0.0
-        };
+        let cat_title_extra = crate::common::y_title_extra(&ax_x.title, &cat_title_paint);
+        let val_title_extra = crate::common::x_title_extra(&ax_y.title, &val_title_paint);
         let legend = (legend_shown && !legend_entries_typed.is_empty())
             .then(|| {
                 vega_legend(&legend_entries_typed, &legend_title, &r.legend, fonts)
@@ -3540,6 +3553,10 @@ fn render_horizontal_panel(
                     0.0,
                     ph,
                 ));
+                if cat_title_extra > 0.0 {
+                    let x = -(ax_off + cat_gutter + cat_title_extra);
+                    b.union(&vega_fit::Bounds::new(x, ph / 2.0 - cat_title_w / 2.0, x, ph / 2.0 + cat_title_w / 2.0));
+                }
                 // Bottom value axis labels (flush-aligned at the range ends);
                 // Vega's parity overlap hides every other one under the
                 // theme's min_gap, and only the visible labels' ink counts.
@@ -3566,7 +3583,7 @@ fn render_horizontal_panel(
                 val_visible.replace(Some(visible));
                 if val_title_extra > 0.0 {
                     x_axis_y2 += val_title_extra;
-                    b.union(&vega_fit::Bounds::new(0.0, 0.0, 0.0, x_axis_y2));
+                    b.union(&vega_fit::Bounds::new(pw / 2.0 - val_title_w / 2.0, 0.0, pw / 2.0 + val_title_w / 2.0, x_axis_y2));
                 }
                 if let Some(lg) = &legend {
                     // `xBounds` is the plot rect ∪ the left category band
@@ -4329,7 +4346,7 @@ fn render_horizontal_panel(
     };
     emit_axis_title_rotated(
         &mut svg,
-        &cat_title_text,
+        &cat_title_paint,
         &ax_x.title,
         cat_label_left_edge,
         plot_top + plot_h / 2.0,
@@ -4378,7 +4395,7 @@ fn render_horizontal_panel(
 
     emit_axis_title_bottom(
         &mut svg,
-        &val_title_text,
+        &val_title_paint,
         &ax_y.title,
         plot_left + plot_w / 2.0,
         val_label_y,
@@ -4787,14 +4804,21 @@ fn render_vertical_continuous_x_panel(
 
     let x_title_text = axis_title_text(&r.x, r.x_label.as_deref(), &r.field_labels);
     let y_title_text = axis_title_text(&r.y, r.y_label.as_deref(), &r.field_labels);
-    let x_title_band = axis_title_band(&ax_x.title, &x_title_text);
-    let y_title_extra = crate::common::y_title_extra(&ax_y.title, &y_title_text);
-    let x_title_extra = if x_title_band > 0.0 {
-        let fs = ax_x.title.font.size_or(11.0);
-        ax_x.title.padding.unwrap_or(10.0) + fs + (0.79 * fs).round() - (0.8 * fs).round()
+    let facet_grid = multiples::grid_counts(r.multiples.as_ref(), &r.panel_axes);
+    let (x_title_paint, y_title_paint) = if suppress_x_axis {
+        crate::common::refuse_wrapping_facet_title("bar", &x_title_text, &ax_x.title, svg_w, facet_grid.1, fonts)?;
+        crate::common::refuse_wrapping_facet_title("bar", &y_title_text, &ax_y.title, svg_h, facet_grid.0, fonts)?;
+        (x_title_text.clone(), y_title_text.clone())
     } else {
-        0.0
+        (
+            crate::common::wrapped_axis_title(&r.id, "x_label", &x_title_text, &ax_x.title.font, svg_w, fonts)?,
+            crate::common::wrapped_axis_title(&r.id, "y_label", &y_title_text, &ax_y.title.font, svg_h, fonts)?,
+        )
     };
+    let y_title_extra = crate::common::y_title_extra(&ax_y.title, &y_title_paint);
+    let x_title_extra = crate::common::x_title_extra(&ax_x.title, &x_title_paint);
+    let x_title_w = crate::common::widest_title_line(&ax_x.title, &x_title_paint, fonts)?;
+    let y_title_w = crate::common::widest_title_line(&ax_y.title, &y_title_paint, fonts)?;
 
     // The same title block the band arms compile: production runs
     // `apply_title_overflow_to_spec` on this unit spec too, so a title or
@@ -4863,6 +4887,10 @@ fn render_vertical_continuous_x_panel(
                     pw + y_tick_eff + y_gutter + y_title_extra,
                     ph,
                 ));
+                if y_title_extra > 0.0 && !suppress_x_axis {
+                    let x = pw + y_tick_eff + y_gutter + y_title_extra;
+                    b.union(&vega_fit::Bounds::new(x, ph / 2.0 - y_title_w / 2.0, x, ph / 2.0 + y_title_w / 2.0));
+                }
                 for (&tv, &lw) in y_ticks.iter().zip(y_label_ws.iter()) {
                     let y = ph * (y_max - tv) / y_span;
                     let mut label_ink = vega_fit::text_ink(
@@ -4919,7 +4947,7 @@ fn render_vertical_continuous_x_panel(
                     }
                     if x_title_extra > 0.0 {
                         let ext = (b.y2 - ph).max(0.0);
-                        b.union(&vega_fit::Bounds::new(0.0, 0.0, 0.0, ph + ext + x_title_extra));
+                        b.union(&vega_fit::Bounds::new(pw / 2.0 - x_title_w / 2.0, 0.0, pw / 2.0 + x_title_w / 2.0, ph + ext + x_title_extra));
                     }
                 }
                 // Bar rect ink (boundStroke: full border width).
@@ -5086,7 +5114,7 @@ fn render_vertical_continuous_x_panel(
         x_label_pad,
         x_family: x_family.to_string(),
         x_font_size,
-        x_title_text: x_title_text.clone(),
+        x_title_text: x_title_paint.clone(),
         title_key: (!suppress_x_axis).then_some(crate::contract::LabelKey::X),
     };
     if !suppress_x_axis {
@@ -5126,7 +5154,7 @@ fn render_vertical_continuous_x_panel(
 
     emit_axis_title_rotated(
         &mut svg,
-        &y_title_text,
+        &y_title_paint,
         &ax_y.title,
         y_label_x,
         plot_h / 2.0,
@@ -6641,7 +6669,7 @@ pub(crate) fn render_vertical_panel(
     let val_title_text = if r.wide_measures.is_empty() {
         axis_title_text(val_field, r.y_label.as_deref(), &r.field_labels)
     } else {
-        r.y_label.clone().unwrap_or_else(|| crate::common::wide_measures_title(&r.wide_measures, &r.field_labels))
+        r.y_label.as_deref().map(crate::common::collapse_title_newlines).unwrap_or_else(|| crate::common::wide_measures_title(&r.wide_measures, &r.field_labels))
     };
     // A dual axis needs both sides labeled to tell the scales apart:
     // production restores the base title from its encoding title when the
@@ -6655,7 +6683,20 @@ pub(crate) fn render_vertical_panel(
     let base_title_suppressed =
         r.y_label.as_deref().is_some_and(|l| !l.is_empty()) && ax_y.title.visible == Some(false);
     let val_title_style = if base_title_suppressed { &ax_y.title } else { layer_title_style };
-    let val_title_band = axis_title_band(val_title_style, &val_title_text);
+    let facet_grid = multiples::grid_counts(r.multiples.as_ref(), &r.panel_axes);
+    let (cat_title_paint, val_title_paint) = if facet.is_some() {
+        crate::common::refuse_wrapping_facet_title("bar", &cat_title_text, &ax_x.title, w, facet_grid.1, fonts)?;
+        crate::common::refuse_wrapping_facet_title("bar", &val_title_text, &ax_y.title, h, facet_grid.0, fonts)?;
+        (cat_title_text.clone(), val_title_text.clone())
+    } else {
+        (
+            crate::common::wrapped_axis_title(&r.id, "x_label", &cat_title_text, &ax_x.title.font, w, fonts)?,
+            crate::common::wrapped_axis_title(&r.id, "y_label", &val_title_text, &ax_y.title.font, h, fonts)?,
+        )
+    };
+    let val_title_band = axis_title_band(val_title_style, &val_title_paint);
+    let cat_title_w = crate::common::widest_title_line(&ax_x.title, &cat_title_paint, fonts)?;
+    let val_title_w = crate::common::widest_title_line(val_title_style, &val_title_paint, fonts)?;
     let val_margin = max_val_w + val_pad + val_title_band;
 
     let cat_font_size = ax_x.labels.font.size.ok_or(
@@ -6665,7 +6706,7 @@ pub(crate) fn render_vertical_panel(
         "bar: axis_x.labels.padding absent (theme required)",
     )?;
     let cat_family = ax_x.labels.font.family.as_deref().unwrap_or("sans-serif");
-    let cat_title_band = axis_title_band(&ax_x.title, &cat_title_text);
+    let cat_title_band = axis_title_band(&ax_x.title, &cat_title_paint);
 
     // Resolve temporal label cadence before final layout (mirrors line.rs,
     // pre-fix): `avail_w` (padding-excluded width), not the real plot width,
@@ -6812,7 +6853,7 @@ pub(crate) fn render_vertical_panel(
         && !is_stacked
         && color_is_1to1(color_field.expect("is_grouped implies color"));
     let (band_pi, band_po) = if is_grouped && !is_stacked && !one_to_one {
-        (GROUPED_PADDING_INNER, GROUPED_PADDING_OUTER)
+        (r.style.grouped.padding_inner, r.style.grouped.padding_outer)
     } else {
         (0.0, 0.0)
     };
@@ -6933,9 +6974,6 @@ pub(crate) fn render_vertical_panel(
             raw_max,
         )
     };
-    if val_away && ax_y.tick_values.is_empty() {
-        return Err("bar: a default-aligned right value axis with no baked ladder is not modeled".into());
-    }
     let val_gutter = if val_on_right && ax_y.tick_values.is_empty() {
         estimated_val_gutter()?
     } else {
@@ -7569,12 +7607,7 @@ pub(crate) fn render_vertical_panel(
             }
             None => zero_w.unwrap_or(0.0),
         };
-        let cat_title_extra = if cat_title_band > 0.0 {
-            let fs = ax_x.title.font.size_or(11.0);
-            ax_x.title.padding.unwrap_or(10.0) + fs + (0.79 * fs).round() - (0.8 * fs).round()
-        } else {
-            0.0
-        };
+        let cat_title_extra = crate::common::x_title_extra(&ax_x.title, &cat_title_paint);
         // Theme-visible ticks and the thinned-cadence restoration meet in
         // one band term — never summed, the tick is drawn once either way.
         let x_tick_eff = if ax_x.ticks.visible.unwrap_or(true) {
@@ -7659,7 +7692,7 @@ pub(crate) fn render_vertical_panel(
             plot_h = plot_h_of(&tick_values);
         }
         let top_ink = top_ink_of(&tick_values);
-        let val_title_extra = crate::common::y_title_extra(val_title_style, &val_title_text);
+        let val_title_extra = crate::common::y_title_extra(val_title_style, &val_title_paint);
         // The value axis's own ink extent. Vega lays each axis out with an
         // integer (ceil'd) extent before the panes negotiate widths — but
         // the title group keeps the UNROUNDED one (see `title_pos` below).
@@ -7832,13 +7865,8 @@ pub(crate) fn render_vertical_panel(
                 })
                 .collect::<Result<_, String>>()?,
         };
-        let val_title_extra = crate::common::y_title_extra(val_title_style, &val_title_text);
-        let cat_title_extra = if cat_title_band > 0.0 {
-            let fs = ax_x.title.font.size_or(11.0);
-            ax_x.title.padding.unwrap_or(10.0) + fs + (0.79 * fs).round() - (0.8 * fs).round()
-        } else {
-            0.0
-        };
+        let val_title_extra = crate::common::y_title_extra(val_title_style, &val_title_paint);
+        let cat_title_extra = crate::common::x_title_extra(&ax_x.title, &cat_title_paint);
         let legend = (legend_shown && !legend_entries_typed.is_empty())
             .then(|| {
                 vega_legend(&legend_entries_typed, &legend_title, &r.legend, fonts)
@@ -7878,6 +7906,10 @@ pub(crate) fn render_vertical_panel(
                 // Value axis gutter (right by default) + rotated title.
                 let val_axis_x2 =
                     if val_on_right { pw + ax_off_y + val_tick_size + val_gutter + val_title_extra } else { pw };
+                if val_title_extra > 0.0 && facet.is_none() {
+                    let x = if val_on_right { val_axis_x2 } else { -(ax_off_y + val_tick_size + val_gutter + val_title_extra) };
+                    b.union(&vega_fit::Bounds::new(x, ph / 2.0 - val_title_w / 2.0, x, ph / 2.0 + val_title_w / 2.0));
+                }
                 if val_on_right {
                     b.union(&vega_fit::Bounds::new(0.0, 0.0, val_axis_x2, ph));
                 } else {
@@ -8033,7 +8065,12 @@ pub(crate) fn render_vertical_panel(
                     }
                     if cat_title_extra > 0.0 {
                         let s = (b.y2 - ph).max(0.0);
-                        let title_reach = vega_fit::Bounds::new(0.0, 0.0, 0.0, ph + s + cat_title_extra);
+                        let title_reach = vega_fit::Bounds::new(
+                            pw / 2.0 - cat_title_w / 2.0,
+                            0.0,
+                            pw / 2.0 + cat_title_w / 2.0,
+                            ph + s + cat_title_extra,
+                        );
                         b.union(&title_reach);
                         x_axis_y2 = x_axis_y2.max(title_reach.y2);
                     }
@@ -9584,7 +9621,7 @@ pub(crate) fn render_vertical_panel(
         cat_font_size,
         cat_family: cat_family.to_string(),
         has_two_row_labels,
-        cat_title_text: cat_title_text.clone(),
+        cat_title_text: cat_title_paint.clone(),
         title_key: facet.is_none().then_some(crate::contract::LabelKey::X),
         cat_title_reach,
     };
@@ -9714,7 +9751,7 @@ pub(crate) fn render_vertical_panel(
     };
     emit_axis_title_rotated(
         &mut svg,
-        &val_title_text,
+        &val_title_paint,
         val_title_style,
         val_label_edge_x,
         plot_top + plot_h / 2.0,
@@ -9770,7 +9807,7 @@ pub(crate) fn render_vertical_panel(
             1.0,
             // Only the first y title of the chart edits its label: the layer's
             // stands in for a base title that draws nothing.
-            (facet.is_none() && axis_title_band(val_title_style, &val_title_text) == 0.0)
+            (facet.is_none() && axis_title_band(val_title_style, &val_title_paint) == 0.0)
                 .then_some(crate::contract::LabelKey::Y),
         );
         crate::contract::axis_group_close(&mut svg);
@@ -9992,7 +10029,7 @@ fn stack_group_total(
 /// A disconnected `curve: "step"` layer's own goal-marker plateau per row —
 /// `charts/extensibility_1`'s `bullet` chart's own `Goal` layer: a plain
 /// two-point horizontal segment at the row's own category band, inset by
-/// `STEP_BAND_DISCONNECTED_WIDTH`'s share of the band on each side, never
+/// `line_mark.disconnected_width`'s share of the band on each side, never
 /// joined to its neighbors (`step_band.py`'s `connect: false` `offset_
 /// range`, re-derived here from `line.rs`'s own base-chart reading of the
 /// same law — that module is out of this task's scope, so the geometry
@@ -10021,16 +10058,17 @@ fn paint_disconnected_step_layer_marks(
         l.line_mark.disconnected_cap.as_deref(),
     );
     let join = l.line_mark.stroke.join.as_deref().unwrap_or("miter");
+    let plateau_share = l.line_mark.disconnected_width;
     // Every plateau is its own path on the same band, so one fit serves all.
     let dash = l.line_mark.stroke.dasharray.as_deref().map_or(Ok(String::new()), |raw| {
-        crate::step_band::attr("bar", &crate::step_band::parse("bar", raw)?, Some(band.bandwidth()))
+        crate::step_band::attr("bar", &crate::step_band::parse("bar", raw)?, Some(band.bandwidth() * plateau_share))
     })?;
     let mut targets: Vec<(f64, f64, String)> = Vec::new();
     for row in rows {
         let cat = row_str(row, cat_field);
         let Some(band_x) = band.position(&cat) else { continue };
         let bw = band.bandwidth();
-        let inset = bw * (1.0 - STEP_BAND_DISCONNECTED_WIDTH) / 2.0;
+        let inset = bw * (1.0 - plateau_share) / 2.0;
         let val = row_num(row, &l.y)
             .ok_or_else(|| format!("bar: layer row: missing or non-numeric field {:?}", l.y))?;
         let y = y_of(val);
@@ -11769,7 +11807,7 @@ mod tests {
                 "format": null,
                 "visible": true
             },
-            "title": {"font": {"family": TEST_FONT}, "padding": 0.0, "visible": false},
+            "title": {"font": {"family": TEST_FONT, "weight": "600"}, "padding": 0.0, "visible": false},
             "position": null,
             "mirror": null,
             "band_position": 0.5,
@@ -11801,7 +11839,7 @@ mod tests {
                 "visible": true,
                 "align": "right"
             },
-            "title": {"font": {"family": TEST_FONT}, "padding": 0.0, "visible": false},
+            "title": {"font": {"family": TEST_FONT, "weight": "600"}, "padding": 0.0, "visible": false},
             "position": "left",
             "mirror": null,
             "band_position": 0.5,
@@ -11853,6 +11891,7 @@ mod tests {
                     "size": 20.0,
                     "border": {"width": null, "color": null, "radius": 4.0}
                 },
+                "grouped": {"padding_inner": 0.2, "padding_outer": 0.2},
                 "single_series_fill": "#3164a3",
                 "label_font_size": 11.0,
                 "series_label": {"font_family": "'Inter'", "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": []},
@@ -11882,6 +11921,7 @@ mod tests {
         serde_json::json!({
             "type": "line",
             "line_mark": {
+                "disconnected_width": 0.9,
                 "stroke": {"width": 2.0, "color": stroke_color, "cap": "round", "join": "round"},
                 "halo_multiplier": 2.0,
                 "curve": "linear",
@@ -12989,6 +13029,7 @@ mod tests {
             let layer = serde_json::json!({
                 "type": "line",
                 "line_mark": {
+                    "disconnected_width": 0.9,
                     "stroke": {"width": 2.5, "color": null, "cap": "round", "join": "round"},
                     "halo_multiplier": 2.0,
                     "curve": "linear",
@@ -13311,6 +13352,7 @@ mod tests {
                     "curve": "step",
                     "connect": false,
                     "disconnected_cap": disconnected_cap,
+                    "disconnected_width": 0.9,
                     "labels": {"visible": false}
                 },
                 "point_mark": {
@@ -13384,6 +13426,30 @@ mod tests {
                 "the plateau's cap is the baked disconnected_cap, not the authored round \
                  stroke.cap: {svg}"
             );
+        }
+
+        #[test]
+        fn a_disconnected_step_layer_plateau_spans_the_authored_share_of_its_band() {
+            let plateau_width = |share: f64| -> f64 {
+                let mut layer = disconnected_step_layer_json("round", Some("butt"));
+                layer["line_mark"]["disconnected_width"] = serde_json::json!(share);
+                let svg = render(
+                    &make_payload(bullet_like_payload(stacked_bar_layer_json(None), layer)),
+                    &test_fonts(),
+                )
+                .expect("a disconnected step-curve layer renders");
+                let marker = svg.find("fill=\"none\" stroke=\"#dea628\"").expect("layer plateau paints");
+                let d_start = svg[..marker].rfind("d=\"").unwrap() + 3;
+                let d = &svg[d_start..d_start + svg[d_start..].find('"').unwrap()];
+                let xs: Vec<f64> = d
+                    .split(['M', 'L'])
+                    .filter(|pt| !pt.trim().is_empty())
+                    .map(|pt| pt.trim().split(',').next().unwrap().parse().unwrap())
+                    .collect();
+                xs[1] - xs[0]
+            };
+            let ratio = plateau_width(0.5) / plateau_width(0.9);
+            assert!((ratio - 0.5 / 0.9).abs() < 0.01, "{ratio}");
         }
 
         /// An absent `disconnected_cap` (never authored) falls back to the
@@ -13847,27 +13913,29 @@ mod tests {
         );
     }
 
-    /// A domain that excludes 0 compiles to different scales per
-    /// orientation (probed: vertical `zero: false`, horizontal `zero: true`,
-    /// which widens it to 0) — refused by name on both rather than drawn as
-    /// one of them.
+    /// A domain that excludes 0 compiles to different scales per orientation
+    /// (probed: vertical `zero: false`, whose zero-based bars hang past the
+    /// plot, horizontal `zero: true`, which widens it to 0): the horizontal
+    /// bar draws from 0 and the vertical one refuses by name.
     #[test]
-    fn authored_domain_excluding_zero_refuses_on_both_orientations() {
+    fn authored_domain_excluding_zero_widens_a_horizontal_bar_and_refuses_a_vertical_one() {
         for horizontal in [false, true] {
             let mut payload_json = make_authored_domain_payload(horizontal);
             payload_json["resolved"]["style"]["axis_y"]["scale"] =
                 serde_json::json!({"continuous": {"domain": [100.0, 4000.0]}});
-            let err = render(&make_payload(payload_json), &test_fonts())
-                .expect_err("a domain excluding 0 is unmodeled");
-            assert!(err.contains("excludes 0"), "horizontal={horizontal}: {err}");
+            let result = render(&make_payload(payload_json), &test_fonts());
+            if horizontal {
+                result.expect("a horizontal bar widens the domain to 0");
+            } else {
+                assert!(result.expect_err("vertical refuses").contains("excludes 0"));
+            }
         }
     }
 
-    /// Vega draws a bar past an authored pair unclipped and grows the fitted
-    /// view around it (probed: 5000 over `[0, 4000]` overflows the plot top
-    /// and shrinks the plot; −300 hangs below the bottom edge), a geometry
-    /// no arm models — refused by name on both orientations rather than
-    /// clamped to the plot edge.
+    /// Vega draws a bar outside an authored pair unclipped and grows the fitted
+    /// view around it (probed: 5000 over `[0, 4000]` overflows the plot top and
+    /// shrinks the plot; -300 hangs below the bottom edge), a geometry no arm
+    /// models: refused by name on both orientations rather than clamped.
     #[test]
     fn authored_domain_with_a_value_outside_it_refuses_on_both_orientations() {
         for (horizontal, value) in [(false, 5000.0), (true, 5000.0), (false, -300.0), (true, -300.0)] {
@@ -14217,7 +14285,7 @@ mod tests {
     fn support_table_style_json() -> serde_json::Value {
         serde_json::json!({
             "font": {"family": TEST_FONT, "size": 11.0, "color": "#6F685D"},
-            "divider": {"visible": false, "color": "#626366", "width": 1.0, "dasharray": null},
+            "divider": {"gap": 4.0, "visible": false, "color": "#626366", "width": 1.0, "dasharray": null},
             "row": {"padding": {"vertical": 2.0, "horizontal": 4.0},
                     "divider": {"visible": false, "color": "#626366", "width": 1.0, "dasharray": null}},
             "label": {"padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0, "color": "#6F685D"}},
@@ -15129,7 +15197,7 @@ mod tests {
                         "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"},
                         "padding": 6.0, "min_gap": 4.0, "format": null, "visible": true, "align": "left"
                     },
-                    "title": {"font": {"family": TEST_FONT}, "padding": 0.0, "visible": false},
+                    "title": {"font": {"family": TEST_FONT, "weight": "600"}, "padding": 0.0, "visible": false},
                     "position": null, "mirror": null, "band_position": 0.5, "scale": {},
                     "tick_values": [], "domain_max": null, "domain_min": null, "ruler": null,
                     "time_unit": null, "fiscal_year_start_month": 1, "is_quantitative": true, "zero_anchored": false, "fill": null, "line": null
@@ -15141,13 +15209,14 @@ mod tests {
                         "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"},
                         "padding": 6.0, "min_gap": null, "format": null, "visible": true
                     },
-                    "title": {"font": {"family": TEST_FONT}, "padding": 0.0, "visible": false},
+                    "title": {"font": {"family": TEST_FONT, "weight": "600"}, "padding": 0.0, "visible": false},
                     "position": "left", "mirror": null, "band_position": 0.5, "scale": {},
                     "tick_values": [0.0, 500.0, 1000.0], "domain_max": 1000.0, "domain_min": null,
                     "ruler": null, "tick_label": {"format": ",.0~f"},
                     "time_unit": null, "fiscal_year_start_month": 1, "is_quantitative": true, "zero_anchored": false, "fill": null, "line": null
                 },
                 "mark": {"band_width": 0.7, "size": 20.0, "border": {"width": null, "color": null, "radius": 0.0}},
+                "grouped": {"padding_inner": 0.2, "padding_outer": 0.2},
                 "single_series_fill": "#3164a3",
                 "series_label": {"font_family": "'Inter'", "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": []},
                 "endpoint_labels": {"visible": false, "height": 20.0, "label_offset": 6.0}
@@ -15816,7 +15885,7 @@ mod tests {
                         "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"},
                         "padding": 6.0, "min_gap": 4.0, "format": null, "visible": true, "align": "left"
                     },
-                    "title": {"font": {"family": TEST_FONT}, "padding": 0.0, "visible": false},
+                    "title": {"font": {"family": TEST_FONT, "weight": "600"}, "padding": 0.0, "visible": false},
                     "position": null, "mirror": null, "band_position": 0.5, "scale": {},
                     "tick_values": [], "domain_max": null, "domain_min": null, "ruler": null,
                     "time_unit": null, "fiscal_year_start_month": 1, "is_quantitative": true, "zero_anchored": false, "fill": null, "line": null
@@ -15828,7 +15897,7 @@ mod tests {
                         "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"},
                         "padding": 6.0, "min_gap": 16.0, "format": ".3~s", "visible": true
                     },
-                    "title": {"font": {"family": TEST_FONT}, "padding": 0.0, "visible": false},
+                    "title": {"font": {"family": TEST_FONT, "weight": "600"}, "padding": 0.0, "visible": false},
                     "position": "left", "mirror": null, "band_position": 0.5,
                     "scale": {"headroom": 0.08, "values": null},
                     "tick_values": [-1000000.0, 0.0, 1000000.0, 2000000.0, 3000000.0],
@@ -15850,6 +15919,7 @@ mod tests {
                         "position": "above"
                     }
                 },
+                "grouped": {"padding_inner": 0.2, "padding_outer": 0.2},
                 "single_series_fill": "#1c395c",
                 "series_label": {"font_family": "'Inter'", "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": []},
                 "endpoint_labels": {"visible": false, "height": 20.0, "label_offset": 6.0},
@@ -16203,7 +16273,7 @@ mod tests {
             s[i..].split(',').nth(1).unwrap().split(')').next().unwrap().trim().parse().unwrap()
         };
         let delta = plot_top(&with_sub) - plot_top(&without);
-        let want = 13.0 + crate::vega_fit::SUBTITLE_PADDING;
+        let want = 13.0 + crate::constants::layout::VEGA_SUBTITLE_PADDING;
         assert_eq!(
             delta, want,
             "the subtitle band is reserved: plot moved {delta}, expected {want}"
@@ -16536,7 +16606,7 @@ mod tests {
         // title's own un-tiered size (`title_measure_font_size`'s
         // fallback) — the same 18px this fixture's title uses — so the
         // override doesn't change the expected reservation math below.
-        let want = 18.0 + crate::vega_fit::SUBTITLE_PADDING;
+        let want = 18.0 + crate::constants::layout::VEGA_SUBTITLE_PADDING;
         assert_eq!(
             delta, want,
             "the subtitle band is reserved: plot moved {delta}, expected {want}"
@@ -17359,7 +17429,7 @@ mod tests {
         assert!(one_line.contains(">Hourly volume<"), "the subtitle paints: {one_line}");
         assert_eq!(
             plot_group_top(&one_line) - plot_group_top(&none),
-            11.0 + crate::vega_fit::SUBTITLE_PADDING,
+            11.0 + crate::constants::layout::VEGA_SUBTITLE_PADDING,
             "…and reserves its own band: {one_line}"
         );
         assert_two_subtitle_rows(&wrapped, CARD_WIDE_SUBTITLE_LINE_1, CARD_WIDE_SUBTITLE_LINE_2);
@@ -17932,6 +18002,7 @@ mod tests {
                     "axis_x": {"grid": {"visible": false}, "ticks": {}, "labels": {"font": {}}, "title": {"font": {}}, "scale": {}, "tick_values": [], "fiscal_year_start_month": 1, "is_quantitative": true, "zero_anchored": false},
                     "axis_y": {"grid": {"visible": false}, "ticks": {}, "labels": {"font": {}}, "title": {"font": {}}, "scale": {}, "tick_values": [], "fiscal_year_start_month": 1, "is_quantitative": true, "zero_anchored": false},
                     "mark": {"band_width": 0.7, "size": 20.0, "border": {}},
+                    "grouped": {"padding_inner": 0.2, "padding_outer": 0.2},
                     "single_series_fill": "#000",
                     "series_label": {"font_family": "'Inter'", "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": []},
                     "endpoint_labels": {"visible": false, "height": 20.0, "label_offset": 6.0}
@@ -17971,7 +18042,7 @@ mod tests {
                 "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"},
                 "padding": 6.0, "min_gap": 4.0, "format": null, "visible": true, "align": "left"
             },
-            "title": {"font": {"family": TEST_FONT}, "padding": 0.0, "visible": false},
+            "title": {"font": {"family": TEST_FONT, "weight": "600"}, "padding": 0.0, "visible": false},
             "position": "left", "mirror": null, "band_position": 0.5, "scale": {},
             "tick_values": [0.0, 25.0, 50.0], "domain_max": null, "domain_min": null,
             "ruler": null, "tick_label": {"format": ",.0~f"},
@@ -18015,6 +18086,7 @@ mod tests {
                     "size": 20.0,
                     "border": {"width": null, "color": null, "radius": 0.0}
                 },
+                "grouped": {"padding_inner": 0.2, "padding_outer": 0.2},
                 "single_series_fill": "#3164a3",
                 "series_label": {"font_family": "'Inter'", "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": []},
                 "endpoint_labels": {"visible": false, "height": 20.0, "label_offset": 6.0}
@@ -18057,6 +18129,36 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// The distance between two categories' first grouped bars is the band
+    /// step `W / (n - padding_inner + 2 * padding_outer)`, so it moves with
+    /// each authored padding and tells the two apart.
+    fn grouped_band_step(padding_inner: f64, padding_outer: f64) -> f64 {
+        let mut payload_json = make_vertical_payload(&[("Jan", 100.0), ("Feb", 150.0)], true);
+        payload_json["resolved"]["style"]["grouped"] =
+            serde_json::json!({"padding_inner": padding_inner, "padding_outer": padding_outer});
+        let svg = render(&make_payload(payload_json), &test_fonts()).expect("grouped bar renders");
+        // Bars are rounded `<path d="M x,..." fill="#3164a3">` marks; the first
+        // series fills `#3164a3`.
+        let first_series: Vec<f64> = svg
+            .split("<path d=\"M ")
+            .skip(1)
+            .filter(|mark| mark.contains("fill=\"#3164a3\""))
+            .map(|mark| mark.split(',').next().unwrap().parse().unwrap())
+            .collect();
+        assert_eq!(first_series.len(), 2, "{svg}");
+        first_series[1] - first_series[0]
+    }
+
+    #[test]
+    fn grouped_band_padding_follows_the_authored_inner_and_outer_values() {
+        let default = grouped_band_step(0.2, 0.2);
+        let inner_small = grouped_band_step(0.1, 0.4);
+        let inner_large = grouped_band_step(0.4, 0.1);
+        // step = W / (2 - inner + 2 * outer): 2.2, 2.7 and 1.8 share-widths of W.
+        assert!((default / inner_small - 2.7 / 2.2).abs() < 0.01, "{default} {inner_small}");
+        assert!((inner_large / inner_small - 2.7 / 1.8).abs() < 0.01, "{inner_large} {inner_small}");
     }
 
     /// Rebuild the stacked payload as production's color-1:1-with-x shape
@@ -19604,7 +19706,7 @@ mod tests {
         for angle in [None, Some(-90.0), Some(-45.0)] {
             let mut p = make_tilt_payload(angle);
             p["resolved"]["style"]["axis_x"]["title"] =
-                json!({"font": {"family": TEST_FONT, "size": title_fs}, "padding": title_padding, "visible": true});
+                json!({"font": {"family": TEST_FONT, "size": title_fs, "weight": "600"}, "padding": title_padding, "visible": true});
             let svg = render(&make_payload(p), &fonts).expect("renders");
             let (rot, dy, anchor, _tx, anchor_y) = rotated_label(&svg, "Category 01").expect("rotated");
             let (align, baseline) = match anchor.as_str() {
@@ -22890,9 +22992,24 @@ mod tests {
         /// exceeds a `5px` target, driving the corrected height deeply
         /// negative.
         #[test]
+        fn a_facet_axis_title_wider_than_its_panel_refuses_by_name() {
+            let mut payload_json = make_facet_payload("shared");
+            payload_json["resolved"]["x_label"] = json!(
+                "An axis title far too long to fit the width of a single small multiple panel, \
+                 however the wrapper would break it across lines"
+            );
+            payload_json["resolved"]["style"]["axis_x"]["title"]["visible"] = json!(true);
+            payload_json["resolved"]["style"]["axis_x"]["title"]["font"]["weight"] = json!("600");
+            let err = render(&make_payload(payload_json), &test_fonts()).unwrap_err();
+            assert_eq!(err, "bar: multiples with an axis title wider than its panel budget is not supported");
+        }
+
+        #[test]
         fn facet_height_collapse_returns_err_not_a_silent_skip() {
             let mut payload_json = make_facet_payload("shared");
             payload_json["height"] = json!(5.0);
+            payload_json["resolved"]["x_label"] = json!("");
+            payload_json["resolved"]["y_label"] = json!("");
             let payload = make_payload(payload_json);
             let fonts = test_fonts();
             let err = render(&payload, &fonts).unwrap_err();

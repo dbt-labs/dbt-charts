@@ -395,7 +395,7 @@ def merge_cache_layers(*layers: CachePatch) -> CachePatch:
 
     merged = CachePatch()
     for layer in layers:
-        merged = merge_patches(merged, _as_base_patch(layer), nested=False)
+        merged = merge_patches(merged, _as_base_patch(layer))
     return merged
 
 

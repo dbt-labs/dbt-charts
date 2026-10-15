@@ -861,9 +861,10 @@ def render(
             "--cache",
             envvar="DCT_CACHE_PATH",
             help=(
-                "Persist the query cache to this DuckDB file (created if absent). "
-                "Default: falls back to dbt_charts.yml's cache: block (in-memory "
-                "unless a path is configured there). Mutually exclusive with --no-cache."
+                "Keep the query cache in this DuckDB file (created if absent). "
+                "Default: the path in dbt_charts.yml's cache: block, else a "
+                "per-user file shared by every project. Mutually exclusive "
+                "with --no-cache."
             ),
         ),
     ] = None,
@@ -1340,11 +1341,10 @@ def serve(
             "--cache",
             envvar="DCT_CACHE_PATH",
             help=(
-                "Persist the query cache to this DuckDB file (created if absent). "
-                "Default: falls back to dbt_charts.yml's cache: block (in-memory "
-                "unless a path is configured there). A persistent cache file "
-                "supports only one writer at a time — don't share it across "
-                "concurrently running servers. Mutually exclusive with --no-cache."
+                "Keep the query cache in this DuckDB file (created if absent). "
+                "Default: the path in dbt_charts.yml's cache: block, else a "
+                "per-user file shared by every project. Several dct processes "
+                "can share one file. Mutually exclusive with --no-cache."
             ),
         ),
     ] = None,
@@ -1371,8 +1371,9 @@ def serve(
     server.port > deterministic hash of project directory. If the chosen port
     is occupied, the next available port is used automatically.
 
-    The query-result cache is in-memory by default — ephemeral, discarded when
-    the server exits. Pass --cache <path> to persist it across restarts.
+    Query results are cached in a per-user file by default, so they survive
+    restarts and are shared with `dct render`. Pass --cache <path> to use
+    another file, or --no-cache to re-run every query.
 
     \b
     Examples:

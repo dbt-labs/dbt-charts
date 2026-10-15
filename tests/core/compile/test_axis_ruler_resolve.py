@@ -64,7 +64,7 @@ from dbt_charts.core.text.numeral_scale import (
     sub_unit_scientific_format,
 )
 
-from ..conftest import baked_format
+from ..conftest import baked_format, theme_without_tick_count
 
 # A ladder that compacts in ANCHOR mode (mirrors the 0-450k worked example in
 # the numeral design doc): step 100,000 divides the thousands tier evenly and
@@ -1219,7 +1219,7 @@ def test_end_to_end_literal_authored_format_is_not_baked_through_real_resolve():
 @pytest.mark.parametrize(
     ("theme_name", "multiples"),
     [
-        pytest.param("stark", None, id="stark-ticks-count-unset"),
+        pytest.param("stark", None, id="ticks-count-unset"),
         pytest.param(
             "clarity",
             {"rows": "region", "scale": "independent"},
@@ -1234,9 +1234,9 @@ def test_end_to_end_no_ladder_root_causes_bake_the_sub_unit_guard(
     ``build_resolved_axis`` has no visibility into *why* ``tick_values`` came
     back empty, so both must reach the same bake:
 
-    - ``stark`` leaves ``axis_quantitative.ticks.count`` unset -- no
+    - an unset ``axis_quantitative.ticks.count`` -- no
       ``multiples:`` involved at all, the plain reported case.
-    - ``clarity`` (whose ``ticks.count: 6`` would otherwise bake a real
+    - ``clarity`` (whose ``ticks.count: auto`` would otherwise bake a real
       ladder under the default ``shared`` scale) with
       ``multiples.scale: independent``.
 
@@ -1246,7 +1246,12 @@ def test_end_to_end_no_ladder_root_causes_bake_the_sub_unit_guard(
     in ``bar.py``) would leave the isolated ``build_resolved_axis`` tests
     green while stark's real pipeline silently stopped reaching this branch.
     """
-    board = resolve_chart_style_context(get_theme_style(theme_name))
+    theme = (
+        theme_without_tick_count(theme_name)
+        if multiples is None
+        else get_theme_style(theme_name)
+    )
+    board = resolve_chart_style_context(theme)
     data = [
         {"month": m, "region": r, "revenue": 0.05 + 0.01 * m}
         for r in ("West", "East")

@@ -1123,7 +1123,7 @@ def create_server(
         cache_path: Persist the query-result cache to this DuckDB file (created
             if absent). Explicit override — wins over dbt_charts.yml. None (the
             default) falls through to the project's cache: block (path: null
-            there means the zero-config in-memory default). Ignored when
+            there means the per-user file). Ignored when
             no_cache=True.
         clock: Every render's time source, handed to its ``Executor``.
 
@@ -1165,7 +1165,11 @@ def create_server(
         # registry is built eagerly here (not lazily on first request), so a
         # malformed dbt_charts.yml surfaces at startup rather than on the
         # first page load.
-        cache = TrivialDuckDBCache(db_path=boot.path) if boot.enabled else None
+        cache = (
+            TrivialDuckDBCache(db_path=boot.path, max_age=boot.max_age)
+            if boot.enabled
+            else None
+        )
         try:
             _app.state.result_cache = cache
             _app.state.adapter_registry = _build_registry(core_project)

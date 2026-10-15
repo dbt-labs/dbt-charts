@@ -232,13 +232,11 @@ def test_strip_top_reserves_two_line_axis_label_space():
 
     top_y = _divider_y_pixel(
         style,
-        axis_offset(cs, style, x_label_authored=False, chart_type=""),
+        axis_offset(cs, style, x_labeled=False, chart_type=""),
         spec_height,
     )
 
-    axis_x = resolved_axis_style(
-        cs, "axis_x", "band", chart_type="", label_authored=False
-    )
+    axis_x = resolved_axis_style(cs, "axis_x", "band", chart_type="", labeled=False)
     label_padding = axis_x.labels.padding or 0.0
     label_font_size = axis_x.labels.font.size or 0.0
     assert label_font_size > 0, (

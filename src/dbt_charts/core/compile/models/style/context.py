@@ -40,7 +40,6 @@ from dbt_charts.core.compile.models.style.authored import (
     AxisYStylePatch,
     BandAxisStylePatch,
     BaseAxisStylePatch,
-    ChartsStylePatch,
     PaginationConfig,
     QuantitativeAxisStylePatch,
 )
@@ -63,6 +62,7 @@ from dbt_charts.core.compile.models.style.theme import (
     BarChartStyle,
     BaseAxisStyle,
     CalloutChartStyle,
+    ChartTitleStyle,
     GeoshapeChartStyle,
     GlobalMarksStyle,
     HeatmapChartStyle,
@@ -82,7 +82,6 @@ from dbt_charts.core.compile.models.style.theme import (
     Style,
     SupportTableStyle,
     TableChartStyle,
-    TitleStyle,
     TooltipStyle,
     ViewStyle,
 )
@@ -178,7 +177,7 @@ class ChartStyleContext:
     border: BorderStyle
 
     # --- Axis cascade state (theme layers, not yet chart-merged) ---
-    # `axis` is Layer 1's channel-agnostic base (BaseAxisStyle — raw passthrough,
+    # `axis` is the cascade's channel-agnostic base (BaseAxisStyle — raw passthrough,
     # not eagerly resolved). `axis_x`/`axis_y`/`axis_quantitative` are
     # authored-only overlays — sparse by design (SkipInheritSlots means
     # apply_inherit never fills their None leaves from `axis`).
@@ -227,7 +226,7 @@ class ChartStyleContext:
     # way it reads tooltip above.
     hover_emphasis: HoverEmphasisStyle
     font_family: str | None  # root font.family; emitted as top-level VL `font`
-    title: TitleStyle
+    title: ChartTitleStyle
     pagination: PaginationConfig | None
 
     # H1–H6 font sizes from `style.fonts.heading.sizes`, indexed by level - 1.
@@ -242,15 +241,6 @@ class ChartStyleContext:
     # reads as `style`.
     cascaded: Style
 
-    # --- Board-authored chart style overrides (board layers of the axis cascade) ---
-    # The board's accumulated `style.charts.*` patch, kept separate from the
-    # theme+board-commingled `axis`/`axis_x`/`axis_y`/`axis_quantitative`
-    # above so board-authored leaves survive the theme's chart-type defaults
-    # at Layer 4 instead of being silently overwritten.
-    # Always a real, possibly-empty patch: model_fields_set is empty when the
-    # board authored nothing, and merge_onto_base no-ops on unset fields.
-    charts_board_overrides: ChartsStylePatch
-
     # === Sparse / cascade-only fields — populated only by
     # === build_chart_style_context() from a chart's ChartStylePatch; None on
     # === the board-level instance resolve_chart_style_context() produces. ===
@@ -258,7 +248,7 @@ class ChartStyleContext:
     # Format alias vocabulary from the root Style.formats cascade.
     formats: FormatTable | None = None
 
-    # Chart-local axis overrides (Layers 11/12/13) as typed patches. None = no
+    # Chart-local axis overrides as typed patches. None = no
     # chart-local override on that axis variant. These are NOT exposed to
     # chart emit code directly; resolved_axis_style is the single canonical
     # reader.

@@ -8,7 +8,6 @@ from decimal import Decimal
 from typing import Literal, NamedTuple
 
 from dbt_charts.core.colors import sanitize_color
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.chart.authored import TableColumnConfig
 from dbt_charts.core.compile.models.primitives import (
     ResolvedFontStyle,
@@ -28,6 +27,17 @@ from dbt_charts.core.compile.resolve.chart.label_data import (
     ChartRows,
     prepare_pie_label_data,
     project_pie_table_rows,
+)
+from dbt_charts.core.constants.pie import (
+    ATTACHED_TABLE_GAP_PX,
+    INVISIBLE_SLICE_SHARE,
+    LABEL_REACH_COEFFICIENT,
+    OUTER_FRACTION,
+    RIGHT_PLACEMENT_MAX_WHEEL_PX,
+    RIGHT_PLACEMENT_MIN_WIDTH_FRACTION,
+    RIGHT_PLACEMENT_MIN_WIDTH_PX,
+    WEDGE_LABEL_MIN_SHARE,
+    WHEEL_DOMINANCE_MIN_RATIO,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
@@ -131,9 +141,8 @@ def arc_disk_width(
     and the center-total overflow detector, so the two can't disagree about
     how much width the labels consume.
     """
-    pie_cfg = get_chart_rendering().pie
     measurer = get_font_measurer(font_family)
-    reach = pie_cfg.label_reach_coefficient * max(
+    reach = LABEL_REACH_COEFFICIENT * max(
         (measurer.measure(line, font_size) for line in label_lines),
         default=0.0,
     )
@@ -150,15 +159,14 @@ def classify_arc_render_mode(
 ) -> ArcRenderMode:
     if not shares:
         return "direct"
-    pie_cfg = get_chart_rendering().pie
-    visible = sum(share > pie_cfg.wedge_label_min_share for share in shares)
+    visible = sum(share > WEDGE_LABEL_MIN_SHARE for share in shares)
     if visible == 0:
         return "full_table"
     labeled = arc_disk_width(label_lines, font_family, font_size, label_offset, width)
-    ratio = min(1.0, labeled / (width * pie_cfg.outer_fraction))
-    if ratio < pie_cfg.wheel_dominance_min_ratio:
+    ratio = min(1.0, labeled / (width * OUTER_FRACTION))
+    if ratio < WHEEL_DOMINANCE_MIN_RATIO:
         return "full_table"
-    return "hybrid" if min(shares) < pie_cfg.invisible_slice_share else "direct"
+    return "hybrid" if min(shares) < INVISIBLE_SLICE_SHARE else "direct"
 
 
 class TablePlacement(NamedTuple):
@@ -177,11 +185,10 @@ def choose_table_placement(
     to stay wide enough; a card too narrow for that puts it below, naming the
     side the author asked for so the swap is reported rather than silent.
     """
-    pie_cfg = get_chart_rendering().pie
-    wheel_region = width - table_width - pie_cfg.attached_table_gap_px
+    wheel_region = width - table_width - ATTACHED_TABLE_GAP_PX
     beside_fits = (
-        wheel_region >= pie_cfg.right_placement_min_width_fraction * width
-        and wheel_region >= pie_cfg.right_placement_min_width_px
+        wheel_region >= RIGHT_PLACEMENT_MIN_WIDTH_FRACTION * width
+        and wheel_region >= RIGHT_PLACEMENT_MIN_WIDTH_PX
     )
     if authored_edge in ("top", "bottom"):
         return TablePlacement(authored_edge, None)
@@ -230,21 +237,18 @@ def plan_attachment(
 ) -> AttachmentPlan:
     """Measure the companion table and split the card between it and the wheel.
 
-    ``category_colors`` doesn't change the measured swatch column width (it's
-    a fixed constant, see ``build_attached_table_columns``) -- it's threaded
-    through so the swatch this compile-time plan bakes into ``rows`` stays
-    consistent with the one the render path (``prepare_pie_render_rows``)
-    projects from the same wedge-fill resolution, rather than the two paths
-    quietly diverging.
+    ``category_colors`` doesn't change the measured swatch column width (a
+    fixed constant, see ``build_attached_table_columns``); it colors the
+    swatches ``project_pie_table_rows`` bakes into ``rows``, the same
+    wedge-fill resolution the engine paints the wedges with.
     """
-    pie_cfg = get_chart_rendering().pie
     row_indices = tuple(
         range(len(data))
         if mode == "full_table"
         else (
             index
             for index, share in enumerate(shares)
-            if share <= pie_cfg.wedge_label_min_share
+            if share <= WEDGE_LABEL_MIN_SHARE
         )
     )
     rows = project_pie_table_rows(
@@ -259,8 +263,8 @@ def plan_attachment(
     align = decide_table_align(placement, authored_align)
     if placement in ("left", "right"):
         wheel_width = min(
-            width - natural_width - pie_cfg.attached_table_gap_px,
-            pie_cfg.right_placement_max_wheel_px,
+            width - natural_width - ATTACHED_TABLE_GAP_PX,
+            RIGHT_PLACEMENT_MAX_WHEEL_PX,
         )
         return AttachmentPlan(
             row_indices,
@@ -360,11 +364,10 @@ def finalize_pie_label_lines(
     if not shares:
         return tuple(() for _ in data)
     rendered = prepare_pie_label_data(theta_field, color_field, data, labels)
-    threshold = get_chart_rendering().pie.wedge_label_min_share
     finalized: list[tuple[str, ...]] = []
     for row, share in zip(rendered, shares, strict=True):
         rendered_label = row.get(LABEL_FIELD)
-        if share > threshold and isinstance(rendered_label, list):
+        if share > WEDGE_LABEL_MIN_SHARE and isinstance(rendered_label, list):
             finalized.append(tuple(str(line) for line in rendered_label))
         else:
             finalized.append(())

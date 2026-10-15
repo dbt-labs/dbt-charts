@@ -4,6 +4,7 @@ import logging
 
 import pytest
 
+from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.terminal_charts import (
     _terminal_y_field,
@@ -12,6 +13,8 @@ from dbt_charts.core.render.terminal_charts import (
     render_table_terminal,
 )
 
+_KPI_COMPACT = get_theme_style().charts.kpi.value.compact
+
 
 def test_render_kpi_terminal(make_chart):
     """Test KPI rendering to terminal."""
@@ -19,7 +22,9 @@ def test_render_kpi_terminal(make_chart):
 
     data = [{"revenue": 1234567.89}]
 
-    output = render_kpi_terminal(chart, data, "Total Revenue", formats=None)
+    output = render_kpi_terminal(
+        chart, data, "Total Revenue", formats=None, kpi_compact=_KPI_COMPACT
+    )
     # Terminal must consume the finalized title argument; deriving a fallback
     # here would reopen the normalized-to-render boundary.
     assert "Total Revenue" in output
@@ -37,7 +42,9 @@ def test_render_kpi_terminal_honors_authored_format_prefix_and_spec(make_chart):
         style={"value": {"format": {"spec": ",.0f", "prefix": "EUR "}}},
     )
 
-    output = render_kpi_terminal(chart, [{"revenue": 154500}], "Revenue", formats=None)
+    output = render_kpi_terminal(
+        chart, [{"revenue": 154500}], "Revenue", formats=None, kpi_compact=_KPI_COMPACT
+    )
 
     assert "EUR 154,500" in output
     assert "154,500.00" not in output
@@ -62,9 +69,13 @@ def test_render_kpi_terminal_spec_less_affix_matches_svg_finalized_format(
         label="Revenue",
         style={"value": {"format": {"prefix": "EUR "}}},
     )
-    output = render_kpi_terminal(chart, [{"revenue": value}], "Revenue", formats=None)
+    output = render_kpi_terminal(
+        chart, [{"revenue": value}], "Revenue", formats=None, kpi_compact=_KPI_COMPACT
+    )
 
-    finalized = finalize_kpi_value_format(value_format, float(value))
+    finalized = finalize_kpi_value_format(
+        value_format, float(value), compact=_KPI_COMPACT
+    )
     expected = format_value(value, finalized, None)
 
     assert expected in output
@@ -97,9 +108,11 @@ def test_render_kpi_terminal_money_prefix_below_one_falls_back(make_chart):
         label="Revenue",
         style={"value": {"format": {"prefix": "£"}}},
     )
-    output = render_kpi_terminal(chart, [{"revenue": value}], "Revenue", formats=None)
+    output = render_kpi_terminal(
+        chart, [{"revenue": value}], "Revenue", formats=None, kpi_compact=_KPI_COMPACT
+    )
 
-    finalized = finalize_kpi_value_format(value_format, value)
+    finalized = finalize_kpi_value_format(value_format, value, compact=_KPI_COMPACT)
     terminal_expected = format_value(value, finalized, None)
     svg_prefix, svg_number, svg_suffix = format_kpi_parts(value, finalized)
     svg_expected = svg_prefix + svg_number + svg_suffix
@@ -144,7 +157,9 @@ def test_render_kpi_terminal_paints_the_same_string_as_the_text_render(
     )
 
     assert _kpi_text_parts(resolved, data[0], None)["value"] == painted
-    assert painted in render_kpi_terminal(chart, data, "Revenue", formats=None)
+    assert painted in render_kpi_terminal(
+        chart, data, "Revenue", formats=None, kpi_compact=_KPI_COMPACT
+    )
 
 
 def test_render_kpi_terminal_survives_a_style_block_without_value(make_chart):
@@ -158,7 +173,9 @@ def test_render_kpi_terminal_survives_a_style_block_without_value(make_chart):
         style={"align": "center"},
     )
 
-    output = render_kpi_terminal(chart, [{"revenue": 154500}], "Revenue", formats=None)
+    output = render_kpi_terminal(
+        chart, [{"revenue": 154500}], "Revenue", formats=None, kpi_compact=_KPI_COMPACT
+    )
 
     assert "154,500" in output
     assert "Error" not in output
@@ -178,7 +195,11 @@ def test_render_kpi_terminal_resolves_a_style_formats_alias(make_chart):
     )
 
     output = render_kpi_terminal(
-        chart, [{"revenue": 154500}], "Revenue", formats={"eur": ",.0f"}
+        chart,
+        [{"revenue": 154500}],
+        "Revenue",
+        formats={"eur": ",.0f"},
+        kpi_compact=_KPI_COMPACT,
     )
 
     assert "154,500" in output
@@ -190,7 +211,7 @@ def test_render_kpi_terminal_raises_on_missing_column(make_chart):
     chart = make_chart("kpi", value="revenue", label="Rev")
     data = [{"total": 100}]
     with pytest.raises(ChartDataError, match="revenue.*not found|not found.*revenue"):
-        render_kpi_terminal(chart, data, "Rev", formats=None)
+        render_kpi_terminal(chart, data, "Rev", formats=None, kpi_compact=_KPI_COMPACT)
 
 
 def test_render_kpi_terminal_honors_empty_final_display_title(make_chart):
@@ -201,6 +222,7 @@ def test_render_kpi_terminal_honors_empty_final_display_title(make_chart):
         [{"revenue": 100}],
         "",
         formats=None,
+        kpi_compact=_KPI_COMPACT,
     )
 
     assert "{{ region }}" not in output
@@ -233,7 +255,13 @@ def test_render_chart_terminal_bar(make_chart):
 
     # This will use fallback if plotext is not available
     output = render_chart_terminal(
-        chart, data, "Revenue by Month", width=80, height=20, formats=None
+        chart,
+        data,
+        "Revenue by Month",
+        width=80,
+        height=20,
+        formats=None,
+        kpi_compact=_KPI_COMPACT,
     )
     assert output  # Should produce some output
     assert "Revenue by Month" in output or "chart" in output.lower()
@@ -250,6 +278,7 @@ def test_render_chart_terminal_uses_final_display_title(make_chart):
         width=80,
         height=20,
         formats=None,
+        kpi_compact=_KPI_COMPACT,
     )
 
     assert "West revenue" in output
@@ -267,7 +296,13 @@ def test_render_chart_terminal_line(make_chart):
     ]
 
     output = render_chart_terminal(
-        chart, data, "Value Over Time", width=80, height=20, formats=None
+        chart,
+        data,
+        "Value Over Time",
+        width=80,
+        height=20,
+        formats=None,
+        kpi_compact=_KPI_COMPACT,
     )
     assert output  # Should produce some output
 
@@ -278,7 +313,9 @@ def test_render_chart_terminal_empty_data(make_chart):
 
     data = []
 
-    output = render_chart_terminal(chart, data, "", formats=None)
+    output = render_chart_terminal(
+        chart, data, "", formats=None, kpi_compact=_KPI_COMPACT
+    )
     assert output  # Should handle empty data gracefully
 
 
@@ -316,7 +353,9 @@ def test_render_chart_item_terminal_isolates_a_bare_dbt_charts_error(make_chart)
         ERR_INTERNAL, message="terminal pipeline blew up"
     )
 
-    output = render_chart_item_terminal(chart, executor, {}, 80, 20, formats=None)
+    output = render_chart_item_terminal(
+        chart, executor, {}, 80, 20, formats=None, kpi_compact=_KPI_COMPACT
+    )
 
     assert output.startswith(f"[Error rendering {chart.id}:")
     assert "terminal pipeline blew up" in output
@@ -333,7 +372,9 @@ def test_render_chart_item_terminal_still_isolates_bug_class_errors(make_chart):
     executor = MagicMock(spec=Executor)
     executor.execute_chart.side_effect = ValueError("bad value")
 
-    output = render_chart_item_terminal(chart, executor, {}, 80, 20, formats=None)
+    output = render_chart_item_terminal(
+        chart, executor, {}, 80, 20, formats=None, kpi_compact=_KPI_COMPACT
+    )
 
     assert output.startswith(f"[Error rendering {chart.id}:")
 
@@ -343,7 +384,7 @@ def test_render_kpi_terminal_no_rows_carries_code(make_chart):
 
     chart = make_chart("kpi", value="revenue")
     with pytest.raises(ChartDataError) as exc_info:
-        render_kpi_terminal(chart, [], "Rev", formats=None)
+        render_kpi_terminal(chart, [], "Rev", formats=None, kpi_compact=_KPI_COMPACT)
     assert exc_info.value.code is ERR_KPI_NO_DATA
     assert exc_info.value.fields == {"chart_id": chart.id}
 
@@ -354,6 +395,6 @@ def test_render_kpi_terminal_multirow_carries_code(make_chart):
     chart = make_chart("kpi", value="revenue")
     data = [{"revenue": 1}, {"revenue": 2}]
     with pytest.raises(ChartDataError) as exc_info:
-        render_kpi_terminal(chart, data, "Rev", formats=None)
+        render_kpi_terminal(chart, data, "Rev", formats=None, kpi_compact=_KPI_COMPACT)
     assert exc_info.value.code is ERR_KPI_MULTIROW
     assert exc_info.value.fields == {"chart_id": chart.id, "row_count": 2}

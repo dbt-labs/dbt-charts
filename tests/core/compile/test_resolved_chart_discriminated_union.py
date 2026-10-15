@@ -43,6 +43,7 @@ from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.compile.resolve.chart.label_data import (
     pie_presentation_fingerprint,
 )
+from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 
 _adapter = TypeAdapter(ResolvedChart)
 _ZERO_PADDING = PaddingStyle(left=0.0, right=0.0, top=0.0, bottom=0.0)
@@ -65,7 +66,7 @@ def _default_resolved_table_style() -> ResolvedTableStyle:
     charts = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
     return ResolvedTableStyle(
         table=charts.table,
-        title=charts.title,
+        title=concrete_title_style(charts),
         formats=charts.formats,
         title_font=resolve_title_font(charts, 600.0),
         pagination=charts.pagination,
@@ -83,9 +84,9 @@ def _default_callout_style() -> ResolvedCalloutStyle:
 
 def _default_charts():
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
-    from dbt_charts.core.compile.resolve.style.board import resolve_style
+    from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-    return resolve_style(get_theme_style(get_default_theme_name())).chart_defaults
+    return resolve_chart_style_context(get_theme_style(get_default_theme_name()))
 
 
 _DEFAULT_CHARTS = _default_charts()
@@ -99,7 +100,7 @@ _B: dict = {
     "legend": _default_legend(),
     "background": _DEFAULT_CHARTS.background,
     "canvas": _DEFAULT_CHARTS.ink_canvas,
-    "title_style": _DEFAULT_CHARTS.title,
+    "title_style": concrete_title_style(_DEFAULT_CHARTS),
     "layout_padding": _ZERO_PADDING,
 }
 _C: dict = dict(_B)
@@ -343,7 +344,7 @@ _BD: dict = {
     "legend": _default_legend().model_dump(),
     "background": _DEFAULT_CHARTS.background,
     "canvas": _DEFAULT_CHARTS.ink_canvas,
-    "title_style": _DEFAULT_CHARTS.title.model_dump(),
+    "title_style": concrete_title_style(_DEFAULT_CHARTS).model_dump(),
     "layout_padding": _ZERO_PADDING_D,
 }
 _CD: dict = {**_BD, "panel_axes": []}
@@ -354,7 +355,12 @@ _KPI_BD: dict = {
     "variant": "stacked",
 }
 # Resolved mark dicts.
-_LINE_MARK_D = {"stroke": {"width": 2.0}, "halo_multiplier": 2.0, "labels": {}}
+_LINE_MARK_D = {
+    "stroke": {"width": 2.0},
+    "halo_multiplier": 2.0,
+    "labels": {},
+    "disconnected_width": 0.9,
+}
 _AREA_MARK_D = {"opacity": 0.15, "backdrop": True}
 # Area's line_mark carries top-edge stroke/halo/labels (see ResolvedAreaLineStyle) —
 # area's own mark (_AREA_MARK_D) is fill-only (opacity/curve).
@@ -386,6 +392,7 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
                 "style": {
                     "series_label": _SERIES_LABEL_D,
                     "mark": {},
+                    "grouped": {"padding_inner": 0.2, "padding_outer": 0.2},
                     "endpoint_labels": _ENDPOINT_LABELS_D,
                     "single_series_fill": "#4C72B0",
                     "tooltip_format": "",

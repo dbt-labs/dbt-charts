@@ -205,7 +205,7 @@ def test_resolved_axis_style_wrapper_does_not_crash_on_a_formatconfig():
         ),
     )
     resolved = resolved_axis_style(
-        ctx, "axis_x", "band", chart_type="bar", label_authored=False
+        ctx, "axis_x", "band", chart_type="bar", labeled=False
     )
     assert resolved.labels.padding is not None
 

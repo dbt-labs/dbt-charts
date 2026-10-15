@@ -127,12 +127,7 @@
 //!   `tick_label`, a facet `format` or a `ruler` other than `axis_y.ruler`
 //!   (`AxisStyle::mirror_ghost`; the fit arm paints a ghost `format` through
 //!   `FormatSlot::paint_tick`), with a wide/list y, alongside a visible
-//!   endpoint-label rail, combined with `curve: step`, combined with an
-//!   authored `sort`, on a date-like x whose cadence this port can't
-//!   detect (an accepted over-refusal — real Vega may resolve it
-//!   temporal, unaffected), or on a single-chart AREA (only line's fit arm
-//!   paints the ghost; an area facet takes the band-position law, the
-//!   composer painting the ghost) — see `mirror_ghost_x`'s doc comment for the
+//!   endpoint-label rail — see `mirror_ghost_x`'s doc comment for the
 //!   ported `mirror: true` fit-arm and facet shapes (production's
 //!   `ResolvedMirrorAxis` object, whose `ruler` equals `axis_y.ruler`, is the
 //!   same request)
@@ -205,7 +200,7 @@ use crate::common::{
     TitleStyle, FormatSlot, AXIS_FREE_EDGE_PAD, VALUE_AXIS_BREATHING_ROOM,
 };
 use crate::families::cartesian::{
-    vl_default_tick_count, LinearScale, LogScale, MeasureScale, PointScale,
+    vl_default_tick_count, BandGeometry, LinearScale, LogScale, MeasureScale, PointScale,
 };
 use crate::families::layers::{line_layer_legend_entries, paint_line_layer_marks, resolve_layer_rows, OverlayLineLayer};
 use crate::families::support_table_strip;
@@ -241,12 +236,12 @@ const X_AXIS_OFFSET: f64 = 1.0;
 // VL hconcat spacing: outer padding added to bottom/top in left-axis layout
 // (vl spec: top-level spacing = 6.0).
 const HCONCAT_SPACING: f64 = 6.0;
-use crate::step_band::STEP_BAND_DISCONNECTED_WIDTH;
 
 // ── Payload structs ──────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 pub(crate) struct LineResolved {
+    pub id: String,
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
     pub title: Option<String>,
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
@@ -486,12 +481,27 @@ pub(crate) struct LineMark {
     /// default round cap would overhang each plateau's flush band edge.
     #[serde(default)]
     pub disconnected_cap: Option<String>,
+    /// Share of its band a disconnected band-step plateau spans
+    /// (`style.charts.marks.line.disconnected_width`). Absent on area's
+    /// `line_mark` slice, which has no disconnected step.
+    #[serde(default)]
+    pub disconnected_width: Option<f64>,
     /// Authored value labels (`style.marks.line.labels`) — production's
     /// `value_labels` feature reads this slot for a line AND for an area
     /// (`_apply_area` never looks at `area_mark`, which carries no `labels`
     /// key at all).
     #[serde(default)]
     pub labels: Option<MarkLabels>,
+}
+
+impl LineMark {
+    /// The plateau share of a disconnected band step, which refuses when the
+    /// payload carries none.
+    pub(crate) fn plateau_share(&self, family: &str) -> Result<f64, String> {
+        self.disconnected_width.ok_or_else(|| {
+            format!("{family}: line_mark.disconnected_width must be resolved for a disconnected band step")
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -572,12 +582,23 @@ pub(crate) fn resolve_tilted_temporal_label(
     angle: f64,
     format_tu: TimeUnit,
 ) -> Result<(String, usize, &'static str, &'static str), String> {
-    let inline = angle.abs() >= 90.0;
-    if angle != 0.0 && !inline && !tl.row2.is_empty() {
+    if angle != 0.0 && angle.abs() < 90.0 && !tl.row2.is_empty() {
         return Err(
             "line: a partial (non-inline) tilt on a two-row temporal label is unmodeled".into(),
         );
     }
+    Ok(tilted_temporal_label(tl, angle, format_tu))
+}
+
+/// A temporal label at `angle`: its text, row count, and the align/baseline
+/// Vega-Lite picks for that angle. A tilt of 90 degrees or more prints the
+/// inline form; a shallower one keeps both rows.
+pub(crate) fn tilted_temporal_label(
+    tl: &TemporalLabel,
+    angle: f64,
+    format_tu: TimeUnit,
+) -> (String, usize, &'static str, &'static str) {
+    let inline = angle.abs() >= 90.0;
     // `vl_x_label_anchor`'s precondition is an angle already normalized to
     // [0, 360) (`vega_fit.rs`); `pick_tilt`'s raw ladder value (e.g. -90)
     // is not — bar.rs normalizes before calling it too.
@@ -591,7 +612,7 @@ pub(crate) fn resolve_tilted_temporal_label(
     } else {
         (tl.row1.clone(), if tl.row2.is_empty() { 1 } else { 2 })
     };
-    Ok((text, rows, angle_align, if angle != 0.0 { angle_baseline } else { "top" }))
+    (text, rows, angle_align, if angle != 0.0 { angle_baseline } else { "top" })
 }
 
 // ── Overlay layers (chart.layers) ────────────────────────────────────────────
@@ -764,6 +785,14 @@ pub(crate) struct PlotRect {
     /// is a `std::cell::Cell` local to that block). `0.0` off the rail-
     /// concat/legacy arms, which a facet panel never reaches.
     top_axis_overhang: f64,
+}
+
+/// Where a band-step row's two vertices sit across its band: the whole band,
+/// or — `connect: false` — each plateau's inset share of it
+/// (`step_band.py`'s `offset_range`).
+fn band_step_edges(plateau_share: f64) -> (f64, f64) {
+    let inset = (1.0 - plateau_share) / 2.0;
+    (inset, 1.0 - inset)
 }
 
 pub(crate) fn shape(
@@ -1612,31 +1641,13 @@ pub(crate) fn render_line_panel(
     // `r.wide_measures` before any panel is built, and an area facet takes
     // the band-position law through `mirror_band_x` with the composer
     // painting the ghost.
-    if mirror_active && facet.is_none() {
-        // Scope: line's fit arm only — area shares this function
-        // (`draw_areas`) and would otherwise silently inherit the ghost too,
-        // so a single-chart area refuses.
-        if draw_areas {
-            return Err("area: axis_y.mirror not supported — only line's fit arm ports it".into());
-        }
-        if !r.wide_measures.is_empty() {
-            return Err(
-                "line: axis_y.mirror with wide_measures (list y) is not supported".into(),
-            );
-        }
+    if mirror_active && facet.is_none() && !r.wide_measures.is_empty() {
+        return Err("line: axis_y.mirror with wide_measures (list y) is not supported".into());
     }
     let mirror_active = mirror_active && facet.is_none();
     let ghost_format = mirror.and_then(|ghost| ghost.format);
-    if ghost_format.is_some() {
-        // A ghost on the label side of its own `labelAlign` re-measures its
-        // padding from the ghost's labels (`mirror_axis.py`); the ghost
-        // inherits the primary's otherwise.
-        if matches!(r.style.axis_y.labels.align.as_deref(), Some("left" | "center")) {
-            return Err("line: axis_y.mirror.format with axis_y.labels.align left or center is not supported".into());
-        }
-        if r.style.axis_y.is_log_scale() {
-            return Err("line: axis_y.mirror.format on a log axis is not supported".into());
-        }
+    if ghost_format.is_some() && r.style.axis_y.labels.align.as_deref() == Some("left") {
+        return Err("line: axis_y.mirror.format with axis_y.labels.align left is not supported".into());
     }
     if r.style.line_mark.halo_multiplier < 0.0 {
         return Err("line: halo_multiplier below 0 not supported".into());
@@ -2079,27 +2090,8 @@ pub(crate) fn render_line_panel(
     let mirror_wants_band = (mirror_active || facet.is_some_and(|f| f.mirror_band_x))
         && !x_is_quantitative
         && detected_data_tu.is_none();
-    // `detected_data_tu.is_none()` tests THIS PORT's own cadence
-    // detection, not production's real classification: an ISO-date x
-    // whose cadence `detect_time_unit` can't bucket (e.g. a 28-day step)
-    // is non-quantitative with no detected cadence too, but its STRUCTURAL
-    // shape (`x_is_temporal_candidate`) still looks date-like — this port
-    // cannot tell whether production resolves it temporal (unaffected, no
-    // band flip) or nominal (the band flip above), so it refuses rather
-    // than guess. A GENUINELY nominal x (no date-like shape at all, e.g.
-    // month NAMES `Jan`/`Feb`/`Mar` rather than `2024-01`) has no such
-    // ambiguity and renders on the band-position law instead. An accepted
-    // over-refusal (no corpus row reaches it) — the message states the
-    // condition this gate actually tests, not a claim about x's real
-    // production type.
-    if mirror_wants_band && x_is_temporal_candidate {
-        return Err(format!(
-            "{fam}: axis_y.mirror on a date-like x with no detected temporal cadence is not \
-             supported — this port cannot tell whether production resolves it temporal \
-             (unaffected) or nominal (Vega's own point-to-band scale flip), so it refuses \
-             rather than guess"
-        ));
-    }
+    // `detected_data_tu.is_none()` is this port's own cadence detection: an ISO date x
+    // no calendar grain explains also takes the band flip under mirror.
     // Front-end contract only: `infer_vega_type_from_data`'s STRICT
     // `all_temporal` gate (`x_values_are_standard_dates`) -- a field this
     // strict types "temporal" even with no detected bucketed grain, so its
@@ -2261,19 +2253,6 @@ pub(crate) fn render_line_panel(
             ));
         }
     }
-    // `axis_y.mirror`'s band-position law (above) reorders nothing — the
-    // ghost's own invisible rule mark only changes the x SCALE type, never
-    // the domain order Vega's own sort/`dimension_sort_domain` computes.
-    // Combining it with an authored sort is unprobed: whether Vega's band
-    // scale places `dimension_sort_domain`'s reordered categories at the
-    // SAME `step*(i+0.5)` centers (just permuted) is not confirmed against
-    // a live scenegraph, so this refuses by name rather than guess.
-    if mirror_wants_band && r.sort.is_some() {
-        return Err(format!(
-            "{fam}: axis_y.mirror combined with an authored sort on a non-quantitative x is not \
-             supported — reordering the shared domain under Vega's own band scale is unprobed"
-        ));
-    }
     let x_domain: Vec<String> = if x_is_categorical {
         dimension_sort_domain(
             &payload.rows,
@@ -2347,23 +2326,10 @@ pub(crate) fn render_line_panel(
         && !x_is_quantitative
         && detected_data_tu.is_none()
         && (x_is_categorical || x_is_authored_ordinal);
-    // `axis_y.mirror`'s band-position law and `curve: step`'s own band-step
-    // transform are two INDEPENDENT gates that happen to both resolve a
-    // band x scale — combining them is unprobed (does Vega's mirror-ghost
-    // rule mark coexist with the doubled `xOffset` rows `step_band.py`
-    // adds? no corpus/ladder board pairs the two), so refuse by name
-    // rather than guess which formula wins.
-    if mirror_wants_band && is_band_step {
-        let fam = if draw_areas { "area" } else { "line" };
-        return Err(format!(
-            "{fam}: axis_y.mirror combined with curve=step band mode is not supported"
-        ));
-    }
     // The position-only half of the band-scale law: MARKS and TICKS land
     // at band centers (`step*(i+0.5)`) whenever the shared x resolves to a
     // genuine band scale — `is_band_step`'s own `curve: step` shape, OR
-    // `mirror_wants_band`'s mirror-ghost shape (the two refuse together
-    // just above, so at most one is ever true here). Every POSITION call
+    // `mirror_wants_band`'s mirror-ghost shape. Every POSITION call
     // site (`fit_x_at`/`band_center_x`/`label_x_at`/`x_rule_at`, the
     // `LineXAxisBody::Nominal` tick build, the ink-measurement closure's
     // own `pos_at`/`band_center` pair) reads this flag; every TRANSFORM
@@ -2395,6 +2361,7 @@ pub(crate) fn render_line_panel(
         return Err("line: value labels are not supported alongside a band-aware step curve".into());
     }
     let disconnected = is_band_step && !draw_areas && r.style.line_mark.connect == Some(false);
+    let plateau_share = if disconnected { r.style.line_mark.plateau_share("line")? } else { 1.0 };
     // Area's top edge and a dash palette's strokeDash encoding each carry their
     // own dash law, unmodeled beside an authored mark dasharray.
     let authored_dash = match r.style.line_mark.stroke.dasharray.as_deref() {
@@ -3048,10 +3015,22 @@ pub(crate) fn render_line_panel(
     let y_title_text = if r.wide_measures.is_empty() {
         axis_title_text(y_field, r.y_label.as_deref(), &r.field_labels)
     } else {
-        r.y_label.clone().unwrap_or_else(|| crate::common::wide_measures_title(&r.wide_measures, &r.field_labels))
+        r.y_label.as_deref().map(crate::common::collapse_title_newlines).unwrap_or_else(|| crate::common::wide_measures_title(&r.wide_measures, &r.field_labels))
     };
-    let x_title_band = axis_title_band(&ax_x.title, &x_title_text);
-    let y_title_band = axis_title_band(&ax_y.title, &y_title_text);
+    let facet_grid = crate::families::multiples::grid_counts(r.multiples.as_ref(), &r.panel_axes);
+    let (x_title_paint, y_title_paint) = if facet.is_some() {
+        let fam = if draw_areas { "area" } else { "line" };
+        crate::common::refuse_wrapping_facet_title(fam, &x_title_text, &ax_x.title, svg_w, facet_grid.1, fonts)?;
+        crate::common::refuse_wrapping_facet_title(fam, &y_title_text, &ax_y.title, svg_h, facet_grid.0, fonts)?;
+        (x_title_text.clone(), y_title_text.clone())
+    } else {
+        (
+            crate::common::wrapped_axis_title(&r.id, "x_label", &x_title_text, &ax_x.title.font, svg_w, fonts)?,
+            crate::common::wrapped_axis_title(&r.id, "y_label", &y_title_text, &ax_y.title.font, svg_h, fonts)?,
+        )
+    };
+    let x_title_band = axis_title_band(&ax_x.title, &x_title_paint);
+    let y_title_band = axis_title_band(&ax_y.title, &y_title_paint);
 
     // Front-end contract: structured-tooltip content for this chart's own
     // datum points, zero/unity rule, and (multi-series) endpoint-rail
@@ -3211,20 +3190,14 @@ pub(crate) fn render_line_panel(
     // Authored x scale padding (VL `scale.padding`, pixels): insets the
     // point range on both ends — marks sit at [pad, pw − pad], so they stop
     // contributing edge ink once the padding exceeds their stroke reach.
-    let x_scale_pad = ax_x.scale.get("padding").and_then(Value::as_f64).unwrap_or(0.0);
-    // `band_width`/`band_edge` (below) reuse this as a POINT-scale pixel
-    // range inset. A genuine VL band scale (band-step's x channel) instead
-    // reads `scale.padding` as a fractional inner/outer padding that opens
-    // gaps BETWEEN bands — a different law, unverified against any
-    // reference here, so a non-zero padding refuses rather than draw an
-    // unmodeled band geometry.
-    if use_band_positions && x_scale_pad != 0.0 {
-        let fam = if draw_areas { "area" } else { "line" };
-        return Err(format!(
-            "{fam}: a band x scale (curve=step, or axis_y.mirror on a non-quantitative x) with \
-             a non-zero axis_x.scale.padding is not supported"
-        ));
-    }
+    let authored_x_padding = ax_x.scale.get("padding").and_then(Value::as_f64).unwrap_or(0.0);
+    // A band scale reads `scale.padding` as the fractional inner and outer
+    // padding (`BandGeometry`); a point scale as a pixel inset of its range.
+    let (x_scale_pad, x_band_padding) =
+        if use_band_positions { (0.0, authored_x_padding) } else { (authored_x_padding, 0.0) };
+    let x_band_geometry = |width: f64| {
+        BandGeometry::new(x_domain.len(), 0.0, width, x_band_padding, x_band_padding)
+    };
     let x_ticks_visible = ax_x.ticks.visible.unwrap_or(true);
     let x_tick_eff = if x_ticks_visible { x_tick_len } else { 0.0 };
     let x_limit = ax_x.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
@@ -3835,13 +3808,10 @@ pub(crate) fn render_line_panel(
         let mut composed_rows: Option<Vec<support_table_strip::ComposedRow>> = None;
         let mut bare_axis: Option<(Vec<BareTick>, Vec<bool>)> = None;
         let mut y_visible: Option<Vec<bool>> = None;
-        let y_title_extra = crate::common::y_title_extra(&ax_y.title, &y_title_text);
-        let x_title_extra = if x_title_band > 0.0 {
-            let fs = ax_x.title.font.size_or(11.0);
-            ax_x.title.padding.unwrap_or(10.0) + fs + (0.79 * fs).round() - (0.8 * fs).round()
-        } else {
-            0.0
-        };
+        let y_title_extra = crate::common::y_title_extra(&ax_y.title, &y_title_paint);
+        let x_title_extra = crate::common::x_title_extra(&ax_x.title, &x_title_paint);
+        let x_title_w = crate::common::widest_title_line(&ax_x.title, &x_title_paint, fonts)?;
+        let y_title_w = crate::common::widest_title_line(&ax_y.title, &y_title_paint, fonts)?;
         // Baseline rule ink: every rule layer strokes at the threshold
         // grid's own width (`_full_rule_at` reads `axis_y.grid.threshold`).
         let baseline_rule_w = ax_y.grid.threshold.as_ref().map(|z| z.width.unwrap_or(2.0));
@@ -3918,12 +3888,10 @@ pub(crate) fn render_line_panel(
                 // that) so the strip's cells land on the SAME shared-x-axis
                 // band centers the panel's own ticks already sit at, not
                 // this arm's unconditional point-scale positions.
-                let strip_band_width =
-                    (svg_w - 2.0 * x_scale_pad).max(0.0) / x_domain.len().max(1) as f64;
                 let cell_xs: Vec<f64> = (0..x_domain.len())
                     .map(|i| {
                         if use_band_positions {
-                            x_scale_pad + strip_band_width * (i as f64 + 0.5)
+                            x_band_geometry(svg_w).edge(i, 0.5)
                         } else {
                             match &utc_fracs {
                                 Some(fr) => {
@@ -4012,6 +3980,10 @@ pub(crate) fn render_line_panel(
                 let mut ink = |b: &mut vega_fit::Bounds| -> Result<(), String> {
                     // Right value gutter + rotated y title.
                     b.union(&vega_fit::Bounds::new(0.0, 0.0, pw + y_tick_eff + y_gutter + y_title_extra, ph));
+                    if y_title_extra > 0.0 && !suppress_x_axis {
+                        let x = pw + y_tick_eff + y_gutter + y_title_extra;
+                        b.union(&vega_fit::Bounds::new(x, ph / 2.0 - y_title_w / 2.0, x, ph / 2.0 + y_title_w / 2.0));
+                    }
                     // Per y-tick label ink (the top tick can overhang the plot
                     // top); parity hides every other label under min_gap and
                     // only the visible ones' ink counts. `tick_ys` is the one
@@ -4143,10 +4115,7 @@ pub(crate) fn render_line_panel(
                     // inside the plot, contributing no edge overhang to this
                     // ink union; recomputed per candidate `pw`, mirroring
                     // `pos_at`/`inner_w` above.
-                    let band_center = |i: usize| -> f64 {
-                        let bw = inner_w / n.max(1) as f64;
-                        x_scale_pad + bw * (i as f64 + 0.5)
-                    };
+                    let band_center = |i: usize| -> f64 { x_band_geometry(pw).edge(i, 0.5) };
                     let mut bare_tick_xs: Vec<f64> = Vec::new();
                     let mut labels_meta: Vec<(usize, f64, usize)> = Vec::new();
                     match detected_data_tu {
@@ -4331,7 +4300,7 @@ pub(crate) fn render_line_panel(
                     }
                     if x_title_extra > 0.0 && !suppress_x_axis {
                         let ext = (b.y2 - ph).max(0.0);
-                        b.union(&vega_fit::Bounds::new(0.0, 0.0, 0.0, ph + ext + x_title_extra));
+                        b.union(&vega_fit::Bounds::new(pw / 2.0 - x_title_w / 2.0, 0.0, pw / 2.0 + x_title_w / 2.0, ph + ext + x_title_extra));
                     }
                     // Main line layer stroke ink; visible point markers add
                     // their halo symbol's reach. Vega's autosize-fit bounds
@@ -4340,7 +4309,7 @@ pub(crate) fn render_line_panel(
                     // at `[x_scale_pad, pw − x_scale_pad]`; band-step's marks
                     // sit at the band edges (`0`/`pw`) when connected, or —
                     // `connect: false` — at each plateau's own inset edge
-                    // (`STEP_BAND_DISCONNECTED_WIDTH`'s share of the band,
+                    // (`line_mark.disconnected_width`'s share of the band,
                     // the SAME inset `band_edge` below draws with).
                     let point_reach = match r.style.point_mark.as_ref().and_then(|pm| pm.size) {
                         Some(sz) if sz > 0.0 => {
@@ -4348,20 +4317,17 @@ pub(crate) fn render_line_panel(
                         }
                         _ => 0.0,
                     };
-                    let (datum_x0, datum_x1) = if is_band_step && disconnected {
-                        let bw = pw / x_domain.len().max(1) as f64;
-                        let inset = bw * (1.0 - STEP_BAND_DISCONNECTED_WIDTH) / 2.0;
-                        (inset, pw - inset)
-                    } else if is_band_step {
-                        (0.0, pw)
+                    let last_band = x_domain.len().saturating_sub(1);
+                    let (datum_x0, datum_x1) = if is_band_step {
+                        let (lo, hi) = band_step_edges(plateau_share);
+                        (x_band_geometry(pw).edge(0, lo), x_band_geometry(pw).edge(last_band, hi))
                     } else if use_band_positions {
                         // Mirror's own band-position law with no row-doubling:
                         // ONE vertex per category, at its band's CENTER — the
                         // first/last drawn datum sits half a band step inside
                         // the plot edge, never at the band EDGE `is_band_step`
                         // draws with above.
-                        let bw = pw / x_domain.len().max(1) as f64;
-                        (bw * 0.5, pw - bw * 0.5)
+                        (x_band_geometry(pw).edge(0, 0.5), x_band_geometry(pw).edge(last_band, 0.5))
                     } else {
                         (x_scale_pad, (pw - x_scale_pad).max(x_scale_pad))
                     };
@@ -4673,7 +4639,7 @@ pub(crate) fn render_line_panel(
         };
         let has_two_row =
             temporal_labels.as_ref().is_some_and(|tls| tls.iter().any(|tl| !tl.row2.is_empty()));
-        let y_title_extra = crate::common::y_title_extra(&ax_y.title, &y_title_text);
+        let y_title_extra = crate::common::y_title_extra(&ax_y.title, &y_title_paint);
         // C3: the y axis's own ink extent. Vega lays each axis out with an
         // integer (ceil'd) extent before the panes negotiate widths, so the
         // gutter enters the chrome sum already ceil'd — but the title group
@@ -4816,12 +4782,7 @@ pub(crate) fn render_line_panel(
             }
             ink
         };
-        let x_title_extra = if x_title_band > 0.0 {
-            let fs = ax_x.title.font.size_or(11.0);
-            ax_x.title.padding.unwrap_or(10.0) + fs + (0.79 * fs).round() - (0.8 * fs).round()
-        } else {
-            0.0
-        };
+        let x_title_extra = crate::common::x_title_extra(&ax_x.title, &x_title_paint);
         // A tilt reserves the widest CANDIDATE label's own rotated reach
         // (`rail_tilt_extent`, computed above from the SAME ink the fit
         // arm's union carries) in place of the flat font-height term —
@@ -5517,8 +5478,8 @@ pub(crate) fn render_line_panel(
     // scale either way (a point scale's first position is the range
     // start, 0). Reusing `x_scale_pad`/`plot_w`, not a new scale —
     // `use_band_positions && x_scale_pad != 0.0` already refuses above.
-    let band_width = (plot_w - 2.0 * x_scale_pad).max(0.0) / x_domain.len().max(1) as f64;
-    let band_center_x = |i: usize| x_scale_pad + band_width * (i as f64 + 0.5);
+    let band_geometry = x_band_geometry(plot_w);
+    let band_center_x = |i: usize| band_geometry.edge(i, 0.5);
     // Position by domain index: utc-scale time fractions on the temporal fit
     // path, band centers on a band scale, the point scale otherwise
     // (utc_fracs is None off the fit path, so the point-scale arm is
@@ -5581,15 +5542,10 @@ pub(crate) fn render_line_panel(
     // pixel edge — `step_band.apply_step_band`'s `xOffset` point scale bound
     // to the synthetic `__step_band_pos__` column, riding the SAME band
     // scale `band_width`/`band_center_x` above. `connect: false` insets
-    // both edges by `STEP_BAND_DISCONNECTED_WIDTH`'s share of the band,
+    // both edges by `line_mark.disconnected_width`'s share of the band,
     // split evenly (`lo`/`hi`) — `step_band.py`'s own `offset_range` formula.
-    let (edge_lo, edge_hi) = if disconnected {
-        let inset = (1.0 - STEP_BAND_DISCONNECTED_WIDTH) / 2.0;
-        (inset, 1.0 - inset)
-    } else {
-        (0.0, 1.0)
-    };
-    let band_edge = |i: usize, frac: f64| x_scale_pad + band_width * (i as f64 + frac);
+    let (edge_lo, edge_hi) = band_step_edges(plateau_share);
+    let band_edge = |i: usize, frac: f64| band_geometry.edge(i, frac);
     // The doubled rows draw in QUERY order: `apply_step_band` doubles each
     // row in place and never reorders (`step_band.py:134-136`), and the
     // band-step line/area sub-layers set `order: False`
@@ -5940,7 +5896,7 @@ pub(crate) fn render_line_panel(
     // (`_layers.py:397`); any other line keeps the authored list.
     let ink_dash_attr = authored_dash
         .as_deref()
-        .map(|list| crate::step_band::attr("line", list, disconnected.then_some(band_width)))
+        .map(|list| crate::step_band::attr("line", list, disconnected.then_some(band_geometry.bandwidth() * plateau_share)))
         .transpose()?;
 
     // Halo lines — canvas-colored wider stroke under each main line,
@@ -6428,7 +6384,7 @@ pub(crate) fn render_line_panel(
         x_label_pad,
         x_axis_drop,
         has_two_row_labels,
-        x_title_text: x_title_text.clone(),
+        x_title_text: x_title_paint.clone(),
         title_key: facet.is_none().then_some(crate::contract::LabelKey::X),
         tick_xs: axis_tick_xs,
         body: if let Some((ticks, visible)) = bare_axis {
@@ -6610,7 +6566,7 @@ pub(crate) fn render_line_panel(
         };
         emit_axis_title_rotated(
             &mut svg,
-            &y_title_text,
+            &y_title_paint,
             &ax_y.title,
             y_label_edge_x,
             plot_h / 2.0,
@@ -7015,15 +6971,12 @@ pub(crate) fn render_line_panel(
         Some(sz) if sz > 0.0 => point_mark_reach(sz, r.style.line_mark.halo_multiplier),
         _ => 0.0,
     };
-    let (geom_datum_x0, geom_datum_x1) = if is_band_step && disconnected {
-        let bw = plot_w / x_domain.len().max(1) as f64;
-        let inset = bw * (1.0 - STEP_BAND_DISCONNECTED_WIDTH) / 2.0;
-        (inset, plot_w - inset)
-    } else if is_band_step {
-        (0.0, plot_w)
+    let last_band = x_domain.len().saturating_sub(1);
+    let (geom_datum_x0, geom_datum_x1) = if is_band_step {
+        let (lo, hi) = band_step_edges(plateau_share);
+        (x_band_geometry(plot_w).edge(0, lo), x_band_geometry(plot_w).edge(last_band, hi))
     } else if use_band_positions {
-        let bw = plot_w / x_domain.len().max(1) as f64;
-        (bw * 0.5, plot_w - bw * 0.5)
+        (x_band_geometry(plot_w).edge(0, 0.5), x_band_geometry(plot_w).edge(last_band, 0.5))
     } else {
         (x_scale_pad, (plot_w - x_scale_pad).max(x_scale_pad))
     };
@@ -7294,7 +7247,7 @@ mod tests {
             {"week": "2026-01-15", "signups": 130.0},
         ]);
         let resolved = serde_json::json!({
-            "title": null, "title_style": null, "background": "#ffffff", "canvas": "#ffffff",
+            "id": "c", "title": null, "title_style": null, "background": "#ffffff", "canvas": "#ffffff",
             "x": "week", "y": "signups",
             "color": null, "stack": "none",
             "palette": ["#3164a3"],
@@ -8476,6 +8429,7 @@ mod tests {
         serde_json::json!({
             "type": "line",
             "line_mark": {
+                "disconnected_width": 0.9,
                 "stroke": {"width": 4.0, "cap": "round", "join": "round"},
                 "curve": "linear",
                 "labels": {"visible": false}
@@ -8785,7 +8739,7 @@ mod tests {
     fn support_table_style_json() -> serde_json::Value {
         serde_json::json!({
             "font": {"family": TEST_FONT, "size": 11.0, "color": "#6F685D"},
-            "divider": {"visible": false, "color": "#626366", "width": 1.0, "dasharray": null},
+            "divider": {"gap": 4.0, "visible": false, "color": "#626366", "width": 1.0, "dasharray": null},
             "row": {"padding": {"vertical": 2.0, "horizontal": 4.0},
                     "divider": {"visible": false, "color": "#626366", "width": 1.0, "dasharray": null}},
             "label": {"font": {"family": TEST_FONT, "size": 11.0, "color": "#6F685D"}},
@@ -8809,7 +8763,7 @@ mod tests {
             {"week": "2026-01-08", "series": "B", "signups": 60.0},
         ]);
         let resolved = serde_json::json!({
-            "title": null, "title_style": null, "background": "#ffffff", "canvas": "#ffffff",
+            "id": "c", "title": null, "title_style": null, "background": "#ffffff", "canvas": "#ffffff",
             "x": "week", "y": "signups",
             "color": "series", "stack": "none",
             "palette": ["#3164a3", "#779bc9"],
@@ -9223,7 +9177,7 @@ mod tests {
             {"month": "2026-01-08", "revenue": 150.0, "units_sold": 60.0},
         ]);
         let resolved = json!({
-            "title": null, "title_style": null, "background": "#ffffff", "canvas": "#ffffff",
+            "id": "c", "title": null, "title_style": null, "background": "#ffffff", "canvas": "#ffffff",
             "x": "month", "y": "__dbt_charts_wide_value__",
             "color": null, "stack": "none",
             "palette": ["#3164a3", "#779bc9"],
@@ -12512,6 +12466,7 @@ mod tests {
             "halo_multiplier": 0.0,
             "curve": "step",
             "disconnected_cap": "butt",
+            "disconnected_width": 0.9,
         });
         if let Some(c) = connect {
             line_mark["connect"] = serde_json::json!(c);
@@ -12523,7 +12478,7 @@ mod tests {
         let mut axis_x_json = axis_json(false, None);
         axis_x_json["is_quantitative"] = serde_json::json!(false);
         let resolved = serde_json::json!({
-            "title": null, "title_style": null, "background": "#ffffff", "canvas": "#ffffff",
+            "id": "c", "title": null, "title_style": null, "background": "#ffffff", "canvas": "#ffffff",
             "x": "cat", "y": "val",
             "color": null, "stack": "none",
             "palette": ["#3164a3"],
@@ -12678,7 +12633,7 @@ mod tests {
 
     /// A disconnected band-step's first plateau starts inset from the plot
     /// edge by the theme's `disconnected_width` share of the band
-    /// (`STEP_BAND_DISCONNECTED_WIDTH`), so the mark-ink bounds must anchor
+    /// (`line_mark.disconnected_width`), so the mark-ink bounds must anchor
     /// there, not at the plot edge: `left_margin = ceil(point_reach −
     /// plateau_x0)`, where `plateau_x0` is the SAME local x the plateau
     /// itself draws at (`distinct_xs(main_line_d)`'s first entry) — an
@@ -12703,21 +12658,17 @@ mod tests {
         );
     }
 
-    /// `band_width`/`band_edge` reuse `x_scale_pad` as a *point*-scale pixel
-    /// range inset — a VL band scale reads `scale.padding` as a fractional
-    /// inner/outer padding that opens gaps BETWEEN bands, a semantically
-    /// different law no reference here covers. Refuse rather than draw an
-    /// unverified band geometry.
+    /// A band scale reads `scale.padding` as the fractional inner and outer
+    /// padding (`BandGeometry`), so a padded band-step line differs from the
+    /// unpadded one instead of insetting its range in pixels.
     #[test]
-    fn band_step_with_nonzero_scale_padding_refuses() {
+    fn band_step_with_scale_padding_opens_gaps_between_bands() {
+        let plain = render(&serde_json::from_value(make_band_step_line_payload(None)).unwrap(), &test_fonts())
+            .expect("renders");
         let mut json = make_band_step_line_payload(None);
         json["resolved"]["style"]["axis_x"]["scale"] = serde_json::json!({"padding": 0.1});
-        let payload: Payload = serde_json::from_value(json).unwrap();
-        let err = render(&payload, &test_fonts()).unwrap_err();
-        assert!(
-            err.contains("scale.padding") || err.contains("padding"),
-            "names the unmodeled band-scale padding law: {err}"
-        );
+        let padded = render(&serde_json::from_value(json).unwrap(), &test_fonts()).expect("renders");
+        assert_ne!(plain, padded);
     }
 
     /// Connected band-step (the default `connect`): production's
@@ -12746,7 +12697,7 @@ mod tests {
     }
 
     /// `connect: false` insets each plateau by the theme's
-    /// `step_band.disconnected_width` (0.9 — 5% inset per side) and draws
+    /// `style.charts.marks.line.disconnected_width` (0.9 — 5% inset per side) and draws
     /// one subpath per band instead of one continuous chain — production's
     /// `detail` channel split, mirrored here as separate `M` subpaths within
     /// the same `<path>` (equivalent ink; see `step_band.py`'s docstring).
@@ -12773,6 +12724,29 @@ mod tests {
             svg.contains("stroke-linecap=\"butt\""),
             "disconnected_cap replaces the authored round stroke cap: {svg}"
         );
+    }
+
+    #[test]
+    fn band_step_disconnected_plateau_spans_the_authored_share_of_its_band() {
+        let mut raw = make_band_step_line_payload(Some(false));
+        raw["resolved"]["style"]["line_mark"]["disconnected_width"] = serde_json::json!(0.5);
+        let payload: Payload = serde_json::from_value(raw).unwrap();
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        let xs = distinct_xs(&main_line_d(&svg));
+        let (plateau_w, gap) = (xs[1] - xs[0], xs[2] - xs[1]);
+        assert!((gap / plateau_w - 1.0).abs() < 1e-3, "half a band each: plateau={plateau_w} gap={gap}");
+    }
+
+    #[test]
+    fn band_step_disconnected_without_a_resolved_width_refuses_by_name() {
+        let mut raw = make_band_step_line_payload(Some(false));
+        raw["resolved"]["style"]["line_mark"]
+            .as_object_mut()
+            .unwrap()
+            .remove("disconnected_width");
+        let payload: Payload = serde_json::from_value(raw).unwrap();
+        let err = render(&payload, &test_fonts()).unwrap_err();
+        assert!(err.contains("line_mark.disconnected_width"), "{err}");
     }
 
     /// Query order `Feb, Apr, Mar, Jan` with `seq` `2, 4, 3, 1`: ascending
@@ -12923,7 +12897,7 @@ mod tests {
         let plateaus: Vec<Vec<(f64, f64)>> =
             d.split('M').skip(1).map(|run| path_vertices(run)).collect();
         assert_eq!(plateaus.len(), 4, "one subpath per band: {d}");
-        let band_w = (plateaus[0][1].0 - plateaus[0][0].0) / crate::step_band::STEP_BAND_DISCONNECTED_WIDTH;
+        let band_w = (plateaus[0][1].0 - plateaus[0][0].0) / 0.9;
         let left_bands: Vec<f64> = plateaus.iter().map(|p| p[0].0 / band_w).collect();
         // `band_w` divides two printed x differences by 0.9, so it carries up to 2/0.9 printed
         // tolerances; a unit `x / band_w` of at most 3.05 then moves by
@@ -15273,18 +15247,15 @@ mod tests {
         svg.match_indices(&needle).map(|(pos, _)| &svg[svg[..pos].rfind("<text").unwrap()..pos]).collect()
     }
 
-    /// Scope: line's fit arm only. Area shares `render_inner` with line
-    /// (`draw_areas`), so it would otherwise silently inherit the ghost —
-    /// area keeps refusing, matching its prior (pre-mirror-port) behavior.
+    /// Area shares `render_inner` with line, so its fit arm paints the ghost too.
     #[test]
-    fn mirror_on_area_refuses() {
+    fn mirror_on_area_paints_the_ghost() {
         let mut json = make_line_payload(true, false);
         json["resolved"]["style"]["axis_y"]["mirror"] = serde_json::json!(true);
         json["resolved"]["style"]["area_mark"] = serde_json::json!({"opacity": 0.16, "backdrop": false});
         let payload: Payload = serde_json::from_value(json).unwrap();
-        let err =
-            crate::families::area::render(&payload, &test_fonts()).expect_err("area keeps refusing mirror");
-        assert!(err.contains("axis_y.mirror"), "error names the unmodeled field: {err}");
+        let svg = crate::families::area::render(&payload, &test_fonts()).expect("area mirror renders");
+        assert!(svg.matches("text-anchor=\"end\"").count() >= 2, "{svg}");
     }
 
     #[test]
@@ -15751,14 +15722,10 @@ mod tests {
         format!("{y2:04}-{m2:02}-{d2:02}")
     }
 
-    /// An accepted over-refusal: production types a 28-day-cadence ISO
-    /// date x temporal (`bare_temporal`) and draws it on a time scale,
-    /// unaffected by the point-vs-band flip — but `detect_time_unit`
-    /// can't bucket that cadence, so `detected_data_tu` is `None` and the
-    /// gate above refuses it the same way a genuinely nominal x does. No
-    /// corpus row reaches this shape.
+    /// A 28-day-cadence ISO date x under mirror draws (probed against
+    /// production: `axis-mirror/11`).
     #[test]
-    fn mirror_on_an_undetected_cadence_iso_date_x_over_refuses() {
+    fn mirror_on_an_undetected_cadence_iso_date_x_renders() {
         let mut p = make_line_payload(true, false); // right axis => fit arm
         p["resolved"]["style"]["axis_x"]["is_quantitative"] = serde_json::json!(false);
         let rows: Vec<serde_json::Value> = (0..6)
@@ -15770,21 +15737,13 @@ mod tests {
         p["rows"] = serde_json::json!(rows);
         p["resolved"]["style"]["axis_y"]["mirror"] = serde_json::json!(true);
         let payload: Payload = serde_json::from_value(p).unwrap();
-        let err = render(&payload, &test_fonts())
-            .expect_err("undetected-cadence ISO date x under mirror over-refuses");
-        assert!(
-            err.contains("no detected temporal cadence"),
-            "over-refusal message: {err}"
-        );
+        render(&payload, &test_fonts()).expect("undetected-cadence ISO date x under mirror renders");
     }
 
-    /// `axis_y.mirror`'s band-position law and `curve: step`'s own
-    /// band-step transform are two independent gates onto a band x scale —
-    /// combining them is unprobed (does Vega's mirror-ghost rule mark
-    /// coexist with the doubled `xOffset` rows `step_band.py` adds?), so
-    /// this stays refused by name.
+    /// `axis_y.mirror`'s band-position law and `curve: step`'s band-step
+    /// transform compose.
     #[test]
-    fn mirror_combined_with_curve_step_refuses() {
+    fn mirror_combined_with_curve_step_renders() {
         let mut p = make_line_payload(true, false); // right axis => fit arm
         p["resolved"]["style"]["axis_x"]["is_quantitative"] = serde_json::json!(false);
         p["rows"] = serde_json::json!([
@@ -15795,17 +15754,12 @@ mod tests {
         p["resolved"]["style"]["axis_y"]["mirror"] = serde_json::json!(true);
         p["resolved"]["style"]["line_mark"]["curve"] = serde_json::json!("step");
         let payload: Payload = serde_json::from_value(p).unwrap();
-        let err = render(&payload, &test_fonts()).expect_err("mirror + curve=step is unmodeled");
-        assert_eq!(err, "line: axis_y.mirror combined with curve=step band mode is not supported");
+        render(&payload, &test_fonts()).expect("mirror + curve=step renders");
     }
 
-    /// `axis_y.mirror`'s band-position law reorders nothing itself — an
-    /// authored sort still reorders `dimension_sort_domain`'s own x
-    /// domain, and whether Vega's band scale places the REORDERED
-    /// categories at the same `step*(i+0.5)` centers is unprobed against a
-    /// live scenegraph, so this stays refused by name too.
+    /// An authored sort reorders the domain under mirror's band scale
     #[test]
-    fn mirror_combined_with_authored_sort_refuses() {
+    fn mirror_combined_with_authored_sort_renders() {
         let mut p = make_line_payload(true, false); // right axis => fit arm
         p["resolved"]["style"]["axis_x"]["is_quantitative"] = serde_json::json!(false);
         p["rows"] = serde_json::json!([
@@ -15816,12 +15770,7 @@ mod tests {
         p["resolved"]["style"]["axis_y"]["mirror"] = serde_json::json!(true);
         p["resolved"]["sort"] = serde_json::json!({"by": "signups", "order": "asc"});
         let payload: Payload = serde_json::from_value(p).unwrap();
-        let err = render(&payload, &test_fonts()).expect_err("mirror + authored sort is unmodeled");
-        assert_eq!(
-            err,
-            "line: axis_y.mirror combined with an authored sort on a non-quantitative x is not \
-             supported — reordering the shared domain under Vega's own band scale is unprobed"
-        );
+        render(&payload, &test_fonts()).expect("mirror + authored sort renders");
     }
 
     /// x positions of the x-axis tick marks (the vertical strokes below the

@@ -29,7 +29,6 @@ from dbt_charts.core.colors import wcag_contrast as _wcag_contrast
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.schema_names import ThemeName
 from dbt_charts.core.compile.resolve.style.axis_cascade import (
-    chart_type_axis_patch,
     resolved_axis_style,
 )
 from dbt_charts.core.compile.resolve.style.board import (
@@ -61,9 +60,8 @@ def _axis(theme: str, family: str, slot: str, channel_type: str):
         context,
         slot,
         channel_type,
-        chart_type_axis_patch(context, family, slot),
-        chart_type="",
-        label_authored=False,
+        chart_type=family,
+        labeled=False,
     )
 
 

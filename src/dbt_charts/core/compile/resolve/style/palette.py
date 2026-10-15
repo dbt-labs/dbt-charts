@@ -70,8 +70,6 @@ from dbt_charts.core.colors import (
     rgb01_to_hex,
     wcag_contrast,
 )
-from dbt_charts.core.compile.config import get_chart_rendering
-from dbt_charts.core.compile.models.config import ChartRenderingConfig
 from dbt_charts.core.compile.models.palette import (
     HARD_FAIL_PALETTE_NAMES,
     PALETTE_WARN_ALIASES,
@@ -80,6 +78,19 @@ from dbt_charts.core.compile.models.palette import (
     PaletteIndexEntry,
     build_palette_index,
 )
+from dbt_charts.core.constants.color import (
+    DARK_K,
+    DARK_POLE,
+    DEEP_K,
+    DEEP_POLE,
+    LIGHT_CHROMA,
+    LIGHT_K,
+    LIGHT_MIN_GAP,
+    LIGHT_PALE_GAP,
+    PALE_CHROMA,
+    PALE_L,
+)
+from dbt_charts.core.constants.contrast import LABEL_INK_MIN_CONTRAST
 from dbt_charts.core.diagnostics.hints import respell_retired_variant_token
 
 # ============================================================================
@@ -1244,14 +1255,12 @@ def _color_from_theme_dispatch(
 
 
 @functools.lru_cache(maxsize=4096)
-def _variant_cached(
-    color: str, kind: Variant, config: ChartRenderingConfig.ColorVariantsConfig
-) -> str:
+def _variant_cached(color: str, kind: Variant) -> str:
     L, C, H = hex_to_oklch(color)
     if kind == "light":
-        Ln = L + (1.0 - L) * config.light_k
-        # Two competing clamps: capped under the pale band (light_pale_gap),
-        # floored at least light_min_gap above base. Above base L 0.80 (at
+        Ln = L + (1.0 - L) * LIGHT_K
+        # Two competing clamps: capped under the pale band (LIGHT_PALE_GAP),
+        # floored at least LIGHT_MIN_GAP above base. Above base L 0.80 (at
         # the shipped constants) the two conflict -- the floor wins (max is
         # outermost), so `light` can end up level with or above `pale` for a
         # very light base rather than strictly under it. The floor itself
@@ -1259,20 +1268,18 @@ def _variant_cached(
         # chroma.
         Ln = min(
             1.0,
-            max(
-                min(Ln, config.pale_l - config.light_pale_gap), L + config.light_min_gap
-            ),
+            max(min(Ln, PALE_L - LIGHT_PALE_GAP), L + LIGHT_MIN_GAP),
         )
-        return oklch_to_hex(Ln, C * config.light_chroma, H)
+        return oklch_to_hex(Ln, C * LIGHT_CHROMA, H)
     if kind == "dark":
         # min(L, ...) clamps to darkening only -- unclamped, a base below the
         # pole would move up toward it.
-        return oklch_to_hex(min(L, L + (config.dark_pole - L) * config.dark_k), C, H)
+        return oklch_to_hex(min(L, L + (DARK_POLE - L) * DARK_K), C, H)
     if kind == "pale":
         # k = 1: the band itself is the pole, uniform regardless of base L.
-        return oklch_to_hex(config.pale_l, C * config.pale_chroma, H)
+        return oklch_to_hex(PALE_L, C * PALE_CHROMA, H)
     if kind == "deep":
-        return oklch_to_hex(min(L, L + (config.deep_pole - L) * config.deep_k), C, H)
+        return oklch_to_hex(min(L, L + (DEEP_POLE - L) * DEEP_K), C, H)
     raise ValueError(
         f"unknown variant {kind!r}; expected one of {', '.join(VARIANT_WORDS)}"
     )
@@ -1286,51 +1293,47 @@ def variant(color: str, kind: Variant) -> str:
     a near-black pole, `pale` onto a flat pale band, `deep` toward a near-
     black pole further than `dark`. `dark` and `deep` are clamped so they
     never come out lighter than `color` itself. Constants live in
-    `chart_rendering.color_variants` (`ColorVariantsConfig`).
+    `core/constants/color.py`.
     """
-    return _variant_cached(color, kind, get_chart_rendering().color_variants)
+    return _variant_cached(color, kind)
 
 
-def _label_ink_step(
-    color: str, canvas: str, config: ChartRenderingConfig.ColorVariantsConfig
-) -> str:
+def _label_ink_step(color: str, canvas: str) -> str:
     """The pre-floor move `label_ink` makes: `color`'s dark step, away from
     `canvas`, before the legibility floor is applied. Exposed as its own
     function so callers (including tests) can inspect the move without
     duplicating the arithmetic.
 
-    On a light canvas a base already darker than `dark_pole` would step
+    On a light canvas a base already darker than `DARK_POLE` would step
     *up*, toward the canvas, so the step is clamped to the base there;
     the floor (`ensure_readable_ink`) is then the only thing that can
     move it. The white pole needs no clamp: no base sits above L 1.0.
     """
     L, C, H = hex_to_oklch(color)
     if is_light_canvas(canvas):
-        return oklch_to_hex(min(L, L + (config.dark_pole - L) * config.dark_k), C, H)
-    return oklch_to_hex(L + (1.0 - L) * config.dark_k, C, H)
+        return oklch_to_hex(min(L, L + (DARK_POLE - L) * DARK_K), C, H)
+    return oklch_to_hex(L + (1.0 - L) * DARK_K, C, H)
 
 
 @functools.lru_cache(maxsize=4096)
-def _label_ink_cached(
-    color: str, canvas: str, config: ChartRenderingConfig.ColorVariantsConfig
-) -> str:
-    stepped = _label_ink_step(color, canvas, config)
-    return ensure_readable_ink(stepped, canvas, config.label_ink_min_contrast)
+def _label_ink_cached(color: str, canvas: str) -> str:
+    stepped = _label_ink_step(color, canvas)
+    return ensure_readable_ink(stepped, canvas, LABEL_INK_MIN_CONTRAST)
 
 
 def label_ink(color: str, canvas: str) -> str:
     """Ink for text painted on `canvas` about a mark of `color`.
 
-    The dark move away from `canvas` (toward `dark_pole` on a light canvas,
+    The dark move away from `canvas` (toward `DARK_POLE` on a light canvas,
     toward white on a dark one), then nudged the rest of the way to legible
     against `canvas` if the move alone doesn't clear the floor
-    (`ensure_readable_ink`, floor is `label_ink_min_contrast`). Unlike
+    (`ensure_readable_ink`, floor is `LABEL_INK_MIN_CONTRAST`). Unlike
     `variant(..., "dark")`, this is the engine's one automatic, canvas-aware
     color derivation -- the contrast floor costs hue separation, which
     belongs on ink an author never sees as a literal color, not on `dark`
     itself.
     """
-    return _label_ink_cached(color, canvas, get_chart_rendering().color_variants)
+    return _label_ink_cached(color, canvas)
 
 
 def _try_parse_color(value: str) -> tuple[float, float, float, float] | None:

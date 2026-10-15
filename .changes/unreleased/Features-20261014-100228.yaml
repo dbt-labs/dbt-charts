@@ -1,0 +1,3 @@
+kind: Features
+body: 'Board-level axis styling now follows specificity: a theme''s chart-type or quantitative axis value beats the board''s general one.'
+time: 2026-10-14T10:02:28.823299-07:00

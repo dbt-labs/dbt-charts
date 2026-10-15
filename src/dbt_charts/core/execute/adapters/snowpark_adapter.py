@@ -10,7 +10,7 @@ Imports nothing from ``snowflake.*``: the session is duck-typed against
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from itertools import islice
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -25,6 +25,7 @@ from dbt_charts.core.execute.adapters.base import (
     apply_row_limit_truncation,
     classify_warehouse_error,
     plain_error,
+    reject_duplicate_columns,
 )
 from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
@@ -34,15 +35,20 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
 
 
-_Cells = dict[str, Any]  # type-state: explicit_any — untyped warehouse cells
+def _raw_name(identifier: str) -> str:
+    # df.columns is identifier-quoted; result keys are raw names.
+    if len(identifier) >= 2 and identifier[0] == identifier[-1] == '"':
+        return identifier[1:-1].replace('""', '"')
+    return identifier
 
 
-class SnowparkRow(Protocol):
-    def as_dict(self) -> _Cells: ...
+_Cells = Iterable[Any]  # type-state: explicit_any — untyped warehouse cells
 
 
 class SnowparkDataFrame(Protocol):
-    def to_local_iterator(self) -> Iterator[SnowparkRow]: ...
+    columns: list[str]
+
+    def to_local_iterator(self) -> Iterator[_Cells]: ...
 
 
 class SnowparkSession(Protocol):
@@ -164,11 +170,10 @@ class SnowparkAdapter(BaseAdapter):
                 )
             # Streamed and cut off at the fetch limit, so the SQL text is never
             # rewritten (DataFrame.limit() would wrap it in a subquery).
+            frame = self._session.sql(prepared.sql)
+            columns = [_raw_name(name).lower() for name in frame.columns]
             rows = list(
-                islice(
-                    self._session.sql(prepared.sql).to_local_iterator(),
-                    prepared.row_fetch_limit.fetch_limit,
-                )
+                islice(frame.to_local_iterator(), prepared.row_fetch_limit.fetch_limit)
             )
         except Exception as e:  # noqa: BLE001 — Snowpark driver error boundary
             return classify_warehouse_error("snowflake SQL execution", e, "snowflake")
@@ -176,7 +181,8 @@ class SnowparkAdapter(BaseAdapter):
         rows, truncated_reason = apply_row_limit_truncation(
             rows, prepared.row_fetch_limit
         )
-        data = [{str(k).lower(): v for k, v in row.as_dict().items()} for row in rows]
+        reject_duplicate_columns(columns)
+        data = [dict(zip(columns, row, strict=True)) for row in rows]
         return QueryResult(
             data=data,
             resolved_relations=prepared.resolved_relations or None,

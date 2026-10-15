@@ -110,7 +110,6 @@ dependencies = [
  "base64",
  "d3rs",
  "display-text",
- "libc",
  "md-5",
  "mdsvg",
  "minijinja",

@@ -199,6 +199,10 @@ def _build_resolved_line_mark(
         raise ValueError(
             "line.marks.line.halo_multiplier is None after cascade — check theme defaults"
         )
+    if merged.disconnected_width is None:
+        raise ValueError(
+            "line.marks.line.disconnected_width is None after cascade — check theme defaults"
+        )
     return ResolvedLineMarkStyle(
         stroke=ResolvedStrokeStyle(
             width=merged.stroke.width,
@@ -211,6 +215,7 @@ def _build_resolved_line_mark(
         curve=merged.curve,
         connect=merged.connect,
         disconnected_cap=merged.disconnected_cap,
+        disconnected_width=merged.disconnected_width,
         labels=labels,
     )
 
@@ -239,17 +244,14 @@ def _build_resolved_area_line(
     _build_resolved_line_mark minus curve/connect (owned solely by
     ResolvedAreaMarkStyle.curve — see AreaLineStyle's docstring).
     """
-    # merged.stroke.width can't be None here: _apply_line_width
-    # already ran and fills width whenever a stroke object exists. Only
-    # merged.stroke itself being None (an authored `stroke: null`) can
-    # still reach this guard -- the `or merged.stroke.width is None` half is
-    # unreachable at runtime but kept so the type checker narrows
-    # `merged.stroke.width` from `float | None` to `float` below.
-    if merged.stroke is None or merged.stroke.width is None:
+    if merged.stroke is None:
         raise ValueError(
             "area.marks.line.stroke is None after cascade — an authored "
             "`stroke: null` is not valid on an area's top-edge line"
         )
+    # Stacked recipes are validated in area.py; the rest get a width from
+    # _apply_line_width.
+    assert merged.stroke.width is not None
     if merged.halo_multiplier is None:
         raise ValueError(
             "area.marks.line.halo_multiplier is None after cascade — check theme defaults"

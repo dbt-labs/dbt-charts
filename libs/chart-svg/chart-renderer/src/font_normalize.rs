@@ -39,8 +39,8 @@ static CSS_VAR_STYLE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 /// `fonts.py::WEIGHT_FACE_ALIASES` — a static engine constant (unlike the
 /// embed-fonts registry's own DERIVED emoji unicode-range, this table is
 /// hand-authored and stable), mirrored as a literal the same way other
-/// small engine-config tables already are in this crate (`spark_bar.rs`'s
-/// own `chart_rendering.spark_bar.*` constants). `(base_family, weight,
+/// small engine constants already are in this crate (`spark_bar.rs`'s
+/// own title-height estimates). `(base_family, weight,
 /// target_family)`, in the SAME base-family-major order production's dict
 /// iterates.
 const WEIGHT_FACE_ALIASES: &[(&str, &str, &str)] = &[

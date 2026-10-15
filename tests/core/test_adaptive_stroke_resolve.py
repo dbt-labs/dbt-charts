@@ -15,7 +15,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from dbt_charts.core.compile.compiler import compile as compile_board
-from dbt_charts.core.compile.config import get_chart_rendering, get_theme_style
+from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.primitives import StrokeStyle
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -33,9 +33,19 @@ from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
     stroke_from_px_per_point,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
+from dbt_charts.core.constants.estimates import FACET_CHROME_PX
+from dbt_charts.core.constants.layout import FACET_MIN_PANEL_PX
+from dbt_charts.core.constants.marks import (
+    POINT_DIAMETER_RATIO,
+    POINT_MIN_PX_PER_POINT,
+    STROKE_FALLBACK_WIDTH,
+    STROKE_MAX_WIDTH,
+    STROKE_MIN_WIDTH,
+)
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
+_STACKED_STROKE_WIDTH = _BOARD_STYLE.area.marks.area.stacked.stroke.width
 _QUERY = SqlQuery(sql="SELECT 1", source="src")
 
 
@@ -226,7 +236,7 @@ def _resolved_area_stroke(
 
 
 # Explicit clamp bounds for the pure-formula tests (min_w/max_w are required
-# args now — no in-code defaults; production passes chart_rendering.stroke).
+# args now, no in-code defaults; production passes the stroke constants).
 _MIN_W = 1.5
 _MAX_W = 4.0
 
@@ -277,10 +287,9 @@ class TestStrokeFromPxPerPoint:
         assert stroke_from_px_per_point(-5.0) == 0.0
 
     def test_positive_matches_adaptive_stroke_with_configured_clamp(self) -> None:
-        clamp = get_chart_rendering().stroke
         px = 30.0
         assert stroke_from_px_per_point(px) == adaptive_stroke(
-            px, clamp.min_width, clamp.max_width
+            px, STROKE_MIN_WIDTH, STROKE_MAX_WIDTH
         )
 
 
@@ -372,15 +381,12 @@ class TestMaxPointsPerSeries:
 class TestFacetPanelWidth:
     def test_no_mirror_subtracts_chrome(self) -> None:
         """Without mirror, panel width = (width − chrome) / cols."""
-        from dbt_charts.core.compile.config import get_chart_rendering
-
-        cfg = get_chart_rendering().facet
         result = facet_panel_width(600.0, 3, has_mirror=False, extra_axis_px=0.0)
-        expected = (600.0 - cfg.chrome_px) / 3
+        expected = (600.0 - FACET_CHROME_PX) / 3
         assert result == pytest.approx(expected)
 
     def test_mirror_adds_gutter(self) -> None:
-        """With mirror, extra mirror_axis_px is subtracted → narrower panels."""
+        """With mirror, extra FACET_MIRROR_AXIS_PX is subtracted → narrower panels."""
         result_no_mirror = facet_panel_width(
             600.0, 2, has_mirror=False, extra_axis_px=0.0
         )
@@ -398,36 +404,27 @@ class TestFacetPanelWidth:
         legibility floor render narrower and a warning tells the author,
         rather than the floor winning and the chart overflowing its box.
         """
-        from dbt_charts.core.compile.config import get_chart_rendering
-
-        cfg = get_chart_rendering().facet
         # Very narrow width, 5 columns → panels must shrink well below the floor.
         result = facet_panel_width(10.0, 5, has_mirror=False, extra_axis_px=0.0)
-        assert result < cfg.min_panel_px
+        assert result < FACET_MIN_PANEL_PX
         assert result == pytest.approx(0.0)
 
     def test_single_panel_no_facet(self) -> None:
         """1 panel, no mirror: (width − chrome) / 1."""
-        from dbt_charts.core.compile.config import get_chart_rendering
-
-        cfg = get_chart_rendering().facet
         result = facet_panel_width(600.0, 1, has_mirror=False, extra_axis_px=0.0)
-        expected = 600.0 - cfg.chrome_px
+        expected = 600.0 - FACET_CHROME_PX
         assert result == pytest.approx(expected)
 
     def test_panel_width_times_cols_plus_chrome_never_exceeds_card_width(self) -> None:
         """The invariant the floor used to violate: painted panels + chrome must
         fit inside the card at every panel count, not just the ones below the
         old floor's breakeven point."""
-        from dbt_charts.core.compile.config import get_chart_rendering
-
-        cfg = get_chart_rendering().facet
         width = 600.0
         for panel_cols in (1, 2, 4, 6, 10):
             panel_w = facet_panel_width(
                 width, panel_cols, has_mirror=False, extra_axis_px=0.0
             )
-            assert panel_w * panel_cols + cfg.chrome_px <= width + 1e-9
+            assert panel_w * panel_cols + FACET_CHROME_PX <= width + 1e-9
 
 
 # ---------------------------------------------------------------------------
@@ -461,7 +458,7 @@ class TestBakePointCompanions:
         assert result.size is None
 
     def test_size_off_below_threshold(self) -> None:
-        threshold = get_chart_rendering().point.min_px_per_point
+        threshold = POINT_MIN_PX_PER_POINT
         result = bake_point_companions(self._BASE_POINT, 4.0, threshold - 0.01)
         assert result.size == 0.0
 
@@ -469,8 +466,8 @@ class TestBakePointCompanions:
         """At/above the threshold, size == (diameter_ratio * stroke)**2 -- the
         empirically-measured diameter = sqrt(size) relationship, not the
         textbook circle-area pi*r**2 reading."""
-        threshold = get_chart_rendering().point.min_px_per_point
-        ratio = get_chart_rendering().point.diameter_ratio
+        threshold = POINT_MIN_PX_PER_POINT
+        ratio = POINT_DIAMETER_RATIO
         stroke = 4.0
         result = bake_point_companions(self._BASE_POINT, stroke, threshold)
         assert result.size == pytest.approx((ratio * stroke) ** 2)
@@ -587,7 +584,7 @@ class TestLineChartAdaptiveStroke:
         chart, data, w = _line_chart(20, width=600.0)
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=w)
         stroke = resolved.style.line_mark.stroke.width
-        ratio = get_chart_rendering().point.diameter_ratio
+        ratio = POINT_DIAMETER_RATIO
         expected_size = (ratio * stroke) ** 2
         assert resolved.style.point_mark.size == pytest.approx(expected_size, rel=1e-9)
 
@@ -710,14 +707,11 @@ class TestLineChartAdaptiveStroke:
         assert resolved.style.point_mark.size > 0.0
 
     def test_fallback_when_no_data(self) -> None:
-        """When data is empty, fallback to chart_rendering.stroke.fallback_width
+        """When data is empty, fallback to STROKE_FALLBACK_WIDTH
         (no crash) -- no tier pinned a width and adaptive cannot compute one."""
         chart, _, w = _line_chart(0, width=600.0)
         resolved = resolve(chart, [], chart_style_context=_BOARD_STYLE, width=w)
-        assert (
-            resolved.style.line_mark.stroke.width
-            == get_chart_rendering().stroke.fallback_width
-        )
+        assert resolved.style.line_mark.stroke.width == STROKE_FALLBACK_WIDTH
         # The ring tracks that stroke even with no density to measure — the
         # base-series half of the same rule TestUnbakedLineOverlayRing pins
         # for overlay layers.
@@ -728,13 +722,10 @@ class TestLineChartAdaptiveStroke:
 
     def test_fallback_when_no_width(self) -> None:
         """Width of 0 cannot determine px_per_point; falls back to
-        chart_rendering.stroke.fallback_width."""
+        STROKE_FALLBACK_WIDTH."""
         chart, data, _ = _line_chart(20, width=0.0)
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=0.0)
-        assert (
-            resolved.style.line_mark.stroke.width
-            == get_chart_rendering().stroke.fallback_width
-        )
+        assert resolved.style.line_mark.stroke.width == STROKE_FALLBACK_WIDTH
         assert (
             resolved.style.point_mark.stroke_width
             == resolved.style.line_mark.stroke.width
@@ -914,25 +905,19 @@ class TestAreaChartAdaptiveStroke:
 
     def test_fallback_when_no_data_overlap(self) -> None:
         """Overlap recipe (colored), no data anywhere in the cascade: falls
-        back to chart_rendering.stroke.fallback_width, not the stacked
+        back to STROKE_FALLBACK_WIDTH, not the stacked
         recipe's constant -- these are two distinct engine-config values."""
         chart, _, w = _area_chart(0, width=600.0, color="series")
         resolved = resolve(chart, [], chart_style_context=_BOARD_STYLE, width=w)
-        assert (
-            resolved.style.line_mark.stroke.width
-            == get_chart_rendering().stroke.fallback_width
-        )
+        assert resolved.style.line_mark.stroke.width == STROKE_FALLBACK_WIDTH
 
     def test_fallback_when_no_data_stacked(self) -> None:
         """Stacked recipe (colorless), no data anywhere in the cascade: falls
-        back to chart_rendering.stroke.stacked_fallback_width -- the
-        stacked-recipe's own, thinner constant, not the overlap one."""
+        to the theme's stacked stroke width -- the stacked recipe's own,
+        thinner value, not the overlap one."""
         chart, _, w = _area_chart(0, width=600.0)
         resolved = resolve(chart, [], chart_style_context=_BOARD_STYLE, width=w)
-        assert (
-            resolved.style.line_mark.stroke.width
-            == get_chart_rendering().stroke.stacked_fallback_width
-        )
+        assert resolved.style.line_mark.stroke.width == _STACKED_STROKE_WIDTH
 
 
 class TestLayerInheritsCascadePinnedStroke:
@@ -1147,11 +1132,11 @@ class TestStreamgraphStrokeCap:
         stream_dense = self._stream_stroke(300, 600.0, stack="center")
         assert stream_sparse == stream_dense
 
-    def test_streamgraph_edge_uses_stacked_fallback_width_constant(self) -> None:
-        """An unpinned streamgraph edge takes
-        chart_rendering.stroke.stacked_fallback_width."""
+    def test_streamgraph_edge_uses_theme_stacked_width(self) -> None:
+        """A streamgraph edge takes the theme's stacked
+        stroke width."""
         stream_dense = self._stream_stroke(300, 600.0, stack="center")
-        assert stream_dense == get_chart_rendering().stroke.stacked_fallback_width
+        assert stream_dense == _STACKED_STROKE_WIDTH
 
     def test_streamgraph_edge_ignores_adaptive_clamp(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1160,13 +1145,11 @@ class TestStreamgraphStrokeCap:
         adaptive clamp, so retuning the clamp cannot move it."""
         from dbt_charts.core.compile.resolve.chart import adaptive_stroke as module
 
-        real = get_chart_rendering()
-        thin = real.stroke.model_copy(update={"min_width": 0.5, "max_width": 0.5})
-        patched = real.model_copy(update={"stroke": thin})
-        monkeypatch.setattr(module, "get_chart_rendering", lambda: patched)
+        monkeypatch.setattr(module, "STROKE_MIN_WIDTH", 0.5)
+        monkeypatch.setattr(module, "STROKE_MAX_WIDTH", 0.5)
 
         stream = self._stream_stroke(300, 600.0, stack="center")
-        assert stream == real.stroke.stacked_fallback_width
+        assert stream == _STACKED_STROKE_WIDTH
 
 
 # ---------------------------------------------------------------------------
@@ -1424,7 +1407,7 @@ charts:
 
         Asserted against the line stroke in the same spec, not against the theme
         literal: "ring tracks the line" is the actual contract, and it stays
-        true however ``chart_rendering.stroke`` is retuned.
+        true however the stroke constants are retuned.
         """
         spec = self._spec("")
         baked_line = self._visible_marks(spec, "line")[-1].get("strokeWidth")
@@ -1560,7 +1543,4 @@ rows:
             chart_style_context=result.board.chart_style_context,
             width=400,
         )
-        assert (
-            resolved.layers[0].line_mark.stroke.width
-            == get_chart_rendering().stroke.fallback_width
-        )
+        assert resolved.layers[0].line_mark.stroke.width == STROKE_FALLBACK_WIDTH

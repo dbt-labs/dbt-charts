@@ -79,9 +79,7 @@ style:
       ticks:
         color: *faint              # tracks the quantitative grid above
         width: 1                   # the hairline this theme's grid is drawn at
-        count: 6                   # sparse, like clarity
     legend:
-      visible: false               # direct-labeling by default (clarity posture)
       label:
         font:
           color: *high
@@ -90,18 +88,11 @@ style:
           color: *high
     line:
       endpoint_labels:
-        visible: true
+        visible: auto
     area:
       endpoint_labels:
-        visible: true
+        visible: auto
     bar:
-      legend:
-        # A bar that direct-labels has this suppressed again by resolve. It is
-        # load-bearing for the bars that cannot — grouped, or stacked but
-        # disqualified by `multiples:`, a negative measure, or a series absent
-        # from the last column — which would otherwise carry no series key at
-        # all, since the theme hides legends globally.
-        visible: true
       axis_x:                      # inward-align horizontal-bar row labels (resolve scopes to left/right edge)
         labels:
           align: inward
@@ -163,8 +154,7 @@ style:
         bar:
           background: dbt-grays.grid-emphasis
     support_table:
-      font:
-        color: *value              # cell values = max
+      neutral_color: *value
       label:
         font:
           color: *mid

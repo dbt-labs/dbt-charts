@@ -22,9 +22,9 @@ the same comparison shape; Layer 2 runs their real path.
 Layer 2 — execution, with row-level expectations. DuckDB and SQLite (bound
 parameters, the adapters' own path) and Postgres (a throwaway cluster on the
 machine's own binaries, `pg_cluster` in tests/conftest.py) run everywhere,
-locally and on every PR. BigQuery (a dry run through WIF) and Databricks run
-nightly in warehouse-nightly.yml; locally they skip until their variables are
-set. BigQuery uses Application Default Credentials:
+locally and on every PR. BigQuery (a dry run through WIF), Databricks and
+Snowflake run nightly in warehouse-nightly.yml; locally they skip until their
+variables are set. BigQuery uses Application Default Credentials:
 
     DCT_TEST_BIGQUERY_PROJECT=<gcp project> \
     uv run pytest tests/core/test_variable_sql_cross_dialect.py
@@ -32,7 +32,9 @@ set. BigQuery uses Application Default Credentials:
 Postgres executes the inlined literals; BigQuery dry-runs them, which scans
 nothing and is the one engine here that rejects a mistyped comparison.
 Databricks executes them against the test SQL warehouse once
-DCT_TEST_DATABRICKS_HOST, _HTTP_PATH and _TOKEN are set.
+DCT_TEST_DATABRICKS_HOST, _HTTP_PATH and _TOKEN are set; Snowflake does once
+DCT_TEST_SNOWFLAKE_ACCOUNT, _USER, _PRIVATE_KEY, _WAREHOUSE and _DATABASE are
+set.
 
 Each case starts from the value's runtime shape (the string a URL parameter
 carries, or the typed value a YAML default carries) and goes through the same
@@ -558,11 +560,11 @@ class TestBigQueryDryRun:
         client.query(sql, job_config=config)
 
 
-def _databricks_fixture_cte() -> str:
-    databricks = get_dialect("databricks")
+def _values_fixture_cte(dialect_name: str) -> str:
+    dialect = get_dialect(dialect_name)
     rows = ", ".join(
         f"(CAST({id_} AS INT), DATE '{d}', TIMESTAMP '{ts}', CAST({n} AS INT), "
-        f"CAST({f} AS DOUBLE), {sql_string_literal(s, databricks)}, "
+        f"CAST({f} AS DOUBLE), {sql_string_literal(s, dialect)}, "
         f"{'TRUE' if b else 'FALSE'})"
         for id_, d, ts, n, f, s, b in ROWS
     )
@@ -588,7 +590,43 @@ class TestDatabricks:
     @pytest.mark.parametrize(("case", "column"), _case_params())
     def test_rows(self, databricks: Any, case: Case, column: str) -> None:
         databricks.execute(
-            _databricks_fixture_cte()
+            _values_fixture_cte("databricks")
             + _render_inlined(case, column, get_dialect("databricks"))
         )
         assert {r[0] for r in databricks.fetchall()} == case.expect
+
+
+@pytest.fixture(scope="module")
+def snowflake() -> Iterator[Any]:
+    account = os.environ.get("DCT_TEST_SNOWFLAKE_ACCOUNT")
+    if not account:
+        pytest.skip("DCT_TEST_SNOWFLAKE_ACCOUNT not set")
+    connector = pytest.importorskip("snowflake.connector")
+    serialization = pytest.importorskip("cryptography.hazmat.primitives.serialization")
+    key = serialization.load_pem_private_key(
+        os.environ["DCT_TEST_SNOWFLAKE_PRIVATE_KEY"].encode(), password=None
+    )
+    con = connector.connect(
+        account=account,
+        user=os.environ["DCT_TEST_SNOWFLAKE_USER"],
+        private_key=key.private_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ),
+        warehouse=os.environ["DCT_TEST_SNOWFLAKE_WAREHOUSE"],
+        database=os.environ["DCT_TEST_SNOWFLAKE_DATABASE"],
+        login_timeout=15,
+    )
+    yield con.cursor()
+    con.close()
+
+
+class TestSnowflake:
+    @pytest.mark.parametrize(("case", "column"), _case_params())
+    def test_rows(self, snowflake: Any, case: Case, column: str) -> None:
+        snowflake.execute(
+            _values_fixture_cte("snowflake")
+            + _render_inlined(case, column, get_dialect("snowflake"))
+        )
+        assert {r[0] for r in snowflake.fetchall()} == case.expect

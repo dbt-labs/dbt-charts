@@ -42,16 +42,6 @@ pytestmark = [
     # Wheel build + clean-venv install exceeds the repo-wide 30s timeout on
     # loaded machines; the setup cost is billed to the first test in the module.
     pytest.mark.timeout(180),
-    # Resolving the wheel's dependencies into the fresh venv reaches PyPI, and one
-    # of them (dbt-core-experimental-parser) downloads a release artifact from
-    # GitHub inside its own build backend, via a raw urlopen that honors no proxy
-    # CA configuration. Behind an intercepting proxy that is an unconditional
-    # CERTIFICATE_VERIFY_FAILED, so the module cannot run there at all — it was
-    # erroring out of every local `just ci`, six failures deep, none of them real.
-    # `just test` already deselects `network`; this puts the module in
-    # the same bucket so a sandboxed run goes green and CI (which has egress)
-    # still covers it.
-    pytest.mark.network,
 ]
 
 
@@ -177,6 +167,8 @@ def test_dct_render_smoke_in_clean_venv(smoke_venv: Path, tmp_path: Path) -> Non
         "--project-dir",
         str(work),
         cwd=work,
+        # Keep the child's query cache out of the real per-user cache directory.
+        env={"DCT_CACHE_PATH": str(work / "cache.duckdb")},
     )
     assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     output = work / "sample.svg"

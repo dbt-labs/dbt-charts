@@ -39,6 +39,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedSupportTablePerSeries,
     ResolvedSupportTableSource,
 )
+from dbt_charts.core.compile.models.markers import AUTO
 from dbt_charts.core.compile.models.primitives import (
     AuthoredFormat,
     FormatTable,
@@ -72,7 +73,7 @@ def row_height(style: SupportTableStyle) -> float:
 def axis_offset(
     chart_style_context: ChartStyleContext,
     style: SupportTableStyle,
-    x_label_authored: bool,
+    x_labeled: bool,
     chart_type: str,
 ) -> float:
     """Pixel offset from plot bottom edge to the bottom of the x-axis block.
@@ -87,25 +88,25 @@ def axis_offset(
     a year-only cadence may set 1.
 
     MUST use the fully-merged axis (resolved_axis_style) rather than reading
-    charts_style.axis_x directly. ``x_label_authored`` (the caller's own
+    charts_style.axis_x directly. ``x_labeled`` (the caller's own
     ``bool(chart.x_label)`` — truthy, so a blank label reserves no title
-    space, matching what the cascade forces) is required, not defaulted, so a caller
+    space, matching what the cascade shows) is required, not defaulted, so a caller
     that forgets to thread it fails loudly rather than silently reserving no
-    title space. It drives the same Layer-5 label-forcing
-    default ``resolved_axis_style`` applies for the emitted VL spec; reading
-    the base axis_x (Layers 1+2) misses it, under-reserving title space and
+    title space. It resolves the same ``auto`` title
+    ``resolved_axis_style`` applies for the emitted VL spec; reading
+    the base axis_x misses it, under-reserving title space and
     causing the strip to collide with the rendered axis title.
     """
     # Font metrics come from the base ResolvedAxisStyle (non-None guaranteed).
-    # Visibility is read from the fully-merged cascade (includes the Layer-5
-    # label-forcing default and every chart-local override) so both label and
+    # Visibility is read from the fully-merged cascade (includes the resolved
+    # `auto` title and every chart-local override) so both label and
     # title heights reflect the actual rendered state.
     merged = resolved_axis_style(
         chart_style_context,
         "axis_x",
         "band",
         chart_type=chart_type,
-        label_authored=x_label_authored,
+        labeled=x_labeled,
     )
     # labels.padding is always required by build_resolved_axis (the shared
     # ResolvedAxisElementStyle dataclass types it Optional only to let title
@@ -139,6 +140,33 @@ def resolve_effective_support_table_style(
     if per_type is None or not hasattr(per_type, "support_table"):
         return chart_style_context.support_table
     return merge_onto_base(chart_style_context.support_table, per_type.support_table)
+
+
+def bake_neutral_ink(style: SupportTableStyle) -> tuple[SupportTableStyle, bool]:
+    """Replace ``auto`` ink with the table's ``neutral_color``.
+
+    Returns the style every cell can paint as-is, and whether a per-series
+    cell paints its series' own dark ink instead (``font.color: auto``).
+    """
+    series_ink = style.font.color == AUTO
+    neutral = style.neutral_color
+    if neutral is None:
+        raise ValueError("support_table.neutral_color is unset after the cascade")
+    font = style.font
+    if series_ink:
+        font = font.model_copy(update={"color": neutral})
+    label_font = style.label.font
+    if label_font.color is None:
+        label_font = label_font.model_copy(update={"color": font.color})
+    return (
+        style.model_copy(
+            update={
+                "font": font,
+                "label": style.label.model_copy(update={"font": label_font}),
+            }
+        ),
+        series_ink,
+    )
 
 
 def resolve_support_table_position(

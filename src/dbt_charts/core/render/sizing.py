@@ -85,7 +85,6 @@ if TYPE_CHECKING:
     from dbt_charts.core.render.variables_layout import VariablesLayout
 
 from dbt_charts.core.compile.config import (
-    get_chart_rendering,
     get_theme_style,
 )
 from dbt_charts.core.compile.models.board.normalized import (
@@ -129,8 +128,11 @@ from dbt_charts.core.compile.sizing import (
     resolve_cols_widths,
     rows_item_width,
 )
+from dbt_charts.core.constants.estimates import SPARK_BAR_TITLE_HEIGHT_PX
+from dbt_charts.core.diagnostics.codes_render import ERR_TAB_UNKNOWN
 from dbt_charts.core.numeric import aspect_ratio_height
 from dbt_charts.core.render.conditions import item_is_drawn
+from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.variables_layout import WRAP_EPSILON, lay_out_variables
 from dbt_charts.core.render.variables_resolve import resolve_controls
 
@@ -215,11 +217,11 @@ def get_chart_content_height(
          clamped to theme min_height / max_height.
       3. Per-family theme aspect_ratio (e.g. style.charts.bar.aspect_ratio).
       4. Global theme aspect_ratio (style.charts.aspect_ratio).
-      5. chart_rendering.default_chart_height when no width is available.
+      5. style.charts.default_chart_height when no width is available.
 
     SVG-family renderers own their own sizing contract:
       - kpi    → resolved_style.chart_defaults.kpi.default_height (theme cascade)
-      - table  → chart_rendering.default_table_height (replaced by row-count sizing at render)
+      - table  → style.charts.default_table_height (replaced by row-count sizing at render)
       - callout → 0.0 placeholder (replaced by natural render-first sizing)
       - spark_bar → config-derived upper bound from max_bars/bar.height
 
@@ -259,9 +261,7 @@ def get_chart_content_height(
         body = sb.max_bars * (sb.bar.height + sb.bar.padding) + sb.bar.padding
         # SparkBarChart has title via _SharedChartFields; isinstance narrows for pyright.
         has_title = isinstance(chart, SparkBarChart) and chart.title
-        return (
-            body + get_chart_rendering().spark_bar.title_height if has_title else body
-        )
+        return body + SPARK_BAR_TITLE_HEIGHT_PX if has_title else body
 
     if isinstance(chart, CustomChart):
         return custom_chart_height(
@@ -1169,12 +1169,20 @@ def resolve_active_tab_index(
     Single source of truth for tab-active resolution — both the sizing pass
     (this module) and the renderer (``render/layouts.py``'s
     ``render_tabs_layout``) call this so the reserved height always matches
-    the tab actually emitted.
+    the tab actually emitted. The variable value is runtime user input, so a
+    value naming no tab raises rather than quietly showing another tab.
     """
     active = 0 if default_tab is None else default_tab
     if tab_variable and tab_slugs and variable_values:
         var_value = variable_values.get(tab_variable)
-        if var_value and str(var_value) in tab_slugs:
+        if var_value:
+            if str(var_value) not in tab_slugs:
+                raise RenderError.from_code(
+                    ERR_TAB_UNKNOWN,
+                    variable=tab_variable,
+                    value=str(var_value),
+                    slugs=list(tab_slugs),
+                )
             active = tab_slugs.index(str(var_value))
     return min(active, n_items - 1)
 

@@ -1462,17 +1462,20 @@ class TestTimeFormatOnOrdinalAxis:
         """%S (seconds) alone is a d3-time-format directive — must route through
         the UTC labelExpr (not formatType='time' which is runtime-TZ-dependent).
         """
-        from dbt_charts.core.compile.models.style.authored import LineChartStylePatch
+        from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 
         chart = make_chart(
-            "line",
+            "bar",
             x="time_str",
             y="value",
-            style=LineChartStylePatch(
+            style=BarChartStylePatch(
                 axis_x=AxisXStylePatch(labels=DimensionLabelStylePatch(format="%S"))
             ),
         )
-        data = [{"time_str": "00", "value": 1}, {"time_str": "30", "value": 2}]
+        data = [
+            {"time_str": "2024-01", "value": 1},
+            {"time_str": "2024-02", "value": 2},
+        ]
         _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
         spec = generate_vega_lite_spec(chart, data)
         x_axis = spec["encoding"]["x"].get("axis", {})
@@ -1527,7 +1530,10 @@ class TestTimeFormatOnOrdinalAxis:
                 axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="%b %Y"))
             ),
         )
-        data = [{"value": 1, "month_str": "Jan"}, {"value": 2, "month_str": "Feb"}]
+        data = [
+            {"value": 1, "month_str": "2024-01"},
+            {"value": 2, "month_str": "2024-02"},
+        ]
         _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
         spec = generate_vega_lite_spec(chart, data)
         y_axis = spec["encoding"]["y"].get("axis", {})
@@ -1766,8 +1772,8 @@ class TestAxisTitleNull:
     ):
         """A chart-local style.axis.title.visible:false — the global axis
         patch shared by both axes, not axis_y specifically — also beats the
-        y_label forcing default. The default is injected at Layer 5,
-        below every chart-local layer, so this needs no special handling."""
+        y_label forcing default. `auto` resolves after
+        every chart-local layer, so a concrete value wins."""
         chart = make_chart(
             "line",
             x="month",
@@ -1788,7 +1794,7 @@ class TestAxisTitleNull:
         self, make_chart
     ):
         """The more specific axis_y.title.visible:true still wins over a
-        global axis.title.visible:false — Layer 13 beats Layer 11 as usual.
+        global axis.title.visible:false — Layer 12 beats Layer 10 as usual.
         Ordinary cascade precedence between two authored layers; the
         label-forcing default sits below both and changes nothing here."""
         chart = make_chart(
@@ -1812,9 +1818,9 @@ class TestAxisTitleNull:
         self, make_chart
     ):
         """axis_quantitative.title.visible:false beats the y_label forcing
-        default too. The type-conditional slot is cascade Layer 12; the
-        forcing default sits at Layer 5, below it and below every
-        other chart-local layer, so every authored slot wins alike."""
+        default too. The type-conditional slot is cascade Layer 11;
+        `auto` resolves after every layer, so every authored slot
+        wins alike."""
         chart = make_chart(
             "line",
             x="month",

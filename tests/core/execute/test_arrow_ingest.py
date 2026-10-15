@@ -204,7 +204,7 @@ def test_runtime_paths_do_not_import_pyarrow(tmp_path: Path) -> None:
 
         cache = TrivialDuckDBCache()
         cache.put("s", "q", "v", [{{"a": 1}}, {{"a": "2"}}], board_slug="b", query_name="q")
-        assert cache.get("s", "q", "v").rows == [{{"a": 1}}, {{"a": 2}}]
+        assert cache.get("s", "q", "v").rows == [{{"a": 1}}, {{"a": "2"}}]
 
         assert compose_over_named_rows(
             "SELECT sum(a) AS n FROM up", {{"up": [{{"a": 1}}, {{"a": 2}}]}}, []

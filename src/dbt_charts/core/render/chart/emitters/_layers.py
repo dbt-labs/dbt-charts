@@ -55,7 +55,7 @@ CLIP_TO_PLOT: VLDict = {"clip": True}
 # the topmost shape, so a radius past half the smallest on-screen x-step lets
 # a later datum's disc steal its neighbor's hit region. Reuses the ~18px
 # empirical "points still read as discrete, not a caterpillar" spacing floor
-# that `chart_rendering.point.min_px_per_point` (default_config.yml) is
+# that `POINT_MIN_PX_PER_POINT` (constants/marks.py) is
 # itself calibrated against, since no finer-grained signal is available here:
 # ceiling = 18/2 = 9.0px, so size <= 4 * 9.0**2 = 324 —
 # test_hover_target_size_stays_under_x_step_ceiling pins this.
@@ -395,7 +395,9 @@ def emit_line_layer(
         if line_mark.connect is False and line_mark.disconnected_cap is not None:
             fg_props["strokeCap"] = line_mark.disconnected_cap
         if line_mark.connect is False and "strokeDash" in fg_props:
-            fg_props["strokeDash"] = fit_dash_to_plateau(fg_props["strokeDash"])
+            fg_props["strokeDash"] = fit_dash_to_plateau(
+                fg_props["strokeDash"], line_mark.disconnected_width
+            )
     stroke_width = line_mark.stroke.width
     halo_multiplier = 0.0 if suppress_halo else line_mark.halo_multiplier
     point_size: float | None = (

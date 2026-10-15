@@ -118,12 +118,15 @@ def test_default_background_self_token_propagates_to_knockout_strokes():
     background via the self-token mechanism, whatever that background is.
     """
     from dbt_charts.core.compile.config import get_theme_style, reset_config
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+    )
 
     reset_config()
-    default = get_theme_style("clarity")
+    default = resolve_chart_style_context(get_theme_style("clarity")).pre_style
     # Self-token cascade: pie.marks.slice stroke is the donut-slice knockout
     # separator; marks.geoshape stroke is the region halo. Both track
-    # theme.background at theme-compile time (ADR-015 marks namespace).
+    # theme.background once the style is resolved (ADR-015 marks namespace).
     assert default.charts.marks.slice.stroke.color == default.background
     assert default.charts.marks.geoshape.stroke.color == default.background
 

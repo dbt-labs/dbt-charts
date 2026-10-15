@@ -22,6 +22,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     PointMapChart,
     ScatterChart,
 )
+from dbt_charts.core.compile.models.style.authored.bar import BarChartStylePatch
 from dbt_charts.core.render.warnings import (
     WarningContext,
     pie_dominant_segment,
@@ -37,24 +38,27 @@ from dbt_charts.core.render.warnings import (
 from ...core._board_utils import make_test_resolved_board, make_test_resolved_chart
 
 
-def _ctx(
-    chart: Any,
-    rows: list[dict[str, Any]],
-    vega: dict[str, Any] | None = None,
-) -> WarningContext:
+def _ctx(chart: Any, rows: list[dict[str, Any]]) -> WarningContext:
     resolved = make_test_resolved_chart(chart, rows)
     board = make_test_resolved_board(charts={resolved.id: resolved})
     return WarningContext(
         board_spec=board,
         chart_results={resolved.id: rows},
-        vega_specs={} if vega is None else {resolved.id: vega},
+        vega_specs={},
     )
 
 
 def test_too_many_x_categories_anchors_on_x() -> None:
     rows = [{"cat": f"c{i}", "val": i} for i in range(51)]
-    chart = BarChart(id="c1", type="bar", query_name="q", x="cat", y="val")
-    ctx = _ctx(chart, rows, {"encoding": {"x": {"type": "nominal"}}})
+    chart = BarChart(
+        id="c1",
+        type="bar",
+        query_name="q",
+        x="cat",
+        y="val",
+        style=BarChartStylePatch.model_construct(orientation="vertical"),
+    )
+    ctx = _ctx(chart, rows)
 
     (w,) = too_many_x_categories.detect(ctx)
     assert w.path == "charts.c1.x"
@@ -63,7 +67,7 @@ def test_too_many_x_categories_anchors_on_x() -> None:
 def test_temporal_single_point_anchors_on_x() -> None:
     rows = [{"day": "2026-01-01", "val": 1}]
     chart = LineChart(id="c1", type="line", query_name="q", x="day", y="val")
-    ctx = _ctx(chart, rows, {"encoding": {"x": {"type": "temporal"}}})
+    ctx = _ctx(chart, rows)
 
     (w,) = temporal_single_point.detect(ctx)
     assert w.path == "charts.c1.x"
@@ -74,7 +78,7 @@ def test_too_many_color_categories_anchors_on_color() -> None:
     chart = LineChart(
         id="c1", type="line", query_name="q", x="cat", y="val", color="series"
     )
-    ctx = _ctx(chart, rows, {"encoding": {"color": {"type": "nominal"}}})
+    ctx = _ctx(chart, rows)
 
     warnings = too_many_color_categories.detect(ctx)
     assert [w.path for w in warnings] == ["charts.c1.color"]

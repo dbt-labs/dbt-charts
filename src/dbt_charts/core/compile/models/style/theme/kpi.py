@@ -41,6 +41,18 @@ class KpiTextSlotStyle(BaseModel):
     )
 
 
+class KpiCompactStyle(BaseModel):
+    """When an unformatted KPI headline compacts, and to what."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    spec: str = Field(description="D3 format spec the headline compacts to.")
+    threshold: float = Field(
+        gt=0,
+        description="Smallest absolute value that compacts; below it, exact digits.",
+    )
+
+
 class KpiValueStyle(BaseModel):
     """KPI headline value slot: font, format, and the affix and glyph beside it."""
 
@@ -56,6 +68,9 @@ class KpiValueStyle(BaseModel):
     format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
         default=None,
         description="Format for the KPI headline value: D3 format string, preset name, or FormatConfig object. A date value defaults to date_short when unformatted.",
+    )
+    compact: KpiCompactStyle = Field(
+        description="Compaction applied to an unformatted headline number."
     )
     affix: KpiTextSlotStyle = Field(
         default_factory=KpiTextSlotStyle,

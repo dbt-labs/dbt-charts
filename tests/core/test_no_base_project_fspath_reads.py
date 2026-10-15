@@ -59,7 +59,7 @@ _PROJECT_ISH_RE = re.compile(r"project", re.IGNORECASE)
 # sanctioned: the local/parameter is explicitly typed FilesystemProject, or
 # narrowed via isinstance immediately above. Ratchet — shrink, don't grow.
 ALLOWED: dict[tuple[str, int], str] = {
-    ("core/compile/config.py", 573): (
+    ("core/compile/config.py", 649): (
         "resolve_cache_boot(project: FilesystemProject) — already FS-typed"
     ),
     ("core/execute/adapters/adapter_registry.py", 236): (
@@ -101,20 +101,20 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("core/serve/server.py", 752): (
         "_render_board_download(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1172): (
+    ("core/serve/server.py", 1176): (
         "create_server: core_project inferred FilesystemProject from the parameter"
     ),
-    ("core/serve/server.py", 1211): (
+    ("core/serve/server.py", 1215): (
         "create_server: core_project inferred FilesystemProject from the parameter; "
         "the live-reload watch is opened over the project root"
     ),
-    ("core/serve/server.py", 1244): (
+    ("core/serve/server.py", 1248): (
         "_reload_on_change: project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1345): (
+    ("core/serve/server.py", 1349): (
         "profile_table: inspect_project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1537): (
+    ("core/serve/server.py", 1541): (
         "get_board: project explicitly typed FilesystemProject just above"
     ),
     (

@@ -314,8 +314,9 @@ class TestCacheRefIsolation:
         # A table the composing query must NOT be able to reach. Pre-fix it lived
         # on the same connection cache-ref ran on and would leak; post-fix the
         # isolated engine never sees it.
-        cache.conn.execute("CREATE TABLE off_limits (secret INTEGER)")
-        cache.conn.execute("INSERT INTO off_limits VALUES (42)")
+        with cache._connection() as conn:
+            conn.execute("CREATE TABLE off_limits (secret INTEGER)")
+            conn.execute("INSERT INTO off_limits VALUES (42)")
 
         board = _build_board(
             {

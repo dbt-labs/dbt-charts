@@ -54,7 +54,6 @@ from typing import Any, Literal, cast
 from d3_format import FormatSpec, parse as _d3_parse
 from d3_format.errors import D3FormatError
 from dbt_charts.core.colors import ensure_readable_ink, parse_css_color, rgb01_to_hex
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.format import (
     decimal_pad_table_for,
 )
@@ -95,6 +94,10 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
     ink_at,
 )
 from dbt_charts.core.compile.support_table import row_height
+from dbt_charts.core.constants.layout import (
+    SUPPORT_TABLE_COLUMN_BLOCK_SHARE_WARN_RATIO,
+    SUPPORT_TABLE_MAX_X_TICKS,
+)
 from dbt_charts.core.diagnostics import ERR_INPUT_INVALID
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
@@ -200,8 +203,9 @@ def _numeric_cell_font(font_family: str | None) -> str:
 def _strip_height(style: SupportTableStyle, n_rows: int) -> float:
     """Total pixel height for the attached strip (position-agnostic)."""
     row_h = row_height(style)
-    divider_gap = get_chart_rendering().support_table.divider_gap
-    divider = (style.divider.width + divider_gap) if style.divider.visible else 0.0
+    divider = (
+        (style.divider.width + style.divider.gap) if style.divider.visible else 0.0
+    )
     inter_row = (
         style.row.divider.width * (n_rows - 1)
         if style.row.divider.visible and n_rows > 1
@@ -293,7 +297,7 @@ def validate_support_table_against_data(
     (duplicate entries, chart-type, multi-y).
 
     For temporal/quantitative x axes with more than
-    ``chart_rendering.support_table.chart_support_table_max_x_ticks`` rows, sampling
+    ``SUPPORT_TABLE_MAX_X_TICKS`` rows, sampling
     is applied instead of failing. Returns the sampling step (>= 1); step=1
     means no sampling is needed.
 
@@ -319,7 +323,7 @@ def validate_support_table_against_data(
     x_values = {row.get(x_field) for row in data if x_field in row}
     n = len(x_values)
     sampling_step = 1
-    max_x_ticks = get_chart_rendering().support_table.chart_support_table_max_x_ticks
+    max_x_ticks = SUPPORT_TABLE_MAX_X_TICKS
     if n > max_x_ticks:
         if x_type in ("temporal", "quantitative"):
             # Temporal/quantitative: thin the strip labels via Vega-Lite
@@ -412,9 +416,7 @@ def _row_y_pixel(
     (y becomes more negative). No axis-offset is needed since the x-axis is below.
     """
     divider_off = (
-        style.divider.width + get_chart_rendering().support_table.divider_gap
-        if style.divider.visible
-        else 0.0
+        style.divider.width + style.divider.gap if style.divider.visible else 0.0
     )
     row_h = row_height(style)
     inter_row = (
@@ -2019,7 +2021,7 @@ def attach_support_table(
             chain to each text-mark layer so only every Nth row renders a
             cell. The chart's bar/line/area base layer is not affected.
             Computed by validate_support_table_against_data for temporal/
-            quantitative x axes that exceed ``chart_rendering.support_table.chart_support_table_max_x_ticks``.
+            quantitative x axes that exceed ``SUPPORT_TABLE_MAX_X_TICKS``.
         entry_dx: Per-entry dx half-widths (pixels) for band-centering on bar
             charts. When set, entry_dx[i] is applied as the VL mark ``dx``
             offset, centering the number column on the band midpoint. None (the
@@ -2847,7 +2849,7 @@ def _label_period_filter_expr(
         # names ("yearmonth", "yearweek", …) receive the right string.
         base_time_unit = enc_time_unit.removeprefix("utc")
         # chart_local_axis_x is resolved_chart.style.axis_x — the fully
-        # chart-local-cascaded axis (including the Layer 4 chart-type patch
+        # chart-local-cascaded axis (including the chart-family patch
         # and any chart-local override) already baked at resolve time.
         axis_st = chart_local_axis_x
         format_tu = resolve_label_time_unit(base_time_unit, axis_st.labels.time_unit)
@@ -4411,21 +4413,11 @@ def _apply_support_table_columns_post_pass(
             # the block sits at position "left" or "right" — a reader maps
             # visual column N to the chart's own segment N by screen
             # position, so the columns must not be reversed on either side.
-            # dt_style.font.color is never actually None -- every built-in
-            # theme gives support_table its own (muted) ink so aggregate/
-            # source cells always paint something. The signal for "the author
-            # asked for uniform ink" is therefore not None-ness but disagreement
-            # with charts_style.support_table.font.color, the board-wide
-            # default with no chart-local override folded in: equal means
-            # nothing overrode it (today's per-series companion ink applies);
-            # different means a chart-type or chart-local style.support_table.
-            # font.color was authored, and it already painted every cell's
-            # mark.fill via _text_mark_props -- dark_fills is simply left
-            # uncomputed so nothing overrides that authored color.
-            uniform_ink_authored = (
-                dt_style.font.color != charts_style.support_table.font.color
-            )
-            if not uniform_ink_authored:
+            # A concrete font.color already painted every cell's mark.fill
+            # via _text_mark_props, so dark_fills stays uncomputed and nothing
+            # overrides it. `auto` (baked to support_table_series_ink)
+            # gives each per-series cell its series' dark ink.
+            if resolved_chart.support_table_series_ink:
                 dark_palette = list(charts_style.dark_companion_palette)
                 if is_stacked_bar and isinstance(resolved_chart, ResolvedBarChart):
                     fill_by_series = emitted_categorical_color_scale(
@@ -4507,7 +4499,7 @@ def _apply_support_table_columns_post_pass(
     ):
         _plot_width = float(_raw_plot_width)
         _card_width_estimate = _plot_width + total_width
-        _warn_ratio = get_chart_rendering().support_table.column_block_share_warn_ratio
+        _warn_ratio = SUPPORT_TABLE_COLUMN_BLOCK_SHARE_WARN_RATIO
         if total_width > _warn_ratio * _card_width_estimate:
             record_plot_width_share_warning(
                 resolved_chart.id,
@@ -5109,7 +5101,7 @@ def apply_chart_support_table_post_pass(
                 title_font = _ay_style.title_font
                 assert title_font is not None, (
                     "resolved_chart.style.title_font must be baked when the "
-                    "chart has a title — see compile.resolve.chart._kwargs._title_font"
+                    "chart has a title — see compile.resolve.style.typography.resolve_title_font"
                 )
                 spec["title"] = {
                     **title_block,

@@ -28,8 +28,8 @@ Two tick-content scopes are safe to measure, both covered here:
    a theme that sets ``axis.ticks.count``). dbt charts already knows the exact
    values VL will render (``axis.scale.values`` is emitted explicitly); measuring
    is exact, not an estimate. ``quantitative_tick_labels``.
-2. **Unbaked** — no ``tick_values`` (e.g. the ``stark``/``plain`` themes,
-   which leave ``axis.ticks.count`` unset so VL picks its own "nice" ticks).
+2. **Unbaked** — no ``tick_values`` (an unset ``axis.ticks.count``, a log
+   axis, or independent small multiples, so VL picks its own "nice" ticks).
    dbt charts doesn't know VL's actual pick, but it can still bound the widest
    label VL could plausibly render: run the *data's own domain* through the
    same ``nice_tick_values`` algorithm dbt charts uses for the baked case, at a

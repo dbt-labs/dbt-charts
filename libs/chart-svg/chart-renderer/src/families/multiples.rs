@@ -32,14 +32,10 @@
 //! facet, and — combined with `axis_y.mirror` — a `position: "left"` axis
 //! of any shape, a continuous x, or a mirror `format` or `expr`).
 
+use crate::constants::estimates::{FACET_CHROME_PX, FACET_MIRROR_AXIS_PX};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-// `chart_rendering.facet` — default_config.yml. Fixed engine-config
-// constants (not theme-cascaded), hardcoded the same way bar.rs's own
-// CHROME_PX mirrors _LAYOUT_CHROME_PX.
-pub const FACET_CHROME_PX: f64 = 120.0;
-pub const FACET_MIRROR_AXIS_PX: f64 = 80.0;
 
 /// `chart.multiples` — the authored partition config (`_base.py::MultiplesConfig`,
 /// as it lands in a resolved chart's own `multiples` field: `rows`/`columns`
@@ -222,11 +218,20 @@ pub fn panel_axis_cardinality(axes: &[PartitionAxis], field: Option<&str>) -> us
     axes.iter().find(|a| a.field == field).map_or(1, |a| a.values.len().max(1))
 }
 
+/// The `(rows, cols)` panel grid a chart's `multiples:` block divides its box
+/// into; `(1, 1)` when it has none.
+pub fn grid_counts(mc: Option<&MultiplesConfig>, axes: &[PartitionAxis]) -> (usize, usize) {
+    mc.map_or((1, 1), |mc| {
+        (
+            panel_axis_cardinality(axes, mc.rows.as_deref()),
+            panel_axis_cardinality(axes, mc.columns.as_deref()),
+        )
+    })
+}
+
 /// Per-panel pixel width for a small-multiples chart —
 /// `adaptive_stroke.py::facet_panel_width`. `chrome_px`/`mirror_axis_px` are
-/// `chart_rendering.facet`'s fixed engine-config constants
-/// (`default_config.yml`; not theme-cascaded, so hardcoded here the same way
-/// `vega_fit.rs` hardcodes its own engine-config reads).
+/// `FACET_CHROME_PX` / `FACET_MIRROR_AXIS_PX`.
 pub fn facet_panel_width(
     width: f64,
     panel_cols: usize,
@@ -351,7 +356,7 @@ mod tests {
 
     #[test]
     fn facet_panel_width_matches_documented_formula() {
-        // chrome_px=120, mirror_axis_px=80 (default_config.yml chart_rendering.facet)
+        // chrome_px=120, mirror_axis_px=80
         assert_eq!(facet_panel_width(600.0, 1, false, 0.0), 480.0);
         assert_eq!(facet_panel_width(600.0, 2, false, 0.0), 240.0);
         assert_eq!(facet_panel_width(600.0, 1, true, 0.0), 400.0);

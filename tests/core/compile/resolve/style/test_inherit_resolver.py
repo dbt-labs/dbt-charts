@@ -266,13 +266,13 @@ def test_none_stays_none_when_all_fallbacks_none():
 
 def test_graph_excluded_legend_field_sets_are_unchanged() -> None:
     base = get_theme_style("clarity")
-    legend = base.charts.bar.legend
+    legend = base.charts.scatter.legend
     assert legend is not None
     before = _field_set_tree(legend)
 
     result = apply_inherit(base, get_inherit_graph())
 
-    resolved_legend = result.charts.bar.legend
+    resolved_legend = result.charts.scatter.legend
     assert resolved_legend is not None
     assert _field_set_tree(resolved_legend) == before
 

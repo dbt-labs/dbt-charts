@@ -197,7 +197,7 @@ def test_vega_chart_retains_standalone_nested_svg(chart_type: str) -> None:
 
 def test_paints_marks_matches_get_emitter_registry() -> None:
     """PAINTS_MARKS must equal exactly the chart_type strings get_emitter()
-    dispatches an emitter for.
+    dispatches an emitter for, plus pie, which paints its wedges in the engine.
 
     Builds an unvalidated (`model_construct`) instance of every member of the
     `ResolvedChart` discriminated union — enough for get_emitter()'s
@@ -225,7 +225,7 @@ def test_paints_marks_matches_get_emitter_registry() -> None:
             typing.get_args(cls.model_fields["chart_type"].annotation)
         )
 
-    assert emitter_chart_types == PAINTS_MARKS, (
+    assert emitter_chart_types | {"pie"} == PAINTS_MARKS, (
         "PAINTS_MARKS is out of sync with get_emitter()'s registry — add the "
         "new family's chart_type string(s) to PAINTS_MARKS in "
         "compile/models/chart/normalized/_base.py"

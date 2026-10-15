@@ -21,7 +21,6 @@ from typing import Any
 import pytest
 
 from dbt_charts.core.compile.config import (
-    get_chart_rendering,
     get_theme_style,
     reset_config,
 )
@@ -90,13 +89,12 @@ class TestLegendRowFits:
 
         def total(font_weight: str) -> float:
             measurer = get_weighted_font_measurer(legend.label.font.family, font_weight)
-            cfg = get_chart_rendering().legend
-            chrome = cfg.row_swatch_width_px + legend.label.padding
+            chrome = legend.row.swatch_width + legend.label.padding
             row_total = sum(
                 chrome + measurer.measure(entry, legend.label.font.size)
                 for entry in entries
             )
-            return row_total + cfg.row_entry_gap_px * (len(entries) - 1)
+            return row_total + legend.row.entry_gap * (len(entries) - 1)
 
         width = (total("400") + total("800")) / 2
         assert legend_row_fits(entries, width, legend) is True, (
@@ -119,7 +117,7 @@ class TestAxisLabelOverlapPinnedAngle:
     def test_bold_axis_label_weight_grows_the_reserved_block_height(self) -> None:
         charts = _charts()
         axis_x = resolved_axis_style(
-            charts, "axis_x", "ordinal", chart_type="", label_authored=False
+            charts, "axis_x", "ordinal", chart_type="", labeled=False
         )
         label = dataclasses.replace(axis_x.labels, angle=45.0)
         data = [{"category": "Northeast Territory Region"}]
@@ -187,7 +185,7 @@ class TestAxisLabelOverlapAutoTiltDiscreteAndTemporal:
     def test_bold_ordinal_labels_grow_the_auto_tilt_block_height(self) -> None:
         charts = _charts()
         axis_x = resolved_axis_style(
-            charts, "axis_x", "ordinal", chart_type="", label_authored=False
+            charts, "axis_x", "ordinal", chart_type="", labeled=False
         )
         label = dataclasses.replace(axis_x.labels, angle=None)
         data = [
@@ -225,7 +223,7 @@ class TestAxisLabelOverlapAutoTiltDiscreteAndTemporal:
     def test_bold_temporal_labels_grow_the_auto_tilt_block_height(self) -> None:
         charts = _charts()
         axis_x = resolved_axis_style(
-            charts, "axis_x", "temporal", chart_type="", label_authored=False
+            charts, "axis_x", "temporal", chart_type="", labeled=False
         )
         label = dataclasses.replace(
             axis_x.labels, angle=None, tilt_increments=[0.0, -45.0, -90.0]
@@ -273,7 +271,7 @@ class TestAxisTitleWrapBudget:
     def test_bold_axis_title_wraps_where_normal_weight_fits_flat(self) -> None:
         charts = _charts()
         axis_x = resolved_axis_style(
-            charts, "axis_x", "ordinal", chart_type="", label_authored=False
+            charts, "axis_x", "ordinal", chart_type="", labeled=False
         )
         base_font = axis_x.title.font
         text = "Northeast Territory Region"

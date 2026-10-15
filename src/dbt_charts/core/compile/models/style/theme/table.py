@@ -23,6 +23,7 @@ from dbt_charts.core.compile.models.constraints import (
     Requires,
 )
 from dbt_charts.core.compile.models.markers import (
+    AUTO,
     Color,
     Inherit,
     InheritSlot,
@@ -559,6 +560,19 @@ class SupportTableRowStyle(BaseModel):
     divider: DividerStyle = Field(description="Line under each strip row.")
 
 
+class SupportTableFontStyle(FontStyle):
+    """The support_table font. ``color`` also takes ``auto``."""
+
+    color: Annotated[str | None, Color(keywords=(AUTO,))] = Field(
+        default=None,
+        description=(
+            "Text color. 'auto' paints a per-series cell in its series' "
+            "dark ink and every other cell in `neutral_color`. A color paints "
+            "every cell."
+        ),
+    )
+
+
 class SupportTableLabelStyle(BaseModel):
     """Row label styling.
 
@@ -578,10 +592,28 @@ class SupportTableLabelStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # InheritSlot: support_table.label.font fills from support_table.font.
+    # InheritSlot: support_table.label.font fills from support_table.font, except
+    # color: an unset label color takes the table's baked ink at resolve.
     font: Annotated[
-        FontStyle, InheritSlot(from_path="Style.charts.support_table.font")
-    ] = Field(default_factory=FontStyle, description="Row label font style overrides.")
+        FontStyle,
+        InheritSlot(
+            from_path="Style.charts.support_table.font", exclude=frozenset({"color"})
+        ),
+    ] = Field(
+        default_factory=FontStyle,
+        description=(
+            "Row label font style overrides. An unset color follows the table's "
+            "own font color, or `neutral_color` when that is 'auto'."
+        ),
+    )
+
+
+class SupportTableDividerStyle(DividerStyle):
+    """The rule between plot and strip, plus the gap it reserves before the first row."""
+
+    gap: float = Field(
+        ge=0, description="Vertical gap between the divider and the first strip row."
+    )
 
 
 class SupportTableStyle(BaseModel):
@@ -594,10 +626,22 @@ class SupportTableStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # InheritSlot: support_table.font fills from charts.font.
-    font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.font")] = Field(
-        default_factory=FontStyle, description="Support_table font style overrides."
+    font: Annotated[
+        SupportTableFontStyle, InheritSlot(from_path="Style.charts.font")
+    ] = Field(
+        default_factory=SupportTableFontStyle,
+        description="Support_table font style overrides.",
     )
-    divider: DividerStyle = Field(
+    neutral_color: Annotated[
+        str | None, Color(), Inherit(from_path="Style.charts.font.color")
+    ] = Field(
+        default=None,
+        description=(
+            "Ink for cells that belong to no series (totals, source columns, "
+            "labels) when `font.color` is 'auto'."
+        ),
+    )
+    divider: SupportTableDividerStyle = Field(
         description=(
             "Line at the boundary between the chart plot and the data strip. "
             "For position='bottom': the line sits above the strip (below the axis). "

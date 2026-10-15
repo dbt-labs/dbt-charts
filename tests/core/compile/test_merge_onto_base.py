@@ -337,10 +337,6 @@ class TestCombineField:
         result = _combine_field({"a": 1}, {"b": 2}, recurse=lambda a, b: None)
         assert result == {"a": 1, "b": 2}
 
-    def test_strat_append_concatenates(self) -> None:
-        result = _combine_field([1, 2], [3], recurse=lambda a, b: None, strat="append")
-        assert result == [1, 2, 3]
-
     def test_strat_override_skips_isinstance(self) -> None:
         """Explicit override: returns hi even when lo/hi are BaseModels."""
         lo = _Inner(x="lo", y=1)
@@ -372,7 +368,7 @@ class TestCombineField:
 
         lo = _P(x="lo_x", y=10)
         hi = _P(x="hi_x")  # y unset → inherit lo
-        result = merge_patches(lo, hi, nested=False)
+        result = merge_patches(lo, hi)
         assert result.x == "hi_x"
         assert result.y == 10  # lo inherited (y not set in hi)
 

@@ -1,9 +1,9 @@
 """Tests for the PIE_TOTAL_EXCEEDS_INNER_RADIUS render-warning detector.
 
-Detection rule: fires on donut charts whose formatted center total is wider than
-the hole, measured with the repo's font measurer against the real layout
-dimensions (width from vega_specs or wheel_width; height from
-layout_chart_heights or the theme's continuousHeight for attached-table wheels).
+The engine measures the formatted center total against the hole the wheel
+draws and records an overflow; the detector turns each record into a warning.
+These tests render through the engine, then run the detector on what it
+recorded.
 """
 
 from __future__ import annotations
@@ -12,28 +12,26 @@ from decimal import Decimal
 from typing import Any
 
 from dbt_charts.core.compile.models.chart.authored import ChartTotal
-from dbt_charts.core.compile.models.chart.normalized import BarChart, Chart, PieChart
+from dbt_charts.core.compile.models.chart.normalized import PieChart
 from dbt_charts.core.compile.models.chart.normalized.pie import PieChartStylePatch
-from dbt_charts.core.diagnostics import (
-    WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS,
-    Diagnostic,
+from dbt_charts.core.diagnostics import WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS, Diagnostic
+from dbt_charts.core.render.chart.pie_total_overflow import (
+    PieTotalOverflow,
+    collect_pie_total_overflows,
 )
 from dbt_charts.core.render.warnings import (
     WarningContext,
     pie_total_exceeds_inner_radius as detector,
 )
 
-from ...core._board_utils import make_test_resolved_board, make_test_resolved_chart
+from ...core._board_utils import make_test_resolved_board
+from ...core._engine_render import render_pie_svg
 
 
-def _make_donut(total_format: str | None = "integer", **kwargs: object) -> Chart:
-    total: ChartTotal | None = (
-        ChartTotal(visible=True) if total_format is not None else None
-    )
-    # Use model_validate to avoid pyright's TYPE_CHECKING stub requiring all
-    # PieChartStyle fields — at runtime build_patch_model makes every field optional.
-    # Slice labels off by default so the fixture's plot widths stay the
-    # geometry under test (the label-reach deduction has its own test below).
+def _make_donut(total_format: str | None = "integer", **kwargs: object) -> PieChart:
+    total = ChartTotal(visible=True) if total_format is not None else None
+    # Slice labels off by default so the plot box stays the geometry under
+    # test (label reach has its own test below).
     total_value: dict[str, Any] = {"font": {"size": 18}}
     if total_format is not None:
         total_value["format"] = total_format
@@ -57,36 +55,42 @@ def _make_donut(total_format: str | None = "integer", **kwargs: object) -> Chart
     )
 
 
-def _make_ctx(
-    chart: Chart,
-    rows: list[dict[str, Any]],
-    plot_width: float,
-    plot_height: float,
-) -> WarningContext:
-    resolved = make_test_resolved_chart(chart, rows)
-    board = make_test_resolved_board(charts={resolved.id: resolved})
-    return WarningContext(
-        board_spec=board,
-        chart_results={resolved.id: rows},
-        vega_specs={resolved.id: {"mark": "arc", "width": plot_width}},
-        layout_chart_heights={resolved.id: plot_height},
-        layout_charts={resolved.id: resolved},
+def _warnings(
+    chart: PieChart, rows: list[dict[str, Any]], width: float, height: float
+) -> list[Diagnostic]:
+    with collect_pie_total_overflows() as overflows:
+        render_pie_svg(chart, rows, width, height)
+    ctx = WarningContext(
+        board_spec=make_test_resolved_board(charts={}),
+        chart_results={},
+        vega_specs={},
+        pie_total_overflows=overflows,
     )
+    return detector.detect(ctx)
 
 
 _NARROW_ROWS = [{"category": "a", "amount": 113135}]
 _WIDE_ROWS = [{"category": "a", "amount": 5}]
-# 1,000,000 integer-formats to "1,000,000" (85px) but compacts to "1M" (23px).
+# 1,000,000 integer-formats to "1,000,000" but compacts to "1M".
 _MILLION_ROWS = [{"category": "a", "amount": 1000000}]
 
 
-def test_fires_when_total_overflows_hole() -> None:
-    """113,135 at 18px ≈ 60px > hole (~47px) in an 88×240 plot box."""
-    chart = _make_donut()
-    warnings = detector.detect(_make_ctx(chart, _NARROW_ROWS, 88, 240))
-    assert len(warnings) == 1
-    w = warnings[0]
-    assert isinstance(w, Diagnostic)
+def test_a_record_becomes_a_warning_anchored_on_the_total_format() -> None:
+    ctx = WarningContext(
+        board_spec=make_test_resolved_board(charts={}),
+        chart_results={},
+        vega_specs={},
+        pie_total_overflows={
+            "c1": PieTotalOverflow(
+                formatted_value="113,135",
+                text_width=60.0,
+                hole_diameter=47.5,
+                slot_width=88.0,
+                slot_height=240.0,
+            )
+        },
+    )
+    [w] = detector.detect(ctx)
     assert w.code == WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS.code
     assert w.chart == "c1"
     assert "113,135" in w.message
@@ -95,146 +99,67 @@ def test_fires_when_total_overflows_hole() -> None:
     assert w.field == "format"
 
 
+def test_fires_when_total_overflows_hole() -> None:
+    [w] = _warnings(_make_donut(), _NARROW_ROWS, 88, 240)
+    assert w.chart == "c1"
+    assert "113,135" in w.message
+
+
 def test_no_fire_when_total_fits() -> None:
-    """5 in a wide 400×300 plot box — hole is ~162px, text fits easily."""
-    chart = _make_donut(total_format="integer")
-    assert detector.detect(_make_ctx(chart, _WIDE_ROWS, 400, 300)) == []
+    assert _warnings(_make_donut(), _WIDE_ROWS, 400, 300) == []
 
 
 def test_no_fire_when_total_none() -> None:
-    chart = _make_donut(total_format=None)
-    assert detector.detect(_make_ctx(chart, _NARROW_ROWS, 88, 240)) == []
+    assert _warnings(_make_donut(total_format=None), _NARROW_ROWS, 88, 240) == []
 
 
 def test_no_fire_when_total_not_visible() -> None:
-    chart = PieChart(
-        id="c1",
-        type="donut",
-        query_name="q",
-        theta="amount",
-        style=PieChartStylePatch.model_validate(
-            {"inner_radius": 0.6, "total": {"value": {"format": "integer"}}}
-        ),
-        total=ChartTotal(visible=False),
-    )
-    assert detector.detect(_make_ctx(chart, _NARROW_ROWS, 88, 240)) == []
-
-
-def test_no_fire_for_non_pie() -> None:
-    chart = BarChart(id="c1", type="bar", query_name="q", x="category", y="amount")
-    resolved = make_test_resolved_chart(chart, _NARROW_ROWS)
-    board = make_test_resolved_board(charts={resolved.id: resolved})
-    ctx = WarningContext(
-        board_spec=board,
-        chart_results={resolved.id: _NARROW_ROWS},
-        vega_specs={resolved.id: {"width": 88, "height": 240}},
-        layout_charts={resolved.id: resolved},
-    )
-    assert detector.detect(ctx) == []
-
-
-def test_no_fire_when_chart_absent_from_layout_charts() -> None:
-    """Charts not reached by the active layout tree are absent from
-    layout_charts — the detector must skip them."""
-    chart = _make_donut()
-    resolved = make_test_resolved_chart(chart, _NARROW_ROWS)
-    board = make_test_resolved_board(charts={resolved.id: resolved})
-    ctx = WarningContext(
-        board_spec=board,
-        chart_results={resolved.id: _NARROW_ROWS},
-        vega_specs={resolved.id: {"mark": "arc", "width": 88.0}},
-        layout_chart_heights={resolved.id: 240.0},
-        layout_charts={},  # chart absent from active layout
-    )
-    assert detector.detect(ctx) == []
+    chart = _make_donut(total=ChartTotal(visible=False))
+    assert _warnings(chart, _NARROW_ROWS, 88, 240) == []
 
 
 def test_compact_format_fits() -> None:
-    """1,000,000 under compact format emits '1M' (23px) — fits the 47.5px hole.
-    Under integer format the same value would emit '1,000,000' (86px) and overflow.
-    Verifies the detector measures the formatted string, not the raw number."""
-    chart = _make_donut(total_format="number")
-    assert detector.detect(_make_ctx(chart, _MILLION_ROWS, 88, 240)) == []
-
-
-_DECIMAL_ROWS = [{"category": "a", "amount": Decimal("56789")}]
+    """The warning measures the formatted string: "1M" fits where "1,000,000"
+    would not."""
+    assert _warnings(_make_donut(total_format="number"), _MILLION_ROWS, 88, 240) == []
+    assert len(_warnings(_make_donut(), _MILLION_ROWS, 88, 240)) == 1
 
 
 def test_fires_with_decimal_theta_values() -> None:
-    """Warehouse NUMERIC/DECIMAL columns produce Decimal values in executor rows.
-    The detector must include them in the theta sum rather than silently dropping
-    them — a Decimal-only sum of 0 would never produce a wide enough string to fire.
-    56,789 formatted as integer at 18px is wide enough to overflow the 47px hole."""
-    chart = _make_donut()
-    warnings = detector.detect(_make_ctx(chart, _DECIMAL_ROWS, 88, 240))
-    assert len(warnings) == 1, (
-        "Decimal theta values must be included in the sum — expected the "
-        "warning to fire for 56,789 overflowing the ~47px hole"
-    )
+    """Warehouse NUMERIC/DECIMAL columns arrive as Decimal; they count toward
+    the total."""
+    rows = [{"category": "a", "amount": Decimal("56789")}]
+    assert len(_warnings(_make_donut(), rows, 88, 240)) == 1
 
 
 def test_unauthored_total_measures_the_resolve_time_default_format() -> None:
-    """A donut with no format authored anywhere in the cascade still gets one:
-    _resolve_pie defaults style.total.value.format to the integer preset for
-    any donut shape (see test_donut_auto_total_defaults_format_to_integer_preset
-    in test_new_compiler.py). The detector must measure that resolved,
-    comma-grouped text -- never a raw Python float repr, and never the bare
-    digit string a since-closed unformatted branch used to fall back to."""
-    chart = PieChart(
-        id="c1",
-        type="donut",
-        query_name="q",
-        theta="amount",
-        style=PieChartStylePatch.model_validate(
-            {"inner_radius": 0.6, "total": {"value": {"font": {"size": 18}}}}
-        ),
-        total=ChartTotal(visible=True),  # no format authored anywhere
+    """A donut with no format authored resolves the integer preset, so the
+    measured text is comma-grouped, never a raw float repr."""
+    [w] = _warnings(
+        _make_donut(total_format=None, total=ChartTotal(visible=True)),
+        _MILLION_ROWS,
+        88,
+        240,
     )
-    warnings = detector.detect(_make_ctx(chart, _MILLION_ROWS, 88, 240))
-    assert len(warnings) == 1
-    assert "1,000,000" in warnings[0].message
-    assert "1000000.0" not in warnings[0].message
+    assert "1,000,000" in w.message
+    assert "1000000.0" not in w.message
 
 
 def test_fires_for_attached_table_donut() -> None:
-    """Attached-table donuts render as SVG and are absent from vega_specs.
-    The detector sources width from chart.wheel_width and height from
-    board_spec.style.chart_defaults.view.continuous_height (the Vega default
-    when the wheel is stamped with height=None in _render_arc_attached_table)."""
-    from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
-
-    chart = _make_donut()
-    # One slice with < 2% share triggers hybrid/attached-table mode.
-    rows = [{"amount": 999990}, {"amount": 10}]
-    resolved = make_test_resolved_chart(chart, rows, width=150)
-    assert isinstance(resolved, ResolvedPieChart)
-    assert resolved.attached_table is not None, (
-        "expected hybrid (attached-table) mode: 0.001% share < invisible_slice_share"
-    )
-
-    board = make_test_resolved_board(charts={resolved.id: resolved})
-    ctx = WarningContext(
-        board_spec=board,
-        chart_results={resolved.id: rows},
-        vega_specs={},  # attached-table charts absent from vega_specs
-        layout_chart_heights={},  # not used for attached-table path
-        layout_charts={resolved.id: resolved},
-    )
-    warnings = detector.detect(ctx)
-    assert len(warnings) == 1, (
-        "1,000,000 total must overflow the hole via the attached-table path "
-        f"(wheel_width={resolved.wheel_width}px)"
-    )
-    assert warnings[0].chart == "c1"
+    """One slice under 2% share puts the donut in attached-table mode; the
+    wheel it draws still carries the total."""
+    rows = [{"category": "a", "amount": 999990}, {"category": "b", "amount": 10}]
+    assert len(_warnings(_make_donut(), rows, 150, 300)) == 1
 
 
 def test_slice_label_reach_shrinks_the_measured_hole() -> None:
-    """A labeled donut's hole is judged against the label-deducted disk width
-    (arc_disk_width), so a total that would fit the bare slot can still warn.
-    Same chart and 300x240 slot: label-less passes, labeled fires."""
-    bare = _make_donut()
-    assert detector.detect(_make_ctx(bare, _NARROW_ROWS, 300, 240)) == []
-
+    """Slice labels take reach on both sides of the disk, so a total that fits
+    the bare wheel can overflow a labeled one at the same slot."""
+    label_rows = [
+        {"category": "Sig 0", "amount": 565675},
+        {"category": "Sig 1", "amount": 565675},
+    ]
+    assert _warnings(_make_donut(), label_rows, 200, 400) == []
     labeled_style = PieChartStylePatch.model_validate(
         {
             "inner_radius": 0.6,
@@ -250,13 +175,4 @@ def test_slice_label_reach_shrinks_the_measured_hole() -> None:
             },
         }
     )
-    labeled = _make_donut(style=labeled_style)
-    # Long enough for the reach to bind the 300px slot, short enough that
-    # classification keeps direct mode (a still-longer label flips to
-    # full_table, which drops the labels entirely).
-    label_rows = [{"category": "Signature reminders", "amount": 113135}]
-    warnings = detector.detect(_make_ctx(labeled, label_rows, 300, 240))
-    assert len(warnings) == 1, (
-        "slice labels reserve reach on both sides of the disk; the deducted "
-        "width must bind before the 240px height does"
-    )
+    assert len(_warnings(_make_donut(style=labeled_style), label_rows, 200, 400)) == 1

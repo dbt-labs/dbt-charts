@@ -46,7 +46,6 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
     _geo_kwargs,
-    _title_font,
 )
 from dbt_charts.core.compile.resolve.chart._marks import _resolved_point_mark
 from dbt_charts.core.compile.resolve.chart._palette import (
@@ -58,6 +57,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
+from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_GEOSHAPE_SHADING_WITHOUT_LOOKUP,
@@ -334,7 +334,7 @@ def _resolve_geoshape(
     primary = _with_color_tokens(normalized.style, chart_style_context)
     geoshape = merge_onto_base(chart_style_context.geoshape, primary)
     channels = _channels_for(normalized, data)
-    _tf = _title_font(normalized, chart_local_style_context, width)
+    _tf = resolve_title_font(chart_local_style_context, width)
     # The tooltip formats chart.value_field (emitters/geo.py:357-364), which
     # is normalized.value when authored, else the color channel
     # (_resolve_choropleth_value_field) -- vote on that same field, not the
@@ -468,7 +468,7 @@ def _resolve_point_map(
         normalized.projection if normalized.projection is not None else "albersUsa"
     )
 
-    _tf = _title_font(normalized, chart_local_style_context, width)
+    _tf = resolve_title_font(chart_local_style_context, width)
     return ResolvedPointMapChart(
         **_base_kwargs(
             normalized,

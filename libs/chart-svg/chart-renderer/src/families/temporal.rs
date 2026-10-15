@@ -30,6 +30,7 @@
 //! with its own single row of text, at every grain; the ladder measures that
 //! text instead.
 
+use crate::constants::axis::{LABEL_GAP_SPACES, LABEL_GAP_SPACES_NUMERIC, SPARSE_CEILING_PX};
 use super::table_dates::{strftime, Moment};
 use std::collections::BTreeMap;
 
@@ -1574,11 +1575,6 @@ pub fn resolve_temporal_labels(
 // (AGENTS.md: "the legacy margin arms draw every label"). Everything below
 // is additive, called only from line/area's fit and rail-concat arms.
 
-/// `chart_rendering.axis.sparse_ceiling_px` (`default_config.yml:144`) — L4's
-/// preference ceiling for the bucketed cadence ladder: the loop prefers the
-/// finest rung that both clears collisions and lands no farther apart than
-/// this, but still accepts a sparser one over rotating to vertical.
-pub const SPARSE_CEILING_PX: f64 = 90.0;
 
 /// L2: fold a two-row temporal label onto one row for a steep tilt
 /// (`abs(angle) >= 90`) — port of `_day_number_label`/`_year_context_row`
@@ -1760,6 +1756,7 @@ pub fn resolve_vertical_temporal_labels(
         fiscal_start,
         skip,
         &mut |labeled, vocab_tu| {
+            let anchor = chronological_first(&dates, labeled);
             let heights: Vec<f64> = labeled
                 .iter()
                 .enumerate()
@@ -1768,7 +1765,7 @@ pub fn resolve_vertical_temporal_labels(
                     let rows = match vocab_tu {
                         TimeUnit::Year => 1,
                         TimeUnit::YearWeek | TimeUnit::YearMonthDate => 2,
-                        _ if k == 0 || is_opener(y, m, d, data_tu, TimeUnit::Year, fiscal_start) => 2,
+                        _ if k == anchor || is_opener(y, m, d, data_tu, TimeUnit::Year, fiscal_start) => 2,
                         _ => 1,
                     };
                     font_size * rows as f64
@@ -2261,15 +2258,23 @@ pub fn build_temporal_labels(
         .filter_map(|(idx, s)| parse_iso_date(s).map(|d| (idx, d)))
         .collect();
     let dates: Vec<(i32, u8, u8)> = dated.iter().map(|&(_, d)| d).collect();
-    openers_at(&dates, data_tu, visibility_tu, fiscal_start)
+    let openers = openers_at(&dates, data_tu, visibility_tu, fiscal_start);
+    let anchor = chronological_first(&dates, &openers);
+    openers
         .iter()
         .enumerate()
         .map(|(pos, &p)| {
             let (domain_idx, (y, m, d)) = dated[p];
-            let (row1, row2) = label_rows(y, m, d, format_tu, pos == 0, fiscal_start, authored)?;
+            let (row1, row2) = label_rows(y, m, d, format_tu, pos == anchor, fiscal_start, authored)?;
             Ok(TemporalLabel { domain_idx, row1, row2 })
         })
         .collect()
+}
+
+/// Position within `labeled` of the earliest date: the tick that carries the
+/// year-context row, wherever a descending domain paints it.
+fn chronological_first(dates: &[(i32, u8, u8)], labeled: &[usize]) -> usize {
+    (0..labeled.len()).min_by_key(|&k| dates[labeled[k]]).unwrap_or(0)
 }
 
 /// Deduplication key for a cadence opener. Only the bucketed grains
@@ -2447,11 +2452,6 @@ fn next_bucket(date: (i32, u8, u8), tu: TimeUnit) -> (i32, u8, u8) {
     (y + total / 12, (total % 12 + 1) as u8, 1)
 }
 
-/// `chart_rendering.axis.label_gap_spaces_numeric` / `label_gap_spaces`
-/// (`default_config.yml:150-151`) — the spaces of clearance `_submonth_candidate_fits`
-/// reserves after the day-number row and the month/year context row.
-const LABEL_GAP_SPACES_NUMERIC: f64 = 2.0;
-const LABEL_GAP_SPACES: f64 = 1.0;
 
 /// Port of `_submonth_candidate_indices` (`_label_overlap.py:254-259`): the
 /// buckets a daily axis labels at the weekly candidate are its Mondays.
@@ -2493,8 +2493,8 @@ fn submonth_candidate_fits(
         }
     }
     for (row, gap) in [
-        (day_row, LABEL_GAP_SPACES_NUMERIC * space),
-        (context_row, LABEL_GAP_SPACES * space),
+        (day_row, LABEL_GAP_SPACES_NUMERIC as f64 * space),
+        (context_row, LABEL_GAP_SPACES as f64 * space),
     ] {
         for pair in row.windows(2) {
             let ((left_index, left), (right_index, right)) = (&pair[0], &pair[1]);

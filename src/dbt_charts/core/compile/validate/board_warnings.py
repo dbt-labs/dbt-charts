@@ -9,6 +9,9 @@ markdown boards after their translation to YAML.
 from __future__ import annotations
 
 import difflib
+from collections.abc import Mapping
+
+from pydantic import BaseModel
 
 from dbt_charts.core.compile.format import resolve_format_parts
 from dbt_charts.core.compile.models.board.normalized import Board, LayoutItem
@@ -20,6 +23,10 @@ from dbt_charts.core.compile.models.chart.normalized import (
 )
 from dbt_charts.core.compile.normalize.chart_focus import (
     PRE_FOCUS_PLACED_CHARTS_META_KEY,
+)
+from dbt_charts.core.compile.resolve.style.axis_cascade import (
+    AUTO_AXIS_FORMAT,
+    decided_axis_format,
 )
 from dbt_charts.core.compile.validate.formats import format_names_used
 from dbt_charts.core.diagnostics import (
@@ -37,15 +44,22 @@ from dbt_charts.core.text.predefined_formats import ALL_PREDEFINED_NAMES
 
 
 def detect_board_warnings(
-    board: Board, own_format_names: frozenset[str]
+    board: Board,
+    own_format_names: frozenset[str],
+    chart_styles: Mapping[
+        str, BaseModel | None
+    ],  # type-state: optional — None when the chart authors no style
 ) -> list[Diagnostic]:
-    """Return non-fatal warnings read off the compiled board tree."""
+    """Return non-fatal warnings read off the compiled board tree.
+
+    ``chart_styles`` maps chart id to the style patch the chart itself authored.
+    """
     warnings: list[Diagnostic] = []
     _detect_double_headers(board, warnings)
     _detect_single_chart_redundant_title(board, warnings)
     _detect_orphan_charts(board, warnings)
-    _detect_axis_align_discarded(board, warnings)
-    _detect_unused_format_names(board, own_format_names, warnings)
+    _detect_axis_align_discarded(board, chart_styles, warnings)
+    _detect_unused_format_names(board, own_format_names, chart_styles, warnings)
     return warnings
 
 
@@ -284,7 +298,13 @@ def _detect_orphan_charts(board: Board, warnings: list[Diagnostic]) -> None:
 # ──────────────────────────── Axis align discarded ────────────────────────────
 
 
-def _detect_axis_align_discarded(board: Board, warnings: list[Diagnostic]) -> None:
+def _detect_axis_align_discarded(
+    board: Board,
+    chart_styles: Mapping[
+        str, BaseModel | None
+    ],  # type-state: optional — None when the chart authors no style
+    warnings: list[Diagnostic],
+) -> None:
     """Warn when an authored axis_y.labels.align is discarded by a house-format alias.
 
     House-rule format aliases force label.align = 'right' on right-edge quantitative
@@ -318,7 +338,9 @@ def _detect_axis_align_discarded(board: Board, warnings: list[Diagnostic]) -> No
     # predefined name -- see ResolvedFormat.is_house) -- a bare axis
     # inheriting this default still gets forced right-aligned, so the
     # diagnostic must check it too, not just a chart-local override.
-    default_format = ctx.axis_quantitative.labels.format
+    default_format = ctx.axis_quantitative.labels.format or ctx.axis.labels.format
+    if default_format == AUTO_AXIS_FORMAT:
+        default_format = decided_axis_format("quantitative")
     board_quant_font = (
         ctx.axis_quantitative.labels.font.family
         or ctx.axis_y.labels.font.family
@@ -329,7 +351,7 @@ def _detect_axis_align_discarded(board: Board, warnings: list[Diagnostic]) -> No
     for chart_id, chart in board.charts.items():
         if not isinstance(chart, (LineChart, AreaChart, ScatterChart)):
             continue
-        style = chart.style
+        style = chart_styles[chart_id]
         if style is None:
             continue
         style_dict = style.model_dump()
@@ -390,7 +412,12 @@ def _engine_name_hint(name: str) -> str:
 
 
 def _detect_unused_format_names(
-    board: Board, own_format_names: frozenset[str], warnings: list[Diagnostic]
+    board: Board,
+    own_format_names: frozenset[str],
+    chart_styles: Mapping[
+        str, BaseModel | None
+    ],  # type-state: optional — None when the chart authors no style
+    warnings: list[Diagnostic],
 ) -> None:
     """Warn on a name this board file's ``style.formats`` defines and nothing reads.
 
@@ -400,7 +427,7 @@ def _detect_unused_format_names(
     unjudged = own_format_names - ALL_PREDEFINED_NAMES
     if not unjudged:
         return
-    used = format_names_used(board)
+    used = format_names_used(board, chart_styles)
     for name in sorted(unjudged - used):
         warnings.append(
             Diagnostic.from_code(

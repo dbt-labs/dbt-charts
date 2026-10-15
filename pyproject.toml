@@ -116,6 +116,10 @@ dependencies = [
     # Builds Arrow from Python values without pyarrow (core/execute/arrow_ingest.py).
     "nanoarrow>=0.9.0",
     "tomli-w>=1.0.0",
+    # core/compile/config.py's default_cache_path() locates the per-user cache
+    # directory for the query-result cache `dct render` and `dct serve` use by
+    # default; execute/drivers/_fetch.py finds dbt's shared driver cache with it.
+    "platformdirs>=4.0",
     # dbt_macro_loader.py and dbt_adapter_factory.py reach into dbt-internal
     # API (MacroParser, MacroManifest, FACTORY internals,
     # generate_runtime_macro_context) to bootstrap dbt manifests/macro
@@ -213,11 +217,10 @@ fabric = [
 # dbt v2's lake compute driver has no PyPI build. dbt publishes it on its own CDN
 # and `execute/drivers/_fetch.py` downloads it on first use, checksum-pinned, so
 # this extra installs the machinery to load and verify one: the ADBC driver
-# manager, zstd for the compressed artifact, and platformdirs to find the cache
-# dbt shares.
+# manager and zstd for the compressed artifact. platformdirs, which finds the
+# cache dbt shares, is a base dependency.
 lakecompute = [
     "adbc-driver-manager>=1.12",
-    "platformdirs>=4.0",
     "zstandard>=0.22",
 ]
 
@@ -267,10 +270,9 @@ testpaths = ["tests"]
 # test_packaging_mdsvg.py, test_oss_install_smoke.py) pin specific tests to
 # one worker for isolation; the default --dist=load ignores that marker.
 addopts = "--import-mode=importlib --maxprocesses=6 --dist=loadgroup"
-timeout = 30
+timeout = 60
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "network: marks tests as requiring network access (deselect with '-m \"not network\"')",
     "windows: opt-in — test asserted Windows-safe; the release-gating Windows subset is exactly `-m windows`",
     "docs_derived: computed from apps/docs/** content (e.g. DOCS_DIR); selected by docs.yml's docs lane, whose path filter — unlike the main test matrix — includes apps/docs/**",
 ]

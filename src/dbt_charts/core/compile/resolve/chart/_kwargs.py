@@ -25,7 +25,6 @@ from dbt_charts.core.compile.models.chart.resolved import (
 )
 from dbt_charts.core.compile.models.primitives import (
     FormatTable,
-    ResolvedFontStyle,
     ResolvedFormat,
 )
 from dbt_charts.core.compile.models.style.authored import (
@@ -54,12 +53,14 @@ from dbt_charts.core.compile.resolve.style.legend_position import (
     decide_legend_position,
     merge_authored_direction,
     merge_authored_position,
+    merge_authored_title_visible,
+    merge_authored_visible,
     merge_legend,
     validate_cartesian_position,
 )
 from dbt_charts.core.compile.resolve.style.palette import substitute_for_alias
 from dbt_charts.core.compile.resolve.style.tokens import _resolve_color_tokens
-from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
+from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 from dbt_charts.core.compile.template.display_text import (
     ChartDisplayText,
     resolve_display_text,
@@ -74,7 +75,6 @@ __all__ = [
     "_geo_kwargs",
     "_resolve_text",
     "_shared_kwargs",
-    "_title_font",
     "default_chart_width",
     "preferred_chart_width",
 ]
@@ -144,8 +144,8 @@ def _base_kwargs(
     automatic_link_candidate: AutomaticLinkCandidate,
     layout_padding: PaddingStyle | PaddingStylePatch,
     suppress_legend: bool = False,
+    drop_legend: bool = False,
     top_legend: Literal["compact", "row", "off"] = "off",
-    force_legend_visible: bool = False,
     legend_position_overridden_by_width: LegendEdge | None = None,
     radial_legend: bool = False,
     legendless: bool = False,
@@ -170,24 +170,14 @@ def _base_kwargs(
     layout_padding: pass the caller's already-merged per-family padding (e.g.
     ``bar.padding``) — the same object build_chart_style_context/merge_onto_base
     produced for the rest of that family's style slice.
-    suppress_legend: True when endpoint labels replace the color legend. Folds
-    visible=False into the legend patch BEFORE the cascade merge so the resolved
-    legend is built once with its final visibility — no post-hoc model_copy.
+    suppress_legend: True when direct labels (endpoint labels, pie slice labels)
+    replace the color legend. Hides the legend only where ``visible`` is still
+    ``auto``; a concrete value from any tier keeps it.
+    drop_legend: True when an attached table replaces the legend. Hides it
+    whatever ``visible`` says: both would name the same series twice.
     top_legend: force the legend above the plot, reading left to right like the
     marks it names. "compact" wraps at compact_columns for cards too narrow to
     hold a row; "row" leaves the entry count to the renderer.
-    force_legend_visible: True when the chart's own style named a legend
-    position, OR the chart's shape itself wants a legend (SeriesNaming's
-    top_legend_series was not None) regardless of whether that legend landed
-    at the top or fell back to the theme's own position. A theme that hides
-    this family's legend by default (line and area do) would otherwise leave
-    either case with a legend that never renders -- an authored position with
-    nothing to show it, or a top-legend fit rule whose "off" outcome means
-    "not at the top", not "not at all". It is folded with the cascade, ahead
-    of suppress_legend, so it outranks the theme but never the caller's
-    suppression -- bar's suppress_legend carries _stack_legend_should_yield,
-    a plot-collapse guard the author does not get to overrule (the chart
-    would raise ERR-CHART-PAINTED-NO-MARKS).
     radial_legend: True for pie and donut, whose key never overlays
     (``decide_legend_position``'s ``radial``).
     wrap_legend: True when one horizontal row cannot hold the entries; wraps an
@@ -205,9 +195,9 @@ def _base_kwargs(
     not a post-hoc patch on the finished ResolvedLegendStyle.
     """
     legend = merge_legend(chart_style_context.legend, legend_patch)
-    if force_legend_visible:
-        shown = LegendStylePatch.model_validate({"visible": True})
-        legend = merge_onto_base(legend, shown)
+    board_legend = chart_style_context.cascaded.charts.legend
+    visible = merge_authored_visible(board_legend, legend_patch)
+    title_visible = merge_authored_title_visible(board_legend, legend_patch)
     if legend_position_overridden_by_width is not None:
         overridden = _LegendPositionOverridePatch(
             position_overridden_by_width=legend_position_overridden_by_width
@@ -215,15 +205,12 @@ def _base_kwargs(
         legend = merge_onto_base(legend, overridden)
     if top_legend != "off":
         top = LegendStylePatch.model_validate(
-            {
-                "visible": True,
-                "columns": legend.compact_columns if top_legend == "compact" else 0,
-            }
+            {"columns": legend.compact_columns if top_legend == "compact" else 0}
         )
         legend = merge_onto_base(legend, top)
     if not legendless:
         authored_position = merge_authored_position(
-            chart_style_context.pre_style.charts.legend.position, legend_patch
+            chart_style_context.cascaded.charts.legend.position, legend_patch
         )
         # Validated before the top strip rewrites the edge: width never decides.
         if not radial_legend:
@@ -239,12 +226,12 @@ def _base_kwargs(
             "horizontal"
             if top_legend != "off"
             else merge_authored_direction(
-                chart_style_context.pre_style.charts.legend, legend_patch
+                chart_style_context.cascaded.charts.legend, legend_patch
             ),
             decided.edge,
         )
         authored_direction = merge_authored_direction(
-            chart_style_context.pre_style.charts.legend, legend_patch
+            chart_style_context.cascaded.charts.legend, legend_patch
         )
         wrap = (
             wrap_legend
@@ -264,16 +251,21 @@ def _base_kwargs(
                 }
             ),
         )
-    if suppress_legend:
-        hidden = LegendStylePatch.model_validate({"visible": False})
-        legend = merge_onto_base(legend, hidden)
+    if drop_legend or (suppress_legend and visible == "auto"):
+        visible = False
     if (
         legend.position.edge == "top"
         and legend.direction == "horizontal"
-        and legend.title.visible is None
+        and title_visible in (None, "auto")
     ):
-        no_title = LegendStylePatch.model_validate({"title": {"visible": False}})
-        legend = merge_onto_base(legend, no_title)
+        title_visible = False
+    decided_visibility = LegendStylePatch.model_validate(
+        {
+            "visible": visible is not False,
+            "title": {"visible": title_visible is not False},
+        }
+    )
+    legend = merge_onto_base(legend, decided_visibility)
     # link: false = authored auto_link opt-out — resolves to no link at all.
     link = None if normalized.link is False else normalized.link
     if normalized.link is None:
@@ -347,26 +339,6 @@ def _resolve_text(
     )
 
 
-def _title_font(
-    normalized: Chart, chart_local_style_context: ChartStyleContext, width: float
-) -> ResolvedFontStyle:
-    """Resolve the chart's title font, honoring a chart-local style.title.font override.
-
-    Must receive the chart-local context (``build_chart_style_context``'s
-    result), not the board-level one: ``resolve_title_font`` only threads the
-    ``family``/``size``/``weight`` triple through its explicit override
-    argument — ``color``/``style``/``decoration``/``case``/``line_height``
-    are read straight off ``chart_style_context.title.font``, which only
-    carries this chart's ``style.title.font`` override once
-    ``build_chart_style_context`` has merged it in.
-    """
-    _s = normalized.style
-    _st = getattr(_s, "title", None) if _s is not None else None
-    return resolve_title_font(
-        chart_local_style_context, width, _st.font if _st is not None else None
-    )
-
-
 def _color_column_format(
     normalized: _BaseChartFields,
     color_field: str | None,
@@ -420,7 +392,7 @@ def _shared_kwargs(
         ),
         "background": chart_style_context.background,
         "canvas": chart_style_context.ink_canvas,
-        "title_style": chart_style_context.title,
+        "title_style": concrete_title_style(chart_style_context),
     }
 
 
@@ -544,20 +516,20 @@ def _support_table_geometry(
     support_table: ResolvedSupportTable | None,
     chart_style_context: ChartStyleContext,
     chart_type: str,
-    x_label_authored: bool,
+    x_labeled: bool,
     chart_id: str,
     category_axis_vertical: bool,
     axis_y_orient: Literal["left", "right"],
     stacked: bool,
-) -> tuple[SupportTableStyle | None, float | None]:
+) -> tuple[SupportTableStyle | None, float | None, bool | None]:
     """Bake the support_table strip's compile-owned geometry: the chart's
     effective SupportTableStyle (with ``position`` resolved to a concrete
     side) and the axis-offset pixel gap the strip reserves below the plot.
 
     Both are pure functions of the per-chart-cascaded ``chart_style_context``
-    plus ``x_label_authored`` (the caller's own ``bool(normalized.x_label)``,
-    truthy not ``is not None``, driving the axis cascade's Layer-5
-    title-forcing default) —
+    plus ``x_labeled`` (the caller's own ``bool(normalized.x_label)``,
+    truthy not ``is not None``, resolving the axis cascade's
+    ``auto`` title) —
     the same values ``render/chart/support_table_attachment.py`` used to
     recompute at render time by reaching into ``compile/support_table.py`` with
     a full ``ChartStyleContext``. Baking them here closes that reach-back:
@@ -572,9 +544,10 @@ def _support_table_geometry(
     `position:` is a compile-time error rather than a render-time surprise.
     """
     if support_table is None:
-        return None, None
+        return None, None, None
     from dbt_charts.core.compile.support_table import (  # noqa: PLC0415
         axis_offset,
+        bake_neutral_ink,
         reject_ignored_per_series_label,
         resolve_effective_support_table_style,
         resolve_support_table_position,
@@ -590,12 +563,18 @@ def _support_table_geometry(
     resolved_position = resolve_support_table_position(
         effective_style.position, category_axis_vertical, axis_y_orient, chart_id
     )
-    effective_style = effective_style.model_copy(update={"position": resolved_position})
-    return effective_style, axis_offset(
-        chart_style_context,
+    effective_style, series_ink = bake_neutral_ink(
+        effective_style.model_copy(update={"position": resolved_position})
+    )
+    return (
         effective_style,
-        x_label_authored=x_label_authored,
-        chart_type=chart_type,
+        axis_offset(
+            chart_style_context,
+            effective_style,
+            x_labeled=x_labeled,
+            chart_type=chart_type,
+        ),
+        series_ink,
     )
 
 
@@ -630,7 +609,11 @@ def _cartesian_kwargs(
     resolved_support_table = _resolved_support_table(
         normalized.support_table, normalized.y, data, chart_style_context.formats
     )
-    effective_support_table_style, support_table_axis_offset = _support_table_geometry(
+    (
+        effective_support_table_style,
+        support_table_axis_offset,
+        support_table_series_ink,
+    ) = _support_table_geometry(
         resolved_support_table,
         chart_style_context,
         chart_type,
@@ -654,6 +637,7 @@ def _cartesian_kwargs(
         "support_table": resolved_support_table,
         "effective_support_table_style": effective_support_table_style,
         "support_table_axis_offset": support_table_axis_offset,
+        "support_table_series_ink": support_table_series_ink,
         "aspect_ratio": normalized.aspect_ratio,
         "min_height": normalized.min_height,
         "max_height": normalized.max_height,

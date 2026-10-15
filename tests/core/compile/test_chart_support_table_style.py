@@ -17,7 +17,7 @@ from pydantic import ValidationError
 from dbt_charts.core.compile.config import (
     get_theme_style,
 )
-from dbt_charts.core.compile.models.primitives import DividerStyle, FontStyle
+from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.style.authored import (
     ChartStylePatch,
 )
@@ -25,6 +25,10 @@ from dbt_charts.core.compile.models.style.theme import (
     SupportTableLabelStyle,
     SupportTableRowStyle,
     SupportTableStyle,
+)
+from dbt_charts.core.compile.models.style.theme.table import (
+    SupportTableDividerStyle,
+    SupportTableFontStyle,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
@@ -61,9 +65,9 @@ def test_compiled_support_table_style_has_all_spec_leaves():
 
     s = get_theme_style().charts.support_table
     assert hasattr(s, "font")
-    assert isinstance(s.font, FontStyle)
+    assert isinstance(s.font, SupportTableFontStyle)
     assert hasattr(s, "divider")
-    assert isinstance(s.divider, DividerStyle)
+    assert isinstance(s.divider, SupportTableDividerStyle)
     assert hasattr(s, "row")
     assert isinstance(s.row, SupportTableRowStyle)
     assert hasattr(s, "label")
@@ -87,7 +91,7 @@ def test_compiled_support_table_style_forbids_header_key():
 def test_support_table_tier1_universal_override():
     # Tier 1: theme sets style.charts.support_table.font.size = 99.5;
     # confirm it propagates to the resolved model.
-    theme = _theme_with_support_table(font=FontStyle(size=99.5))
+    theme = _theme_with_support_table(font=SupportTableFontStyle(size=99.5))
     resolved = resolve_chart_style_context(theme)
     assert resolved.support_table.font.size == 99.5
 
@@ -95,7 +99,7 @@ def test_support_table_tier1_universal_override():
 def test_support_table_tier1_override_does_not_cross_into_bar_font():
     # Scope rule (spec §4.4): support_table style does NOT cascade into sibling
     # chart-type styles. Setting support_table.font.size must not touch bar mark.
-    theme = _theme_with_support_table(font=FontStyle(size=77.0))
+    theme = _theme_with_support_table(font=SupportTableFontStyle(size=77.0))
     resolved = resolve_chart_style_context(theme)
     baseline = resolve_chart_style_context(get_theme_style())
     assert resolved.marks.bar.border.width == baseline.marks.bar.border.width
@@ -103,7 +107,9 @@ def test_support_table_tier1_override_does_not_cross_into_bar_font():
 
 def test_support_table_divider_width_override():
     theme = _theme_with_support_table(
-        divider=DividerStyle(visible=True, width=3.0, color="#888888")
+        divider=SupportTableDividerStyle(
+            gap=4.0, visible=True, width=3.0, color="#888888"
+        )
     )
     resolved = resolve_chart_style_context(theme)
     assert resolved.support_table.divider.width == 3.0
@@ -132,17 +138,23 @@ def test_support_table_tier2_bar_override_merges_over_tier1():
 
     # Tier 1: universal sets font.size + padding_top.
     tier1 = get_theme_style().charts.support_table.model_copy(
-        update={"font": FontStyle(size=11.0, color="#aaa"), "padding_top": 7.0}
+        update={
+            "font": SupportTableFontStyle(size=11.0, color="#aaa"),
+            "padding_top": 7.0,
+        }
     )
     # Tier 2: bar-specific override bumps font.size AND divider.width, but
     # leaves padding_top alone — expect padding_top to inherit from tier 1.
-    tier2 = SupportTableStylePatch.model_validate(
-        {
-            "font": {"size": 23.0},
-            "divider": {"width": 4.0},
-        }
-    )
     base = get_theme_style()
+    tier2 = merge_onto_base(
+        tier1,
+        SupportTableStylePatch.model_validate(
+            {
+                "font": {"size": 23.0},
+                "divider": {"width": 4.0},
+            }
+        ),
+    )
     seed = base.model_copy(
         update={
             "charts": base.charts.model_copy(
@@ -171,7 +183,7 @@ def test_support_table_tier2_unset_falls_through_to_tier1():
         resolve_effective_support_table_style,
     )
 
-    theme = _theme_with_support_table(font=FontStyle(size=15.0))
+    theme = _theme_with_support_table(font=SupportTableFontStyle(size=15.0))
     resolved = resolve_chart_style_context(theme)
     effective = resolve_effective_support_table_style(resolved, "bar")
     assert effective.font.size == 15.0

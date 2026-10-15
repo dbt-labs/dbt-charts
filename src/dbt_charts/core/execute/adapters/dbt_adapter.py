@@ -56,6 +56,7 @@ from dbt_charts.core.execute.adapters.base import (
     handle_adapter_error,
     interrupted,
     plain_error,
+    reject_duplicate_columns,
     resolve_effective_row_limit,
 )
 from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
@@ -412,11 +413,7 @@ def render_dbt_sql(
         range_filters: Collects each ``filter_date_range()`` call that emitted
             a range (see ``render_parameterized``).
     """
-    # The helpers' date spelling, by the target's type as read from the
-    # profile. Not `_escaping_dialect`: that refuses an unknown type, which is
-    # right for escaping a value but would fail a query that binds nothing
-    # before it reaches the adapter's own type check.
-    warehouse = get_dialect(dialect_name)
+    warehouse = _escaping_dialect(dialect_name)
     collector = _ParameterCollector(variables={}, dialect=INLINE_PLACEHOLDERS)
     rendered = resolve_jinja_template(
         resolved,
@@ -440,7 +437,7 @@ def render_dbt_sql(
             rendered,
             collector.params,
             INLINE_PLACEHOLDERS,
-            escaping=_escaping_dialect(dialect_name),
+            escaping=warehouse,
         )
     except ValueError as e:
         # A surviving placeholder means a Jinja filter transformed one
@@ -454,7 +451,7 @@ def _escaping_dialect(dialect_name: str) -> SQLDialect:
 
     Raises:
         DbtChartsError: The warehouse type has no dialect here, so its literal
-            grammar is unknown. `get_dialect` would answer postgres, which leaves
+            grammar is unknown. Guessing postgres would leave
             backslashes alone — the wrong answer for a value on any engine that
             escapes them, and wrong in the direction that puts part of a value in
             code position.
@@ -633,6 +630,7 @@ class DbtAdapter(BaseAdapter):
         columns = list(table.column_names)
         rows = list(table.rows)
         rows, truncated_reason = apply_row_limit_truncation(rows, row_fetch_limit)
+        reject_duplicate_columns(columns)
         data = [dict(zip(columns, row, strict=False)) for row in rows]
         return QueryResult(
             data=data, columns=columns, truncated_reason=truncated_reason

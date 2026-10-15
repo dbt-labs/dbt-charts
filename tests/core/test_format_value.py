@@ -30,6 +30,8 @@ from dbt_charts.core.text.predefined_formats import (
     PredefinedNumberFormat,
 )
 
+_KPI_COMPACT = get_theme_style().charts.kpi.value.compact
+
 _ALIAS_FORMATS = {"tilde": "~s", "money": "$,.2f"}
 
 
@@ -1248,7 +1250,9 @@ class TestSiSubUnitFloor:
     def test_kpi_headline_pipeline_money_prefix_below_one_falls_back(self) -> None:
         # A KPI headline never reaches format_kpi_parts with the author's raw {prefix:
         # "£"}.
-        finalized = finalize_kpi_value_format(FormatConfig(prefix="£"), 0.67)
+        finalized = finalize_kpi_value_format(
+            FormatConfig(prefix="£"), 0.67, compact=_KPI_COMPACT
+        )
         assert format_kpi_parts(0.67, finalized) == ("£", "0.67", "")
 
 

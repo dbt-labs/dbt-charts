@@ -20,6 +20,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     TableChart,
 )
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 
 
 def _registry(**kwargs: SqlQuery) -> dict[str, SqlQuery]:
@@ -471,7 +472,7 @@ def test_resolved_table_has_no_x_y_color_sort() -> None:
         chart_type="table",
         style=ResolvedTableStyle(
             table=board_charts.table,
-            title=board_charts.title,
+            title=concrete_title_style(board_charts),
             formats=board_charts.formats,
             title_font=resolve_title_font(board_charts, 600.0),
             pagination=board_charts.pagination,
@@ -482,7 +483,7 @@ def test_resolved_table_has_no_x_y_color_sort() -> None:
         legend=legend,
         background=board_charts.background,
         canvas=board_charts.ink_canvas,
-        title_style=board_charts.title,
+        title_style=concrete_title_style(board_charts),
         layout_padding=PaddingStyle(left=0.0, right=0.0, top=0.0, bottom=0.0),
         rows=["region"],
         pivot_columns=["product"],

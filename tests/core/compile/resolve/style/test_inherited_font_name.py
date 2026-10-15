@@ -28,7 +28,7 @@ def test_a_slot_the_theme_binds_directly_reads_that_name() -> None:
 
 def test_a_charts_level_tweak_counts_beside_the_root_layers_own_fields() -> None:
     theme = get_theme_style(None)
-    merged, _ = merge_style(
+    merged = merge_style(
         theme,
         StylePatch.model_validate({"charts": {"title": {"font": {"weight": 700}}}}),
     )

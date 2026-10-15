@@ -20,6 +20,7 @@ from dbt_charts.core.compile.models.chart.resolved.bar import (
     ResolvedBarStyle,
 )
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
+from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 from dbt_charts.core.render.chart.emitter import ChartEmitter
 from dbt_charts.core.render.chart.feature import FeaturePipeline
 from dbt_charts.core.render.chart.features import DEFAULT_FEATURES
@@ -74,7 +75,7 @@ def _default_resolved_table_style():
     charts = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
     return ResolvedTableStyle(
         table=charts.table,
-        title=charts.title,
+        title=concrete_title_style(charts),
         formats=charts.formats,
         title_font=resolve_title_font(charts, 600.0),
         pagination=charts.pagination,
@@ -83,9 +84,9 @@ def _default_resolved_table_style():
 
 def _default_charts():
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
-    from dbt_charts.core.compile.resolve.style.board import resolve_style
+    from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-    return resolve_style(get_theme_style(get_default_theme_name())).chart_defaults
+    return resolve_chart_style_context(get_theme_style(get_default_theme_name()))
 
 
 _DEFAULT_CHARTS = _default_charts()
@@ -97,7 +98,7 @@ _B: dict[str, Any] = {
     "legend": _default_legend(),
     "background": _DEFAULT_CHARTS.background,
     "canvas": _DEFAULT_CHARTS.ink_canvas,
-    "title_style": _DEFAULT_CHARTS.title,
+    "title_style": concrete_title_style(_DEFAULT_CHARTS),
     "layout_padding": _ZERO_PADDING,
 }
 _C: dict[str, Any] = dict(_B)
@@ -202,7 +203,7 @@ def test_get_emitter_raises_for_table() -> None:
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
         canvas=_DEFAULT_CHARTS.ink_canvas,
-        title_style=_DEFAULT_CHARTS.title,
+        title_style=concrete_title_style(_DEFAULT_CHARTS),
         layout_padding=_ZERO_PADDING,
     )
     with pytest.raises(RenderError, match="ResolvedTableChart"):

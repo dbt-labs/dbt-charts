@@ -46,7 +46,9 @@ def seed_with_bar_endpoint_labels(model_copy_at):
             get_theme_style("stark"),
             "charts.bar.endpoint_labels",
             EndpointLabelsConfig(
-                visible=enabled, label_offset=label_offset, height=20.0
+                visible="auto" if enabled else False,
+                label_offset=label_offset,
+                height=20.0,
             ),
         )
         return resolve_chart_style_context(seed)

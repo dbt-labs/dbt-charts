@@ -68,14 +68,13 @@ exclude = [
     # Excluded from tach's external check because tach looks up the import
     # name `PIL`, not the PyPI-normalized name `pillow`.
     "pillow",
-    # `adbc-driver-manager`, `zstandard` and `platformdirs` are declared in
+    # `adbc-driver-manager` and `zstandard` are declared in
     # [project.optional-dependencies] lakecompute (tach 0.35.0 only reads
-    # [project] dependencies, not optional-deps). All three are imported by
+    # [project] dependencies, not optional-deps). Both are imported by
     # `execute/drivers/`, which `open_driver` imports lazily — so a wheel
-    # without the extra never loads any of them.
+    # without the extra never loads either of them.
     "adbc_driver_manager",
     "zstandard",
-    "platformdirs",
     # `trino` is declared in [project.optional-dependencies] trino, which tach
     # does not read. Imported by `execute/drivers/trino.py`, loaded lazily by
     # `open_driver` like the lake compute driver above.
@@ -155,6 +154,7 @@ depends_on = [
     "dbt_charts.core.fonts",
     "dbt_charts.core.links",
     "dbt_charts.core.numeric",
+    "dbt_charts.core.constants",
     "dbt_charts.core.utils",
     "dbt_charts.core.text",
     "dbt_charts.core.dialects",
@@ -232,6 +232,12 @@ layer = "core"
 depends_on = []   # leaf node — no compile/execute/render deps
 
 [[modules]]
+path = "dbt_charts.core.constants"
+layer = "core"
+# Leaf node: non-authorable engine constants, plain typed values only.
+depends_on = []
+
+[[modules]]
 path = "dbt_charts.core.numeric"
 layer = "core"
 # Leaf node — the generic d3-style "nice step" tick primitive (nice_tick_values),
@@ -271,6 +277,7 @@ depends_on = [
     "dbt_charts.core.font_measure",
     "dbt_charts.core.links",
     "dbt_charts.core.numeric",
+    "dbt_charts.core.constants",
     "dbt_charts.core.fonts",
     "dbt_charts.core.text",
     "dbt_charts.core.utils",

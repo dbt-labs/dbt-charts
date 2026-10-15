@@ -21,7 +21,7 @@ match. A platform with no checksum row is refused before any socket opens.
 This module reaches the local filesystem, which ``core`` otherwise does not do
 (``core/AGENTS.md``): a driver is where the engine meets the machine it is
 running on, and a cache shared with dbt cannot be expressed as project I/O.
-``platformdirs`` and ``zstandard`` are declared by the ``lakecompute`` extra.
+``zstandard`` is declared by the ``lakecompute`` extra.
 """
 
 from __future__ import annotations

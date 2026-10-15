@@ -206,12 +206,11 @@ def test_style_title_precedence_charts_title_beats_root_title() -> None:
 
 def test_style_title_precedence_chart_own_title_beats_charts_title() -> None:
     from dbt_charts.core.compile.models.chart.normalized import BarChart
-    from dbt_charts.core.compile.models.primitives import FontStyle
     from dbt_charts.core.compile.models.style.authored import (
         BarChartStylePatch,
         ChartsStylePatch,
+        ChartTitleStylePatch,
         StylePatch,
-        TitleStylePatch,
     )
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
     from dbt_charts.core.compile.resolve.style.chart_context import (
@@ -219,13 +218,13 @@ def test_style_title_precedence_chart_own_title_beats_charts_title() -> None:
     )
 
     board_patch = StylePatch(
-        charts=ChartsStylePatch(title=TitleStylePatch(font=FontStyle(color="#222222")))
+        charts=ChartsStylePatch(title=ChartTitleStylePatch(font={"color": "#222222"}))
     )
     board = resolve_chart_style_context(get_theme_style(), board_patch)
     assert board.title.font.color == "#222222"
 
     chart_patch = BarChartStylePatch(
-        title=TitleStylePatch(font=FontStyle(color="#333333"))
+        title=ChartTitleStylePatch(font={"color": "#333333"})
     )
     effective = build_chart_style_context(
         board, BarChart(id="c", type="bar", style=chart_patch)
@@ -240,7 +239,7 @@ def test_style_title_field_reaches_charts_title_alongside_charts_title_field() -
             style=textwrap.indent(
                 "title:\n"
                 "  font:\n"
-                "    size: 30\n"
+                "    style: italic\n"
                 "charts:\n"
                 "  title:\n"
                 "    font:\n"
@@ -252,27 +251,24 @@ def test_style_title_field_reaches_charts_title_alongside_charts_title_field() -
         )
     )
     ctx = board.chart_style_context
-    assert ctx.title.font.size == 30
+    assert ctx.title.font.style == "italic"
     assert ctx.title.font.color == "#222222"
 
 
 def test_charts_title_fill_is_independent_of_patch_order() -> None:
     """Both patches reach the chart title in either order."""
-    from dbt_charts.core.compile.models.primitives import FontStyle
     from dbt_charts.core.compile.models.style.authored import (
         ChartsStylePatch,
+        ChartTitleStylePatch,
         StylePatch,
-        TitleStylePatch,
     )
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
     base = get_theme_style()
     color_patch = StylePatch(
-        charts=ChartsStylePatch(title=TitleStylePatch(font=FontStyle(color="#222222")))
+        charts=ChartsStylePatch(title=ChartTitleStylePatch(font={"color": "#222222"}))
     )
-    family_patch = StylePatch(
-        title=TitleStylePatch(font=FontStyle(family="Helvetica", size=24))
-    )
+    family_patch = StylePatch.model_validate({"title": {"font": {"style": "italic"}}})
 
     forward = resolve_chart_style_context(base, color_patch, family_patch)
     backward = resolve_chart_style_context(base, family_patch, color_patch)
@@ -280,23 +276,21 @@ def test_charts_title_fill_is_independent_of_patch_order() -> None:
     assert forward.title == backward.title
     for ctx in (forward, backward):
         assert ctx.title.font.color == "#222222"
-        assert ctx.title.font.family.startswith("Helvetica")
-        assert ctx.title.font.size == 24
+        assert ctx.title.font.style == "italic"
 
 
 def test_charts_title_writes_at_two_cascade_levels_both_survive() -> None:
     """Writes from two cascade levels both land; a later conflict wins."""
-    from dbt_charts.core.compile.models.primitives import FontStyle
     from dbt_charts.core.compile.models.style.authored import (
         ChartsStylePatch,
+        ChartTitleStylePatch,
         StylePatch,
-        TitleStylePatch,
     )
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-    def patch(**font: object) -> StylePatch:
+    def patch(**font: str) -> StylePatch:
         return StylePatch(
-            charts=ChartsStylePatch(title=TitleStylePatch(font=FontStyle(**font)))
+            charts=ChartsStylePatch(title=ChartTitleStylePatch(font=font))
         )
 
     base = get_theme_style()
@@ -329,7 +323,7 @@ def test_later_null_is_not_undone_by_the_held_write_replay() -> None:
     )
     second = StylePatch.model_validate({"charts": {"marks": {"bar": {"border": None}}}})
 
-    merged, _ = merge_style(base, first, second)
+    merged = merge_style(base, first, second)
 
     assert merged.charts.marks.bar.border is None
     assert merged.charts.title is not None
@@ -345,7 +339,7 @@ def test_later_null_on_a_held_slot_is_not_undone() -> None:
     )
     second = StylePatch.model_validate({"charts": {"title": None}})
 
-    merged, _ = merge_style(get_theme_style(), first, second)
+    merged = merge_style(get_theme_style(), first, second)
 
     assert merged.charts.title is None
 

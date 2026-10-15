@@ -50,7 +50,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 
 BAND_STEP_CURVE = "step"
@@ -77,7 +76,9 @@ def is_band_step(curve: str | None, x_type: str | None) -> bool:
     return curve == BAND_STEP_CURVE and x_type in _BAND_SCALE_TYPES
 
 
-def fit_dash_to_plateau(dashes: list[float]) -> list[float] | dict[str, str]:
+def fit_dash_to_plateau(
+    dashes: list[float], disconnected_width: float
+) -> list[float] | dict[str, str]:
     """Fit a dasharray to a disconnected plateau as N dashes + N-1 gaps.
 
     Each plateau is its own path, so dash phase restarts per plateau while its
@@ -89,7 +90,7 @@ def fit_dash_to_plateau(dashes: list[float]) -> list[float] | dict[str, str]:
         dashes = dashes * 2  # SVG repeats an odd list; its last entry is a gap
     if sum(dashes[0::2]) == 0:
         return dashes  # no ink to redistribute; the fit would divide by zero
-    span = f"(bandwidth('x')*{get_chart_rendering().step_band.disconnected_width})"
+    span = f"(bandwidth('x')*{disconnected_width})"
     period, last = sum(dashes), dashes[-1]
     n = f"max(1,round(({span}+{last})/{period}))"
     scale = f"{span}/({n}*{period}-{last})"
@@ -101,13 +102,16 @@ def apply_step_band(
     encoding: dict[str, Any],
     *,
     chart_id: str,
-    connect: bool,
+    disconnected_width: float | None,
 ) -> list[dict[str, Any]]:
     """Double each row to the band's edges and add the xOffset point scale.
 
+    ``disconnected_width`` is None for a connected band. Otherwise it is the
+    share of the band each plateau spans.
+
     Mutates ``encoding`` in place: adds the ``xOffset`` channel, and (when
-    ``connect`` is False) a ``detail`` channel that breaks the path per band,
-    with the xOffset range inset so disconnected plateaus don't optically weld
+    ``disconnected_width`` is set) a ``detail`` channel that breaks the path
+    per band, with the xOffset range inset so disconnected plateaus don't optically weld
     into their neighbors. Returns the doubled rows. Callers must only invoke
     this when ``is_band_step`` is True (band x-axis already confirmed); raises
     ``ChartDataError`` only for a data-driven (multi-series) color encoding,
@@ -135,11 +139,10 @@ def apply_step_band(
         doubled.append({**row, STEP_BAND_EDGE_FIELD: 0})
         doubled.append({**row, STEP_BAND_EDGE_FIELD: 1})
 
-    if connect:
+    if disconnected_width is None:
         offset_range: list[int | dict[str, str]] = [0, {"expr": "bandwidth('x')"}]
     else:
-        width = get_chart_rendering().step_band.disconnected_width
-        lo = (1 - width) / 2
+        lo = (1 - disconnected_width) / 2
         offset_range = [
             {"expr": f"bandwidth('x')*{lo}"},
             {"expr": f"bandwidth('x')*{1 - lo}"},
@@ -154,7 +157,7 @@ def apply_step_band(
             "range": offset_range,
         },
     }
-    if not connect:
+    if disconnected_width is not None:
         encoding["detail"] = {"field": x_enc["field"], "type": "nominal"}
 
     return doubled

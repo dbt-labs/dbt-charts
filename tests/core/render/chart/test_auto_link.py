@@ -2144,7 +2144,7 @@ charts:
         )
         html_1 = render(result.board, executor_1, format="html").output
         assert isinstance(html_1, str)
-        result_cache_1.conn.close()
+        result_cache_1.close()
 
         # Request 2: NEW executor (simulating next HTTP request). Its per-request
         # cursor description cache starts empty. _lookup_cached finds the result in
@@ -2159,7 +2159,7 @@ charts:
         )
         html_2 = render(result.board, executor_2, format="html").output
         assert isinstance(html_2, str)
-        result_cache_2.conn.close()
+        result_cache_2.close()
 
         detail_prefix = "/data/dw/main/orders/detail/"
 

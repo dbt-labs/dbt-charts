@@ -6,12 +6,12 @@ They live at root level (1d) and cascade to sub-fields within a board
 (1c) is per-field, driven by each Style field's own Merge marker (see
 compile/models/markers.py and style/theme/style.py): most fields a parent
 board explicitly authors — muted, accent, font, or anything else without a
-nested=Strategy.CHILD marker — reach a nested board, falling back to that
+NotInherited marker — reach a nested board, falling back to that
 nested board's own theme for anything no ancestor authored. A field marked
-nested=Strategy.CHILD (a per-board structural or root-only concern, not
+NotInherited (a per-board structural or root-only concern, not
 thematic identity) never crosses a board boundary; the published
 AuthoredBoard.style description enumerates the current set, and
-test_authored_board_style_description_names_every_child_marked_field below
+test_authored_board_style_description_names_every_not_inherited_field below
 keeps that enumeration honest.
 
 `background` is the one exception with no marker at all: CSS
@@ -20,6 +20,8 @@ pinned to transparent at compile_board_resolved_style's own call site
 (_pin_unauthored_nested_background in normalize/dispatch.py) rather than
 crossing in from an ancestor's patch like every field above.
 """
+
+import pytest
 
 from dbt_charts.core.compile.config import (
     get_theme_style,
@@ -289,7 +291,7 @@ def test_ancestor_font_color_reaches_childs_title_ink_across_a_theme_switch():
 
 def test_gap_margin_padding_do_not_cascade_to_styled_child():
     """gap/margin/padding are per-board authoring, never theme-populated
-    (Style.gap/margin/padding carry Merge(nested=Strategy.CHILD)) — a nested
+    (Style.gap/margin/padding are NotInherited) — a nested
     board authoring its own unrelated style patch must not inherit an
     ancestor's spacing, even though it does inherit the ancestor's color."""
     child_rs = _compile_and_get_child_resolved(
@@ -309,7 +311,7 @@ def test_gap_margin_padding_do_not_cascade_to_styled_child():
 
 def test_frame_does_not_cascade_to_styled_child():
     """FrameStyle's own docstring says it must not cascade to child boards —
-    Style.frame carries Merge(nested=Strategy.CHILD) for the same reason as
+    Style.frame is NotInherited for the same reason as
     gap/margin/padding: each board's structural frame is its own."""
     theme_default = resolve_style(get_theme_style()).frame.card_padding
     child_rs = _compile_and_get_child_resolved(
@@ -344,7 +346,7 @@ def test_layout_rows_cols_grid_gap_do_not_cascade_to_styled_child():
 
 
 def test_layout_tabs_bar_height_does_not_cascade_to_styled_child():
-    """Style.layout carries a single container-level Merge(nested=CHILD): a
+    """Style.layout carries a single container-level NotInherited: a
     nested board's own tab bar and details-accordion styling resolve against
     its own theme too, not an ancestor's, same as rows/cols/grid gap."""
     theme_default = resolve_style(get_theme_style()).layout.tabs.bar_height
@@ -356,7 +358,7 @@ def test_layout_tabs_bar_height_does_not_cascade_to_styled_child():
 
 
 def test_layout_details_summary_height_does_not_cascade_to_styled_child():
-    """Same whole-container Merge(nested=CHILD) on Style.layout, exercised
+    """Same whole-container NotInherited on Style.layout, exercised
     for details (the other layout.* widget) rather than tabs."""
     theme_default = resolve_style(get_theme_style()).layout.details.summary_height
     child_rs = _compile_and_get_child_resolved(
@@ -367,17 +369,13 @@ def test_layout_details_summary_height_does_not_cascade_to_styled_child():
 
 
 def test_layout_field_authored_by_child_does_not_pull_in_ancestor_layout_field():
-    """A nested board authoring its own layout.cols.gap still gets CHILD's
-    all-or-nothing behavior for layout as a whole: its own cols.gap wins,
+    """A nested board authoring its own layout.cols.gap still drops
+    the ancestor's layout as a whole: its own cols.gap wins,
     and an ancestor's layout.details.summary_height resolves from its own
-    theme, not the ancestor's -- merge_patches' CHILD strategy takes the
-    whole field from the nested board's own patch, it does not merge
-    sibling sub-fields from the ancestor in underneath it.
-
-    Uses details/cols rather than rows/cols: both are LAYOUT_FIELDS, and
-    merge_patches' cross-axis-layout-clear rule (unrelated to the CHILD
-    marker under test) would zero an ancestor's rows whenever a child
-    authors cols regardless of any Merge marker, confounding the result."""
+    theme, not the ancestor's -- NotInherited drops the whole field from the
+    ancestor's patch, it does not merge sibling sub-fields from the ancestor
+    in underneath it.
+    """
     theme_default = resolve_style(get_theme_style()).layout
     child_rs = _compile_and_get_child_resolved(
         parent_style={
@@ -398,7 +396,7 @@ def test_layout_field_authored_by_child_does_not_pull_in_ancestor_layout_field()
 def test_footer_timestamp_do_not_cascade_to_styled_child():
     """footer/timestamp are root-board-only chrome: a nested board has no
     footer or timestamp line of its own, so Style.footer/timestamp carry
-    Merge(nested=Strategy.CHILD) like layout/frame."""
+    NotInherited like layout/frame."""
     theme_default = resolve_style(get_theme_style())
     child_rs = _compile_and_get_child_resolved(
         parent_style={
@@ -411,21 +409,20 @@ def test_footer_timestamp_do_not_cascade_to_styled_child():
     assert child_rs.timestamp.format == theme_default.timestamp.format
 
 
-def test_authored_board_style_description_names_every_child_marked_field():
+def test_authored_board_style_description_names_every_not_inherited_field() -> None:
     """The published style: field description enumerates every Style field
-    that carries Merge(nested=Strategy.CHILD) -- catches the next marker
-    added without updating the shipped docs."""
+    marked NotInherited -- catches the next marker added without updating the
+    shipped docs."""
     import re
 
-    from dbt_charts.core.compile.merge import Strategy, merge_marker
     from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+    from dbt_charts.core.compile.models.markers import NotInherited
     from dbt_charts.core.compile.models.style.theme.style import Style
 
-    child_marked = {
+    marked = {
         name
         for name, field in Style.model_fields.items()
-        if (marker := merge_marker(field)) is not None
-        and marker.nested == Strategy.CHILD
+        if any(isinstance(m, NotInherited) for m in field.metadata)
     }
 
     description = AuthoredBoard.model_fields["style"].description
@@ -434,4 +431,56 @@ def test_authored_board_style_description_names_every_child_marked_field():
     for match in re.findall(r"fields \(([^)]+)\)", description):
         named_in_description.update(name.strip() for name in match.split(","))
 
-    assert named_in_description == child_marked
+    assert named_in_description == marked
+
+
+_NOT_INHERITED_CASES = {
+    "frame": ({"card_padding": 150}, lambda rs: rs.frame.card_padding),
+    "layout": ({"rows": {"gap": 150}}, lambda rs: rs.layout.rows.gap),
+    "footer": ({"text": "parent footer"}, lambda rs: rs.footer.text),
+    "timestamp": ({"format": "%Y"}, lambda rs: rs.timestamp.format),
+    "padding": ({"top": 30}, lambda rs: rs.padding),
+    "margin": ({"left": 40}, lambda rs: rs.margin),
+    "gap": (60, lambda rs: rs.gap),
+}
+
+
+@pytest.mark.parametrize("field", list(_NOT_INHERITED_CASES))
+def test_styled_nested_board_does_not_inherit_not_inherited_fields(field: str) -> None:
+    authored, read = _NOT_INHERITED_CASES[field]
+    theme_default = read(resolve_style(get_theme_style()))
+    child_rs = _compile_and_get_child_resolved(
+        parent_style={field: authored}, child_style={"muted": "#888888"}
+    )
+    assert read(child_rs) == theme_default
+
+
+def test_styled_nested_board_inherits_named_fonts() -> None:
+    child_rs = _compile_and_get_child_resolved(
+        parent_style={
+            "fonts": {"mine": {"color": "#a1a1a1"}},
+            "title": {"font": "mine"},
+        },
+        child_style={"muted": "#888888"},
+    )
+    assert child_rs.title.font.color == "#a1a1a1"
+
+
+def test_unstyled_nested_board_inherits_the_parent_patch_unchanged() -> None:
+    child_rs = _compile_and_get_child_resolved(
+        parent_style={"gap": 33, "layout": {"rows": {"gap": 60}}}
+    )
+    assert child_rs.layout.rows.gap == 60
+    assert child_rs.gap == 33
+
+
+def test_nested_board_does_not_inherit_tags() -> None:
+    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+    from dbt_charts.core.compile.normalize.dispatch import normalize_board
+
+    board = AuthoredBoard.model_validate(
+        {"title": "parent", "tags": ["finance"], "rows": [{"title": "child"}]}
+    )
+    child_board = normalize_board(board).layout.items[0].board
+    assert child_board is not None
+    assert not child_board.tags

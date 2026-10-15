@@ -522,3 +522,8 @@ def test_page_chrome_font_requires_size_and_color(slot: str, key: str) -> None:
         f"Value error, style.{slot}.font.{key} is required "
         + ("(float)" if key == "size" else "(color string)")
     ]
+
+
+def test_ticks_time_unit_with_auto_count_is_allowed() -> None:
+    """`count: auto` leaves the cadence to the engine, so it is not a second cadence."""
+    DimensionTicksStyle.model_validate({"time_unit": "year", "count": "auto"})

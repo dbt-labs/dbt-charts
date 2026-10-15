@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.theme.page import FooterStyle
     from dbt_charts.core.compile.models.variable.authored import Variable
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.board.normalized import (
     NO_TITLE_SHIFT,
     ProsePlan,
@@ -109,7 +108,7 @@ def _footer_attribution_svg(
     # FooterStyle.__constraints__ guarantee both non-None.
     assert footer.font.size is not None and footer.font.color is not None
     size = float(footer.font.size)
-    brand_weight = get_chart_rendering().frame.footer_brand_weight
+    brand_weight = footer.brand_weight
     measure = get_font_measurer(font_family).measure
     brand_measure = get_weighted_font_measurer(font_family, brand_weight).measure
 
@@ -1314,8 +1313,7 @@ def _render_board_svg(
         # FooterStyle.__constraints__ guarantee font.size is not None.
         assert footer_style.font.size is not None
         footer_font_size = float(footer_style.font.size)
-        footer_rule_gap_px = get_chart_rendering().frame.footer_rule_gap_px
-        rule_gap = footer_rule_gap_px if footer_style.divider.visible else 0
+        rule_gap = footer_style.divider.gap if footer_style.divider.visible else 0
         total_height += footer_style.y_offset + footer_font_size + rule_gap
 
     # Grid pattern if enabled
@@ -1375,7 +1373,7 @@ def _render_board_svg(
     timestamp_element = ""
     # Painted ahead of the timestamp block, which positions itself against this
     # width. Measuring it a second time there would use the regular-weight
-    # advances and quietly deliver a narrower gap than footer_timestamp_gap_px
+    # advances and quietly deliver a narrower gap than style.timestamp.gap
     # configures, because the brand run is painted heavier than the rest.
     attribution_svg = ""
     attribution_width = 0.0
@@ -1411,11 +1409,7 @@ def _render_board_svg(
             timestamp_x = total_width - page_padding
             timestamp_anchor = "end"
             if timestamp_style.position == "footer" and footer_style.visible:
-                timestamp_x = (
-                    footer_x
-                    - attribution_width
-                    - get_chart_rendering().frame.footer_timestamp_gap_px
-                )
+                timestamp_x = footer_x - attribution_width - timestamp_style.gap
         timestamp_element = (
             f'<text data-role="render-timestamp" x="{format_svg_numeric(timestamp_x)}" y="{format_svg_numeric(timestamp_y)}" text-anchor="{escape_attr(timestamp_anchor)}" '
             f'font-size="{format_svg_numeric(timestamp_font_size)}" fill="{escape_attr(timestamp_style.font.color)}" font-family="{escape_attr(timestamp_family)}" '
@@ -1431,11 +1425,7 @@ def _render_board_svg(
         assert footer_style.font.color is not None
         footer_parts = []
         if footer_style.divider.visible:
-            rule_y = (
-                footer_y
-                - float(footer_style.font.size)
-                - get_chart_rendering().frame.footer_rule_gap_px
-            )
+            rule_y = footer_y - float(footer_style.font.size) - footer_style.divider.gap
             footer_parts.append(
                 f'<line x1="{format_svg_numeric(page_padding)}" y1="{format_svg_numeric(rule_y)}" '
                 f'x2="{format_svg_numeric(footer_x)}" y2="{format_svg_numeric(rule_y)}" '

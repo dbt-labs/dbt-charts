@@ -3,7 +3,7 @@
 Detection rule: fires on a ``ResolvedBarChart`` whose resolved
 ``style.plot_height_below_floor`` is True -- the estimated plot height falls
 below the calibrated floor, a fraction
-(``chart_rendering.plot_height_floor.ratio``) of the card's own height,
+(``PLOT_HEIGHT_FLOOR_RATIO``) of the card's own height,
 checked at every width. The fact is baked at
 resolve time (``estimate_plot_height()``, ``plot_height_floor.py``,
 called from ``bar.py``'s ``_resolve_bar``); this detector only reads it off

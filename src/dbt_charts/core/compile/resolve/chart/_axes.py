@@ -5,9 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from math import ceil
-from typing import Any, Generic, Literal, NamedTuple, TypeVar
+from typing import Generic, Literal, NamedTuple, TypeVar
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import column_format
 from dbt_charts.core.compile.models.chart.authored import (
@@ -29,15 +28,19 @@ from dbt_charts.core.compile.models.primitives import (
 )
 from dbt_charts.core.compile.models.style.authored import (
     EndpointLabelsConfig,
-    LegendStylePatch,
     QuantitativeAxisStylePatch,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedLegendStyle
+from dbt_charts.core.compile.models.style.resolved._cartesian import (
+    ResolvedEndpointLabelsConfig,
+)
 from dbt_charts.core.compile.models.style.theme import (
     AxisXStyle,
     AxisYStyle,
     LegendEdge,
+    LegendPositionStyle,
+    LegendStyle,
     _CartesianChartStyle,
 )
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset, ChartRows
@@ -48,13 +51,26 @@ from dbt_charts.core.compile.resolve.chart.plot_height_floor import (
 from dbt_charts.core.compile.resolve.style.axis_cascade import (
     AxisOverrides,
     _merge_axis_cascade,
-    chart_type_axis_patch as _chart_type_axis_patch,
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
     CartesianFamilyChart,
     axis_layer_format,
 )
+from dbt_charts.core.compile.resolve.style.legend_position import (
+    merge_authored_position,
+    merge_authored_visible,
+    placed_align,
+    placed_edge,
+    placed_overlay,
+)
 from dbt_charts.core.compile.resolve.style.typography import width_tier
+from dbt_charts.core.constants.estimates import (
+    COMPACT_LEGEND_ROW_PX,
+    LEGEND_CHROME_HEIGHT_PX,
+    LEGEND_DIMENSION_AXIS_RESERVE_CHROME_PX,
+    LEGEND_MIN_RESERVE_PX,
+    LEGEND_ROW_HEIGHT_PX,
+)
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_AFFIX_NOMINAL_AXIS_UNSUPPORTED,
@@ -75,8 +91,7 @@ from dbt_charts.core.text.format_d3 import is_d3_si_spec
 __all__ = [
     "SeriesNaming",
     "_NO_RAIL_ENDPOINT_LABELS",
-    "_author_asked_for_endpoint_labels",
-    "_authored_legend",
+    "_cascaded_legend",
     "_bake_ay_orient",
     "_bake_ay_position_left",
     "_bake_ay_position_right",
@@ -106,14 +121,9 @@ def _extract_axis_overrides(
     """Extract chart-local axis patches from a family-level primary patch.
 
     Mirrors the axis_overrides_* extraction in build_chart_style_context
-    (layers 11-13) so the resolve path can pass them directly to
-    resolved_axis_style without building a per-chart ChartStyleContext. The
-    x_label/y_label title-visible default is NOT applied here — it is
-    injected directly into the axis cascade (``_merge_axis_cascade``'s
-    ``label_authored`` parameter), the one place that already knows the full
-    chart-local layer order, so every chart-local slot (global ``axis``,
-    ``axis_quantitative``/``axis_band``, ``axis_x``/``axis_y``) beats the
-    forcing default with no separate guard.
+    (the cascade's chart-local layers) so the resolve path can pass them directly to
+    resolved_axis_style without building a per-chart ChartStyleContext.
+    x_label/y_label are not read here; the cascade takes them as ``labeled``.
 
     ``quantitative`` is threaded in by the caller (``plan_cartesian``) rather
     than read off ``primary`` here: heatmap's per-family style patch has no
@@ -225,11 +235,11 @@ def _bake_cartesian_axes(
     These semantics hold regardless of orientation — axis routing is a
     render-layer concern; the cascade slots are fixed.
 
-    axis_overrides carries the chart-local patches (layers 11-13) extracted from
+    axis_overrides carries the chart-local patches extracted from
     the family patch — passed explicitly so no per-chart ChartStyleContext
     is required.
 
-    ``chart`` supplies each axis's Layer 10 via ``axis_layer_format()``: the
+    ``chart`` supplies each axis's column-format layer via ``axis_layer_format()``: the
     query's declared format for the axis column.
 
     ``multiples`` / ``y`` are the small-multiples inputs. This is the ONE home
@@ -253,7 +263,6 @@ def _bake_cartesian_axes(
         chart_style_context,
         "axis_x",
         x_channel_type,
-        _chart_type_axis_patch(chart_style_context, chart_type, "axis_x"),
         column_layer_format=axis_layer_format(
             chart,
             x_channel_type,
@@ -262,13 +271,12 @@ def _bake_cartesian_axes(
         ),
         axis_overrides=axis_overrides,
         chart_type=chart_type,
-        label_authored=bool(chart.x_label),
+        labeled=bool(chart.x_label),
     )
     ay, ay_band_position = _merge_axis_cascade(
         chart_style_context,
         "axis_y",
         y_channel_type,
-        _chart_type_axis_patch(chart_style_context, chart_type, "axis_y"),
         column_layer_format=axis_layer_format(
             chart,
             y_channel_type,
@@ -277,7 +285,7 @@ def _bake_cartesian_axes(
         ),
         axis_overrides=axis_overrides,
         chart_type=chart_type,
-        label_authored=bool(chart.y_label),
+        labeled=bool(chart.y_label),
     )
     # labels.values (the label-cadence filter) lives only on DimensionLabelStyle,
     # used solely by AxisXStyle.labels — axis_y structurally cannot author it,
@@ -450,22 +458,20 @@ def _reject_dual_axis_layered_endpoint_labels(
 def _endpoint_labels_off_for_layers(
     endpoint_labels: EndpointLabelsConfig,
     normalized: BarChart | LineChart | AreaChart,
-    author_opted_in: bool,
 ) -> EndpointLabelsConfig:
-    """A layered chart's default is a legend, not the endpoint-label rail.
+    """A layered chart's ``auto`` is a legend, not the endpoint-label rail.
 
-    Every family here defaults endpoint labels on; without this disqualifier
-    an un-opted-in layered chart would flip straight to the rail and leave a
-    single-series chart with an overlay looking like the multi-series case it
-    isn't.
+    Without this disqualifier an ``auto`` layered chart would flip straight to
+    the rail and leave a single-series chart with an overlay looking like the
+    multi-series case it isn't.
 
-    An author who writes ``style.endpoint_labels.visible: true`` opts in: the
-    rail then names the base series and every overlay layer's own endpoint
+    A concrete ``visible: true`` from any tier keeps the rail: it then names
+    the base series and every overlay layer's own endpoint
     (see ``EndpointLabelFeature._apply_layered_single_series``), and
     ``_suppress_legend_for_endpoint_labels`` retires the legend so nothing is
     named twice.
     """
-    if author_opted_in or not normalized.layers:
+    if endpoint_labels.visible != "auto" or not normalized.layers:
         return endpoint_labels
     return endpoint_labels.model_copy(update={"visible": False})
 
@@ -473,17 +479,16 @@ def _endpoint_labels_off_for_layers(
 def _endpoint_labels_off_for_multiples(
     endpoint_labels: EndpointLabelsConfig,
     normalized: BarChart | LineChart | AreaChart,
-    author_opted_in: bool,
 ) -> EndpointLabelsConfig:
     """Each small multiple is its own panel; the rail names series for one panel
     and a faceted chart has no single panel for it to sit beside. The shared
     top legend takes over the naming (``_multiples_wants_top_legend``).
 
-    Like its sibling above it steers the default only: an author who wrote
+    Like its sibling above it steers ``auto`` only: a concrete
     ``endpoint_labels.visible: true`` on a faceted chart still reaches the
     render-layer refusal, with a diagnostic naming both fields.
     """
-    if author_opted_in or normalized.multiples is None:
+    if endpoint_labels.visible != "auto" or normalized.multiples is None:
         return endpoint_labels
     return endpoint_labels.model_copy(update={"visible": False})
 
@@ -507,46 +512,19 @@ def _multiples_wants_top_legend(
     )
 
 
-def _authored_legend(
-    primary: Any,  # type-state: explicit_any — Any at its source
-) -> LegendStylePatch | None:
-    """This chart's own ``legend:`` patch, or None when it authored no legend.
+def _cascaded_legend(
+    chart_style_context: ChartStyleContext, family_legend: LegendStyle
+) -> tuple[LegendPositionStyle, bool | Literal["auto"]]:
+    """The legend's placement leaves and ``visible`` as the cascade left them.
 
-    ``primary`` stays ``Any`` here and in its sibling below because it's
-    ``Any`` at its source (``CartesianPlan.primary`` — see that field's own
-    docstring in ``_plan.py`` for why it isn't narrowed) and neither function
-    does anything else with it. A local ``_HasColor``-style Protocol would
-    still need the same ``None`` guard below, since the value genuinely is
-    ``None`` for an unstyled chart — narrowing buys nothing here. The return
-    is narrowed because the patch model does declare that field's type; only
-    reaching it goes through ``Any``.
-
-    The chart-local patch, not the merged cascade, is the only place the
-    author's own say-so survives: a theme that hides legends board-wide
-    (editorial does) leaves the same ``visible: False`` on the merged value,
-    and a family default puts a ``position`` there for every chart that never
-    named one. The width-tier, grouped-bar and endpoint-rail policies exist
-    precisely to place a legend where the author left the choice open — so
-    they read this patch to know when the choice was not left open.
+    A position leaf that is set to a value came from the board or the chart;
+    ``visible`` may still be ``auto``.
     """
-    return None if primary is None else primary.legend
-
-
-def _author_asked_for_endpoint_labels(style: Any) -> bool:
-    """True when this chart's own style asks for a rail of endpoint labels.
-
-    Read from the authored patch for the same reason as ``_authored_legend``:
-    every theme now switches the rail on, so the merged value says ``True`` for
-    charts that never asked. Only this chart's own say-so overrides the
-    shape-based disqualifiers. style stays Any: the patch model's
-    TYPE_CHECKING stub declares this field non-optional while the runtime value
-    really is None when unauthored, so a typed signature would let the type
-    checker delete the None guard that every unstyled chart depends on.
-    """
-    if style is None:
-        return False
-    endpoint_labels = style.endpoint_labels
-    return endpoint_labels is not None and endpoint_labels.visible is True
+    board = chart_style_context.cascaded.charts.legend
+    return (
+        merge_authored_position(board.position, family_legend),
+        merge_authored_visible(board, family_legend),
+    )
 
 
 def _series_label_layout_for_width(
@@ -771,7 +749,7 @@ def legend_row_fits(
     what "fits" means.
 
     The swatch box and the gap to the next entry are fixed rendering chrome
-    (``chart_rendering.legend``), constant regardless of mark size or entry
+    (``legend.row``), constant regardless of mark size or entry
     count -- a legend swatch stays legible-sized even naming a thousand tiny
     marks; scaling it to the marks it names is explicitly
     rejected. Only the label TEXT is measured, against the legend's own real
@@ -781,14 +759,13 @@ def legend_row_fits(
     """
     if not entries:
         return True
-    cfg = get_chart_rendering().legend
     measurer = get_weighted_font_measurer(
         legend.label.font.family, legend.label.font.weight
     )
     font_size = legend.label.font.size
-    chrome = cfg.row_swatch_width_px + legend.label.padding
+    chrome = legend.row.swatch_width + legend.label.padding
     total = sum(chrome + measurer.measure(entry, font_size) for entry in entries)
-    total += cfg.row_entry_gap_px * (len(entries) - 1)
+    total += legend.row.entry_gap * (len(entries) - 1)
     return total <= width
 
 
@@ -810,7 +787,7 @@ def estimate_left_axis_reserve_px(
     rule defaults its quantitative measure axis to the RIGHT ordinarily
     (``_bake_ay_orient``'s default branch), so in the ordinary case nothing
     of substance sits to the legend's left --
-    ``chart_rendering.legend.min_reserve_px`` is that small, fixed floor
+    ``LEGEND_MIN_RESERVE_PX`` is that small, fixed floor
     (generic card/frame chrome, not axis content). Not an unconditional
     guarantee for line/area: with endpoint labels visible,
     ``_bake_ay_orient`` can still flip their own measure axis to the left
@@ -840,17 +817,16 @@ def estimate_left_axis_reserve_px(
     painted width unbounded.
     Takes priority over ``dimension_values`` when set.
     """
-    cfg = get_chart_rendering().legend
     if unmeasurable_label_limit_px is not None:
         return max(
-            cfg.min_reserve_px,
-            unmeasurable_label_limit_px + cfg.dimension_axis_reserve_chrome_px,
+            LEGEND_MIN_RESERVE_PX,
+            unmeasurable_label_limit_px + LEGEND_DIMENSION_AXIS_RESERVE_CHROME_PX,
         )
     if not dimension_values:
-        return cfg.min_reserve_px
+        return LEGEND_MIN_RESERVE_PX
     measurer = get_font_measurer(legend.label.font.family)
     widest = max(measurer.measure(v, legend.label.font.size) for v in dimension_values)
-    return max(cfg.min_reserve_px, widest + cfg.dimension_axis_reserve_chrome_px)
+    return max(LEGEND_MIN_RESERVE_PX, widest + LEGEND_DIMENSION_AXIS_RESERVE_CHROME_PX)
 
 
 def legend_wrapped_row_count(
@@ -914,16 +890,15 @@ def legend_wrap_required_height_px(
     squeeze a stacked bar's own segments to zero height? ``required >
     plot_height``, nothing else in the comparison). A caller instead
     feeding a plot-height *floor* that already charges its own fixed chrome
-    (``estimate_plot_height``'s ``irreducible_height_px`` /
-    ``axis_titles_height_px``) wants ``legend_wrap_marginal_height_px``
+    (``estimate_plot_height``'s ``PLOT_HEIGHT_FLOOR_IRREDUCIBLE_PX`` plus
+    the axis title cost) wants ``legend_wrap_marginal_height_px``
     below, not this -- summing both fixed terms double-counts the
-    non-legend chrome baked into this one's ``chrome_height_px``.
-    ``chart_rendering.legend.row_height_px`` / ``chrome_height_px`` are the
-    calibrated constants (see default_config.yml).
+    non-legend chrome baked into this one's ``LEGEND_CHROME_HEIGHT_PX``.
+    ``LEGEND_ROW_HEIGHT_PX`` / ``LEGEND_CHROME_HEIGHT_PX`` are the
+    calibrated constants (``constants/estimates.py``).
     """
     rows = legend_wrapped_row_count(entry_count, symbol_limit, columns)
-    cfg = get_chart_rendering().legend
-    return rows * cfg.row_height_px + cfg.chrome_height_px
+    return rows * LEGEND_ROW_HEIGHT_PX + LEGEND_CHROME_HEIGHT_PX
 
 
 def legend_wrap_marginal_height_px(
@@ -937,19 +912,18 @@ def legend_wrap_marginal_height_px(
     footprint at collapse, fixed chrome included) -- this is the number a
     caller that feeds ``estimate_plot_height`` wants, since that function
     already subtracts its own fixed chrome
-    (``chart_rendering.plot_height_floor.irreducible_height_px`` /
-    ``axis_titles_height_px``) alongside whatever this returns. Summing the
+    (``PLOT_HEIGHT_FLOOR_IRREDUCIBLE_PX`` /
+    the axis title cost) alongside whatever this returns. Summing the
     *total* footprint on top of that fixed chrome double-counts the
     non-legend chrome the total's own fixed term carries. Shared by bar.py's
     own compact-legend floor charge and this module's
     ``legend_wrap_fits_height_budget`` -- both ask the same floor about the
     same wrapped legend, so this arithmetic is one calculation, not two.
-    ``chart_rendering.plot_height_floor.compact_legend_row_px`` is the
-    calibrated constant (see default_config.yml).
+    ``COMPACT_LEGEND_ROW_PX`` is the
+    calibrated constant (``constants/estimates.py``).
     """
     rows = legend_wrapped_row_count(entry_count, symbol_limit, columns)
-    cfg = get_chart_rendering().plot_height_floor
-    return rows * cfg.compact_legend_row_px
+    return rows * COMPACT_LEGEND_ROW_PX
 
 
 def legend_wrap_fits_height_budget(
@@ -958,12 +932,12 @@ def legend_wrap_fits_height_budget(
     plot_height_estimate: float,
     *,
     card_padding_px: float,
-    subtitle_present: bool,
-    axis_title_costs_height: bool,
+    subtitle_height_px: float,
+    axis_title_height_px: float,
 ) -> bool:
     """True when putting a wrapped, multi-column top legend naming
     ``entries`` above the plot still leaves the plot clearing
-    ``chart_rendering.plot_height_floor.ratio`` of the card's own height.
+    ``PLOT_HEIGHT_FLOOR_RATIO`` of the card's own height.
 
     Rung 2 of the top-legend fallback ladder, between a single-row fit
     (``legend_row_fits``) and giving up on top placement. Asks the same
@@ -980,10 +954,10 @@ def legend_wrap_fits_height_budget(
     ``plot_height_estimate`` is every caller's own
     ``estimate_cartesian_plot_height(normalized, style, width)`` -- the same
     CARD content-height estimate the floor itself is measured against.
-    ``card_padding_px``, ``subtitle_present`` and ``axis_title_costs_height``
+    ``card_padding_px``, ``subtitle_height_px`` and ``axis_title_height_px``
     are the floor's other required inputs (``style.frame.card_padding``,
-    whether this chart authored a subtitle, and whether the axis on the
-    horizontal rail shows its title) -- each caller already has these in
+    and the costs ``subtitle_cost_px`` / ``axis_title_cost_px`` derive from
+    this chart's own subtitle and horizontal-rail axis title) -- each caller already has these in
     hand for its own floor-adjacent logic or axis cascade.
     """
     marginal = legend_wrap_marginal_height_px(
@@ -994,8 +968,8 @@ def legend_wrap_fits_height_budget(
         card_height,
         card_padding_px=card_padding_px,
         legend_height_px=marginal,
-        subtitle_present=subtitle_present,
-        axis_title_costs_height=axis_title_costs_height,
+        subtitle_height_px=subtitle_height_px,
+        axis_title_height_px=axis_title_height_px,
     )
     return estimated_plot_height >= plot_height_floor_px(card_height)
 
@@ -1058,25 +1032,16 @@ class SeriesNaming(NamedTuple):
     route ``author_moved_legend_off_top`` does not outrank (see this
     function's docstring). ``None`` otherwise, including when the author
     placed no position at all.
-
-    ``force_legend_visible`` is true both when the author placed a position
-    and when the chart's own shape wants a legend (``top_legend_series is
-    not None``) — the latter regardless of whether ``top_legend`` actually
-    came out "row" or fell back to "off": a shape that wants a legend but
-    whose row doesn't fit the card still needs one, just not at the top, and
-    a theme that hides this family's legend by default (line, area) must not
-    silently delete it once "off" stops meaning "top didn't fit".
     """
 
-    endpoint_labels: EndpointLabelsConfig
+    endpoint_labels: ResolvedEndpointLabelsConfig
     suppress_legend: bool
     top_legend: Literal["compact", "row", "off"]
-    force_legend_visible: bool
     legend_position_overridden_by_width: LegendEdge | None
     wrap_legend: bool
 
 
-_NO_RAIL_ENDPOINT_LABELS = EndpointLabelsConfig(
+_NO_RAIL_ENDPOINT_LABELS = ResolvedEndpointLabelsConfig(
     visible=False, label_offset=0.0, height=0.0
 )
 
@@ -1084,7 +1049,8 @@ _NO_RAIL_ENDPOINT_LABELS = EndpointLabelsConfig(
 def cartesian_series_naming(
     normalized: _CartesianChartFields,
     channels: Mapping[str, ResolvedStyleChannel],
-    authored_legend: LegendStylePatch | None,
+    authored_position: LegendPositionStyle,
+    authored_visible: bool | Literal["auto"],
     legend: ResolvedLegendStyle,
     width: float,
     endpoint_labels: EndpointLabelsConfig,
@@ -1098,8 +1064,8 @@ def cartesian_series_naming(
     plot_height_estimate: float,
     left_axis_reserve_px: float,
     card_padding_px: float,
-    subtitle_present: bool,
-    axis_title_costs_height: bool,
+    subtitle_height_px: float,
+    axis_title_height_px: float,
 ) -> SeriesNaming:
     """Decide how a cartesian chart's series get named: rail, top legend, or plain legend.
 
@@ -1111,16 +1077,16 @@ def cartesian_series_naming(
     (``_multiples_wants_top_legend``), and the top_legend/off ternary that
     reads those together with the author's own ``legend:`` keys.
 
-    ``authored_legend`` is this chart's own legend patch — every caller passes
-    ``_authored_legend(primary)`` — and it outranks all three policies,
-    because each of them only ever answers a question the author left open:
+    ``legend.visible`` and ``authored_position`` (the placement leaves anyone
+    authored, at any tier) outrank all three policies, because each of them
+    only ever answers a question the cascade left open:
 
-    - ``visible: true`` keeps the endpoint rail from retiring the legend. The
-      rail replaces a legend nobody asked for, never one that was asked for;
-      it goes on rendering beside it.
-    - a ``position`` is a legend the author placed, so the automatic top strip
-      stands down and (unless ``visible: false`` is authored alongside) the
-      legend is shown — naming where a legend goes cannot resolve to no legend.
+    - a concrete ``visible: true`` keeps the endpoint rail from retiring the
+      legend. The rail replaces a legend nobody asked for, never one that was
+      asked for; it goes on rendering beside it. Only ``auto`` is retired.
+    - a position is a legend that was placed, so the automatic top strip
+      stands down and the rail leaves the legend alone — naming where a legend
+      goes cannot resolve to no legend.
       The one policy it does not outrank is the tiny-width tier: a card that
       narrow physically cannot hold a side legend, so ``tiny_top_legend`` wins
       over an authored ``position: right`` the way it already wins over the
@@ -1159,7 +1125,7 @@ def cartesian_series_naming(
     three-rung fallback ladder: top, single row, while those
     entries fit ``width`` (``legend_row_fits``); failing that, top, wrapped
     at ``legend.compact_columns``, while putting that wrap on top still
-    leaves the plot clearing ``chart_rendering.plot_height_floor.ratio``
+    leaves the plot clearing ``PLOT_HEIGHT_FLOOR_RATIO``
     (``legend_wrap_fits_height_budget``, asking the same floor
     ``bar.py``'s own starved-plot warning asks); right, the family's own
     fallback position, once even the wrap would sink the plot below the
@@ -1184,11 +1150,10 @@ def cartesian_series_naming(
     canvas width still hard-clips against the plot's own (narrower) local
     origin once the axis reserving that difference is real.
 
-    ``card_padding_px``, ``subtitle_present`` and ``axis_title_costs_height``
+    ``card_padding_px``, ``subtitle_height_px`` and ``axis_title_height_px``
     feed rung 2's floor check (``legend_wrap_fits_height_budget``) alone --
-    ``style.frame.card_padding``, whether this chart authored a subtitle, and
-    whether the axis on the horizontal rail shows its title, matching the
-    same three facts ``bar.py``'s own ``WARN-PLOT-HEIGHT-BELOW-MINIMUM``
+    ``style.frame.card_padding`` and the costs this chart's own subtitle and
+    horizontal-rail axis title charge, matching the same three facts ``bar.py``'s own ``WARN-PLOT-HEIGHT-BELOW-MINIMUM``
     measurement feeds to ``estimate_plot_height``. A family whose
     ``top_legend_series`` is always ``None`` (scatter, heatmap) never reaches
     rung 2, so these three are inert for it -- pass ``False``/``0.0`` rather
@@ -1203,55 +1168,40 @@ def cartesian_series_naming(
     is a continuous ramp: it has no row to wrap, so it must never drive
     rung 1 or rung 2, regardless of what ``top_legend_series`` a caller
     computed. This does NOT null the parameter itself -- ``top_legend_series``
-    is also ``wants_top_legend_shape``'s "this shape has entries to name"
-    signal, which forces the legend visible even when the row doesn't fit;
-    nulling it would silence a gradient-colored line/area's legend
-    entirely on a theme that hides it by default, trading a placement bug
-    for a worse one.
+    is also the "this shape has entries to name"
+    signal, so nulling it would silence a gradient-colored line/area's legend
+    entirely.
     """
     color_channel = channels.get("color")
     gradient_color = color_channel is not None and color_channel.mode == "gradient"
     endpoint_labels, tiny_top_legend = _series_label_layout_for_width(
         endpoint_labels, width
     )
-    author_hid_legend = authored_legend is not None and authored_legend.visible is False
-    author_showed_legend = (
-        authored_legend is not None and authored_legend.visible is True
+    endpoint_labels = ResolvedEndpointLabelsConfig.model_validate(
+        {
+            **endpoint_labels.model_dump(),
+            "visible": endpoint_labels.visible in (True, "auto"),
+        }
     )
-    # Read the position out before testing it. `LegendStylePatch`'s TYPE_CHECKING
-    # stub subclasses `LegendStyle`, where `position` is required, so mypy sees
-    # `authored_legend.position is not None` as always-true and rejects it -- but
-    # at runtime `build_patch_model` makes every field optional, and an author
-    # who wrote only `visible: true` really does leave this None. Going through a
-    # local gives mypy the `| None` the stub can't express, and the check stays.
-    authored_position = (
-        authored_legend.position if authored_legend is not None else None
-    )
-    authored_edge: LegendEdge | None = (
-        None if authored_position is None else authored_position.edge
-    )
+    author_hid_legend = authored_visible is False
+    authored_edge = placed_edge(authored_position.edge)
     # Naming any leaf of `position` is placing the legend; only a named edge can
     # conflict with the automatic top strip (an unset edge is the engine's call).
     author_placed_legend = (
-        authored_position is not None
-        and any(
-            leaf is not None
-            for leaf in (
-                authored_position.edge,
-                authored_position.align,
-                authored_position.overlay,
-            )
+        authored_edge is not None
+        or placed_align(authored_position.align) is not None
+        or placed_overlay(authored_position.overlay) is not None
+    ) and not author_hid_legend
+    suppress_legend = (
+        authored_visible == "auto"
+        and not author_placed_legend
+        and _suppress_legend_for_endpoint_labels(
+            channels,
+            endpoint_labels.visible and rail_eligible_for_suppression,
+            endpoint_label_has_layers,
+            wide_measure_series=suppress_wide_measure_series,
+            has_layers=has_layers,
         )
-        and not author_hid_legend
-    )
-    suppress_legend = not (
-        author_showed_legend or author_placed_legend
-    ) and _suppress_legend_for_endpoint_labels(
-        channels,
-        endpoint_labels.visible and rail_eligible_for_suppression,
-        endpoint_label_has_layers,
-        wide_measure_series=suppress_wide_measure_series,
-        has_layers=has_layers,
     )
     # An authored `edge: top` agrees with the automatic top strip -- only an
     # edge that moves the legend off the top is a conflict to resolve. Short-
@@ -1262,19 +1212,6 @@ def cartesian_series_naming(
     )
     legend_position_overridden_by_width: LegendEdge | None = (
         authored_edge if tiny_top_legend and author_moved_legend_off_top else None
-    )
-    # The chart's shape wants a legend named at all, independent of whether a
-    # single top row happens to fit: `top_legend_series is not None` is the
-    # family's own "this shape has entries to name" signal (see the docstring
-    # above), gated the same way the "row" route below gates it -- an
-    # explicit `visible: false` or an endpoint rail retiring the legend both
-    # still win. When the row does NOT fit, the fit rule falls the position
-    # back to the theme's default (right, for the families that reach here),
-    # not to no-legend-at-all -- so this must force the same `visible: True`
-    # the "row" route forces, or a theme that hides this family's legend by
-    # default (line, area) silently deletes the only naming this chart had.
-    wants_top_legend_shape = (
-        top_legend_series is not None and not suppress_legend and not author_hid_legend
     )
     top_legend_series_row_fits = (
         top_legend_series is not None
@@ -1301,8 +1238,8 @@ def cartesian_series_naming(
             legend,
             plot_height_estimate,
             card_padding_px=card_padding_px,
-            subtitle_present=subtitle_present,
-            axis_title_costs_height=axis_title_costs_height,
+            subtitle_height_px=subtitle_height_px,
+            axis_title_height_px=axis_title_height_px,
         )
     )
     multiples_wants_top_legend = _multiples_wants_top_legend(
@@ -1334,7 +1271,6 @@ def cartesian_series_naming(
         endpoint_labels,
         suppress_legend,
         top_legend,
-        author_placed_legend or wants_top_legend_shape,
         legend_position_overridden_by_width,
         wrap_legend,
     )

@@ -221,6 +221,30 @@ def unset_dbt_target_path(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def isolate_user_cache_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Keep the default query-result cache out of the real per-user cache directory.
+
+    `dct render` and `dct serve` persist results there unless told otherwise, so
+    a test that renders would leave warehouse-shaped data in the developer's
+    home and read back whatever an earlier run left. Each test gets its own
+    directory, created only if something asks for it. A `dct` child process
+    does not see this patch and needs `--no-cache` or `DCT_CACHE_PATH`.
+    """
+    created: list[Path] = []
+
+    def _user_cache_dir() -> str:
+        if not created:
+            created.append(tmp_path_factory.mktemp("user-cache"))
+        return str(created[0])
+
+    monkeypatch.setattr(
+        "dbt_charts.core.compile.config.user_cache_dir", _user_cache_dir
+    )
+
+
+@pytest.fixture(autouse=True)
 def disable_usage_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
     """Suppress CLI usage telemetry for every test, subprocesses included.
 
@@ -247,28 +271,27 @@ def isolate_resolve_style_cache() -> Iterator[None]:
     clear_resolve_style_cache()
 
 
-@pytest.fixture(scope="session")
-def built_dbt_charts_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Build the dbt-charts wheel once per pytest session.
-
-    `uv build --wheel` skips the sdist; the install-smoke and wheel-content
-    assertions both consume the wheel itself.
-    """
-    out_dir = tmp_path_factory.mktemp("dbt-charts-wheel")
+def dbt_charts_wheel(out_dir: Path) -> Path:
+    """The wheel under test: `DCT_PREBUILT_WHEEL` (CI's engine job builds it
+    once per run), else a fresh `uv build --wheel` into ``out_dir``."""
+    if prebuilt := os.environ.get("DCT_PREBUILT_WHEEL"):
+        wheel = Path(prebuilt)
+        if not wheel.is_file():
+            raise FileNotFoundError(f"DCT_PREBUILT_WHEEL names no file: {wheel}")
+        return wheel
     subprocess.run(
-        [
-            "uv",
-            "build",
-            "--wheel",
-            "--out-dir",
-            str(out_dir),
-        ],
+        ["uv", "build", "--wheel", "--out-dir", str(out_dir)],
         cwd=_DBT_CHARTS_DIR,
         check=True,
     )
     wheels = list(out_dir.glob("dbt_charts-*.whl"))
     assert len(wheels) == 1, f"expected exactly one wheel, found {wheels}"
     return wheels[0]
+
+
+@pytest.fixture(scope="session")
+def built_dbt_charts_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return dbt_charts_wheel(tmp_path_factory.mktemp("dbt-charts-wheel"))
 
 
 @pytest.fixture(scope="session")

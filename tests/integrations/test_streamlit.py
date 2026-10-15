@@ -53,25 +53,18 @@ rows:
 """
 
 
-class _FakeRow:
-    def __init__(self, data: dict[str, Any]) -> None:
-        self._data = data
-
-    def as_dict(self) -> dict[str, Any]:
-        return self._data
-
-
 class _FakeResultSet:
-    def __init__(self, rows: list[_FakeRow]) -> None:
-        self._rows = rows
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.columns = list(rows[0]) if rows else []
+        self._rows = [tuple(row.values()) for row in rows]
 
-    def to_local_iterator(self) -> Iterator[_FakeRow]:
+    def to_local_iterator(self) -> Iterator[tuple[Any, ...]]:
         return iter(self._rows)
 
 
 class _FakeSession:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
-        self._rows = [_FakeRow(r) for r in rows]
+        self._rows = rows
         self.received_sql: list[str] = []
 
     def sql(self, sql: str) -> _FakeResultSet:

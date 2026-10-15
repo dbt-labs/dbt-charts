@@ -211,7 +211,7 @@ def test_value_label_marks_a_bars_label_but_not_a_donuts_outside_or_center() -> 
     """``data-dbt-value-label`` is the join key recedableMarks() reads to
     scope its twin search to a mark's OWN printed value -- a bar's label must
     carry it, and a donut's leader-lined outside label and center-total
-    layers (built directly in emitters/pie.py, never through the value-label
+    layers (painted by the engine's pie family, never through the value-label
     feature) must not, or they would incorrectly recede with an unrelated
     wedge.
     """

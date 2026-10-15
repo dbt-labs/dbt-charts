@@ -55,7 +55,7 @@ def _axis(
 
     charts = resolve_chart_style_context(get_theme_style())
     axis_x = resolved_axis_style(
-        charts, "axis_x", "temporal", chart_type="", label_authored=False
+        charts, "axis_x", "temporal", chart_type="", labeled=False
     )
     labels = dataclasses.replace(
         axis_x.labels,
@@ -287,7 +287,7 @@ def _ordinal_axis(time_format: str | None) -> Any:
 
     charts = resolve_chart_style_context(get_theme_style())
     axis_x = resolved_axis_style(
-        charts, "axis_x", "ordinal", chart_type="", label_authored=False
+        charts, "axis_x", "ordinal", chart_type="", labeled=False
     )
     return dataclasses.replace(
         axis_x,

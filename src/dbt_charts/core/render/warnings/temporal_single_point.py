@@ -3,20 +3,20 @@ core/diagnostics/codes_render.py for what this fires on.
 
 Detection rule:
   chart.chart_type in {"line", "area"}
-  AND ctx.vega_specs[chart_id].encoding.x.type == "temporal"
+  AND the chart's x axis resolves to a temporal scale over its rows
   AND len(ctx.chart_results[chart_id]) == 1
 """
 
 from __future__ import annotations
 
-from dbt_charts.core.compile.models.chart.resolved._base import (
-    _CartesianResolvedChartFields,
+from dbt_charts.core.compile.models.chart.resolved import (
+    ResolvedAreaChart,
+    ResolvedLineChart,
 )
 from dbt_charts.core.diagnostics import WARN_TEMPORAL_SINGLE_POINT, Diagnostic
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.warnings.base import WarningContext
-
-# Chart types where a single temporal data point is misleading.
-_TEMPORAL_LINE_TYPES = frozenset({"line", "area"})
+from dbt_charts.core.render.warnings.x_axis import emitted_x_axis
 
 
 def detect(ctx: WarningContext) -> list[Diagnostic]:
@@ -24,24 +24,22 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
     warnings: list[Diagnostic] = []
 
     for chart_id, chart in ctx.board_spec.charts.items():
-        if not isinstance(chart, _CartesianResolvedChartFields):
+        if not isinstance(chart, ResolvedLineChart | ResolvedAreaChart):
             continue
-        if chart.chart_type not in _TEMPORAL_LINE_TYPES:
-            continue
-        # Respect the sparse vega_specs contract — non-Vega charts are omitted.
-        if chart_id not in ctx.vega_specs:
+        if chart.x is None:
             continue
         # Orphan charts (query not in pre_executed_query_names) are absent from chart_results.
         if chart_id not in ctx.chart_results:
             continue
-
-        vega_x_type: str = (
-            ctx.vega_specs[chart_id].get("encoding", {}).get("x", {}).get("type", "")
-        )
-        if vega_x_type != "temporal":
+        rows = ctx.chart_results[chart_id]
+        if len(rows) != 1:
             continue
-
-        if len(ctx.chart_results[chart_id]) != 1:
+        try:
+            axis = emitted_x_axis(chart, rows)
+        except (ValueError, ChartDataError):
+            # The emitter rejects this x column too; that error says why.
+            continue
+        if axis.vl_type != "temporal":
             continue
 
         warnings.append(

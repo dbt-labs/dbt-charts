@@ -6,7 +6,6 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.primitives import OverlapSpec, ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedAxisStyle
@@ -325,7 +324,7 @@ def apply_grouped_bar_spacing(
     )
     if cat_ch in encoding and not x_encoding_is_banded(encoding[cat_ch]):
         # A continuous categorical channel (quantitative, or a temporal x
-        # promoted past max_ordinal_buckets) has no band scale for the offset
+        # promoted past MAX_ORDINAL_BUCKETS) has no band scale for the offset
         # channel to sub-divide, so every spacing control below is inapplicable:
         # paddingInner/paddingOuter are band-scale-only, and `overlap` is
         # defined as a fraction of band width. Leave mark.width/height alone so
@@ -362,10 +361,9 @@ def apply_grouped_bar_spacing(
     # in Vega, so it must be removed.
     if cat_ch in encoding:
         cat_scale: dict[str, Any] = encoding[cat_ch].setdefault("scale", {})
-        bar_cfg = get_chart_rendering().bar
         cat_scale.pop("padding", None)
-        cat_scale["paddingInner"] = bar_cfg.grouped_bar_padding_inner
-        cat_scale["paddingOuter"] = bar_cfg.grouped_bar_padding_outer
+        cat_scale["paddingInner"] = chart.style.grouped.padding_inner
+        cat_scale["paddingOuter"] = chart.style.grouped.padding_outer
     if n_series < 0:
         n_series = _count_series(chart, data)
     fraction = _resolve_overlap_fraction(chart.style.overlap, n_series)
@@ -1262,7 +1260,7 @@ def _emit_vertical(
             # (nominal/ordinal, or bucketed-calendar temporal) x, and is
             # inert on a genuinely continuous x once y.stack: null (below)
             # is in place — omitting it there would silently un-group a
-            # >max_ordinal_buckets bucketed-time x (type_inference.py
+            # >MAX_ORDINAL_BUCKETS bucketed-time x (type_inference.py
             # promotes that to temporal), which used to group correctly.
             if color_field and not _is_color_1to1_with_x(
                 cat_field, color_field, dataset

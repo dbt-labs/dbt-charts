@@ -45,8 +45,8 @@ def serve_command(
         target: dbt target name (defaults to DBT_TARGET env var, then profile default)
         no_cache: Skip the query-result cache entirely.
         cache_path: Persist the query-result cache to this DuckDB file (created
-            if absent). None (the default) opens an in-memory cache — ephemeral,
-            discarded on exit.
+            if absent). None (the default) falls through to the project's
+            cache: block, then to the per-user file.
 
     Returns:
         None (exits with code 0 on success, 1 on errors, 3 when the server

@@ -6,7 +6,6 @@ from dataclasses import replace
 from datetime import date
 from typing import Literal
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import (
     column_format,
@@ -31,16 +30,18 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedBarStyle,
     ResolvedBarTotalLabel,
 )
+from dbt_charts.core.compile.models.style.resolved._cartesian import (
+    ResolvedEndpointLabelsConfig,
+)
 from dbt_charts.core.compile.models.style.theme import (
     AxisXStyle,
     AxisYStyle,
     BarLabelsStyle,
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
-    _author_asked_for_endpoint_labels,
-    _authored_legend,
     _bake_ay_orient,
     _bake_ay_position_left,
+    _cascaded_legend,
     _edge_or_none,
     _endpoint_labels_off_for_layers,
     _endpoint_labels_off_for_multiples,
@@ -67,7 +68,6 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     restamp,
 )
 from dbt_charts.core.compile.resolve.chart._domain import (
-    _authored_axis_y_ticks_count,
     _axis_headroom,
     _bake_normalize_domain,
     _CartesianTickResolution,
@@ -83,7 +83,6 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
     _cartesian_kwargs,
-    _title_font,
 )
 from dbt_charts.core.compile.resolve.chart._layers import (
     _check_layers_y_domain,
@@ -116,8 +115,10 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
     wide_measure_labels_for,
 )
 from dbt_charts.core.compile.resolve.chart.plot_height_floor import (
+    axis_title_cost_px,
     estimate_plot_height,
     plot_height_floor_px,
+    subtitle_cost_px,
 )
 from dbt_charts.core.compile.resolve.chart.tick_values import (
     apply_headroom,
@@ -128,7 +129,10 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
+from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
+from dbt_charts.core.constants.bar import TOP_RAIL_LABEL_GAP_SPACES
+from dbt_charts.core.constants.estimates import ROW_LEGEND_TOTAL_PX
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_BAR_LOG_SCALE_NOT_SUPPORTED,
     ERR_BAR_Y_NOT_NUMERIC,
@@ -159,7 +163,6 @@ def _bar_endpoint_labels_for_stack(
     data: ChartRows,
     stack_mode: str,
     horizontal: bool,
-    author_opted_in: bool,
     width: float,
     ax_merged: AxisXStyle,
     ay_merged: AxisYStyle,
@@ -167,18 +170,17 @@ def _bar_endpoint_labels_for_stack(
     font_family: str,
     font_size: float,
 ) -> EndpointLabelsConfig:
-    """Direct labeling is the default; the disqualifiers below turn it back off.
+    """Direct labeling is what ``auto`` means; the disqualifiers below turn it off.
 
-    Every disqualifier here steers the *default* away from a shape it would
-    render badly or not at all. An author who wrote
-    ``style.endpoint_labels.visible: true`` on this chart has said they want
-    the rail on that shape, so ``author_opted_in`` returns the cascaded value
-    untouched: grouped bars label at their bar tops as they always have, and
-    the shapes render refuses (a negative measure, a sorted or center-stacked
-    horizontal rail, ``multiples:``) raise there with a message naming the
-    conflict. Quietly dropping the rail instead would be neither.
+    Every disqualifier here steers ``auto`` away from a shape it would
+    render badly or not at all. A concrete ``style.endpoint_labels.visible``
+    from any tier is returned untouched: with ``true``, grouped bars label at
+    their bar tops as they always have, and the shapes render refuses (a
+    negative measure, a sorted or center-stacked horizontal rail,
+    ``multiples:``) raise there with a message naming the conflict. Quietly
+    dropping the rail instead would be neither.
     """
-    if author_opted_in:
+    if endpoint_labels.visible != "auto":
         return endpoint_labels
     if normalized.support_table is not None and any(
         isinstance(entry, ChartSupportTablePerSeries) and not entry.by_measure
@@ -193,10 +195,8 @@ def _bar_endpoint_labels_for_stack(
         # similar height, so the collision cascade squashes the labels
         # together. A legend is the honest treatment.
         return endpoint_labels.model_copy(update={"visible": False})
-    endpoint_labels = _endpoint_labels_off_for_multiples(
-        endpoint_labels, normalized, author_opted_in
-    )
-    if not endpoint_labels.visible:
+    endpoint_labels = _endpoint_labels_off_for_multiples(endpoint_labels, normalized)
+    if endpoint_labels.visible is False:
         return endpoint_labels
     y_fields = (
         (normalized.y,)
@@ -211,11 +211,8 @@ def _bar_endpoint_labels_for_stack(
     # regardless of which one resolved_stack picked.
     if any(v < 0 for v in _numeric_y_values(data, y_fields)):
         return endpoint_labels.model_copy(update={"visible": False})
-    # author_opted_in is False by construction here — the opt-in returned above.
-    endpoint_labels = _endpoint_labels_off_for_layers(
-        endpoint_labels, normalized, author_opted_in
-    )
-    if not endpoint_labels.visible:
+    endpoint_labels = _endpoint_labels_off_for_layers(endpoint_labels, normalized)
+    if endpoint_labels.visible is False:
         return endpoint_labels
     if normalized.sort is not None and not numeric_column_values(
         data, normalized.sort.by
@@ -509,9 +506,7 @@ def _horizontal_rail_labels_would_collide(
         stack_order=stack_order,
     )
     measurer = get_font_measurer(font_family)
-    gap = get_chart_rendering().bar.top_rail_label_gap_spaces * measurer.measure(
-        " ", font_size
-    )
+    gap = TOP_RAIL_LABEL_GAP_SPACES * measurer.measure(" ", font_size)
     usable_width = max(width - _categorical_axis_gutter_px(ax_merged, data, x), 0.0)
     domain_span_width = domain_hi - domain_lo
     pixel = sorted(
@@ -747,7 +742,10 @@ def _resolve_bar(
     # use) so the horizontal collision disqualifier can measure the same
     # font the rail actually paints with, without resolving it twice.
     series_label = _resolved_series_label(
-        chart_style_context, primary, width, chart_local_style_context.ink_canvas
+        chart_style_context,
+        primary,
+        width,
+        chart_local_style_context.ink_canvas,
     )
     # Resolved after orientation: the disqualifier chain below is specific to
     # the horizontal rail. `merged_legend` was hoisted above (with
@@ -809,13 +807,16 @@ def _resolve_bar(
     # (_emit_horizontal maps ay to VL x). Feeds both rung 2's floor check
     # below and this function's own floor measurement further down -- the
     # same fact, computed once.
-    _axis_title_costs_height = (
-        ay_merged if orientation == "horizontal" else ax_merged
-    ).title.visible is not False
+    _axis_title_height_px = axis_title_cost_px(
+        (ay_merged if orientation == "horizontal" else ax_merged).title
+    )
+    _subtitle_height_px = subtitle_cost_px(
+        normalized.subtitle, chart_style_context.title.subtitle.font
+    )
     naming = cartesian_series_naming(
         normalized,
         channels,
-        _authored_legend(primary),
+        *_cascaded_legend(chart_style_context, bar.legend),
         merged_legend,
         width,
         _bar_endpoint_labels_for_stack(
@@ -824,7 +825,6 @@ def _resolve_bar(
             data,
             resolved_stack,
             orientation == "horizontal",
-            _author_asked_for_endpoint_labels(normalized.style),
             width,
             ax_merged,
             ay_merged,
@@ -842,8 +842,8 @@ def _resolve_bar(
         plot_height_estimate=plot_height_estimate,
         left_axis_reserve_px=left_axis_reserve_px,
         card_padding_px=chart_style_context.card_padding,
-        subtitle_present=bool(normalized.subtitle),
-        axis_title_costs_height=_axis_title_costs_height,
+        subtitle_height_px=_subtitle_height_px,
+        axis_title_height_px=_axis_title_height_px,
     )
     # The classifier's series count, not the legend's entry count -- see
     # `_floor_entry_count` below for the difference and why they are
@@ -934,7 +934,7 @@ def _resolve_bar(
     # legend_wrap_required_height_px: that one is the legend's *total*
     # footprint at collapse (fixed chrome included), and this charge feeds
     # estimate_plot_height below, which already subtracts its own fixed
-    # chrome (irreducible_height_px / axis_titles_height_px) -- summing both
+    # chrome (PLOT_HEIGHT_FLOOR_IRREDUCIBLE_PX and the axis title cost) -- summing both
     # fixed terms would double-count non-legend chrome a second time.
     # `row` flows entries horizontally in one row of flat height instead --
     # measured 31px at 2, 5, 16 and 25 series, on 400px and 640px cards
@@ -952,9 +952,7 @@ def _resolve_bar(
             _legend_entries_for_floor, None, merged_legend.compact_columns
         )
     else:
-        legend_height_for_floor = (
-            get_chart_rendering().bar.plot_height_floor_row_legend_total_px
-        )
+        legend_height_for_floor = ROW_LEGEND_TOTAL_PX
     # A measurement, not a mutation -- see plot_height_floor.py's module
     # docstring for why chrome is never removed automatically. Surfaced to
     # the author as WARN-PLOT-HEIGHT-BELOW-MINIMUM
@@ -962,7 +960,7 @@ def _resolve_bar(
     # below, not acted on here. Measured on the calibration chart at 300px:
     # hiding the x title moved the plot 44 -> 65px tall at unchanged width,
     # hiding the y title moved it 216 -> 238px wide at unchanged height --
-    # `_axis_title_costs_height` above (hoisted for rung 2's own floor
+    # `_axis_title_height_px` above (hoisted for rung 2's own floor
     # check) is that same fact.
     #
     # The card the renderer actually draws: the content height above plus
@@ -976,8 +974,8 @@ def _resolve_bar(
         floor_card_height,
         card_padding_px=chart_style_context.card_padding,
         legend_height_px=legend_height_for_floor,
-        subtitle_present=bool(normalized.subtitle),
-        axis_title_costs_height=_axis_title_costs_height,
+        subtitle_height_px=_subtitle_height_px,
+        axis_title_height_px=_axis_title_height_px,
     )
     plot_starved = estimated_plot_height < plot_height_floor_px(floor_card_height)
     endpoint_labels = naming.endpoint_labels
@@ -1063,7 +1061,6 @@ def _resolve_bar(
             ay_merged,
             bar_y_values,
             zero_anchor=bar_zero,
-            authored_ticks_count=_authored_axis_y_ticks_count(normalized.style),
             scale=multiples_scale,
             is_quantitative=True,  # bar's y is always the measure
         )
@@ -1137,7 +1134,7 @@ def _resolve_bar(
         endpoint_rail_may_discard_domain=False,
     )
     axis_house_default = plan.axes.y.is_house
-    _tf = _title_font(normalized, chart_local_style_context, width)
+    _tf = resolve_title_font(chart_local_style_context, width)
     bkw = _base_kwargs(
         normalized,
         chart_style_context,
@@ -1149,10 +1146,10 @@ def _resolve_bar(
         ),
         automatic_link_candidate=automatic_link_candidate,
         layout_padding=bar.padding,
-        suppress_legend=naming.suppress_legend or stack_legend_yield,
+        suppress_legend=naming.suppress_legend,
+        drop_legend=stack_legend_yield,
         top_legend=naming.top_legend,
         wrap_legend=naming.wrap_legend,
-        force_legend_visible=naming.force_legend_visible,
         legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
     )
     resolved_layers = _resolve_layer_list(
@@ -1249,6 +1246,7 @@ def _resolve_bar(
             label_font_size=_effective_label_font_size(
                 bar_mark.labels, chart_style_context
             ),
+            grouped=bar.grouped,
             total_label_is_house=total_label_is_house,
             **style_tail,
         ),
@@ -1340,7 +1338,7 @@ def _resolve_histogram(
     )
     # histogram reuses ResolvedBarStyle; these bar-only fields are unread by
     # the histogram emit path (no stack, no endpoint labels, no grouped x offset).
-    _tf = _title_font(normalized, chart_local_style_context, width)
+    _tf = resolve_title_font(chart_local_style_context, width)
     hist_labels, hist_label_is_house = _label_format_fallback(
         hist.marks.bar.labels,
         ResolvedBarLabels,
@@ -1410,8 +1408,11 @@ def _resolve_histogram(
             # per-row value for a rail to anchor to — it would place labels
             # against a measure the chart never plots. Bar's slot supplies the
             # rest of the style; this one field is off for the family.
-            endpoint_labels=chart_style_context.bar.endpoint_labels.model_copy(
-                update={"visible": False}
+            endpoint_labels=ResolvedEndpointLabelsConfig.model_validate(
+                {
+                    **chart_style_context.bar.endpoint_labels.model_dump(),
+                    "visible": False,
+                }
             ),
             label_is_house=hist_label_is_house,
             # Read, but it can never produce a threshold: a histogram emits
@@ -1420,6 +1421,7 @@ def _resolve_histogram(
             label_font_size=_effective_label_font_size(
                 hist_mark.labels, chart_style_context
             ),
+            grouped=chart_style_context.bar.grouped,
             total_label_is_house=False,
             label_usable_ratio=chart_style_context.label_usable_ratio,
             title_font=_tf,

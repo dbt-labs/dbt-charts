@@ -1,3 +1,0 @@
-kind: Features
-body: A board that extends another and restates the same rows or cols layout now warns that it appends to the parent's.
-time: 2026-10-08T15:21:36.34674-07:00

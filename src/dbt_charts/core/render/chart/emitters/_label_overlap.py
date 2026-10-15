@@ -8,12 +8,12 @@ from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, Literal, NamedTuple
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedAxisElementStyle,
     ResolvedAxisLabelOverlapConfig,
     ResolvedAxisStyle,
 )
+from dbt_charts.core.constants.axis import LABEL_GAP_SPACES, LABEL_GAP_SPACES_NUMERIC
 from dbt_charts.core.font_measure import (
     FontMeasurer,
     get_weighted_font_measurer,
@@ -280,10 +280,9 @@ def _submonth_candidate_fits(
     if not indices:
         return False
     band = usable_width / len(dates)
-    axis_config = get_chart_rendering().axis
     gaps = (
-        axis_config.label_gap_spaces_numeric * measurer.measure(" ", font_size),
-        axis_config.label_gap_spaces * measurer.measure(" ", font_size),
+        LABEL_GAP_SPACES_NUMERIC * measurer.measure(" ", font_size),
+        LABEL_GAP_SPACES * measurer.measure(" ", font_size),
     )
     rows: tuple[list[tuple[int, str]], list[tuple[int, str]]] = ([], [])
     for position, index in enumerate(indices):
@@ -636,9 +635,7 @@ def _temporal_layout(
         and axis.labels.time_unit in (None, "auto")
         and authored_format is None
     ):
-        gap = get_chart_rendering().axis.label_gap_spaces * measurer.measure(
-            " ", font.size
-        )
+        gap = LABEL_GAP_SPACES * measurer.measure(" ", font.size)
         if encoding_time_unit == "yearmonthdate":
             # _day_label renders two rows ("%-d" over a possibly-blank
             # month/year row); measure that shape directly rather than the
@@ -692,9 +689,7 @@ def _temporal_layout(
             authored_format,
         )
         widths = [measurer.measure(value, font.size) for value in labels]
-        gap = get_chart_rendering().axis.label_gap_spaces * measurer.measure(
-            " ", font.size
-        )
+        gap = LABEL_GAP_SPACES * measurer.measure(" ", font.size)
         return _generic_layout(
             axis, overlap, [width + gap for width in widths], usable_width
         )._replace(format_time_unit=format_time_unit)
@@ -922,7 +917,7 @@ def resolve_axis_x_overlap(
         spec = axis.labels.format.spec if axis.labels.format is not None else None
         labels = [category_label_text(v, spec, font.case) for v in labels]
     widths = [measurer.measure(value, font.size) for value in labels]
-    gap = get_chart_rendering().axis.label_gap_spaces * measurer.measure(" ", font.size)
+    gap = LABEL_GAP_SPACES * measurer.measure(" ", font.size)
     widths = [width + gap for width in widths]
     usable_width = chart_width * label_usable_ratio
     flat_fits = _fits_flat(widths, usable_width)

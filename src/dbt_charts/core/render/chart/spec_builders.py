@@ -89,10 +89,6 @@ def bump_padding_right(
 # Vega's own default for title.offset, which applies when neither the title block
 # nor config.title sets one.
 VEGA_TITLE_OFFSET = 4
-# Vega's own default for the gap between a title and its subtitle, which applies
-# because the spec never sets subtitlePadding; the subtitle line is as tall as
-# its font size because the spec never sets subtitleLineHeight either.
-VEGA_SUBTITLE_PADDING = 3
 
 
 def shift_chart_title(spec: VLDict, shift: TitleShift) -> None:

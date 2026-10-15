@@ -26,7 +26,7 @@ cannot be redefined as a date spec, and vice versa (``ERR-FORMAT-KIND-MISMATCH``
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 
 from pydantic import BaseModel
 
@@ -45,6 +45,7 @@ from dbt_charts.core.compile.models.primitives import (
     FormatTable,
 )
 from dbt_charts.core.compile.models.query.normalized import Query, ValuesQuery
+from dbt_charts.core.compile.resolve.style.axis_cascade import AUTO_AXIS_FORMAT
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_AFFIX_TIME_UNSUPPORTED,
     ERR_FORMAT_ALIAS_CYCLE,
@@ -144,9 +145,13 @@ def _iter_format_slots(
     time_capable: bool,
     vega_painted: bool = False,
     axis_painted: bool = False,
+    replace: Mapping[str, BaseModel | None] | None = None,
 ) -> Iterator[tuple[str, str | FormatConfig, bool, bool, bool]]:
     """Yield (field_path, spec, time_capable, vega_painted, reject_time_affix)
     per format slot.
+
+    ``replace`` swaps the value read for a field of ``node`` itself, keeping
+    its position in field order; it does not reach into nested nodes.
 
     ``vega_painted`` gates ERR-FORMAT-NATIVE-IN-VEGA-SLOT; ``reject_time_affix``
     marks an axis slot, where an affix beside a date spec is rejected.
@@ -155,7 +160,10 @@ def _iter_format_slots(
         for name in type(node).model_fields:
             if name == "query":  # SQL text and source/cache config, no format slots
                 continue
-            value = getattr(node, name)
+            if replace is not None and name in replace:
+                value = replace[name]
+            else:
+                value = getattr(node, name)
             if value is None:
                 continue
             child_time = time_capable or name in _TIME_CAPABLE_FIELDS
@@ -400,6 +408,22 @@ def _check_redefinition_kind(name: str, target: str | FormatConfig) -> None:
         )
 
 
+def _check_reserved_alias(name: str) -> None:
+    """Raise when an alias is named ``auto``: on an axis it means the engine's
+    own default, so an alias of that name would be silently ignored there."""
+    if name == AUTO_AXIS_FORMAT:
+        raise CompilationError.from_code(
+            ERR_FORMAT_INVALID,
+            spec=name,
+            field_path=f"style.formats.{name}",
+            kind_noun="number",
+            explanation=(
+                "`auto` is reserved: an axis's `labels.format: auto` means the "
+                "engine's default. Name the alias something else."
+            ),
+        )
+
+
 def _check_alias_cycle(name: str, aliases: FormatAliases) -> None:
     """Raise when ``name`` leads into a circle of aliases."""
     chain = [name]
@@ -475,20 +499,32 @@ def _spec_name(spec: str | FormatConfig) -> str | None:
     return spec.spec if isinstance(spec, FormatConfig) else spec
 
 
-def format_names_used(board: Board) -> set[str]:
+def format_names_used(
+    board: Board,
+    chart_styles: Mapping[
+        str, BaseModel | None
+    ],  # type-state: optional — None when the chart authors no style
+) -> set[str]:
     """Format names read by a slot, a query column, or a text ``format('name')``
-    call, on this board or any nested board."""
+    call, on this board or any nested board.
+
+    ``chart_styles`` maps chart id to the style patch the chart itself authored.
+    """
     used: set[str] = set()
     text_call = re.compile(r"""\bformat\(\s*(['"])(.+?)\1""")
     for each in _boards(board):
-        roots = (*each.charts.values(), each.authored_style)
-        for root in roots:
-            if root is not None:
-                names = (
-                    _spec_name(spec)
-                    for _, spec, *_ in _iter_format_slots(root, "", False)
+        slots = [
+            *_iter_format_slots(each.authored_style, "", False),
+            *(
+                slot
+                for chart in each.charts.values()
+                for slot in _iter_format_slots(
+                    chart, "", False, replace={"style": chart_styles[chart.id]}
                 )
-                used.update(name for name in names if name is not None)
+            ),
+        ]
+        names = (_spec_name(spec) for _, spec, *_ in slots)
+        used.update(name for name in names if name is not None)
         queries = [*each.queries.values()]
         queries += [
             chart.query
@@ -518,16 +554,27 @@ def _strings(
             yield from _strings(value)
 
 
-def validate_board_format_specs(board: Board) -> None:
+def validate_board_format_specs(
+    board: Board,
+    chart_styles: Mapping[
+        str, BaseModel | None
+    ],  # type-state: optional — None when the chart authors no style
+) -> None:
     """Walk a normalized Board tree, validating every authored format string.
+
+    ``chart_styles`` maps chart id to the style patch the chart itself authored.
 
     Recurses into nested boards -- each carries its own resolved theme, and
     therefore its own alias table (``board.chart_style_context.formats``).
     """
-    _validate_board(board, set())
+    _validate_board(board, chart_styles, set())
 
 
-def _validate_board(board: Board, validated: set[int]) -> None:
+def _validate_board(
+    board: Board,
+    chart_styles: Mapping[str, BaseModel | None],
+    validated: set[int],  # type-state: optional — None when the chart authors no style
+) -> None:
     """Validate one board's format slots, skipping charts a descendant owns."""
     # Nested boards first. Normalization hoists a nested board's charts into
     # every ancestor's `charts` registry (`_collect_charts_from_layout`), by
@@ -537,7 +584,7 @@ def _validate_board(board: Board, validated: set[int]) -> None:
     # table that actually resolves it, and walks each chart exactly once.
     for item in board.layout.items:
         if item.type == "board" and item.board is not None:
-            _validate_board(item.board, validated)
+            _validate_board(item.board, chart_styles, validated)
 
     formats = board.chart_style_context.formats
     aliases = {} if formats is None else formats.aliases
@@ -550,6 +597,7 @@ def _validate_board(board: Board, validated: set[int]) -> None:
     for query_name, query in board.queries.items():
         _validate_query_formats(query_name, query, aliases)
     for alias, target in aliases.items():
+        _check_reserved_alias(alias)
         _check_redefinition_kind(alias, target)
         target_spec = target.spec if isinstance(target, FormatConfig) else target
         _validate_spec(
@@ -580,7 +628,7 @@ def _validate_board(board: Board, validated: set[int]) -> None:
         ("axis_quantitative", charts_style.axis_quantitative),
     ):
         label_format = axis_style.labels.format
-        if label_format is not None:
+        if label_format is not None and label_format != AUTO_AXIS_FORMAT:
             # Axis label format slots are Vega-painted — native formatters invalid.
             _validate_spec(
                 label_format,
@@ -616,8 +664,17 @@ def _validate_board(board: Board, validated: set[int]) -> None:
             and chart.query is not None
         ):
             _validate_query_formats(chart_id, chart.query, aliases)
-        for field_path, spec, timed, is_vega, reject_affix in _iter_format_slots(
-            chart, f"charts.{chart_id}", False
+        for (
+            field_path,
+            spec,
+            timed,
+            is_vega,
+            reject_affix,
+        ) in _iter_format_slots(
+            chart,
+            f"charts.{chart_id}",
+            False,
+            replace={"style": chart_styles[chart_id]},
         ):
             _validate_spec(
                 spec,

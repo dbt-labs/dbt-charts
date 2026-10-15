@@ -953,7 +953,7 @@ rows:
         ``style.formats`` alias) still carries its affix to the text
         render's y-range display.
 
-        axis_cascade.py's chart-format-fallback layer (Layer 10) used to
+        axis_cascade.py's chart-format-fallback layer (Layer 9) used to
         collapse ``format_authored_raw`` to the bare resolved spec string,
         losing the affix this specific shape has nowhere else to ride on --
         the other two forms above (a direct axis_y.labels.format, and an

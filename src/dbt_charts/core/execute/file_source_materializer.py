@@ -40,6 +40,7 @@ from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.adapters.base import QueryParams
 from dbt_charts.core.execute.adapters.duckdb_adapter import duckdb_error_code
 from dbt_charts.core.execute.arrow_ingest import RelationStream, ingest, insert_rows
+from dbt_charts.core.execute.cache_composition import quote_identifier, rows_from_result
 from dbt_charts.core.execute.duckdb_cache import compute_source_hash
 from dbt_charts.core.project import is_glob
 
@@ -51,6 +52,40 @@ if TYPE_CHECKING:
 _JsonRow: TypeAlias = dict[str, Any]
 _FileSource = CsvSourceConfig | JsonSourceConfig | ParquetSourceConfig
 _BYTES_PER_MB = 1_000_000
+
+
+def _bindable_value(
+    value: Any,  # type-state: explicit_any — a json.loads cell is dynamically typed
+) -> Any:  # type-state: explicit_any — the cell, or JSON text for a list/dict
+    """Turn a parsed JSON cell into something DuckDB's INSERT accepts.
+
+    A nested list or dict becomes JSON text for the JSON column; a scalar binds
+    as it is.
+    """
+    if isinstance(value, (list, dict)):
+        return json.dumps(value)
+    return value
+
+
+def _infer_type(
+    value: Any,  # type-state: explicit_any — a json.loads cell is dynamically typed
+) -> str:
+    """The DuckDB column type for a parsed JSON cell.
+
+    Rows reach this only from ``json.loads``, so a cell is None, bool, int,
+    float, str, list or dict and nothing else.
+    """
+    if value is None:
+        return "VARCHAR"
+    if isinstance(value, bool):
+        return "BOOLEAN"
+    if isinstance(value, int):
+        return "BIGINT"
+    if isinstance(value, float):
+        return "DOUBLE"
+    if isinstance(value, (list, dict)):
+        return "JSON"
+    return "VARCHAR"
 
 
 def default_local_materializer_factory(
@@ -177,11 +212,6 @@ class FileSourceMaterializer:
 
         with self._lock:
             conn = self._connection()
-            from dbt_charts.core.execute._duckdb_cache_base import (
-                _q,
-                _rows_from_result,
-            )
-
             for table_name, version, relpaths in table_specs:
                 key = (source_hash, table_name)
                 physical = self._physical_name(source_hash, table_name)
@@ -196,11 +226,13 @@ class FileSourceMaterializer:
                     self._loaded[key] = version
 
                 conn.execute(
-                    f"CREATE OR REPLACE VIEW {_q(table_name)} AS "
-                    f"SELECT * FROM {_q(physical)}"
+                    f"CREATE OR REPLACE VIEW {quote_identifier(table_name)} AS "
+                    f"SELECT * FROM {quote_identifier(physical)}"
                 )
             try:
-                return _rows_from_result(conn.execute(resolved_sql, resolved_params))
+                return rows_from_result(conn.execute(resolved_sql, resolved_params))
+            except DbtChartsError:
+                raise
             except Exception as exc:  # noqa: BLE001 — DuckDB exposes many execution exception classes at this boundary
                 raise QueryError(
                     f"{exc}\nSQL:\n{resolved_sql}", code=duckdb_error_code(exc)
@@ -255,8 +287,6 @@ class FileSourceMaterializer:
         """
         import duckdb
 
-        from dbt_charts.core.execute._duckdb_cache_base import _q
-
         with (
             tempfile.TemporaryDirectory(  # noqa: TID251 — DuckDB's readers take a path; the copies die with the load
                 prefix="dct_file_"
@@ -303,7 +333,9 @@ class FileSourceMaterializer:
                 types = [row[1] for row in described]
                 counts = scratch.execute(
                     "SELECT count(*), "
-                    + ", ".join(f"count({_q(column)})" for column in columns)
+                    + ", ".join(
+                        f"count({quote_identifier(column)})" for column in columns
+                    )
                     + f" FROM {shard.name}"
                 ).fetchone()
                 assert counts is not None
@@ -352,7 +384,9 @@ class FileSourceMaterializer:
                 for shard in shards
             )
             try:
-                ingest(conn, _q(physical), RelationStream(scratch.sql(union)))
+                ingest(
+                    conn, quote_identifier(physical), RelationStream(scratch.sql(union))
+                )
             except duckdb.Error as exc:
                 raise DbtChartsError.from_code(
                     ERR_FILE_SOURCE_UNSUPPORTED_TYPE,
@@ -369,16 +403,10 @@ class FileSourceMaterializer:
     ) -> None:
         import duckdb
 
-        from dbt_charts.core.execute._duckdb_cache_base import (
-            _cache_safe_value,
-            _infer_type,
-            _q,
-        )
-
         staging = 'temp."_dct_file_rows"'
         keys = list(rows[0])
         columns = [
-            f"{_q(column)} "
+            f"{quote_identifier(column)} "
             + _infer_type(
                 next(
                     (row[column] for row in rows if row.get(column) is not None),
@@ -388,7 +416,7 @@ class FileSourceMaterializer:
             for column in keys
         ]
         coerced = [
-            {column: _cache_safe_value(row.get(column)) for column in keys}
+            {column: _bindable_value(row.get(column)) for column in keys}
             for row in rows
         ]
         try:
@@ -397,7 +425,7 @@ class FileSourceMaterializer:
             )
             insert_rows(conn, staging, coerced)
             conn.execute(
-                f"CREATE OR REPLACE TABLE {_q(physical)} AS SELECT * FROM {staging}"
+                f"CREATE OR REPLACE TABLE {quote_identifier(physical)} AS SELECT * FROM {staging}"
             )
         except duckdb.Error as exc:
             raise DbtChartsError.from_code(
@@ -546,13 +574,13 @@ def _csv_header(
 
 def _select(column: str, typed: str | None, target: str | None) -> str:
     """One shard column as the merged table holds it."""
-    from dbt_charts.core.execute._duckdb_cache_base import _q
-
     if typed is not None and typed == target:
-        return _q(column)
+        return quote_identifier(column)
     # A column no file gave a value is text.
     cast_to = "VARCHAR" if target is None else target
-    return f"CAST({_q(column)} AS {cast_to}) AS {_q(column)}"
+    return (
+        f"CAST({quote_identifier(column)} AS {cast_to}) AS {quote_identifier(column)}"
+    )
 
 
 # Fields a CSV export writes for a missing value.
@@ -586,8 +614,6 @@ def _load_csv(
     every field as written, an empty one as the empty string. A column of
     nothing but missing values is null throughout.
     """
-    from dbt_charts.core.execute._duckdb_cache_base import _q
-
     read = "read_csv($1, delim=$2, header=true, sample_size=-1"
     scratch.execute(
         f"CREATE TABLE {table} AS SELECT * FROM {read}, nullstr=$3)",
@@ -603,13 +629,16 @@ def _load_csv(
     if not text:
         return
     counts = scratch.execute(
-        f"SELECT {', '.join(f'count({_q(c)})' for c in text)} FROM {table}"
+        f"SELECT {', '.join(f'count({quote_identifier(c)})' for c in text)} FROM {table}"
     ).fetchone()
     assert counts is not None
     text = [column for column, count in zip(text, counts, strict=True) if count]
     if not text:
         return
-    raw = ", ".join(f"coalesce(raw.{_q(c)}, '') AS {_q(c)}" for c in text)
+    raw = ", ".join(
+        f"coalesce(raw.{quote_identifier(c)}, '') AS {quote_identifier(c)}"
+        for c in text
+    )
     scratch.execute(
         f"CREATE OR REPLACE TABLE {table} AS SELECT typed.* REPLACE ({raw}) "
         f"FROM {table} typed POSITIONAL JOIN {read}, all_varchar=true) raw",
@@ -684,15 +713,13 @@ def _refuse_lossy_nanoseconds(
     The cap in ``_TIMESTAMPS`` makes ns → us the one widening that can lose a
     value, and DuckDB's CAST truncates silently.
     """
-    from dbt_charts.core.execute._duckdb_cache_base import _q
-
     for index, shard in enumerate(shards):
         for column, typed in shard.types.items():
             if typed != "TIMESTAMP_NS" or merged[column] != "TIMESTAMP":
                 continue
             row = scratch.execute(
                 f"SELECT count(*) FROM {shard.name} "
-                f"WHERE epoch_ns({_q(column)}) % 1000 <> 0"
+                f"WHERE epoch_ns({quote_identifier(column)}) % 1000 <> 0"
             ).fetchone()
             if row is not None and row[0]:
                 raise load.mismatch(

@@ -2,9 +2,7 @@
 
 Parses a SQL SELECT and produces one canned row keyed by SELECT aliases — a
 placeholder for warehouse SQL adapters that aren't available in CI. Currently
-only exercised by its own unit test in test_canned_shape_adapter.py; corpus
-sweeps use real adapters end-to-end (see
-apps/looker_migrate/tests/integration/test_corpus_boards_render.py).
+only exercised by its own unit test in test_canned_shape_adapter.py.
 
 This file is TESTS-ONLY. Never imported from production code.
 """

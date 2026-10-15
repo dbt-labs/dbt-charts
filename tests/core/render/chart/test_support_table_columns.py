@@ -802,6 +802,90 @@ def test_per_series_column_cells_use_dark_fills_when_font_color_unset():
     assert fills == ["#aaaaaa", "#bbbbbb"]
 
 
+def _per_series_cell_fills(
+    chart_style: dict[str, object] | None = None,
+    board_patch: dict[str, object] | None = None,
+) -> list[str]:
+    from pydantic import TypeAdapter
+
+    from dbt_charts.core.compile.models.chart.normalized import Chart
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
+    from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "t",
+            "type": "bar",
+            "x": "region",
+            "y": "revenue",
+            "color": "product",
+            "stack": "zero",
+            "query": SqlQuery(sql="SELECT 1", source="src"),
+            "query_name": "q",
+            "support_table": {"entries": [{"per_series": "revenue"}]},
+            "style": {"orientation": "horizontal", **(chart_style or {})},
+        }
+    )
+    data = [
+        {"region": "E", "product": "A", "revenue": 10.0},
+        {"region": "E", "product": "B", "revenue": 5.0},
+        {"region": "W", "product": "A", "revenue": 7.0},
+        {"region": "W", "product": "B", "revenue": 9.0},
+    ]
+    board_style, ctx = resolve_style_and_context(
+        get_theme_style(),
+        *([StylePatch.model_validate(board_patch)] if board_patch else []),
+    )
+    resolve(chart, data, chart_style_context=ctx)
+    spec = generate_vega_lite_spec(
+        chart,
+        data,
+        width=400,
+        height=200,
+        board_style=board_style,
+        chart_style_context=ctx,
+    )
+
+    def cells(node: object) -> list[str]:
+        if isinstance(node, dict):
+            mark = node.get("mark")
+            enc = node.get("encoding", {})
+            if (
+                isinstance(mark, dict)
+                and mark.get("type") == "text"
+                and enc.get("text", {}).get("field") not in (None, "__header")
+                and "fill" in mark
+            ):
+                return [mark["fill"]]
+            return [f for v in node.values() for f in cells(v)]
+        if isinstance(node, list):
+            return [f for v in node for f in cells(v)]
+        return []
+
+    return cells(spec)
+
+
+def test_per_series_columns_keep_an_authored_color_equal_to_the_theme_default():
+    default_ink = get_theme_style().charts.support_table.neutral_color
+    fills = _per_series_cell_fills({"support_table": {"font": {"color": default_ink}}})
+    assert fills and set(fills) == {default_ink}
+
+
+def test_board_level_support_table_color_paints_every_column():
+    fills = _per_series_cell_fills(
+        board_patch={"charts": {"support_table": {"font": {"color": "#336699"}}}}
+    )
+    assert fills and set(fills) == {"#336699"}
+
+
+def test_per_series_columns_use_companion_ink_when_color_is_the_theme_default():
+    fills = _per_series_cell_fills()
+    assert len(set(fills)) == 2
+
+
 # =============================================================================
 # COLUMN DIVIDER (style.support_table.row.divider as a vertical divider between columns)
 # =============================================================================

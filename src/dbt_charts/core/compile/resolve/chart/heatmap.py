@@ -20,8 +20,8 @@ from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedHeatmapStyle
 from dbt_charts.core.compile.resolve.chart._axes import (
     _NO_RAIL_ENDPOINT_LABELS,
-    _authored_legend,
     _bake_ay_position_left,
+    _cascaded_legend,
     cartesian_series_naming,
     color_legend_entries,
     estimate_cartesian_plot_height,
@@ -35,7 +35,6 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     _base_kwargs,
     _cartesian_kwargs,
     _color_column_format,
-    _title_font,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
@@ -53,6 +52,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
+from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 
 __all__ = [
@@ -95,7 +95,7 @@ def _resolve_heatmap(
     naming = cartesian_series_naming(
         normalized,
         channels,
-        _authored_legend(primary),
+        *_cascaded_legend(chart_style_context, heatmap.legend),
         merge_legend(chart_style_context.legend, heatmap.legend),
         width,
         _NO_RAIL_ENDPOINT_LABELS,
@@ -113,8 +113,8 @@ def _resolve_heatmap(
         # top_legend_series=None above means rung 2's floor check never runs
         # for this family either -- these three are inert, not real facts.
         card_padding_px=0.0,
-        subtitle_present=False,
-        axis_title_costs_height=False,
+        subtitle_height_px=0.0,
+        axis_title_height_px=0.0,
     )
     ay_merged = _bake_ay_position_left(ay_merged)
     # Heatmap's column axis (axis_x) is always a bottom-orient nominal band —
@@ -158,7 +158,7 @@ def _resolve_heatmap(
         endpoint_rail_may_discard_domain=False,
     )
     reject_native(style_tail["tooltip_format"], "style.tooltip.format")
-    _tf = _title_font(normalized, chart_local_style_context, width)
+    _tf = resolve_title_font(chart_local_style_context, width)
     return ResolvedHeatmapChart(
         **_base_kwargs(
             normalized,
@@ -185,7 +185,6 @@ def _resolve_heatmap(
             ),
             suppress_legend=naming.suppress_legend,
             top_legend=naming.top_legend,
-            force_legend_visible=naming.force_legend_visible,
             legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
         ),
         **_cartesian_kwargs(

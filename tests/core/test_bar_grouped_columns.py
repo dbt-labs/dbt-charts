@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 
 from dbt_charts.core.compile.config import (
-    get_chart_rendering,
     get_theme_style,
     reset_config,
 )
@@ -422,24 +421,24 @@ class TestGroupedBarScalePadding:
         """Grouped vertical bars: paddingInner creates group gaps, paddingOuter prevents edge overflow."""
         chart = _chart()
         resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
-        bar_cfg = get_chart_rendering().bar
+        bar_cfg = get_theme_style().charts.bar.grouped
         spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
         x_scale = spec.get("encoding", {}).get("x", {}).get("scale", {})
-        assert x_scale.get("paddingInner") == bar_cfg.grouped_bar_padding_inner
-        assert x_scale.get("paddingOuter") == bar_cfg.grouped_bar_padding_outer
+        assert x_scale.get("paddingInner") == bar_cfg.padding_inner
+        assert x_scale.get("paddingOuter") == bar_cfg.padding_outer
         assert "padding" not in x_scale, (
             "grouped bar must not have padding shorthand — it overrides explicit paddingOuter in Vega"
         )
 
     def test_horizontal_grouped_bar_y_scale_padding(self) -> None:
         """Grouped horizontal bars: same padding contract on y scale."""
-        bar_cfg = get_chart_rendering().bar
+        bar_cfg = get_theme_style().charts.bar.grouped
         chart = _chart(orientation="horizontal")
         resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
         spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
         y_scale = spec.get("encoding", {}).get("y", {}).get("scale", {})
-        assert y_scale.get("paddingInner") == bar_cfg.grouped_bar_padding_inner
-        assert y_scale.get("paddingOuter") == bar_cfg.grouped_bar_padding_outer
+        assert y_scale.get("paddingInner") == bar_cfg.padding_inner
+        assert y_scale.get("paddingOuter") == bar_cfg.padding_outer
         assert "padding" not in y_scale, "grouped bar must not have padding shorthand"
 
     def test_non_grouped_bar_uses_bar_padding_not_grouped_defaults(self):
@@ -492,11 +491,11 @@ class TestGroupedBarWithLayers:
         """A grouped bar with a layers: line still gets the grouped-bar band padding."""
         chart = self._chart_with_line_layer()
         resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
-        bar_cfg = get_chart_rendering().bar
+        bar_cfg = get_theme_style().charts.bar.grouped
         spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
         x_scale = self._bar_scale(spec, "x")
-        assert x_scale.get("paddingInner") == bar_cfg.grouped_bar_padding_inner
-        assert x_scale.get("paddingOuter") == bar_cfg.grouped_bar_padding_outer
+        assert x_scale.get("paddingInner") == bar_cfg.padding_inner
+        assert x_scale.get("paddingOuter") == bar_cfg.padding_outer
         assert "padding" not in x_scale, (
             "grouped bar must not have padding shorthand — it overrides explicit paddingOuter in Vega"
         )
@@ -533,11 +532,11 @@ class TestGroupedBarWithLayers:
         """
         chart = self._chart_with_line_layer(orientation="horizontal")
         resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
-        bar_cfg = get_chart_rendering().bar
+        bar_cfg = get_theme_style().charts.bar.grouped
         spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
         y_scale = self._bar_scale(spec, "y")
-        assert y_scale.get("paddingInner") == bar_cfg.grouped_bar_padding_inner
-        assert y_scale.get("paddingOuter") == bar_cfg.grouped_bar_padding_outer
+        assert y_scale.get("paddingInner") == bar_cfg.padding_inner
+        assert y_scale.get("paddingOuter") == bar_cfg.padding_outer
 
     def test_layered_horizontal_grouped_bar_honors_overlap(self) -> None:
         """style.overlap must reach the horizontal layered path too.
@@ -714,11 +713,11 @@ class TestGroupedBarQuantitativeX:
         """The grouped-bar band gutter must not leak onto a quantitative x scale.
 
         ``apply_grouped_bar_spacing`` unconditionally overwrote paddingOuter
-        with the grouped-bar band gutter (``bar_cfg.grouped_bar_padding_outer``)
+        with the grouped-bar band gutter (``bar_cfg.padding_outer``)
         whenever xOffset was present — meaningless on a quantitative scale,
         which has no bands to pad between.
         """
-        bar_cfg = get_chart_rendering().bar
+        bar_cfg = get_theme_style().charts.bar.grouped
         chart = BarChart(
             id="test_bar",
             query=SqlQuery(sql="SELECT 1", source="test"),
@@ -733,7 +732,7 @@ class TestGroupedBarQuantitativeX:
         resolve(chart, NUMERIC_X_DATA, chart_style_context=_BOARD_STYLE)
         spec = generate_vega_lite_spec(chart, NUMERIC_X_DATA)
         x_scale = self._bar_scale_from_flat_or_layered(spec)
-        assert x_scale.get("paddingOuter") != bar_cfg.grouped_bar_padding_outer, (
+        assert x_scale.get("paddingOuter") != bar_cfg.padding_outer, (
             f"quantitative x scale must not carry the grouped-bar band gutter: {x_scale}"
         )
 

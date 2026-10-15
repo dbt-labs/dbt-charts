@@ -47,6 +47,21 @@ class BarChartMarksStyle(BaseModel):
     )
 
 
+class BarGroupedStyle(BaseModel):
+    """Band-scale padding for grouped (side-by-side) bars."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    padding_inner: float = Field(
+        ge=0, lt=1, description="Gap between groups, as a share of the band step."
+    )
+    padding_outer: float = Field(
+        ge=0,
+        lt=1,
+        description="Margin at both plot edges, as a share of the band step.",
+    )
+
+
 class BarLayerStyle(BaseModel):
     """Required wrapper for bar-layer mark overrides (built into a Patch by build_patch_model)."""
 
@@ -107,6 +122,7 @@ class BarChartStyle(_CartesianChartStyle, _QuantitativeAxisChartStyleMixin):
     endpoint_labels: EndpointLabelsConfig = Field(
         description="Series names printed on stacked bars instead of in a legend."
     )
+    grouped: BarGroupedStyle = Field(description="Band-scale padding for grouped bars.")
     marks: Annotated[
         BarChartMarksStyle, InheritSlot(from_path="Style.charts.marks")
     ] = Field(

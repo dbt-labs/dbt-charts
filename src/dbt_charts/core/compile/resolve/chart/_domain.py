@@ -15,7 +15,6 @@ from dbt_charts.core.compile.models.style.theme import (
     AxisYStyle,
     BaseScaleStyle,
     ScaleContinuousStyle,
-    _CartesianChartStyle,
 )
 from dbt_charts.core.compile.resolve.chart._chart_rows import (
     CartesianChart,
@@ -36,6 +35,7 @@ from dbt_charts.core.compile.resolve.chart.tick_values import (
     zero_anchor_domain_floor,
     zero_anchor_floor,
 )
+from dbt_charts.core.compile.resolve.style.axis_cascade import target_tick_count
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_BAR_Y_NOT_NUMERIC,
@@ -53,7 +53,6 @@ _VEGA_DEFAULT_TICK_COUNT = 11
 
 __all__ = [
     "_CartesianTickResolution",
-    "_authored_axis_y_ticks_count",
     "_axis_headroom",
     "_bake_normalize_domain",
     "_bake_y_zero",
@@ -189,31 +188,6 @@ def _reject_non_positive_log_scale_data(
                 chart_id=chart_id,
                 y_field=field,
             )
-
-
-def _authored_axis_y_ticks_count(
-    chart_style: _CartesianChartStyle | None,
-) -> int | None:
-    """The chart's OWN authored ``axis_y.ticks.count`` — pre-cascade, not the
-    theme-defaulted resolved value.
-
-    The theme always resolves ``ay.ticks.count`` to a concrete default (e.g.
-    6 nice ticks) for every quantitative axis, so the resolved
-    ``ResolvedAxisStyle.ticks.count`` is essentially never ``None`` in
-    practice. Only a count the *chart itself* deliberately set is a real
-    authoring conflict with ``type: log`` — the theme's blanket tick-count
-    default is not a per-chart decision about this axis and must not trip it.
-    """
-    if chart_style is None or chart_style.axis_y is None:
-        return None
-    # AxisStylePatch.ticks: its TYPE_CHECKING stub inherits AxisYStyle's
-    # non-Optional `ticks: AxisTicksStyle = Field(default_factory=...)`, but
-    # build_patch_model_ext genuinely makes this field Optional at runtime —
-    # getattr is the correct escape hatch for this Patch-vs-compiled-type
-    # stub mismatch (mypy would otherwise flag a real `is None` check as
-    # unreachable), not a defensive read of a guaranteed field.
-    ticks = getattr(chart_style.axis_y, "ticks", None)
-    return ticks.count if ticks is not None else None
 
 
 def _axis_headroom(ay: AxisYStyle) -> float | None:
@@ -458,7 +432,6 @@ def _resolve_cartesian_ticks(
     ay: AxisYStyle,
     y_floats: list[float],
     zero_anchor: bool,
-    authored_ticks_count: int | None,
     scale: Literal["shared", "independent"],
     *,
     is_quantitative: bool,
@@ -472,9 +445,9 @@ def _resolve_cartesian_ticks(
     all of them, because a series drawn outside the domain is outside the plot.
 
     A log measure axis always delegates tick placement to Vega-Lite (log
-    decades), regardless of the theme's tick-count default — unless the
-    chart itself explicitly authored ``ticks.count``, which is a genuine
-    conflict (a target count is meaningless on a log axis) and raises.
+    decades), unless ``ticks.count`` is a concrete number from any tier, which
+    is a genuine conflict (a target count is meaningless on a log axis) and
+    raises.
 
     Two headroom formulas depending on zero-anchor:
     - Zero-anchored: multiplicative on the far edge, with 0 as the near one.
@@ -502,9 +475,8 @@ def _resolve_cartesian_ticks(
     not — only an aggregate needs one panel's rows); what changes is only
     whether the result gets baked.
 
-    An unauthored ``ticks.count`` (a theme like ``stark`` that leaves it
-    unset, deliberately, for Vega-Lite's own dynamic tick density) always
-    returns an empty ladder: a fixed-density ladder would replace that
+    A ``ticks.count`` left unset (``None``; every built-in theme says ``auto``,
+    which bakes a ladder) always returns an empty ladder: a fixed-density ladder would replace that
     density with a much coarser one on a large-magnitude axis. A fixed-decimal
     format instead reaches Vega-Lite as a resolved ``tickMinStep``
     (``build_resolved_axis``). Vega-Lite honors it inconsistently without an
@@ -520,7 +492,7 @@ def _resolve_cartesian_ticks(
     """
     _cont = ay.scale.continuous if ay.scale is not None else None
     if _cont is not None and _cont.type == "log":
-        if authored_ticks_count is not None:
+        if isinstance(ay.ticks.count, int):
             raise CompilationError.from_code(
                 ERR_TICKS_COUNT_REQUIRES_NON_LOG_SCALE,
                 chart_id=chart_id,
@@ -553,14 +525,13 @@ def _resolve_cartesian_ticks(
     # over it either way, but its step must not be floored by a format rule
     # meant for a measure axis.
     min_step = _measure_axis_min_step(ay) if is_quantitative else None
-    # A theme leaving ticks.count unset (stark, deliberately, for Vega-Lite's
-    # own dynamic tick density) bakes no ladder: Vega-Lite picks the ticks and
+    # An unset ticks.count bakes no ladder: Vega-Lite picks the ticks and
     # the format floor reaches it as a resolved tickMinStep (see
     # build_resolved_axis); a floored format also bakes the domain bounds
     # below, since Vega-Lite honors it inconsistently against an auto domain.
-    if (ay.ticks.count is None and min_step is None) or not y_floats:
+    target_count = target_tick_count(ay.ticks.count)
+    if (target_count is None and min_step is None) or not y_floats:
         return _CartesianTickResolution((), None, negative_floor)
-    target_count = ay.ticks.count
     authored = numeric_domain_bounds(_cont.domain if _cont is not None else None)
     domain_max: float | None = None
     domain_min: float | None = None
@@ -716,8 +687,7 @@ def _y_domain_floor(
 
     Returns None only when nothing pins the floor at all: no tick ladder
     was baked (a log measure axis, ``scale: independent`` small multiples,
-    a theme that never sets ``axis_quantitative.ticks.count`` -- stark --
-    unconditionally, or no data), or a zoomed axis with an authored (never
+    an unset ``axis_quantitative.ticks.count`` unconditionally, or no data), or a zoomed axis with an authored (never
     data-related) ladder and no authored/baked bound.
     ``_y_gridline_caps_bottom`` treats this as the undecidable case.
 
@@ -773,7 +743,7 @@ def _y_gridline_caps_bottom(
     default is to show it. An earlier revision answered False here by
     treating "no ladder baked" as if it meant "gridlines already reach the
     labels" -- confirmed wrong by rendering a log-scale axis and a
-    ``stark``-themed chart, where Vega-Lite draws gridlines with no ladder
+    chart with no ticks count, where Vega-Lite draws gridlines with no ladder
     baked on our side at all.
 
     Otherwise: an exact/near-exact match between the ladder's lowest rung
@@ -834,9 +804,9 @@ def _resolve_stacked_bar_ticks(
     # numeric-string-but-nominal case for a stack total), so this reads
     # ay.labels.format unconditionally, unlike the non-stacked sibling.
     min_step = _measure_axis_min_step(ay)
-    if ay.ticks.count is None:
+    target_count = target_tick_count(ay.ticks.count)
+    if target_count is None:
         return ()
-    target_count = ay.ticks.count
     data = dataset.all_rows()
     if not data:
         return ()
@@ -868,13 +838,19 @@ def _resolve_stacked_bar_ticks(
         raw_max = sm if sm is not None else max(y_floats)
         tick_max = apply_headroom(raw_max, _axis_headroom(ay))
         tick_min = min(0.0, min(y_floats))  # stacked bars always zero-anchor
-    ticks = tuple(nice_tick_values(tick_min, tick_max, target_count, min_step=min_step))
+    ticks: tuple[float, ...] = tuple(
+        nice_tick_values(tick_min, tick_max, target_count, min_step=min_step)
+    )
     if authored is None and min_step is not None and tick_min < 0:
         # A stack pins its floor from ticks[0], which the format floor can
         # round below the real data. Bake nothing then; the floor reaches
         # Vega-Lite as a resolved tickMinStep (see build_resolved_axis).
         unfloored = nice_tick_values(tick_min, tick_max, target_count)
-        if ticks[0] < unfloored[0]:
+        # At the floor's own step, a negative reach under half of it is a zero,
+        # not a row to give a rung.
+        step = next((b - a for a, b in zip(ticks, ticks[1:], strict=False)), None)
+        phantom_rung = step is not None and step <= min_step and -tick_min < step / 2
+        if ticks[0] < unfloored[0] or phantom_rung:
             return ()
     return ticks
 

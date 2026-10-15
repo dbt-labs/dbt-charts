@@ -48,7 +48,6 @@ class TestChartTypeMappings:
             ("area", "area"),
             ("scatter", "point"),
             ("heatmap", "rect"),
-            ("pie", "arc"),
         ],
     )
     def test_chart_type_mapping(self, make_chart, chart_type: str, expected_mark: str):

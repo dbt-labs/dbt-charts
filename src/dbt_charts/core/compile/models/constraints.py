@@ -62,9 +62,13 @@ class AtLeastOneOf:
 
 @dataclasses.dataclass(frozen=True)
 class AtMostOneOf:
+    """At most one key is set. A key in ``auto`` counts as unset while it reads
+    ``auto``: the engine decides it, so it is not a second authored value."""
+
     keys: tuple[str, ...]
     message: str
     nonempty: tuple[str, ...] = ()
+    auto: tuple[str, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -173,15 +177,17 @@ def _keys(constraint: Constraint) -> tuple[str, ...]:
             return (key, *(c.key for c in when))
         case NotNull(keys, _):
             return keys
-        case AtLeastOneOf(keys, _, nonempty) | AtMostOneOf(keys, _, nonempty):
+        case AtMostOneOf(keys, _, nonempty, auto):
+            return (*keys, *nonempty, *auto)
+        case AtLeastOneOf(keys, _, nonempty):
             return (*keys, *nonempty)
         case Requires(keys, _, when, nonempty) | Forbids(keys, _, when, nonempty):
             return (*keys, *(c.key for c in when), *nonempty)
 
 
-def _is_set(model: BaseModel, key: str, nonempty: bool) -> bool:
+def _is_set(model: BaseModel, key: str, nonempty: bool, auto: bool = False) -> bool:
     value = _value_at(model, key)
-    if value is None:
+    if value is None or (auto and value == "auto"):
         return False
     if not nonempty:
         return True
@@ -232,8 +238,10 @@ def check_constraints(model: BaseModel) -> None:
             case AtLeastOneOf(keys, message, nonempty):
                 if not any(_is_set(model, k, k in nonempty) for k in keys):
                     raise _fail(model, message)
-            case AtMostOneOf(keys, message, nonempty):
-                set_keys = [k for k in keys if _is_set(model, k, k in nonempty)]
+            case AtMostOneOf(keys, message, nonempty, auto):
+                set_keys = [
+                    k for k in keys if _is_set(model, k, k in nonempty, k in auto)
+                ]
                 if len(set_keys) > 1:
                     raise _fail(model, message, set=set_keys)
             case Requires(keys, message, when, nonempty):

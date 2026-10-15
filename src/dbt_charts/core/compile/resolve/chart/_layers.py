@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from typing import Any
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import (
     check_anchored_sign,
@@ -58,6 +57,7 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import (
     affix_tick_label,
     ladderless_tick_label,
 )
+from dbt_charts.core.constants.marks import STROKE_FALLBACK_WIDTH
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_LAYER_AXIS_TITLE_WITHOUT_POSITION,
@@ -233,7 +233,7 @@ def _resolve_one_layer(
         line_merged = _apply_line_width(
             line_merged,
             line_adaptive_stroke,
-            get_chart_rendering().stroke.fallback_width,
+            STROKE_FALLBACK_WIDTH,
         )
         resolved_line_layer_mark = _build_resolved_line_mark(line_merged, line_labels)
         line_layer_point_mark = resolved_as(
@@ -278,7 +278,7 @@ def _resolve_one_layer(
         area_line_merged = _apply_line_width(
             area_line_merged,
             line_adaptive_stroke,
-            get_chart_rendering().stroke.fallback_width,
+            STROKE_FALLBACK_WIDTH,
         )
         return ResolvedAreaLayer(
             type="area",

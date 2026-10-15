@@ -85,7 +85,7 @@ class TestClockCascade:
         )
         charts = resolve_chart_style_context(patched)
         axis = resolved_axis_style(
-            charts, "axis_x", "temporal", chart_type="", label_authored=False
+            charts, "axis_x", "temporal", chart_type="", labeled=False
         )
         assert axis.labels.clock == 24
 
@@ -100,7 +100,7 @@ class TestClockCascade:
         """
         charts = resolve_chart_style_context(get_theme_style())
         axis = resolved_axis_style(
-            charts, "axis_x", "temporal", chart_type="", label_authored=False
+            charts, "axis_x", "temporal", chart_type="", labeled=False
         )
         assert axis.labels.clock is not None
         assert axis.labels.clock == get_theme_style().charts.axis_x.labels.clock

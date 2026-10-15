@@ -16,7 +16,7 @@ DAG-safe path.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -32,7 +32,7 @@ from dbt_charts.core.compile.models.factories import (
     build_patch_model_ext,
     register_patch,
 )
-from dbt_charts.core.compile.models.markers import Merge, Strategy
+from dbt_charts.core.compile.models.markers import NotInherited
 from dbt_charts.core.compile.models.style.authored.table import (
     PaginationConfig,
     TableChartStylePatch,
@@ -57,6 +57,7 @@ from dbt_charts.core.compile.models.style.theme import (
     BaseAxisStyle,
     BaseScaleStyle,
     ChartsStyle,
+    ChartTitleStyle,
     DimensionLabelStyle,
     DimensionTicksStyle,
     GeoshapeChartStyle,
@@ -80,7 +81,6 @@ from dbt_charts.core.compile.models.style.theme import (
     Style,
     SupportTableStyle as SupportTableStyle,
     TableChartStyle,
-    TitleStyle,
     TotalSlotStyle,
     TotalStyle,
     XScaleStyle,
@@ -215,14 +215,15 @@ class EndpointLabelsConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
-    visible: bool = Field(
+    visible: bool | Literal["auto"] = Field(
         description=(
-            "Print series names on the chart instead of in a legend. True on "
-            "every built-in theme, and used wherever the shape can name every "
-            "series: line and area charts, and stacked bars. Grouped bars, "
-            "layered charts, small multiples, and very narrow cards keep a "
-            "legend instead. "
-            "Set false to move the names back into a legend everywhere. Where "
+            "Print series names on the chart instead of in a legend. 'auto' "
+            "on every built-in theme: used wherever the shape can name every "
+            "series (line and area charts, and stacked bars), with a legend "
+            "on grouped bars, layered charts, small multiples, and very "
+            "narrow cards. "
+            "Set true to print them on every shape that can, or false to move "
+            "the names back into a legend everywhere. Where "
             "the labels do appear they replace the color legend, so this "
             "setting and not `legend` is what removes them."
         )
@@ -306,8 +307,7 @@ TableChartStylePatch.model_rebuild(_types_namespace=_authored_ns)
 ChartsStyle.model_rebuild(_types_namespace=_authored_ns)
 
 # Generated and registered before _StylePatchBase so build_patch_model(Style)
-# reuses this exact class when recursing into ChartsStyle, giving a stable name
-# for ChartStyleContext.charts_board_overrides.
+# reuses this exact class when recursing into ChartsStyle, giving it a stable name.
 if TYPE_CHECKING:
 
     class ChartsStylePatch(ChartsStyle):
@@ -318,15 +318,15 @@ else:
 
 
 # build_patch_model_ext is @cache'd: theme/_chart_base.py already built this
-# exact TitleStylePatch class (for the chart-local title sentinel field), so
+# exact ChartTitleStylePatch class (for the chart-local title sentinel field), so
 # this call returns that same object rather than generating a second one.
 if TYPE_CHECKING:
 
-    class TitleStylePatch(TitleStyle):
+    class ChartTitleStylePatch(ChartTitleStyle):
         pass
 
 else:
-    TitleStylePatch = build_patch_model(TitleStyle)
+    ChartTitleStylePatch = build_patch_model(ChartTitleStyle)
 
 
 # Style itself under TYPE_CHECKING: the patch carries Style's field names, so a
@@ -359,7 +359,7 @@ class StylePatch(_StylePatchBase):
     """Authored overlay for Style: all fields optional."""
 
     # Redeclared (not generated) because a float has no patch class to carry the
-    # shorthand; Merge repeats Style.gap's.
+    # shorthand; NotInherited repeats Style.gap's.
     gap: Annotated[
         Annotated[
             float,
@@ -372,7 +372,7 @@ class StylePatch(_StylePatchBase):
             ),
         ]
         | None,
-        Merge(Strategy.OVERRIDE, nested=Strategy.CHILD),
+        NotInherited(),
     ] = Field(default=None, description=Style.model_fields["gap"].description)
 
 

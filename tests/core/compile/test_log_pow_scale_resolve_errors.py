@@ -237,6 +237,48 @@ def test_line_log_scale_with_ticks_count_raises() -> None:
     assert exc_info.value.code.code == "ERR-TICKS-COUNT-REQUIRES-NON-LOG-SCALE"
 
 
+def test_line_log_scale_with_board_level_ticks_count_raises() -> None:
+    from dbt_charts.core.compile.config import get_theme_style
+    from dbt_charts.core.compile.errors import CompilationError
+    from dbt_charts.core.compile.models.style.authored import (
+        LineChartStylePatch,
+        StylePatch,
+    )
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
+
+    board_patch = StylePatch.model_validate(
+        {"charts": {"axis_quantitative": {"ticks": {"count": 5}}}}
+    )
+    chart = _line_normalized(
+        style=LineChartStylePatch.model_validate(
+            {"axis_y": {"scale": {"continuous": {"type": "log"}}}}
+        )
+    )
+    with pytest.raises(CompilationError) as exc_info:
+        resolve(
+            chart,
+            _DATA,
+            resolve_chart_style_context(get_theme_style(), board_patch),
+        )
+    assert exc_info.value.code is not None
+    assert exc_info.value.code.code == "ERR-TICKS-COUNT-REQUIRES-NON-LOG-SCALE"
+
+
+def test_line_log_scale_on_clarity_does_not_raise() -> None:
+    from dbt_charts.core.compile.config import get_theme_style
+    from dbt_charts.core.compile.models.style.authored import LineChartStylePatch
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
+
+    chart = _line_normalized(
+        style=LineChartStylePatch.model_validate(
+            {"axis_y": {"scale": {"continuous": {"type": "log"}}}}
+        )
+    )
+    resolve(chart, _DATA, resolve_chart_style_context(get_theme_style("clarity")))
+
+
 def test_line_log_scale_without_ticks_count_does_not_raise() -> None:
     from dbt_charts.core.compile.models.style.authored import LineChartStylePatch
     from dbt_charts.core.compile.resolve import resolve

@@ -904,16 +904,16 @@ def test_label_pane_min_pixel_gap_at_least_font_size():
     so the collision-avoidance algorithm produced overlapping bounding
     rects. The contract is that the multiplier is >= 1.0 so labels'
     bounding rects can never overlap on the y-axis. We assert the *rule*,
-    not the literal value, so tuning the multiplier upward via chart_rendering config stays free.
+    not the literal value, so tuning the multiplier upward stays free.
 
     A unit test of the pixel<->data conversion formula in isolation cannot
     see whether the *delivered* pixel gap actually meets this floor — see
     ``test_endpoint_label_gap.py``, which measures it from rendered SVG.
-    This test only pins the typographic rule the config value must satisfy.
+    This test only pins the typographic rule the engine constant must satisfy.
     """
-    from dbt_charts.core.compile.config import get_chart_rendering
+    from dbt_charts.core.constants.marks import ENDPOINT_LABEL_LINE_HEIGHT_MULTIPLIER
 
-    multiplier = get_chart_rendering().endpoint_labels.line_height_multiplier
+    multiplier = ENDPOINT_LABEL_LINE_HEIGHT_MULTIPLIER
     assert multiplier >= 1.0, (
         f"line_height_multiplier ({multiplier}) must be >= 1.0 "
         f"or adjacent label bounding rects can overlap"

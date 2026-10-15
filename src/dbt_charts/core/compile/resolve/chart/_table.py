@@ -52,7 +52,6 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
     _shared_kwargs,
-    _title_font,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_requested_alias_palette,
@@ -64,6 +63,10 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 )
 from dbt_charts.core.compile.resolve.style.palette import (
     palette as resolve_named_palette,
+)
+from dbt_charts.core.compile.resolve.style.typography import (
+    concrete_title_style,
+    resolve_title_font,
 )
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.codes_compile import (
@@ -661,7 +664,7 @@ def _resolve_table(
                 field_path=f"charts.{normalized.id}.style.columns.{name}.format",
             )
     header_overflow_val = primary.header_overflow if primary is not None else None
-    _tf = _title_font(normalized, chart_local_style_context, width)
+    _tf = resolve_title_font(chart_local_style_context, width)
     return ResolvedTableChart(
         **_base_kwargs(
             normalized,
@@ -689,7 +692,7 @@ def _resolve_table(
         column_defaults=column_defaults_val,
         style=ResolvedTableStyle(
             table=table,
-            title=chart_local_style_context.title,
+            title=concrete_title_style(chart_local_style_context),
             formats=chart_local_style_context.formats,
             title_font=_tf,
             pagination=chart_local_style_context.pagination,

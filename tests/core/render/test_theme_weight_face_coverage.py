@@ -107,26 +107,25 @@ def test_every_theme_cascaded_weight_has_a_registered_static_face() -> None:
 
 
 def test_every_theme_covers_the_footer_brand_weight() -> None:
-    """The footer's emphasis weight is a constant, not a cascaded style value.
+    """The footer brand run sets a heavier weight than the theme's body weights.
 
-    ``_collect_family_weight_pairs`` above walks what a theme cascades, so it
-    cannot see ``chart_rendering.frame.footer_brand_weight`` — the footer sets
-    its brand run heavier without any theme asking for it. A theme whose body family has no
+    ``_collect_family_weight_pairs`` above walks the font weights a theme
+    cascades, so it cannot see ``footer.brand_weight`` — the footer sets
+    its brand run heavier without any font slot asking for it. A theme whose body family has no
     row for that weight renders the phrase heavier in a browser and flat in
     every PNG/PDF export, the same silent failure this file exists to catch.
     """
-    from dbt_charts.core.compile.config import get_chart_rendering
-
-    weight = str(get_chart_rendering().frame.footer_brand_weight)
     missing: set[tuple[str, str]] = set()
     for theme in _PRODUCTION_THEMES:
-        family = _primary_family(get_theme_style(theme).font.family)
+        style = get_theme_style(theme)
+        weight = str(style.footer.brand_weight)
+        family = _primary_family(style.font.family)
         if family is None or family not in _TARGET_FAMILIES:
             continue
         if weight not in WEIGHT_FACE_ALIASES[family]:
             missing.add((theme, family))
 
     assert not missing, (
-        f"Theme(s) whose body family has no static face at weight {weight}, "
-        f"which the footer brand run always requests: {sorted(missing)}"
+        f"Theme(s) whose body family has no static face at the footer brand weight, "
+        f"which the footer brand run requests: {sorted(missing)}"
     )

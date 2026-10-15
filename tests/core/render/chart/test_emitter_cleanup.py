@@ -37,11 +37,15 @@ def _board_style_with_endpoint_labels(
     from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-    with_legend = model_copy_at(get_theme_style("stark"), "charts.legend.visible", True)
+    with_legend = model_copy_at(
+        get_theme_style("stark"), "charts.legend.visible", "auto"
+    )
     seed = model_copy_at(
         with_legend,
         f"charts.{chart_type}.endpoint_labels",
-        EndpointLabelsConfig(visible=enabled, label_offset=5.0, height=20.0),
+        EndpointLabelsConfig(
+            visible="auto" if enabled else False, label_offset=5.0, height=20.0
+        ),
     )
     return resolve_chart_style_context(seed)
 
@@ -199,7 +203,7 @@ def test_grouped_bar_scale_padding_set_by_emitter(
     top level before that wrap), so the emitter — not a post-emit feature —
     owns this now.
     """
-    from dbt_charts.core.compile.config import get_chart_rendering, get_theme_style
+    from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.resolve import resolve
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
     from dbt_charts.core.render.chart.emitters.bar import BarEmitter
@@ -212,7 +216,7 @@ def test_grouped_bar_scale_padding_set_by_emitter(
     # vertical bars, y for horizontal) — don't assume an orientation default.
     cat_ch = "y" if "yOffset" in spec.encoding else "x"
     cat_scale = spec.encoding.get(cat_ch, {}).get("scale", {})
-    grouped_bar_padding_outer = get_chart_rendering().bar.grouped_bar_padding_outer
+    grouped_bar_padding_outer = get_theme_style().charts.bar.grouped.padding_outer
     assert cat_scale.get("paddingOuter") == grouped_bar_padding_outer
 
 

@@ -13,7 +13,12 @@ from pydantic import (
     model_validator,
 )
 
-from dbt_charts.core.compile.models.markers import Color, Merge, Strategy
+from dbt_charts.core.compile.models.markers import (
+    Color,
+    Merge,
+    NotInherited,
+    Strategy,
+)
 from dbt_charts.core.compile.models.primitives import (
     BOX_SHADOW_PATTERN,
     BorderStyle,
@@ -57,10 +62,10 @@ class Style(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # nested=CHILD: FrameStyle's own docstring says it must not cascade to
+    # FrameStyle's own docstring says it must not cascade to
     # child boards — each board's structural frame is its own, the same as
     # gap/margin/padding below.
-    frame: Annotated[FrameStyle, Merge(Strategy.DEEP, nested=Strategy.CHILD)] = Field(
+    frame: Annotated[FrameStyle, NotInherited()] = Field(
         description="Board-level structural frame dimensions."
     )
     background: Annotated[str, Color()] = Field(
@@ -111,26 +116,24 @@ class Style(BaseModel):
     charts: ChartsStyle = Field(
         description="Root of all chart-type styles and shared chart configuration."
     )
-    # nested=CHILD: rows/cols/grid spacing and grid column count are each
+    # rows/cols/grid spacing and grid column count are each
     # board's own, not thematic identity. The marker has to sit on this
     # whole container, not on LayoutStyle's own rows/cols/grid fields:
     # merge_patches only checks a Merge marker on the field it walks, so an
     # inner marker would never fire unless a nested board separately
     # authored something else under layout: too. That also stops
     # tabs/details styling from crossing a board boundary.
-    layout: Annotated[LayoutStyle, Merge(Strategy.DEEP, nested=Strategy.CHILD)] = Field(
+    layout: Annotated[LayoutStyle, NotInherited()] = Field(
         description="Spacing and arrangement inside the containers (rows, cols, grid, tabs, details)."
     )
     variables: VariablesStyle = Field(description="Variable controls chrome style.")
-    # nested=CHILD: footer/timestamp are root-board-only chrome — a nested
+    # footer/timestamp are root-board-only chrome — a nested
     # board has no footer or timestamp line of its own to draw, so an
     # ancestor's authored values here have nothing to reach.
-    footer: Annotated[FooterStyle, Merge(Strategy.DEEP, nested=Strategy.CHILD)] = Field(
+    footer: Annotated[FooterStyle, NotInherited()] = Field(
         description="Page footer chrome visibility."
     )
-    timestamp: Annotated[
-        TimestampStyle, Merge(Strategy.DEEP, nested=Strategy.CHILD)
-    ] = Field(
+    timestamp: Annotated[TimestampStyle, NotInherited()] = Field(
         description="Data-freshness chrome: visibility, placement, format, and font."
     )
     # Cascade-managed sentinel — None means "no aliases at this cascade level" (not empty).
@@ -193,25 +196,21 @@ class Style(BaseModel):
     )
     # padding/margin/gap below: none of them are theme-populated (no shipped
     # theme sets any of the three), matching their own "per-board"
-    # descriptions. Each carries nested=CHILD so a nested board that authors
+    # descriptions. Each is NotInherited so a nested board that authors
     # any style of its own never inherits an ancestor's value for these —
     # the same rows/cols/grid pattern. A nested board authoring no style at
     # all still inherits everything, these three included, via the
     # compile_board_resolved_style fast path (verbatim reuse of the parent).
-    padding: Annotated[
-        SpacingValues | None, Merge(Strategy.DEEP, nested=Strategy.CHILD)
-    ] = Field(
+    padding: Annotated[SpacingValues | None, NotInherited()] = Field(
         default=None,
         description="Per-board padding override (CSS shorthand or structured).",
     )
-    margin: Annotated[
-        SpacingValues | None, Merge(Strategy.DEEP, nested=Strategy.CHILD)
-    ] = Field(
+    margin: Annotated[SpacingValues | None, NotInherited()] = Field(
         default=None,
         description="Per-board margin override (CSS shorthand or structured).",
     )
-    gap: Annotated[float | None, Merge(Strategy.OVERRIDE, nested=Strategy.CHILD)] = (
-        Field(default=None, description="Per-board gap between layout items in pixels.")
+    gap: Annotated[float | None, NotInherited()] = Field(
+        default=None, description="Per-board gap between layout items in pixels."
     )
 
     @model_validator(mode="after")

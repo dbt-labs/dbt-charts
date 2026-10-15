@@ -156,6 +156,14 @@ x: month
 y: revenue
 """
 
+_VERTICAL_BAR = """
+type: bar
+x: cat
+y: revenue
+style:
+  orientation: vertical
+"""
+
 _BAR_CURRENCY_Y = """
 type: bar
 x: cat
@@ -273,7 +281,7 @@ class TestTooManyXCategoriesReadsV2:
         from dbt_charts.core.render.warnings import too_many_x_categories as detector
         from dbt_charts.core.render.warnings.base import WarningContext
 
-        chart = _compile_chart_v2(_BAR_CURRENCY_Y, "bar1")
+        chart = _compile_chart_v2(_VERTICAL_BAR, "bar1")
         board = _make_v2_board({"bar1": chart})
         rows = [{"cat": f"cat_{i}", "revenue": i} for i in range(51)]
         ctx = WarningContext(
@@ -298,7 +306,7 @@ class TestTooManyXCategoriesReadsV2:
         from dbt_charts.core.render.warnings import too_many_x_categories as detector
         from dbt_charts.core.render.warnings.base import WarningContext
 
-        chart = _compile_chart_v2(_BAR_CURRENCY_Y, "bar1")
+        chart = _compile_chart_v2(_VERTICAL_BAR, "bar1")
         board = _make_v2_board({"bar1": chart})
         rows = [{"cat": f"cat_{i}", "revenue": i} for i in range(10)]
         ctx = WarningContext(
@@ -329,7 +337,7 @@ class TestLikelyCurrencyOrPercentMissingFormatterReadsV2:
         )
         from dbt_charts.core.render.warnings.base import WarningContext
 
-        chart = _compile_chart_v2(_BAR_CURRENCY_Y, "bar1")
+        chart = _compile_chart_v2(_VERTICAL_BAR, "bar1")
         board = _make_v2_board({"bar1": chart})
         ctx = WarningContext(
             board_spec=board,

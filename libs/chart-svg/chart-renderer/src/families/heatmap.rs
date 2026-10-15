@@ -14,6 +14,7 @@
 //! - a vertical gradient legend above or below the plot, or a right-hand y
 //!   axis — neither has a probed geometry, and no corpus board draws one
 
+use crate::constants::axis::GRADIENT_NICE_TICK_COUNT;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
@@ -52,9 +53,6 @@ const VEGA_GRADIENT_LENGTH_MAX: f64 = 200.0;
 /// `utils.py::_BREATHING_ROOM_PX` — the gap production leaves between an
 /// own-side label's near edge and the plot it grows toward.
 pub(crate) const BREATHING_ROOM_PX: f64 = 4.0;
-/// `defaults/default_config.yml`'s `gradient.nice_tick_count`. The resolved
-/// payload carries no tick count, so the config default is the contract.
-const GRADIENT_NICE_TICK_COUNT: usize = 6;
 /// Vega's `config.axis.translate`: every axis group is drawn half a pixel in
 /// from its anchor so 1px strokes land on a pixel boundary.
 pub(crate) const AXIS_TRANSLATE: f64 = 0.5;
@@ -199,16 +197,13 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
     if r.legend.visible && !categorical && r.legend.position.overlay {
         return Err("heatmap: a floating gradient legend is not modeled (its gradient length follows the orient)".into());
     }
-    if r.style.axis_y.position.as_deref() == Some("right") {
-        return Err("heatmap: axis_y.position right not supported".into());
-    }
-    // `axis_y.mirror` is line's own fit-arm feature (line.rs); heatmap has
-    // no ghost-axis model — refuse rather than silently ignore an authored
-    // mirror and render an unmirrored chart.
-    if !matches!(&r.style.axis_y.mirror, None | Some(Value::Null) | Some(Value::Bool(false))) {
-        return Err("heatmap: axis_y.mirror not supported".into());
-    }
     if r.multiples.is_some() {
+        if r.style.axis_y.position.as_deref() == Some("right") {
+            return Err("heatmap: multiples with axis_y.position right not supported".into());
+        }
+        if r.style.axis_y.mirror_requested("heatmap")? {
+            return Err("heatmap: multiples with axis_y.mirror not supported".into());
+        }
         return crate::families::heatmap_facet::render_facet(payload, fonts, &r);
     }
 
@@ -266,12 +261,6 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
             .label_usable_ratio
             .ok_or("heatmap: label_usable_ratio absent (theme required for the x axis ladder)")?;
         let axis = HeatmapXAxis::dates(&x_first_seen, ax_x, w, usable_ratio, fonts, LEAD)?;
-        if x_domain != x_first_seen {
-            return Err(
-                "heatmap: a single chart with a date x reordered by an authored sort is not supported"
-                    .into(),
-            );
-        }
         Some(axis)
     } else {
         None
@@ -320,9 +309,6 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
     // (`build_cartesian_x_encoding`); it paints from query order.
     let y_first_seen = first_appearance(&payload.rows, y_field);
     let y_dates = y_date_labels(&y_first_seen, ax_y, h, r.style.label_usable_ratio, fonts, y_label_family, y_label_fs)?;
-    if y_dates.is_some() && y_domain != y_first_seen {
-        return Err("heatmap: a date y reordered by an authored sort is not supported".into());
-    }
     let y_label_bands: Vec<String> = match &y_dates {
         Some(labels) => labels.iter().map(|l| y_domain[l.domain_idx].clone()).collect(),
         None => y_domain.clone(),
@@ -355,17 +341,43 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
             .padding
             .ok_or("heatmap: axis_y.labels.padding absent (theme required)")?
     };
+    // A resolved `right` align on a right axis is measurable: production bakes
+    // `labelPadding = max_width + 4` and end-anchors the labels there.
+    let y_right = ax_y.position.as_deref() == Some("right");
+    if y_right && (y_dates.is_some() || ax_y.labels.align.as_deref() != Some("right") || matches!(y_case, "upper" | "lower")) {
+        return Err("heatmap: a right y axis is only modeled with a date-free y, a resolved axis_y.labels.align of right and no upper or lower case; every other align is not supported".into());
+    }
+    let y_label_pad = if y_right { y_label_max_w.min(y_label_limit) + BREATHING_ROOM_PX } else { y_label_pad };
     let (y_ink_align, y_text_anchor) = if y_own_side { ("left", "start") } else { ("right", "end") };
     let y_gutter = y_tick_len + y_label_pad;
+    // The labels' anchor x past the plot's left edge, for a plot `pw` wide.
+    let y_anchor_x = |pw: f64| if y_right { pw + y_gutter } else { -y_gutter };
+    if ax_y.mirror_requested("heatmap")? {
+        return Err("heatmap: axis_y.mirror is not supported".into());
+    }
 
     // ── Axis titles ───────────────────────────────────────────────────────
     // A title is drawn unless the style hides it (`axis_to_vl` sets
     // `title: null` only for an explicit `visible: false`); the text is the
     // authored label, else the field's own name.
-    let x_title_text = crate::common::axis_title_text(x_field, r.x_label.as_deref(), &r.field_labels);
-    let y_title_text = crate::common::axis_title_text(y_field, r.y_label.as_deref(), &r.field_labels);
-    refuse_wrapped_axis_title("axis_x", &x_title_text, &ax_x.title, w, fonts)?;
-    refuse_wrapped_axis_title("axis_y", &y_title_text, &ax_y.title, h, fonts)?;
+    let x_title_text = crate::common::wrapped_axis_title(
+        &r.id,
+        "x_label",
+        &crate::common::axis_title_text(x_field, r.x_label.as_deref(), &r.field_labels),
+        &ax_x.title.font,
+        w,
+        fonts,
+    )?;
+    let y_title_text = crate::common::wrapped_axis_title(
+        &r.id,
+        "y_label",
+        &crate::common::axis_title_text(y_field, r.y_label.as_deref(), &r.field_labels),
+        &ax_y.title.font,
+        h,
+        fonts,
+    )?;
+    let x_title_w = crate::common::widest_title_line(&ax_x.title, &x_title_text, fonts)?;
+    let y_title_w = crate::common::widest_title_line(&ax_y.title, &y_title_text, fonts)?;
     let x_title_extra = crate::common::x_title_extra(&ax_x.title, &x_title_text);
     let y_title_extra = crate::common::y_title_extra(&ax_y.title, &y_title_text);
     // Where the rotated title starts from: the row labels' outer edge, which
@@ -374,7 +386,8 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
     // past it. Own-side labels start at the gutter and grow toward the plot;
     // away-side ones end there and grow left.
     let y_label_edge = y_label_ws.iter().fold(0.0_f64, |edge, lw| {
-        edge.min(vega_fit::text_ink(-y_gutter, 0.0, *lw, y_label_fs, y_ink_align, "middle").x1)
+        let ink = vega_fit::text_ink(y_anchor_x(0.0), 0.0, *lw, y_label_fs, y_ink_align, "middle");
+        if y_right { edge.max(ink.x2) } else { edge.min(ink.x1) }
     });
     // How far the x labels reach below their row's anchor: the bottom title
     // sits `padding` past it (`s = bounds.y2`, `vega.js:20403-20405`).
@@ -511,15 +524,21 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         for (cat, lw) in y_label_bands.iter().zip(&y_label_ws) {
             let Some(by) = ys.position(cat) else { continue };
             let cy = by + ys.bandwidth() / 2.0 - AXIS_TRANSLATE;
-            y_axis.union(&vega_fit::text_ink(-y_gutter, cy, *lw, y_label_fs, y_ink_align, "middle"));
+            y_axis.union(&vega_fit::text_ink(y_anchor_x(pw), cy, *lw, y_label_fs, y_ink_align, "middle"));
         }
         for label in y_dates.iter().flatten().filter(|l| !l.row2.is_empty()) {
             let Some(by) = ys.position(&y_domain[label.domain_idx]) else { continue };
             let cy = by + ys.bandwidth() / 2.0 - AXIS_TRANSLATE + vega_fit::label_row_advance(y_label_fs);
-            y_axis.union(&vega_fit::text_ink(-y_gutter, cy, label.w2.min(y_label_limit), y_label_fs, y_ink_align, "middle"));
+            y_axis.union(&vega_fit::text_ink(y_anchor_x(pw), cy, label.w2.min(y_label_limit), y_label_fs, y_ink_align, "middle"));
         }
         if y_title_extra > 0.0 {
-            y_axis.union(&Bounds::new(y_label_edge - y_title_extra, 0.0, 0.0, ph));
+            let x = if y_right { pw + y_label_edge + y_title_extra } else { y_label_edge - y_title_extra };
+            y_axis.union(&Bounds::new(x, ph / 2.0 - y_title_w / 2.0, x, ph / 2.0 + y_title_w / 2.0));
+            if !y_right {
+                y_axis.union(&Bounds::new(x, 0.0, 0.0, ph));
+            } else {
+                y_axis.union(&Bounds::new(pw, 0.0, x, ph));
+            }
         }
         b.union(&y_axis);
         let mut x_axis = Bounds::new(0.0, 0.0, pw, ph);
@@ -543,7 +562,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         b.union(&x_axis);
         if x_title_extra > 0.0 {
             let label_reach = (b.y2 - ph).max(0.0);
-            x_axis.union(&Bounds::new(0.0, 0.0, 0.0, ph + label_reach + x_title_extra));
+            x_axis.union(&Bounds::new(pw / 2.0 - x_title_w / 2.0, 0.0, pw / 2.0 + x_title_w / 2.0, ph + label_reach + x_title_extra));
             b.union(&x_axis);
         }
         // Only the legend's own axis joins the fit (probed at nine spec
@@ -674,8 +693,8 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
     let y_label_weight = ax_y.labels.font.weight_str();
     let y_tick_color = ax_y.ticks.color.as_deref().unwrap_or("#D0D3D9");
     let y_tick_w_px = ax_y.ticks.width.unwrap_or(1.0);
-    let y_axis_x = plot_left + AXIS_TRANSLATE;
-    let y_label_x = y_axis_x - y_gutter;
+    let y_axis_x = plot_left + if y_right { plot_w } else { 0.0 } + AXIS_TRANSLATE;
+    let y_label_x = if y_right { y_axis_x + y_gutter } else { y_axis_x - y_gutter };
     // One row per drawn label: every band for a category y, only the ladder's
     // openers (and a second context row under them) for a date y.
     crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (y_axis_x, plot_top));
@@ -692,7 +711,8 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
                 svg,
                 "<line x1=\"{:.2}\" y1=\"{tick_y:.2}\" x2=\"{y_axis_x:.2}\" y2=\"{tick_y:.2}\" \
                  stroke=\"{y_tick_color}\" stroke-width=\"{y_tick_w_px}\"/>",
-                y_axis_x - y_tick_len, y_tick_color = xml_escape_attr(y_tick_color)
+                if y_right { y_axis_x + y_tick_len } else { y_axis_x - y_tick_len },
+                y_tick_color = xml_escape_attr(y_tick_color)
             );
         }
         let row2 = y_dates.as_ref().map(|labels| labels[i].row2.as_str()).unwrap_or("");
@@ -718,7 +738,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         &ax_y.title,
         y_axis_x + y_label_edge,
         plot_top + plot_h / 2.0,
-        -1.0,
+        if y_right { 1.0 } else { -1.0 },
         None,
     );
     crate::contract::axis_group_close(&mut svg);
@@ -871,9 +891,6 @@ fn y_date_labels(
     }
     if labels_cfg.spec().is_some_and(is_time_format) {
         return Err("heatmap: a date y with an authored time axis_y.labels.format is not supported".into());
-    }
-    if !refs.windows(2).all(|w| w[0] < w[1]) {
-        return Err("heatmap: a date y not in ascending query order is not supported".into());
     }
     let usable_ratio = usable_ratio.ok_or("heatmap: label_usable_ratio absent (theme required for the y axis ladder)")?;
     let overlap = labels_cfg.overlap.as_ref().ok_or("heatmap: axis_y.labels.overlap absent (theme required)")?;
@@ -1049,34 +1066,6 @@ fn color_categories(
     Ok((domain, fills))
 }
 
-/// Production wraps an axis title that outgrows `axis_title_budget`
-/// (`extent - 72`, `emitters/_cartesian.py:568-580`) onto a second line and
-/// ellipsizes past that (`wrap_axis_title`, `_cartesian.py:583`); this arm draws
-/// one line, so a title past the budget refuses instead of drawing the wrong
-/// text. `extent` is the box size along the axis the title runs. The title is
-/// measured at its painted weight (`wrap_axis_title`, `_cartesian.py:610`),
-/// which is 600 at the theme default, so a title that fits at 400 can still wrap.
-fn refuse_wrapped_axis_title(
-    name: &str,
-    text: &str,
-    title: &crate::common::AxisTitle,
-    extent: f64,
-    fonts: &FontBook,
-) -> Result<(), String> {
-    if crate::common::axis_title_band(title, text) == 0.0 {
-        return Ok(());
-    }
-    let budget = (extent - crate::families::bar::CHROME_PX).floor().max(1.0);
-    let width = title.font.measure_weighted(fonts, text, title.font.size_or(11.0))?;
-    if width > budget {
-        return Err(format!(
-            "heatmap: {name} title {text:?} is {width:.0}px wide, past its {budget}px wrap budget \
-             (wrapped axis titles are not supported)"
-        ));
-    }
-    Ok(())
-}
-
 /// Label widths in domain order, each capped at what Vega-Lite will actually
 /// draw (`labelLimit`).
 fn measure_all(
@@ -1193,7 +1182,7 @@ pub(crate) fn format_legend_value(v: f64, spec: Option<&str>) -> Result<String, 
 
 #[cfg(test)]
 mod tests {
-    use super::{refuse_wrapped_axis_title, render};
+    use super::render;
     use crate::text::FontBook;
     use crate::Payload;
     use serde_json::{json, Value};
@@ -1202,30 +1191,25 @@ mod tests {
 
     /// `wrap_axis_title` measures the title at its painted weight
     /// (`_cartesian.py:610`; 600 at the theme default), so a title that fits its
-    /// budget at 400 can still wrap, and the arm that cannot wrap refuses it.
+    /// budget at 400 can still wrap.
     #[test]
-    fn a_title_that_fits_regular_but_wraps_at_its_painted_weight_is_refused() {
+    fn a_title_that_fits_regular_but_wraps_at_its_painted_weight() {
         let fonts = test_fonts();
         let text = "Net revenue retention by customer segment and sales region";
         let width_at = |weight: f32| fonts.measure_at_weight(text, "Inter", 11.0, Some(weight)).unwrap();
         let (regular, painted) = (width_at(400.0), width_at(600.0));
         assert!(painted - regular > 2.0, "{regular} vs {painted}");
         let extent = crate::families::bar::CHROME_PX + ((regular + painted) / 2.0).floor();
-        let title = |weight: Value| -> crate::common::AxisTitle {
-            serde_json::from_value(json!({
-                "font": {"family": TEST_FONT, "size": 11.0, "weight": weight},
-                "padding": 10.0,
-                "visible": true,
-            }))
-            .expect("axis title parses")
+        let lines = |weight: Value| {
+            let font = serde_json::from_value(json!({"family": TEST_FONT, "size": 11.0, "weight": weight}))
+                .expect("font parses");
+            crate::common::wrap_axis_title(text, extent, 1.0, &font, &fonts).expect("wraps")
         };
-        refuse_wrapped_axis_title("axis_x", text, &title(json!("400")), extent, &fonts)
-            .expect("fits at 400");
-        let err = refuse_wrapped_axis_title("axis_x", text, &title(json!(600.0)), extent, &fonts)
-            .expect_err("wraps at 600");
-        assert!(err.contains("wrap budget"), "{err}");
-        refuse_wrapped_axis_title("axis_x", text, &title(json!("semibold")), extent, &fonts)
-            .expect("an unparseable weight paints at the default");
+        assert_eq!(lines(json!("400")), (vec![text.to_string()], false));
+        let (wrapped, truncated) = lines(json!(600.0));
+        assert_eq!(wrapped.len(), 2, "{wrapped:?}");
+        assert!(!truncated);
+        assert_eq!(lines(json!("semibold")).0.len(), 1, "an unparseable weight paints at the default");
     }
 
     fn test_fonts() -> FontBook {
@@ -1568,8 +1552,7 @@ mod tests {
     }
 
     /// H1 — the color scale's domain and the gradient legend's ladder are
-    /// one `nice_tick_values(min, max, 6)` list (`default_config.yml`'s
-    /// `gradient.nice_tick_count`). At five rungs the same extent gives step
+    /// one `nice_tick_values(min, max, 6)` list (`GRADIENT_NICE_TICK_COUNT`). At five rungs the same extent gives step
     /// 20 000 (`0/20,000/40,000/60,000`) and paints every cell differently.
     #[test]
     fn the_color_domain_and_the_legend_ladder_share_the_six_rung_tick_list() {
@@ -2086,8 +2069,8 @@ mod tests {
             j["resolved"]["legend"]["position"] = json!({"edge": "bottom", "align": "start", "overlay": false})
         }));
         assert!(vertical_bottom.contains("vertical gradient legend") && vertical_bottom.contains("bottom"), "{vertical_bottom}");
-        assert!(err(heatmap_payload(|j| j["resolved"]["style"]["axis_y"]["position"] = json!("right")))
-            .contains("axis_y"));
+        assert!(err(heatmap_payload(|j| j["resolved"]["style"]["axis_y"]["mirror"] = json!(true)))
+            .contains("axis_y.mirror"));
     }
 
     /// Oracle: `format_d3(47368, ",.2~f", "US$", "", None, placement)` is

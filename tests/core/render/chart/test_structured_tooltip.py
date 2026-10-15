@@ -46,6 +46,8 @@ from dbt_charts.core.render.chart.emitters._tooltip import (
 )
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
+from ..._engine_render import render_pie_svg
+
 _BOARD_RS, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
 
@@ -74,6 +76,10 @@ def _render(chart: Any, data: list[dict[str, Any]]) -> list[str]:
     resolve(chart, data, chart_style_context=_BOARD_CTX)
     spec = generate_vega_lite_spec(chart, data, width=400)
     return _svg_aria_labels(spec)
+
+
+def _render_pie(chart: PieChart, data: list[dict[str, Any]]) -> list[str]:
+    return re.findall(r'aria-label="([^"]+)"', render_pie_svg(chart, data))
 
 
 _MULTI_SERIES_LINE_DATA = [
@@ -920,7 +926,7 @@ def test_pie_header_and_value_present():
         total=ChartTotal(),
         style=PieChartStylePatch.model_validate({"inner_radius": 0.6}),
     )
-    labels = _render(chart, _PIE_DATA)
+    labels = _render_pie(chart, _PIE_DATA)
     assert any(f"{ROLE_HEADER_SWATCHED}starter_monthly" in lb for lb in labels), labels
     assert any("User Count: 8.5" in lb for lb in labels), labels
 
@@ -934,7 +940,7 @@ def test_pie_header_before_value():
         total=ChartTotal(),
         style=PieChartStylePatch.model_validate({"inner_radius": 0.6}),
     )
-    labels = _render(chart, _PIE_DATA)
+    labels = _render_pie(chart, _PIE_DATA)
     row = next(lb for lb in labels if f"{ROLE_HEADER_SWATCHED}starter_monthly" in lb)
     assert row.index(ROLE_HEADER_SWATCHED) < row.index("User Count")
 
@@ -943,7 +949,7 @@ def test_pie_carries_percent_and_grand_total():
     """Pie/donut: % leads, raw beneath, grand total footer (always -- pie
     values are inherently one commensurable unit)."""
     chart = PieChart(id="t", type="pie", theta="user_count", color="plan")
-    labels = _render(chart, _PIE_DATA)
+    labels = _render_pie(chart, _PIE_DATA)
     row = next(lb for lb in labels if f"{ROLE_HEADER_SWATCHED}starter_monthly" in lb)
     assert "%: 72%" in row, row
     assert "User Count: 8.5" in row, row
@@ -956,7 +962,7 @@ def test_pie_mutes_raw_count_and_total_but_not_the_share_lead():
     total are context, so both carry the MUTED marker (rendered low-contrast)
     while the share % and swatched header do not."""
     chart = PieChart(id="t", type="pie", theta="user_count", color="plan")
-    labels = _render(chart, _PIE_DATA)
+    labels = _render_pie(chart, _PIE_DATA)
     row = next(lb for lb in labels if f"{ROLE_HEADER_SWATCHED}starter_monthly" in lb)
     # raw count and total are muted (MUTED prepended, composing with ROLE_TOTAL)
     assert f"{MUTED}User Count: 8.5" in row, row

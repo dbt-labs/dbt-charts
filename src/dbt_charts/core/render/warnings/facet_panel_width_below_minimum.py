@@ -6,7 +6,7 @@ Detection rule:
   (``"facet"`` present in ``vega_specs[chart_id]``) AND the inner unit
   spec's ``width`` — the same per-panel width ``facet_panel_width()``
   computes at resolve and render — is below
-  ``chart_rendering.facet.min_panel_px``.
+  ``FACET_MIN_PANEL_PX``.
 
 ``facet_panel_width()`` never floors panels back up to that minimum (the
 card boundary always wins — see its docstring): a high column-facet
@@ -17,13 +17,13 @@ signal that happened.
 
 from __future__ import annotations
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.chart.resolved._base import (
     _CartesianResolvedChartFields,
 )
 from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
     panel_axis_cardinality,
 )
+from dbt_charts.core.constants.layout import FACET_MIN_PANEL_PX
 from dbt_charts.core.diagnostics import WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM, Diagnostic
 from dbt_charts.core.render.warnings.base import WarningContext
 
@@ -31,8 +31,6 @@ from dbt_charts.core.render.warnings.base import WarningContext
 def detect(ctx: WarningContext) -> list[Diagnostic]:
     """Return one Diagnostic per faceted chart whose panel width undercuts the floor."""
     warnings: list[Diagnostic] = []
-    min_panel_px = get_chart_rendering().facet.min_panel_px
-
     for chart_id, chart in ctx.board_spec.charts.items():
         if not isinstance(chart, _CartesianResolvedChartFields):
             continue
@@ -48,7 +46,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         panel_width = unit.get("width")
         if not isinstance(panel_width, int | float):
             continue
-        if panel_width >= min_panel_px:
+        if panel_width >= FACET_MIN_PANEL_PX:
             continue
 
         panel_cols = panel_axis_cardinality(chart.panel_axes, chart.multiples.columns)
@@ -62,7 +60,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
                     chart_id=chart_id,
                     panel_cols=panel_cols,
                     panel_width=panel_width,
-                    min_panel_px=min_panel_px,
+                    min_panel_px=FACET_MIN_PANEL_PX,
                 ),
                 fix=WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM.fix_template,
             )

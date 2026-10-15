@@ -38,6 +38,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
 from ..._svg_render import leaf_kind_subtrees, render_board_to_svg
+from ...conftest import theme_without_tick_count
 
 _NUMERIC = re.compile(r"^[−-]?[\d,]+(\.\d+)?%?$")
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
@@ -489,7 +490,9 @@ def test_stark_stacked_negative_rows_floor_via_tick_min_step() -> None:
         {"x": "a", "series": "s2", "y": 1.0},
         {"x": "b", "series": "s1", "y": -0.01},
     ]
-    stark_style, stark_ctx = resolve_style_and_context(get_theme_style("stark"))
+    stark_style, stark_ctx = resolve_style_and_context(
+        theme_without_tick_count("stark")
+    )
     resolve(chart, rows, chart_style_context=stark_ctx)
     spec = generate_vega_lite_spec(
         chart, rows, width=400, board_style=stark_style, chart_style_context=stark_ctx
@@ -531,10 +534,11 @@ rows:
 """
 
 
-def test_stark_stacked_negative_rows_paint_no_duplicate_tick_labels() -> None:
-    svg = render_board_to_svg(f"extends: stark\n{_STACKED_NEGATIVE_BOARD}")
-    chart = leaf_kind_subtrees(svg, "chart")[0]
-    assert _measure_axis_labels(chart) == ["0", "1", "2"]
+def test_stacked_negative_rows_paint_no_duplicate_tick_labels() -> None:
+    for header in ("", "extends: stark\n"):
+        svg = render_board_to_svg(f"{header}{_STACKED_NEGATIVE_BOARD}")
+        chart = leaf_kind_subtrees(svg, "chart")[0]
+        assert _measure_axis_labels(chart) == ["0", "1", "2"], header
 
 
 def test_dual_axis_layer_does_not_inherit_the_base_tick_min_step() -> None:
@@ -545,7 +549,7 @@ def test_dual_axis_layer_does_not_inherit_the_base_tick_min_step() -> None:
     from dbt_charts.core.render.chart.spec import RenderBox
     from dbt_charts.core.render.chart.translate import translate_to_vl
 
-    _, ctx = resolve_style_and_context(get_theme_style("stark"))
+    _, ctx = resolve_style_and_context(theme_without_tick_count("stark"))
     data = [
         {"month": "Jan", "revenue": 1200.0, "conversion": 0.11},
         {"month": "Feb", "revenue": 1800.0, "conversion": 0.22},

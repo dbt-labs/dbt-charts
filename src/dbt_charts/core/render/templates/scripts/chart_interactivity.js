@@ -565,7 +565,7 @@
     /*{# strength over a receded one. `data-dbt-value-label` (stamped by #}*/
     /*{# converters/chart.py on the text-mark GROUP holding a mark's own #}*/
     /*{# printed value -- never on a pie/donut center total or outside label, #}*/
-    /*{# which are built directly in emitters/pie.py and never go through the #}*/
+    /*{# which the engine's pie family paints and never go through the #}*/
     /*{# value-label feature) is what says a text mark is reachable here at #}*/
     /*{# all; which byte-identical aria-label ties it to its own bar/arc, #}*/
     /*{# with no sublayer bookkeeping needed. Nothing about a solid blend #}*/

@@ -56,6 +56,7 @@ from dbt_charts.core.execute.adapters.base import (
     connection_failure,
     handle_adapter_error,
     plain_error,
+    reject_duplicate_columns,
     resolve_effective_row_limit,
     resolve_setup_sql,
 )
@@ -1040,6 +1041,7 @@ class SqlAdapter(BaseAdapter):
             rows, prepared.row_fetch_limit
         )
 
+        reject_duplicate_columns(columns)
         data = [dict(zip(columns, row, strict=False)) for row in rows]
         return QueryResult(
             data=data, columns=columns, truncated_reason=truncated_reason

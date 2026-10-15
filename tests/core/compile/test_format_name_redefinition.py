@@ -18,6 +18,8 @@ from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_cont
 
 from .._svg_render import render_board_to_svg
 
+_KPI_COMPACT = get_theme_style().charts.kpi.value.compact
+
 _BOARD = """
 title: T
 {style}
@@ -132,10 +134,12 @@ def test_redefined_name_is_not_house() -> None:
 
 
 def test_kpi_keeps_engine_compaction_but_prints_a_redefined_number() -> None:
-    engine = finalize_kpi_value_format(None, 1_500_000.0, None)
+    engine = finalize_kpi_value_format(None, 1_500_000.0, None, compact=_KPI_COMPACT)
     assert engine is not None and engine.spec == ".2~s"
-    assert finalize_kpi_value_format(None, 131.0, None) is None
-    own = finalize_kpi_value_format(None, 131.5, {"number": ",.1f"})
+    assert finalize_kpi_value_format(None, 131.0, None, compact=_KPI_COMPACT) is None
+    own = finalize_kpi_value_format(
+        None, 131.5, {"number": ",.1f"}, compact=_KPI_COMPACT
+    )
     assert own is not None and own.spec == ",.1f"
     assert format_kpi_parts(131.5, own, {"number": ",.1f"})[1] == "131.5"
 
@@ -194,15 +198,20 @@ def test_a_redefined_number_reaches_table_cells_and_kpis_with_its_affix() -> Non
     formats = {"number": FormatConfig(spec=",.0f", suffix=" units")}
     cell = format_kpi_parts(1234.0, None, formats, default_number=True)
     assert cell[1:] == ("1,234", "units")
-    kpi = finalize_kpi_value_format(None, 1234.0, formats)
+    kpi = finalize_kpi_value_format(None, 1234.0, formats, compact=_KPI_COMPACT)
     assert kpi is not None and (kpi.spec, kpi.suffix) == (",.0f", " units")
 
 
 def test_a_number_redefined_as_another_engine_name_reaches_the_kpi() -> None:
-    small = finalize_kpi_value_format(None, 0.25, {"number": "percent"})
+    small = finalize_kpi_value_format(
+        None, 0.25, {"number": "percent"}, compact=_KPI_COMPACT
+    )
     assert small is not None and small.raw == "percent"
     money = finalize_kpi_value_format(
-        None, 1_500_000.0, FormatTable(aliases={"number": "currency"}, currency="USD")
+        None,
+        1_500_000.0,
+        FormatTable(aliases={"number": "currency"}, currency="USD"),
+        compact=_KPI_COMPACT,
     )
     assert money is not None and money.raw == "currency"
 
@@ -226,13 +235,13 @@ def test_an_unpaintable_or_empty_redefinition_is_rejected(
 
 def test_a_number_aliasing_the_engine_number_keeps_its_affix_on_the_kpi() -> None:
     formats = {"number": FormatConfig(spec="number", suffix=" widgets")}
-    kpi = finalize_kpi_value_format(None, 1_500_000.0, formats)
+    kpi = finalize_kpi_value_format(None, 1_500_000.0, formats, compact=_KPI_COMPACT)
     assert kpi is not None and kpi.suffix == " widgets"
 
 
 def test_a_number_aliasing_the_engine_number_keeps_its_affix_below_compaction() -> None:
     formats = {"number": FormatConfig(spec="number", suffix=" widgets")}
-    kpi = finalize_kpi_value_format(None, 12.0, formats)
+    kpi = finalize_kpi_value_format(None, 12.0, formats, compact=_KPI_COMPACT)
     assert kpi is not None and kpi.suffix == " widgets"
 
 
@@ -246,7 +255,12 @@ def test_a_number_aliasing_the_engine_number_keeps_its_affix_below_compaction() 
 def test_a_redefined_number_does_not_reach_a_date_headline(
     redefined: FormatConfig,
 ) -> None:
-    assert finalize_kpi_value_format(None, None, {"number": redefined}) is None
+    assert (
+        finalize_kpi_value_format(
+            None, None, {"number": redefined}, compact=_KPI_COMPACT
+        )
+        is None
+    )
 
 
 def test_one_redefined_number_looks_the_same_on_kpi_cell_axis_and_mark_label() -> None:

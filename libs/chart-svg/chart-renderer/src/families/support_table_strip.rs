@@ -37,12 +37,13 @@
 //! caller to sit directly below the title; `[0, axis_offset + strip_h]` for
 //! bottom, translated to sit directly below the plot).
 
+use crate::constants::layout::SUPPORT_TABLE_MAX_X_TICKS;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
-use crate::common::{row_str, slug_to_display, Divider, FormatSlot, Font, SignPlacement};
+use crate::common::{row_str, slug_to_display, Divider, FormatSlot, GappedDivider, Font, SignPlacement};
 use crate::families::temporal::TimeUnit;
 use crate::svg::{xml_escape, xml_escape_attr, vega_escape_attr};
 use crate::text::FontBook;
@@ -50,17 +51,6 @@ use crate::text::FontBook;
 // Per-row base height before padding — mirrors `_ROW_HEIGHT_BASE` in
 // `compile/support_table.py`.
 const ROW_HEIGHT_BASE: f64 = 14.0;
-// Gap between the divider rule and the first strip row — mirrors
-// `chart_rendering.support_table.divider_gap` in `default_config.yml`.
-const DIVIDER_GAP: f64 = 4.0;
-// Max distinct x values a strip supports — mirrors
-// `chart_rendering.support_table.chart_support_table_max_x_ticks` in
-// `default_config.yml`. Production samples instead of erroring for a
-// temporal/quantitative x past this cap (`validate_support_table_against_data`);
-// this renderer implements no such sampling pass (see `AGENTS.md`'s "No
-// `label_period_filter_expr`/`sampling_step` cell thinning" gap), so it fails
-// closed for every x type past the cap rather than silently truncating.
-const MAX_X_TICKS: usize = 40;
 // Row-label gutter cap — mirrors `_LABEL_STUB_LIMIT_PX` in
 // `support_table_attachment.py`. Vega-Lite's `labelLimit` truncates with an
 // ellipsis at this pixel width; a long `label:` would otherwise overrun the
@@ -118,8 +108,8 @@ pub struct LabelStyle {
 #[derive(Deserialize, Clone)]
 pub struct SupportTableStyle {
     pub font: Font,
-    /// The line between the plot and the strip.
-    pub divider: Divider,
+    /// The line between the plot and the strip, and the gap it reserves.
+    pub divider: GappedDivider,
     pub row: RowStyle,
     pub label: LabelStyle,
     pub padding_top: f64,
@@ -213,7 +203,7 @@ pub fn strip_height(style: &SupportTableStyle, n_rows: usize) -> f64 {
 
 /// Divider offset from the plot edge (0.0 when the divider is hidden).
 fn divider_offset(style: &SupportTableStyle) -> f64 {
-    if style.divider.visible { style.divider.width + DIVIDER_GAP } else { 0.0 }
+    if style.divider.line.visible { style.divider.line.width + style.divider.gap } else { 0.0 }
 }
 
 /// One strip line, as the Vega-Lite `rule` mark production draws it: the
@@ -1271,7 +1261,7 @@ pub fn build_rows_composed(
 /// straight off the already-built `ComposedCell::w`s — the same shaped
 /// measurement `_entry_cell_widths` performs, so no separate width pass is
 /// needed here). The cap-overflow half is out of scope (this port's
-/// `MAX_X_TICKS` still hard-errors every x type, `validate_against_data`'s
+/// `SUPPORT_TABLE_MAX_X_TICKS` still hard-errors every x type, `validate_against_data`'s
 /// own doc) — n never reaches that cap on a chart this override fires for,
 /// so `sampling_step` starts at 1 here, unlike production's own two-term
 /// `max(sampling_step, width_step)`. Only meaningful for a genuinely
@@ -1521,9 +1511,9 @@ pub fn render_rows_composed(
     let label_weight = style.label.font.weight_str();
     let baseline = crate::vega_fit::baseline_shift("middle", font_size);
 
-    if style.divider.visible {
+    if style.divider.line.visible {
         let y = origin_y + divider_y_base(style, 0.0);
-        out.push_str(&divider_line(origin_x, y, origin_x + plot_w, y, &style.divider));
+        out.push_str(&divider_line(origin_x, y, origin_x + plot_w, y, &style.divider.line));
     }
     let (cell_anchor, stub_anchor) =
         if axis_on_right { ("end", "start") } else { ("start", "end") };
@@ -1576,9 +1566,9 @@ pub(crate) fn validate_against_data(
     x_field: &str,
     domain: &[String],
 ) -> Result<(), String> {
-    if domain.len() > MAX_X_TICKS {
+    if domain.len() > SUPPORT_TABLE_MAX_X_TICKS {
         return Err(format!(
-            "support_table: supports at most {MAX_X_TICKS} x-axis ticks; got {}. \
+            "support_table: supports at most {SUPPORT_TABLE_MAX_X_TICKS} x-axis ticks; got {}. \
              Aggregate or filter in the query before attaching a support_table.",
             domain.len()
         ));
@@ -1815,9 +1805,9 @@ pub fn render_rows(
 
     let mut svg = String::new();
 
-    if style.divider.visible {
+    if style.divider.line.visible {
         let y = to_local(divider_y_base(style, axis_offset_value), style, strip_h);
-        svg.push_str(&divider_line(plot_left, y, plot_right, y, &style.divider));
+        svg.push_str(&divider_line(plot_left, y, plot_right, y, &style.divider.line));
     }
 
     for (i, row) in rows.iter().enumerate() {
@@ -2288,7 +2278,7 @@ mod tests {
     ) -> SupportTableStyle {
         serde_json::from_value(serde_json::json!({
             "font": {"family": "sans", "size": 11.0, "color": "#333"},
-            "divider": divider_json(divider_w),
+            "divider": {"gap": 4.0, "visible": divider_w > 0.0, "color": "#626366", "width": if divider_w > 0.0 { divider_w } else { 1.0 }, "dasharray": null},
             "row": {"padding": {"vertical": row_pad_v, "horizontal": 4.0}, "divider": divider_json(rule_w)},
             "label": {"font": {"family": "sans", "size": 11.0, "color": "#333"}},
             "padding_top": padding_top,
@@ -2324,7 +2314,7 @@ mod tests {
     fn label_style() -> SupportTableStyle {
         serde_json::from_value(serde_json::json!({
             "font": {"family": TEST_FONT, "size": 11.0, "color": "#333"},
-            "divider": divider_json(0.0),
+            "divider": {"gap": 4.0, "visible": false, "color": "#626366", "width": 1.0, "dasharray": null},
             "row": {"padding": {"vertical": 2.0, "horizontal": 4.0}, "divider": divider_json(0.0)},
             "label": {"font": {"family": TEST_FONT, "size": 11.0}},
             "padding_top": 8.0,
@@ -2352,12 +2342,20 @@ mod tests {
         assert_eq!(strip_height(&s, 3), 73.0);
     }
 
+    #[test]
+    fn the_divider_reserves_its_own_gap_before_the_first_row() {
+        let mut s = style(8.0, 4.0, 2.0, 1.0, 0.0);
+        s.divider.gap = 9.0;
+        // divider = 1 + 9; padding_top 8 + 10 + one 18px row + padding_bottom 4
+        assert_eq!(strip_height(&s, 1), 8.0 + 10.0 + 18.0 + 4.0);
+    }
+
     /// `_strip_height`/`_row_y_pixel` gate on `visible`, never on `width`: a
     /// hidden divider keeps its theme width and reserves nothing.
     #[test]
     fn a_hidden_divider_reserves_no_strip_space_whatever_its_width() {
         let mut s = style(8.0, 4.0, 2.0, 3.0, 3.0);
-        s.divider.visible = false;
+        s.divider.line.visible = false;
         s.row.divider.visible = false;
         // padding_top + 3 rows of 18 + padding_bottom, no divider band, no inter-row.
         assert_eq!(strip_height(&s, 3), 8.0 + 54.0 + 4.0);
@@ -2937,7 +2935,7 @@ mod tests {
                 by_measure: false,
             }],
         };
-        let n = MAX_X_TICKS + 1;
+        let n = SUPPORT_TABLE_MAX_X_TICKS + 1;
         let rows: Vec<serde_json::Map<String, Value>> = (0..n)
             .map(|i| serde_json::json!({"week": format!("2024-{i:03}"), "revenue": 1.0}).as_object().unwrap().clone())
             .collect();
@@ -2945,7 +2943,7 @@ mod tests {
         let x_positions: Vec<f64> = (0..n).map(|i| i as f64).collect();
         let err =
             build_rows(&config, &rows, "week", &domain, &x_positions, &test_fonts(), &label_style(), None, &[], &[]).unwrap_err();
-        assert!(err.contains(&MAX_X_TICKS.to_string()), "names the cap: {err}");
+        assert!(err.contains(&SUPPORT_TABLE_MAX_X_TICKS.to_string()), "names the cap: {err}");
     }
 
     /// MEDIUM: the row-label stub caps at `LABEL_STUB_LIMIT_PX`, matching

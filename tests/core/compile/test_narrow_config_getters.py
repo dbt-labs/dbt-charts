@@ -7,19 +7,11 @@ from pathlib import Path
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import (
-    get_chart_rendering,
     get_export_config,
     get_rendering_config,
     get_terminal_config,
     reset_config,
 )
-
-
-def test_get_chart_rendering_returns_correct_slice():
-    reset_config()
-    result = get_chart_rendering()
-    # preferred_width lives on the theme cascade.
-    assert result.spark_bar.title_height > 0
 
 
 def test_get_terminal_config_max_labels():

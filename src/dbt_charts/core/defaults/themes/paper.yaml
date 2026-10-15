@@ -175,8 +175,7 @@ style:
       drop_line_color: dbt-creams.disabled
       drop_line_width: 3.0
     support_table:
-      font:
-        color: dbt-creams.muted
+      neutral_color: dbt-creams.muted
       divider:
         color: dbt-creams.muted
       row:

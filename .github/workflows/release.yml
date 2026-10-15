@@ -165,7 +165,7 @@ jobs:
           command: build
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux || 'auto' }}
-          args: --release --locked --out dist
+          args: --profile dist --locked --out dist
 
       - name: Stamp the tag version and vendored packages
         run: uv run --no-project --with "maturin>=1.15,<2" --with "setuptools-scm>=8" python _build_backend.py dist/*.whl

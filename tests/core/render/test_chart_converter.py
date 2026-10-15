@@ -20,6 +20,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
     resolve_style_and_context,
 )
+from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 from dbt_charts.core.render.errors import FormatError
 
 
@@ -337,9 +338,9 @@ def test_render_vega_spec_hconcat_title_wrap_uses_chart_local_title_style(
     from dbt_charts.core.render.converters import chart as chart_converter
 
     target_width = 500.0
-    chart_title_style = resolve_chart_style_context(get_theme_style()).title.model_copy(
-        update={"overflow": "clip"}
-    )
+    chart_title_style = concrete_title_style(
+        resolve_chart_style_context(get_theme_style())
+    ).model_copy(update={"overflow": "clip"})
     pane0 = {"width": 495, "height": 300, "title": {"text": "Some Chart Title"}}
     pane1 = {"width": 50, "height": 300}
     spec = {
@@ -603,7 +604,7 @@ def test_hconcat_subtitle_rewrapped_at_corrected_width_not_stale(
     rs, ctx = resolve_style_and_context(get_theme_style())
     spec = {
         "$df_target_width": target_width,
-        "$df_title_style": ctx.title.model_dump(),
+        "$df_title_style": concrete_title_style(ctx).model_dump(),
         "hconcat": [pane0, pane1],
     }
 

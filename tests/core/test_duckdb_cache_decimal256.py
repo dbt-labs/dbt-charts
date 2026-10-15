@@ -5,21 +5,14 @@ DuckDB's DECIMAL is HUGEINT-backed and capped at precision 38. BigQuery's
 NUMERIC type allows up to 76 digits, and certain SUM-of-fan-out-deduplicated
 queries can return precision-47/scale-38 results.
 
-History: the cache used to bulk-load via a pyarrow table, which auto-inferred
-``decimal256`` for these values and then crashed ``conn.register`` with
-``NotImplementedException: Unsupported Internal Arrow Type for Decimal``. The
-original fix mapped a ``Decimal`` column to ``DOUBLE`` (15 significant digits —
-lossy, but the crash was gone). That lossy coercion turned out to be a second
-bug: an incremental watermark column of restated NUMERIC values duplicated on every
-warm render, because a float-coerced prior key (``101.2``) never equaled the
-freshly-queried ``Decimal('101.20')`` tail key. The cache now stores a
-uniformly-Decimal column (every non-None value in the column is exactly
-``Decimal`` — see ``_uniform_decimal_columns``) as VARCHAR text
-(``str(value)``, exact) instead of DOUBLE, restored back to ``Decimal`` on
-read (``_restore_decimal_columns``) — which also sidesteps the original Arrow
-crash, since Arrow never sees a ``Decimal`` object for that column at all. A
-column that mixes Decimal with another type keeps the lossy DOUBLE coercion;
-exactness is only promised for a uniform column.
+History: a typed DECIMAL column crashed on these values, and coercing them to
+DOUBLE (15 significant digits) was a second bug: an incremental watermark
+column of restated NUMERIC values duplicated on every warm render, because a
+float-coerced prior key (``101.2``) never equaled the freshly-queried
+``Decimal('101.20')`` tail key. The cache stores a column whose every value is
+a ``Decimal`` as exact text and restores it on read. A column that mixes
+Decimal with another type keeps the lossy float coercion; exactness is only
+promised for a uniform column.
 
 Eval ``20260428-155000`` was the original production trigger: 12 queries on
 dashboards 955 + 2223 failed with this exact error before the original fix.
@@ -78,9 +71,8 @@ def test_duckdb_cache_list_column_round_trips_as_list(tmp_path):
     """JSON/list columns (e.g. an array_agg sparkline series) must come back as
     Python lists, not the JSON string they are stored as.
 
-    Regression: the cache serializes list/dict columns to JSON text on write
-    (_cache_safe_value), but the read path returned the raw JSON string, since
-    DuckDB hands a JSON-typed column back as a Python str. A warm cache then fed
+    Regression: the cache once serialized list/dict columns to JSON text on
+    write and returned the raw JSON string on read. A warm cache then fed
     a str into the spark renderer, which crashed with
     "unsupported operand type(s) for -: 'str' and 'str'". A cache miss returned
     the fresh list, so a first (cold) render looked fine.

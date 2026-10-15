@@ -191,7 +191,7 @@ class TestSingleChartPropertyValidation:
         """
         from dbt_charts.core.compile.models.style.authored import (
             BarChartStylePatch,
-            TitleStylePatch,
+            ChartTitleStylePatch,
         )
 
         chart = make_chart(
@@ -199,7 +199,9 @@ class TestSingleChartPropertyValidation:
             x="month",
             y="revenue",
             title="quarterly revenue",
-            style=BarChartStylePatch(title=TitleStylePatch(font={"case": "upper"})),
+            style=BarChartStylePatch(
+                title=ChartTitleStylePatch(font={"case": "upper"})
+            ),
         )
         data = [{"month": "Jan", "revenue": 100}]
         spec = generate_vega_lite_spec(chart, data)
@@ -217,7 +219,7 @@ class TestSingleChartPropertyValidation:
         """
         from dbt_charts.core.compile.models.style.authored import (
             BarChartStylePatch,
-            TitleStylePatch,
+            ChartTitleStylePatch,
         )
 
         chart = make_chart(
@@ -227,7 +229,7 @@ class TestSingleChartPropertyValidation:
             title="quarterly revenue",
             style=BarChartStylePatch(
                 background="#123456",
-                title=TitleStylePatch(font={"case": "upper"}),
+                title=ChartTitleStylePatch(font={"case": "upper"}),
             ),
         )
         data = [{"month": "Jan", "revenue": 100}]
@@ -288,7 +290,7 @@ class TestSingleChartPropertyValidation:
         the exact character split so this stays robust to tier-size tweaks."""
         from dbt_charts.core.compile.models.style.authored import (
             BarChartStylePatch,
-            TitleStylePatch,
+            ChartTitleStylePatch,
         )
 
         title = (
@@ -301,7 +303,7 @@ class TestSingleChartPropertyValidation:
             x="month",
             y="revenue",
             title=title,
-            style=BarChartStylePatch(title=TitleStylePatch(overflow="wrap-two")),
+            style=BarChartStylePatch(title=ChartTitleStylePatch(overflow="wrap-two")),
         )
         data = [{"month": "Jan", "revenue": 100}]
 

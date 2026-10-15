@@ -19,6 +19,8 @@ from dbt_charts.core.compile.resolve.style.board import (
 from dbt_charts.core.compile.vega_lite import VEGA_LITE_SCHEMA_URL
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
+_KPI_COMPACT = get_theme_style().charts.kpi.value.compact
+
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
 # Uses make_chart fixture from tests/conftest.py
@@ -1047,7 +1049,7 @@ class TestMapTerminalFallback:
         ]
 
         result = render_chart_terminal(
-            chart, data, "", width=80, height=20, formats=None
+            chart, data, "", width=80, height=20, formats=None, kpi_compact=_KPI_COMPACT
         )
 
         # Should render as table with data values

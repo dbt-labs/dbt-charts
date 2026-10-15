@@ -32,7 +32,7 @@ import statistics
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from dbt_charts.core.compile.config import get_chart_rendering
+from dbt_charts.core.constants.axis import MAX_ORDINAL_BUCKETS, SPARSE_CEILING_PX
 from dbt_charts.core.font_measure import FontMeasurer
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.text.format_d3 import portable_strftime
@@ -561,7 +561,7 @@ def resolve_temporal_label_visibility(
     exit on a near-empty axis by way of ``temporal_visibility_fits``'s
     <2-label special case.
 
-    ``chart_rendering.axis.sparse_ceiling_px`` is a *preference*, not a hard
+    ``SPARSE_CEILING_PX`` is a *preference*, not a hard
     stop: walking finest to coarsest, the first rung that both clears
     collisions and lands no farther apart than the ceiling wins immediately.
     If no rung ever satisfies both, the finest rung that clears collisions at
@@ -619,7 +619,6 @@ def walk_label_cadence_ladder(
     the ladder reaches it, else ``format_time_unit``). Direction-agnostic:
     the horizontal axis measures widths, the vertical one heights.
     """
-    ceiling = get_chart_rendering().axis.sparse_ceiling_px
     unit = format_time_unit
     sparse_fit: str | None = None  # finest rung that clears collisions but is sparse
     while True:
@@ -635,7 +634,7 @@ def walk_label_cadence_ladder(
                 if len(labeled) >= 2
                 else 0.0
             )
-            if spacing <= ceiling:
+            if spacing <= SPARSE_CEILING_PX:
                 return unit, True
             if sparse_fit is None:
                 sparse_fit = unit
@@ -921,7 +920,7 @@ def ordinal_scaffold_within_budget(
     prevent. A non-faceted chart is the one-panel case and is unaffected.
 
     The budget: synthesized empty buckets may not exceed ``max(distinct
-    buckets, chart_rendering.type_inference.max_ordinal_buckets)`` — dense
+    buckets, MAX_ORDINAL_BUCKETS)`` — dense
     series (contiguous dailies, weekday-only data, weekly-with-holiday-gaps)
     pass untouched, while a scaffold dominated by empty slots means the
     detected grain is finer than the data's own and banding must not fire.
@@ -932,8 +931,7 @@ def ordinal_scaffold_within_budget(
     ≥10% unparseable, so what is left cannot move the verdict far.
     """
     total_bands, occupied = _band_counts(panels, time_unit)
-    max_ordinal = get_chart_rendering().type_inference.max_ordinal_buckets
-    return total_bands - occupied <= max(occupied, max_ordinal)
+    return total_bands - occupied <= max(occupied, MAX_ORDINAL_BUCKETS)
 
 
 def range_extension_keeps_band_axis(
@@ -944,7 +942,7 @@ def range_extension_keeps_band_axis(
     """Whether scaffolding *panels* out to *date_range* leaves the band axis a band axis.
 
     The extended axis must pass the scaffold budget, and a coarse grain, which
-    bar also flips to continuous time past ``max_ordinal_buckets`` bands, must
+    bar also flips to continuous time past ``MAX_ORDINAL_BUCKETS`` bands, must
     stay under that count in total.
     """
     extended = [[*values, *date_range] for values in panels]
@@ -953,7 +951,7 @@ def range_extension_keeps_band_axis(
     if time_unit in FINE_BUCKET_UNITS:
         return True
     total_bands, _ = _band_counts(extended, time_unit)
-    return total_bands <= get_chart_rendering().type_inference.max_ordinal_buckets
+    return total_bands <= MAX_ORDINAL_BUCKETS
 
 
 def _band_counts(

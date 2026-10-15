@@ -33,6 +33,7 @@ from dbt_charts.core.compile.resolve.style.inherit_graph import (
     _unwrap_model,
     get_inherit_graph,
 )
+from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 
 _BUILT_IN_THEMES = user_facing_theme_names()
 
@@ -108,4 +109,4 @@ def test_charts_title_slot_completes_from_style_title(theme_name: str) -> None:
     """With no board patches, charts.title equals the resolved style.title."""
     base = get_theme_style(theme_name)
     resolved, ctx = resolve_style_and_context(base)
-    assert ctx.title == resolved.title
+    assert concrete_title_style(ctx) == resolved.title

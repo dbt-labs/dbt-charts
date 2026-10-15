@@ -598,7 +598,6 @@ def test_geoshape_hinge_scheme_single_sided_bound_survives_domainMid_fallback() 
     assert "domainMax" not in color_enc["scale"]
 
 
-@pytest.mark.network
 def test_geoshape_nice_false_legend_renders_true_data_endpoints() -> None:
     """Render-level proof (vl_convert, real `us-states` topology fetched over
     the network) that the client-side signal actually EVALUATES to the real

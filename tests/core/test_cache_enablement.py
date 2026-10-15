@@ -12,7 +12,12 @@ from pathlib import Path
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.compile.config import reset_config, resolve_cache_boot
+from dbt_charts.core.compile.config import (
+    DEFAULT_CACHE_MAX_AGE,
+    default_cache_path,
+    reset_config,
+    resolve_cache_boot,
+)
 
 
 def _project(tmp_path: Path, dbt_charts_yml: str | None = None) -> FilesystemProject:
@@ -23,11 +28,22 @@ def _project(tmp_path: Path, dbt_charts_yml: str | None = None) -> FilesystemPro
 
 class TestResolveCacheBootDefaults:
     def test_no_project_config_defaults_to_shipped_root(self, tmp_path: Path) -> None:
-        """No dbt_charts.yml: shipped default (enabled, in-memory) applies."""
+        """No dbt_charts.yml: the per-user file, pruned on open."""
         reset_config()
         boot = resolve_cache_boot(_project(tmp_path))
         assert boot.enabled is True
-        assert boot.path is None
+        assert boot.path == default_cache_path().resolve()
+        assert boot.max_age == DEFAULT_CACHE_MAX_AGE
+
+    def test_default_file_lives_in_the_per_user_cache_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "dbt_charts.core.compile.config.user_cache_dir", lambda: str(tmp_path)
+        )
+        assert default_cache_path() == (
+            tmp_path / "com.getdbt" / "charts" / "query-cache.duckdb"
+        )
 
 
 class TestResolveCacheBootFlagsOverrideConfig:
@@ -45,6 +61,7 @@ class TestResolveCacheBootFlagsOverrideConfig:
         boot = resolve_cache_boot(project, cache_path=explicit)
         assert boot.enabled is True
         assert boot.path == explicit
+        assert boot.max_age is None
 
     def test_relative_cache_path_flag_resolves_against_cwd(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -72,7 +89,7 @@ class TestResolveCacheBootFromProjectConfig:
         project = _project(tmp_path, "cache: false\n")
         boot = resolve_cache_boot(project)
         assert boot.enabled is True
-        assert boot.path is None
+        assert boot.path == default_cache_path().resolve()
 
     def test_config_path_opens_persistent_file_relative_to_project_root(
         self, tmp_path: Path
@@ -82,10 +99,12 @@ class TestResolveCacheBootFromProjectConfig:
         boot = resolve_cache_boot(project)
         assert boot.enabled is True
         assert boot.path == tmp_path / ".dct" / "cache.duckdb"
+        assert boot.max_age is None
 
-    def test_config_no_path_stays_in_memory(self, tmp_path: Path) -> None:
+    def test_config_no_path_uses_the_per_user_file(self, tmp_path: Path) -> None:
         reset_config()
         project = _project(tmp_path, "cache: 1h\n")
         boot = resolve_cache_boot(project)
         assert boot.enabled is True
-        assert boot.path is None
+        assert boot.path == default_cache_path().resolve()
+        assert boot.max_age == DEFAULT_CACHE_MAX_AGE

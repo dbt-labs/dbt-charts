@@ -47,7 +47,7 @@ _trino_dialect = TrinoDialect()
 
 # Registry mapping profile types to dialect instances
 DIALECTS: dict[str, SQLDialect] = {
-    # PostgreSQL (default)
+    # PostgreSQL
     "postgres": _postgres_dialect,
     "postgresql": _postgres_dialect,
     # DuckDB
@@ -82,15 +82,11 @@ DIALECTS: dict[str, SQLDialect] = {
     "lakecompute": _lakecompute_dialect,
 }
 
-# Default dialect when profile type is unknown
-DEFAULT_DIALECT = _postgres_dialect
-
 
 def get_dialect(profile_type: str) -> SQLDialect:
     """Get the appropriate SQL dialect for a database profile type.
 
     Returns a singleton dialect instance for the given profile type.
-    Falls back to PostgreSQL dialect for unknown types.
 
     Args:
         profile_type: Database type string (e.g., 'postgres', 'mysql', 'snowflake')
@@ -98,15 +94,22 @@ def get_dialect(profile_type: str) -> SQLDialect:
     Returns:
         SQLDialect instance for the specified database type
 
+    Raises:
+        ValueError: The type is not registered. A guessed dialect would run the
+            warehouse with the wrong placeholders and quoting, silently.
+
     Example:
         >>> dialect = get_dialect('postgres')
         >>> dialect.param(1)
         '$1'
-        >>> dialect = get_dialect('unknown')  # Falls back to PostgreSQL
-        >>> dialect.name
-        'postgres'
     """
-    return DIALECTS.get(profile_type.lower(), DEFAULT_DIALECT)
+    try:
+        return DIALECTS[profile_type.lower()]
+    except KeyError:
+        raise ValueError(
+            f"No SQL dialect registered for warehouse type {profile_type!r}. "
+            f"Registered types: {', '.join(list_dialects())}."
+        ) from None
 
 
 def list_dialects() -> list[str]:

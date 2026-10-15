@@ -26,6 +26,8 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
+from ._engine_render import render_pie_svg
+from ._svg_render import legend_label_order
 from .conftest import chart_pane
 
 
@@ -435,19 +437,13 @@ class TestOtherFamiliesResolveToo:
             {"segment": "Organic", "revenue": 20},
             {"segment": "Paid", "revenue": 15},
         ]
-        spec = _render(
-            make_chart,
+        chart = make_chart(
             "pie",
-            {"legend": {"visible": True, "values": ["paid", "direct"]}},
-            rows,
+            style={"legend": {"visible": True, "values": ["paid", "direct"]}},
             theta="revenue",
             color="segment",
         )
-        # Pie's color encoding lives inside its own `layer:` array (arc +
-        # label sublayers), not at the spec's top level -- _color_legend_values
-        # assumes an hconcat/vconcat/flat shape that doesn't apply here.
-        arc_color = spec["layer"][0]["encoding"]["color"]
-        assert arc_color["legend"]["values"] == ["Paid", "Direct"]
+        assert legend_label_order(render_pie_svg(chart, rows)) == ["Paid", "Direct"]
 
     def test_scatter_resolves(self, make_chart):
         rows = [

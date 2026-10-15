@@ -70,7 +70,7 @@ def test_ordinal_sparse_daily_axis_keeps_per_row_bands() -> None:
         "axis_x",
         "temporal",
         chart_type="",
-        label_authored=False,
+        labeled=False,
     )
     layout = resolve_axis_x_overlap(
         axis,

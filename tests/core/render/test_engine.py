@@ -23,7 +23,10 @@ from typing import Any
 import pytest
 
 from dbt_charts import _engine
-from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+from dbt_charts.core.compile.config import (
+    get_default_theme_name,
+    get_theme_style,
+)
 from dbt_charts.core.compile.image_assets import image_scope
 from dbt_charts.core.compile.models.board.normalized import (
     NO_TITLE_SHIFT,
@@ -36,7 +39,24 @@ from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.normalize.charts import normalize_chart
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
+from dbt_charts.core.constants.layout import SUPPORT_TABLE_COLUMN_BLOCK_SHARE_WARN_RATIO
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.render.chart.axis_label_collision import (
+    AxisLabelCollision,
+    collect_axis_label_collisions,
+)
+from dbt_charts.core.render.chart.endpoint_label_overflow import (
+    EndpointLabelGapOverflow,
+    collect_endpoint_label_gap_overflows,
+)
+from dbt_charts.core.render.chart.plot_width_floor_record import (
+    PlotWidthShareWarning,
+    collect_plot_width_share_warnings,
+)
+from dbt_charts.core.render.chart.series_label_truncation import (
+    SeriesLabelTruncation,
+    collect_series_label_truncations,
+)
 from dbt_charts.core.render.chart.table_overflow import (
     TableCramping,
     TableOverflow,
@@ -55,8 +75,13 @@ from dbt_charts.core.render.chart.text_truncation import (
     TextTruncation,
     collect_text_truncations,
 )
+from dbt_charts.core.render.chart.x_domain_paint_order import (
+    XDomainPaintOrder,
+    collect_x_domain_paint_orders,
+)
 from dbt_charts.core.render.engine import (
     build_chart_payload,
+    column_types,
     dumps_payload,
     render_native,
 )
@@ -144,7 +169,132 @@ def test_payload_carries_board_width_variables_and_datasets() -> None:
     assert payload["rows"] == _REVENUE
     assert payload["datasets"] == {chart.query_name: _REVENUE}
     assert payload["background"] == _BOARD_RS.background
+    assert (
+        payload["board_style"]["column_block_share_warn_ratio"]
+        == SUPPORT_TABLE_COLUMN_BLOCK_SHARE_WARN_RATIO
+    )
     json.dumps(payload)
+
+
+def _engine_decided_paths(node: object, path: tuple[str, ...] = ()) -> Generator[str]:
+    """Paths of `auto` leaves the theme spells for the engine to decide."""
+    if node == "auto" and (
+        path[-3:-1] == ("title", "font")
+        or path[-2:] == ("font", "color")
+        or (path[-2:] == ("title", "visible") and "legend" not in path)
+    ):
+        yield ".".join(path)
+    elif isinstance(node, dict):
+        for key, value in node.items():
+            yield from _engine_decided_paths(value, (*path, key))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from _engine_decided_paths(value, (*path, str(index)))
+
+
+@pytest.mark.parametrize("theme", ["clarity", "paper", "stark", "neon", "vivid"])
+@pytest.mark.parametrize(
+    "chart_def",
+    [
+        _KPI,
+        {"type": "table", "query": "q"},
+    ],
+    ids=["kpi", "table"],
+)
+def test_payload_carries_no_engine_decided_literal(
+    theme: str, chart_def: dict[str, Any]
+) -> None:
+    board_rs, board_ctx = resolve_style_and_context(get_theme_style(theme))
+    flat = normalize_chart(
+        "c1", chart_def, {"q": ValuesQuery(rows=_REVENUE)}, sources={}
+    )
+    chart = resolve(flat, _REVENUE, chart_style_context=board_ctx)
+    payload = build_chart_payload(
+        chart,
+        {chart.query_name: _REVENUE},
+        width=300.0,
+        height=150.0,
+        padding=None,
+        board_style=board_rs,
+        board_width=_BOARD_WIDTH,
+        variables=None,
+        title_shift=NO_TITLE_SHIFT,
+        is_placeholder=False,
+    )
+    leaked = list(_engine_decided_paths(json.loads(json.dumps(payload))))
+    assert not leaked, f"{theme}: payload carries engine-decided literals {leaked}"
+
+
+def test_payload_types_every_column_of_rows_and_each_dataset() -> None:
+    chart = _resolved(_KPI, _REVENUE)
+    other = [{"day": datetime.date(2024, 1, 2), "label": "a"}]
+    payload = build_chart_payload(
+        chart,
+        {chart.query_name: _REVENUE, "other": other},
+        width=300.0,
+        height=150.0,
+        padding=None,
+        board_style=_BOARD_RS,
+        board_width=_BOARD_WIDTH,
+        variables={},
+        title_shift=NO_TITLE_SHIFT,
+        is_placeholder=False,
+    )
+    assert payload["column_types"] == {
+        "rows": {"revenue": "integer"},
+        "datasets": {
+            chart.query_name: {"revenue": "integer"},
+            "other": {"day": "date", "label": "string"},
+        },
+    }
+
+
+def test_column_types_name_each_cell_kind() -> None:
+    rows = [
+        {
+            "s": "a",
+            "i": 1,
+            "f": 1.5,
+            "d": Decimal("1.50"),
+            "b": True,
+            "date": datetime.date(2024, 1, 2),
+            "ts": datetime.datetime(2024, 1, 2, 3, 4),
+            "n": None,
+            "nested": [{"key": "k", "value": 1}],
+        },
+        {"s": None, "i": None, "f": float("nan"), "n": None},
+    ]
+    assert column_types(rows) == {
+        "s": "string",
+        "i": "integer",
+        "f": "float",
+        "d": "decimal",
+        "b": "boolean",
+        "date": "date",
+        "ts": "datetime",
+        "n": "null",
+        "nested": "nested",
+    }
+
+
+def test_column_types_widen_integers_into_floats() -> None:
+    assert column_types([{"v": 1}, {"v": 2.5}]) == {"v": "float"}
+
+
+@pytest.mark.parametrize(
+    "mixed",
+    [
+        ["a", 1],
+        [datetime.date(2024, 1, 2), "2024-01-02"],
+        [datetime.date(2024, 1, 2), datetime.datetime(2024, 1, 2)],
+        [True, 1],
+        [Decimal("1"), 1.5],
+    ],
+)
+def test_column_types_report_a_column_mixing_cell_kinds_as_mixed(
+    mixed: list[Any],
+) -> None:
+    assert column_types([{"v": cell} for cell in mixed]) == {"v": "mixed"}
 
 
 def test_payload_carries_the_active_time_locale() -> None:
@@ -485,23 +635,15 @@ def test_a_placeholder_font_weight_of_any_authored_kind_leaves_every_engine_char
             assert f'font-weight="{attr}" fill=' in svg.split("placeholder-overlay")[1]
 
 
-def test_a_config_override_of_the_spark_bar_title_block_reaches_the_painted_title(
+def test_the_spark_bar_title_estimate_constants_reach_the_painted_title(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from types import SimpleNamespace
-
-    from dbt_charts.core.compile.config import get_chart_rendering
-
-    real = get_chart_rendering()
-    fake = SimpleNamespace(
-        spark_bar=SimpleNamespace(title_height=40.0, title_baseline_y=30.0),
-    )
     default_svg = _spark_svg()
+    monkeypatch.setattr("dbt_charts.core.render.engine.SPARK_BAR_TITLE_HEIGHT_PX", 40.0)
     monkeypatch.setattr(
-        "dbt_charts.core.render.engine.get_chart_rendering", lambda: fake
+        "dbt_charts.core.render.engine.SPARK_BAR_TITLE_BASELINE_Y_PX", 30.0
     )
     svg = _spark_svg()
-    assert real.spark_bar.title_baseline_y != 30.0
     assert 'y="30.0"' in svg and 'y="30.0"' not in default_svg
 
 
@@ -788,6 +930,139 @@ def test_an_unmapped_engine_warning_raises(monkeypatch: pytest.MonkeyPatch) -> N
         _native(_KPI, _REVENUE)
 
 
+_CARTESIAN_WARNINGS: list[tuple[str, dict[str, Any]]] = [
+    (
+        "WARN-CHART-TITLE-TRUNCATED",
+        {"chart_id": "c1", "authored_field": "title", "authored_text": "T"},
+    ),
+    (
+        "WARN-AXIS-TITLE-TRUNCATED",
+        {"chart_id": "c1", "authored_field": "x_label", "authored_text": "X"},
+    ),
+    (
+        "WARN-SUPPORT-TABLE-CELL-OVERFLOW",
+        {"chart_id": "c1", "detail": "82px needed, 47px per band"},
+    ),
+    (
+        "WARN-SERIES-LABEL-TRUNCATED",
+        {"chart_id": "c1", "authored_field": "color", "series_names": ["A"]},
+    ),
+    (
+        "WARN-ENDPOINT-LABEL-GAP-OVERFLOW",
+        {"chart_id": "c1", "series_count": 3, "gap_px": 18.2},
+    ),
+    (
+        "WARN-ENDPOINT-LABEL-RAIL-TIED",
+        {"chart_id": "c1", "series_count": 3, "gap_px": 18.2},
+    ),
+    (
+        "WARN-ENDPOINT-LABEL-RAIL-OVERFLOW",
+        {
+            "chart_id": "c1",
+            "series_count": 3,
+            "gap_px": 18.2,
+            "dropped_series": ["B"],
+        },
+    ),
+    (
+        "WARN-AXIS-LABEL-COLLISION",
+        {"chart_id": "c1", "field": "x", "label_count": 80},
+    ),
+    (
+        "WARN-LAYER-X-DOMAIN-PAINT-ORDER",
+        {"chart_id": "c1", "x_field": "m", "layer_only": ["Feb", "Apr"]},
+    ),
+    (
+        "WARN-PLOT-WIDTH-BELOW-MINIMUM",
+        {
+            "chart_id": "c1",
+            "block_width": 300.0,
+            "plot_width": 200.0,
+            "card_width": 500.0,
+        },
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        (
+            "WARN-ENDPOINT-LABEL-GAP-OVERFLOW",
+            EndpointLabelGapOverflow(
+                series_count=3, gap_px=18.2, cause="gap_did_not_fit"
+            ),
+        ),
+        (
+            "WARN-ENDPOINT-LABEL-RAIL-TIED",
+            EndpointLabelGapOverflow(series_count=3, gap_px=18.2, cause="no_slope"),
+        ),
+        (
+            "WARN-ENDPOINT-LABEL-RAIL-OVERFLOW",
+            EndpointLabelGapOverflow(
+                series_count=3,
+                gap_px=18.2,
+                cause="rail_overflow",
+                dropped_series=("B",),
+            ),
+        ),
+    ],
+)
+def test_each_endpoint_rail_warning_records_its_own_cause(
+    monkeypatch: pytest.MonkeyPatch, code: str, expected: EndpointLabelGapOverflow
+) -> None:
+    params = dict(dict(_CARTESIAN_WARNINGS)[code])
+
+    def emit(_payload: str) -> tuple[str, list[dict[str, Any]], float | None]:
+        return "<svg/>", [{"code": code, "params": params}], None
+
+    monkeypatch.setattr(_engine, "render_chart", emit)
+    with collect_endpoint_label_gap_overflows() as rails:
+        _native(_KPI, _REVENUE)
+    assert rails == {"c1": expected}
+
+
+def test_cartesian_engine_warnings_land_in_their_sinks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    warnings = [
+        {"code": code, "params": params} for code, params in _CARTESIAN_WARNINGS
+    ]
+
+    def emit(_payload: str) -> tuple[str, list[dict[str, Any]], float | None]:
+        return "<svg/>", warnings, None
+
+    monkeypatch.setattr(_engine, "render_chart", emit)
+    with ExitStack() as stack:
+        truncations = stack.enter_context(collect_text_truncations())
+        series = stack.enter_context(collect_series_label_truncations())
+        rails = stack.enter_context(collect_endpoint_label_gap_overflows())
+        collisions = stack.enter_context(collect_axis_label_collisions())
+        paint_orders = stack.enter_context(collect_x_domain_paint_orders())
+        plot_widths = stack.enter_context(collect_plot_width_share_warnings())
+        _native(_KPI, _REVENUE)
+    assert [
+        (t.surface, t.authored_field, t.authored_text) for t in truncations["c1"]
+    ] == [
+        ("chart_title", "title", "T"),
+        ("axis_title", "x_label", "X"),
+        ("support_table_cell_overflow", "support_table", "82px needed, 47px per band"),
+    ]
+    assert series["c1"] == [
+        SeriesLabelTruncation(authored_field="color", series_name="A")
+    ]
+    assert rails["c1"] == EndpointLabelGapOverflow(
+        series_count=3, gap_px=18.2, cause="rail_overflow", dropped_series=("B",)
+    )
+    assert collisions["c1"] == AxisLabelCollision(field="x", label_count=80)
+    assert paint_orders["c1"] == XDomainPaintOrder(
+        x_field="m", layer_only=("Feb", "Apr")
+    )
+    assert plot_widths["c1"] == PlotWidthShareWarning(
+        column_block_width_px=300.0, plot_width_px=200.0, card_width_px=500.0
+    )
+
+
 @pytest.mark.parametrize("cell", [Decimal("NaN"), Decimal("-Infinity"), float("nan")])
 def test_a_non_finite_numeric_table_cell_paints_the_null_dash(
     cell: float | Decimal,
@@ -873,6 +1148,18 @@ def test_board_style_envelope_carries_the_sizers_pagination_control_height() -> 
         style, None, active_format_locale(), active_time_locale()
     )
     assert envelope["pagination_control_height"] == TABLE_PAGINATION_CONTROL_HEIGHT
+
+
+def test_board_style_envelope_carries_the_text_mark_font() -> None:
+    from dbt_charts.core.render.engine import board_style_envelope
+    from dbt_charts.core.text.format_d3 import active_format_locale, active_time_locale
+
+    style, _ = resolve_style_and_context(get_theme_style())
+    envelope = board_style_envelope(
+        style, None, active_format_locale(), active_time_locale()
+    )
+    font = style.chart_defaults.marks.text.font
+    assert envelope["text_mark_font"] == {"family": font.family, "size": font.size}
 
 
 def _pivot_headers(cells: list[object]) -> list[str]:

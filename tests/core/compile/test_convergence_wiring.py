@@ -95,14 +95,10 @@ def test_merged_patch_board_title_overrides_meta(
     assert result.title == "FaceTitle"  # type: ignore[union-attr]
 
 
-def test_merged_patch_tags_append_meta_then_board(
+def test_merged_patch_tags_board_replaces_meta(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """tags is Merge("append") — meta tags come before board tags.
-
-    A plain dict-overlay merge would REPLACE lists; the engine APPENDs them.
-    This is the canonical test for list-merge behavior change.
-    """
+    """Lists replace like scalars: the board's tags win over the meta's."""
     from dbt_charts.core.compile.merge import merged_patch
     from dbt_charts.core.compile.models.board.patch import BoardPatch
 
@@ -112,7 +108,7 @@ def test_merged_patch_tags_append_meta_then_board(
     board_node = BoardPatch.model_validate({"tags": ["board-tag"]})
 
     result = merged_patch(board_node, board_file, project.directory("."))
-    assert result.tags == ["meta-tag", "board-tag"]  # type: ignore[union-attr]
+    assert result.tags == ["board-tag"]  # type: ignore[union-attr]
 
 
 def test_merged_patch_frame_width_survives_sibling_frame_key(
@@ -219,10 +215,10 @@ def test_compile_file_extends_resolves_end_to_end(
     assert result.board.title == "BaseTitle"
 
 
-def test_compile_file_meta_tags_append(
+def test_compile_file_board_tags_replace_meta_tags(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """End-to-end: tags from meta.yml and board APPEND, not replace."""
+    """End-to-end: the board's tags replace the meta.yml tags."""
     from dbt_charts.core.compile.compiler import compile_file
 
     project = local_project(tmp_path)
@@ -234,7 +230,7 @@ def test_compile_file_meta_tags_append(
         project.path("charts/board.yaml").read_board(), apply_meta=True
     )
     assert result.success, result.errors
-    assert result.board.tags == ["meta-tag", "board-tag"]
+    assert result.board.tags == ["board-tag"]
 
 
 def test_compile_file_board_width_survives_sibling_end_to_end(
@@ -279,47 +275,6 @@ def test_compile_file_threads_lint_through_engine(
     assert result.success, result.errors
     assert result.meta_lint is not None
     assert "WARN-REAGGREGATION" in result.meta_lint.ignore
-
-
-def test_compiler_wiring_respects_merge_marker_not_hardcoded_set(
-    tmp_path: Path, local_project: Callable[..., FilesystemProject]
-) -> None:
-    """Compiler overlay reads strategy from Merge markers, not a hardcoded frozenset.
-
-    Pin: the strategy() function is the single source of truth.  If 'tags'
-    ever changes its marker from Merge('append') to Merge('override'), this
-    test detects it and the wiring follows automatically.  Concretely: verify
-    that the Merge marker on BoardPatch.tags is 'append' and that the compiler
-    wiring produces append behavior for that field.
-    """
-    from dbt_charts.core.compile.compiler import compile_file
-    from dbt_charts.core.compile.merge import merge_marker
-    from dbt_charts.core.compile.models.board.patch import BoardPatch
-
-    # Verify the marker on BoardPatch.tags is append — if this ever changes
-    # the wiring should follow without a code change in compiler.py.
-    tags_field = BoardPatch.model_fields["tags"]
-    marker = merge_marker(tags_field)
-    assert marker is not None, "tags field must have an explicit Merge marker"
-    assert marker.file == "append", (
-        f"tags.Merge.file changed from 'append' to {marker.file!r}; "
-        "update the marker (and wiring will follow automatically)"
-    )
-
-    # End-to-end: meta tags append to board tags.
-    project = local_project(tmp_path)
-    _write(tmp_path, "charts/meta.yml", "tags:\n  - meta_tag\n")
-    board_yaml = "title: T\ntags:\n  - board_tag\nrows:\n  - cols:\n    - text: hi\n"
-    _write(tmp_path, "charts/board.yaml", board_yaml)
-
-    result = compile_file(
-        project.path("charts/board.yaml").read_board(), apply_meta=True
-    )
-    assert result.success, result.errors
-    assert result.board.tags == [
-        "meta_tag",
-        "board_tag",
-    ], "compiler wiring must append tags using the Merge marker strategy"
 
 
 # ===========================================================================

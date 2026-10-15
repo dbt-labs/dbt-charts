@@ -261,6 +261,10 @@ class _CartesianResolvedChartFields(
         default=None,
         description="Pixel offset from plot bottom to the x-axis block bottom, for support_table strip placement.",
     )
+    support_table_series_ink: bool | None = Field(
+        default=None,
+        description="Whether a per-series support_table cell paints its series' dark ink; None when support_table is None.",
+    )
     effective_support_table_style: SupportTableStyle | None = Field(
         default=None,
         description="Final per-chart support_table style (board theme merged with the family override).",

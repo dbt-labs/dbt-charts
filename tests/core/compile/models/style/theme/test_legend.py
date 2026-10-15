@@ -26,6 +26,7 @@ def _legend(position: object = None, direction: str = "vertical") -> LegendStyle
             "direction": direction,
             "columns": 0,
             "compact_columns": 2,
+            "row": {"swatch_width": 10.0, "entry_gap": 16.0},
             "label": {"padding": 8.0},
             "title": {"padding": 0.0},
         }
@@ -75,6 +76,7 @@ def test_pie_position_accepts_an_edge(edge: str) -> None:
             "direction": "vertical",
             "columns": 0,
             "compact_columns": 2,
+            "row": {"swatch_width": 10.0, "entry_gap": 16.0},
             "label": {"padding": 8.0},
             "title": {"padding": 0.0},
         }

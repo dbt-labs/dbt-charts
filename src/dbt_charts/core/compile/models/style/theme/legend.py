@@ -8,8 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.markers import (
     InheritSlot,
-    Merge,
-    Strategy,
 )
 from dbt_charts.core.compile.models.primitives import (
     FontStyle,
@@ -44,35 +42,38 @@ class LegendLabelStyle(LegendElementStyle):
 
 
 class LegendTitleStyle(LegendElementStyle):
-    visible: bool | None = Field(
+    visible: bool | Literal["auto"] | None = Field(
         default=None,
-        description="Show the legend title; None = shown, False = suppressed (VL legend.title: null).",
+        description=(
+            "Show the legend title. 'auto' shows it except on a top legend "
+            "that runs horizontally; false suppresses it (VL legend.title: null)."
+        ),
     )
 
 
 class LegendPositionStyle(BaseModel):
     """Cartesian and geo legend placement: edge, align along it, overlay or reserve.
 
-    Every leaf is a cascade-managed sentinel: no theme populates them, and None
-    means "the engine decides" (``resolve/style/legend_position.py``), which
-    bakes the concrete placement into the resolved legend.
+    Every leaf is `auto` on every built-in theme: the engine decides
+    (``resolve/style/legend_position.py``) and bakes the concrete placement
+    into the resolved legend. A concrete leaf from any tier is placed as written.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    edge: LegendEdge | None = Field(
+    edge: LegendEdge | Literal["auto"] | None = Field(
         default=None,
-        description="Side of the plot the legend sits on. None = the engine decides.",
+        description="Side of the plot the legend sits on. 'auto' = the engine decides.",
     )
-    align: LegendAlign | None = Field(
+    align: LegendAlign | Literal["auto"] | None = Field(
         default=None,
-        description="Position along the edge. None = the engine decides.",
+        description="Position along the edge. 'auto' = the engine decides.",
     )
-    overlay: bool | None = Field(
+    overlay: bool | Literal["auto"] | None = Field(
         default=None,
         description=(
             "True floats the legend over the plot, reserving no space; False "
-            "reserves a strip for it. None = the engine decides."
+            "reserves a strip for it. 'auto' = the engine decides."
         ),
     )
 
@@ -85,16 +86,34 @@ class PiePositionStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    edge: LegendEdge | None = Field(
+    edge: LegendEdge | Literal["auto"] | None = Field(
         default=None,
         description=(
             "Side of the wheel the key (legend or attached table) sits on. "
-            "None = the engine decides."
+            "'auto' = the engine decides."
         ),
     )
-    align: LegendAlign | None = Field(
+    align: LegendAlign | Literal["auto"] | None = Field(
         default=None,
-        description=("Position of the key along that edge. None = the engine decides."),
+        description=(
+            "Position of the key along that edge. 'auto' = the engine decides."
+        ),
+    )
+
+
+class LegendRowStyle(BaseModel):
+    """Fixed chrome around each entry of a single-row top legend.
+
+    Constant regardless of mark size or entry count: a swatch stays legible even
+    when the marks it names are countless and tiny. The label text is measured
+    against the real resolved label font, never estimated.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    swatch_width: float = Field(ge=0, description="Swatch box width in pixels.")
+    entry_gap: float = Field(
+        ge=0, description="Gap in pixels between one entry and the next."
     )
 
 
@@ -124,11 +143,18 @@ class _LegendStyleBase(BaseModel):
             "top legend, or an inferred-horizontal legend too wide for one row."
         ),
     )
+    row: LegendRowStyle = Field(
+        description="Chrome around each entry of a single-row top legend."
+    )
     label: LegendLabelStyle = Field(description="Legend label style.")
     title: LegendTitleStyle = Field(description="Legend title style.")
-    visible: bool | None = Field(
+    visible: bool | Literal["auto"] | None = Field(
         default=None,
-        description="Show the legend. None = legend visible; False = explicitly suppressed.",
+        description=(
+            "Show the legend. 'auto' shows it unless direct labeling (endpoint "
+            "labels, or a pie's slice labels) names the series instead; true "
+            "keeps it beside direct labels and false hides it."
+        ),
     )
     symbol_limit: int | None = Field(
         default=None,
@@ -143,7 +169,7 @@ class _LegendStyleBase(BaseModel):
     # layer infers entry order from the color scale domain (data + layer order).
     # Authored as a list to pin/reorder legend entries explicitly (maps to VL
     # legend.values). No theme default — ordering is an author decision.
-    values: Annotated[list[str] | None, Merge(Strategy.OVERRIDE)] = Field(
+    values: list[str] | None = Field(
         default=None,
         description=(
             "Explicit legend entry order/filter; each entry resolves against "

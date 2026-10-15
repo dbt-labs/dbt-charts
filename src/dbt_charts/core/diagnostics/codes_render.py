@@ -555,6 +555,25 @@ ERR_INPUT_INVALID = REGISTRY.register(
     )
 )
 
+ERR_TAB_UNKNOWN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TAB-UNKNOWN",
+        domain="render",
+        title="Unknown tab selected",
+        message_template=(
+            "Tab variable {variable!r} is {value!r}, which is not a tab on this "
+            "board (tabs: {slugs})."
+        ),
+        doc=(
+            "Fired when a render selects a tab that is not on the board, through "
+            "a `--var`, a URL parameter, or an API variable named by the tabs "
+            "`id:`. A tab is selected by slug: its title lowercased with spaces "
+            "replaced by underscores."
+        ),
+        docs_topic="layout",
+    )
+)
+
 ERR_VEGA_LITE_UNSUPPORTED_TYPE = REGISTRY.register(
     ErrorCode(
         code="ERR-VEGA-LITE-UNSUPPORTED-TYPE",
@@ -665,6 +684,30 @@ ERR_LABEL_FORMAT_AXIS_MISMATCH = REGISTRY.register(
             "Fired when a non-time format is authored on an axis holding "
             "category or date tick labels."
         ),
+        docs_topic="charts",
+    )
+)
+
+ERR_TIME_FORMAT_NOT_TEMPORAL = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TIME-FORMAT-NOT-TEMPORAL",
+        domain="render",
+        title="a time format needs date values",
+        message_template=(
+            "style.{setting} ({fmt!r}) is a date pattern, but {field!r} holds "
+            "{found}, not dates. {remedy}"
+        ),
+        doc=(
+            "Fired when a d3 time format (`%b %Y`) is authored on an axis whose "
+            "field holds values that are not ISO dates (`2024-01`, "
+            "`2024-01-31`) or date objects: category names, numbers, or "
+            "non-ISO bucket labels such as `Q1 2024`. Vega would paint "
+            "`Invalid Date` on every tick. A chart written with the retired "
+            "`style.time_format` migrates onto `style.axis_x.labels.format` "
+            "whatever x holds, so this is where a board whose x was never a "
+            "date is told."
+        ),
+        summary="Fired when a date pattern is authored on an axis that holds no dates.",
         docs_topic="charts",
     )
 )
@@ -1556,7 +1599,7 @@ WARN_BAR_BAND_WIDTH_TOO_NARROW = REGISTRY.register(
         # continuous-x equivalent. The continuous (quantitative-x) branch
         # shares this diagnostic CODE (one warning, not a second parallel
         # one) but formats its own message
-        # (``_CONTINUOUS_MESSAGE_TEMPLATE`` in
+        # (``CONTINUOUS_MESSAGE_TEMPLATE`` in
         # ``render/warnings/bar_band_width_too_narrow.py``): its comparison
         # direction is inverted (bar_width exceeds the gap rather than
         # falling below a floor), and printing both numbers through this
@@ -1642,7 +1685,7 @@ WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM = REGISTRY.register(
         doc=(
             "Fires when a small-multiples chart's column-facet cardinality "
             "leaves each panel narrower than the configured legibility floor. "
-            "The floor is `chart_rendering.facet.min_panel_px`. The card's "
+            "The floor is `constants.layout.FACET_MIN_PANEL_PX`. The card's "
             "declared width is never negotiable, panels shrink below the "
             "floor rather than push painted content past the card's edge, "
             "so this is the author's only signal that the panel count has "
@@ -1673,7 +1716,7 @@ WARN_ENDPOINT_LABEL_GAP_OVERFLOW = REGISTRY.register(
         ),
         doc=(
             "Fires when an endpoint-label rail's intended gap "
-            "(`font_size * chart_rendering.endpoint_labels.line_height_multiplier`) "
+            "(`font_size * constants.marks.ENDPOINT_LABEL_LINE_HEIGHT_MULTIPLIER`) "
             "cannot fit between the "
             "rail's series count and the plot's actual height. This is "
             "advisory, not a floor: the rail still renders, with labels "
@@ -2076,10 +2119,8 @@ WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS = REGISTRY.register(
             "Fires on donut charts whose formatted center total is wider than the "
             "hole it sits in, measured with the engine's font measurer. The hole "
             "diameter is `min(slot_width, slot_height) * outer_fraction * "
-            "inner_radius`, where slot_width is the laid-out width minus the slice "
-            "labels' reach and slot_height is the laid-out card height (for "
-            "attached-table wheels, the wheel width and the theme's continuous "
-            "view height)."
+            "inner_radius`, where the slot is the plot box the wheel draws in, "
+            "after the slice labels' reach and any legend."
         ),
         docs_topic="charts",
     )
@@ -2105,7 +2146,7 @@ WARN_PLOT_HEIGHT_BELOW_MINIMUM = REGISTRY.register(
         doc=(
             "Fires when a bar chart's estimated plot height falls below its "
             "calibrated readability floor. The floor is "
-            "`chart_rendering.plot_height_floor.ratio` of the card's own "
+            "`constants.layout.PLOT_HEIGHT_FLOOR_RATIO` of the card's own "
             "height, checked at every width: a short, wide card carrying "
             "heavy chrome starves its plot the same way a narrow one does. "
             "ERR-CHART-PAINTED-NO-MARKS already hard-fails around 247px, "
@@ -2142,7 +2183,7 @@ WARN_PLOT_WIDTH_BELOW_MINIMUM = REGISTRY.register(
         doc=(
             "Fires when a horizontal bar's support_table column block "
             "already claims more than "
-            "`chart_rendering.support_table.column_block_share_warn_ratio` "
+            "`constants.layout.SUPPORT_TABLE_COLUMN_BLOCK_SHARE_WARN_RATIO` "
             "of the width it shares with the plot, measured from the "
             "column block's own font-measured reservation before any "
             "further axis-label or legend chrome is subtracted. The "
@@ -3507,9 +3548,8 @@ WARN_LOW_TEXT_CONTRAST = REGISTRY.register(
         summary="Fired when a text block's ink has too little contrast against its background.",
         doc=(
             "Fires when a text block's heading or body ink clears less than "
-            "the configured WCAG 2.1 contrast ratio "
-            "(`chart_rendering.text_contrast.min_ratio`, or "
-            "`large_text_min_ratio` for WCAG's own large-text exception) "
+            "the WCAG 2.1 AA contrast ratio (4.5:1, or 3:1 under WCAG's own "
+            "large-text exception) "
             "against the opaque background it "
             "paints on. The common case is a row's own default ink left "
             "unchanged after authoring a `style.background` on that row; the "

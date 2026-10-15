@@ -94,7 +94,8 @@ def st_board(
         board: Board YAML path, relative to ``project_dir``.
         project_dir: The dbt charts project root.
         session: A live Snowpark ``Session`` (or duck-typed equivalent —
-            anything exposing ``.sql(sql).to_local_iterator()``). When given, SQL
+            anything whose ``.sql(sql)`` result exposes ``columns`` and
+            ``to_local_iterator()``). When given, SQL
             against a ``snowflake`` source runs through it instead of a dbt
             profile — the shape Streamlit in Snowflake hands an app, which has
             no dbt credentials to connect with otherwise. The session must

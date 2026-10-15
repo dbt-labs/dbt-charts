@@ -15,7 +15,6 @@ from typing import Any
 import pytest
 
 from dbt_charts.core.compile.config import (
-    get_chart_rendering,
     get_theme_style,
     reset_config,
 )
@@ -30,6 +29,7 @@ from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
     panel_axis_cardinality,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
+from dbt_charts.core.constants.layout import FACET_MIN_PANEL_PX
 from dbt_charts.core.render.chart.emitters._cartesian import (
     effective_horizontal_bar_category_count,
     facet_bound_position_channels,
@@ -328,7 +328,7 @@ class TestExtraAxisWidthTracksMeasuredLabels:
 class TestAffordabilityGate:
     """Narrowing is an improvement only when it is affordable. If reserving
     the measured extra axis would drop the per-column panel below
-    ``chart_rendering.facet.min_panel_px`` — the same floor
+    ``FACET_MIN_PANEL_PX`` — the same floor
     ``WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM`` already reads — the channel
     does not narrow at all: the panel keeps its full-domain, shared axis
     (today's exact behavior) instead of an unreadable, over-narrow one.
@@ -381,7 +381,6 @@ class TestAffordabilityGate:
         board_rs, ctx = _board()
         resolved = resolve(chart, data, chart_style_context=ctx, width=card_width)
         baseline = _unnarrowed_width(resolved, card_width)
-        min_panel_px = get_chart_rendering().facet.min_panel_px
 
         vl = generate_vega_lite_spec(
             chart, data, width=card_width, board_style=board_rs, chart_style_context=ctx
@@ -394,7 +393,7 @@ class TestAffordabilityGate:
             # Affordable: reserved real width, still legible, strictly
             # narrower than doing nothing (there would be no point
             # narrowing to the exact same width).
-            assert emitted >= min_panel_px
+            assert emitted >= FACET_MIN_PANEL_PX
             assert emitted < baseline
         else:
             # Declined: today's exact, unreduced behavior — not a
@@ -440,12 +439,11 @@ class TestAffordabilityGate:
         data = _sparse_region_data(products)
         chart = _sparse_region_chart({"columns": "region"})
         board_rs, ctx = _board()
-        min_panel_px = get_chart_rendering().facet.min_panel_px
 
         vl = generate_vega_lite_spec(
             chart, data, width=card_width, board_style=board_rs, chart_style_context=ctx
         )
-        assert vl["spec"]["width"] >= min_panel_px
+        assert vl["spec"]["width"] >= FACET_MIN_PANEL_PX
 
 
 class TestMirrorNeverNarrows:

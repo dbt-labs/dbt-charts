@@ -3,6 +3,8 @@
 Split from test_vega_lite.py — arc chart aggregation tests.
 """
 
+import re
+
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
@@ -11,30 +13,39 @@ from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
+from ._engine_render import render_pie_svg
+
 _BOARD_STYLE = resolve_style(get_theme_style())
+
+
+def _wedges(svg: str) -> list[str]:
+    return re.findall(r'<path d="([^"]+)"[^>]*aria-roledescription="arc mark"', svg)
 
 
 class TestArcChartNoHiddenAggregation:
     """Arc/pie charts should NOT silently aggregate data."""
 
-    def test_pie_with_inner_radius_theta_has_no_aggregate(self, make_chart):
-        """Pie chart with inner_radius (donut appearance) should not aggregate."""
+    def test_donut_draws_one_wedge_per_row(self, make_chart):
+        """A donut draws every row as its own wedge; a repeated category is
+        never summed."""
         chart = make_chart(
             "pie", x="category", y="value", style={"pie": {"inner_radius": 0.5}}
         )
-        data = [{"category": "A", "value": 30}, {"category": "B", "value": 70}]
-        spec = generate_vega_lite_spec(chart, data)
-        # Pie/donut now layers by default (default labels added at pipeline);
-        # the arc encoding lives on layer[0].
-        assert "aggregate" not in spec["layer"][0]["encoding"]["theta"]
+        data = [
+            {"category": "A", "value": 30},
+            {"category": "A", "value": 20},
+            {"category": "B", "value": 70},
+        ]
+        assert len(_wedges(render_pie_svg(chart, data))) == 3
 
-    def test_pie_theta_has_no_aggregate(self, make_chart):
+    def test_pie_draws_one_wedge_per_row(self, make_chart):
         chart = make_chart("pie", x="category", y="value")
-        data = [{"category": "A", "value": 30}, {"category": "B", "value": 70}]
-        spec = generate_vega_lite_spec(chart, data)
-        # Pie/donut now layers by default (default labels added at pipeline);
-        # the arc encoding lives on layer[0].
-        assert "aggregate" not in spec["layer"][0]["encoding"]["theta"]
+        data = [
+            {"category": "A", "value": 30},
+            {"category": "A", "value": 20},
+            {"category": "B", "value": 70},
+        ]
+        assert len(_wedges(render_pie_svg(chart, data))) == 3
 
     def test_arc_type_rejected_by_generate_vega_lite_spec(self):
         """arc is not an authorable chart type (not in the Chart union). A chart
@@ -55,48 +66,22 @@ class TestArcChartNoHiddenAggregation:
 
 
 class TestArcChartSpacing:
-    """Arc radius uses Vega signal expressions so it always fits the view."""
+    """The wheel's radius fits the plot's shorter side."""
 
-    def test_pie_outerRadius_is_expression(self, make_chart):
-        """outerRadius must be a Vega signal expr, not a fixed pixel value, so it
-        adapts to the actual view width after legend placement."""
+    @pytest.mark.parametrize(("width", "height"), [(300, 300), (600, 200), (200, 600)])
+    def test_pie_radius_fits_the_short_axis(self, make_chart, width, height):
         chart = make_chart("pie", x="category", y="value")
         data = [{"category": "A", "value": 30}, {"category": "B", "value": 70}]
-        spec = generate_vega_lite_spec(chart, data, width=300, height=300)
+        svg = render_pie_svg(chart, data, width=width, height=height)
+        outer = max(float(r) for r in re.findall(r"A([\d.]+),\1,", svg))
+        assert outer <= min(width, height) / 2
 
-        outer = spec["layer"][0]["mark"]["outerRadius"]
-        assert isinstance(outer, dict) and "expr" in outer, (
-            "outerRadius must be a Vega ExprRef so the radius adapts to the actual "
-            "view dimensions; a fixed pixel value clips the arc when labels are long"
-        )
-
-    def test_pie_with_inner_radius_both_radii_are_expressions(self, make_chart):
-        """Both outerRadius and innerRadius must be expressions for pie with style.inner_radius."""
+    def test_donut_hole_scales_with_the_wheel(self, make_chart):
         chart = make_chart(
             "pie", x="category", y="value", style={"pie": {"inner_radius": 0.5}}
         )
         data = [{"category": "A", "value": 30}, {"category": "B", "value": 70}]
-        spec = generate_vega_lite_spec(chart, data, width=400, height=400)
-
-        mark = spec["layer"][0]["mark"]
-        assert (
-            isinstance(mark.get("outerRadius"), dict) and "expr" in mark["outerRadius"]
-        )
-        assert (
-            isinstance(mark.get("innerRadius"), dict) and "expr" in mark["innerRadius"]
-        )
-
-    def test_pie_landscape_radius_fits_short_axis(self, make_chart):
-        """Non-square chart: min(width, height) must use the shorter axis."""
-        chart = make_chart("pie", x="category", y="value")
-        data = [{"category": "A", "value": 30}, {"category": "B", "value": 70}]
-        spec = generate_vega_lite_spec(chart, data, width=600, height=200)
-
-        outer = spec["layer"][0]["mark"]["outerRadius"]
-        # Expression must reference both axes so the shorter one constrains the radius
-        assert isinstance(outer, dict) and "expr" in outer
-        assert (
-            "min(" in outer["expr"]
-            and "width" in outer["expr"]
-            and "height" in outer["expr"]
-        )
+        for size in (300, 500):
+            wedge = _wedges(render_pie_svg(chart, data, width=size, height=size))[0]
+            radii = sorted({float(r) for r in re.findall(r"A([\d.]+),\1,", wedge)})
+            assert radii[-2] / radii[-1] == pytest.approx(0.5, abs=1e-3)

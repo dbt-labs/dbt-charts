@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Protocol
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.format import column_format
 from dbt_charts.core.compile.models.primitives import (
     ColorStyle,
@@ -22,6 +21,7 @@ from dbt_charts.core.compile.models.style.theme import (
 from dbt_charts.core.compile.resolve.style.palette import mark_ink
 from dbt_charts.core.compile.resolve.style.tokens import _resolve_color_tokens
 from dbt_charts.core.compile.resolve.style.typography import width_tier
+from dbt_charts.core.constants.marks import ENDPOINT_LABEL_LINE_HEIGHT_MULTIPLIER
 
 __all__ = [
     "_cartesian_style_tail",
@@ -178,7 +178,6 @@ def _resolved_series_label(
     eff_palette = _effective_palette(chart_style_context, primary)
     compact = width_tier(width) in ("tiny", "narrow")
     font_size = font.compact_size if compact else font.size
-    multiplier = get_chart_rendering().endpoint_labels.line_height_multiplier
     return ResolvedSeriesLabelStyle(
         font_family=font.family,
         font_size=font_size,
@@ -194,7 +193,7 @@ def _resolved_series_label(
                 }
             )
         ),
-        gap_px=font_size * multiplier,
+        gap_px=font_size * ENDPOINT_LABEL_LINE_HEIGHT_MULTIPLIER,
     )
 
 

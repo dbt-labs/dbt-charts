@@ -285,6 +285,7 @@ _OMITTED_FROM_PROJECTION = {
     "title_style": "resolved chart-local title style (overflow, case)",
     # Support-table strip geometry baked at resolve time so render never re-runs axis cascade.
     "support_table_axis_offset": "pixel offset baked at resolve time for support_table strip placement",
+    "support_table_series_ink": "resolve-time render flag: whether per-series support_table cells paint their series ink",
     "effective_support_table_style": "final per-chart support_table style (board theme merged with family override)",
     # Fold-resolved multi-y list; authors write `y: [a, b]` which the resolver
     # normalizes into `y=WIDE_VALUE_FIELD, wide_measures=(a, b)`.

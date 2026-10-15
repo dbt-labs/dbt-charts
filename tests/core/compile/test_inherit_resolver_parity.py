@@ -590,16 +590,16 @@ def test_parity_support_table_font_fills_from_charts_font():
 def test_parity_support_table_label_font_fills_from_support_table_font():
     """support_table.label.font inherits from support_table.font via InheritSlot."""
     graph = get_inherit_graph()
-    target = "Style.charts.support_table.label.font.color"
+    target = "Style.charts.support_table.label.font.size"
 
     base = get_theme_style("clarity")
-    distinctive = "#445566"
+    distinctive = 17.0
 
     patched_dt_font = base.charts.support_table.font.model_copy(
-        update={"color": distinctive}
+        update={"size": distinctive}
     )
     patched_label_font = base.charts.support_table.label.font.model_copy(
-        update={"color": None}
+        update={"size": None}
     )
     merged = base.model_copy(
         update={
@@ -899,7 +899,7 @@ def test_per_family_support_table_inherits_from_global():
     per_family_paths = [
         "Style.charts.bar.support_table.font.color",
         "Style.charts.line.support_table.font.color",
-        "Style.charts.bar.support_table.label.font.color",
+        "Style.charts.bar.support_table.label.font.size",
     ]
     missing = [p for p in per_family_paths if p not in graph]
     assert not missing, (
@@ -907,7 +907,7 @@ def test_per_family_support_table_inherits_from_global():
     )
     # Global chains must still be present too.
     assert "Style.charts.support_table.font.color" in graph
-    assert "Style.charts.support_table.label.font.color" in graph
+    assert "Style.charts.support_table.label.font.size" in graph
 
 
 # ── Full-theme graph coverage ─────────────────────────────────────────────────

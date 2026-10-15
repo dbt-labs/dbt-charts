@@ -298,8 +298,7 @@ def _stamp_value_label_layers(svg: str, layer_indices: list[int], chart_id: str)
 
     chart_interactivity.js's ``recedableMarks()`` reads this attribute to
     scope its twin search to marked layers only -- a bar's own printed value
-    still recedes with its bar, while a pie's center total and outside
-    labels (never marked; built directly in emitters/pie.py) stay lit
+    still recedes with its bar, while an unmarked text layer stays lit
     unconditionally. See that function's docstring.
 
     A layer index with zero matching groups is a wiring bug, not a

@@ -1,0 +1,3 @@
+kind: Fixes
+body: Boards that set the retired style.time_format or a scatter's style.number_format now migrate onto the axis label format instead of failing to parse, and a date pattern on an axis that holds no dates (including numbers such as epoch milliseconds) is now an error instead of painting Invalid Date.
+time: 2026-10-14T03:30:22.616533-07:00

@@ -782,6 +782,36 @@ ERR_DRIVER_CHECKSUM_MISMATCH = REGISTRY.register(
     )
 )
 
+ERR_CACHE_FILE_UNAVAILABLE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CACHE-FILE-UNAVAILABLE",
+        domain="execute",
+        title="The query-result cache file could not be opened",
+        message_template=(
+            "Could not open the query-result cache at {path} after retrying "
+            "for {seconds}s: {detail} If another process is holding the file "
+            "open, close it; otherwise check that the file is readable and "
+            "writable and the disk has space. To go on without it, pass "
+            "--cache PATH for another file, or --no-cache."
+        ),
+        doc=(
+            "Fired when the query-result cache file cannot be opened for the "
+            "whole retry window. The message carries DuckDB's own description "
+            "of why. One cause is another process holding the file: it is a "
+            "DuckDB database, which one process at a time may open for "
+            "writing. dbt Charts opens it only for the length of each read or "
+            "write, so several `dct` processes normally share it, but a "
+            "process that keeps it open, such as a DuckDB shell or a release "
+            "that held the cache for the life of the process, locks the others "
+            "out. The other causes are a file that is damaged, not readable or "
+            "writable by this user, or on a full disk. Results are never "
+            "served from a substitute in-memory cache, because that would "
+            "silently re-run every query against the warehouse."
+        ),
+        docs_topic="queries",
+    )
+)
+
 ERR_RESULT_NUMERIC_OVERFLOW = REGISTRY.register(
     ErrorCode(
         code="ERR-RESULT-NUMERIC-OVERFLOW",
@@ -797,6 +827,26 @@ ERR_RESULT_NUMERIC_OVERFLOW = REGISTRY.register(
             "Charts refuses to narrow it, because a driver's own narrowing can "
             "wrap silently and produce a plausible wrong number. Cast the column "
             "in the query to state what you want instead."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_RESULT_DUPLICATE_COLUMN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-RESULT-DUPLICATE-COLUMN",
+        domain="execute",
+        title="A query returned two columns with the same name",
+        message_template=(
+            "The query returned more than one column named {columns}. Rows are "
+            "keyed by column name, so one would silently replace the other. "
+            "Alias each column to a distinct name in the query."
+        ),
+        doc=(
+            "Fired when a query result has two or more columns with the same "
+            "name, for example `select 1 as a, 2 as a` or a join that selects "
+            "`id` from both sides. Names are compared after the adapter's own "
+            "case normalization."
         ),
         docs_topic="queries",
     )

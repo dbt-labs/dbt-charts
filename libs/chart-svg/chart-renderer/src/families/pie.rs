@@ -228,8 +228,7 @@ struct TotalStyle {
 }
 
 /// The center value's resolved style. Its d3 `format` lives here and nowhere
-/// else: `ChartTotal` has no `format` key, and `emitters/pie.py` reads
-/// `style.total_style.value.format`.
+/// else: `ChartTotal` has no `format` key.
 #[derive(Deserialize)]
 struct TotalValueStyle {
     font: Font,
@@ -364,10 +363,8 @@ fn identity_string(row: &serde_json::Map<String, Value>, field: Option<&String>)
         .unwrap_or_default()
 }
 
-/// The color channel's data field: production's `color_key`
-/// (`emitters/pie.py`), `None` when the chart authors no `color:`. Without
-/// it the emitter writes no `encoding.color`, so there is neither a color
-/// scale nor a legend to carry.
+/// The color channel's data field, `None` when the chart authors no
+/// `color:`. Without it there is neither a color scale nor a legend.
 fn color_field_of(r: &Resolved) -> Option<&str> {
     r.resolved_channels
         .get("color")
@@ -415,9 +412,8 @@ impl PieLegend {
     }
 }
 
-/// Lays the pie's color legend out through the shared Vega layout
-/// (`emitters/pie.py:236-262`: `apply_color_legend`'s config on the color
-/// encoding, the scale's `domain: seen`). `None` when no legend is drawn.
+/// Lays the pie's color legend out through the shared Vega layout, over the
+/// color scale's domain. `None` when no legend is drawn.
 /// Every legend shape this port does not draw refuses by name.
 fn plan_legend(
     r: &Resolved,
@@ -459,8 +455,8 @@ fn plan_legend(
         return Err(format!("pie: legend.position edge {:?} is not a side of the plot", cfg.position.edge));
     }
 
-    // The scale's domain: the color values in row order, each once
-    // (`emitters/pie.py`'s `seen`); a null draws no entry.
+    // The scale's domain: the color values in row order, each once; a null
+    // draws no entry.
     let mut domain: Vec<&str> = Vec::new();
     for row in rows {
         match row.get(color_field) {
@@ -535,11 +531,10 @@ fn plan_legend(
 /// re-derives the radius and label anchors and unions their ink. A wheel's
 /// label ink moves WITH the plot, so the sequence generally has no fixed
 /// point — which is why `fit_plot` runs Vega's own bounded pass count rather
-/// than iterating to one (`AUTOSIZE_PADDING_PASSES`). The attached-table composition
-/// (arc_attached_table.py) renders its wheel through this same fit path —
-/// production's wheel child is a full standalone VL render at
-/// `width=wheel_width, height=None` — and only the outer wheel+table
-/// placement is production's own Python SVG arithmetic.
+/// than iterating to one (`AUTOSIZE_PADDING_PASSES`). The attached-table
+/// composition renders its wheel through this same fit path at
+/// `width=wheel_width` and the theme's unsized view height; only the outer
+/// wheel+table placement is its own arithmetic.
 #[allow(clippy::too_many_arguments)]
 fn draw_pie_fit(
     frame: &ChartFrame,
@@ -568,11 +563,10 @@ fn draw_pie_fit(
         idx: usize,
     }
     let mut slice_labels: Vec<SliceLabel> = Vec::new();
-    // Production's `color_key` (emitters/pie.py): the color channel's
-    // `data_field`, empty when the chart authors no `color:`. Without it the
-    // emitter writes no `encoding.color` at all and stamps one constant
-    // `mark.fill = palette[0]` on the arc layer — palette-by-index is the
-    // color scale's range, so it needs the scale to exist.
+    // The color channel's `data_field`, empty when the chart authors no
+    // `color:`. Without it every wedge paints one constant `palette[0]` —
+    // palette-by-index is the color scale's range, so it needs the scale to
+    // exist.
     let color_field = color_field_of(r);
     let color_key = color_field.is_some();
     // The board's plan for this field, if it binds one (#7167) — the arc
@@ -764,15 +758,29 @@ fn draw_pie_fit(
     let radius = pw.min(ph) / 2.0 * r.outer_fraction;
     let inner = radius * r.style.inner_radius;
     let (cx, cy) = (pad_l + m.left + pw / 2.0, pad_t + m.top + ph / 2.0);
+    if let Some((formatted, value_w, _, _)) = &total_texts {
+        if inner > 0.0 && *value_w > 2.0 * inner {
+            crate::diagnostic::warn(crate::diagnostic::Diagnostic::new(
+                &crate::codes::WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS,
+                [
+                    ("chart_id", serde_json::json!(r.id)),
+                    ("formatted_value", serde_json::json!(formatted)),
+                    ("hole_diameter", serde_json::json!(2.0 * inner)),
+                    ("slot_height", serde_json::json!(ph)),
+                    ("slot_width", serde_json::json!(pw)),
+                    ("text_width", serde_json::json!(value_w)),
+                ],
+            ));
+        }
+    }
 
     // ── Emission ─────────────────────────────────────────────────────────
     let mut svg = String::with_capacity(4096);
     frame.background(&mut svg);
     if let (Some(_), false) = (m.title_pos, title.block().title_lines.is_empty()) {
-        // `arc_attached_table.py::_slide_title`: a left-placed table pushes the
-        // wheel right, and the title group slides back by that much so it stays
-        // on the card's own left edge.
-        // Printed as production's `{dx:g}`.
+        // A left-placed table pushes the wheel right, and the title group
+        // slides back by that much so it stays on the card's own left edge.
+        // Printed `{dx:g}`.
         if title_dx != 0.0 {
             let _ = write!(svg, "<g transform=\"translate({},0)\">", d3rs::py_float::format_g(title_dx));
         }
@@ -867,11 +875,9 @@ fn draw_pie_fit(
     let _ = write!(svg, "</g>");
 
     // Center total — Vega text baselines: value "bottom", caption "top".
-    // Both text layers reduce the shared dataset to `row_number === 1`
-    // (`emitters/pie.py:284-292`/`316-319`), so the description they would
-    // inherit from the arc layer names the FIRST slice whichever slice is
-    // meant: production sets `aria: False` on both, and each is a hidden
-    // mark set.
+    // Both text layers carry one row, so a description inherited from the
+    // arc layer would name the FIRST slice whichever slice is meant: each is
+    // a hidden mark set.
     if let (Some(total_cfg), Some((formatted, _, _, _))) = (&r.total, &total_texts) {
         let total_href = row_href(r, payload_rows, 0)?;
         {
@@ -1036,7 +1042,7 @@ fn vega_title_block_height(r: &Resolved) -> Result<f64, String> {
             .and_then(|ts| ts.subtitle.as_ref())
             .and_then(|sub| sub.font.size)
             .ok_or("pie: a subtitled attached_table at the top requires title_style.subtitle.font.size")?;
-        size + crate::vega_fit::SUBTITLE_PADDING
+        size + crate::constants::layout::VEGA_SUBTITLE_PADDING
     } else {
         0.0
     };
@@ -1125,8 +1131,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
             if legend_is_drawn(&r) {
                 return Err("pie: a visible legend beside an attached table is not ported".into());
             }
-            // Mirrors arc_attached_table.py's compose_attached_table_svg: the
-            // wheel and table are two independently-backgrounded children
+            // The wheel and table are two independently-backgrounded children
             // placed side by side or stacked — the outer canvas itself carries
             // no background fill, same as production leaves the gap between
             // them unpainted.
@@ -1182,7 +1187,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
                     .hybrid_heading_gap
                     .ok_or("pie: attached_table heading requires hybrid_heading_gap")?;
                 let heading_size = heading_font.size_or(11.0);
-                // `arc_attached_table.py::heading_block_height` (:25-27): size + 2 + gap.
+                // The heading block: size + 2 + gap.
                 let heading_block_h = heading_size + 2.0 + heading_gap;
                 let heading_family = heading_font.family_or("sans-serif");
                 let heading_weight = heading_font.weight_str();
@@ -1205,9 +1210,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
                 table_h += heading_block_h;
             }
 
-            // Production's composition (vega_lite.py `_render_arc_attached_table`
-            // + arc_attached_table.py `compose_attached_table_svg`): the wheel
-            // is a full standalone VL render at `width=wheel_width,
+            // The wheel is a full standalone VL render at `width=wheel_width,
             // height=None` — its effective height is the theme's
             // `chart_defaults.view.continuous_height` (VL's
             // `config.view.continuousHeight`), NOT the slot height — and the
@@ -1272,8 +1275,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
 
             let (outer_h, donut_x, table_x, table_y) = match placement {
                 "left" | "right" => {
-                    // The table aligns down the wheel's disk, not the card
-                    // (`compose_attached_table_svg`, arc_attached_table.py:112-122),
+                    // The table aligns down the wheel's disk, not the card,
                     // and never above the disk's top.
                     let diameter = 2.0 * radius;
                     let disk_top = ((wheel_h - diameter) / 2.0).max(0.0);
@@ -1290,7 +1292,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
                     (wheel_h.max(table_y + table_h), donut_x, table_x, table_y)
                 }
                 _ => {
-                    // Across the card inside its padding (arc_attached_table.py:107-111).
+                    // Across the card inside its padding.
                     let across_x = match align {
                         "start" => pad_l,
                         "center" => (w - table_width) / 2.0,
@@ -1463,10 +1465,7 @@ mod tests {
         assert!(svg.contains("<rect width=\"600\" height=\"432\" fill=\"#d9a45b\"/>"), "{svg}");
     }
 
-    /// Production's arc mark carries ONE constant fill when the chart has no
-    /// color channel: `emitters/pie.py`'s `if not color_key:
-    /// arc_mark_props["fill"] = chart.palette[0]` emits no `encoding.color`
-    /// at all, so every wedge paints `palette[0]`. Palette-by-index is the
+    /// With no color channel every wedge paints one constant `palette[0]`. Palette-by-index is the
     /// color scale's range — it only exists when a color channel does
     /// (`color_key` is the channel's non-empty `data_field`).
     #[test]
@@ -1824,7 +1823,7 @@ mod tests {
         }));
         let mut payload_json = payload_json;
         // The format lives only on the resolved style: `ChartTotal` has no
-        // `format` key (`emitters/pie.py` reads `style.total_style.value.format`).
+        // `format` key.
         payload_json["resolved"]["style"]["total_style"]["value"]["format"] = json!("$,.0f");
         payload_json["resolved"]["style"]["total_style"]["value"]["font"]["family"] =
             json!(TEST_FONT);
@@ -1855,8 +1854,7 @@ mod tests {
         }
     }
 
-    /// Oracle: `format_d3(443023, ".3~s", "CHF ", "", None, "after_prefix")`
-    /// (`emitters/pie.py` paints a total's affix through `_affixed_digits_expr`).
+    /// Oracle: `format_d3(443023, ".3~s", "CHF ", "", None, "after_prefix")`.
     #[test]
     fn a_total_value_format_paints_its_affix_around_the_digits() {
         let mut payload_json = make_pie_payload(json!({"visible": true, "label": "Total Revenue"}));
@@ -1866,6 +1864,37 @@ mod tests {
         payload_json["resolved"]["style"]["total_style"]["label"]["font"]["family"] = json!(TEST_FONT);
         let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
         assert!(svg.contains(">CHF 443k<"), "{svg}");
+    }
+
+    /// A donut's center total wider than the hole it sits in is
+    /// WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS, measured on the hole the wheel
+    /// actually draws (`2 × inner`), not a slot estimate.
+    #[test]
+    fn a_total_wider_than_the_hole_warns_and_one_that_fits_does_not() {
+        let donut = |size: f64| {
+            let mut json = make_pie_payload(json!({"visible": true}));
+            let font = &mut json["resolved"]["style"]["total_style"]["value"]["font"];
+            font["family"] = json!(TEST_FONT);
+            font["size"] = json!(size);
+            make_payload(json)
+        };
+        let (svg, warnings) = crate::diagnostic::collect(|| render(&donut(96.0), &test_fonts()));
+        svg.expect("renders");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        let w = &warnings[0];
+        assert_eq!(w.code, crate::codes::WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS.id);
+        assert_eq!(w.params["chart_id"], json!("pie"));
+        assert_eq!(w.params["formatted_value"], json!("443023"));
+        let text = w.params["text_width"].as_f64().unwrap();
+        let hole = w.params["hole_diameter"].as_f64().unwrap();
+        assert!(text > hole, "{text} > {hole}");
+        let (slot_w, slot_h) =
+            (w.params["slot_width"].as_f64().unwrap(), w.params["slot_height"].as_f64().unwrap());
+        assert!((hole - slot_w.min(slot_h) * 0.9 * 0.6).abs() < 1e-9, "{hole} {slot_w} {slot_h}");
+
+        let (svg, warnings) = crate::diagnostic::collect(|| render(&donut(18.0), &test_fonts()));
+        svg.expect("renders");
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]
@@ -2063,8 +2092,7 @@ mod tests {
         svg.split("height=\"").nth(1).and_then(|s| s.split('"').next()).unwrap().parse().unwrap()
     }
 
-    /// `compose_attached_table_svg` (arc_attached_table.py:107-111): a table
-    /// above or below the wheel aligns across the card — `start` at the left
+    /// A table above or below the wheel aligns across the card — `start` at the left
     /// padding, `center` on the card's middle, `end` against the right padding.
     /// Card 600, table 212, padding 16.
     #[test]
@@ -2077,7 +2105,7 @@ mod tests {
         }
     }
 
-    /// arc_attached_table.py:112-122: a table beside the wheel aligns down the
+    /// A table beside the wheel aligns down the
     /// wheel's DISK, never above its top. This wheel is 300 tall with no label
     /// ink, so the disk is 2 × 0.9 × (300 − 32)/2 = 241.2 and disk_top 29.4;
     /// `center` is `disk_top + (241.2 − 72)/2` = 114 and `end`
@@ -2101,7 +2129,7 @@ mod tests {
         }
     }
 
-    /// `_slide_title` (arc_attached_table.py:43-53): a left table pushes the
+    /// A left table pushes the
     /// wheel right by `table_width + gap` and the title back by the same, so it
     /// stays on the card's left edge. Only a left placement slides it.
     #[test]
@@ -2180,8 +2208,7 @@ mod tests {
     }
 
 
-    /// Production renders an attached-table pie's wheel as its OWN VL pane at
-    /// `width=chart.wheel_width` (`vega_lite.py::_render_arc_attached_table`),
+    /// An attached-table pie's wheel is its own pane at `width=chart.wheel_width`,
     /// so `apply_title_overflow_to_spec`'s limit is `compute_title_limit(wheel_width,
     /// padding)`, not the card's — a title that fits the card but overruns the
     /// narrower wheel pane must still clip there, while the same title on a
@@ -2845,8 +2872,7 @@ mod tests {
             .collect()
     }
 
-    /// Entries are the color domain in row order (`emitters/pie.py`'s `seen`,
-    /// the scale's `domain`), each swatch the scale's own color for that
+    /// Entries are the color scale's domain in row order, each swatch the scale's own color for that
     /// value, stroked in the slice mark's own stroke color
     /// (`encode.ts` `symbols`: the mark's `stroke` flows to the legend
     /// symbol, never its `strokeWidth` — the 1.5 stays Vega's).
@@ -2878,8 +2904,8 @@ mod tests {
     }
 
     /// A hidden legend reserves nothing and draws nothing, and a visible one
-    /// over a pie with no color channel draws nothing either: no
-    /// `encoding.color` exists to carry a legend (`emitters/pie.py`).
+    /// over a pie with no color channel draws nothing either: there is no
+    /// color scale to carry a legend.
     #[test]
     fn a_hidden_or_colorless_legend_draws_nothing_and_reserves_nothing() {
         let mut hidden = legend_pie_payload("right", "start", "vertical");

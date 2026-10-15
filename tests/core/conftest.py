@@ -34,6 +34,7 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedTotalStyle,
     ResolvedTotalValueSlot,
 )
+from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 
 # Ink palette slot 0 from the default resolved theme.
 # This is rcs.single_series_palette[0] for the built-in theme.
@@ -56,9 +57,11 @@ def _series_label() -> ResolvedSeriesLabelStyle:
 
 def _endpoint_labels(visible: bool = False):
     """Minimal cascade-merged endpoint-label config for cartesian-style fixtures."""
-    from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
+    from dbt_charts.core.compile.models.style.resolved._cartesian import (
+        ResolvedEndpointLabelsConfig,
+    )
 
-    return EndpointLabelsConfig(visible=visible, label_offset=8.0, height=20.0)
+    return ResolvedEndpointLabelsConfig(visible=visible, label_offset=8.0, height=20.0)
 
 
 def fixture_chart_for_type(chart_type: str):
@@ -133,6 +136,7 @@ def bar_style() -> ResolvedBarStyle:
     unconditionally (``continuous_bar_size_prop``).
     """
     from dbt_charts.core.compile.models.style.resolved import ResolvedBarMarkStyle
+    from dbt_charts.core.compile.models.style.theme.bar import BarGroupedStyle
 
     ax, ay = _bake_axes("bar", "ordinal", "quantitative")
     return ResolvedBarStyle(
@@ -142,6 +146,7 @@ def bar_style() -> ResolvedBarStyle:
         single_series_fill=SINGLE_SERIES_FILL,
         tooltip_format=ResolvedFormat(spec=""),
         label_font_size=11.0,
+        grouped=BarGroupedStyle(padding_inner=0.2, padding_outer=0.2),
         label_usable_ratio=0.8,
         axis_x=ax,
         axis_y=ay,
@@ -165,6 +170,7 @@ def line_style() -> ResolvedLineStyle:
             stroke=ResolvedStrokeStyle(width=2.0),
             halo_multiplier=2.0,
             curve=None,
+            disconnected_width=0.9,
             labels=ResolvedPointLabels(),
         ),
         point_mark=ResolvedPointMarkStyle(),
@@ -291,7 +297,7 @@ def table_style() -> ResolvedTableStyle:
     rcs = resolve_chart_style_context(get_theme_style())
     return ResolvedTableStyle(
         table=rcs.table,
-        title=rcs.title,
+        title=concrete_title_style(rcs),
         formats=rcs.formats,
         title_font=resolve_title_font(rcs, width=600.0),
         pagination=rcs.pagination,
@@ -375,3 +381,18 @@ def no_spog_probe(monkeypatch: pytest.MonkeyPatch) -> None:
         return probe.HostMetadata(host_type=None)
 
     monkeypatch.setattr(probe, "probe_host", offline_probe)
+
+
+def theme_without_tick_count(name: str):
+    """A built-in theme with ``axis_quantitative.ticks.count`` unset, the case
+    that bakes no tick ladder (every built-in theme says ``auto``)."""
+    from dbt_charts.core.compile.config import get_theme_style
+
+    style = get_theme_style(name)
+    quantitative = style.charts.axis_quantitative
+    unset = quantitative.model_copy(
+        update={"ticks": quantitative.ticks.model_copy(update={"count": None})}
+    )
+    return style.model_copy(
+        update={"charts": style.charts.model_copy(update={"axis_quantitative": unset})}
+    )

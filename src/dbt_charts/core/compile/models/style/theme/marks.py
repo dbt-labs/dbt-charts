@@ -122,8 +122,7 @@ class LabelsDefaultTemplate(BaseModel):
     authored a ``color:`` channel — that's a structural fact about the
     chart's authoring surface, not a theme concern.
 
-    Templates use the generic Jinja context vars supplied by the
-    ``context_extras`` callback in ``render/chart/emitters/pie.py``
+    Templates use the generic context vars the engine's pie family supplies
     (``percent``, ``color``, ``value``, ``total``) so they work regardless
     of the chart's theta/color field names.
 
@@ -175,7 +174,7 @@ class SliceLabelsStyle(BaseModel):
     # clears the outer slot context but keeps skip_slots=False so this marker
     # still processes correctly. ``color`` is excluded from the fill: it stays
     # a genuine cascade-managed sentinel (None unless authored at some tier)
-    # so PieEmitter can tell "theme filled this" from "the author set
+    # so the engine's pie family can tell "theme filled this" from "the author set
     # this" and prefer an authored color over the dark-companion default.
     font: Annotated[
         FontStyle,
@@ -507,6 +506,18 @@ class LineMarkStyle(BaseModel):
             "rather than only the two ends of one continuous line; 'butt' keeps "
             "plateaus flush with the band. Overrides stroke.cap in that geometry "
             "only; every other line keeps stroke.cap."
+        ),
+    )
+    # Sits on the mark beside ``connect``: area has no ``connect``.
+    disconnected_width: float | None = Field(
+        default=None,
+        gt=0,
+        le=1,
+        description=(
+            "Share of the band width a disconnected band-step plateau spans "
+            "(curve='step' + connect=False on a categorical x-axis). Below 1 "
+            "leaves a gap between neighboring plateaus so they don't weld "
+            "into one bar. Connected lines keep the full band."
         ),
     )
     # Halo: a knockout-colored line drawn behind the foreground line so that

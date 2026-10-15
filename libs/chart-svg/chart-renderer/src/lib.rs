@@ -2,12 +2,12 @@
 //! no Vega-Lite, no JS runtime. One module per chart family; families own
 //! their payload structs and deserialize the raw `resolved` JSON themselves.
 
-pub mod alloc_budget;
 pub mod board;
 pub mod case;
 pub mod codes;
 pub mod common;
 pub mod conditions;
+pub mod constants;
 pub mod contract;
 pub mod diagnostic;
 pub mod embed_fonts;
@@ -18,7 +18,6 @@ pub mod href;
 pub mod label_template;
 pub mod number_locale;
 pub mod prose;
-pub mod sandbox;
 pub mod sizing;
 pub mod step_band;
 pub mod svg;
@@ -30,9 +29,6 @@ pub mod titlecase_first_char;
 pub mod variables;
 pub mod vega_fit;
 pub mod xml;
-
-#[global_allocator]
-static ALLOCATOR: alloc_budget::Budgeted = alloc_budget::Budgeted;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -103,14 +99,6 @@ pub struct BoardStyle {
     /// it is absent rather than assuming a theme value.
     #[serde(default)]
     pub continuous_height: Option<f64>,
-    /// The board-wide default `support_table.font.color`
-    /// (`charts_style.support_table.font.color`, no chart-local override
-    /// folded in). A horizontal support_table's per_series columns paint the
-    /// series ink only while the chart's own effective color still equals it;
-    /// a different one is an authored uniform ink. Optional in the envelope; a
-    /// per_series column block errors when it is absent rather than guessing.
-    #[serde(default)]
-    pub support_table_font_color: Option<String>,
     /// The theme's VL `config.font` — the family Vega-Lite compiles into the
     /// `guide-title` and `guide-label` styles (`config.ts:505-512`), which a
     /// legend with no legend config (a shape channel's own) draws in. Optional
@@ -142,9 +130,8 @@ pub struct BoardStyle {
     /// Optional in the envelope; a table errors when it is absent.
     #[serde(default)]
     pub pagination_control_height: Option<f64>,
-    /// `chart_rendering.spark_bar.title_height` / `title_baseline_y`, which the
-    /// Python sizing and title band read from config too. Optional in the
-    /// envelope; a titled spark_bar errors when it is absent.
+    /// `SPARK_BAR_TITLE_HEIGHT_PX` / `SPARK_BAR_TITLE_BASELINE_Y_PX`.
+    /// Optional in the envelope; a titled spark_bar errors when it is absent.
     #[serde(default)]
     pub spark_bar_title: Option<SparkBarTitle>,
     /// `ResolvedStyle.placeholder`; a placeholder chart errors when it is absent.
@@ -575,7 +562,7 @@ fn render_width_fitted(
         orientation,
         payload.width,
         actual_width,
-        sizing::PLOT_WIDTH_FLOOR_RATIO,
+        constants::layout::SUPPORT_TABLE_PLOT_WIDTH_FLOOR_RATIO,
     )?;
     match corrected {
         None => Ok((svg, None)),

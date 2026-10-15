@@ -14,9 +14,7 @@ collected dict via ``WarningContext.plot_width_share_warnings``.
 
 This is the softer, earlier signal than the hard floor (checked in
 ``render/layout_sizing.py``'s width-correction re-render, which raises using
-``get_chart_rendering().support_table.plot_width_floor_ratio`` directly — a
-single multiply over an already-sanctioned engine-config getter, with no
-compile-side module of its own): a chart can trip this warning while its
+``SUPPORT_TABLE_PLOT_WIDTH_FLOOR_RATIO`` directly): a chart can trip this warning while its
 plot still clears the hard floor by a comfortable margin, or it can trip
 both.
 """

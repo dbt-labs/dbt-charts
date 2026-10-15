@@ -17,6 +17,7 @@ Gap site fixed in follow-up (this file):
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -33,6 +34,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
+from ._engine_render import render_pie_svg
 from .conftest import chart_pane
 
 _BOARD_STYLE = resolve_style(get_theme_style())
@@ -198,7 +200,7 @@ def test_support_table_per_series_format_alias_resolves():
 
 
 def test_pie_total_format_alias_resolves():
-    """style.total.value.format: 'number' must resolve to '.3~s' in VL encoding.text.format."""
+    """style.total.value.format: 'number' paints the total through the alias."""
     chart = TypeAdapter(Chart).validate_python(
         {
             "id": "t",
@@ -214,23 +216,8 @@ def test_pie_total_format_alias_resolves():
             },
         }
     )
-    _rc = resolve(chart, _PIE_DATA, chart_style_context=_BOARD_CONTEXT)
-    spec = generate_vega_lite_spec(chart, _PIE_DATA, width=400, height=400)
-
-    # Pie total emits a text layer where encoding.text.type == "quantitative" and
-    # encoding.text has a "format" key (when total.format is set).
-    total_fmt: str | None = None
-    for layer in spec.get("layer", []):
-        enc = layer.get("encoding", {})
-        text_enc = enc.get("text", {})
-        if text_enc.get("type") == "quantitative" and "format" in text_enc:
-            total_fmt = text_enc["format"]
-            break
-
-    assert total_fmt == _RESOLVED_COMPACT, (
-        f"Expected '{_RESOLVED_COMPACT}' (resolved 'number' alias) in pie total "
-        f"encoding.text.format; got: {total_fmt!r}"
-    )
+    svg = render_pie_svg(chart, _PIE_DATA, width=400, height=400)
+    assert re.search(r'layer_1_marks"[^>]*><text [^>]*>1k</text>', svg), svg
 
 
 # ── Gap site 5: axis.format via _build_encoding_axis ─────────────────────────

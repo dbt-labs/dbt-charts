@@ -12,8 +12,10 @@ import hashlib
 import importlib
 import io
 import os
+import shutil
 import sys
 import tarfile
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -203,21 +205,45 @@ def build_wheel(
     return _finalize(Path(wheel_directory) / name, editable=False)
 
 
+def _editable_from_prebuilt(
+    engine: Path, wheel_directory: Path, config_settings: dict[str, str] | None
+) -> str:
+    """Install a prebuilt `_engine` where maturin's editable build puts it, and
+    wrap maturin's metadata-only dist-info in an editable wheel: no cargo."""
+    if not engine.name.startswith("_engine."):
+        raise ValueError(f"DCT_PREBUILT_ENGINE must name an _engine.* file: {engine}")
+    if not engine.is_file():
+        raise FileNotFoundError(f"DCT_PREBUILT_ENGINE names no file: {engine}")
+    shutil.copy2(engine, ROOT / "src" / "dbt_charts" / engine.name)
+    with tempfile.TemporaryDirectory() as metadata_directory:
+        dist_info = maturin.prepare_metadata_for_build_editable(
+            metadata_directory, config_settings
+        )
+        source = Path(metadata_directory) / dist_info
+        (tag,) = [
+            line.removeprefix("Tag: ")
+            for line in (source / "WHEEL").read_text().splitlines()
+            if line.startswith("Tag: ")
+        ]
+        wheel = wheel_directory / f"{dist_info.removesuffix('.dist-info')}-{tag}.whl"
+        with zipfile.ZipFile(wheel, "w", zipfile.ZIP_DEFLATED) as zout:
+            for path in sorted(p for p in source.rglob("*") if p.is_file()):
+                zout.write(path, f"{dist_info}/{path.relative_to(source).as_posix()}")
+            zout.writestr("dbt_charts.pth", f"{ROOT / 'src'}\n")
+    return wheel.name
+
+
 def build_editable(
     wheel_directory: str,
     config_settings: dict[str, str] | None = None,
     metadata_directory: str | None = None,
 ) -> str:
-    # Editable installs are local dev builds only: skip the release profile's
-    # fat LTO (see [profile.editable] in libs/chart-svg/python/Cargo.toml).
-    build_args = maturin.get_maturin_pep517_args(config_settings)
-    settings: dict[str, Any] = {
-        k: v
-        for k, v in (config_settings or {}).items()
-        if k not in ("build-args", "maturin.build-args")
-    }
-    settings["build-args"] = ["--profile", "editable", *build_args]
-    name = maturin.build_editable(wheel_directory, settings, None)
+    if prebuilt := os.environ.get("DCT_PREBUILT_ENGINE"):
+        name = _editable_from_prebuilt(
+            Path(prebuilt), Path(wheel_directory), config_settings
+        )
+        return _finalize(Path(wheel_directory) / name, editable=True)
+    name = maturin.build_editable(wheel_directory, config_settings, None)
     return _finalize(Path(wheel_directory) / name, editable=True)
 
 

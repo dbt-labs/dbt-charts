@@ -27,6 +27,7 @@ from dbt_charts.core.compile.models.board.normalized import (
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.chart.normalized.kpi import KpiChart
 from dbt_charts.core.compile.models.primitives import FormatTable
+from dbt_charts.core.compile.models.style.theme.kpi import KpiCompactStyle
 from dbt_charts.core.compile.template.display_text import resolve_display_text
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.chart_resolution import collect_display_text_inputs
@@ -230,6 +231,7 @@ def render_layout_item_terminal(
             available_width,
             available_height,
             formats=resolved_style.chart_defaults.formats,
+            kpi_compact=resolved_style.chart_defaults.kpi.value.compact,
         )
     elif item.type == "board" and item.board:
         return render_nested_board_terminal(
@@ -250,6 +252,7 @@ def render_chart_item_terminal(
     available_height: int,
     *,
     formats: FormatTable | None,
+    kpi_compact: KpiCompactStyle,
 ) -> str:
     """Render a chart item to terminal.
 
@@ -260,6 +263,7 @@ def render_chart_item_terminal(
         available_width: Available terminal width in characters
         available_height: Available terminal height in characters
         formats: Board-level style.formats alias map (ResolvedStyle.formats).
+        kpi_compact: Board-level KPI headline compaction policy.
 
     Returns:
         Terminal-formatted chart string
@@ -289,6 +293,7 @@ def render_chart_item_terminal(
             height=available_height,
             colors=True,
             formats=formats,
+            kpi_compact=kpi_compact,
         )
 
     except (ValueError, KeyError, TypeError, AttributeError, DbtChartsError) as e:

@@ -6,6 +6,9 @@ for layered specs). Tests validate distinctive values propagate correctly.
 
 from __future__ import annotations
 
+import re
+from typing import Any
+
 import pytest
 from pydantic import TypeAdapter
 
@@ -22,6 +25,8 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+
+from ._engine_render import render_pie_svg
 
 _DATA = [{"month": "Jan", "rev": 100}]
 
@@ -271,191 +276,76 @@ class TestScatterPointWiring:
         assert _get_mark(spec_a).get("opacity") != _get_mark(spec_b).get("opacity")
 
 
-def _pie_spec_with_theme(**chart_overrides):
-    """Like ``_spec_with_theme`` but builds a pie-shaped chart (theta/color)."""
-    compiled = get_theme_style()
-    charts = compiled.charts
-    for style_key, field_overrides in chart_overrides.items():
-        chart_style = getattr(charts, style_key)
-        updated = chart_style.model_copy(update=field_overrides)
-        charts = charts.model_copy(update={style_key: updated})
-    resolved, _ctx = resolve_style_and_context(
-        compiled.model_copy(update={"charts": charts})
-    )
+_PIE_DATA = [
+    {"month": "Jan", "rev": 100},
+    {"month": "Feb", "rev": 60},
+    {"month": "Mar", "rev": 40},
+]
 
-    chart = PieChart(
-        id="t",
-        type="pie",
-        theta="rev",
-        color="month",
-        query=SqlQuery(sql="SELECT 1", source="src"),
-        query_name="q",
+
+def _pie_wedges(**slice_overrides: Any) -> list[dict[str, str]]:
+    """The engine-drawn wedges of a pie under a theme whose
+    ``charts.marks.slice`` carries ``slice_overrides``: each wedge's attributes,
+    its path as ``d``."""
+    compiled = get_theme_style()
+    marks = compiled.charts.marks
+    updated_slice = marks.slice.model_copy(update=slice_overrides)
+    charts = compiled.charts.model_copy(
+        update={"marks": marks.model_copy(update={"slice": updated_slice})}
     )
-    return generate_vega_lite_spec(
-        chart, _DATA, board_style=resolved, chart_style_context=_ctx, width=400
+    chart = PieChart(id="t", type="pie", theta="rev", color="month", query_name="q")
+    svg = render_pie_svg(
+        chart, _PIE_DATA, theme=compiled.model_copy(update={"charts": charts})
     )
+    return [
+        dict(re.findall(r'([\w-]+)="([^"]*)"', wedge))
+        for wedge in re.findall(r'<path [^>]*aria-roledescription="arc mark"', svg)
+    ]
+
+
+def _stroke(**stroke_overrides: Any) -> list[dict[str, str]]:
+    stroke = get_theme_style().charts.marks.slice.stroke
+    return _pie_wedges(stroke=stroke.model_copy(update=stroke_overrides))
 
 
 class TestArcWiring:
-    """SliceMarkStyle fields → spec.mark.{...} on pie charts."""
+    """SliceMarkStyle fields reach every engine-drawn wedge."""
 
-    def _pie_spec_with_slice_stroke(self, **stroke_overrides):
-        """Build a pie spec with a StrokeStyle override on marks.slice.stroke."""
-        compiled = get_theme_style()
-        global_slice = compiled.charts.marks.slice
-        updated_slice = global_slice.model_copy(
-            update={"stroke": global_slice.stroke.model_copy(update=stroke_overrides)}
-        )
-        updated_marks = compiled.charts.marks.model_copy(
-            update={"slice": updated_slice}
-        )
-        charts = compiled.charts.model_copy(update={"marks": updated_marks})
-        resolved, _ctx = resolve_style_and_context(
-            compiled.model_copy(update={"charts": charts})
-        )
-        chart = PieChart(
-            id="t",
-            type="pie",
-            theta="rev",
-            color="month",
-            query=SqlQuery(sql="SELECT 1", source="src"),
-            query_name="q",
-        )
-        return generate_vega_lite_spec(
-            chart, _DATA, board_style=resolved, chart_style_context=_ctx, width=400
-        )
+    def test_distinctive_pad_angle_reaches_the_wedges(self):
+        assert [w["d"] for w in _pie_wedges(gap=0.07)] != [
+            w["d"] for w in _pie_wedges(gap=0.0)
+        ]
 
-    def test_distinctive_pad_angle_appears_in_mark(self):
-        compiled = get_theme_style()
-        updated_slice = compiled.charts.marks.slice.model_copy(update={"gap": 0.07})
-        updated_marks = compiled.charts.marks.model_copy(
-            update={"slice": updated_slice}
-        )
-        charts = compiled.charts.model_copy(update={"marks": updated_marks})
-        resolved, _ctx = resolve_style_and_context(
-            compiled.model_copy(update={"charts": charts})
-        )
-        chart = PieChart(
-            id="t",
-            type="pie",
-            theta="rev",
-            color="month",
-            query=SqlQuery(sql="SELECT 1", source="src"),
-            query_name="q",
-        )
-        spec = generate_vega_lite_spec(
-            chart, _DATA, width=400, board_style=resolved, chart_style_context=_ctx
-        )
-        assert _get_mark(spec).get("padAngle") == pytest.approx(0.07)
+    def test_distinctive_corner_radius_reaches_the_wedges(self):
+        wedges = _pie_wedges(corner_radius=9.0)
+        assert len(wedges) == len(_PIE_DATA)
+        assert all("A9,9," in w["d"] for w in wedges)
 
-    def test_distinctive_corner_radius_appears_in_mark(self):
-        compiled = get_theme_style()
-        updated_slice = compiled.charts.marks.slice.model_copy(
-            update={"corner_radius": 9.0}
-        )
-        updated_marks = compiled.charts.marks.model_copy(
-            update={"slice": updated_slice}
-        )
-        charts = compiled.charts.model_copy(update={"marks": updated_marks})
-        resolved, _ctx = resolve_style_and_context(
-            compiled.model_copy(update={"charts": charts})
-        )
-        chart = PieChart(
-            id="t",
-            type="pie",
-            theta="rev",
-            color="month",
-            query=SqlQuery(sql="SELECT 1", source="src"),
-            query_name="q",
-        )
-        spec = generate_vega_lite_spec(
-            chart, _DATA, width=400, board_style=resolved, chart_style_context=_ctx
-        )
-        assert _get_mark(spec).get("cornerRadius") == pytest.approx(9.0)
+    def test_distinctive_stroke_reaches_the_wedges(self):
+        assert {w["stroke"] for w in _stroke(color="#abcdef")} == {"#abcdef"}
 
-    def test_distinctive_stroke_appears_in_mark(self):
-        spec = self._pie_spec_with_slice_stroke(color="#abcdef")
-        assert _get_mark(spec).get("stroke") == "#abcdef"
+    def test_distinctive_stroke_width_reaches_the_wedges(self):
+        assert {w["stroke-width"] for w in _stroke(width=2.5)} == {"2.5"}
 
-    def test_distinctive_stroke_width_appears_in_mark(self):
-        spec = self._pie_spec_with_slice_stroke(width=2.5)
-        assert _get_mark(spec).get("strokeWidth") == pytest.approx(2.5)
-
-    def test_distinctive_stroke_join_appears_in_mark(self):
-        spec = self._pie_spec_with_slice_stroke(join="bevel")
-        assert _get_mark(spec).get("strokeJoin") == "bevel"
+    def test_distinctive_stroke_join_reaches_the_wedges(self):
+        assert {w["stroke-linejoin"] for w in _stroke(join="bevel")} == {"bevel"}
 
     def test_arc_fields_propagate_independently(self):
-        compiled = get_theme_style()
+        a = _pie_wedges(corner_radius=2.0)
+        b = _pie_wedges(corner_radius=8.0)
+        assert len(a) == len(b) == len(_PIE_DATA)
+        assert all("A2,2," in w["d"] for w in a)
+        assert all("A8,8," in w["d"] for w in b)
+        assert {w["stroke-width"] for w in _stroke(width=1.0)} != {
+            w["stroke-width"] for w in _stroke(width=3.0)
+        }
 
-        def _pie_with(corner_radius: float, stroke_width: float):
-            global_slice = compiled.charts.marks.slice
-            updated_slice = global_slice.model_copy(
-                update={
-                    "corner_radius": corner_radius,
-                    "stroke": global_slice.stroke.model_copy(
-                        update={"width": stroke_width}
-                    ),
-                }
-            )
-            updated_marks = compiled.charts.marks.model_copy(
-                update={"slice": updated_slice}
-            )
-            charts = compiled.charts.model_copy(update={"marks": updated_marks})
-            resolved, _ctx = resolve_style_and_context(
-                compiled.model_copy(update={"charts": charts})
-            )
-            chart = PieChart(
-                id="t",
-                type="pie",
-                theta="rev",
-                color="month",
-                query=SqlQuery(sql="SELECT 1", source="src"),
-                query_name="q",
-            )
-            return generate_vega_lite_spec(
-                chart, _DATA, width=400, board_style=resolved, chart_style_context=_ctx
-            )
+    def test_distinctive_opacity_reaches_the_wedges(self):
+        assert {w["opacity"] for w in _pie_wedges(opacity=0.55)} == {"0.55"}
 
-        spec_a = _pie_with(corner_radius=1.0, stroke_width=1.0)
-        spec_b = _pie_with(corner_radius=8.0, stroke_width=4.0)
-        assert _get_mark(spec_a).get("cornerRadius") != _get_mark(spec_b).get(
-            "cornerRadius"
-        )
-        assert _get_mark(spec_a).get("strokeWidth") != _get_mark(spec_b).get(
-            "strokeWidth"
-        )
-
-    def test_distinctive_opacity_appears_in_mark(self):
-        compiled = get_theme_style()
-        updated_slice = compiled.charts.marks.slice.model_copy(update={"opacity": 0.55})
-        updated_marks = compiled.charts.marks.model_copy(
-            update={"slice": updated_slice}
-        )
-        charts = compiled.charts.model_copy(update={"marks": updated_marks})
-        resolved, _ctx = resolve_style_and_context(
-            compiled.model_copy(update={"charts": charts})
-        )
-        chart = PieChart(
-            id="t",
-            type="pie",
-            theta="rev",
-            color="month",
-            query=SqlQuery(sql="SELECT 1", source="src"),
-            query_name="q",
-        )
-        spec = generate_vega_lite_spec(
-            chart, _DATA, width=400, board_style=resolved, chart_style_context=_ctx
-        )
-        assert _get_mark(spec).get("opacity") == pytest.approx(0.55)
-
-    def test_arc_mark_does_not_set_fill_so_color_encoding_wins(self):
-        """Arc is the one mark family where ``mark.fill`` overrides
-        ``encoding.color`` (opposite of bar/line/area). _build_mark_style
-        must not set palette[0] on arc/pie or every slice renders the
-        same color."""
-        spec = _pie_spec_with_theme()
-        assert "fill" not in _get_mark(spec)
+    def test_color_encoding_fills_each_wedge_its_own_color(self):
+        """A pie never paints one static fill over its color encoding."""
+        assert len({w["fill"] for w in _pie_wedges()}) == len(_PIE_DATA)
 
 
 class TestArcTotalStyleCascade:

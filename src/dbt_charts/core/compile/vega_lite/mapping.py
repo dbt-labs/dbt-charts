@@ -2,8 +2,7 @@
 
 style_to_vega_lite() is the sole place that maps dbt charts' nested field
 names to flat Vega-Lite camelCase; effective_vega_config() is its sole
-production caller, merging the base VL config dict with the style overlay
-it produces.
+production caller, dumping the overlay it produces.
 
 effective_vega_config() is called from compile/resolve/style/board.py
 (_finalize_style).
@@ -11,38 +10,27 @@ effective_vega_config() is called from compile/resolve/style/board.py
 
 from __future__ import annotations
 
-import copy
 from typing import TYPE_CHECKING, Any
 
-from dbt_charts.core.compile.merge import deep_merge_dict
 from dbt_charts.core.compile.models.style.resolved._base import _VLConfig
+from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.context import ChartStyleContext
 
 
-def effective_vega_config(
-    base_vl_config: _VLConfig,
-    chart_style_context: ChartStyleContext,
-) -> _VLConfig:
-    """Merge base VL config + style overlay into a final VL config dict.
+def effective_vega_config(chart_style_context: ChartStyleContext) -> _VLConfig:
+    """Final VL config dict for a board: the style overlay, nothing else.
 
     Called by ``_finalize_style`` (bakes onto ``ResolvedStyle``).
 
     Background is not part of the config: it is emitted top-level on the
     assembled spec (``apply_presentation_defaults``), the home Vega-Lite
     resolves with precedence over any config copy.
-
-    Args:
-        base_vl_config: Plain-dict copy of ``get_config().vega.config``.
-        resolved_charts: Board-level resolved chart style.
     """
-    result = copy.deepcopy(base_vl_config)
     vlc = style_to_vega_lite(chart_style_context)
     overlay: _VLConfig = vlc.model_dump(by_alias=True, exclude_unset=True)
-    if overlay:
-        result = deep_merge_dict(result, overlay)
-    return result
+    return overlay
 
 
 # =============================================================================
@@ -150,7 +138,7 @@ def style_to_vega_lite(
         data["text"] = text_data
 
     # Title (board/chart title styling)
-    title = chart_style_context.title
+    title = concrete_title_style(chart_style_context)
     title_data: dict[str, Any] = {}
     tf = title.font
     # FontStyle fields are Optional — only emit when authored (not None)

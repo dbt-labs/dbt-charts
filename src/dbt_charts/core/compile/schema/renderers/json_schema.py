@@ -444,11 +444,13 @@ def _at(
 
 
 def _is_set(
-    key: str, nonempty: bool
+    key: str, nonempty: bool, auto: bool = False
 ) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
     unset: dict[str, Any] = (  # type-state: explicit_any — see _ref
         {"enum": _EMPTY_VALUES} if nonempty else {"type": "null"}
     )
+    if auto:
+        unset = {"anyOf": [unset, {"const": "auto"}]}
     return _at(key, {"not": unset})
 
 
@@ -483,15 +485,15 @@ def _constraint(
     match constraint:
         case AtLeastOneOf(keys, _, nonempty):
             return {"anyOf": [_is_set(k, k in nonempty) for k in keys]}
-        case AtMostOneOf(keys, _, nonempty):
+        case AtMostOneOf(keys, _, nonempty, auto):
             pairs = itertools.combinations(keys, 2)
             return {
                 "not": {
                     "anyOf": [
                         {
                             "allOf": [
-                                _is_set(a, a in nonempty),
-                                _is_set(b, b in nonempty),
+                                _is_set(a, a in nonempty, a in auto),
+                                _is_set(b, b in nonempty, b in auto),
                             ]
                         }
                         for a, b in pairs

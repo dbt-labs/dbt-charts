@@ -33,7 +33,7 @@ def _axis_with_label_field(field: str, value: object):
     reset_config()
     charts = resolve_chart_style_context(get_theme_style())
     base_axis = resolved_axis_style(
-        charts, "axis_y", "quantitative", chart_type="", label_authored=False
+        charts, "axis_y", "quantitative", chart_type="", labeled=False
     )
     new_labels = dataclasses.replace(base_axis.labels, **{field: value})
     return dataclasses.replace(base_axis, labels=new_labels)
@@ -96,7 +96,7 @@ def test_default_theme_label_positioning_fields_cascade_to_vl() -> None:
     reset_config()
     charts = resolve_chart_style_context(get_theme_style())
     base_axis = resolved_axis_style(
-        charts, "axis_x", "quantitative", chart_type="", label_authored=False
+        charts, "axis_x", "quantitative", chart_type="", labeled=False
     )
     new_labels = dataclasses.replace(base_axis.labels, bound=True)
     patched_axis = dataclasses.replace(base_axis, labels=new_labels)

@@ -1,0 +1,3 @@
+kind: Fixes
+body: Category-count and single-point warnings now fire for colored, wide and faceted charts.
+time: 2026-10-13T19:30:45.710818-07:00

@@ -19,6 +19,7 @@ from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedLegendPosition,
     ResolvedLegendStyle,
 )
+from dbt_charts.core.compile.models.style.theme import LegendRowStyle
 from dbt_charts.core.render.chart.emitters._channels import (
     apply_color_legend,
     apply_legend_entry_order,
@@ -53,6 +54,7 @@ def _legend_with_values(values: list[str]) -> ResolvedLegendStyle:
         direction="vertical",
         columns=0,
         compact_columns=1,
+        row=LegendRowStyle(swatch_width=10.0, entry_gap=16.0),
         label=elem,
         title=elem,
         visible=True,

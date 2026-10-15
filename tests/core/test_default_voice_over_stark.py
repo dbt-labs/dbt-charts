@@ -85,13 +85,12 @@ def test_kpi_value_font_family_overrides_stark(theme_name: str) -> None:
 
 
 @pytest.mark.parametrize("theme_name", EDITORIAL_THEMES)
-def test_legend_disabled_by_default(theme_name: str) -> None:
+def test_legend_auto_by_default(theme_name: str) -> None:
     theme = get_theme_style(theme_name)
-    assert theme.charts.legend.visible is False, (
+    assert theme.charts.legend.visible == "auto", (
         f"{theme_name}.charts.legend.visible is "
-        f"{theme.charts.legend.visible!r}; the editorial-voiced themes suppress "
-        f"the legend by default (direct labels and editorial titles carry "
-        f"the framing). Add `legend.visible: false` to clarity.yaml."
+        f"{theme.charts.legend.visible!r}; the editorial-voiced themes leave "
+        f"the legend to the engine, which retires it behind direct labels."
     )
 
 
@@ -109,7 +108,7 @@ def test_axis_domain_not_visible_by_default(theme_name, axis):
     ctx = resolve_chart_style_context(get_theme_style(theme_name))
     channel_type = "ordinal" if axis == "axis_x" else "quantitative"
     axis_style = resolved_axis_style(
-        ctx, axis, channel_type, chart_type="", label_authored=False
+        ctx, axis, channel_type, chart_type="", labeled=False
     )
     assert axis_style.line.visible is False, (
         f"resolved {theme_name}.charts.{axis}.line.visible is "
@@ -142,19 +141,13 @@ def test_paper_inherits_clarity_kpi_value_font():
 
 
 @pytest.mark.parametrize("theme_name", EDITORIAL_THEMES)
-def test_legend_disable_propagates_through_resolve_style(theme_name: str) -> None:
-    """legend.visible=False on the compiled theme must survive resolve_style.
-
-    The compiled-theme test (test_legend_disabled_by_default) passes, but
-    _build_resolved_legend previously dropped the field by not copying it.
-    This test exercises the full compiled→resolved path to guard against
-    that regression.
-    """
+def test_legend_auto_propagates_through_resolve_style(theme_name: str) -> None:
+    """legend.visible=auto on the compiled theme must survive resolve_style."""
     compiled = get_theme_style(theme_name)
     ctx = resolve_chart_style_context(compiled)
-    assert ctx.legend.visible is False, (
+    assert ctx.pre_style.charts.legend.visible == "auto", (
         f"{theme_name}.charts.legend.visible lost during resolve_style: "
-        f"{ctx.legend.visible!r}"
+        f"{ctx.pre_style.charts.legend.visible!r}"
     )
 
 

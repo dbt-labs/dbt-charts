@@ -137,13 +137,11 @@ def test_authored_width_beats_title_floor(local_project) -> None:
 
 
 def _footer_row_width(resolved: ResolvedBoard, *, timestamp: bool) -> float:
-    from dbt_charts.core.compile.config import get_chart_rendering
-
     style = resolved.style
     width = footer_text_width(style.footer, str(style.font.family))
     if timestamp:
         sample = "Data as of 12:00 UTC on 28 Dec 2026"
-        width += get_chart_rendering().frame.footer_timestamp_gap_px
+        width += style.timestamp.gap
         width += get_font_measurer(str(style.font.family)).measure(
             sample, float(style.timestamp.font.size)
         )

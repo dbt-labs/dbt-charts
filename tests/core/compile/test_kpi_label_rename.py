@@ -14,9 +14,7 @@ from __future__ import annotations
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from dbt_charts.core.compile.config import (
-    get_theme_style,
-)
+from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.authored import (
     AuthoredChart,
     KpiChart,
@@ -33,6 +31,8 @@ from .conftest import (
     compile_with_board_sources as compile_board,
     project_with_db_source,
 )
+
+_KPI_COMPACT = get_theme_style().charts.kpi.value.compact
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
@@ -296,6 +296,7 @@ rows:
             available_width=80,
             available_height=20,
             formats=None,
+            kpi_compact=_KPI_COMPACT,
         )
         assert "EMEA revenue" in output
         assert "{{ region }}" not in output

@@ -4,32 +4,30 @@ The feature re-scales a color channel a chart already has; it never adds one.
 These tests drive the whole pipeline — YAML in, Vega-Lite specs out — because
 the defect being fixed is only observable across *two* charts at once.
 
-Two helpers exist because two earlier versions of this file could not fail:
-``_mark_paints`` looks at what actually paints each mark (an assertion on the
-color *encoding* alone happily found a top-level encoding no mark read), and
-``_label_inks`` deliberately inspects the ``text`` layers that ``_mark_paints``
-skips (filtering them out is what hid a bug where labels rendered in their own
-bar's color, i.e. invisible).
+``_mark_paints`` looks at what actually paints each mark: an assertion on the
+color *encoding* alone happily found a top-level encoding no mark read.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
+from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.board_resolve import build_resolved_board
-from dbt_charts.core.render.chart.emitters.pie import prepare_pie_render_rows
 from dbt_charts.core.render.chart.session import BoardRenderSession
 from dbt_charts.core.render.chart.spec import RenderBox
+
+from .._engine_render import render_pie_svg
 
 _DATA_MARKS = frozenset(
     {"bar", "line", "area", "point", "circle", "square", "arc", "rect", "trail"}
 )
-_ANNOTATION_MARKS = frozenset({"text", "rule", "tick"})
 
 # Two series (status) across three categories, so a `color:` channel is
 # natural and the category set can differ between charts.
@@ -71,6 +69,8 @@ def _specs(yaml_content: str) -> dict[str, dict[str, Any]]:
     session = BoardRenderSession.create(resolved_board.style)
     out: dict[str, dict[str, Any]] = {}
     for chart_id, chart in resolved_board.charts.items():
+        if isinstance(chart, ResolvedPieChart):
+            continue
         rows = executor.execute_query(chart.query_name, {}) if chart.query_name else []
         item = next(
             i
@@ -85,6 +85,31 @@ def _specs(yaml_content: str) -> dict[str, dict[str, Any]]:
             )
         )
     return out
+
+
+def _pie_svg(yaml_content: str, chart_id: str) -> str:
+    """The engine-drawn SVG of the board's pie ``chart_id``."""
+    resolved_board, executor = _resolve_board(yaml_content)
+    chart = resolved_board.charts[chart_id]
+    assert isinstance(chart, ResolvedPieChart)
+    rows = executor.execute_query(chart.query_name, {})
+    return render_pie_svg(chart, rows, width=chart.resolution_width)
+
+
+def _wedge_fill(svg: str, value: str) -> str:
+    """The fill of the wedge whose tooltip header is ``value``."""
+    match = re.search(rf'fill="([^"]+)"[^>]*aria-label="\u2064{re.escape(value)};', svg)
+    assert match is not None, f"no wedge for {value!r}"
+    return match.group(1)
+
+
+def _slice_label_ink(svg: str, value: str) -> str:
+    """The fill of the direct slice label whose tooltip header is ``value``."""
+    match = re.search(
+        rf'<text [^>]*fill="([^"]+)"[^>]*aria-label="\u2064{re.escape(value)};', svg
+    )
+    assert match is not None, f"no slice label for {value!r}"
+    return match.group(1)
 
 
 def _walk(spec: dict[str, Any], kinds: frozenset[str]) -> list[dict[str, Any] | str]:
@@ -135,16 +160,6 @@ def _mark_paints(spec: dict[str, Any]) -> list[dict[str, Any] | str]:
     return _walk(spec, _DATA_MARKS)
 
 
-def _label_inks(spec: dict[str, Any]) -> list[dict[str, Any] | str]:
-    """What paints the annotation layers — labels, baselines, ticks.
-
-    These carry their own deliberate ink (a donut's direct labels use
-    dark-companion stops for contrast against the wedge they sit on). The
-    binding must leave them alone.
-    """
-    return _walk(spec, _ANNOTATION_MARKS)
-
-
 def _color_enc(spec: dict[str, Any]) -> dict[str, Any]:
     paints = _mark_paints(spec)
     encs = [p for p in paints if isinstance(p, dict) and "field" in p]
@@ -160,14 +175,6 @@ def _color_scale(spec: dict[str, Any]) -> dict[str, Any]:
 
 def _color_of(spec: dict[str, Any], value: str) -> str:
     scale = _color_scale(spec)
-    return scale["range"][scale["domain"].index(value)]
-
-
-def _label_color_of(spec: dict[str, Any], value: str) -> str:
-    """A donut's own direct-label ink for ``value`` (dark-companion contrast)."""
-    inks = [i for i in _label_inks(spec) if isinstance(i, dict) and "scale" in i]
-    assert inks, f"no label ink scale in spec: {sorted(spec)}"
-    scale = inks[0]["scale"]
     return scale["range"][scale["domain"].index(value)]
 
 
@@ -250,9 +257,8 @@ class TestCrossChartConsistency:
         assert len(set(scale["range"])) == len(scale["domain"]) == 3
 
     def test_a_pie_and_a_bar_agree(self) -> None:
-        specs = _specs(
-            _board(
-                """
+        board = _board(
+            """
   bars:
     query: all
     type: bar
@@ -268,10 +274,9 @@ rows:
   - bars
   - slices
 """
-            )
         )
-        assert _color_of(specs["bars"], "Electronics") == _color_of(
-            specs["slices"], "Electronics"
+        assert _color_of(_specs(board)["bars"], "Electronics") == _wedge_fill(
+            _pie_svg(board, "slices"), "Electronics"
         )
 
 
@@ -543,14 +548,12 @@ class TestAnnotationLayersKeepTheirInk:
     """Labels carry deliberate contrast ink; re-scaling them hides them."""
 
     def test_donut_direct_labels_are_not_rescaled(self) -> None:
-        specs = _specs(_TWO_DONUTS)
-        mark_scale = _color_scale(specs["d1"])
-        for ink in _label_inks(specs["d1"]):
-            if isinstance(ink, dict) and "scale" in ink:
-                assert ink["scale"] != mark_scale, (
-                    "label layer was re-scaled to the mark palette; its "
-                    "dark-companion contrast is gone"
-                )
+        svg = _pie_svg(_TWO_DONUTS, "d1")
+        for value in ("Accessories", "Electronics", "Tools"):
+            assert _slice_label_ink(svg, value) != _wedge_fill(svg, value), (
+                "label inks with its wedge's own fill; its dark-companion "
+                "contrast is gone"
+            )
 
     def test_donut_direct_labels_agree_across_charts_with_different_row_order(
         self,
@@ -562,11 +565,9 @@ class TestAnnotationLayersKeepTheirInk:
         row) than in d2 (1st row) — the coincident case, where both charts
         happen to see every value in the same order, cannot tell these apart.
         """
-        specs = _specs(_TWO_DONUTS)
+        d1, d2 = _pie_svg(_TWO_DONUTS, "d1"), _pie_svg(_TWO_DONUTS, "d2")
         for value in ("Electronics", "Tools"):
-            assert _label_color_of(specs["d1"], value) == _label_color_of(
-                specs["d2"], value
-            )
+            assert _slice_label_ink(d1, value) == _slice_label_ink(d2, value)
 
 
 class TestThresholdGate:
@@ -804,7 +805,8 @@ rows:
       - {category: 2, revenue: 8}
 """,
         )
-        _specs(board)  # renders without a bare KeyError
+        for chart_id in ("d1", "d2", "d3"):
+            assert _pie_svg(board, chart_id).startswith("<svg")
         resolved_board, _ = _resolve_board(board)
         bound = {
             s.field for c in resolved_board.charts.values() for s in c.category_colors
@@ -851,7 +853,8 @@ rows:
       - {category: "2025", revenue: 8}
 """,
         )
-        _specs(board)  # renders without a bare KeyError
+        for chart_id in ("d1", "d2", "d3"):
+            assert _pie_svg(board, chart_id).startswith("<svg")
         resolved_board, _ = _resolve_board(board)
         bound = {
             s.field for c in resolved_board.charts.values() for s in c.category_colors
@@ -1599,7 +1602,7 @@ rows:
 # 10 distinct categories (fills vivid-10 exactly), pinned in the REVERSE of
 # their row (data) order — so slot 0 is the *last*-seen value and slot 9 the
 # *first*-seen one. Three rows repeat early categories so every share sits at
-# ~7.7%, under wedge_label_min_share (8%): every slice is unlabeled, which is
+# ~7.7%, under WEDGE_LABEL_MIN_SHARE (8%): every slice is unlabeled, which is
 # the documented "full_table" trigger (pie_attachment.classify_arc_render_mode)
 # -- the honest way to force the attached table on, not internals-poking.
 _SWATCH_CATEGORIES = [f"V{i}" for i in range(10)]
@@ -1668,14 +1671,18 @@ class TestAttachedTableSwatchMatchesWedge:
         assert chart.attached_table is not None, "fixture must trigger full_table"
 
         data = executor.execute_query(chart.query_name, {})
-        spec = _specs(_SWATCH_MATCH_BOARD)["d"]
-        attached_rows = prepare_pie_render_rows(chart, data)[1]
+        svg = _pie_svg(_SWATCH_MATCH_BOARD, "d")
+        swatches = re.findall(
+            r'<rect width="14" height="14" rx="3" fill="([^"]+)"/></g>'
+            r'<text [^>]*data-col="1">[^<]*</text><text [^>]*data-col="2">([^<]*)</text>',
+            svg,
+        )
 
-        assert len(attached_rows) == len(data)
-        for row in attached_rows:
-            wedge_fill = _color_of(spec, str(row["name"]))
-            assert row["swatch"] == wedge_fill, (
-                f"table swatch for {row['name']!r} is {row['swatch']!r}, "
+        assert len(swatches) == len(data)
+        for swatch, name in swatches:
+            wedge_fill = _wedge_fill(svg, name)
+            assert swatch == wedge_fill, (
+                f"table swatch for {name!r} is {swatch!r}, "
                 f"but its own wedge paints {wedge_fill!r}"
             )
 

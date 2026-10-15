@@ -121,6 +121,28 @@ pub fn axis_title_group_open(out: &mut String, key: Option<LabelKey>) {
     let _ = write!(out, "<g class=\"mark-text role-axis-title\" pointer-events=\"none\"{kind}>");
 }
 
+/// Open Vega's symbol-legend group (`role-legend`): the thumbnail strips it
+/// and the hover runtime skips a cursor inside it. It holds the title and
+/// the entries group. Close each legend opener with [`mark_group_close`].
+pub fn legend_open(out: &mut String) {
+    out.push_str("<g class=\"mark-group role-legend\">");
+}
+
+/// Open a legend's title group (`role-legend-title`).
+pub fn legend_title_open(out: &mut String) {
+    out.push_str("<g class=\"mark-text role-legend-title\" pointer-events=\"none\">");
+}
+
+/// Open the one group holding every legend entry (`role-legend-entry`).
+pub fn legend_entries_open(out: &mut String) {
+    out.push_str("<g class=\"mark-group role-legend-entry\">");
+}
+
+/// Open one entry's swatch group (`role-legend-symbol`).
+pub fn legend_symbol_open(out: &mut String) {
+    out.push_str("<g class=\"mark-symbol role-legend-symbol\" pointer-events=\"none\">");
+}
+
 /// Open the group Vega draws around legend label text (`role-legend-label`):
 /// the runtime reads a legend's labels from it. A gradient legend has one for
 /// all its tick labels, a size legend one per row. `series_attr` is the

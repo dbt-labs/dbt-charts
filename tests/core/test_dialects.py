@@ -633,10 +633,12 @@ class TestDialectRegistry:
         dialect = get_dialect("clickhouse")
         assert isinstance(dialect, ClickHouseDialect)
 
-    def test_unknown_dialect_returns_postgres(self) -> None:
-        """Unknown dialect type falls back to PostgreSQL."""
-        dialect = get_dialect("unknown_db")
-        assert isinstance(dialect, PostgresDialect)
+    def test_unknown_dialect_raises_naming_type_and_registered(self) -> None:
+        """An unregistered type is a bug or typo; guessing Postgres hides it."""
+        with pytest.raises(ValueError, match="unknown_db") as exc:
+            get_dialect("unknown_db")
+        assert "postgres" in str(exc.value)
+        assert "lakecompute" in str(exc.value)
 
     def test_case_insensitive(self) -> None:
         """Dialect lookup is case-insensitive."""

@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from dbt_charts.core.compile.config import get_chart_rendering
+from dbt_charts.core.constants.axis import MAX_ORDINAL_BUCKETS
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart.type_inference import (
     build_cartesian_x_encoding,
@@ -283,7 +283,7 @@ class TestBuildCartesianXEncodingType:
 class TestBuildCartesianXEncodingDensityGate:
     """Bucketed calendar grains with no coarser label cadence to fall back on
     (yearmonth, yearquarter, year) flip to a continuous temporal scale once
-    the bucket count passes ``chart_rendering.type_inference.max_ordinal_buckets`` —
+    the bucket count passes ``MAX_ORDINAL_BUCKETS`` —
     otherwise the ordinal axis renders one gridline per bucket with no filtering.
     """
 
@@ -304,18 +304,16 @@ class TestBuildCartesianXEncodingDensityGate:
         assert vl_type == "ordinal"
 
     def test_boundary_at_threshold_stays_ordinal(self) -> None:
-        max_buckets = get_chart_rendering().type_inference.max_ordinal_buckets
         ax = _axis(time_unit="yearmonth")
-        dates = _monthly_dates(max_buckets)
+        dates = _monthly_dates(MAX_ORDINAL_BUCKETS)
         vl_type, _, _tu = build_cartesian_x_encoding(
             _rows(dates), "date", ax, {}, "bar"
         )
         assert vl_type == "ordinal"
 
     def test_boundary_one_past_threshold_falls_back_to_temporal(self) -> None:
-        max_buckets = get_chart_rendering().type_inference.max_ordinal_buckets
         ax = _axis(time_unit="yearmonth")
-        dates = _monthly_dates(max_buckets + 1)
+        dates = _monthly_dates(MAX_ORDINAL_BUCKETS + 1)
         vl_type, _, _tu = build_cartesian_x_encoding(
             _rows(dates), "date", ax, {}, "bar"
         )
@@ -364,7 +362,7 @@ def _sparse_daily_dates(n: int = 10, gap_days: int = 45) -> list[str]:
 class TestFineGrainScaffoldBudgetGate:
     """A detected yearweek/yearmonthdate grain bands only while the ordinal
     scaffold gap-fill would enumerate stays within budget
-    (synthesized empty buckets ≤ max(distinct buckets, max_ordinal_buckets)).
+    (synthesized empty buckets ≤ max(distinct buckets, MAX_ORDINAL_BUCKETS)).
     Past that, the data is sparser than its detected grain — e.g. ten dates
     45 days apart, too irregular for any cadence to name, reading as "daily" —
     and banding renders sub-pixel bars across thousands of near-empty slots.
@@ -504,7 +502,7 @@ class TestFineGrainScaffoldBudgetGate:
             )
             verdicts.add((vl_type, tu))
         # Assert the SPECIFIC verdict, not mere uniformity: with a thin margin
-        # a stricter max_ordinal_buckets makes every panel count resolve
+        # a stricter MAX_ORDINAL_BUCKETS makes every panel count resolve
         # ("temporal", None), which is uniform and pins nothing.
         assert verdicts == {("ordinal", "yearmonthdate")}, verdicts
 
@@ -568,7 +566,7 @@ class TestCoarseGrainScaffoldBudgetGate:
     A coarse grain owes the axis one band per bucket across its span exactly
     as a fine one does; a decade-spaced series names ``year`` honestly and
     still asks for ten empty bands per real bar. The row count the coarse
-    branch measures against ``max_ordinal_buckets`` cannot see that — it only
+    branch measures against ``MAX_ORDINAL_BUCKETS`` cannot see that — it only
     ever counts the bars that exist."""
 
     def test_decennial_bar_flips_to_continuous_temporal(self) -> None:
@@ -710,18 +708,17 @@ class TestBuildCartesianXEncodingMarkTypeSplit:
     def test_high_density_yearmonth_line_step_stays_ordinal(self) -> None:
         # step's band-x requirement is not negotiable at any bucket count:
         # unlike plain line/area (always temporal) and bar (density-gated to
-        # temporal above max_ordinal_buckets), step must stay ordinal even
+        # temporal above MAX_ORDINAL_BUCKETS), step must stay ordinal even
         # past the density gate, or step_band.py raises ChartDataError.
-        max_buckets = get_chart_rendering().type_inference.max_ordinal_buckets
         ax = _axis(time_unit="yearmonth")
-        dates = _monthly_dates(max_buckets + 1)
+        dates = _monthly_dates(MAX_ORDINAL_BUCKETS + 1)
         vl_type, _, _tu = build_cartesian_x_encoding(
             _rows(dates), "date", ax, {}, "line", "step"
         )
         assert vl_type == "ordinal"
 
     def test_low_density_yearmonth_line_is_temporal(self) -> None:
-        # Below max_ordinal_buckets, bar stays ordinal (existing density gate)
+        # Below MAX_ORDINAL_BUCKETS, bar stays ordinal (existing density gate)
         # but line always goes continuous — the ordinal-vs-temporal split is
         # bar-only. The scaffold-budget gate is not reached here: the grain is
         # authored, and yearmonth is not a FINE_BUCKET_UNIT.
@@ -1846,8 +1843,7 @@ class TestVisibilityThreading:
 
     def test_temporal_quarter_cadence_anchors_by_value_not_index(self) -> None:
         ax = _axis(time_unit="yearmonth")
-        max_ordinal = get_chart_rendering().type_inference.max_ordinal_buckets
-        n = max_ordinal + 6
+        n = MAX_ORDINAL_BUCKETS + 6
         vl_type, ax_vl, _tu = build_cartesian_x_encoding(
             self._months(n),
             "date",
@@ -1868,8 +1864,7 @@ class TestVisibilityThreading:
         # guard keeps anchor_value="" so datum.index === 0 fires for the first
         # tick.  A value anchor comparing at %Y-%m could miss Vega-generated
         # ticks; the index anchor is more robust on this path.
-        max_ordinal = get_chart_rendering().type_inference.max_ordinal_buckets
-        n = max_ordinal + 6
+        n = MAX_ORDINAL_BUCKETS + 6
         vl_type, ax_vl, _tu = build_cartesian_x_encoding(
             self._months(n),
             "date",
@@ -1887,8 +1882,7 @@ class TestVisibilityThreading:
         # The anchor must reference April 2024 (the first real quarter opener in
         # the domain), not datum.index === 0 (which would always show February's
         # label, overlapping April's).
-        max_ordinal = get_chart_rendering().type_inference.max_ordinal_buckets
-        n = max_ordinal + 6
+        n = MAX_ORDINAL_BUCKETS + 6
         months: list[dict[str, str]] = []
         for i in range(n):
             month_offset = 1 + i  # offset from Jan 2024: i=0 → Feb 2024

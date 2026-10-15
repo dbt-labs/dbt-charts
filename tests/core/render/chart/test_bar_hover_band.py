@@ -2,7 +2,7 @@
 
 Every bar chart (vertical, horizontal, grouped, stacked, mixed-sign) gets an
 invisible companion bar mark anchored at scale('ch', 0) extending by
-``chart_rendering.bar.hover_band_extend_fraction`` of the plot extent toward the
+``constants.bar.HOVER_BAND_EXTEND_FRACTION`` of the plot extent toward the
 sign of each datum's value.
 
 This widens the hover hit-target for near-zero bars without touching the rendered visual.
@@ -27,10 +27,14 @@ from typing import Any
 
 import pytest
 
-from dbt_charts.core.compile.config import get_chart_rendering, reset_config
+from dbt_charts.core.compile.config import reset_config
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
+from dbt_charts.core.constants.bar import (
+    HOVER_BAND_EXTEND_FRACTION,
+    HOVER_BAND_TRIGGER_FRACTION,
+)
 from dbt_charts.core.render.chart.features.bar_hover_band import (
     _HOVER_BAND_STYLE,
     _append_bar_hover_area,
@@ -134,9 +138,8 @@ def test_vertical_hover_band_y2_encoding_extends_toward_sign() -> None:
     bands = _hover_band_layers(layers)
     assert len(bands) == 1
     y2_enc = bands[0].get("encoding", {}).get("y2", {})
-    bar_config = get_chart_rendering().bar
-    expected_band = f"height * {bar_config.hover_band_extend_fraction}"
-    trigger_px = f"height * {bar_config.hover_band_trigger_fraction}"
+    expected_band = f"height * {HOVER_BAND_EXTEND_FRACTION}"
+    trigger_px = f"height * {HOVER_BAND_TRIGGER_FRACTION}"
     baseline = "scale('y', 0)"
     signed = f"{baseline} + (datum['val'] >= 0 ? -{expected_band} : {expected_band})"
     own_extent = f"abs(scale('y', datum['val']) - {baseline})"
@@ -183,9 +186,8 @@ def test_horizontal_hover_band_x2_encoding_extends_toward_sign() -> None:
     bands = _hover_band_layers(layers)
     assert len(bands) == 1
     x2_enc = bands[0].get("encoding", {}).get("x2", {})
-    bar_config = get_chart_rendering().bar
-    expected_band = f"width * {bar_config.hover_band_extend_fraction}"
-    trigger_px = f"width * {bar_config.hover_band_trigger_fraction}"
+    expected_band = f"width * {HOVER_BAND_EXTEND_FRACTION}"
+    trigger_px = f"width * {HOVER_BAND_TRIGGER_FRACTION}"
     baseline = "scale('x', 0)"
     signed = f"{baseline} + (datum['val'] >= 0 ? {expected_band} : -{expected_band})"
     own_extent = f"abs(scale('x', datum['val']) - {baseline})"
@@ -477,7 +479,12 @@ def test_guard_no_cat_encoding_is_noop() -> None:
     the spec stays flat and unmodified.
     """
     spec = ChartSpec(mark="bar", encoding={"y": {"field": "v", "type": "quantitative"}})
-    _append_bar_hover_area(spec, "y", "v", [{"v": 1}])
+    _append_bar_hover_area(
+        spec,
+        "y",
+        "v",
+        [{"v": 1}],
+    )
     assert spec.mark == "bar", (
         "Spec must NOT be promoted to layered when cat 'x' is absent"
     )
@@ -731,7 +738,7 @@ def test_hover_band_stays_interactive_on_legend_bearing_chart() -> None:
 
 def test_bar_hover_band_pixel_geometry() -> None:
     """A genuinely tiny bar's hover band has height close to
-    hover_band_extend_fraction * plot height.
+    constants.bar.HOVER_BAND_EXTEND_FRACTION * plot height.
 
     Two rows: a tall bar sets the axis domain, a tiny bar needs the band --
     a single-row chart can't exercise this, since that row's own value
@@ -790,7 +797,7 @@ def test_bar_hover_band_pixel_geometry() -> None:
     assert band_heights, (
         "Expected the tiny bar's opacity=0 hover band path in the rendered SVG"
     )
-    extend_fraction = get_chart_rendering().bar.hover_band_extend_fraction
+    extend_fraction = HOVER_BAND_EXTEND_FRACTION
     expected = plot_height * extend_fraction
     tolerance = expected * 0.15  # 15% tolerance for VL padding/rounding
     for h in band_heights:
@@ -826,7 +833,7 @@ def test_bar_chart_with_no_tiny_bars_gets_no_hover_band_layer_at_all() -> None:
 def test_bar_hover_band_collapses_for_adequately_sized_bar() -> None:
     """In a chart that DOES get a band layer (because some row is tiny), the
     adequately-sized row's own extent must still be ~0, not
-    hover_band_extend_fraction * plot height.
+    constants.bar.HOVER_BAND_EXTEND_FRACTION * plot height.
 
     This is the per-row half of the "small bars only" contract: the band's
     geometry is gated on each row's own rendered extent (via scale()), not
@@ -868,7 +875,7 @@ def test_bar_hover_band_collapses_for_adequately_sized_bar() -> None:
                 band_heights.append(h)
 
     assert band_heights, "Expected A's opacity=0 hover band path in the rendered SVG"
-    extend_fraction = get_chart_rendering().bar.hover_band_extend_fraction
+    extend_fraction = HOVER_BAND_EXTEND_FRACTION
     collapse_threshold = plot_height * extend_fraction * 0.15
     for h in band_heights:
         assert h <= collapse_threshold, (

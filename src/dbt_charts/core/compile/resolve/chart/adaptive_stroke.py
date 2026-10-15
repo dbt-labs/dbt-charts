@@ -17,8 +17,14 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.resolve.chart._chart_rows import PanelRows, reduce_panels
+from dbt_charts.core.constants.estimates import FACET_CHROME_PX, FACET_MIRROR_AXIS_PX
+from dbt_charts.core.constants.marks import (
+    POINT_DIAMETER_RATIO,
+    POINT_MIN_PX_PER_POINT,
+    STROKE_MAX_WIDTH,
+    STROKE_MIN_WIDTH,
+)
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.chart.authored._base import MultiplesConfig
@@ -45,16 +51,15 @@ def adaptive_stroke(
     bottom region).
 
     ``min_w``/``max_w`` are required (no in-code defaults): the caller passes
-    the ``chart_rendering.stroke`` clamp bounds so they stay overridable and
-    introspectable like the sibling ``chart_rendering.facet`` geometry. They
+    the ``STROKE_MIN_WIDTH``/``STROKE_MAX_WIDTH`` clamp bounds. They
     are calibration constants (fit against the density lab) — retune by
     re-running that calibration, not casually.
 
     Args:
         px_per_point: Chart pixel width divided by the number of distinct
             x-values in the densest rendered series.  Must be positive.
-        min_w: Clamp floor in pixels (``chart_rendering.stroke.min_width``).
-        max_w: Clamp ceiling in pixels (``chart_rendering.stroke.max_width``).
+        min_w: Clamp floor in pixels (``STROKE_MIN_WIDTH``).
+        max_w: Clamp ceiling in pixels (``STROKE_MAX_WIDTH``).
 
     Returns:
         Stroke width in pixels, snapped to the nearest 0.5.
@@ -148,14 +153,13 @@ def facet_panel_width(
 
     Returns:
         Per-panel pixel width: ``(width - chrome) / panel_cols``, never
-        floored to ``min_panel_px``. The card boundary always wins — a panel
+        floored to ``FACET_MIN_PANEL_PX``. The card boundary always wins — a panel
         count that would otherwise need more than the card's width shrinks
         below the legibility floor instead of pushing painted content past
         the card's edge (``render/warnings/facet_panel_width_below_minimum.py``
         warns the author when that happens).
     """
-    facet_cfg = get_chart_rendering().facet
-    chrome = facet_cfg.chrome_px + (facet_cfg.mirror_axis_px if has_mirror else 0.0)
+    chrome = FACET_CHROME_PX + (FACET_MIRROR_AXIS_PX if has_mirror else 0.0)
     usable = max(width - chrome, 0.0)
     return max(usable / panel_cols - extra_axis_px, 0.0)
 
@@ -251,7 +255,7 @@ def resolve_px_per_point(
 def stroke_from_px_per_point(px_per_point: float) -> float:
     """Turn a density signal into an adaptive stroke width, or 0.0 when inapplicable.
 
-    The one place that reads ``chart_rendering.stroke``'s clamp and calls
+    The one place that reads the stroke clamp constants and calls
     ``adaptive_stroke`` — every caller that already has ``px_per_point`` (from
     ``resolve_px_per_point``) goes through this leaf instead of re-deriving
     the clamp read, so a future change to how a stroke derives from density
@@ -266,8 +270,7 @@ def stroke_from_px_per_point(px_per_point: float) -> float:
     """
     if px_per_point <= 0:
         return 0.0
-    clamp = get_chart_rendering().stroke
-    return adaptive_stroke(px_per_point, clamp.min_width, clamp.max_width)
+    return adaptive_stroke(px_per_point, STROKE_MIN_WIDTH, STROKE_MAX_WIDTH)
 
 
 def density_adaptive_stroke(
@@ -321,20 +324,19 @@ def bake_point_companions(
       signal: a line overlay on a bar, scatter or area base has none, and its
       ring must still read with the weight of the line it rings rather than
       falling through to Vega-Lite's unthemeable 2px.
-    - ``size`` is ``(point.diameter_ratio * stroke) ** 2`` (VL ``size`` is
+    - ``size`` is ``(POINT_DIAMETER_RATIO * stroke) ** 2`` (VL ``size`` is
       area, but the rendered diameter is ``sqrt(size)``, not the textbook
       ``pi * r**2`` reading) once ``px_per_point`` clears
-      ``point.min_px_per_point``, and ``0.0`` (points off) below it. Without a
+      ``POINT_MIN_PX_PER_POINT``, and ``0.0`` (points off) below it. Without a
       density signal the cascaded size stands: ``0.0`` means "measured, and too
       dense to show dots", which is not "never measured".
     """
     if point_mark.stroke_width is None:
         point_mark = point_mark.model_copy(update={"stroke_width": stroke})
     if point_mark.size is None and px_per_point > 0:
-        point_cfg = get_chart_rendering().point
         auto_size = (
-            (point_cfg.diameter_ratio * stroke) ** 2
-            if px_per_point >= point_cfg.min_px_per_point
+            (POINT_DIAMETER_RATIO * stroke) ** 2
+            if px_per_point >= POINT_MIN_PX_PER_POINT
             else 0.0
         )
         point_mark = point_mark.model_copy(update={"size": auto_size})

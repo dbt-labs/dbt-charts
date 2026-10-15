@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,15 +26,20 @@ __all__ = [
 ]
 
 
-def open_cache(path: Path | None) -> TrivialDuckDBCache:
+def open_cache(
+    path: Path | None, max_age: timedelta | None = None
+) -> TrivialDuckDBCache:
     """Open the query-result cache at an already-resolved path.
 
     ``path=None`` opens an in-memory cache — ephemeral, discarded when closed.
     A path opens (or creates, if absent) a persistent DuckDB file, reused
-    across invocations. Callers own the returned cache's lifecycle (close it).
+    across invocations and safe to share with other processes: the file is
+    held only for the length of each read or write. ``max_age`` deletes
+    entries older than that when the cache is opened; None keeps them all.
+    Callers own the returned cache's lifecycle (close it).
     Does not consult project config — use ``project_cache_ctx`` for that.
     """
-    return TrivialDuckDBCache(db_path=path)
+    return TrivialDuckDBCache(db_path=path, max_age=max_age)
 
 
 @contextmanager
@@ -54,8 +60,8 @@ def project_cache_ctx(
     entirely; ``cache_path`` (``--cache PATH``, or its ``DCT_CACHE_PATH`` env
     backing) opens that persistent file. Otherwise the project's
     ``dbt_charts.yml`` ``cache:`` block picks the location — a configured ``path``
-    opens that file (created if absent); no path opens the zero-config
-    in-memory default. A project-level ``cache: false`` defaults the *cascade*
+    opens that file (created if absent); no path opens the per-user file
+    shared by every project, pruned of entries older than a week. A project-level ``cache: false`` defaults the *cascade*
     to off without closing the door on a nearer scope's opt-in, so it still
     opens a store; the resolved per-query policy decides what gets written.
 
@@ -64,7 +70,7 @@ def project_cache_ctx(
         through as ``ProjectSession(cache=...)``.
     """
     boot = resolve_cache_boot(project, no_cache=no_cache, cache_path=cache_path)
-    cache = open_cache(boot.path) if boot.enabled else None
+    cache = open_cache(boot.path, boot.max_age) if boot.enabled else None
     try:
         yield cache
     finally:

@@ -264,7 +264,9 @@ def _apply_area_step_band(
     """Apply band-aware step row doubling when curve is step on a band x-axis."""
     if is_band_step(area_mark.curve, x_type):
         # Area always renders as a continuous silhouette.
-        return apply_step_band(data, top_encoding, chart_id=chart.id, connect=True)
+        return apply_step_band(
+            data, top_encoding, chart_id=chart.id, disconnected_width=None
+        )
     return None
 
 

@@ -29,7 +29,7 @@ def _axis(
 
     charts = resolve_chart_style_context(get_theme_style())
     axis_x = resolved_axis_style(
-        charts, "axis_x", "nominal", chart_type="", label_authored=False
+        charts, "axis_x", "nominal", chart_type="", labeled=False
     )
     font = axis_x.labels.font
     if case is not None:

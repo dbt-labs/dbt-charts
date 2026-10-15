@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import duckdb
 import pytest
 
 from dbt_charts.agent_api.cache import (
@@ -12,6 +11,10 @@ from dbt_charts.agent_api.cache import (
     project_cache_ctx,
 )
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.compile.config import (
+    DEFAULT_CACHE_MAX_AGE,
+    default_cache_path,
+)
 from dbt_charts.core.execute.cache_backend import CacheHit
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
@@ -69,10 +72,15 @@ class TestProjectCachePrecedence:
     do not overlap, so this precedence coverage has no other home.
     """
 
-    def test_no_project_config_defaults_to_in_memory(self, tmp_path: Path) -> None:
+    def test_no_project_config_defaults_to_the_per_user_file(
+        self, tmp_path: Path
+    ) -> None:
         with project_cache_ctx(FilesystemProject(tmp_path)) as cache:
             assert isinstance(cache, TrivialDuckDBCache)
-            assert cache.db_path is None
+            assert cache.db_path == default_cache_path().resolve()
+            assert cache.max_age == DEFAULT_CACHE_MAX_AGE
+        assert default_cache_path().exists()
+        assert not any(tmp_path.rglob("*.duckdb"))
 
     def test_no_cache_flag_yields_none(self, tmp_path: Path) -> None:
         with project_cache_ctx(FilesystemProject(tmp_path), no_cache=True) as cache:
@@ -86,6 +94,7 @@ class TestProjectCachePrecedence:
         ) as cache:
             assert cache is not None
             assert cache.db_path == explicit
+            assert cache.max_age is None
 
     def test_project_config_disabled_still_opens_the_store(
         self, tmp_path: Path
@@ -95,7 +104,7 @@ class TestProjectCachePrecedence:
         (tmp_path / "dbt_charts.yml").write_text("cache: false\n")
         with project_cache_ctx(FilesystemProject(tmp_path)) as cache:
             assert cache is not None
-            assert cache.db_path is None
+            assert cache.db_path == default_cache_path().resolve()
 
     def test_project_config_path_opens_persistent_file(self, tmp_path: Path) -> None:
         (tmp_path / "dbt_charts.yml").write_text("cache:\n  path: .dct/cache.duckdb\n")
@@ -109,18 +118,31 @@ class TestProjectCacheCtx:
         with project_cache_ctx(FilesystemProject(tmp_path), no_cache=True) as cache:
             assert cache is None
 
-    def test_enabled_yields_cache_and_closes_on_exit(self, tmp_path: Path) -> None:
-        captured: list[TrivialDuckDBCache] = []
+    @pytest.fixture
+    def closed(self, monkeypatch: pytest.MonkeyPatch) -> list[TrivialDuckDBCache]:
+        """Every cache `close()` was called on. A file-backed cache holds no
+        connection between operations, so the call is all there is to observe."""
+        closed: list[TrivialDuckDBCache] = []
+
+        def _record(cache: TrivialDuckDBCache) -> None:
+            closed.append(cache)
+
+        monkeypatch.setattr(TrivialDuckDBCache, "close", _record)
+        return closed
+
+    def test_enabled_yields_cache_and_closes_on_exit(
+        self, tmp_path: Path, closed: list[TrivialDuckDBCache]
+    ) -> None:
         with project_cache_ctx(FilesystemProject(tmp_path)) as cache:
             assert isinstance(cache, TrivialDuckDBCache)
-            # Connection is open inside the block
-            cache.conn.execute("SELECT 1").fetchone()
-            captured.append(cache)
+            assert cache.get("s", "q", "v") is None
+            assert closed == []
 
-        with pytest.raises(duckdb.ConnectionException):
-            captured[0].conn.execute("SELECT 1").fetchone()
+        assert closed == [cache]
 
-    def test_closes_on_exception_inside_with_block(self, tmp_path: Path) -> None:
+    def test_closes_on_exception_inside_with_block(
+        self, tmp_path: Path, closed: list[TrivialDuckDBCache]
+    ) -> None:
         captured: list[TrivialDuckDBCache] = []
 
         def _run() -> None:
@@ -132,5 +154,4 @@ class TestProjectCacheCtx:
         with pytest.raises(RuntimeError, match="boom"):
             _run()
 
-        with pytest.raises(duckdb.ConnectionException):
-            captured[0].conn.execute("SELECT 1").fetchone()
+        assert closed == captured

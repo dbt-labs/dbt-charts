@@ -33,6 +33,7 @@ from dbt_charts.core.execute.adapters.base import (
     connection_failure,
     handle_adapter_error,
     plain_error,
+    reject_duplicate_columns,
     resolve_effective_row_limit,
 )
 from dbt_charts.core.execute.adapters.dbt_utils import (
@@ -204,6 +205,7 @@ class SqliteAdapter(BaseAdapter):
 
         rows, truncated_reason = apply_row_limit_truncation(rows, row_fetch_limit)
 
+        reject_duplicate_columns(columns)
         data = [dict(zip(columns, row, strict=False)) for row in rows]
         return QueryResult(
             data=data,

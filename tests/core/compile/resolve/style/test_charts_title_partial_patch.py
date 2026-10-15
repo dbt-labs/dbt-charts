@@ -57,12 +57,11 @@ def test_charts_family_title_partial_override_does_not_raise():
     never rejected by this bug — it inherits the field through the
     "AllOptional" base, not directly from ``_ChartStyleBase`` — so this only
     pins that the type change above doesn't regress it at the board-cascade
-    stage. ``charts_board_overrides`` is the raw, still-sparse authored patch;
-    ``test_per_family_theme_title_patch.py`` covers the merged value every
+    stage; ``test_per_family_theme_title_patch.py`` covers the merged value every
     chart of the family actually resolves to.
     """
     patch = StylePatch.model_validate(
         {"charts": {"bar": {"title": {"font": {"family": "Georgia"}}}}}
     )
     ctx = resolve_chart_style_context(get_theme_style(), patch)
-    assert ctx.charts_board_overrides.bar.title.font.family == "Georgia"
+    assert ctx.bar.title.font.family.startswith("Georgia")

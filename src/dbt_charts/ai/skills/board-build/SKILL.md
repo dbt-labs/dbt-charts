@@ -248,7 +248,7 @@ Put a number preset on an axis whose ticks can't carry it and the engine raises 
 |---|---|
 | `bar` over a category | band |
 | `bar` over `yearweek` / `yearmonthdate` buckets | band, always |
-| `bar` over `year` / `yearquarter` / `yearmonth` buckets | band, up to 60 distinct buckets (`max_ordinal_buckets`); temporal at 61+ |
+| `bar` over `year` / `yearquarter` / `yearmonth` buckets | band, up to 60 distinct buckets; temporal at 61+ |
 | `line` / `area` / `scatter` over a text category | band |
 | `line` / `area` / `scatter` over bucketed dates | temporal |
 | `line` / `area` with `curve: step` over bucketed dates | band — the step plateau needs a band scale |

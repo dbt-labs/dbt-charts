@@ -26,7 +26,6 @@ from typing import Any, Literal
 
 from d3_format import parse as _d3_parse
 from d3_format.errors import D3FormatError
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.primitives import (
     AuthoredFormat,
@@ -36,6 +35,7 @@ from dbt_charts.core.compile.models.primitives import (
     ResolvedFormat,
     signs_before_prefix,
 )
+from dbt_charts.core.compile.models.style.theme.kpi import KpiCompactStyle
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_GRAIN_NAME_NOT_REDEFINED,
     ERR_FORMAT_NATIVE_IN_VEGA_SLOT,
@@ -658,30 +658,30 @@ def finalize_kpi_value_format(
     value: float | None,
     formats: FormatTable | None = None,
     *,
+    compact: KpiCompactStyle,
     board: AuthoredFormat | None = None,
     column: AuthoredFormat | None = None,
 ) -> ResolvedFormat | None:
     """The headline's final format: ``column_format``'s layers with the KPI's
-    policy for the engine's own ``number`` (``chart_rendering.kpi.compact_spec``
-    once ``|value|`` reaches ``compact_threshold``, exact digits below it), and
+    policy for the engine's own ``number`` (``compact.spec`` once ``|value|``
+    reaches ``compact.threshold``, exact digits below it), and
     narrative notation unless one is set. A date or text headline has no numeric
     value, so it merges as a date, and nothing is baked when no layer sets
     anything.
     """
-    kpi_rendering = get_chart_rendering().kpi
 
-    def compact() -> str:
+    def compacted() -> str:
         # Not a predefined name: the predefined "compact" is 3 sig figs, one
         # more than a tile wants.
-        reached = value is not None and abs(value) >= kpi_rendering.compact_threshold
-        return kpi_rendering.compact_spec if reached else ""
+        reached = value is not None and abs(value) >= compact.threshold
+        return compact.spec if reached else ""
 
     layers = (fmt, column, board)
     if all(layer is None for layer in layers):
         if value is None:
             return None
         parts = column_format(
-            "number", formats, engine_default=compact, notation="narrative"
+            "number", formats, engine_default=compacted, notation="narrative"
         )
         return parts if parts.spec or parts.prefix or parts.suffix else None
     return column_format(
@@ -690,7 +690,7 @@ def finalize_kpi_value_format(
         fmt,
         board=board,
         column=column,
-        engine_default=None if value is None else compact,
+        engine_default=None if value is None else compacted,
         notation="narrative",
     )
 

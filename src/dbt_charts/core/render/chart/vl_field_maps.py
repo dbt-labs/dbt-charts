@@ -1408,21 +1408,6 @@ def scatter_mark_to_vl(point: Any) -> dict[str, Any]:
     return _emit_point_mark(point)
 
 
-def slice_mark_to_vl(arc: Any) -> dict[str, Any]:
-    """Map SliceStyle/Patch → VL extended mark dict (non-None only)."""
-    if arc is None:
-        return {}
-    d: dict[str, Any] = {}
-    if (v := _n(arc, "opacity")) is not None:
-        d["opacity"] = v
-    if (v := _n(arc, "gap")) is not None:
-        d["padAngle"] = v
-    if (v := _n(arc, "corner_radius")) is not None:
-        d["cornerRadius"] = v
-    d.update(_stroke_to_vl(_n(arc, "stroke")))
-    return d
-
-
 def map_fields(source: BaseModel, field_map: dict[str, str]) -> dict[str, object]:
     """Extract non-None fields from source, mapping snake_case to camelCase."""
     result: dict[str, object] = {}

@@ -86,6 +86,14 @@ class InputStyle(BaseModel):
     range: RangeDefaults = Field(description="Range input default min/max/step values.")
 
 
+class FooterDividerStyle(DividerStyle):
+    """The footer hairline, plus the gap it reserves above the footer text."""
+
+    gap: float = Field(
+        ge=0, description="Vertical gap between the footer text and its divider."
+    )
+
+
 class FooterStyle(ConstrainedModel):
     """Page footer chrome: visibility, attribution text, font, and divider."""
 
@@ -110,7 +118,12 @@ class FooterStyle(ConstrainedModel):
         description="Footer text font style (size and color required).",
     )
     y_offset: float = Field(description="Vertical offset from bottom edge in pixels.")
-    divider: DividerStyle = Field(description="Hairline above the footer text.")
+    # Only 500 and 600 have a static font face for vl-convert to swap in: any
+    # other weight renders heavier in a browser and flat in every PNG/PDF export.
+    brand_weight: Literal[500, 600] = Field(
+        description="Font weight of the footer brand phrase."
+    )
+    divider: FooterDividerStyle = Field(description="Hairline above the footer text.")
 
 
 class TimestampStyle(ConstrainedModel):
@@ -136,6 +149,10 @@ class TimestampStyle(ConstrainedModel):
         "'UTC'), else compile rejects it: an unlabeled clock reads as local."
     )
     y: float = Field(description="Y-coordinate for top-positioned timestamp in pixels.")
+    gap: float = Field(
+        ge=0,
+        description="Horizontal gap between the footer timestamp and the attribution.",
+    )
     font: Annotated[FontStyle, InheritSlot(from_path="Style.font")] = Field(
         default_factory=FontStyle,
         description="Timestamp font style overrides (size, color, weight, ...).",

@@ -318,10 +318,7 @@ pub fn get_chart_content_height(
         let sb = &defaults.spark_bar;
         let body = sb.max_bars as f64 * (sb.bar.height + sb.bar.padding) + sb.bar.padding;
         return match spark_bar_titled {
-            // `chart_rendering.spark_bar.title_height` — engine config
-            // mirrored as a literal, same reasoning `spark_bar.rs::
-            // TITLE_HEIGHT` already documents for that hardcoded 24.0.
-            Some(true) => Ok(body + 24.0),
+            Some(true) => Ok(body + crate::constants::estimates::SPARK_BAR_TITLE_HEIGHT_PX),
             Some(false) => Ok(body),
             None => Err(
                 "sizing: chart_error spark_bar content height needs an authored title fact \
@@ -616,14 +613,6 @@ fn spark_bar_natural_height(
     Ok(actual + inset)
 }
 
-/// `get_chart_rendering().support_table.plot_width_floor_ratio`
-/// (`default_config.yml`) — engine config, not a theme constant, and the
-/// payload envelope has no field for it (same reasoning as `spark_bar.rs`'s
-/// own hardcoded `chart_rendering.spark_bar` mirror): every caller of
-/// `crate::render_fitted` shares this one value rather than threading it
-/// from Python through three separate payload shapes (the per-chart sweep's
-/// `Payload`, the board composer's `BoardPayload`, and the sizing pass).
-pub(crate) const PLOT_WIDTH_FLOOR_RATIO: f64 = 0.30;
 
 /// layout_sizing.py::_make_data_aware_height_provider's width correction — the
 /// floor/shrink arithmetic for a support_table chart whose first render's outer
@@ -1344,9 +1333,13 @@ pub fn resolve_active_tab_index(
             if let Some(var_value) = variable_values.get(var_name) {
                 match var_value {
                     Value::String(s) if !s.is_empty() => {
-                        if let Some(idx) = tab_slugs.iter().position(|slug| slug == s) {
-                            active = idx;
-                        }
+                        active = tab_slugs.iter().position(|slug| slug == s).ok_or_else(|| {
+                            format!(
+                                "ERR-TAB-UNKNOWN: tab variable {var_name:?} is {s:?}, \
+                                 which is not a tab on this board (tabs: {})",
+                                tab_slugs.join(", ")
+                            )
+                        })?;
                     }
                     // Falsy (empty string / null) — Python's own `if
                     // var_value` guard skips the override attempt entirely,
@@ -1472,11 +1465,9 @@ pub(crate) fn effective_alignment_target_for_chart(
 /// key is set to it and Vega respects it, which is why overwriting straight
 /// to `row_height` is exact for every family EXCEPT one case: a
 /// `_FIXED_ASPECT_PIE_TYPES` chart carrying an `attached_table`.
-/// `render_resolved_chart` dispatches an attached-table pie straight to
-/// `_render_arc_attached_table` (vega_lite.py:597-603) BEFORE it ever
-/// looks at the `height` kwarg — that function composes its own canvas from
+/// An attached-table pie ignores the slot `height`: it composes its own canvas from
 /// `wheel_width x board_style.continuous_height` plus the attached table's
-/// own row count (`pie.rs`'s `Some(attached)` arm ports this verbatim), a
+/// own row count (`pie.rs`'s `Some(attached)` arm), a
 /// pure function of the chart's own content and width, never of the row's
 /// assigned height. Re-rendering it at `row_height` is therefore a no-op —
 /// production's real re-render returns the SAME composed height regardless
@@ -1930,6 +1921,18 @@ pub fn calculate_layout_height(layout_type: &str, boxes: &[ItemBox], min_height:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unknown_tab_value_is_refused_not_mapped_to_the_default() {
+        let slugs = vec!["first".to_string(), "second".to_string()];
+        let mut values = serde_json::Map::new();
+        values.insert("tab".to_string(), Value::String("second".into()));
+        assert_eq!(resolve_active_tab_index(2, Some("tab"), &slugs, 0, &values), Ok(1));
+        values.insert("tab".to_string(), Value::String("nope".into()));
+        let err = resolve_active_tab_index(2, Some("tab"), &slugs, 0, &values).unwrap_err();
+        assert!(err.starts_with("ERR-TAB-UNKNOWN:"), "{err}");
+        assert!(err.ends_with("(tabs: first, second)"), "{err}");
+    }
 
     // ---- layout_sizing.py's render-first clamp/trust split ----
 

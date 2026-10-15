@@ -660,7 +660,7 @@ class DesignTarget(DesignNode):
     )
 
 
-def _arms(type_repr: str) -> set[str]:
+def union_arms(type_repr: str) -> set[str]:
     """The union's arms as the schema spells them, minus `None`."""
     return {arm.strip() for arm in type_repr.split("|")} - {"None"}
 
@@ -712,7 +712,7 @@ def _widget_for(field: SchemaField) -> Widget | None:
     # numeric controls to a text box; `projection` is `str | Projection | None`,
     # a model arm the IR does not report as nested, so a text box showed an
     # authored object as empty and one keystroke replaced it with a string.
-    arms = _arms(field.type_repr)
+    arms = union_arms(field.type_repr)
     str_pattern = field.extra_union_type_keywords.get("str", {}).get("pattern")
     if str_pattern is not None and str_pattern not in _NAME_GUARDS:
         # A pattern-constrained string is parse-time sugar, not free text: a
@@ -745,16 +745,15 @@ def _widget_for(field: SchemaField) -> Widget | None:
         return "list" if scalars <= _SCALAR_TYPES else None
     if field.enum_values:
         # `select` says these are the values; `combo` says these are the
-        # shortcuts. A format field is `<alias Literal> | str` — the engine's
+        # shortcuts. A numeric arm is open the same way a `str` arm is:
+        # `size: number | auto` takes any number beside its keyword. A format field is `<alias Literal> | str` — the engine's
         # names for that slot's kind, plus any d3 spec — so a select there makes
         # `,.0f` unauthorable. Only a `str` arm earns the combo: `zero` is
         # `bool | 'auto'` and `title.level` is `int | 'auto'`, where "type
         # anything else" is false, and a text box would take what neither arm
         # accepts. A `bool` arm is closed, so those selects carry it in full
-        # (see the enum_values assembly below); an `int` arm is not, which
-        # leaves `title.level` unable to reach its non-enum arm — a control
-        # the widget set does not have yet, not one to fake.
-        return "combo" if "str" in arms else "select"
+        # (see the enum_values assembly below).
+        return "combo" if "str" in arms or arms & _NUMERIC_TYPES else "select"
     if not arms or not arms <= _SCALAR_TYPES:
         return None
     if arms == {"bool"}:
@@ -821,7 +820,7 @@ def _drills_into(field: SchemaField) -> str | None:
         if model in {cls.__name__ for cls in PATCH_SHORTHAND}
         else set()
     )
-    return model if _arms(field.type_repr) - sugar == {model} else None
+    return model if union_arms(field.type_repr) - sugar == {model} else None
 
 
 def _suppressed(
@@ -1207,7 +1206,7 @@ def _describe(
                 value = value[0]
             widget = "text"
         enum_values = tuple(field.enum_values) if field.enum_values else None
-        if enum_values is not None and "bool" in _arms(field.type_repr):
+        if enum_values is not None and "bool" in union_arms(field.type_repr):
             # A `bool | <Literal> | None` slot is a real boolean that also
             # takes a named mode -- `axis_x.ticks.visible` is `bool | "auto"`.
             # Offering only the literal would strip the control down to its

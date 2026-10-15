@@ -1227,7 +1227,7 @@ def test_layered_bar_support_table_headers_stay_default_ink_when_legend_visible(
     else:
         raise AssertionError("expected a live legend on this chart")
 
-    default_ink = get_theme_style().charts.support_table.font.color
+    default_ink = get_theme_style().charts.support_table.neutral_color
     assert _header_fill(spec, "Revenue") == default_ink
     assert _header_fill(spec, "Target") == default_ink
 

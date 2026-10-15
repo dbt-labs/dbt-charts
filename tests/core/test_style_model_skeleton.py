@@ -377,7 +377,7 @@ def test_resolved_style_charts_axis_label_font_concrete():
     ctx = resolve_chart_style_context(get_theme_style())
     # resolved_axis_style() merges all cascade layers and returns a ResolvedAxisStyle.
     axis = resolved_axis_style(
-        ctx, "axis_y", "quantitative", chart_type="", label_authored=False
+        ctx, "axis_y", "quantitative", chart_type="", labeled=False
     )
     assert isinstance(axis.labels.font, ResolvedFontStyle)
     assert axis.labels.font.family is not None

@@ -1,10 +1,4 @@
-"""The hover-emphasis switch reaches the runtime, and its strength stays engine-side.
-
-Two surfaces, two owners, and the split is the point: a theme decides whether
-hover emphasis happens at all, while how far a demoted mark recedes is ours to
-tune. A regression that quietly moved the strength into the theme cascade would
-still render correctly, so it is pinned here rather than left to review.
-"""
+"""The hover-emphasis switch and strength reach the runtime from the theme."""
 
 from __future__ import annotations
 
@@ -12,18 +6,15 @@ import re
 
 import pytest
 
-from dbt_charts.core.compile.config import (
-    get_chart_rendering,
-    get_theme_style,
-    reset_config,
-)
-from dbt_charts.core.compile.models.style.theme.charts import HoverEmphasisStyle
+from dbt_charts.core.compile.config import get_theme_style, reset_config
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.render.chart_interactivity import (
     _build_hover_emphasis_dict,
     hover_runtime_attributes,
     hover_runtime_source,
 )
+
+from .render.test_theme_weight_face_coverage import _PRODUCTION_THEMES
 
 
 @pytest.fixture(autouse=True)
@@ -37,21 +28,10 @@ def test_theme_provides_the_switch_board_wide() -> None:
     assert isinstance(resolved.chart_defaults.hover_emphasis.visible, bool)
 
 
-def test_strength_is_engine_config_not_a_theme_value() -> None:
-    """The theme owns the switch and the drop-line paint; the strength stays ours to tune.
-
-    ``model_fields`` is the whole contract: a ``dimmed_opacity`` added to the
-    theme model lands there, and the engine value would quietly stop being the
-    one that decides.
-    """
-    assert set(HoverEmphasisStyle.model_fields) == {
-        "visible",
-        "drop_line_color",
-        "drop_line_width",
-    }
-    # Bounds, not type: an opacity outside (0, 1) is the failure that matters,
-    # and the type is already declared.
-    assert 0 < get_chart_rendering().hover_emphasis.dimmed_opacity < 1
+def test_theme_provides_a_bounded_dimmed_opacity() -> None:
+    for theme in _PRODUCTION_THEMES:
+        opacity = get_theme_style(theme).charts.hover_emphasis.dimmed_opacity
+        assert 0 < opacity < 1
 
 
 def test_runtime_dict_carries_the_switch_and_the_strength() -> None:
@@ -60,13 +40,13 @@ def test_runtime_dict_carries_the_switch_and_the_strength() -> None:
 
     assert blob == {
         "visible": resolved.chart_defaults.hover_emphasis.visible,
-        "opacity": get_chart_rendering().hover_emphasis.dimmed_opacity,
+        "opacity": resolved.chart_defaults.hover_emphasis.dimmed_opacity,
         "dropLineColor": resolved.chart_defaults.hover_emphasis.drop_line_color,
         "dropLineWidth": resolved.chart_defaults.hover_emphasis.drop_line_width,
     }
 
 
-@pytest.mark.parametrize("theme", ["clarity", "paper", "stark", "vivid", "neon"])
+@pytest.mark.parametrize("theme", _PRODUCTION_THEMES)
 def test_runtime_dict_carries_each_themes_own_drop_line_color_and_width(
     theme: str,
 ) -> None:

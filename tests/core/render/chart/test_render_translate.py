@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 from dbt_charts.core.render.chart.spec import ChartSpec, EndpointLabelData
 from dbt_charts.core.render.chart.translate import translate_to_vl
 
@@ -802,7 +803,7 @@ def test_assemble_final_vl_returns_vl_dict_with_schema_and_config() -> None:
         encoding={"x": {"field": "date"}},
         data=[{"date": "Jan"}],
         background=board_style.background,
-        title_style=chart_ctx.title,
+        title_style=concrete_title_style(chart_ctx),
     )
     vl = assemble_final_vl(spec, board_style)
     assert "$schema" in vl
@@ -829,7 +830,7 @@ def test_assemble_final_vl_background_and_autosize_top_level_only() -> None:
         encoding={"x": {"field": "date"}},
         data=[{"date": "Jan"}],
         background=board_style.background,
-        title_style=chart_ctx.title,
+        title_style=concrete_title_style(chart_ctx),
     )
     vl = assemble_final_vl(spec, board_style)
     assert "background" in vl
@@ -888,7 +889,7 @@ def test_assemble_final_vl_does_not_leak_title_font_across_charts() -> None:
         encoding={"x": {"field": "date"}},
         data=[{"date": "Jan"}],
         background=board_style.background,
-        title_style=chart_ctx.title,
+        title_style=concrete_title_style(chart_ctx),
         title="Chart A",
         title_font=font_a,
     )
@@ -902,7 +903,7 @@ def test_assemble_final_vl_does_not_leak_title_font_across_charts() -> None:
         encoding={"x": {"field": "date"}},
         data=[{"date": "Feb"}],
         background=board_style.background,
-        title_style=chart_ctx.title,
+        title_style=concrete_title_style(chart_ctx),
         title="Chart B",
     )
     vl_b = assemble_final_vl(spec_b, board_style)

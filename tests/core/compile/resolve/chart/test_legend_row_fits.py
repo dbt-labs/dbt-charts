@@ -14,7 +14,6 @@ from typing import Any
 import pytest
 
 from dbt_charts.core.compile.config import (
-    get_chart_rendering,
     get_theme_style,
     reset_config,
 )
@@ -29,6 +28,11 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     legend_wrapped_row_count,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
+from dbt_charts.core.constants.estimates import (
+    LEGEND_CHROME_HEIGHT_PX,
+    LEGEND_MIN_RESERVE_PX,
+    LEGEND_ROW_HEIGHT_PX,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -77,6 +81,29 @@ class TestLegendRowFits:
         assert legend_row_fits(long, width, _legend()) is False
 
 
+class TestLegendRowChromeFromTheme:
+    def test_authored_row_chrome_moves_the_fit_threshold(self) -> None:
+        base = get_theme_style()
+        assert base.charts.legend.row.swatch_width == 10.0
+        assert base.charts.legend.row.entry_gap == 16.0
+        entries = ("Alpha", "Beta", "Gamma")
+        default = _legend()
+
+        def legend_with(**row: float) -> ResolvedLegendStyle:
+            legend = base.charts.legend.model_copy(
+                update={"row": base.charts.legend.row.model_copy(update=row)}
+            )
+            charts = base.charts.model_copy(update={"legend": legend})
+            style = base.model_copy(update={"charts": charts})
+            return resolve_chart_style_context(style).legend
+
+        wide_gap = legend_with(entry_gap=400.0)
+        assert legend_row_fits(entries, 400.0, default) is True
+        assert legend_row_fits(entries, 400.0, wide_gap) is False
+        wide_swatch = legend_with(swatch_width=400.0)
+        assert legend_row_fits(entries, 400.0, wide_swatch) is False
+
+
 class TestLegendWrappedRowCount:
     """Row-count arithmetic shared between the fallback ladder's rung-2 wrap
     check (``legend_wrap_fits_height_budget``) and bar.py's own
@@ -117,11 +144,10 @@ class TestLegendWrapRequiredHeightPx:
     ``TestLegendWrapFitsHeightBudget``."""
 
     def test_scales_with_row_count(self) -> None:
-        cfg = get_chart_rendering().legend
         one_row = legend_wrap_required_height_px(2, None, 2)
         two_rows = legend_wrap_required_height_px(4, None, 2)
-        assert one_row == cfg.row_height_px + cfg.chrome_height_px
-        assert two_rows == 2 * cfg.row_height_px + cfg.chrome_height_px
+        assert one_row == LEGEND_ROW_HEIGHT_PX + LEGEND_CHROME_HEIGHT_PX
+        assert two_rows == 2 * LEGEND_ROW_HEIGHT_PX + LEGEND_CHROME_HEIGHT_PX
 
 
 def _plot_height_at_old_share_boundary(required: float, share: float = 0.30) -> float:
@@ -147,15 +173,15 @@ def _budget(
         legend,
         plot_height,
         card_padding_px=16.0,
-        subtitle_present=False,
-        axis_title_costs_height=False,
+        subtitle_height_px=0.0,
+        axis_title_height_px=0.0,
     )
 
 
 class TestLegendWrapFitsHeightBudget:
     """Rung 2 of the fallback ladder: a wrapped legend stays top only while
     putting it there still leaves the plot clearing
-    ``chart_rendering.plot_height_floor.ratio`` of the card's own height --
+    ``PLOT_HEIGHT_FLOOR_RATIO`` of the card's own height --
     the same floor ``bar.py``'s own starved-plot warning checks, not a
     second, independently-calibrated share (RJ, 2026-08-27's rejection of a
     fixed row cap, then again of the ``max_wrap_height_share`` share-of-body
@@ -193,7 +219,7 @@ class TestLegendWrapFitsHeightBudget:
         subtracts fixed chrome separately) is smaller than the old share
         check's ``legend_wrap_required_height_px`` total (fixed chrome
         folded into every row) at this low an entry count -- enough smaller
-        that it outweighs the fixed ``plot_height_floor.irreducible_height_px``
+        that it outweighs the fixed ``PLOT_HEIGHT_FLOOR_IRREDUCIBLE_PX``
         the old share check never counted at all, so the floor-based
         boundary sits well below the retired one rather than reproducing it.
         This is the exact collision two mechanisms reasoning about the same
@@ -218,15 +244,13 @@ class TestEstimateLeftAxisReservePx:
 
     def test_no_dimension_values_uses_the_fixed_floor(self) -> None:
         legend = _legend()
-        cfg = get_chart_rendering().legend
-        assert estimate_left_axis_reserve_px(None, legend) == cfg.min_reserve_px
-        assert estimate_left_axis_reserve_px((), legend) == cfg.min_reserve_px
+        assert estimate_left_axis_reserve_px(None, legend) == LEGEND_MIN_RESERVE_PX
+        assert estimate_left_axis_reserve_px((), legend) == LEGEND_MIN_RESERVE_PX
 
     def test_dimension_values_add_measured_chrome_on_top_of_the_floor(self) -> None:
         legend = _legend()
-        cfg = get_chart_rendering().legend
         reserve = estimate_left_axis_reserve_px(("Jan", "Feb", "Mar"), legend)
-        assert reserve > cfg.min_reserve_px
+        assert reserve > LEGEND_MIN_RESERVE_PX
 
     def test_longer_dimension_labels_widen_the_reserve(self) -> None:
         """Measures real text, same as legend_row_fits -- a longer label

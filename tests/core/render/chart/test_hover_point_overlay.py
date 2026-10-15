@@ -122,9 +122,8 @@ def test_hover_target_size_stays_under_x_step_ceiling() -> None:
     """HOVER_TARGET_SIZE must not exceed the x-step ceiling its own comment
     derives (18px spacing floor / 2, as radius): a radius past that lets one
     datum's hover disc steal a neighbor's hit region. Hardcodes the same 18
-    the comment does rather than reading `chart_rendering.point.
-    min_px_per_point` (a different, safety-padded number for a different
-    purpose — see default_config.yml) — this only catches HOVER_TARGET_SIZE
+    the comment does rather than reading `POINT_MIN_PX_PER_POINT`
+    (a different, safety-padded number for a different purpose); this only catches HOVER_TARGET_SIZE
     drifting past a fixed ceiling, not that 18px ceiling itself going stale."""
     assert HOVER_TARGET_SIZE <= 4 * (18.0 / 2) ** 2
 

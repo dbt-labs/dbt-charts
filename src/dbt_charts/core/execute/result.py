@@ -25,6 +25,7 @@ from dbt_charts.core.execute.adapters.base import (
     QueryResult,
     RowFetchLimit,
     apply_row_limit_truncation,
+    reject_duplicate_columns,
 )
 from dbt_charts.core.execute.arrow_ingest import relabel
 
@@ -126,6 +127,7 @@ def arrow_to_query_result(
     schema = na.c_schema(table.schema)
     fields = list(schema.children)
     names = [_name(field) for field in fields]
+    reject_duplicate_columns(names)
     storage = _storage(schema)
     if _needs_decoding(schema):
         chunks = [relabel(na.c_array(chunk), storage) for chunk in table.iter_chunks()]

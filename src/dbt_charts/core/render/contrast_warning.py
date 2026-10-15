@@ -40,7 +40,7 @@ from dbt_charts.core.colors import (
     rgb01_to_hex,
     wcag_contrast,
 )
-from dbt_charts.core.compile.config import get_chart_rendering
+from dbt_charts.core.constants.contrast import LARGE_TEXT_MIN_RATIO, TEXT_MIN_RATIO
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
@@ -59,8 +59,8 @@ _ELEMENT_NAMES: dict[ContrastKind, str] = {
 
 # WCAG's own "large text" exception: >=24px (18pt) at any weight, or
 # >=18.67px (14pt) bold. The normal floor applies below this size; large
-# text gets the more permissive floor (both configurable — see
-# compile/models/config.py's TextContrastConfig).
+# text gets the more permissive floor (both are engine constants in
+# core/constants/contrast.py).
 _LARGE_TEXT_PX = 24.0
 _LARGE_BOLD_TEXT_PX = 18.6667
 _BOLD_WEIGHTS = frozenset({"bold", "700", "800", "900"})
@@ -193,9 +193,8 @@ def check_text_contrast(
     if ink_hex is None:
         return
     ratio = wcag_contrast(ink_hex, bg_hex)
-    contrast_cfg = get_chart_rendering().text_contrast
     large_text = is_large_text(font_size, font_weight)
-    floor = contrast_cfg.large_text_min_ratio if large_text else contrast_cfg.min_ratio
+    floor = LARGE_TEXT_MIN_RATIO if large_text else TEXT_MIN_RATIO
     if ratio >= floor:
         return
     sinks[-1].append(

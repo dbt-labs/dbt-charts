@@ -1,6 +1,6 @@
 """StructuredTooltipFeature — chart-axes LUT-driven aria-label content.
 
-Runs after emission for line/area/bar/pie/donut/scatter/heatmap and sets
+Runs after emission for line/area/bar/scatter/heatmap and sets
 ``ChartSpec.tooltip_description``, the per-datum expression string
 ``assemble_final_vl`` wires to VL's native ``description`` channel as a
 ``{"value": {"expr": ...}}`` def. See ``emitters/_tooltip.py`` for why
@@ -42,7 +42,6 @@ from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.heatmap import ResolvedHeatmapChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
-from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
 from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
@@ -64,7 +63,6 @@ from dbt_charts.core.render.chart.emitters._tooltip import (
     series_row_promoted,
     span_tooltip_rows,
 )
-from dbt_charts.core.render.chart.emitters.pie import PIE_PCT_FIELD, PIE_TOTAL_FIELD
 from dbt_charts.core.render.chart.feature import chart_rows
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.time_unit_detect import normalize_labeled_temporal
@@ -452,44 +450,6 @@ def _stack_group_total(
     return [pct_field, *values], (total_field,)
 
 
-def _pie_roles(
-    chart: ResolvedPieChart,
-) -> tuple[tuple[TooltipField, ...], list[TooltipField], tuple[TooltipField, ...]]:
-    """Header (chart.identity_field), values (share % then raw), total (grand
-    total) for a pie/donut.
-
-    ``__dbt_pct``/``__dbt_total`` are already baked into every row by
-    ``PieEmitter``'s ``_augment_pie_data`` (the same fields drive the donut
-    center-total display) — no new transform needed here, unlike the
-    cartesian normalized-stack case.
-    """
-    font = chart.legend.title.font
-    header: tuple[TooltipField, ...] = ()
-    if chart.identity_field is not None:
-        header = (
-            TooltipField(
-                chart.identity_field,
-                field_display_text(chart.identity_field, chart.field_labels, font),
-            ),
-        )
-    value_title = field_display_text(chart.theta, chart.field_labels, font)
-    fmt = chart.style.tooltip_format
-    # The share % leads on a pie; the raw slice count and the grand total are
-    # context, so both render muted (low-contrast). See MUTED in _tooltip.py.
-    values = [
-        TooltipField(
-            PIE_PCT_FIELD, "%", kind="quantitative", format=_PERCENT_TOOLTIP_FORMAT
-        ),
-        TooltipField(
-            chart.theta, value_title, kind="quantitative", format=fmt, muted=True
-        ),
-    ]
-    total = (
-        TooltipField(PIE_TOTAL_FIELD, "Σ", kind="quantitative", format=fmt, muted=True),
-    )
-    return header, values, total
-
-
 def _dot_plot_roles(
     chart: ResolvedScatterChart, data: ChartRenderData, spec: ChartSpec
 ) -> (
@@ -544,8 +504,8 @@ def _scatter_roles(
     Locked design's screen-informed exception: y (dependent) leads, x
     (independent) follows -- neither axis alone identifies a scatter point.
     Plain scatter (no color) carries no header at all. A bound color
-    channel promotes its value to a swatched header-like row (mirrors pie's
-    header_is_swatched -- the header IS the series here), so the LUT key
+    channel promotes its value to a swatched header-like row (the header IS
+    the series here), so the LUT key
     switches to "scatter_colored". Per the locked table this promotion is
     "color if present" -- no cardinality gate, unlike cartesian's series row.
 
@@ -676,7 +636,7 @@ class StructuredTooltipFeature:
                 and bool(color_ch.data_field)
                 and chart.multiples is None
             )
-        return isinstance(chart, ResolvedPieChart)
+        return False
 
     def apply(
         self,
@@ -812,10 +772,5 @@ class StructuredTooltipFeature:
             header, values = _heatmap_roles(chart, data)
             spec.tooltip_description = build_structured_tooltip_expr(
                 "heatmap", header, (), values
-            )
-        elif isinstance(chart, ResolvedPieChart):
-            header, values, total = _pie_roles(chart)
-            spec.tooltip_description = build_structured_tooltip_expr(
-                "pie", header, (), values, total
             )
         return spec

@@ -91,8 +91,7 @@ pub fn for_family<'a>(payload: &'a Payload, chart_type: &str) -> Result<Cow<'a, 
 /// `title_dy`.
 ///
 /// `shift` is a parameter because the pie's attached-table composition shifts
-/// its own wheel by the room a top-placed table takes
-/// (`vega_lite.py::_render_arc_attached_table`), not by a row's shift.
+/// its own wheel by the room a top-placed table takes, not by a row's shift.
 pub(crate) fn shift_vega_payload(
     payload: &Payload,
     shift: TitleShift,
@@ -285,7 +284,7 @@ pub(crate) fn vega_title_block(chart: &Value) -> Result<(f64, f64), String> {
             .ok_or_else(|| {
                 format!("chart {chart_id}: a subtitle needs title_style.subtitle.font.size")
             })?;
-        subtitle_size + crate::vega_fit::SUBTITLE_PADDING
+        subtitle_size + crate::constants::layout::VEGA_SUBTITLE_PADDING
     } else {
         0.0
     };

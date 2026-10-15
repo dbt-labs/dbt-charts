@@ -58,9 +58,8 @@ def test_every_registered_dialect_can_quote() -> None:
         assert dialect.quote("x") != "x"
 
 
-def test_lakecompute_is_registered_not_a_postgres_fallback() -> None:
-    """`get_dialect` answers Postgres for any name it does not know, so a missing
-    registration would run lake compute with Postgres placeholders and no error."""
+def test_lakecompute_is_registered() -> None:
+    """A missing registration would fail every lake compute query at lookup."""
     dialect = get_dialect("lakecompute")
     assert dialect.name == "lakecompute"
     assert dialect.param(1) == "$1"

@@ -5,6 +5,7 @@
 //! or not it extends; only a near-zero one (or, on a stack, the first row of a
 //! near-zero total) gets an extent.
 
+use crate::constants::bar::{HOVER_BAND_EXTEND_FRACTION, HOVER_BAND_TRIGGER_FRACTION};
 use super::cartesian::LinearScale;
 use crate::common::row_num;
 use crate::contract::{aria_attr, mark_group_close, mark_group_open, ItemRole};
@@ -12,10 +13,6 @@ use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-/// `chart_rendering.bar.hover_band_trigger_fraction` (`default_config.yml`).
-const TRIGGER_FRACTION: f64 = 0.02;
-/// `chart_rendering.bar.hover_band_extend_fraction` (`default_config.yml`).
-const EXTEND_FRACTION: f64 = 0.05;
 /// Vega-Lite's default mark color: the layer authors no color of its own.
 const FILL: &str = "#4c78a8";
 
@@ -48,7 +45,7 @@ impl HoverBand {
     pub(crate) fn plain(rows: &Rows, measure: &str) -> Option<Self> {
         let values: Vec<f64> = rows.iter().filter_map(|row| row_num(row, measure)).map(f64::abs).collect();
         let domain_max = values.iter().copied().fold(0.0_f64, f64::max);
-        let needed = domain_max > 0.0 && values.iter().any(|v| *v < domain_max * TRIGGER_FRACTION);
+        let needed = domain_max > 0.0 && values.iter().any(|v| *v < domain_max * HOVER_BAND_TRIGGER_FRACTION);
         needed.then(|| HoverBand { gate: Gate::Each, rows: Vec::new() })
     }
 
@@ -75,7 +72,7 @@ impl HoverBand {
         let mut carriers: HashMap<String, String> = HashMap::new();
         for row in rows {
             let cat = crate::common::row_str(row, cat_field);
-            if carriers.contains_key(&cat) || totals.get(&cat).is_none_or(|t| t / domain_max >= TRIGGER_FRACTION) {
+            if carriers.contains_key(&cat) || totals.get(&cat).is_none_or(|t| t / domain_max >= HOVER_BAND_TRIGGER_FRACTION) {
                 continue;
             }
             if !matches!(row.get(series_field), None | Some(Value::Null)) {
@@ -107,8 +104,8 @@ impl HoverBand {
     /// the plot's pixel size along the measure axis.
     pub(crate) fn emit(&self, out: &mut String, vertical: bool, scale: &LinearScale, extent: f64) {
         let baseline = scale.position(0.0);
-        let band = extent * EXTEND_FRACTION;
-        let trigger = extent * TRIGGER_FRACTION;
+        let band = extent * HOVER_BAND_EXTEND_FRACTION;
+        let trigger = extent * HOVER_BAND_TRIGGER_FRACTION;
         mark_group_open(out, "rect", "hover_band_marks");
         for row in &self.rows {
             let grows = match (&self.gate, row.value) {

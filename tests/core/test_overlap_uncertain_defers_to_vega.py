@@ -27,7 +27,7 @@ def _axis(channel_type: str, skip: bool, tilt: bool) -> Any:
 
     charts = resolve_chart_style_context(get_theme_style())
     axis_x = resolved_axis_style(
-        charts, "axis_x", channel_type, chart_type="", label_authored=False
+        charts, "axis_x", channel_type, chart_type="", labeled=False
     )
     labels = dataclasses.replace(
         axis_x.labels,

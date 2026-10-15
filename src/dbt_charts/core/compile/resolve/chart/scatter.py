@@ -22,8 +22,8 @@ from dbt_charts.core.compile.models.style.resolved import (
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
     _NO_RAIL_ENDPOINT_LABELS,
-    _authored_legend,
     _bake_ay_position_right,
+    _cascaded_legend,
     cartesian_color_domain_values,
     cartesian_series_naming,
     estimate_cartesian_plot_height,
@@ -37,7 +37,6 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     LayerDatasets,
 )
 from dbt_charts.core.compile.resolve.chart._domain import (
-    _authored_axis_y_ticks_count,
     _bake_y_zero,
     _CartesianTickResolution,
     _check_bar_layer_spans,
@@ -52,7 +51,6 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
     _cartesian_kwargs,
-    _title_font,
 )
 from dbt_charts.core.compile.resolve.chart._layers import (
     _check_layers_y_domain,
@@ -81,6 +79,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     declared_column_format,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
+from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_SCATTER_MULTI_Y_NOT_NUMERIC,
@@ -163,7 +162,7 @@ def _resolve_scatter(
     naming = cartesian_series_naming(
         normalized,
         channels,
-        _authored_legend(primary),
+        *_cascaded_legend(chart_style_context, scatter.legend),
         merge_legend(chart_style_context.legend, scatter.legend),
         width,
         _NO_RAIL_ENDPOINT_LABELS,
@@ -181,8 +180,8 @@ def _resolve_scatter(
         # top_legend_series=None above means rung 2's floor check never runs
         # for this family -- these three are inert, not real facts.
         card_padding_px=0.0,
-        subtitle_present=False,
-        axis_title_costs_height=False,
+        subtitle_height_px=0.0,
+        axis_title_height_px=0.0,
     )
     ay_merged = plan.axes.y.style
     ay_merged = _bake_ay_position_right(ay_merged)
@@ -236,7 +235,6 @@ def _resolve_scatter(
                 else _zero_floats
             ),
             zero_anchor=_scatter_anchored,
-            authored_ticks_count=_authored_axis_y_ticks_count(normalized.style),
             scale=multiples_scale,
             is_quantitative=y_ch_type == "quantitative",
         )
@@ -324,7 +322,7 @@ def _resolve_scatter(
     )
     if authored_y_domain is not None:
         _check_layers_y_domain(normalized.id, resolved_layers, authored_y_domain)
-    _tf = _title_font(normalized, chart_local_style_context, width)
+    _tf = resolve_title_font(chart_local_style_context, width)
     _ck = _cartesian_kwargs(
         normalized,
         chart_local_style_context,
@@ -354,7 +352,6 @@ def _resolve_scatter(
             suppress_legend=naming.suppress_legend,
             top_legend=naming.top_legend,
             wrap_legend=naming.wrap_legend,
-            force_legend_visible=naming.force_legend_visible,
             legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
         ),
         **_ck,

@@ -102,11 +102,9 @@ def test_resolved_chart_title_font_varies_by_width():
 # Regression: chart-local style.title.font.{color,style} must reach the
 # resolved title font for every family resolver, not just family/size/weight.
 #
-# resolve_title_font only threads family/size/weight through its explicit
-# authored_title_font argument; color/style/decoration/case/line_height are
-# read straight off chart_style_context.title.font. A resolver that calls
-# _title_font() (or resolve_title_font directly) with the board-level context
-# instead of the chart-local one silently drops those five fields.
+# resolve_title_font reads the whole title font off chart_style_context. A
+# resolver that calls it with the board-level context instead of the
+# chart-local one silently drops a chart-local override.
 # ---------------------------------------------------------------------------
 
 _TITLE_FONT_OVERRIDE = {"title": {"font": {"color": "#123456", "style": "italic"}}}

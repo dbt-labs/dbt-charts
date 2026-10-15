@@ -16,12 +16,12 @@ from typing import Any
 import pytest
 
 from dbt_charts.core.compile.config import (
-    get_chart_rendering,
     get_theme_style,
     reset_config,
 )
 from dbt_charts.core.compile.models.style.theme import PointMarkStyle
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
+from dbt_charts.core.constants.marks import STROKE_FALLBACK_WIDTH
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 from dbt_charts.core.render.chart.vl_field_maps import (
     area_mark_to_vl,
@@ -483,16 +483,14 @@ class TestPointMarkMapper:
         # Families whose point ring is not density-baked supply their own
         # default so hollow rings read at the line family's stroke weight
         # rather than falling back to VL's hardcoded 2 px. This is a
-        # separate theme literal pinned equal to
-        # chart_rendering.stroke.fallback_width for visual coherence -- not
-        # an inherited reference, so a project overriding fallback_width in
-        # dbt_charts.yml would desync the two.
+        # separate theme literal pinned equal to STROKE_FALLBACK_WIDTH for
+        # visual coherence.
         editorial = get_theme_style("clarity")
         theme_point = getattr(editorial.charts, family).marks.point
-        fallback_width = get_chart_rendering().stroke.fallback_width
+        fallback_width = STROKE_FALLBACK_WIDTH
         assert theme_point.stroke_width == fallback_width, (
             f"{family}.marks.point.stroke_width ({theme_point.stroke_width}) "
-            f"should match chart_rendering.stroke.fallback_width "
+            f"should match STROKE_FALLBACK_WIDTH "
             f"({fallback_width}) so hollow rings read with the same weight "
             f"as the line itself"
         )

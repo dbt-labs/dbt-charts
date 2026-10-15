@@ -127,9 +127,9 @@ class TestChartTypeAxisCascade:
         )
 
     def test_per_chart_authored_angle_wins_over_chart_type(self) -> None:
-        """Per-chart axis_x.labels.angle (layer 13) wins over chart-type patch (layer 4)."""
+        """Per-chart axis_x.labels.angle (layer 12) wins over chart-type patch (layer 4)."""
         # Theme has bar.axis_x.labels.angle = -55 (layer 4).
-        # Board authors angle = 90 (layer 13). Layer 13 must win.
+        # Board authors angle = 90 (layer 12). Layer 12 must win.
         board_style = _board_style_with_bar_axis_x_angle(-55)
         axis = _compile_and_render_with_board(
             "bar",

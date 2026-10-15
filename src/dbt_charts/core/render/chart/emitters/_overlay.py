@@ -885,7 +885,7 @@ def _fix_bar_band_width(spec: ChartSpec, x_is_banded: bool) -> None:
     ``x`` band.
 
     ``x_is_banded`` is False for a continuous (quantitative, or
-    max_ordinal_buckets-promoted temporal) base x. Leave such a bar's width
+    MAX_ORDINAL_BUCKETS-promoted temporal) base x. Leave such a bar's width
     entirely alone: there is no band for ``bandwidth(...)`` to measure, so
     rewriting the width is what produced the zero-width-bar defect — VL
     evaluates ``bandwidth('xOffset')`` to 0 against a scale that has no bands.
@@ -935,7 +935,7 @@ def _fix_bar_band_width(spec: ChartSpec, x_is_banded: bool) -> None:
 
 def _apply_layer_step_band(
     curve: str | None,
-    connect: bool,
+    disconnected_width: float | None,
     layer_encoding: VLDict,
     base_x: Any,
     data: list[dict[str, Any]],
@@ -944,7 +944,7 @@ def _apply_layer_step_band(
 ) -> list[dict[str, Any]] | None:
     """Apply the band-aware step transform to an overlay line/area layer,
     mirroring the base emitters. Doubles rows to the band edges and adds
-    ``xOffset`` (+ a ``detail`` channel when ``connect`` is False) to
+    ``xOffset`` (+ a ``detail`` channel when ``disconnected_width`` is set) to
     ``layer_encoding``; returns the doubled rows to attach as the layer's own
     data, or None when not band-aware step. When the layer authored its own
     ``x``, ``layer_encoding[cat_ch]`` is already set to that field's own
@@ -972,7 +972,9 @@ def _apply_layer_step_band(
     if cat_ch != "x":
         raise ChartDataError.from_code(ERR_LAYER_STEP_ORIENTATION, chart_id=chart_id)
     layer_encoding["x"] = x_enc
-    return apply_step_band(data, layer_encoding, chart_id=chart_id, connect=connect)
+    return apply_step_band(
+        data, layer_encoding, chart_id=chart_id, disconnected_width=disconnected_width
+    )
 
 
 def _layer_band_anchor(
@@ -1124,8 +1126,8 @@ def render_cartesian_overlay(
     split two cases the resolved axis alone cannot tell apart: an axis with no
     label is suppressed by the theme's blanket default, and dual-axis overrides
     that (both sides need labeling to tell the scales apart), whereas a
-    labeled axis can only be suppressed by the author saying so — the Layer 5
-    default would otherwise have forced it visible — so that one is honored and
+    labeled axis can only be suppressed by the author saying so — the `auto`
+    default would otherwise have shown it — so that one is honored and
     left alone. The caller computes it rather than this function deriving it
     from ``axis_y``, because only the caller knows whether its own family
     honored the author's suppression.
@@ -1794,7 +1796,9 @@ def render_cartesian_overlay(
         if isinstance(layer, ResolvedLineLayer):
             step_data = _apply_layer_step_band(
                 layer.line_mark.curve,
-                layer.line_mark.connect is not False,
+                layer.line_mark.disconnected_width
+                if layer.line_mark.connect is False
+                else None,
                 layer_encoding,
                 base_spec.encoding.get(cat_ch),
                 rows_for_layer,
@@ -1844,10 +1848,10 @@ def render_cartesian_overlay(
                 field_color_legend_symbols.append((wrapper, "stroke"))
 
         elif isinstance(layer, ResolvedAreaLayer):
-            # Area always renders as a continuous silhouette — connect=True.
+            # Area always renders as a continuous silhouette.
             step_data = _apply_layer_step_band(
                 layer.area_mark.curve,
-                True,
+                None,
                 layer_encoding,
                 base_spec.encoding.get(cat_ch),
                 rows_for_layer,

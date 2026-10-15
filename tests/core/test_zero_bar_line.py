@@ -62,7 +62,7 @@ def _make_spec_with_ticks_visible(
     chart_y_orient: str | None = None,
     chart_x_orient: str | None = None,
 ) -> dict:
-    """Build a chart spec where chart-local style makes ticks visible (Layer 13).
+    """Build a chart spec where chart-local style makes ticks visible (Layer 12).
 
     Drives the cascade end-to-end: the chart's ``style.axis_{x,y}.ticks.visible``
     patch overrides the theme's ``bar.axis_{x,y}.ticks.visible`` (Layer 4),
@@ -326,7 +326,7 @@ def test_zero_rule_no_offset_when_tick_size_zero():
     strict=True,
 )
 def test_zero_rule_extends_when_chart_local_unhides_ticks():
-    """Chart-local style.axis_y.ticks.visible=True (Layer 13) wins over theme bar.axis_y (Layer 4).
+    """Chart-local style.axis_y.ticks.visible=True (Layer 12) wins over theme bar.axis_y (Layer 4).
 
     Regression: profile._zero_rule_layer must read the merged-cascade ticks
     state, not resolved_style.axis_y.ticks (Layer 2 only). Without the fix,
@@ -436,7 +436,7 @@ def test_zero_rule_color_matches_resolved_grid_zero_color():
 
     ctx = resolve_chart_style_context(get_theme_style())
     axis_y = resolved_axis_style(
-        ctx, "axis_y", "quantitative", chart_type="", label_authored=False
+        ctx, "axis_y", "quantitative", chart_type="", labeled=False
     )
     expected_color = axis_y.grid.threshold.color
 

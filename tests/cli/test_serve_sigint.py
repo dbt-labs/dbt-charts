@@ -69,6 +69,8 @@ def test_sigint_stops_serve_during_a_long_query(tmp_path: Path) -> None:
             str(port),
             "--host",
             "127.0.0.1",
+            # A child process is outside the suite's per-user cache isolation.
+            "--no-cache",
         ],
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,

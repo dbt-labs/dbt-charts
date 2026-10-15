@@ -9,7 +9,6 @@ from datetime import date
 from typing import Any
 
 from dbt_charts.core.colors import interpolate_hcl
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
 from dbt_charts.core.compile.models.primitives import (
     ResolvedFormat,
@@ -26,6 +25,7 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     PanelRows,
     map_panels,
 )
+from dbt_charts.core.constants.axis import GRADIENT_NICE_TICK_COUNT
 from dbt_charts.core.numeric import nice_tick_values
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.table_support import (
@@ -120,8 +120,7 @@ def _nice_domain_ticks(
     extent = _numeric_extent(data, field)
     if extent is None:
         return None
-    tick_count = get_chart_rendering().gradient.nice_tick_count
-    return nice_tick_values(extent[0], extent[1], tick_count)
+    return nice_tick_values(extent[0], extent[1], GRADIENT_NICE_TICK_COUNT)
 
 
 def _raw_diverging_bounds(
@@ -982,7 +981,7 @@ def gap_fill_ordinal_time_per_panel(
     ``dataset.all_rows()`` — see ``gap_fill_ordinal_time``'s ``is_temporal``/
     ``detected_time_unit`` docstrings for why: a per-panel re-derivation
     could see a smaller panel's own bucket count fall under
-    ``max_ordinal_buckets`` while the chart-wide x-encoding (and every
+    ``MAX_ORDINAL_BUCKETS`` while the chart-wide x-encoding (and every
     higher-cardinality sibling panel) resolves temporal, synthesizing a
     gap-fill null row under a continuous scale that draws no mark for a
     missing bucket and needs no synthetic row for it — and could bucket at
@@ -995,7 +994,7 @@ def gap_fill_ordinal_time_per_panel(
     panel is individually dense over a narrow window (e.g. one panel's data
     sits entirely in 2000, a sibling's entirely in 2020: pooling would
     scaffold the 20-year gap between them for BOTH panels, ~240 bogus
-    buckets, which would itself cross ``max_ordinal_buckets`` and flip the
+    buckets, which would itself cross ``MAX_ORDINAL_BUCKETS`` and flip the
     chart to a continuous temporal scale the density gate above was built
     to avoid; see ``TestGapFillTimeUnitCentralizedAcrossPanels`` and the
     local-time-label-expr warning detector's density-gate tests). Disjoint

@@ -6,12 +6,12 @@ import datetime as dt
 import re
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.resolve.chart.tick_values import (
     zero_anchor_domain_floor,
     zero_anchor_floor,
 )
+from dbt_charts.core.constants.axis import MAX_ORDINAL_BUCKETS
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.vl_field_maps import emit_resolved_scale_vl
@@ -298,9 +298,10 @@ def resolve_cartesian_x_type(
             vl_type = "ordinal" if scaffold_ok else "temporal"
         else:
             n_buckets = len({row.get(x_field) for row in data if x_field in row})
-            max_ordinal = get_chart_rendering().type_inference.max_ordinal_buckets
             vl_type = (
-                "ordinal" if scaffold_ok and n_buckets <= max_ordinal else "temporal"
+                "ordinal"
+                if scaffold_ok and n_buckets <= MAX_ORDINAL_BUCKETS
+                else "temporal"
             )
     else:
         vl_type = x_type_from_data
@@ -430,6 +431,49 @@ HEATMAP_FORMAT_REMEDY = (
 )
 
 
+def _gate_time_format(
+    fmt: ResolvedFormat,
+    field: str,
+    data: list[dict[str, Any]],  # type-state: explicit_any — raw query rows
+    vl_type: str,
+    setting: str,
+    remedy: str | None,
+) -> None:
+    """Raise when a d3 time spec sits on a non-temporal axis holding non-dates.
+
+    ``date``/``datetime`` cells and date-shaped bands (``2024-01``) are the
+    legal non-temporal cases: the render routes them through
+    ``utcFormat(toDate(...))``, which parses them.
+    Anything else paints ``Invalid Date``. A temporal axis always has dates.
+    """
+    if vl_type not in ("nominal", "ordinal", "quantitative"):
+        return
+    offender = next(
+        (
+            v
+            for v in (row.get(field) for row in data)
+            if v is not None
+            and not isinstance(v, dt.date)  # datetime subclasses date
+            and not (isinstance(v, str) and is_utc_safe_ordinal_date(v))
+        ),
+        None,
+    )
+    if offender is None:
+        return
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError
+    from dbt_charts.core.diagnostics.codes_render import ERR_TIME_FORMAT_NOT_TEMPORAL
+
+    raise ChartDataError.from_code(
+        ERR_TIME_FORMAT_NOT_TEMPORAL,
+        setting=setting,
+        field=field,
+        fmt=fmt.spec,
+        found=f"{offender!r}",
+        remedy=remedy
+        or "Use a number format for numbers, or query the field as a date.",  # type-state: silent_fallback — None means the default text
+    )
+
+
 def gate_label_format(
     fmt: ResolvedFormat | None,
     field: str,
@@ -485,7 +529,10 @@ def gate_label_format(
     time-spec text below, which is right on every family, so a temporal call
     site passing ``remedy=None`` is correct rather than lazy.
     """
-    if fmt is None or is_time_format(fmt.spec):
+    if fmt is None:
+        return
+    if is_time_format(fmt.spec):
+        _gate_time_format(fmt, field, data, vl_type, setting, remedy)
         return
     if vl_type not in ("nominal", "ordinal", "temporal"):
         return
@@ -551,7 +598,7 @@ def build_cartesian_x_encoding(
     or None when no bucketing applies. Callers use it to decide timeUnit emission.
 
     mark_type distinguishes bar/column (ordinal bucketed bands, gated by
-    ``chart_rendering.type_inference.max_ordinal_buckets``) from line/area/scatter
+    ``MAX_ORDINAL_BUCKETS``) from line/area/scatter
     (always continuous temporal for a BUCKETED_CALENDAR_UNITS grain — a
     scatter point needs its real continuous position, not a band-snapped one)
     when no authored type forces the decision either way. All three still
@@ -918,7 +965,7 @@ def build_cartesian_x_encoding(
                 )
                 injected_values_grain = visibility_time_unit
         # The continuous half of the _LABEL_THINNING_TICK_MARK_TYPES
-        # restoration: a bar past `max_ordinal_buckets` resolves temporal, so
+        # restoration: a bar past `MAX_ORDINAL_BUCKETS` resolves temporal, so
         # the ordinal branch above never sees it — yet that is where the cue
         # matters most (densest bars, sparsest labels). `values` above already
         # collapsed to the label cadence, so this marks one period, not one

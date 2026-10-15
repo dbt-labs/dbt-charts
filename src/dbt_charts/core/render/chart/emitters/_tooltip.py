@@ -67,7 +67,7 @@ from dbt_charts.core.utils import coerce_numeric_cell
 # just without a redundant field-name prefix on the header/series rows.
 # chart_interactivity.js mirrors these exact codepoints; keep the two in sync.
 ROLE_HEADER = "⁡"  # FUNCTION APPLICATION
-ROLE_HEADER_SWATCHED = "⁤"  # INVISIBLE PLUS -- header IS the color dim (pie)
+ROLE_HEADER_SWATCHED = "⁤"  # INVISIBLE PLUS -- header IS the color dim
 ROLE_SERIES = "⁢"  # INVISIBLE TIMES
 ROLE_TOTAL = "⁣"  # INVISIBLE SEPARATOR
 # A precomputed display-order rank for this mark's series -- the SAME order
@@ -79,10 +79,9 @@ ROLE_TOTAL = "⁣"  # INVISIBLE SEPARATOR
 ROLE_ORDER = "‌"  # ZERO WIDTH NON-JOINER
 # Emphasis modifier, orthogonal to the role markers above: a value/total row
 # prefixed with this renders its value at the low-contrast label color rather
-# than the loud value color. Used where a percent is the row's lead and the
-# raw number is only its companion context -- on a pie/donut the share % leads,
-# so the raw slice count and the grand total are context. Composes with a role
-# marker (a muted total is MUTED + ROLE_TOTAL). chart_interactivity.js mirrors it.
+# than the loud value color, for a row that is only companion context to the
+# row it follows. Composes with a role marker (a muted total is MUTED +
+# ROLE_TOTAL). chart_interactivity.js mirrors it.
 MUTED = "⁠"  # WORD JOINER
 # Brackets a value row's swatch color: SWATCH + "#hex" + SWATCH + label.
 SWATCH = "\u200b"  # ZERO WIDTH SPACE
@@ -144,9 +143,8 @@ class ChartAxesRoles:
     """Tooltip role support for one chart family — data roles, not VL screen axes."""
 
     supports_series: bool
-    # The header IS the color-bound dimension (pie's category), so its row
-    # carries a swatch the same way a series row would. False for every
-    # cartesian family, whose header (x) is never color-bound.
+    # The header IS the color-bound dimension (a colored scatter's series), so
+    # its row carries a swatch the same way a series row would.
     header_is_swatched: bool = False
 
 
@@ -160,7 +158,6 @@ CHART_AXES_LUT: dict[str, ChartAxesRoles] = {
     "line": ChartAxesRoles(supports_series=True),
     "area": ChartAxesRoles(supports_series=True),
     "bar": ChartAxesRoles(supports_series=True),
-    "pie": ChartAxesRoles(supports_series=False, header_is_swatched=True),
     "heatmap": ChartAxesRoles(supports_series=False),
     "scatter": ChartAxesRoles(supports_series=False),
     "scatter_colored": ChartAxesRoles(supports_series=False, header_is_swatched=True),

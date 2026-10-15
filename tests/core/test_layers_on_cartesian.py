@@ -448,6 +448,7 @@ def test_emit_line_layer_returns_halo_fg_hover() -> None:
         halo_multiplier=2.0,
         curve=None,
         labels=ResolvedPointLabels(),
+        disconnected_width=0.9,
     )
     # ResolvedPointMarkStyle().size is None → no point overlay
     layers = emit_line_layer(
@@ -587,9 +588,9 @@ def test_line_layer_marks_line_and_point_propagate() -> None:
 
 def test_styleless_line_layer_resolves_to_base_marks() -> None:
     """A line layer with no style gets resolved marks from the board base."""
-    from dbt_charts.core.compile.config import get_chart_rendering
     from dbt_charts.core.compile.models.chart.resolved._layer import ResolvedLineLayer
     from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.constants.marks import STROKE_FALLBACK_WIDTH
 
     layer = LineLayer(type="line", y="target")
     chart = _bar_normalized(layers=[layer])
@@ -600,10 +601,10 @@ def test_styleless_line_layer_resolves_to_base_marks() -> None:
     # With no layer style, the resolved marks must equal the board-base line
     # marks. Width is the one field the board base itself leaves unset by
     # design (no cascade tier pins one here) -- it resolves via
-    # chart_rendering.stroke.fallback_width instead of a theme literal.
+    # STROKE_FALLBACK_WIDTH instead of a theme literal.
     base_line = board_style.line.marks.line
     assert base_line.stroke is not None and base_line.stroke.width is None
-    assert r.line_mark.stroke.width == get_chart_rendering().stroke.fallback_width
+    assert r.line_mark.stroke.width == STROKE_FALLBACK_WIDTH
     assert r.point_mark.size == board_style.line.marks.point.size
 
 

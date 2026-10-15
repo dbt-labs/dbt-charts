@@ -3,6 +3,8 @@
 Split from test_vega_lite.py — tooltip-specific tests.
 """
 
+import re
+
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
@@ -11,7 +13,13 @@ from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
+from ._engine_render import render_pie_svg
+
 _BOARD_STYLE = resolve_style(get_theme_style())
+
+
+def _arc_labels(svg: str) -> list[str]:
+    return re.findall(r'aria-label="([^"]+)"[^>]*aria-roledescription="arc mark"', svg)
 
 
 def _mark(spec: dict) -> dict:
@@ -150,16 +158,12 @@ class TestSpecialChartTypeTooltips:
         assert spec["encoding"]["x"]["title"] == "value"
 
     def test_pie_chart_has_tooltips(self, make_chart):
-        # Pie/donut now layers by default (arc + default labels), so the
-        # arc mark + encoding live on layer[0].
         chart = make_chart("pie", x="category", y="value")
         data = [{"category": "A", "value": 30}, {"category": "B", "value": 70}]
-        spec = generate_vega_lite_spec(chart, data)
-        arc_layer = spec["layer"][0]
-        assert isinstance(arc_layer["mark"], dict)
-        assert arc_layer["mark"]["tooltip"] is True
-        assert arc_layer["encoding"]["color"]["field"] == "category"
-        assert arc_layer["encoding"]["theta"]["field"] == "value"
+        labels = _arc_labels(render_pie_svg(chart, data))
+        assert len(labels) == 2
+        assert "A" in labels[0] and "30" in labels[0], labels
+        assert "B" in labels[1] and "70" in labels[1], labels
 
     def test_pie_with_inner_radius_has_tooltips(self, make_chart):
         """Pie chart with inner_radius (donut appearance) has tooltips."""
@@ -167,11 +171,7 @@ class TestSpecialChartTypeTooltips:
             "pie", x="category", y="value", style={"pie": {"inner_radius": 0.5}}
         )
         data = [{"category": "A", "value": 30}, {"category": "B", "value": 70}]
-        spec = generate_vega_lite_spec(chart, data)
-        arc_layer = spec["layer"][0]
-        assert isinstance(arc_layer["mark"], dict)
-        assert arc_layer["mark"]["tooltip"] is True
-        assert "innerRadius" in arc_layer["mark"]
+        assert len(_arc_labels(render_pie_svg(chart, data))) == 2
 
     def test_heatmap_has_tooltips(self, make_chart):
         chart = make_chart("heatmap", x="day", y="hour", color="count")

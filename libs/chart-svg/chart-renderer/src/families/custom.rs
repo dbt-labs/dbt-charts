@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use minijinja::value::{Rest, Value, ValueKind};
 use minijinja::{context, AutoEscape, Environment, Error, ErrorKind, UndefinedBehavior};
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Map, Value as Json};
 
 use crate::codes;
@@ -34,7 +34,6 @@ use crate::common::{Font, TitleStyle};
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::diagnostic::Diagnostic;
 use crate::href;
-use crate::sandbox;
 use crate::svg::{num, xml_escape, xml_escape_attr};
 use crate::text::FontBook;
 use crate::Payload;
@@ -679,23 +678,39 @@ pub(crate) fn checked_svg_content(content: &str) -> Result<String, String> {
 }
 
 /// The first nesting depth past `limit` that a scan of the tags finds, before
-/// the parser (which recurses per level) ever sees the text. The scan counts
-/// an opening tag as a level and a closing or self-closing one as leaving
-/// it. A `>` inside an attribute value misleads it (`<g a="/>">` reads as
-/// self-closing), so it is a fast refusal, not the law: `serialize` holds
-/// the depth cap, and a document that fools the scan into recursing the
-/// parser off its stack ends the sandbox's child, never the host.
+/// the parser ever sees the text. roxmltree recurses per level, so a deep
+/// enough document overflows the stack of the process that parses it: this
+/// scan is the law, not a fast path. Every tag that is not a closing or
+/// self-closing one counts as a level, whatever its name starts with, and a
+/// tag ends at the first `>` outside a quoted attribute value. Comments,
+/// CDATA, processing instructions and declarations are refused before it
+/// runs, so no other `<` or `>` can hide a tag.
 fn nesting_past(content: &str, limit: usize) -> Option<usize> {
     let mut depth: usize = 0;
     let mut rest = content;
     while let Some(open) = rest.find('<') {
         rest = &rest[open + 1..];
-        let Some(end) = rest.find('>') else { break };
+        let mut quote = None;
+        let Some(end) = rest.find(|c: char| match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                }
+                false
+            }
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                false
+            }
+            None => c == '>',
+        }) else {
+            break;
+        };
         let tag = &rest[..end];
         rest = &rest[end + 1..];
         if tag.starts_with('/') {
             depth = depth.saturating_sub(1);
-        } else if tag.starts_with(|c: char| c.is_ascii_alphabetic()) && !tag.ends_with('/') {
+        } else if !tag.ends_with('/') {
             depth += 1;
             if depth > limit {
                 return Some(depth);
@@ -824,49 +839,17 @@ fn checked_attribute<'a>(
 
 // ── Render ──────────────────────────────────────────────────────────────────
 
-/// Which law the sandboxed render refused the template under.
-#[derive(Serialize, Deserialize)]
-pub enum Refused {
-    Render,
-    Svg,
-}
-
-/// Everything one template render reads, as the sandbox's child receives it.
-#[derive(Serialize, Deserialize)]
-pub struct Job {
-    resolved: Json,
+/// Everything one template render reads beyond the resolved chart.
+struct Job {
     rows: Vec<Map<String, Json>>,
     variables: Map<String, Json>,
     link_context: Option<href::LinkContext>,
-    number_locale: crate::number_locale::NumberLocale,
-    fonts_dir: Option<String>,
     /// The board's font family list, which `text_width()` measures with.
     family: String,
     width: f64,
     height: f64,
     /// What the board's output budget has left for this chart.
     budget: u64,
-}
-
-/// The template rendered and its output checked, in whichever process runs
-/// the job.
-pub fn run_job(job: Job) -> Result<String, (Refused, String)> {
-    let r: Resolved = serde_json::from_value(job.resolved.clone())
-        .map_err(|e| (Refused::Render, format!("custom: resolved payload: {e}")))?;
-    let fonts = match &job.fonts_dir {
-        Some(dir) => FontBook::load_dir(dir).map_err(|e| (Refused::Render, e))?,
-        None => FontBook::empty(),
-    };
-    let content = crate::number_locale::with_number_locale(&job.number_locale, || {
-        render_template(&r, &job, &fonts)
-    })
-    .map_err(|reason| (Refused::Render, reason))?;
-    checked_svg_content(&content).map_err(|reason| (Refused::Svg, reason))
-}
-
-/// `chart-renderer custom-child` and the extension's `custom_child`.
-pub fn child_main() {
-    sandbox::child_main(run_job);
 }
 
 /// The title fonts the resolved custom chart always carries: the frame's
@@ -886,8 +869,7 @@ fn require_font(font: &Font, what: &str) -> Result<(), String> {
 
 /// The chart in the shared frame: root `<svg>`, background and title band are
 /// the frame's, fitted with no ink; the template's checked output fills the
-/// body box. The template runs and its output is checked in the sandbox, so
-/// neither can take the host down.
+/// body box.
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
     let r: Resolved = serde_json::from_value(payload.resolved.clone())
         .map_err(|e| format!("custom: resolved payload: {e}"))?;
@@ -917,12 +899,9 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         .and_then(|b| b.font.clone())
         .ok_or("custom: board_style.font absent")?;
     let job = Job {
-        resolved: payload.resolved.clone(),
         rows: payload.rows.clone(),
         variables: payload.variables.clone(),
         link_context: payload.link_context.clone(),
-        number_locale: (*crate::number_locale::active_number_locale()).clone(),
-        fonts_dir: payload.fonts_dir.clone(),
         family,
         width: m.plot_w,
         height: m.plot_h,
@@ -930,15 +909,10 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             .max_template_output_bytes
             .ok_or("custom: payload.max_template_output_bytes missing")?,
     };
-    let content = sandbox::isolated(&job, run_job, sandbox::WALL_CLOCK)
-        .map_err(|reason| diagnostic(&codes::ERR_CUSTOM_RENDER, &r.id, reason))?
-    .map_err(|(stage, reason)| {
-        let code = match stage {
-            Refused::Render => &codes::ERR_CUSTOM_RENDER,
-            Refused::Svg => &codes::ERR_CUSTOM_SVG,
-        };
-        diagnostic(code, &r.id, reason)
-    })?;
+    let content = render_template(&r, &job, fonts)
+        .map_err(|reason| diagnostic(&codes::ERR_CUSTOM_RENDER, &r.id, reason))?;
+    let content = checked_svg_content(&content)
+        .map_err(|reason| diagnostic(&codes::ERR_CUSTOM_SVG, &r.id, reason))?;
     let mut svg = String::new();
     frame.open(&mut svg);
     title.paint(&mut svg, m.title_pos, origin);
@@ -957,7 +931,6 @@ mod tests {
     use super::*;
 
     fn test_fonts() -> FontBook {
-        sandbox::configure(sandbox::Runner::InProcess);
         let manifest = env!("CARGO_MANIFEST_DIR");
         let dir = format!("{manifest}/../../../src/dbt_charts/core/render/fonts");
         FontBook::load_dir(&dir).expect("test fonts load")

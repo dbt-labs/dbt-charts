@@ -374,6 +374,15 @@ pub struct Divider {
     pub dasharray: Option<String>,
 }
 
+/// A divider that also reserves `gap` pixels between its line and the content
+/// it separates (`style.footer.divider`, `style.charts.support_table.divider`).
+#[derive(Deserialize, Clone, Debug)]
+pub struct GappedDivider {
+    #[serde(flatten)]
+    pub line: Divider,
+    pub gap: f64,
+}
+
 /// Production compiles a divider's dash pattern to space-joined numbers
 /// (`DividerStyle._dasharray_is_numbers`); anything else is a stale payload.
 fn de_dasharray<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
@@ -778,6 +787,37 @@ pub struct TickLabelConfig {
     pub scientific_format: Option<String>,
 }
 
+/// `truncate_text_precise`: `text` when it fits, else the longest char prefix
+/// whose `trim_end() + "…"` fits, else the first char.
+pub fn truncate_with(
+    measure: &dyn Fn(&str) -> Result<f64, String>,
+    text: &str,
+    max_width: f64,
+    ellipsis: bool,
+) -> Result<String, String> {
+    if measure(text)? <= max_width {
+        return Ok(text.to_string());
+    }
+    let suffix = if ellipsis { "\u{2026}" } else { "" };
+    let chars: Vec<char> = text.chars().collect();
+    let (mut lo, mut hi, mut best) = (0usize, chars.len(), None::<String>);
+    while lo <= hi {
+        let mid = (lo + hi) / 2;
+        let prefix: String = chars[..mid].iter().collect();
+        let cand = format!("{}{suffix}", prefix.trim_end());
+        if measure(&cand)? <= max_width {
+            best = Some(cand);
+            lo = mid + 1;
+        } else {
+            if mid == 0 {
+                break;
+            }
+            hi = mid - 1;
+        }
+    }
+    Ok(best.filter(|b| !b.is_empty()).unwrap_or_else(|| chars.first().map(|c| c.to_string()).unwrap_or_default()))
+}
+
 /// Measured word-wrap with optional line cap + ellipsis — the port of
 /// production's `wrap_text_precise` (mdsvg/fonts.py), the function
 /// `prepare_title_text` runs for title/subtitle overflow. Semantics ported
@@ -803,11 +843,23 @@ pub fn wrap_text_measured(
     max_lines: Option<usize>,
     ellipsis: bool,
 ) -> Result<(Vec<String>, bool), String> {
+    let measure = |t: &str| fonts.measure(t, family, font_size);
+    wrap_text_with(&measure, text, max_width, max_lines, ellipsis)
+}
+
+/// [`wrap_text_measured`] over any measurer: the axis title wraps at its own
+/// painted weight, a title block in Inter.
+pub fn wrap_text_with(
+    measure: &dyn Fn(&str) -> Result<f64, String>,
+    text: &str,
+    max_width: f64,
+    max_lines: Option<usize>,
+    ellipsis: bool,
+) -> Result<(Vec<String>, bool), String> {
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if normalized.is_empty() {
         return Ok((vec![], false));
     }
-    let measure = |t: &str| fonts.measure(t, family, font_size);
     let space_w = measure(" ")?;
 
     // (text, width, has_separator) — separator is the single space that
@@ -905,31 +957,7 @@ pub fn wrap_text_measured(
             let mut rendered: Vec<String> = lines[..cap - 1].iter().map(|l| join(l)).collect();
             let tail_pieces: Vec<&Piece> = lines[cap - 1..].iter().flatten().copied().collect();
             let tail = join(&tail_pieces);
-            // truncate_text_precise: longest char prefix whose
-            // `trim_end() + suffix` fits; first char when nothing fits.
-            let suffix = if ellipsis { "\u{2026}" } else { "" };
-            let chars: Vec<char> = tail.chars().collect();
-            let last = if measure(&tail)? <= max_width {
-                tail
-            } else {
-                let (mut lo, mut hi, mut best) = (0usize, chars.len(), None::<String>);
-                while lo <= hi {
-                    let mid = (lo + hi) / 2;
-                    let prefix: String = chars[..mid].iter().collect();
-                    let cand = format!("{}{suffix}", prefix.trim_end());
-                    if measure(&cand)? <= max_width {
-                        best = Some(cand);
-                        lo = mid + 1;
-                    } else {
-                        if mid == 0 { break; }
-                        hi = mid - 1;
-                    }
-                }
-                match best.filter(|b| !b.is_empty()) {
-                    Some(b) => b,
-                    None => chars.first().map(|c| c.to_string()).unwrap_or_default(),
-                }
-            };
+            let last = truncate_with(measure, &tail, max_width, ellipsis)?;
             rendered.push(last);
             return Ok((rendered, true));
         }
@@ -2953,7 +2981,7 @@ pub fn emit_subtitle_vega(
     let sub_weight = sf.map(|f| f.font.weight_str()).unwrap_or_else(|| "400".into());
     let sy = title_row_y
         + title_font_size
-        + crate::vega_fit::SUBTITLE_PADDING
+        + crate::constants::layout::VEGA_SUBTITLE_PADDING
         + crate::vega_fit::baseline_shift("top", sub_fs);
     // Extra lines advance by the Vega text mark's default lineHeight
     // (fontSize + LINE_ADVANCE_EXTRA) — same term the fit margins reserve.
@@ -3159,13 +3187,122 @@ pub fn field_display_text(
     }
 }
 
-/// Axis title text: an authored `x_label`/`y_label` wins verbatim (production
-/// never case-transforms it either — see `resolve_xy_titles`), else
-/// `field_title` (the `field_labels` entry, else `slug_to_text`).
+/// An authored title's newlines read as spaces: only [`wrapped_axis_title`]
+/// puts line breaks in a title.
+pub fn collapse_title_newlines(text: &str) -> String {
+    text.replace('\n', " ")
+}
+
+/// Axis title text: an authored `x_label`/`y_label` wins (production never
+/// case-transforms it either, see `resolve_xy_titles`), else `field_title`
+/// (the `field_labels` entry, else `slug_to_text`). A newline in authored text
+/// reads as a space: only [`wrapped_axis_title`] puts line breaks in a title.
 pub fn axis_title_text(field: &str, label: Option<&str>, field_labels: &FieldLabels) -> String {
     label
-        .map(str::to_string)
+        .map(collapse_title_newlines)
         .unwrap_or_else(|| display_text::field_title(field, field_labels))
+}
+
+/// `wrap_axis_title` (`emitters/_cartesian.py`): an axis title wraps to at most
+/// two lines inside `axis_title_budget`, measured at the weight it paints.
+/// `extent` is the chart's size along the title's direction and `panels` how
+/// many facet panels share it. Returns the lines and whether authored text was
+/// cut (a word wider than the budget, or a third line).
+pub fn wrap_axis_title(
+    text: &str,
+    extent: f64,
+    panels: f64,
+    font: &Font,
+    fonts: &crate::text::FontBook,
+) -> Result<(Vec<String>, bool), String> {
+    let budget = (extent - crate::families::bar::CHROME_PX / panels).trunc().max(1.0);
+    let size = font.size_or(11.0);
+    let measure = |t: &str| font.measure_weighted(fonts, t, size);
+    // A word the wrapper would have to break is ellipsized first: a split word
+    // is wrong output in a title.
+    let authored: Vec<&str> = text.split_whitespace().collect();
+    let words = authored
+        .iter()
+        .map(|w| truncate_with(&measure, w, budget, true))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (lines, truncated) = wrap_text_with(&measure, &words.join(" "), budget, Some(2), true)?;
+    if lines.is_empty() {
+        return Ok((vec![text.to_string()], false));
+    }
+    Ok((lines, truncated || words != authored))
+}
+
+/// `WARN-AXIS-TITLE-TRUNCATED`: production's
+/// `record_text_truncation(chart_id, "axis_title", text, authored_field)`.
+pub fn warn_axis_title_truncated(chart_id: &str, authored_field: &str, text: &str) {
+    crate::diagnostic::warn(Diagnostic::new(
+        &codes::WARN_AXIS_TITLE_TRUNCATED,
+        [
+            ("authored_field", json!(authored_field)),
+            ("authored_text", json!(text)),
+            ("chart_id", json!(chart_id)),
+        ],
+    ));
+}
+
+/// A title's lines past the first, in pixels: Vega draws newline-separated text
+/// as `<tspan>`s `lineHeight` apart, and each extra line grows the axis.
+pub fn extra_title_lines(text: &str, font_size: f64) -> f64 {
+    text.matches('\n').count() as f64 * crate::vega_fit::label_row_advance(font_size)
+}
+
+/// The axis title as it paints: `text` wrapped by [`wrap_axis_title`] and joined
+/// by newlines, with `WARN-AXIS-TITLE-TRUNCATED` when authored text was cut.
+/// `extent` is the chart size along the title's direction and `authored_field`
+/// the YAML key the text came from. A hidden title still wraps and warns, as
+/// production's `resolve_xy_titles` does.
+pub fn wrapped_axis_title(
+    chart_id: &str,
+    authored_field: &str,
+    text: &str,
+    font: &Font,
+    extent: f64,
+    fonts: &crate::text::FontBook,
+) -> Result<String, String> {
+    if text.is_empty() {
+        return Ok(String::new());
+    }
+    let (lines, truncated) = wrap_axis_title(text, extent, 1.0, font, fonts)?;
+    if truncated {
+        warn_axis_title_truncated(chart_id, authored_field, text);
+    }
+    Ok(lines.join("\n"))
+}
+
+/// Refuses a small-multiples panel title that wraps: production wraps it against
+/// the panel's extent and the `panels` it was divided across, but the composite
+/// paints the raw text.
+pub fn refuse_wrapping_facet_title(
+    family: &str,
+    text: &str,
+    title: &AxisTitle,
+    extent: f64,
+    panels: usize,
+    fonts: &crate::text::FontBook,
+) -> Result<(), String> {
+    if axis_title_band(title, text) == 0.0 {
+        return Ok(());
+    }
+    let (lines, truncated) = wrap_axis_title(text, extent, panels as f64, &title.font, fonts)?;
+    if truncated || lines.len() > 1 {
+        return Err(format!("{family}: multiples with an axis title wider than its panel budget is not supported"));
+    }
+    Ok(())
+}
+
+/// The widest line of a (possibly wrapped) axis title as Vega measures it
+/// (shaped), for the extent it reaches past the plot.
+pub fn widest_title_line(title: &AxisTitle, text: &str, fonts: &crate::text::FontBook) -> Result<f64, String> {
+    text.split('\n').try_fold(0.0_f64, |widest, line| {
+        fonts
+            .measure_shaped(line, title.font.family_or("sans-serif"), title.font.size_or(11.0))
+            .map(|w| widest.max(w))
+    })
 }
 
 /// Extra margin (px) an axis title band reserves beyond the tick-label band
@@ -3185,7 +3322,8 @@ pub fn axis_title_band(style: &AxisTitle, text: &str) -> f64 {
     if text.is_empty() || !style.visible.unwrap_or(true) {
         0.0
     } else {
-        style.font.size_or(11.0) + style.padding.unwrap_or(10.0)
+        let size = style.font.size_or(11.0);
+        size + style.padding.unwrap_or(10.0) + extra_title_lines(text, size)
     }
 }
 
@@ -3214,7 +3352,7 @@ pub fn y_title_extra(title: &AxisTitle, text: &str) -> f64 {
         return 0.0;
     }
     let fs = title.font.size_or(11.0);
-    title.padding.unwrap_or(10.0) + (0.21 * fs).round() + (0.8 * fs).round()
+    title.padding.unwrap_or(10.0) + (0.21 * fs).round() + (0.8 * fs).round() + extra_title_lines(text, fs)
 }
 
 /// The title Vega draws on an axis whose theme title is hidden but which
@@ -3248,7 +3386,7 @@ pub fn x_title_extra(title: &AxisTitle, text: &str) -> f64 {
         return 0.0;
     }
     let fs = title.font.size_or(11.0);
-    title.padding.unwrap_or(10.0) + fs + (0.79 * fs).round() - (0.8 * fs).round()
+    title.padding.unwrap_or(10.0) + fs + (0.79 * fs).round() - (0.8 * fs).round() + extra_title_lines(text, fs)
 }
 
 /// Emit a bottom-anchored (horizontal) axis title's `<text>` at an
@@ -3271,6 +3409,7 @@ pub fn emit_axis_title_at(
     if axis_title_band(style, text) == 0.0 {
         return;
     }
+    let lines: Vec<&str> = text.split('\n').collect();
     let f = &style.font;
     let size = f.size_or(11.0);
     let family = f.family_or("sans-serif");
@@ -3283,11 +3422,27 @@ pub fn emit_axis_title_at(
     let _ = write!(
         out,
         "<text x=\"{x:.2}\" y=\"{title_y:.2}\" text-anchor=\"middle\" \
-         font-family=\"{}\" font-size=\"{size}\" font-weight=\"{weight}\" fill=\"{color}\">{}</text>",
+         font-family=\"{}\" font-size=\"{size}\" font-weight=\"{weight}\" fill=\"{color}\">",
         crate::svg::vega_escape_attr(family),
-        crate::svg::xml_escape(text), weight = xml_escape_attr(&weight), color = xml_escape_attr(color)
+        weight = xml_escape_attr(&weight), color = xml_escape_attr(color)
     );
+    write_title_lines(out, &lines, x, size);
+    out.push_str("</text>");
     crate::contract::mark_group_close(out);
+}
+
+/// A title's `<text>` content: the line itself, or one `<tspan>` per line
+/// stepping `lineHeight` along the text's own y (Vega's multi-line text).
+pub fn write_title_lines(out: &mut String, lines: &[&str], x: f64, size: f64) {
+    use std::fmt::Write;
+    if let [line] = lines {
+        out.push_str(&crate::svg::xml_escape(line));
+        return;
+    }
+    for (i, line) in lines.iter().enumerate() {
+        let step = if i == 0 { String::new() } else { format!(" x=\"{x:.2}\" dy=\"{}\"", crate::vega_fit::label_row_advance(size)) };
+        let _ = write!(out, "<tspan{step}>{}</tspan>", crate::svg::xml_escape(line));
+    }
 }
 
 /// Emit a bottom-anchored (horizontal) axis title, centered under the plot,
@@ -3340,6 +3495,7 @@ pub fn emit_axis_title_rotated(
     if axis_title_band(style, text) == 0.0 {
         return;
     }
+    let lines: Vec<&str> = text.split('\n').collect();
     let f = &style.font;
     let size = f.size_or(11.0);
     let family = f.family_or("sans-serif");
@@ -3347,7 +3503,10 @@ pub fn emit_axis_title_rotated(
     let weight = f.weight_str();
     let padding = style.padding.unwrap_or(10.0);
     let angle = if sign < 0.0 { -90.0 } else { 90.0 };
-    let title_x = label_edge_x + sign * (padding + rotated_axis_title_nudge(size));
+    // Extra lines grow the title away from the plot; the last line keeps the
+    // single-line baseline.
+    let extra_lines = (lines.len() - 1) as f64 * crate::vega_fit::label_row_advance(size);
+    let title_x = label_edge_x + sign * (padding + rotated_axis_title_nudge(size) + extra_lines);
     // The title lives inside Vega's axis group, which already crisp-shifts
     // by +0.5 in both coordinates — the title's y (its position ALONG the
     // axis) inherits it too, same as the bottom title's x above.
@@ -3357,10 +3516,12 @@ pub fn emit_axis_title_rotated(
         out,
         "<text x=\"{title_x:.2}\" y=\"{y:.2}\" text-anchor=\"middle\" \
          transform=\"rotate({angle} {title_x:.2} {y:.2})\" \
-         font-family=\"{}\" font-size=\"{size}\" font-weight=\"{weight}\" fill=\"{color}\">{}</text>",
+         font-family=\"{}\" font-size=\"{size}\" font-weight=\"{weight}\" fill=\"{color}\">",
         crate::svg::vega_escape_attr(family),
-        crate::svg::xml_escape(text), weight = xml_escape_attr(&weight), color = xml_escape_attr(color)
+        weight = xml_escape_attr(&weight), color = xml_escape_attr(color)
     );
+    write_title_lines(out, &lines, title_x, size);
+    out.push_str("</text>");
     crate::contract::mark_group_close(out);
 }
 
@@ -3378,6 +3539,31 @@ pub fn row_str(row: &serde_json::Map<String, Value>, field: &str) -> String {
         Some(Value::String(s)) => s.clone(),
         Some(Value::Null) | None => String::new(),
         Some(other) => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod axis_title_text_tests {
+    use super::*;
+
+    /// Vega draws a wrapped title's rows one `lineHeight` (font size plus 2)
+    /// apart: 13px at the theme's 11px.
+    #[test]
+    fn a_wrapped_title_steps_by_vegas_line_height() {
+        let style: AxisTitle = serde_json::from_value(serde_json::json!({
+            "font": {"family": "sans-serif", "size": 11.0, "weight": "600"}, "padding": 10.0, "visible": true
+        }))
+        .unwrap();
+        let mut out = String::new();
+        emit_axis_title_at(&mut out, "first\nsecond", &style, 50.0, 30.0, None);
+        assert!(out.contains("dy=\"13\""), "{out}");
+        assert_eq!(extra_title_lines("first\nsecond", 11.0), 13.0);
+    }
+
+    #[test]
+    fn an_authored_newline_reads_as_a_space() {
+        let labels = FieldLabels::new();
+        assert_eq!(axis_title_text("revenue", Some("Net\nrevenue"), &labels), "Net revenue");
     }
 }
 

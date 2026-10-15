@@ -334,9 +334,9 @@ def test_clarity_line_endpoint_labels_on_by_default():
     from dbt_charts.core.compile.config import get_theme_style
 
     compiled = get_theme_style("clarity")
-    assert compiled.charts.line.endpoint_labels.visible is True, (
-        "clarity.charts.line.endpoint_labels.visible should be True after "
-        "clarity theme sets line.endpoint_labels.visible: true"
+    assert compiled.charts.line.endpoint_labels.visible == "auto", (
+        "clarity.charts.line.endpoint_labels.visible should be 'auto' after "
+        "clarity theme sets line.endpoint_labels.visible: auto"
     )
 
 
@@ -345,9 +345,9 @@ def test_paper_line_endpoint_labels_on_by_default():
     from dbt_charts.core.compile.config import get_theme_style
 
     compiled = get_theme_style("paper")
-    assert compiled.charts.line.endpoint_labels.visible is True, (
+    assert compiled.charts.line.endpoint_labels.visible == "auto", (
         f"paper.charts.line.endpoint_labels.visible is "
-        f"{compiled.charts.line.endpoint_labels.visible!r}; expected True (inherited from clarity)."
+        f"{compiled.charts.line.endpoint_labels.visible!r}; expected 'auto' (inherited from clarity)."
     )
 
 
@@ -357,9 +357,9 @@ def test_clarity_and_paper_bar_endpoint_labels_on_by_default():
 
     for theme_name in ("clarity", "paper"):
         compiled = get_theme_style(theme_name)
-        assert compiled.charts.bar.endpoint_labels.visible is True, (
+        assert compiled.charts.bar.endpoint_labels.visible == "auto", (
             f"{theme_name}.charts.bar.endpoint_labels.visible is "
-            f"{compiled.charts.bar.endpoint_labels.visible!r}; expected True."
+            f"{compiled.charts.bar.endpoint_labels.visible!r}; expected 'auto'."
         )
 
 
@@ -372,9 +372,9 @@ def test_structural_root_bar_endpoint_labels_on_by_default():
     from dbt_charts.core.compile.config import get_theme_style
 
     compiled = get_theme_style("stark")
-    assert compiled.charts.bar.endpoint_labels.visible is True, (
+    assert compiled.charts.bar.endpoint_labels.visible == "auto", (
         f"stark.charts.bar.endpoint_labels.visible is "
-        f"{compiled.charts.bar.endpoint_labels.visible!r}; expected True."
+        f"{compiled.charts.bar.endpoint_labels.visible!r}; expected 'auto'."
     )
 
 

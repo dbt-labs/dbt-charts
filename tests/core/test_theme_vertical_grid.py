@@ -154,11 +154,9 @@ def _resolved_axes(theme: str) -> tuple[str, str, str, str]:
     """(canvas, vertical grid, vertical tick, horizontal grid) colors for a line."""
     style = get_theme_style(theme)
     ctx = resolve_chart_style_context(style)
-    x = resolved_axis_style(
-        ctx, "axis_x", "temporal", chart_type="line", label_authored=False
-    )
+    x = resolved_axis_style(ctx, "axis_x", "temporal", chart_type="line", labeled=False)
     y = resolved_axis_style(
-        ctx, "axis_y", "quantitative", chart_type="line", label_authored=False
+        ctx, "axis_y", "quantitative", chart_type="line", labeled=False
     )
     return style.background, x.grid.color, x.ticks.color, y.grid.color
 

@@ -14,6 +14,8 @@ before this task.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style, reset_config
@@ -30,6 +32,7 @@ from dbt_charts.core.compile.models.style.authored import (
     BarChartStylePatch,
     LegendStylePatch,
     LineChartStylePatch,
+    PieChartStylePatch,
 )
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.chart._wide_fields import WIDE_LABEL_FIELD
@@ -42,6 +45,7 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
 )
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
+from ._engine_render import render_pie_svg
 from ._svg_render import legend_label_order, render_board_to_svg
 from .conftest import chart_pane
 
@@ -998,26 +1002,25 @@ rows:
 
 
 def test_pie_legend_and_arc_paint_order_share_one_authority():
+    """The legend lists and the wedges paint in the data's own row order."""
     chart = PieChart(
         id="t",
-        query=SqlQuery(sql="SELECT 1", source="t"),
         query_name="q",
         type="pie",
         theta="val",
         color="cat",
+        style=PieChartStylePatch.model_validate({"legend": {"visible": True}}),
     )
     data = [
         {"cat": "zeta", "val": 10},
         {"cat": "alpha", "val": 30},
     ]
-    spec = generate_vega_lite_spec(
-        chart, data, board_style=_BOARD_STYLE, chart_style_context=_BOARD_CTX
+    svg = render_pie_svg(chart, data)
+    assert legend_label_order(svg) == ["zeta", "alpha"]
+    wedge_headers = re.findall(
+        r'aria-label="\u2064([^;]+);[^"]*"[^>]*aria-roledescription="arc mark"', svg
     )
-    arc_encoding = chart_pane(spec)["layer"][0]["encoding"]
-    # sort=False: the legend's domain order follows the data's own row order —
-    # the SAME order the arc's own "order" encoding paints in.
-    assert arc_encoding["color"]["sort"] is False
-    assert arc_encoding["order"]["field"] == "__dbt_row_idx"
+    assert wedge_headers == ["zeta", "alpha"]
 
 
 # ---------------------------------------------------------------------------

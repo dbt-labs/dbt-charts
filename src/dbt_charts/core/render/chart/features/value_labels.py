@@ -16,7 +16,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar, overload
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
 from dbt_charts.core.compile.models.chart.resolved._layer import (
     LayeredResolvedChart,
@@ -38,6 +37,7 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedPointLabels,
 )
 from dbt_charts.core.compile.models.style.theme import font_weight_as_css
+from dbt_charts.core.constants.bar import LABEL_FIT_LINE_HEIGHT_MULTIPLIER
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_LABELS_FIELD_NOT_FOUND,
@@ -1063,7 +1063,7 @@ def _fit_hide_test(
     font_size = chart.style.label_font_size
     if measure_span is None or measure_span <= 0:
         return None
-    required_px = font_size * get_chart_rendering().bar.label_fit_line_height_multiplier
+    required_px = font_size * LABEL_FIT_LINE_HEIGHT_MULTIPLIER
     field = f"datum[{y_field!r}]"
     # A bare `height` resolves against the COMPILED ROOT view, not whatever
     # scope the mark ends up in. A facet root never sets it — Vega-Lite emits

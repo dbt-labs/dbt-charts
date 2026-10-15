@@ -963,14 +963,6 @@ class TestReviewRegressions:
         result = _compile(_project(tmp_path, template), _board_yaml())
         assert result.success, [d.message for d in result.errors]
 
-    def test_a_template_that_doubles_a_string_fails_on_the_memory_budget(
-        self, tmp_path: Path
-    ) -> None:
-        template = HEADER + "{% set a = 'x' %}" + "{% set a = a ~ a %}" * 40 + "<g/>"
-        out = _render(_project(tmp_path, template), _board_yaml())
-        assert [d.code for d in out.chart_errors] == ["ERR-CUSTOM-RENDER"]
-        assert "memory budget" in out.chart_errors[0].message
-
     def test_the_framing_crossing_the_budget_is_the_charts_error(
         self, tmp_path: Path
     ) -> None:

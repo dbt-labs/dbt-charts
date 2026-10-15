@@ -35,6 +35,7 @@ from dbt_charts.core.compile.models.constraints import (
 from dbt_charts.core.compile.models.markers import (
     Content,
     DisplayText,
+    Exclusive,
     Extends,
     Markdown,
     Merge,
@@ -503,8 +504,8 @@ class AuthoredBoard(ConstrainedModel):
         default=None,
         description="Prose summary of what this board covers; read by AI search and board listings.",
     )
-    tags: Annotated[list[str] | None, Merge(Strategy.APPEND, nested=Strategy.CHILD)] = (
-        Field(default=None, description="Keywords for grouping and searching boards.")
+    tags: list[str] | None = Field(
+        default=None, description="Keywords for grouping and searching boards."
     )
     aliases: list[AbsoluteAlias] | None = (
         Field(  # no Merge marker -- identity field, validate-absent in extends/meta lane
@@ -594,11 +595,11 @@ class AuthoredBoard(ConstrainedModel):
     )
 
     # Scoped definitions
-    variables: Annotated[
-        dict[str, VariableOrRef] | None, Merge(Strategy.BY_KEY, nested=Strategy.CHILD)
-    ] = Field(
-        default_factory=dict,
-        description="Named inputs that parameterize queries; each renders as a control unless it sets visible: false.",
+    variables: Annotated[dict[str, VariableOrRef] | None, Merge(Strategy.BY_KEY)] = (
+        Field(
+            default_factory=dict,
+            description="Named inputs that parameterize queries; each renders as a control unless it sets visible: false.",
+        )
     )
     queries: Annotated[
         dict[str, QueryOrRef] | None, Merge(Strategy.BY_KEY), Content()
@@ -621,7 +622,7 @@ class AuthoredBoard(ConstrainedModel):
         list[ChartName | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
         | None,
         BeforeValidator(_check_layout_list),
-        Merge(Strategy.APPEND, nested=Strategy.CHILD),
+        Exclusive("layout"),
         Content(),
     ] = Field(
         default=None,
@@ -631,21 +632,17 @@ class AuthoredBoard(ConstrainedModel):
         list[ChartName | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
         | None,
         BeforeValidator(_check_layout_list),
-        Merge(Strategy.APPEND, nested=Strategy.CHILD),
+        Exclusive("layout"),
         Content(),
     ] = Field(
         default=None,
         description="Horizontal layout: list of chart names or inline chart/board definitions.",
     )
-    grid: Annotated[
-        GridLayout | None, Merge(Strategy.DEEP, nested=Strategy.CHILD), Content()
-    ] = Field(
+    grid: Annotated[GridLayout | None, Exclusive("layout"), Content()] = Field(
         default=None,
         description="CSS-grid style layout with explicit row/column placement.",
     )
-    tabs: Annotated[
-        TabLayout | None, Merge(Strategy.DEEP, nested=Strategy.CHILD), Content()
-    ] = Field(
+    tabs: Annotated[TabLayout | None, Exclusive("layout"), Content()] = Field(
         default=None,
         description="Tabbed navigation layout where each tab contains its own layout.",
     )

@@ -329,17 +329,24 @@ class ScatterEmitter:
             # A d3 axis format applied to categorical tick labels makes Vega
             # coerce every category string to NaN, and one over dates paints
             # the literal spec — gate_label_format raises for both rather
-            # than silently dropping the authored format. A nominal/ordinal y
-            # with a genuine time spec still routes through a UTC labelExpr
-            # (mirrors the x-axis path in build_cartesian_x_encoding) instead
-            # of raising: is_time_format exempts it inside the gate too, but
-            # only this branch knows to compose the label expression.
+            # than silently dropping the authored format. A time spec on a
+            # nominal/ordinal y holding ISO date bands routes through a UTC
+            # labelExpr (mirrors the x-axis path in build_cartesian_x_encoding);
+            # on any other values the gate raises instead of painting
+            # "Invalid Date".
             y_fmt = y_axis.get("format")
             if (
                 y_type in ("nominal", "ordinal")
                 and isinstance(y_fmt, str)
                 and is_time_format(y_fmt)
             ):
+                gate_label_format(
+                    ResolvedFormat(spec=y_fmt),
+                    chart.y,
+                    data,
+                    y_type,
+                    setting="axis_y.labels.format",
+                )
                 if "labelExpr" not in y_axis:
                     y_axis["labelExpr"] = _utc_time_label_expr(y_fmt)
                 # Vega validates "format" independently of labelExpr — a time

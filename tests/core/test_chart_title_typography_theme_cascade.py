@@ -171,7 +171,7 @@ class TestAuthoredTitleStyleWinsOverWidthAware:
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
         from dbt_charts.core.compile.models.style.authored import (
             BarChartStylePatch,
-            TitleStylePatch,
+            ChartTitleStylePatch,
         )
 
         font_patch: dict[str, float | int] = {}
@@ -187,7 +187,7 @@ class TestAuthoredTitleStyleWinsOverWidthAware:
             y="revenue",
             query=SqlQuery(sql="SELECT 1", source="test_db"),
             style=BarChartStylePatch(
-                title=TitleStylePatch(font=font_patch) if font_patch else None
+                title=ChartTitleStylePatch(font=font_patch) if font_patch else None
             ),
         )
 
@@ -224,6 +224,44 @@ class TestAuthoredTitleStyleWinsOverWidthAware:
             f"Authored title.font.weight=800 must win over the width-aware "
             f"default at medium widths; got fontWeight={title_weight!r}"
         )
+
+
+class TestBoardTitleStyleWinsOverWidthAware:
+    """A board-level ``style.charts.title.font`` value wins over the width ramp."""
+
+    _data = [{"month": "Jan", "revenue": 100}, {"month": "Feb", "revenue": 200}]
+
+    def _spec(self, font: dict[str, float | int | str], width: float):
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.compile.models.style.authored import StylePatch
+        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+
+        board_patch = StylePatch.model_validate({"charts": {"title": {"font": font}}})
+        chart = BarChart(
+            id="bar_test",
+            type="bar",
+            title="Revenue",
+            x="month",
+            y="revenue",
+            query=SqlQuery(sql="SELECT 1", source="test_db"),
+        )
+        return generate_vega_lite_spec(
+            chart,
+            self._data,
+            width=width,
+            board_style=resolve_style(get_theme_style(), board_patch),
+            chart_style_context=resolve_chart_style_context(
+                get_theme_style(), board_patch
+            ),
+        )
+
+    def test_board_title_font_size_wins_at_narrow_width(self):
+        title = self._spec({"size": 30}, width=390.0)["title"]
+        assert title["fontSize"] == 30
+
+    def test_board_title_font_weight_wins_at_medium_width(self):
+        title = self._spec({"weight": 800}, width=770.0)["title"]
+        assert title["fontWeight"] == 800
 
 
 class TestTableTitleEditorialCream:

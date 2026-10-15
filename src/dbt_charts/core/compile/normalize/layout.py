@@ -37,6 +37,7 @@ from dbt_charts.core.compile.normalize.charts import (
     generate_inline_chart_id,
     normalize_chart,
 )
+from dbt_charts.core.diagnostics.codes_compile import ERR_TAB_DEFAULT_UNKNOWN
 
 # The enclosing board's own authoring path, threaded down so each item can name
 # its absolute position. Two distinguishable states, which is why this is
@@ -248,9 +249,17 @@ def build_unified_layout(
         # (avoids collisions when multiple tabs layouts exist in nested boards)
         tab_variable = tabs_obj.id or f"_tab_{board_id}"
 
-        # Resolve default tab from slug
-        default_slug = slugify(tabs_obj.default) if tabs_obj.default else tab_slugs[0]
-        default_tab = tab_slugs.index(default_slug) if default_slug in tab_slugs else 0
+        default_tab = 0
+        if tabs_obj.default:
+            default_slug = slugify(tabs_obj.default)
+            if default_slug not in tab_slugs:
+                raise CompilationError.from_code(
+                    ERR_TAB_DEFAULT_UNKNOWN,
+                    default=tabs_obj.default,
+                    slug=default_slug,
+                    slugs=tab_slugs,
+                )
+            default_tab = tab_slugs.index(default_slug)
 
         return Layout(
             type=LayoutType.TABS,

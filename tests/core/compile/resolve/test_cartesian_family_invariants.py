@@ -651,7 +651,7 @@ class TestTopLegendFitRule:
     def test_too_many_entries_to_wrap_falls_back_to_right(self, family: str) -> None:
         """Rung 3 of the fallback ladder (RJ, 2026-08-27): once even a wrapped
         legend would sink the plot below the shared plot-height floor
-        (chart_rendering.plot_height_floor.ratio -- the same floor bar.py's
+        (PLOT_HEIGHT_FLOOR_RATIO -- the same floor bar.py's
         own starved-plot warning checks), the chart gives up on top
         placement and falls back to the family's own right-hand legend,
         same as the old single-rung rule did for every overflow.
@@ -1053,3 +1053,47 @@ class TestSortFieldMissingRaises:
             ChartDataError, match="ERR-SORT-FIELD-NOT-FOUND|nonexistent"
         ):
             resolve(chart, _SERIES_DATA, _board())
+
+
+def _board_with_legend(legend: dict[str, Any]) -> Any:
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+
+    return resolve_chart_style_context(
+        get_theme_style(),
+        StylePatch.model_validate({"charts": {"legend": legend}}),
+    )
+
+
+class TestBoardLegendSettingsApply:
+    """A board-level ``charts.legend`` value is as concrete as a chart-local one:
+    the engine's legend policies only decide what the cascade left ``auto``."""
+
+    def test_board_visible_false_hides_a_top_legend_shape(self) -> None:
+        chart = _line(layers=[LineLayer(type="line", y="target")])
+        resolved = resolve(chart, _LAYER_DATA, _board_with_legend({"visible": False}))
+        assert resolved.legend.visible is False
+
+    def test_board_visible_true_survives_the_endpoint_rail(self) -> None:
+        chart = _line(color="series")
+        resolved = resolve(chart, _SERIES_DATA, _board_with_legend({"visible": True}))
+        assert resolved.legend.visible is True
+
+    def test_board_edge_counts_as_placed(self) -> None:
+        chart = _line(color="series")
+        resolved = resolve(
+            chart,
+            _SERIES_DATA,
+            _board_with_legend({"position": {"edge": "bottom"}}),
+        )
+        assert resolved.legend.visible is True
+        assert resolved.legend.position.edge == "bottom"
+
+    def test_auto_edge_is_not_a_placement(self) -> None:
+        chart = _line(color="series")
+        resolved = resolve(
+            chart,
+            _SERIES_DATA,
+            _board_with_legend({"position": {"edge": "auto", "align": "auto"}}),
+        )
+        assert resolved.legend.visible is False
+        assert resolved.legend.position.edge == "right"

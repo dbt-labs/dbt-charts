@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from pydantic import BaseModel
 
 from dbt_charts.core.colors import BY_TONE
-from dbt_charts.core.compile.merge import merge_onto_base, merge_patches
+from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.primitives import (
     DEFAULT_REGIONAL,
     FontStyle,
@@ -34,8 +34,9 @@ from dbt_charts.core.compile.models.primitives import (
     parse_box_shadow,
 )
 from dbt_charts.core.compile.models.style.authored import (
-    ChartsStylePatch,
+    EndpointLabelsConfig,
     PaginationConfig,
+    SupportTableStylePatch,
 )
 from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedChartDefaults,
@@ -48,13 +49,20 @@ from dbt_charts.core.compile.models.style.resolved.callout import (
     ResolvedCalloutStyle,
 )
 from dbt_charts.core.compile.models.style.theme import (
+    AreaChartStyle,
+    BarChartStyle,
     CalloutChartStyle,
     ChartsStyle,
+    ChartTitleStyle,
+    HeatmapChartStyle,
+    HistogramChartStyle,
     KpiTonesStyle,
     LegendStyle,
+    LineChartStyle,
+    ScatterChartStyle,
     SparkStyle,
     Style,
-    TitleStyle,
+    SupportTableStyle,
     font_weight_as_css,
 )
 from dbt_charts.core.compile.resolve.style.fonts import (
@@ -79,8 +87,10 @@ from dbt_charts.core.compile.resolve.style.palette import color, ink_canvas, mar
 from dbt_charts.core.compile.resolve.style.tokens import (
     _EMOJI_MODE_TO_FAMILY,
     _append_emoji_family,
+    _resolve_self_tokens,
     _resolve_tokens_on_patch,
 )
+from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 from dbt_charts.core.compile.vega_lite.mapping import effective_vega_config
 from dbt_charts.core.fonts import font_is_tabular
 from dbt_charts.core.text.currencies import CurrencyCode
@@ -200,6 +210,7 @@ def _build_resolved_legend(legend: LegendStyle) -> ResolvedLegendStyle:
         direction=decide_legend_direction(legend.direction, position.edge),
         columns=legend.columns,
         compact_columns=legend.compact_columns,
+        row=legend.row,
         visible=legend.visible is not False,
         symbol_limit=legend.symbol_limit,
         values=legend.values,
@@ -214,7 +225,7 @@ def _build_resolved_legend(legend: LegendStyle) -> ResolvedLegendStyle:
         title=ResolvedLegendElementStyle(
             font=resolve_cascaded_font(legend.title.font, "charts.legend.title.font"),
             padding=legend.title.padding,
-            visible=legend.title.visible,
+            visible=None if legend.title.visible == "auto" else legend.title.visible,
         ),
     )
 
@@ -270,7 +281,7 @@ def _build_chart_style_context(
     base_background: str,
     own_background: str,
     font_family: str | None,
-    title: TitleStyle,
+    title: ChartTitleStyle,
     spark: SparkStyle,
     pagination: PaginationConfig | None,
     bold_font_weight: str,
@@ -279,7 +290,6 @@ def _build_chart_style_context(
     tones: KpiTonesStyle,
     pre_style: Style,
     cascaded: Style,
-    charts_board_overrides: ChartsStylePatch,
     card_padding: float,
     heading_sizes: list[float],
     formats: FormatTable | None = None,
@@ -314,7 +324,6 @@ def _build_chart_style_context(
         "tones",
         "pre_style",
         "cascaded",
-        "charts_board_overrides",
         "card_padding",
         "heading_sizes",
     }
@@ -393,11 +402,10 @@ def _build_chart_style_context(
     # `charts.background` above is merely the Inherit(from_path=
     # "Style.background") echo of own_background, already fully present in
     # board_canvas; compositing that echo again would double it.
-    board_canvas = ink_canvas(own_background, base_background)
-    chart_canvas = (
-        ink_canvas(charts.background, board_canvas)
-        if pre_style.charts.background is not None
-        else board_canvas
+    board_canvas, chart_canvas = _canvases(
+        own_background,
+        charts.background if pre_style.charts.background is not None else None,
+        base_background,
     )
     return ChartStyleContext(
         **passthrough,
@@ -434,7 +442,6 @@ def _build_chart_style_context(
         tones=tones,
         pre_style=pre_style,
         cascaded=cascaded,
-        charts_board_overrides=charts_board_overrides,
         card_padding=card_padding,
         heading_sizes=heading_sizes,
     )
@@ -461,7 +468,7 @@ def _links_under(paths: list[str]) -> InheritGraph:
 def merge_style(
     base: Style,
     *patches: Any,  # type-state: explicit_any — heterogeneous cascade patch fragments
-) -> tuple[Style, ChartsStylePatch]:
+) -> Style:
     """Deep-merge patches onto base.
 
     A partial write into an empty slot that inherits from a parent is merged
@@ -469,19 +476,11 @@ def merge_style(
     complete on its own.
 
     The base comes from ``get_theme_style``, which already ran
-    ``_resolve_self_tokens`` and ``_resolve_color_tokens`` at theme-load time.
-    Pre-resolving patches before the deep-merge means the merged result carries
-    only resolved hex values.
-
-    Also accumulates the boards' authored ``charts`` sub-patch and returns it
-    alongside the merged ``Style`` — distinct from ``merged.charts.*``, which
-    commingles board leaves with the theme's own values.  ``_merge_axis_cascade``
-    reads the accumulator as board layers 6-9.
+    ``_resolve_color_tokens`` at theme-load time. Pre-resolving patches before
+    the deep-merge resolves their color tokens to hex; theme-self tokens stay
+    in place for ``_resolve_canvas_tokens``.
     """
     merged: Style = base
-    # model_construct() seeds a genuinely empty patch with model_fields_set
-    # empty, exactly like merge_patches's own construction.
-    acc = ChartsStylePatch.model_construct()
     held_patches: list[BaseModel] = []
     held: list[str] = []
     for patch in patches:
@@ -497,20 +496,63 @@ def merge_style(
         held_patches.append(held_patch)
         held.extend(deferred)
         merged = merge_onto_base(merged, remainder)
-        if resolved_patch.charts is not None:
-            acc = merge_patches(acc, resolved_patch.charts, nested=False)
 
     if held:
         merged = apply_inherit(merged, _links_under(held))
         for held_patch in held_patches:
             merged = merge_onto_base(merged, held_patch)
-    return merged, acc
+    return merged
+
+
+def _canvases(
+    background: str, charts_background: str | None, base_background: str
+) -> tuple[str, str]:
+    """Return ``(board_canvas, chart_canvas)``: the page fill over its parent's
+    canvas, then an authored card fill over that. Always opaque hex."""
+    board_canvas = ink_canvas(background, base_background)
+    chart_canvas = (
+        board_canvas
+        if charts_background is None
+        else ink_canvas(charts_background, board_canvas)
+    )
+    return board_canvas, chart_canvas
+
+
+def _resolve_canvas_tokens(
+    base: Style,
+    merged: Style,
+    base_background: str,
+) -> Style:
+    """Substitute theme-self tokens in the merged Style.
+
+    Knockouts sit on the card, so the canvas is the chart canvas: a layer or
+    board that changes the page or card fill re-colors every knockout.
+    """
+    composited = _canvases(
+        merged.background, merged.charts.background, base_background
+    )[1]
+    # `ink_canvas` lowercases; re-spelling an opaque `#FFFFFF` canvas would
+    # recolor no pixel but churn every golden, so a candidate that is the
+    # canvas keeps its own spelling.
+    canvas = next(
+        (
+            c
+            for c in (
+                merged.charts.background,
+                merged.background,
+                base.background,
+                base_background,
+            )
+            if c is not None and c.lower() == composited
+        ),
+        composited,
+    )
+    return _resolve_self_tokens(merged, canvas)
 
 
 def _finalize_chart_style_context(
     cascaded: Style,
     pre_style: Style,
-    charts_board_overrides: ChartsStylePatch,
     base_background: str,
     currency: CurrencyCode | None,
 ) -> ChartStyleContext:
@@ -541,7 +583,7 @@ def _finalize_chart_style_context(
         base_background,
         cascaded.background,
         font_family=resolved_root_font.family,
-        title=cascaded.charts.title,
+        title=ChartTitleStyle.model_validate(cascaded.charts.title.model_dump()),
         spark=cascaded.charts.table.spark,
         pagination=cascaded.charts.table.pagination,
         bold_font_weight=font_weight_as_css(cascaded.text.bold.weight),
@@ -551,15 +593,81 @@ def _finalize_chart_style_context(
         pre_style=pre_style,
         cascaded=cascaded,
         formats=_format_table(cascaded, currency),
-        charts_board_overrides=charts_board_overrides,
         card_padding=cascaded.frame.card_padding,
         heading_sizes=pre_style.heading_ramp(),
     )
 
 
+@dataclasses.dataclass(frozen=True)
+class ConcreteFamilyDefaults:
+    """Board-wide family styles with the engine-decided leaves made concrete."""
+
+    support_table: SupportTableStyle
+    bar: BarChartStyle
+    line: LineChartStyle
+    area: AreaChartStyle
+    heatmap: HeatmapChartStyle
+    histogram: HistogramChartStyle
+    scatter: ScatterChartStyle
+
+
+def concrete_family_defaults(
+    chart_context: ChartStyleContext,
+) -> ConcreteFamilyDefaults:
+    """An `auto` endpoint rail is on, and an `auto` support-table ink is the
+    table's neutral color."""
+    from dbt_charts.core.compile.support_table import bake_neutral_ink  # noqa: PLC0415
+
+    def rail_on(config: EndpointLabelsConfig) -> EndpointLabelsConfig:
+        return (
+            config.model_copy(update={"visible": True})
+            if config.visible == "auto"
+            else config
+        )
+
+    def table(style: SupportTableStyle) -> SupportTableStyle:
+        return bake_neutral_ink(style)[0]
+
+    def family_table(style: SupportTableStylePatch | None) -> SupportTableStyle | None:
+        return None if style is None else table(style)
+
+    bar, line, area = chart_context.bar, chart_context.line, chart_context.area
+    heatmap, histogram = chart_context.heatmap, chart_context.histogram
+    scatter = chart_context.scatter
+    return ConcreteFamilyDefaults(
+        support_table=table(chart_context.support_table),
+        bar=bar.model_copy(
+            update={
+                "support_table": family_table(bar.support_table),
+                "endpoint_labels": rail_on(bar.endpoint_labels),
+            }
+        ),
+        line=line.model_copy(
+            update={
+                "support_table": family_table(line.support_table),
+                "endpoint_labels": rail_on(line.endpoint_labels),
+            }
+        ),
+        area=area.model_copy(
+            update={
+                "support_table": family_table(area.support_table),
+                "endpoint_labels": rail_on(area.endpoint_labels),
+            }
+        ),
+        heatmap=heatmap.model_copy(
+            update={"support_table": family_table(heatmap.support_table)}
+        ),
+        histogram=histogram.model_copy(
+            update={"support_table": family_table(histogram.support_table)}
+        ),
+        scatter=scatter.model_copy(
+            update={"support_table": family_table(scatter.support_table)}
+        ),
+    )
+
+
 def _finalize_style(
     merged: Style,
-    charts_board_overrides: ChartsStylePatch,
     base_background: str,
     currency: CurrencyCode | None,
 ) -> tuple[ResolvedStyle, ChartStyleContext]:
@@ -576,9 +684,6 @@ def _finalize_style(
     pre_style = expand_named_fonts(
         merged.model_copy(update={"fonts": registry}), registry
     )
-    charts_board_overrides = expand_named_fonts(
-        charts_board_overrides, registry, "style.charts"
-    )
     cascaded = apply_inherit(pre_style, get_inherit_graph())
     cascaded = _seed_spark_colors(cascaded)
     emoji_family = _EMOJI_MODE_TO_FAMILY.get(cascaded.font.emoji)
@@ -587,18 +692,28 @@ def _finalize_style(
     chart_context = _finalize_chart_style_context(
         cascaded,
         pre_style,
-        charts_board_overrides,
         base_background,
         currency,
     )
     # ResolvedChartDefaults is exactly ChartStyleContext minus its sparse/
     # cascade-only fields (see the class docstring) — every remaining field
     # name matches chart_context 1:1.
+    concrete = concrete_family_defaults(chart_context)
+    overridden = {"title", *(f.name for f in dataclasses.fields(concrete))}
     chart_defaults = ResolvedChartDefaults(
         **{
             f.name: getattr(chart_context, f.name)
             for f in dataclasses.fields(ResolvedChartDefaults)
-        }
+            if f.name not in overridden
+        },
+        title=concrete_title_style(chart_context),
+        support_table=concrete.support_table,
+        bar=concrete.bar,
+        line=concrete.line,
+        area=concrete.area,
+        heatmap=concrete.heatmap,
+        histogram=concrete.histogram,
+        scatter=concrete.scatter,
     )
 
     _TRANSFORMED = {"font", "emoji_mode", "vega_config", "chart_defaults", "box_shadow"}
@@ -608,10 +723,6 @@ def _finalize_style(
         if name not in _TRANSFORMED
     }
     resolved_root_font = resolve_cascaded_font(cascaded.font, "font")
-    from dbt_charts.core.compile.config import get_config
-
-    base_vl = get_config().vega.config.model_dump(by_alias=True, exclude_unset=True)
-
     resolved = ResolvedStyle(
         **passthrough,
         font=resolved_root_font,
@@ -621,7 +732,7 @@ def _finalize_style(
             if cascaded.box_shadow is None
             else parse_box_shadow(cascaded.box_shadow)
         ),
-        vega_config=effective_vega_config(base_vl, chart_context),
+        vega_config=effective_vega_config(chart_context),
         chart_defaults=chart_defaults,
     )
     return resolved, chart_context
@@ -643,7 +754,7 @@ def resolve_chart_style_context(base: Style, *patches: Any) -> ChartStyleContext
 
 def resolve_style_and_context(
     base: Style,
-    *patches: Any,  # type-state: explicit_any — heterogeneous patch types (StylePatch, ChartsStylePatch, ...) merged in sequence
+    *patches: Any,  # type-state: explicit_any — heterogeneous patch types (StylePatch, ...) merged in sequence
     base_background: str | None = None,
     currency: CurrencyCode | None = DEFAULT_REGIONAL.currency,
 ) -> tuple[ResolvedStyle, ChartStyleContext]:
@@ -671,7 +782,11 @@ def resolve_style_and_context(
     """
     background = base.background if base_background is None else base_background
     if patches:
-        return _finalize_style(*merge_style(base, *patches), background, currency)
+        return _finalize_style(
+            _resolve_canvas_tokens(base, merge_style(base, *patches), background),
+            background,
+            currency,
+        )
 
     # Reached only with base_background unset (a nested board with a cascade
     # always has own_patch), so id(base) and currency are the whole key.
@@ -680,6 +795,10 @@ def resolve_style_and_context(
     if cached is not None and cached[0] is base:
         return cached[1], cached[2]
 
-    resolved, chart_context = _finalize_style(*merge_style(base), background, currency)
+    resolved, chart_context = _finalize_style(
+        _resolve_canvas_tokens(base, merge_style(base), background),
+        background,
+        currency,
+    )
     _RESOLVED_STYLE_CACHE[cache_key] = (base, resolved, chart_context)
     return resolved, chart_context

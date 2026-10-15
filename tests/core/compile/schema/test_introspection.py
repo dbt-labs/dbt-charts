@@ -153,7 +153,7 @@ class TestPatchModelsCollected:
             "AxisTicksStylePatch",
             "AxisLabelStylePatch",
             "LegendStylePatch",
-            "TitleStylePatch",
+            "ChartTitleStylePatch",
             "TableChartStylePatch",
             "SupportTableStylePatch",
             "GlobalMarksStylePatch",

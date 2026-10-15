@@ -4,6 +4,7 @@ that paints one, verbatim; `x_label`/`y_label` and `layer.label` still win."""
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -25,12 +26,14 @@ from dbt_charts.core.render.chart.emitters._endpoint_rail import (
 )
 from dbt_charts.core.render.chart.features.structured_tooltip import (
     _cartesian_roles,
-    _pie_roles,
 )
 from dbt_charts.core.render.chart.spec import RenderBox
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
 Rows = list[dict[str, Any]]
+
+
+from ..._engine_render import render_pie_svg
 
 
 def _board(
@@ -386,18 +389,6 @@ def test_unpainted_tooltip_header_and_series_titles_use_field_labels() -> None:
     assert header[0].title == "billing MONTH"
     assert series[0].title == "customer SEG"
 
-    pie = _resolved(
-        {
-            "type": "pie",
-            "theta": "MTok_cost",
-            "color": "seg",
-            "field_labels": _SEG_LABELS,
-        },
-        _SEG_ROWS,
-    )
-    pie_header, _, _ = _pie_roles(pie)
-    assert pie_header[0].title == "customer SEG"
-
 
 def test_axis_labels_win_over_field_labels() -> None:
     spec = _spec(
@@ -502,19 +493,23 @@ def test_heatmap_multi_measure_entries_use_field_labels() -> None:
 
 
 def test_pie_legend_and_tooltip_rows_use_field_labels() -> None:
-    spec = _spec(
+    chart = _resolved(
         {
             "type": "pie",
             "theta": "MTok_cost",
             "color": "seg",
             "field_labels": _SEG_LABELS,
+            "style": {"legend": {"visible": True}},
         },
         _SEG_ROWS,
     )
-    assert _encoding(spec, "color")["title"] == "customer SEG"
-    tooltip = _tooltip_text(spec)
-    assert "cost/MTok: " in tooltip
-    assert "MTok cost" not in tooltip
+    svg = render_pie_svg(chart, _SEG_ROWS, width=chart.resolution_width)
+    assert ">customer SEG</text>" in svg
+    tooltips = re.findall(
+        r'aria-label="([^"]+)"[^>]*aria-roledescription="arc mark"', svg
+    )
+    assert tooltips
+    assert all("cost/MTok: " in t and "MTok cost" not in t for t in tooltips), tooltips
 
 
 def test_donut_total_label_uses_field_label() -> None:

@@ -83,7 +83,7 @@ def test_an_unset_regional_is_en_us_with_its_own_currency() -> None:
 def test_meta_and_board_regional_merge_field_by_field() -> None:
     meta = BoardPatch.model_validate({"regional": {"currency": "EUR"}})
     board = BoardPatch.model_validate({"regional": {"locale": {"number": "fr-FR"}}})
-    merged = merge_patches(meta, board, nested=False)
+    merged = merge_patches(meta, board)
     assert merged.regional.model_dump() == {
         "locale": {"number": "fr-FR", "time": None},
         "currency": "EUR",

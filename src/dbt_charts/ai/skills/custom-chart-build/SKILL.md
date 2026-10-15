@@ -188,10 +188,9 @@ Supported as in Jinja: `set`, `for` with `loop.index0`, `if`, `macro`,
 `list`, `length`, `sort(attribute=...)`, `map`, `selectattr`, `rejectattr`,
 `groupby`, `unique`, `max`, `min`, `sum`, `join`, `replace`, `upper`,
 `lower`, `round(n)`, `abs`, the `~` concatenation and `//` floor division.
-Integers are 128-bit, not arbitrary precision. A template renders in its own
-process: a runaway loop fails the chart on an instruction budget, more than
-256 MiB held fails it on a memory budget, 30 seconds stops it, and output is
-capped by the project's `execution.max_template_output_bytes`.
+Integers are 128-bit, not arbitrary precision. A runaway loop fails the chart
+on an instruction budget, and output is capped by the project's
+`execution.max_template_output_bytes`.
 
 ## 10. Verify
 

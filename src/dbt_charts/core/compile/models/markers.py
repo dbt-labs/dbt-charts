@@ -113,40 +113,60 @@ class Strategy(StrEnum):
     OVERRIDE = "override"
     DEEP = "deep"
     BY_KEY = "by_key"
-    APPEND = "append"
-    CHILD = "child"
 
 
 @dataclasses.dataclass(frozen=True)
 class Merge:
     """Merge strategy marker for the board-resolution engine.
 
-    Declares how a field is combined when two board fragments are merged:
-    ``file`` for file-relation merges (meta.yml, extends) and ``nested``
-    for nested-board-relation merges (child board inside rows/cols/grid/tabs).
-
-    When ``nested`` is None the file strategy is used for both relations.
-
-    Attached via ``Annotated[T, Merge(Strategy.X)]`` or
-    ``Annotated[T, Merge(Strategy.X, nested=Strategy.Y)]``.
+    Declares how a field is combined when two board fragments are merged.
+    Attached via ``Annotated[T, Merge(Strategy.X)]``; a field without one
+    infers its strategy from its type.
 
     - ``override`` — upper's explicitly-set non-None value replaces lower's.
                      When upper has not set the field, lower is preserved.
     - ``deep``     — recurse into the nested patch model.
     - ``by_key``   — dict union; upper wins per key.
-    - ``append``   — list concatenation (lower first).
-    - ``child``    — upper's value is unconditionally authoritative: lower is
-                     discarded regardless of whether upper has set the field
-                     (``getattr`` returns the model default, usually ``None``).
-                     Contrast with ``override``, which preserves lower when
-                     upper is unset.  Typically declared via
-                     ``Merge(nested=Strategy.CHILD)`` so it fires only for
-                     child-board merges (``nested=True``), not for file-relation
-                     merges (extends / meta).
     """
 
     file: Strategy
-    nested: Strategy | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class NotInherited:
+    """The field does not cross into a nested board that authors its own style.
+
+    A per-board structural or root-only concern, not thematic identity: the
+    ancestor's value is dropped before the nested board's patch merges onto it.
+    Attached via ``Annotated[T, NotInherited()]``.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class ResetOnSet:
+    """Setting ``field`` on an upper layer discards the lower layer's ``resets``.
+
+    Declared as a class-level ``merge_reset`` on a model whose ``field`` names
+    a base that the layer replaces outright, so fields the upper layer leaves
+    unset fall back to that base and not to the lower layer.
+    """
+
+    field: str
+    resets: frozenset[str]
+
+
+@dataclasses.dataclass(frozen=True)
+class Exclusive:
+    """Fields sharing a *group* are alternatives: setting one drops the others.
+
+    When an upper layer sets any member of the group to a non-None value, every
+    member of the lower layer is cleared first, so the upper layer's members
+    replace the lower layer's wholesale.
+
+    Attached via ``Annotated[T, Exclusive("layout")]``.
+    """
+
+    group: str
 
 
 @dataclasses.dataclass(frozen=True)
@@ -219,6 +239,8 @@ class Color(Facet):
     """
 
     column_ref: bool = False
+    # Placeholders this one field takes besides a color.
+    keywords: tuple[str, ...] = ()
 
     @property
     def pattern(self) -> str | None:
@@ -249,6 +271,34 @@ class Format(Facet):
     """
 
 
+# The width-following placeholder a chart title font takes on its leaves.
+AUTO = "auto"
+
+
+def _reject_auto(value: str, keywords: tuple[str, ...]) -> str:
+    if value == AUTO and AUTO not in keywords:
+        raise ValueError(f"{AUTO!r} is only valid on a chart title font")
+    return value
+
+
+@dataclasses.dataclass(frozen=True)
+class FontWeightValue(Facet):
+    """The value is a font weight; only a chart title font takes ``auto``."""
+
+    keywords: tuple[str, ...] = ()
+
+    @property
+    def pattern(self) -> str | None:
+        return None if AUTO in self.keywords else f"^(?!{AUTO}$)"
+
+    def __get_pydantic_core_schema__(
+        self,
+        source: Any,  # type-state: explicit_any — pydantic's annotation hook receives any source type
+        handler: GetCoreSchemaHandler,
+    ) -> CoreSchema:
+        return _checked(handler(source), lambda v: _reject_auto(v, self.keywords))
+
+
 @dataclasses.dataclass(frozen=True)
 class FontFamily(Facet):
     """The value names a font family or stack.
@@ -257,18 +307,30 @@ class FontFamily(Facet):
     editor can offer them — as shortcuts, never a closed set: any CSS family
     or stack stays a legal value. An entry that is not a valid CSS identifier
     is quoted; a character that could end the declaration fails validation.
+    ``keywords`` are placeholders this one field takes instead.
     """
+
+    keywords: tuple[str, ...] = ()
 
     @property
     def pattern(self) -> str | None:
-        return AUTHORED_FONT_STACK_PATTERN
+        if AUTO in self.keywords:
+            return AUTHORED_FONT_STACK_PATTERN
+        return AUTHORED_FONT_STACK_PATTERN.replace("^", f"^(?!{AUTO}$)", 1)
 
     def __get_pydantic_core_schema__(
         self,
         source: Any,  # type-state: explicit_any — pydantic's annotation hook receives any source type
         handler: GetCoreSchemaHandler,
     ) -> CoreSchema:
-        return _checked(handler(source), check_authored_font_stack)
+        return _checked(
+            handler(source),
+            lambda v: (
+                v
+                if v in self.keywords
+                else check_authored_font_stack(_reject_auto(v, self.keywords))
+            ),
+        )
 
 
 @dataclasses.dataclass(frozen=True)

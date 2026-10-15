@@ -113,7 +113,6 @@ _VL_FAMILY_IDS = [
     "area",
     "scatter",
     "heatmap",
-    "pie",
     "layered",
     "point_map",
     "bubble_map",

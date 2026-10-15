@@ -2,7 +2,7 @@
 
 ``measure_label_pane_width`` (in ``emitters/_endpoint_rail.py``) caps the rail
 at a fraction of the chart's slot
-(``chart_rendering.endpoint_labels.max_width_fraction``); Vega then ellipsizes
+(``constants.marks.ENDPOINT_LABEL_MAX_WIDTH_FRACTION``); Vega then ellipsizes
 any name wider than that at the pane's mark limit. The cut itself is silent —
 the rail just reads ``Enterprise Cloud Data Pl…`` — so this module is the seam
 that lets the warning detector see it. The measure site records at the exact

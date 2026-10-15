@@ -231,6 +231,7 @@ class TestLegendSymbolLimit:
             ResolvedLegendPosition,
             ResolvedLegendStyle,
         )
+        from dbt_charts.core.compile.models.style.theme import LegendRowStyle
         from dbt_charts.core.render.chart.vl_field_maps import legend_to_vl
 
         _font = ResolvedFontStyle(
@@ -250,6 +251,7 @@ class TestLegendSymbolLimit:
             direction="vertical",
             columns=0,
             compact_columns=2,
+            row=LegendRowStyle(swatch_width=10.0, entry_gap=16.0),
             label=_elem,
             title=_elem,
             visible=True,

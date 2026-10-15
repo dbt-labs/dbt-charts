@@ -22,10 +22,43 @@
 #[derive(Clone)]
 pub struct BandScale {
     domain: Vec<String>,
+    geometry: BandGeometry,
+}
+
+/// d3's band layout for `n` bands over a pixel range: the one place the
+/// step, bandwidth and first band's leading edge are derived.
+#[derive(Clone, Copy)]
+pub struct BandGeometry {
     step: f64,
     bandwidth: f64,
     /// Pixel position of the first band's leading edge.
     origin: f64,
+}
+
+impl BandGeometry {
+    /// `n` bands over `[range_start, range_end]` with d3-style padding fractions.
+    pub fn new(n: usize, range_start: f64, range_end: f64, padding_inner: f64, padding_outer: f64) -> Self {
+        let n = n as f64;
+        let range_w = range_end - range_start;
+        // Denominator: n − paddingInner + 2·paddingOuter, at least 1 to avoid /0.
+        let denom = (n - padding_inner + 2.0 * padding_outer).max(1.0);
+        let step = if n == 0.0 { 0.0 } else { range_w / denom };
+        BandGeometry {
+            step,
+            bandwidth: step * (1.0 - padding_inner),
+            origin: range_start + step * padding_outer,
+        }
+    }
+
+    /// Pixel position `frac` of the way across band `i` (`0` leading, `1` trailing).
+    pub fn edge(&self, i: usize, frac: f64) -> f64 {
+        self.origin + self.step * i as f64 + self.bandwidth * frac
+    }
+
+    /// Bandwidth: the pixel extent available to a mark within its band.
+    pub fn bandwidth(&self) -> f64 {
+        self.bandwidth
+    }
 }
 
 impl BandScale {
@@ -37,31 +70,22 @@ impl BandScale {
         padding_inner: f64,
         padding_outer: f64,
     ) -> Self {
-        let n = domain.len() as f64;
-        let range_w = range_end - range_start;
-        // Denominator: n − paddingInner + 2·paddingOuter, at least 1 to avoid /0.
-        let denom = (n - padding_inner + 2.0 * padding_outer).max(1.0);
-        let step = if n == 0.0 { 0.0 } else { range_w / denom };
-        let bandwidth = step * (1.0 - padding_inner);
-        let origin = range_start + step * padding_outer;
-        BandScale { domain, step, bandwidth, origin }
+        let geometry = BandGeometry::new(domain.len(), range_start, range_end, padding_inner, padding_outer);
+        BandScale { domain, geometry }
     }
 
     /// Leading-edge pixel position of the band for `value`.
     ///
     /// Returns `None` when `value` is not in the domain.
     pub fn position(&self, value: &str) -> Option<f64> {
-        self.domain
-            .iter()
-            .position(|d| d == value)
-            .map(|i| self.origin + self.step * i as f64)
+        self.domain.iter().position(|d| d == value).map(|i| self.geometry.edge(i, 0.0))
     }
 
     /// Bandwidth: the pixel extent available to a mark within its band.
     ///
     /// Equals `step × (1 − padding_inner)`.
     pub fn bandwidth(&self) -> f64 {
-        self.bandwidth
+        self.geometry.bandwidth()
     }
 }
 
@@ -136,7 +160,13 @@ pub fn d3_nice_domain(lo: f64, hi: f64, count: usize) -> (f64, f64) {
 /// (`vega.js:21556-21559`) runs `scale.nice(null)`, d3's count 10.
 pub fn authored_domain_pair(ax: &crate::common::AxisStyle, lo: f64, hi: f64) -> (f64, f64) {
     if ax.scale.get("nice").and_then(serde_json::Value::as_bool) == Some(true) {
-        d3rs::ticks::d3_nice(lo, hi, 10)
+        // d3's `nice` rounds a descending domain outward in its own order.
+        if lo > hi {
+            let (nice_hi, nice_lo) = d3rs::ticks::d3_nice(hi, lo, 10);
+            (nice_lo, nice_hi)
+        } else {
+            d3rs::ticks::d3_nice(lo, hi, 10)
+        }
     } else {
         (lo, hi)
     }
@@ -622,7 +652,7 @@ mod resolve_measure_domain_tests {
 /// Production's endpoint-rail label pane measurement, shared by the line
 /// and bar rail arms: the widest series name plus the 4px edge gap
 /// (`_endpoint_rail._LABEL_GAP_PX`), capped at a third of the chart width
-/// (default_config.yml `endpoint_labels.max_width_fraction` = 0.33).
+/// (`ENDPOINT_LABEL_MAX_WIDTH_FRACTION`).
 /// Returns `(widest_label_w, pane_w)` — line's legacy margins also read the
 /// raw widest width.
 ///
@@ -638,12 +668,11 @@ pub(crate) fn rail_pane_width(
     chart_w: f64,
 ) -> Result<(f64, f64), String> {
     const RAIL_LABEL_GAP: f64 = 4.0;
-    const RAIL_MAX_WIDTH_FRACTION: f64 = 0.33;
     let widest = series.iter().try_fold(0.0_f64, |acc, s| {
         crate::common::measure_at_css_weight(fonts, s, font_family, font_size, font_weight)
             .map(|w| acc.max(w))
     })?;
-    Ok((widest, (widest + RAIL_LABEL_GAP).min(chart_w * RAIL_MAX_WIDTH_FRACTION)))
+    Ok((widest, (widest + RAIL_LABEL_GAP).min(chart_w * crate::constants::marks::ENDPOINT_LABEL_MAX_WIDTH_FRACTION)))
 }
 
 /// Bidirectional greedy collision-avoidance over a set of rail anchors, in

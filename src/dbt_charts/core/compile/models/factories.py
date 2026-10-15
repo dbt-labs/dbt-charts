@@ -32,6 +32,8 @@ from pydantic import (
 )
 from pydantic_core import PydanticUndefinedType
 
+from dbt_charts.core.compile.models.markers import ResetOnSet
+
 FontAlias = Annotated[str, Field(description="Name of a ``style.fonts`` entry.")]
 
 
@@ -48,6 +50,26 @@ class FontSlotBase(_PatchBase):
     # False for the root font: it accepts no name and the schema offers no
     # ``extends`` on it.
     accepts_name: ClassVar[bool] = True
+
+    # A slot naming a font is that font plus its own overrides, so a lower
+    # layer's FontStyle fields do not survive; fields only a subclass declares
+    # (``compact_size``, ``emoji``) are not part of a named font and do.
+    merge_reset: ClassVar[ResetOnSet] = ResetOnSet(
+        "extends",
+        frozenset(
+            {
+                "case",
+                "color",
+                "decoration",
+                "extends",
+                "family",
+                "line_height",
+                "size",
+                "style",
+                "weight",
+            }
+        ),
+    )
 
     if TYPE_CHECKING:
         # Declared as a field by FontStyle and by every patch synthesized from it.

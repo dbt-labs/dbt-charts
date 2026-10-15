@@ -13,7 +13,6 @@ from typing import get_args
 import pytest
 
 from dbt_charts.core.compile.config import (
-    get_chart_rendering,
     get_default_theme_name,
     get_theme_style,
 )
@@ -35,6 +34,12 @@ _DATA: list[dict] = [
 
 def _board() -> ChartStyleContext:
     return resolve_chart_style_context(get_theme_style(get_default_theme_name()))
+
+
+def _theme_stacked_width() -> float:
+    width = _board().area.marks.area.stacked.stroke.width
+    assert width is not None
+    return width
 
 
 def _resolve_area(overrides: dict) -> ResolvedAreaChart:
@@ -94,14 +99,12 @@ def test_single_series_area_line_mark_differs_from_overlap_recipe():
 
 def test_single_series_area_edge_stroke_width_capped_at_theme_fallback():
     """Regression for the width-cap gate: the density-adaptive formula's
-    floor (``chart_rendering.stroke.min_width``, 1.5px) always exceeds the
+    floor (``STROKE_MIN_WIDTH``, 1.5px) always exceeds the
     stacked recipe's background-color separator width
-    (``chart_rendering.stroke.stacked_fallback_width``, 1.0px), so an
+    (the theme's ``marks.area.stacked.stroke.width``, 1.0px), so an
     uncapped bake would knock visible pixels off the top of the band on
-    every single-series area. Assert against the engine config constant --
-    the theme no longer carries a literal here (any tier, theme included,
-    may now leave it unset and let this constant apply)."""
-    stacked_fallback_width = get_chart_rendering().stroke.stacked_fallback_width
+    every single-series area."""
+    stacked_fallback_width = _theme_stacked_width()
 
     single_series = _resolve_area({})
 
@@ -212,7 +215,7 @@ def test_single_series_area_authored_stacked_stroke_width_survives_above_adaptiv
     ``marks.area.stacked.stroke.width`` is honored rather than getting
     silently capped by the adaptive formula. Pin a width comfortably above
     any adaptive value this density could produce."""
-    pinned_width = get_chart_rendering().stroke.stacked_fallback_width + 50.0
+    pinned_width = _theme_stacked_width() + 50.0
 
     authored = _resolve_area(
         {
@@ -286,3 +289,21 @@ def test_every_theme_keeps_the_stacked_recipe_halo_off(theme_name: str):
     stacked = context.area.marks.area.stacked
     assert stacked is not None
     assert stacked.halo_multiplier == 0
+
+
+@pytest.mark.parametrize(
+    "stacked",
+    [{"stroke": {"width": None}}, {"stroke": None}],
+    ids=["null-width", "null-stroke"],
+)
+def test_null_stacked_stroke_raises_coded_error(stacked: dict[str, object]) -> None:
+    with pytest.raises(CompilationError) as excinfo:
+        _resolve_area(
+            {
+                "style": AreaChartStylePatch.model_validate(
+                    {"marks": {"area": {"stacked": stacked}}}
+                )
+            }
+        )
+    assert excinfo.value.code is not None
+    assert excinfo.value.code.code == "ERR-AREA-STACKED-STROKE-INCOMPLETE"

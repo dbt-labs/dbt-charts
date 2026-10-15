@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from xml.etree import ElementTree
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.compile.config import get_chart_rendering, get_theme_style
+from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.font_measure import get_font_measurer
 
 from ._svg_render import render_board_to_svg as _render_svg
@@ -372,7 +372,7 @@ style:
         assert timestamp.attrib["y"] == footer.attrib["y"]
         assert timestamp.attrib["text-anchor"] == "end"
 
-        # The gap the config asks for is the gap that gets painted. Asserting
+        # The gap the theme asks for is the gap that gets painted. Asserting
         # only "left of the prefix" would pass with any shortfall — the brand
         # run is painted heavier than the rest, so a width re-derived at the
         # regular weight lands short (1.41px at the shipped size) and silently
@@ -383,7 +383,7 @@ style:
         # unsnapped width; anything wider than that is a real drift, and the
         # regression this guards is nearly 3x the tolerance.
         left_edge = float(prefix.attrib["x"]) - _text_width(prefix)
-        gap = get_chart_rendering().frame.footer_timestamp_gap_px
+        gap = get_theme_style().timestamp.gap
         assert abs(left_edge - float(timestamp.attrib["x"]) - gap) <= 0.5
 
     def test_svg_timestamp_footer_right_flushes_when_footer_hidden(

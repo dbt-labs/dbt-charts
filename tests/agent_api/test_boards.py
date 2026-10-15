@@ -1885,8 +1885,7 @@ class TestRequiredProjectScopedArgs:
 class TestRaiseOnDashboardFailure:
     """raise_on_dashboard_failure preserves the render domain as a RenderError.
 
-    Callers that classify a failure by exception type (looker_migrate's
-    _stage_for_exception) or catch RenderError specifically (the markdown
+    Callers that catch RenderError specifically (the markdown
     integration) rely on a render-stage fatal arriving as RenderError, not a
     flattened ValueError. Execute-domain and everything else stay ValueError so
     the markdown except tuple — which lists RenderError but not ExecutionError —

@@ -87,12 +87,6 @@ style:
         color: dbt-grays.grid-emphasis
       ticks:
         color: dbt-grays.grid-emphasis
-        # Sparse tick density on every quantitative axis: ~6 instead of VL's
-        # "as many as fit" default (~20 on a 0–4000 range). On the measure
-        # axis the renderer converts this to explicit tickValues, so the
-        # target is exact; on a quantitative axis_x it passes through as VL's
-        # advisory tickCount, which rounds to a nearby round-numbered ladder.
-        count: 6
     legend:
       label:
         font:
@@ -100,10 +94,6 @@ style:
       title:
         font:
           color: dbt-grays.heading
-      # Editorial direction: prefer direct labeling over a legend.
-      # Per-chart `legend.visible: true` still wins for charts that
-      # genuinely want a legend.
-      visible: false
     # Resets border.width / shadow.visible / swatch.radius / active_marker --
     # stark (the structural root) sets 1.5 / false / 0 / triangle for its own
     # utilitarian look; those values would otherwise leak into every descendant
@@ -151,8 +141,6 @@ style:
             extends: label
             family: *serif
     bar:
-      legend:
-        visible: true
       # Inward-align the category (row) labels on horizontal bars into the
       # measured margin. axis_x is the category axis on both orientations;
       # resolve maps inward against the axis's own edge, which is only ever
@@ -175,10 +163,10 @@ style:
           palette: sequence
     line:
       endpoint_labels:
-        visible: true
+        visible: auto
     area:
       endpoint_labels:
-        visible: true
+        visible: auto
     pie:
       total:
         value:
@@ -203,8 +191,7 @@ style:
         # mid-tone mark effectively invisible against it.
         fill: dbt-grays.grid-emphasis
     support_table:
-      font:
-        color: dbt-grays.muted
+      neutral_color: dbt-grays.muted
       label:
         font:
           color: dbt-grays.muted

@@ -27,15 +27,3 @@ def test_font_style_to_mark_omits_none_fields() -> None:
 def test_font_style_to_mark_style_reaches_fontstyle_key() -> None:
     mark = font_style_to_mark(FontStyle(style="italic"))
     assert mark["fontStyle"] == "italic"
-
-
-def test_font_style_to_mark_color_key_param_renames_color_slot() -> None:
-    mark = font_style_to_mark(FontStyle(color="#abcdef"), color_key="color")
-    assert mark == {"color": "#abcdef"}
-
-
-def test_font_style_to_mark_color_key_none_skips_color_entirely() -> None:
-    mark = font_style_to_mark(
-        FontStyle(color="#abcdef", style="italic"), color_key=None
-    )
-    assert mark == {"fontStyle": "italic"}

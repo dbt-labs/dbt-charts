@@ -8,6 +8,7 @@ from pydantic import ConfigDict, Field
 
 from dbt_charts.core.compile.models.primitives import OverlapSpec
 from dbt_charts.core.compile.models.style.resolved._marks import ResolvedBarMarkStyle
+from dbt_charts.core.compile.models.style.theme.bar import BarGroupedStyle
 
 from ._cartesian import _SeriesCartesianResolvedStyle
 
@@ -55,6 +56,9 @@ class ResolvedBarStyle(_SeriesCartesianResolvedStyle):
             "Effective value-label font size in px: mark.labels.font.size when "
             "authored, else the board's text-mark size."
         ),
+    )
+    grouped: BarGroupedStyle = Field(
+        description="Band-scale padding applied to grouped bars."
     )
     total_label_is_house: bool = Field(
         default=False,

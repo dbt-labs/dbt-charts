@@ -56,7 +56,11 @@ from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
     facet_panel_width,
     panel_axis_cardinality,
 )
+from dbt_charts.core.compile.resolve.chart.label_data import (
+    pie_presentation_fingerprint,
+)
 from dbt_charts.core.diagnostics import (
+    ERR_RESOLVED_PIE_DATA_MISMATCH,
     ERR_RESOLVED_PIE_WIDTH_MISMATCH,
     ERR_VEGA_LITE_UNSUPPORTED_TYPE,
 )
@@ -94,11 +98,7 @@ def _render_vl_artifact(
     padding: dict[str, int | float] | None,
     title_shift: TitleShift = NO_TITLE_SHIFT,
 ) -> RenderArtifact:
-    """VL emit path without the arc attached-table dispatch.
-
-    Called by render_resolved_chart (after the dispatch check) and by
-    _render_arc_attached_table (to render the donut without recursing into
-    the dispatch again).
+    """VL emit path, called by render_resolved_chart and generate_vega_lite_spec.
 
     ``width`` is always concrete here — every caller resolves a caller-omitted
     width to a real number (authored width, or the theme default) before
@@ -126,7 +126,7 @@ def _render_vl_artifact(
         return RenderArtifact(kind="svg", payload=svg)
     # render_svg_family only returns None for the VL families, all of which
     # are _SharedResolvedChartFields subclasses (KPI/callout/table/spark_bar/
-    # custom return svg above) — title_style is guaranteed present below.
+    # custom/pie return svg above) — title_style is guaranteed present below.
     assert isinstance(resolved, _SharedResolvedChartFields)
 
     # Small multiples: every geometry decision an emitter makes (label
@@ -470,7 +470,7 @@ def _stamp_legend_align_sentinel(
     edge's cardinal or corner and ``render_vega_spec`` slides it along that edge
     (``converters/legend_align.py``).
     """
-    if not isinstance(resolved, (_CartesianResolvedChartFields, ResolvedPieChart)):
+    if not isinstance(resolved, _CartesianResolvedChartFields):
         return
     legend = resolved.legend
     align = legend.position.align
@@ -497,8 +497,7 @@ def _stamp_value_label_layer_sentinel(
     and emitters/_overlay.py's own layer-label builder via the same
     ``text_layer_spec`` helper) on a flat text ChartSpec that IS one mark's
     own value -- never on a nested "layered" sub-spec (an overlay's own
-    halo/fg/hover trio) or any of pie.py's text layers (center total, outside
-    labels), which never set the flag. translate.py numbers a flat layer
+    halo/fg/hover trio), which never sets the flag. translate.py numbers a flat layer
     array by plain array position, and vl_convert's SVG serializer names a
     layer's mark group by that same position (``layer_N_marks``) -- so the
     mapping is exact array arithmetic, not a scenegraph probe like
@@ -559,109 +558,6 @@ def _apply_facet_layout(
     vl["$df_facet_panel_rows"] = panel_rows
 
 
-def _render_arc_attached_table(
-    chart: ResolvedPieChart,
-    data: list[dict[str, Any]],
-    resolved_style: ResolvedStyle,
-    *,
-    padding: dict[str, int | float] | None,
-) -> RenderArtifact:
-    """Render and compose the finalized pie and companion table children."""
-    from dbt_charts.core.render.chart.arc_attached_table import (
-        compose_attached_table_svg,
-        heading_block_height,
-    )
-    from dbt_charts.core.render.chart.emitters.pie import prepare_pie_render_rows
-    from dbt_charts.core.render.chart.spec_builders import (
-        bump_padding_top,
-        shift_artifact_title,
-    )
-    from dbt_charts.core.render.engine import render_native
-    from dbt_charts.core.render.svg_utils import extract_svg_dimensions
-    from dbt_charts.core.render.title_band import vega_title_block_height
-
-    assert chart.attached_table is not None
-    assert chart.attached_table_placement != "none"
-    assert chart.attached_heading_font is not None
-    table_svg, _ = render_native(
-        chart.attached_table,
-        prepare_pie_render_rows(chart, data)[1],
-        width=chart.attached_table_width,
-        height=0.0,
-        padding=None,
-        board_style=resolved_style,
-    )
-    table_dims = extract_svg_dimensions(table_svg)
-    top_table_y = 0.0
-    padding_top = float(padding["top"]) if padding else 0.0
-    donut_artifact = _render_vl_artifact(
-        chart,
-        data,
-        resolved_style,
-        width=chart.wheel_width,
-        height=None,
-        is_placeholder=False,
-        datasets=None,
-        padding=padding,
-    )
-    if chart.attached_table_placement == "top":
-        # The table sits between the title and the wheel, so the wheel's plot is
-        # pushed down by the table's height (heading included) and its gap.
-        table_height = table_dims.height + (
-            heading_block_height(
-                chart.attached_heading_font.size, chart.hybrid_heading_gap
-            )
-            if chart.attached_heading
-            else 0.0
-        )
-        room = table_height + chart.attached_table_gap
-        assert isinstance(donut_artifact.payload, dict)
-        # `autosize: fit` holds the whole view to its height, so the room is
-        # added to that height or it would come out of the wheel instead.
-        payload = donut_artifact.payload
-        base_height = payload.get(  # type-state: silent_fallback — an unsized pie spec takes the theme's view height
-            "height", resolved_style.chart_defaults.view.continuous_height
-        )
-        payload["height"] = base_height + room
-        if chart.title:
-            shift_artifact_title(donut_artifact, TitleShift(body_dy=room))
-            top_table_y = padding_top + vega_title_block_height(chart)
-        else:
-            bump_padding_top(donut_artifact.payload, room)
-            top_table_y = padding_top
-    donut_svg = render_chart_artifact(
-        donut_artifact,
-        "svg",
-        resolved_style,
-        width=chart.wheel_width,
-        height=None,
-        chart_id=chart.id,
-    )
-    donut_dims = extract_svg_dimensions(donut_svg)
-    composed, _w, _h = compose_attached_table_svg(
-        donut_svg=donut_svg,
-        table_svg=table_svg,
-        donut_width=donut_dims.width,
-        donut_height=donut_dims.height,
-        table_width=table_dims.width,
-        table_height=table_dims.height,
-        card_width=chart.resolution_width,
-        placement=chart.attached_table_placement,
-        heading=chart.attached_heading,
-        heading_font_family=chart.attached_heading_font.family,
-        heading_font_size=chart.attached_heading_font.size,
-        heading_font_weight=str(chart.attached_heading_font.weight),
-        heading_color=chart.attached_heading_font.color,
-        gap=chart.attached_table_gap,
-        heading_gap=chart.hybrid_heading_gap,
-        top_table_y=top_table_y,
-        align=chart.attached_table_align,
-        inset_left=float(padding["left"]) if padding else 0.0,
-        inset_right=float(padding["right"]) if padding else 0.0,
-    )
-    return RenderArtifact(kind="svg", payload=composed)
-
-
 def render_resolved_chart(
     resolved: ResolvedChart,
     render_data: ChartRenderData,
@@ -683,11 +579,11 @@ def render_resolved_chart(
     Wave 1's render_svg_family dispatch + VL emit_chart→finalize_vl→
     hconcat/padding/title-overflow post-processing live here.
 
-    ``title_shift`` moves the hand-drawn families' titles (table, spark_bar). A
-    Vega-Lite spec is left for the caller to
-    shift with ``shift_artifact_title``, after any title-offset calibration.
+    ``title_shift`` moves the engine-drawn families' titles (table, spark_bar,
+    pie). A Vega-Lite spec is left for the caller to shift with
+    ``shift_artifact_title``, after any title-offset calibration.
 
-    Resolved pies carry the width used to finalize their data-aware layout;
+    A pie renders at the width its data-aware layout was resolved for;
     omission reuses it and a conflicting explicit width is rejected. Other
     families retain the theme-family fallback for callers without a slot.
     """
@@ -699,14 +595,16 @@ def render_resolved_chart(
                 resolved_width=resolved.resolution_width,
                 render_width=width,
             )
-        resolved_width = resolved.resolution_width
-        if resolved.attached_table is not None:
-            return _render_arc_attached_table(
-                resolved,
-                render_data,
-                resolved_style,
-                padding=padding,
+        # Labels, label ink and the attached table's rows were frozen against
+        # the rows the pie resolved with.
+        if (
+            pie_presentation_fingerprint(render_data)
+            != resolved.presentation_fingerprint
+        ):
+            raise RenderError.from_code(
+                ERR_RESOLVED_PIE_DATA_MISMATCH, chart_id=resolved.id
             )
+        resolved_width = resolved.resolution_width
     else:
         from dbt_charts.core.compile.resolve import default_chart_width
 
@@ -861,12 +759,12 @@ def generate_vega_lite_spec(
     resolved = resolve(
         chart, data, chart_style_context=context, width=width, display_text="raw"
     )
+    if isinstance(resolved, ResolvedPieChart):
+        raise RenderError.from_code(
+            ERR_VEGA_LITE_UNSUPPORTED_TYPE, chart_type=chart.type
+        )
     resolved_width = (
-        resolved.resolution_width
-        if isinstance(resolved, ResolvedPieChart)
-        else width
-        if width is not None
-        else preferred_chart_width(chart, context)
+        width if width is not None else preferred_chart_width(chart, context)
     )
     # The resolved chart already carries its final chart-local presentation
     # values (background, title_style) baked in at resolve() — no second

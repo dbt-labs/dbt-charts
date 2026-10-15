@@ -73,26 +73,21 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedBarChart,
     ResolvedLineChart,
 )
-from dbt_charts.core.compile.resolve.chart._chart_rows import regroup, restripe
 from dbt_charts.core.diagnostics import (
     WARN_LOCAL_TIME_LABEL_EXPR_ON_BUCKETED_AXIS,
     Diagnostic,
 )
-from dbt_charts.core.render.chart.emitters._channels import (
-    gap_fill_ordinal_time_per_panel,
-)
-from dbt_charts.core.render.chart.step_band import BAND_STEP_CURVE
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart.time_unit_detect import (
     BUCKETED_CALENDAR_UNITS,
     _ordinal_bucket_key,
     detect_time_unit,
-    normalize_labeled_temporal,
 )
 from dbt_charts.core.render.chart.type_inference import (
     _ISO_UTC_SAFE_RE,
-    resolve_cartesian_x_type,
 )
 from dbt_charts.core.render.warnings.base import WarningContext
+from dbt_charts.core.render.warnings.x_axis import emitted_x_axis
 
 # Bare local-time accessors that read datum.value in host local time; their
 # utc-prefixed siblings (utcFormat/utcyear/utcmonth/utcdate/utcquarter/...) share
@@ -119,35 +114,13 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
     warnings: list[Diagnostic] = []
 
     for chart_id, chart in ctx.board_spec.charts.items():
-        if isinstance(chart, ResolvedBarChart):
-            if chart.chart_type == "histogram":
-                # Histogram emits quantitative-binned x (no timeUnit transform,
-                # no calendar bucketing) -- calendar-grain warnings never apply.
-                continue
-            mark_type = "bar"
-            is_band_step = False
-            resolves_cartesian_x = chart.orientation != "horizontal"
-        elif isinstance(chart, ResolvedLineChart):
-            mark_type = "line"
-            # Multi-metric (wide) line (_emit_folded_line, line.py) calls
-            # resolve_cartesian_x() without curve → is_band_step=False for that
-            # path. Mirror that: curve is irrelevant for multi-metric resolution.
-            is_band_step = (
-                False
-                if chart.wide_measures
-                else chart.style.line_mark.curve == BAND_STEP_CURVE
-            )
-            resolves_cartesian_x = True
-        elif isinstance(chart, ResolvedAreaChart):
-            mark_type = "area"
-            # Same for multi-metric (wide) area (_emit_multi_metric_area, area.py).
-            is_band_step = (
-                False
-                if chart.wide_measures
-                else chart.style.area_mark.curve == BAND_STEP_CURVE
-            )
-            resolves_cartesian_x = True
-        else:
+        if not isinstance(
+            chart, ResolvedBarChart | ResolvedLineChart | ResolvedAreaChart
+        ):
+            continue
+        if chart.chart_type == "histogram":
+            # Histogram emits quantitative-binned x (no timeUnit transform,
+            # no calendar bucketing) -- calendar-grain warnings never apply.
             continue
         if chart.x is None:
             continue
@@ -165,63 +138,32 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         if chart_id not in ctx.chart_results:
             continue
 
-        # Mirror each family's preprocessing pipeline exactly. ValueError from
-        # normalize_labeled_temporal (mixed label formats) or
-        # resolve_cartesian_x_type (≥10% unparseable values) means the x field
-        # isn't a date column -- skip this chart without dropping others.
+        # The chart's x pipeline failed (not a date column, or rows that don't
+        # regroup): skip this chart without dropping others.
         try:
-            rows = ctx.chart_results[chart_id]
-            normalized = normalize_labeled_temporal(rows, chart.x)
-            dataset = regroup(chart.panel_axes, rows)
-            mutated_dataset = (
-                restripe(dataset, normalized) if normalized is not rows else dataset
-            )
-            filled, _ = gap_fill_ordinal_time_per_panel(
-                chart.style.axis_x,
-                chart.x,
-                chart.color,
-                mutated_dataset,
-                mark_type,
-                is_band_step,
-                resolves_cartesian_x,
-                chart.x_date_range,
-            )
-            pipeline_rows = filled if filled is not None else normalized
-            vl_type, _, detected_tu = resolve_cartesian_x_type(
-                pipeline_rows,
-                chart.x,
-                chart.style.axis_x,
-                mark_type,
-                is_band_step,
-                tuple(axis.field for axis in chart.panel_axes),
-            )
-            if (
-                detected_tu is None
-                and vl_type == "temporal"
-                and chart.style.axis_x.time_unit is None
-            ):
-                # The scaffold-budget gate drops an over-budget fine grain when
-                # it flips a bar onto a continuous temporal scale. The hazard
-                # this detector exists for belongs to the DOMAIN — date-only
-                # ISO values a bare accessor coerces through local time — not
-                # to whether the axis bands, so recover the detected grain
-                # instead of reading the drop as "not a calendar axis". Without
-                # this, promoting a chart onto the continuous lane silently
-                # disarms the warning on exactly the charts it was written for.
-                # Scoped to a temporal vl_type — the gate's own signature — so
-                # a column that merely samples as nominal in
-                # infer_vega_type_from_data's first 10 rows does not gain a
-                # warning main never raised.
+            axis = emitted_x_axis(chart, ctx.chart_results[chart_id])
+        except (ValueError, ChartDataError):
+            continue
+        vl_type, detected_tu, pipeline_rows = axis.vl_type, axis.time_unit, axis.rows
+        if (
+            detected_tu is None
+            and vl_type == "temporal"
+            and chart.style.axis_x.time_unit is None
+        ):
+            # The scaffold-budget gate drops an over-budget grain when it flips a
+            # bar onto a continuous time scale; the hazard is in the domain's
+            # date-only ISO values, not in whether the axis bands, so recover it.
+            try:
                 detected_tu = detect_time_unit(
                     [row.get(chart.x) for row in pipeline_rows if chart.x in row]
                 )
-        except ValueError:
-            continue
+            except ValueError:
+                continue
         if detected_tu is None or detected_tu not in BUCKETED_CALENDAR_UNITS:
             continue
         # Horizontal bar never emits a temporal x encoding (no timeUnit transform).
         # datum.value is always a raw ISO string. The bar density gate returns
-        # "temporal" above max_ordinal_buckets, which would fire a false positive on
+        # "temporal" above MAX_ORDINAL_BUCKETS, which would fire a false positive on
         # bare timeFormat without toDate -- force ordinal so the toDate check below
         # is the only hazard gate.
         # Wide vertical bar is NOT overridden: _emit_vertical resolves x with the

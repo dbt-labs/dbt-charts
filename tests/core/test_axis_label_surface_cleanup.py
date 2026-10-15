@@ -269,7 +269,7 @@ class TestThemeDefaultsOverlapAndSeparation:
 
         ctx = resolve_chart_style_context(get_theme_style())
         emitted = resolved_axis_style(
-            ctx, "axis_x", "ordinal", chart_type="", label_authored=False
+            ctx, "axis_x", "ordinal", chart_type="", labeled=False
         )
         assert emitted.labels.min_gap is not None
 
@@ -348,7 +348,7 @@ class TestThemeOverrideHonored:
         ctx = resolve_chart_style_context(patched)
         # The authored struct must survive the cascade to the emitted style.
         emitted = resolved_axis_style(
-            ctx, "axis_x", "ordinal", chart_type="", label_authored=False
+            ctx, "axis_x", "ordinal", chart_type="", labeled=False
         )
         assert isinstance(emitted.labels.overlap, ResolvedAxisLabelOverlapConfig)
         assert emitted.labels.overlap.tilt is False

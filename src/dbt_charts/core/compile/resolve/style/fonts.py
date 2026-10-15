@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from dbt_charts.core.colors import is_unknown_color_name
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.primitives import NamedFont, SingleLineFontStyle
+from dbt_charts.core.compile.models.style.theme.board import ChartTitleFontStyle
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_COLOR_TOKEN,
     ERR_FONT_REGISTRY,
@@ -96,13 +97,14 @@ def expand_named_fonts(
 
     ``path`` is the dotted authored location of ``node``, used in errors.
     """
-    if isinstance(node, SingleLineFontStyle):
+    node_cls = type(node)
+    if isinstance(node, (SingleLineFontStyle, ChartTitleFontStyle)):
         if node.extends is None:
             return node
         _check_known(node.extends, registry, path)
         entry = registry[node.extends]
         # A single-line slot has no leading, so a registry font's is dropped.
-        slot_fields = type(node).model_fields
+        slot_fields = node_cls.model_fields
         fields = {
             **{
                 k: v
@@ -113,7 +115,7 @@ def expand_named_fonts(
             },
             **node.model_dump(exclude_unset=True, exclude=set(_REGISTRY_ONLY)),
         }
-        return type(node).model_validate(fields)
+        return node_cls.model_validate(fields)
     updates: dict[str, object] = {}  # type-state: object_annotation — field values
     for name, value in node:
         new = _expand_value(value, registry, f"{path}.{name}")
@@ -144,7 +146,9 @@ def _slot_graph() -> Mapping[str, str]:
     return build_slot_graph(Style)
 
 
-def _slot_at(style: BaseModel, path: str) -> SingleLineFontStyle | None:
+def _slot_at(
+    style: BaseModel, path: str
+) -> SingleLineFontStyle | ChartTitleFontStyle | None:
     node: object = style  # type-state: object_annotation — a walk down model attributes
     for segment in path.split("."):
         node = getattr(
@@ -152,7 +156,9 @@ def _slot_at(style: BaseModel, path: str) -> SingleLineFontStyle | None:
         )  # type-state: silent_fallback — a path off the model has no slot
         if node is None:
             return None
-    return node if isinstance(node, SingleLineFontStyle) else None
+    return (
+        node if isinstance(node, (SingleLineFontStyle, ChartTitleFontStyle)) else None
+    )
 
 
 def inherited_font_name(

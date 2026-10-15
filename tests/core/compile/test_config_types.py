@@ -16,7 +16,6 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.models.config import (
     PUBLISHED_TO_FORM,
-    ChartRenderingConfig,
     CloudConfig,
     Config,
     ConfigNode,
@@ -25,8 +24,6 @@ from dbt_charts.core.compile.models.config import (
     as_plain_mapping,
     is_mapping_like,
 )
-
-ColorVariantsConfig = ChartRenderingConfig.ColorVariantsConfig
 
 
 @pytest.fixture(autouse=True)
@@ -270,110 +267,10 @@ def test_default_config_yaml_is_valid_settings():
     assert data is not None
     assert "style" not in data, "style: must not appear in default_config.yml"
     assert "theme" not in data, "theme: must not appear in default_config.yml"
-    assert data.get("vega", {}).get("default_theme") is None, (
-        "vega.default_theme must not appear in default_config.yml"
-    )
-    assert data.get("vega", {}).get("default_palette") is None, (
-        "vega.default_palette must not appear in default_config.yml"
-    )
+    assert "vega" not in data, "vega: must not appear in default_config.yml"
     # Verify Settings.model_validate accepts the merged defaults stack
     settings = get_config()
     Config.model_validate(settings.to_plain_dict(exclude_none=False))
-
-
-def test_chart_rendering_is_typed_config() -> None:
-    """chart_rendering must be a typed ChartRenderingConfig, not a bare ConfigNode."""
-    config = get_config()
-    assert isinstance(config.chart_rendering, ChartRenderingConfig)
-
-
-def test_chart_rendering_pie_defaults() -> None:
-    cr = get_config().chart_rendering
-    assert cr.pie.wedge_label_min_share == 0.08
-    assert cr.pie.invisible_slice_share == 0.02
-    assert cr.pie.wheel_dominance_min_ratio == 0.6
-    assert cr.pie.right_placement_min_width_fraction == 0.5
-    assert cr.pie.right_placement_min_width_px == 280.0
-    assert cr.pie.right_placement_max_wheel_px == 480.0
-
-
-def test_chart_rendering_bar_defaults() -> None:
-    cr = get_config().chart_rendering
-    assert cr.bar.grouped_bar_padding_inner == 0.2
-    assert cr.bar.grouped_bar_padding_outer == 0.2
-
-
-def test_chart_rendering_type_inference_defaults() -> None:
-    cr = get_config().chart_rendering
-    assert cr.type_inference.max_ordinal_buckets == 60
-
-
-def test_chart_rendering_frame_defaults() -> None:
-    cr = get_config().chart_rendering
-    assert cr.frame.footer_rule_gap_px == 2
-    assert cr.frame.footer_timestamp_gap_px == 12
-
-
-def test_chart_rendering_support_table_defaults() -> None:
-    cr = get_config().chart_rendering
-    assert cr.support_table.divider_gap == 4.0
-    assert cr.support_table.chart_support_table_max_x_ticks == 40
-
-
-def test_chart_rendering_color_variants_defaults() -> None:
-    """The seed block beside hover_emphasis, exactly the fitted constants."""
-    cv = get_config().chart_rendering.color_variants
-    assert isinstance(cv, ColorVariantsConfig)
-    assert cv.light_k == 0.30
-    assert cv.light_chroma == 0.60
-    assert cv.light_min_gap == 0.03
-    assert cv.light_pale_gap == 0.03
-    assert cv.dark_pole == 0.20
-    assert cv.dark_k == 0.30
-    assert cv.pale_l == 0.86
-    assert cv.pale_chroma == 0.32
-    assert cv.deep_pole == 0.28
-    assert cv.deep_k == 0.85
-    assert cv.label_ink_min_contrast == 4.5
-
-
-def test_chart_rendering_color_variants_is_frozen_and_hashable() -> None:
-    """frozen=True makes it hashable, so a cache keyed on it needs no invalidation."""
-    cv = get_config().chart_rendering.color_variants
-    assert hash(cv) is not None
-    with pytest.raises(ValidationError):
-        cv.dark_k = 0.9
-
-
-def test_chart_rendering_color_variants_override_is_readable(
-    tmp_path: object, local_project: Callable[..., FilesystemProject]
-) -> None:
-    """Overriding one constant in dbt_charts.yml must take effect and leave the rest default."""
-    import pathlib
-
-    path = pathlib.Path(str(tmp_path))
-    (path / "dbt_charts.yml").write_text(
-        "chart_rendering:\n  color_variants:\n    dark_k: 0.6\n"
-    )
-    load_config(local_project(path))
-    cv = get_config().chart_rendering.color_variants
-    assert cv.dark_k == 0.6
-    assert cv.light_k == 0.30
-
-
-def test_chart_rendering_color_variants_rejects_an_out_of_range_value(
-    tmp_path: object, local_project: Callable[..., FilesystemProject]
-) -> None:
-    """dark_k is a move fraction, bounded to (0, 1] -- a project value outside
-    that range must raise at load, not silently clamp or pass through."""
-    import pathlib
-
-    path = pathlib.Path(str(tmp_path))
-    (path / "dbt_charts.yml").write_text(
-        "chart_rendering:\n  color_variants:\n    dark_k: 1.5\n"
-    )
-    with pytest.raises(ValidationError, match="dark_k"):
-        load_config(local_project(path))
 
 
 def test_inspector_is_typed_config() -> None:
@@ -393,17 +290,3 @@ def test_inspector_tree_max_depth_override(
     (path / "dbt_charts.yml").write_text("inspector:\n  tree_max_depth: 2\n")
     load_config(local_project(path))
     assert get_config().inspector.tree_max_depth == 2
-
-
-def test_chart_rendering_frame_override_is_readable(
-    tmp_path: object, local_project: Callable[..., FilesystemProject]
-) -> None:
-    """A partial frame override must merge with defaults; only the overridden key changes."""
-    import pathlib
-
-    path = pathlib.Path(str(tmp_path))
-    (path / "dbt_charts.yml").write_text(
-        "chart_rendering:\n  frame:\n    footer_timestamp_gap_px: 99\n"
-    )
-    load_config(local_project(path))
-    assert get_config().chart_rendering.frame.footer_timestamp_gap_px == 99

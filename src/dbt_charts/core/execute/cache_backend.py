@@ -196,11 +196,9 @@ class QueryResultCache(Protocol):
         lossy on its own (e.g. JSON, which has no date/datetime/Decimal
         type, or DuckDB's fixed-precision DECIMAL): such a backend must carry
         enough metadata alongside the rows to restore the original type on
-        read. See ``PostgresResultCache`` for the reference implementation
-        (a per-column type tag stored beside the rows) and
-        ``TrivialDuckDBCache`` (a sidecar VARCHAR column for uniformly-
-        Decimal columns, since DuckDB's DECIMAL is too narrow for some
-        warehouse NUMERIC precisions). A column that mixes types — including
+        read. ``PostgresResultCache`` and ``TrivialDuckDBCache`` both store
+        rows as JSON with a per-column type tag beside them. A column that
+        mixes types — including
         mixing ``date`` and ``datetime`` in the same column — is NOT
         promised exact fidelity: its values pass through in whatever form
         the backend's own storage naturally holds (e.g. an ISO string),
@@ -218,11 +216,9 @@ class QueryResultCache(Protocol):
         object keys, and most key-value stores promise nothing — must either
         store in a form that does, or record the column list alongside the rows
         and rebuild each row from it on read, the same way the type map above is
-        carried. ``TrivialDuckDBCache`` gets column order from its result
-        table's own declared columns, but derives those columns from the first
-        row alone — so it honors this only when every row in one ``put()``
-        shares a key set, and a heterogeneous batch loses keys the first row
-        lacked.
+        carried. ``TrivialDuckDBCache`` stores each row as a JSON object, which
+        keeps its key order, so rows that do not share a key set come back with
+        their own keys.
 
         Callers of ``get()`` (the executor's incremental-tail watermark
         computation, in particular) trust this and do not guess a value's

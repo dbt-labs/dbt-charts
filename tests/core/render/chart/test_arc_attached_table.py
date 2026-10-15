@@ -4,26 +4,25 @@ Three-mode decision rule (wheel-dominance; locked with RJ — see decision D-03
 of the wheel-first-pie-donut-labeling initiative):
 
 - Empty shares: "direct" (placeholder path handled elsewhere).
-- No slice clears ``chart_rendering.pie.wedge_label_min_share`` (8%): "full_table"
+- No slice clears ``WEDGE_LABEL_MIN_SHARE`` (8%): "full_table"
   (nothing would render a direct label anyway).
-- Dominance ratio below ``chart_rendering.pie.wheel_dominance_min_ratio`` (0.6):
+- Dominance ratio below ``WHEEL_DOMINANCE_MIN_RATIO`` (0.6):
   "full_table" (labels would starve the wheel).
 - Otherwise (dominant): "hybrid" when any slice is below
-  ``chart_rendering.pie.invisible_slice_share`` (2%) — the wheel keeps its direct
+  ``INVISIBLE_SLICE_SHARE`` (2%) — the wheel keeps its direct
   labels and a table lists every unlabeled (<= 8%) slice; else "direct" — wheel
   labels only, no table.
 """
 
 from __future__ import annotations
 
-import importlib
 import re
 import xml.etree.ElementTree as ET
-from types import SimpleNamespace
 
 import pytest
 
-from dbt_charts.core.compile.config import get_chart_rendering, get_theme_style
+from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.models.chart.normalized import PieChart
 from dbt_charts.core.compile.models.primitives import (
     FormatConfig,
     StaticGradientColorStyle,
@@ -38,15 +37,23 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style_and_context,
 )
-from dbt_charts.core.render.chart.arc_attached_table import (
-    compose_attached_table_svg,
+from dbt_charts.core.constants.pie import (
+    ATTACHED_TABLE_GAP_PX,
+    INVISIBLE_SLICE_SHARE,
+    RIGHT_PLACEMENT_MAX_WHEEL_PX,
+    RIGHT_PLACEMENT_MIN_WIDTH_FRACTION,
+    RIGHT_PLACEMENT_MIN_WIDTH_PX,
+    WEDGE_LABEL_MIN_SHARE,
+    WHEEL_DOMINANCE_MIN_RATIO,
 )
 from dbt_charts.core.render.chart.vega_lite import render_chart, render_resolved_chart
 from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.svg_utils import escape_attr
 
+from ..._engine_render import render_pie_svg
+
 _SVG_NS = "{http://www.w3.org/2000/svg}"
-_PIE_GAP = get_chart_rendering().pie.attached_table_gap_px
+_PIE_GAP = ATTACHED_TABLE_GAP_PX
 
 
 def _donut_and_table_texts(svg: str) -> tuple[str, str]:
@@ -58,10 +65,8 @@ def _donut_and_table_texts(svg: str) -> tuple[str, str]:
     donut_group, table_group = root.findall(f"{_SVG_NS}g")
 
     def _joined(group: ET.Element) -> str:
-        inner = group.find(f"{_SVG_NS}svg")
-        assert inner is not None
         return "".join(
-            "".join(t.itertext()) for t in inner.findall(f".//{_SVG_NS}text")
+            "".join(t.itertext()) for t in group.findall(f".//{_SVG_NS}text")
         )
 
     return _joined(donut_group), _joined(table_group)
@@ -85,7 +90,7 @@ def _default_label_style() -> tuple[str, float, float]:
 def _labeled_lines(shares: list[float], names: list[str]) -> list[str]:
     """Build one label line per visible (share above wedge_label_min_share) slice,
     mirroring the "{pct}% {name}" default template shape."""
-    threshold = get_chart_rendering().pie.wedge_label_min_share
+    threshold = WEDGE_LABEL_MIN_SHARE
     return [
         f"{round(s * 100)}% {n}"
         for s, n in zip(shares, names, strict=True)
@@ -191,17 +196,17 @@ def test_wider_width_same_data_is_direct():
 def test_wedge_threshold_config_is_eight_percent() -> None:
     """Pin the config default so accidental edits to the threshold show up
     here. The number is a design call, not a theme value."""
-    assert get_chart_rendering().pie.wedge_label_min_share == 0.08
+    assert WEDGE_LABEL_MIN_SHARE == 0.08
 
 
 def test_invisible_slice_threshold_config_is_two_percent() -> None:
     """Pin the physical-visibility fallback separately from label suppression."""
-    assert get_chart_rendering().pie.invisible_slice_share == 0.02
+    assert INVISIBLE_SLICE_SHARE == 0.02
 
 
 def test_wheel_dominance_min_ratio_config_is_point_six() -> None:
     """Pin T=0.6, locked with RJ against the calibration sweep."""
-    assert get_chart_rendering().pie.wheel_dominance_min_ratio == 0.6
+    assert WHEEL_DOMINANCE_MIN_RATIO == 0.6
 
 
 def test_threshold_boundary_is_strictly_greater():
@@ -293,23 +298,12 @@ def test_arc_resolution_suppresses_label_rows_below_threshold(make_chart):
     resolved = resolve(chart, data, chart_style_context=ctx, width=415.0)
     assert resolved.slice_label_indices == (0, 1, 2)
     artifact = render_resolved_chart(resolved, data, rs, width=415.0, height=415.0)
-    assert artifact.kind == "vega_spec"
-    spec = artifact.payload
-
-    # Label layer is the one with mark.type == 'text'. There may be
-    # multiple text layers (center total, etc.); find the per-wedge one
-    # whose text encoding reads the per-row label field.
-    label_layers = [
-        layer
-        for layer in spec.get("layer", [])
-        if isinstance(layer.get("mark"), dict)
-        and layer["mark"].get("type") == "text"
-        and layer.get("encoding", {}).get("text", {}).get("field") == "__dbt_label"
-    ]
-    assert label_layers, "Expected a per-wedge label layer with text field __dbt_label"
-    transforms = label_layers[0].get("transform", [])
-    filters = [t.get("filter") for t in transforms if "filter" in t]
-    assert filters == ["datum.__dbt_label != null"]
+    assert isinstance(artifact.payload, str)
+    painted = re.findall(
+        r'aria-roledescription="text mark"><tspan[^>]*>([^<]*)</tspan>',
+        artifact.payload,
+    )
+    assert painted == ["Big", "Med", "Small1"]
 
 
 # --------------------------------------------------------------------------
@@ -358,14 +352,12 @@ def test_composed_render_wedge_paint_matches_swatch_paint(make_chart):
     # emits arcs in the spec's data order when the ``order`` encoding
     # pins it. Each arc layer's first <path> fill is wedge 0, next is
     # wedge 1, etc.
-    arc_block_match = re.search(
-        r'<g[^>]*\bclass="mark-arc role-mark[^"]*"[^>]*>(.*?)</g>', svg, re.DOTALL
-    )
-    assert arc_block_match, "Expected an arc mark-group in the donut SVG"
-    arc_block = arc_block_match.group(1)
     wedge_fills_in_draw_order = [
-        m.group(1).lower()
-        for m in re.finditer(r'<path[^>]*\bfill="(#[a-fA-F0-9]+)"', arc_block)
+        fill.lower()
+        for fill in re.findall(
+            r'<path [^>]*fill="(#[a-fA-F0-9]+)"[^>]*aria-roledescription="arc mark"',
+            svg,
+        )
     ]
     assert len(wedge_fills_in_draw_order) == 5, (
         f"expected 5 wedge paths, got {len(wedge_fills_in_draw_order)}: "
@@ -530,36 +522,6 @@ def test_resolve_hybrid_heading_style_applies_static_color_override():
     heading_font = resolve_hybrid_heading_font(table_style)
 
     assert heading_font.color == "#ff0000"
-
-
-def test_compose_attached_table_svg_heading_draws_text_and_grows_table_height():
-    """An optional heading (hybrid mode) draws a single text line above the
-    table using the caller-supplied style — and grows the effective table
-    height so both placements' layout math accounts for it."""
-    composed, _outer_w, outer_h = compose_attached_table_svg(
-        donut_svg="<svg>DONUT</svg>",
-        table_svg="<svg>TABLE</svg>",
-        donut_width=400.0,
-        donut_height=400.0,
-        table_width=300.0,
-        table_height=100.0,
-        card_width=400.0,
-        gap=_PIE_GAP,
-        heading_gap=get_chart_rendering().pie.hybrid_heading_gap_px,
-        heading="Too small to label",
-        heading_font_family="Sans",
-        heading_font_size=11.0,
-        heading_font_weight="600",
-        heading_color="#111111",
-        align="center",
-    )
-    assert "Too small to label" in composed
-    assert 'font-family="Sans"' in composed
-    assert 'font-weight="600"' in composed
-    assert 'fill="#111111"' in composed
-    assert outer_h > 400.0 + _PIE_GAP + 100.0, (
-        "outer height must grow to make room for the heading line"
-    )
 
 
 def test_full_table_render_has_no_labels_no_title_lists_every_slice(make_chart):
@@ -773,21 +735,9 @@ def test_arc_layer_not_filtered_by_wedge_threshold(make_chart):
     rs, ctx = resolve_style_and_context(get_theme_style())
     resolved = resolve(chart, data, chart_style_context=ctx, width=415.0)
     artifact = render_resolved_chart(resolved, data, rs, width=415.0, height=415.0)
-    assert artifact.kind == "vega_spec"
-    spec = artifact.payload
-    arc_layers = [
-        layer
-        for layer in spec.get("layer", [])
-        if isinstance(layer.get("mark"), dict) and layer["mark"].get("type") == "arc"
-    ]
-    assert arc_layers, "Expected at least one arc mark layer"
-    transforms = arc_layers[0].get("transform", []) or []
-    filters = [t.get("filter") for t in transforms if "filter" in t]
-    for f in filters:
-        assert not (isinstance(f, str) and "__dbt_pct" in f and "0.08" in f), (
-            "Arc layer must not be filtered by wedge-label threshold. "
-            f"Got filter: {f!r}"
-        )
+    assert isinstance(artifact.payload, str)
+    # Small (~5.7%) is under the 8% label floor but still paints its wedge.
+    assert artifact.payload.count('aria-roledescription="arc mark"') == 2
 
 
 def test_resolved_pie_uses_stored_width_when_render_width_is_omitted(make_chart):
@@ -798,7 +748,9 @@ def test_resolved_pie_uses_stored_width_when_render_width_is_omitted(make_chart)
 
     artifact = render_resolved_chart(resolved, data, rs)
 
-    assert artifact.kind == "vega_spec"
+    assert artifact.kind == "svg"
+    assert isinstance(artifact.payload, str)
+    assert re.match(r'<svg [^>]*width="415(\.0)?"', artifact.payload)
 
 
 def test_resolved_pie_rejects_conflicting_render_width(make_chart):
@@ -809,39 +761,6 @@ def test_resolved_pie_rejects_conflicting_render_width(make_chart):
 
     with pytest.raises(RenderError, match="finalized at width 415.0, not 500.0"):
         render_resolved_chart(resolved, data, rs, width=500.0)
-
-
-def test_resolved_pie_render_does_not_reread_geometry_config(make_chart, monkeypatch):
-    chart = make_chart("pie", x="series", y="value")
-    data = [
-        {"series": f"S{i}", "value": value}
-        for i, value in enumerate(_HYBRID_TAIL_VALUES)
-    ]
-    rs, ctx = resolve_style_and_context(get_theme_style())
-    resolved = resolve(chart, data, chart_style_context=ctx, width=1200.0)
-    before = render_resolved_chart(resolved, data, rs)
-
-    changed_config = SimpleNamespace(
-        pie=SimpleNamespace(
-            outer_fraction=0.1,
-            attached_table_gap_px=200.0,
-            hybrid_heading_gap_px=100.0,
-        )
-    )
-    pie_emitter = importlib.import_module("dbt_charts.core.render.chart.emitters.pie")
-    attachment = importlib.import_module(
-        "dbt_charts.core.render.chart.arc_attached_table"
-    )
-    monkeypatch.setattr(
-        pie_emitter, "get_chart_rendering", lambda: changed_config, raising=False
-    )
-    monkeypatch.setattr(
-        attachment, "get_chart_rendering", lambda: changed_config, raising=False
-    )
-
-    after = render_resolved_chart(resolved, data, rs)
-
-    assert after == before
 
 
 # --------------------------------------------------------------------------
@@ -868,9 +787,8 @@ def test_choose_table_placement_boundary_uses_both_thresholds() -> None:
     conditions. width=1000, table_width=700 leaves a 288px region: it
     clears the absolute floor (288 >= 280) but not the fraction floor
     (288 < 0.5*1000=500) — placement must still fall back to "bottom"."""
-    pie_cfg = get_chart_rendering().pie
-    assert pie_cfg.right_placement_min_width_fraction == 0.5
-    assert pie_cfg.right_placement_min_width_px == 280.0
+    assert RIGHT_PLACEMENT_MIN_WIDTH_FRACTION == 0.5
+    assert RIGHT_PLACEMENT_MIN_WIDTH_PX == 280.0
     assert choose_table_placement(1000.0, 700.0, None) == ("bottom", None)
 
 
@@ -890,151 +808,6 @@ def test_authored_side_edge_falls_to_bottom_and_names_the_edge_when_too_narrow(
     edge,
 ) -> None:
     assert choose_table_placement(340.0, 200.0, edge) == ("bottom", edge)
-
-
-def test_compose_attached_table_svg_left_placement_puts_the_table_first():
-    """placement="left" mirrors "right": the table is left-anchored at the card
-    edge and the donut sits after it, both top-aligned to the disk top."""
-    donut_w, table_w, gap = 500.0, 200.0, _PIE_GAP
-    donut_svg = '<g class="mark-arc role-mark"><path d="M0,0 A200,200 0 0 1 1,1"/></g>'
-    composed, outer_w, outer_h = compose_attached_table_svg(
-        donut_svg=donut_svg,
-        table_svg="<svg>TABLE</svg>",
-        donut_width=donut_w,
-        donut_height=500.0,
-        table_width=table_w,
-        table_height=120.0,
-        card_width=800.0,
-        gap=gap,
-        heading_gap=get_chart_rendering().pie.hybrid_heading_gap_px,
-        placement="left",
-        align="start",
-    )
-    assert (outer_w, outer_h) == (800.0, 500.0)
-    assert _group_offsets(composed) == [(table_w + gap, 0.0), (0.0, 50.0)]
-
-
-def test_compose_attached_table_svg_top_placement_drops_the_table_into_the_donuts_room():
-    """placement="top": the donut SVG already reserves the room the table fills
-    (its plot is pushed down by the table's height), so the table lands at
-    ``top_table_y`` and the outer height is the donut's alone."""
-    composed, outer_w, outer_h = compose_attached_table_svg(
-        donut_svg="<svg>DONUT</svg>",
-        table_svg="<svg>TABLE</svg>",
-        donut_width=400.0,
-        donut_height=520.0,
-        table_width=300.0,
-        table_height=100.0,
-        card_width=500.0,
-        gap=_PIE_GAP,
-        heading_gap=get_chart_rendering().pie.hybrid_heading_gap_px,
-        placement="top",
-        top_table_y=30.0,
-        align="center",
-    )
-    assert (outer_w, outer_h) == (500.0, 520.0)
-    assert _group_offsets(composed) == [(50.0, 0.0), (100.0, 30.0)]
-
-
-def test_compose_attached_table_svg_right_placement_left_anchored_in_card_width():
-    """placement="right" with a card_width wider than the tight group produces
-    an outer SVG spanning the full card_width, with the [donut | gap | table]
-    content group LEFT-ANCHORED to the card's left edge (donut_x = 0) — content
-    flows from the left like every other dbt charts card, with trailing whitespace
-    on the right, rather than floating as a centered island in the slot."""
-    donut_w, table_w, gap = 400.0, 200.0, _PIE_GAP
-    card_width = 800.0
-
-    composed, outer_w, outer_h = compose_attached_table_svg(
-        donut_svg="<svg>DONUT</svg>",
-        table_svg="<svg>TABLE</svg>",
-        donut_width=donut_w,
-        donut_height=400.0,
-        table_width=table_w,
-        table_height=200.0,
-        card_width=card_width,
-        gap=gap,
-        heading_gap=get_chart_rendering().pie.hybrid_heading_gap_px,
-        placement="right",
-        align="start",
-    )
-    assert outer_w == card_width, (
-        "outer SVG must span the full card width so the composed element "
-        "fills the board slot rather than shrinking to content"
-    )
-    offsets = _group_offsets(composed)
-    assert len(offsets) == 2
-    (donut_x, _), (table_x, _) = offsets
-    assert donut_x == 0.0, (
-        f"donut must be left-anchored to the card edge; expected 0.0, got {donut_x}"
-    )
-    assert table_x == donut_w + gap, (
-        f"table must sit at donut + gap from the left edge; expected "
-        f"{donut_w + gap}, got {table_x}"
-    )
-
-
-def test_compose_attached_table_svg_right_placement_is_side_by_side():
-    """placement="right" puts the table beside the donut (table x-offset at
-    donut_width + gap from the left edge). The donut pins to (0, 0); the table
-    TOP-ALIGNS with the WHEEL'S DISK, not the card — its y-offset is the disk's
-    top within the donut SVG, (donut_height - disk_diameter) / 2 — so a short
-    table sits beside the disk (not floating above it) and a tall one grows
-    downward from the disk's top. Outer width expands to card_width; content is
-    left-anchored."""
-    donut_w, table_w, gap = 500.0, 200.0, _PIE_GAP
-    card_width = 800.0
-    # donut SVG carries a disk of diameter 400 (arc radius 200), so the disk
-    # top sits (500 - 400) / 2 = 50px below the SVG top.
-    donut_svg = '<g class="mark-arc role-mark"><path d="M0,0 A200,200 0 0 1 1,1"/></g>'
-    composed, outer_w, outer_h = compose_attached_table_svg(
-        donut_svg=donut_svg,
-        table_svg="<svg>TABLE</svg>",
-        donut_width=donut_w,
-        donut_height=500.0,
-        table_width=table_w,
-        table_height=120.0,
-        card_width=card_width,
-        gap=gap,
-        heading_gap=get_chart_rendering().pie.hybrid_heading_gap_px,
-        placement="right",
-        align="start",
-    )
-    assert outer_w == card_width
-    assert outer_h == 500.0  # max(donut_height, disk_top + table_height)
-    offsets = _group_offsets(composed)
-    assert offsets == [
-        (0.0, 0.0),  # donut left-anchored, pinned to the top
-        (donut_w + gap, 50.0),  # table beside the donut, top-aligned to the disk top
-    ]
-
-
-def test_compose_attached_table_svg_below_placement_is_default_and_centered():
-    """placement defaults to "bottom" and keeps the stacked geometry (outer
-    height is donut + gap + table); both the donut and the table are
-    horizontally CENTERED within card_width — balanced left/right margins,
-    matching the plain direct-label pie's layout in the board slot."""
-    card_width = 500.0
-    composed, outer_w, outer_h = compose_attached_table_svg(
-        donut_svg="<svg>DONUT</svg>",
-        table_svg="<svg>TABLE</svg>",
-        donut_width=400.0,
-        donut_height=400.0,
-        table_width=300.0,
-        table_height=100.0,
-        card_width=card_width,
-        gap=_PIE_GAP,
-        heading_gap=get_chart_rendering().pie.hybrid_heading_gap_px,
-        align="center",
-    )
-    assert outer_w == card_width  # outer SVG spans the full card slot
-    assert outer_h == 400.0 + _PIE_GAP + 100.0
-    offsets = _group_offsets(composed)
-    # donut centered: (500 - 400) / 2 = 50; table centered: (500 - 300) / 2 = 100
-    assert offsets == [
-        ((card_width - 400.0) / 2, 0.0),
-        ((card_width - 300.0) / 2, 400.0 + _PIE_GAP),
-    ]
 
 
 def _group_offsets(svg: str) -> list[tuple[float, float]]:
@@ -1087,10 +860,7 @@ def test_wide_tabled_pie_places_table_to_the_right(make_chart):
     assert table_x > 0.5 * w, (
         f"the table should sit past the card's own midpoint; table_x={table_x} w={w}"
     )
-    assert (
-        table_x
-        <= donut_x + get_chart_rendering().pie.right_placement_max_wheel_px + _PIE_GAP
-    ), (
+    assert table_x <= donut_x + RIGHT_PLACEMENT_MAX_WHEEL_PX + _PIE_GAP, (
         f"the wheel region before the table must not exceed the cap; "
         f"table_x={table_x} donut_x={donut_x}"
     )
@@ -1167,67 +937,91 @@ def test_attached_table_modes_suppress_builtin_color_legend(make_chart, model_co
     assert "role-legend" not in render([(f"C{i}", 6.67) for i in range(15)])
 
 
-def _compose_aligned(placement: str, align: str) -> list[tuple[float, float]]:
-    donut_svg = '<g class="mark-arc role-mark"><path d="M0,0 A150,150 0 1 1 1,1"/></g>'
-    composed, _w, _h = compose_attached_table_svg(
-        donut_svg=donut_svg,
-        table_svg="<svg>TABLE</svg>",
-        donut_width=400.0,
-        donut_height=400.0,
-        table_width=200.0,
-        table_height=100.0,
-        card_width=800.0,
-        gap=_PIE_GAP,
-        heading_gap=get_chart_rendering().pie.hybrid_heading_gap_px,
-        placement=placement,
-        align=align,
-        inset_left=20.0,
-        inset_right=30.0,
-        top_table_y=10.0,
+# --------------------------------------------------------------------------
+# Composition: where the engine places the table against the wheel
+# --------------------------------------------------------------------------
+
+_ALIGN_ROWS = [
+    {"segment": "Enterprise", "sessions": 40},
+    {"segment": "Mid-Market", "sessions": 30},
+    {"segment": "SMB", "sessions": 20},
+    {"segment": "Self-serve", "sessions": 8},
+    {"segment": "Partner", "sessions": 1.5},
+    {"segment": "Other", "sessions": 0.5},
+]
+_MANY_ROWS = [{"segment": f"C{i}", "sessions": 6.67} for i in range(15)]
+
+
+def _composed(
+    edge: str, align: str, rows: list[dict[str, float | str]] = _ALIGN_ROWS
+) -> tuple[str, list[tuple[float, float]]]:
+    """An attached-table pie whose table sits on ``edge``, aligned ``align``,
+    in a 1000px card: the SVG and its [wheel, table] group offsets."""
+    chart = PieChart(
+        id="t",
+        type="pie",
+        theta="sessions",
+        color="segment",
+        query_name="q",
+        style={"legend": {"position": {"edge": edge, "align": align}}},
     )
-    return _group_offsets(composed)
+    svg = render_pie_svg(chart, rows, width=1000.0)
+    return svg, _group_offsets(svg)
 
 
-@pytest.mark.parametrize(
-    ("align", "x"), [("start", 20.0), ("center", 300.0), ("end", 570.0)]
-)
-@pytest.mark.parametrize("placement", ["top", "bottom"])
-def test_a_vertical_table_aligns_across_the_card(
-    placement: str, align: str, x: float
-) -> None:
-    assert _compose_aligned(placement, align)[1][0] == x
+def _wheel_center_y(svg: str) -> float:
+    match = re.search(
+        r'<g transform="translate\([\d.]+,([\d.]+)\)"><g class="mark-arc', svg
+    )
+    assert match is not None, svg
+    return float(match.group(1))
 
 
-@pytest.mark.parametrize(
-    ("align", "y"), [("start", 50.0), ("center", 150.0), ("end", 250.0)]
-)
-@pytest.mark.parametrize("placement", ["left", "right"])
-def test_a_side_table_aligns_down_the_wheels_disk(
-    placement: str, align: str, y: float
-) -> None:
-    # disk diameter 300 in a 400-tall donut: disk top at 50, bottom at 350.
-    assert _compose_aligned(placement, align)[1][1] == y
+def test_a_left_table_sits_before_the_wheel():
+    _, [(wheel_x, _), (table_x, _)] = _composed("left", "start")
+    assert table_x < wheel_x
+
+
+def test_a_right_table_sits_after_the_left_anchored_wheel():
+    svg, [(wheel_x, _), (table_x, _)] = _composed("right", "start")
+    assert wheel_x == 0.0
+    assert table_x > wheel_x
+    assert re.match(r'<svg [^>]*width="1000(\.0)?"', svg)
+
+
+def test_a_top_table_sits_above_the_wheel():
+    svg, [_, (_, table_y)] = _composed("top", "center")
+    assert table_y < _wheel_center_y(svg)
+
+
+def test_a_bottom_table_sits_below_the_wheel():
+    svg, [_, (_, table_y)] = _composed("bottom", "center")
+    assert table_y > _wheel_center_y(svg)
+
+
+@pytest.mark.parametrize("edge", ["top", "bottom"])
+def test_a_vertical_table_aligns_across_the_card(edge: str) -> None:
+    xs = [_composed(edge, align)[1][1][0] for align in ("start", "center", "end")]
+    assert xs[0] < xs[1] < xs[2], xs
+
+
+@pytest.mark.parametrize("edge", ["left", "right"])
+def test_a_side_table_aligns_down_the_wheels_disk(edge: str) -> None:
+    ys = [_composed(edge, align)[1][1][1] for align in ("start", "center", "end")]
+    assert ys[0] < ys[1] < ys[2], ys
 
 
 @pytest.mark.parametrize("align", ["center", "end"])
-@pytest.mark.parametrize("placement", ["left", "right"])
+@pytest.mark.parametrize("edge", ["left", "right"])
 def test_a_side_table_taller_than_the_disk_falls_back_to_the_disks_top(
-    placement: str, align: str
+    edge: str, align: str
 ) -> None:
-    donut_svg = '<g class="mark-arc role-mark"><path d="M0,0 A150,150 0 1 1 1,1"/></g>'
-    composed, _w, _h = compose_attached_table_svg(
-        donut_svg=donut_svg,
-        table_svg="<svg>TABLE</svg>",
-        donut_width=400.0,
-        donut_height=400.0,
-        table_width=200.0,
-        table_height=500.0,
-        card_width=800.0,
-        gap=_PIE_GAP,
-        heading_gap=get_chart_rendering().pie.hybrid_heading_gap_px,
-        placement=placement,
-        align=align,
-    )
-    # Disk top is 50: a table taller than the 300px disk starts there, never
-    # above it (the title sits up there).
-    assert _group_offsets(composed)[1][1] == 50.0
+    [(wheel_x, _), (table_x, start_y)] = _composed(edge, "start", _MANY_ROWS)[1]
+    assert (table_x > wheel_x) == (edge == "right"), "the table must stay beside"
+    assert _composed(edge, align, _MANY_ROWS)[1][1][1] == start_y
+
+
+def test_a_hybrid_heading_heads_the_table():
+    svg, _ = _composed("bottom", "center")
+    _, table_text = _donut_and_table_texts(svg)
+    assert table_text.startswith("Too small to label"), table_text

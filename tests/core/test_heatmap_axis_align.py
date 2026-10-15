@@ -111,7 +111,7 @@ class TestHeatmapAxisYLabelAlignInward:
 
     def test_authored_align_wins_over_inward(self) -> None:
         """An explicit chart-local style.axis_y.labels.align still wins over
-        the theme's inward switch — chart-local (Layer 13) always wins over
+        the theme's inward switch — chart-local (Layer 12) always wins over
         the theme's chart-type patch (Layer 4)."""
         board_rs, board_ctx = _board_with_heatmap_axis_y_label(align="inward")
         style = HeatmapChartStylePatch(

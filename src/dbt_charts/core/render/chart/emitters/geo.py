@@ -330,8 +330,7 @@ class GeoshapeEmitter:
             # Distinct from the quantitative gradient path below, which
             # is the ordinary numeric choropleth. `data` is pre-lookup-
             # join, so this chart's own drawn values come straight from
-            # it, in row order — same pattern as the pie emitter's
-            # wedge/label ink.
+            # it, in row order.
             value_field_type = "nominal"
             seen: list[str] = []
             for row in data:
@@ -621,7 +620,7 @@ class PointMapEmitter:
         )
         # Pre-populate data so BoardRenderSession.emit_chart's fallback
         # (`spec.data = normalize_data_types(data)`) doesn't overwrite with
-        # the unfiltered original. This mirrors what the pie emitter does.
+        # the unfiltered original.
         points_spec.data = data
 
         # Background geo layer when geo_source or basemap is configured.

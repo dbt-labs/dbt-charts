@@ -23,7 +23,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::common::Divider;
+use crate::common::{Divider, GappedDivider};
 use crate::conditions::eval_bool_condition;
 use crate::contract;
 use crate::codes::ERR_ENGINE_REFUSED;
@@ -75,15 +75,6 @@ pub struct BoardPayload {
     /// board-root data attributes the host-shipped hover runtime reads; same
     /// reasoning: a pure function of `resolved_style`.
     pub hover_attributes: String,
-    /// `chart_rendering.frame.*` engine-config constants (`default_config.yml`)
-    /// the footer layout math needs and has no other route to.
-    pub footer_rule_gap_px: f64,
-    pub footer_timestamp_gap_px: f64,
-    /// Weight the footer's brand run is painted and measured at. Carried
-    /// in the payload rather than duplicated as a literal here: two
-    /// independent constants in two languages would drift with nothing
-    /// pinning them.
-    pub footer_brand_weight: u32,
     /// Same flattened envelope `_rust_payload` hands the per-chart sweep —
     /// forwarded verbatim into every chart item's own `Payload`.
     pub board_style: BoardStyle,
@@ -600,7 +591,9 @@ struct FooterDoc {
     link: Option<String>,
     font: FontSizeColorDoc,
     y_offset: f64,
-    divider: Divider,
+    /// Weight the brand run is painted and measured at.
+    brand_weight: u32,
+    divider: GappedDivider,
 }
 
 #[derive(Deserialize)]
@@ -609,6 +602,8 @@ struct TimestampDoc {
     position: String,
     align: String,
     y: f64,
+    /// Gap between the footer-positioned timestamp and the attribution.
+    gap: f64,
     font: FontSizeColorDoc,
 }
 
@@ -2754,7 +2749,6 @@ fn render_tabs_layout(
 fn footer_attribution_svg(
     footer: &FooterDoc,
     font_family: &str,
-    brand_weight: u32,
     x: f64,
     y: f64,
     fonts: &FontBook,
@@ -2768,6 +2762,7 @@ fn footer_attribution_svg(
         .color
         .as_deref()
         .ok_or("footer.font.color must be resolved")?;
+    let brand_weight = footer.brand_weight;
     let run = |end_x: f64, content: &str, brand: bool| -> String {
         let weight_attr = if brand {
             format!(r#" font-weight="{brand_weight}""#)
@@ -4706,8 +4701,8 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
             .font
             .size
             .ok_or("footer.font.size must be resolved")?;
-        let rule_gap = if footer.divider.visible {
-            payload.footer_rule_gap_px
+        let rule_gap = if footer.divider.line.visible {
+            footer.divider.gap
         } else {
             0.0
         };
@@ -4756,20 +4751,19 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
         let (attribution, w) = footer_attribution_svg(
             footer,
             footer_family,
-            payload.footer_brand_weight,
             footer_x,
             footer_y,
             fonts,
         )?;
         footer_width = w;
         let mut footer_parts: Vec<String> = Vec::new();
-        if footer.divider.visible {
-            let rule = &footer.divider;
+        if footer.divider.line.visible {
+            let rule = &footer.divider.line;
             let footer_font_size = footer
                 .font
                 .size
                 .ok_or("footer.font.size must be resolved")?;
-            let rule_y = footer_y - footer_font_size - payload.footer_rule_gap_px;
+            let rule_y = footer_y - footer_font_size - footer.divider.gap;
             footer_parts.push(format!(
                 r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="{}"{}/>"#,
                 num_full(page_padding),
@@ -4807,7 +4801,7 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
             (page_padding, "start")
         } else if timestamp.position == "footer" && footer.visible {
             (
-                footer_x - footer_width - payload.footer_timestamp_gap_px,
+                footer_x - footer_width - timestamp.gap,
                 "end",
             )
         } else {
@@ -5492,8 +5486,9 @@ mod nested_box_sidecar_tests {
                 "font": {"family": "Inter"},
                 "footer": {"visible": false, "text": "made with dbt charts", "link": null,
                            "font": {"family": "Inter", "size": 11.0, "color": "#999999"}, "y_offset": 14.0,
-                           "divider": {"visible": false, "color": "#e5e5e5", "width": 0.5, "dasharray": null}},
-                "timestamp": {"visible": false, "position": "footer", "align": "left", "y": 14.0,
+                           "brand_weight": 600,
+                           "divider": {"visible": false, "color": "#e5e5e5", "width": 0.5, "dasharray": null, "gap": 2.0}},
+                "timestamp": {"visible": false, "position": "footer", "align": "left", "y": 14.0, "gap": 12.0,
                               "font": {"family": "Inter", "size": 11.0, "color": "#999999"}},
                 "title": {"min_height": 0.0, "font": {"case": null, "color": null}},
                 "text": {"column": {"max_number": null, "gap": null, "max_chars": null,
@@ -5546,8 +5541,6 @@ mod nested_box_sidecar_tests {
             "resolved": resolved, "chart_datasets": {}, "background": null, "fonts_dir": null,
             "render_timestamp_text": "", "render_time_iso": "2026-01-01T00:00:00Z",
             "defs_styles_block": "", "hover_attributes": "",
-            "footer_rule_gap_px": 2.0, "footer_timestamp_gap_px": 12.0,
-            "footer_brand_weight": 600,
             "board_style": {"muted": null, "tones": null, "title_case": null, "continuous_height": null, "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()},
             "chart_defaults": {
                 "default_chart_height": 300.0, "default_table_height": 250.0,

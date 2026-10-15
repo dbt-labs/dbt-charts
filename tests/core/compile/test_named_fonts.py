@@ -393,7 +393,7 @@ def _definition(schema: dict[str, Any], name: str) -> dict[str, Any]:
 
 def test_shipped_schema_font_slot_accepts_a_name() -> None:
     schema = _shipped_schema()
-    arms = _definition(schema, "TitleStylePatch")["properties"]["font"]["anyOf"]
+    arms = _definition(schema, "ChartTitleStylePatch")["properties"]["font"]["anyOf"]
     assert {"type": "string"} in arms
 
 
@@ -445,9 +445,7 @@ def test_fragment_slot_fields_lose_to_a_later_named_font() -> None:
             "charts": {"axis": {"labels": {"font": "mine"}}},
         }
     )
-    style = _pre_style(
-        merge_patches(fragment, board, nested=False).model_dump(exclude_unset=True)
-    )
+    style = _pre_style(merge_patches(fragment, board).model_dump(exclude_unset=True))
     assert style.charts.axis.labels.font.color == "#ff0000"
 
 
@@ -592,3 +590,36 @@ def test_heading_extending_with_null_size_is_allowed() -> None:
     style = _pre_style({"fonts": {"heading": {"extends": "label", "size": None}}})
     assert style.fonts is not None
     assert style.fonts["heading"].size is None
+
+
+def test_merge_patches_slot_naming_a_font_drops_lower_font_fields_keeps_slot_only_fields() -> (
+    None
+):
+    from dbt_charts.core.compile.merge import merge_patches
+
+    lower = StylePatch.model_validate(
+        {
+            "charts": {
+                "series_label": {
+                    "font": {"color": "#00ff00", "size": 30, "compact_size": 7}
+                }
+            }
+        }
+    )
+    upper = StylePatch.model_validate(
+        {
+            "fonts": {"mine": {"color": "#ff0000"}},
+            "charts": {"series_label": {"font": "mine"}},
+        }
+    )
+    merged = merge_patches(lower, upper).model_dump(exclude_unset=True)
+    assert merged["charts"]["series_label"]["font"] == {
+        "extends": "mine",
+        "compact_size": 7,
+    }
+
+
+def test_font_reset_fields_equal_font_style_fields() -> None:
+    from dbt_charts.core.compile.models.factories import FontSlotBase
+
+    assert FontSlotBase.merge_reset.resets == FontStyle.model_fields.keys()

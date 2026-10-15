@@ -1,6 +1,4 @@
-"""support_table/donut-total affix edge shapes that a Vega hand-composed non-native
-affix (support_table_attachment.py/emitters/pie.py) must not crash or misrender.
-"""
+"""support_table/donut-total affix edge shapes that an affix must not crash or misrender."""
 
 from __future__ import annotations
 

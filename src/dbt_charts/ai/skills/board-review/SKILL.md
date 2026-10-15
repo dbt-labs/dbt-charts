@@ -27,7 +27,7 @@ requests should land here, not on either leaf skill.
 
 - The user explicitly asked for only structural OR only visual — invoke that
   leaf skill directly
-- Comparing two versions of a board — use the `looker-compare-diff` pattern
+- Comparing two versions of a board — out of scope for this skill
 
 ## Protocol
 

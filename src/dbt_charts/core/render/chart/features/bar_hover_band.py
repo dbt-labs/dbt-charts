@@ -4,32 +4,32 @@ Appended as a sub-layer (invisible ``mark="bar"``, ``opacity=0``) after the emit
 so near-zero bars have a wider hover hit-target without any visible change. Two
 distinct paths, both gated in ``BarHoverBandFeature.apply``:
 
-Two separate config fractions: ``hover_band_trigger_fraction`` (does this bar/
+Two separate engine constants: ``HOVER_BAND_TRIGGER_FRACTION`` (does this bar/
 total need help at all -- default 0.02, deliberately small so the band never
-fires on a bar that's already plainly visible) and ``hover_band_extend_fraction``
+fires on a bar that's already plainly visible) and ``HOVER_BAND_EXTEND_FRACTION``
 (how big the band is once it does fire -- default 0.05). Kept distinct so
 tightening "when does this fire" doesn't also shrink the hit target once it
 does.
 
 - **Non-stacked** (``_append_bar_hover_area``): gated twice. First, a cheap
   Python-side precheck over the chart's own rows: if no row's value is under
-  ``hover_band_trigger_fraction`` of the largest, the layer is never declared
+  ``HOVER_BAND_TRIGGER_FRACTION`` of the largest, the layer is never declared
   at all -- an unconditional layer would still add an invisible zero-extent
   path per row even when it never extends, which is markup with no hover
   value and shows up as noise in every visual golden diff. Once declared,
   each row is gated again, exactly: anchored at ``scale('ch', 0)`` -- the
-  zero baseline -- extending by ``hover_band_extend_fraction`` of the plot's
+  zero baseline -- extending by ``HOVER_BAND_EXTEND_FRACTION`` of the plot's
   pixel extent toward the datum's sign, but ONLY when the bar's own rendered
   extent (read directly off the real bar's scale via
   ``scale(ch, datum[field])``, not the Python-side estimate) is already
-  smaller than ``hover_band_trigger_fraction`` of the plot. A bar at or above
+  smaller than ``HOVER_BAND_TRIGGER_FRACTION`` of the plot. A bar at or above
   that trigger gets no extended hit area at all -- there's nothing to gain by
   widening an already-adequate hit target.
 - **Stacked** (``_append_stacked_total_hover_band``, ``chart.stack == "zero"``
   only): a stacked segment's true position depends on Vega-Lite's own cumulative
   stack transform, which this design deliberately never reimplements (see below)
   -- so instead of a per-row band, at most ONE shared band is added per x-category
-  whose stacked TOTAL renders near-invisible (under ``hover_band_trigger_fraction``
+  whose stacked TOTAL renders near-invisible (under ``HOVER_BAND_TRIGGER_FRACTION``
   of the domain max), carried by one real row for that x. Per-segment precision is
   unnecessary: ``chart_interactivity.js``'s x-unified tooltip already shows every
   series at a given x once ANY mark there is hovered.
@@ -92,13 +92,16 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Literal
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
 from dbt_charts.core.compile.models.chart.resolved._layer import effective_color_field
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.resolve.chart.tick_values import (
     ChartValue,
     stacked_bar_totals,
+)
+from dbt_charts.core.constants.bar import (
+    HOVER_BAND_EXTEND_FRACTION,
+    HOVER_BAND_TRIGGER_FRACTION,
 )
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
@@ -227,9 +230,6 @@ def _append_bar_hover_area(
     if cat_ch not in spec.encoding:
         return
 
-    bar_config = get_chart_rendering().bar
-    trigger_fraction = bar_config.hover_band_trigger_fraction
-    extend_fraction = bar_config.hover_band_extend_fraction
     values = [
         abs(v)
         for row in data
@@ -238,18 +238,20 @@ def _append_bar_hover_area(
     if not values:
         return
     domain_max = max(values)
-    if domain_max <= 0 or not any(v < domain_max * trigger_fraction for v in values):
+    if domain_max <= 0 or not any(
+        v < domain_max * HOVER_BAND_TRIGGER_FRACTION for v in values
+    ):
         return
 
     band = (
-        f"height * {extend_fraction}"
+        f"height * {HOVER_BAND_EXTEND_FRACTION}"
         if measure_ch == "y"
-        else f"width * {extend_fraction}"
+        else f"width * {HOVER_BAND_EXTEND_FRACTION}"
     )
     trigger_px = (
-        f"height * {trigger_fraction}"
+        f"height * {HOVER_BAND_TRIGGER_FRACTION}"
         if measure_ch == "y"
-        else f"width * {trigger_fraction}"
+        else f"width * {HOVER_BAND_TRIGGER_FRACTION}"
     )
     baseline_expr = f"scale('{measure_ch}', 0)"
     signed_extent = _signed_extent_expr(measure_ch, measure_field, band, baseline_expr)
@@ -317,9 +319,6 @@ def _append_stacked_total_hover_band(
     domain_max = chart.stacked_domain_max or max(totals.values())
     if domain_max <= 0:
         return
-    bar_config = get_chart_rendering().bar
-    trigger_fraction = bar_config.hover_band_trigger_fraction
-    extend_fraction = bar_config.hover_band_extend_fraction
 
     carriers: dict[ChartValue, ChartValue] = {}
     for row in data:
@@ -327,7 +326,7 @@ def _append_stacked_total_hover_band(
         if x is None or x in carriers:
             continue
         total = totals.get(x)
-        if total is None or total / domain_max >= trigger_fraction:
+        if total is None or total / domain_max >= HOVER_BAND_TRIGGER_FRACTION:
             continue
         series = row.get(series_field)
         if series is None:
@@ -337,9 +336,9 @@ def _append_stacked_total_hover_band(
         return
 
     band = (
-        f"height * {extend_fraction}"
+        f"height * {HOVER_BAND_EXTEND_FRACTION}"
         if measure_ch == "y"
-        else f"width * {extend_fraction}"
+        else f"width * {HOVER_BAND_EXTEND_FRACTION}"
     )
     baseline_expr = f"scale('{measure_ch}', 0)"
     signed_extent = _signed_extent_expr(measure_ch, measure_field, band, baseline_expr)
@@ -396,7 +395,10 @@ class BarHoverBandFeature:
             )
         else:
             _append_bar_hover_area(
-                spec, measure_ch, measure_field, chart_rows(chart, datasets).all_rows()
+                spec,
+                measure_ch,
+                measure_field,
+                chart_rows(chart, datasets).all_rows(),
             )
         return spec
 

@@ -1,25 +1,24 @@
-"""Base and helpers for the DuckDB-backed QueryResultCache.
+"""Connection lifecycle and outcome store for the DuckDB-backed QueryResultCache.
 
 Stage: EXECUTE (Cache)
-Purpose: Hold the connection lifecycle, SQL helpers, and the outcome store
-shared by the DuckDB-backed cache. TrivialDuckDBCache (replace-on-write) is the
-sole subclass; it adds get/put and result-table management (_ensure_result_table,
-_insert_rows, _drop_stale_result_tables) on top of this base.
+Purpose: Hold the connection lifecycle and the `_query_outcomes` store.
+TrivialDuckDBCache (replace-on-write) is the sole subclass; it adds get/put and
+the payload encoding on top of this base.
 
-The `_query_outcomes` table is authoritative: one row per cache key, carrying
-**two independent slots** — the last successful run (`row_count`, `written_at_utc`,
-with the payload in the per-key `_r_<hash>` table) and the last error
-(`error_*`, `error_written_at_utc`). Either may be empty; both may be full. A
-success write clears the error slot in the same statement, which is what makes
-the merge fix the coexistence bugs the two-table design had. Nothing stores an
+`_query_outcomes` is the only table: one row per cache key, carrying **two
+independent slots** — the last successful run (`written_at_utc`, `payload`) and
+the last error (`error_*`, `error_written_at_utc`). Either may be empty; both
+may be full. A success write clears the error slot in the same statement, so a
+stale failure cannot outlive the success that superseded it. Nothing stores an
 expiry — freshness is derived on read (see `cache_backend`).
 
-`_r_<hash>` exists only for a rows slot with at least one row, so a zero-row
-success is a bare outcome row, told apart from a vanished payload by
-`row_count`.
+A result is one `payload` value on its key's row, never a table of its own:
+DuckDB loads the whole catalog on connect, so a table per key makes opening the
+file cost in proportion to the number of cached queries.
 
-Public helpers (_q, _result_table_name, _cache_safe_value, _infer_type) live
-here and are imported by trivial_local_cache.py.
+A file-backed cache connects for one read or write and disconnects. DuckDB
+allows a single read-write process per file, so a connection held for the life
+of the process would lock every other `dct` process out of a shared cache.
 
 Dependencies:
     - duckdb (optional at module load; required at construction)
@@ -27,16 +26,16 @@ Dependencies:
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import threading
+import time
 import traceback as tb_mod
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
-from decimal import Decimal
+from datetime import UTC, datetime, timedelta
 from pathlib import Path  # noqa: TID251 — DuckDB cache file (DCT_CACHE_PATH)
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     import duckdb
@@ -52,142 +51,38 @@ else:
         HAS_DUCKDB = False
 
 from dbt_charts._install_hint import install_hint
+from dbt_charts.core.diagnostics.codes_execute import ERR_CACHE_FILE_UNAVAILABLE
+from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.cache_backend import (
     CachedQueryFailure,
-    CacheRows,
     TruncatedReason,
 )
 
 logger = logging.getLogger(__name__)
 
-# How long to keep a combined hash prefix for table names
-_HASH_PREFIX = 12
+# Writes collect in the write-ahead log and are checkpointed into the file once
+# the log passes this size, not on every disconnect. A checkpoint cannot extend
+# a block an earlier one wrote, so checkpointing each single-row write costs a
+# whole 256 KB block per cached query. The log is replayed on every connect, so
+# it is kept small enough that a read stays in the low milliseconds. DuckDB's
+# own `checkpoint_threshold` cannot do this: it compares an estimate that a
+# one-row write already exceeds at any threshold this small.
+_CHECKPOINT_WAL_BYTES = 64_000
 
-# Exported: these helpers are defined here and imported by trivial_local_cache.py.
-__all__ = [
-    "_DuckDBResultCacheBase",
-    "_Slots",
-    "_cache_safe_value",
-    "_infer_type",
-    "_q",
-    "_restore_decimal_columns",
-    "_result_table_name",
-    "_rows_from_result",
-    "_uniform_decimal_columns",
-]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SQL helper functions (imported by trivial_local_cache.py)
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def _q(identifier: str) -> str:
-    """Quote a SQL identifier (already assumed safe)."""
-    escaped = identifier.replace('"', '""')
-    return f'"{escaped}"'
-
-
-def _result_table_name(source_hash: str, query_hash: str, variables_hash: str) -> str:
-    """Generate the table name for a cached result.
-
-    Format: _r_{combined_prefix} where combined is a short hash of all three key parts.
-    Short enough to stay under DuckDB's identifier limits.
-    """
-    combined = hashlib.sha256(
-        f"{source_hash}:{query_hash}:{variables_hash}".encode()
-    ).hexdigest()[:_HASH_PREFIX]
-    return f"_r_{combined}"
-
-
-def _cache_safe_value(value: Any) -> Any:
-    """Coerce a Python value to something DuckDB's parameterized INSERT accepts.
-
-    Decimals become float: DuckDB's DECIMAL is HUGEINT-backed and capped at
-    precision 38, but BigQuery NUMERIC can return precision > 38 (e.g. NUMERIC(47,38)
-    on fan-out-deduplicated SUM aggregates). float's 15 significant digits are
-    plenty for dashboard rendering, but is lossy — a uniformly-Decimal column
-    (every value in the column is exactly a Decimal) is stored as VARCHAR
-    text instead, exact, via ``_uniform_decimal_columns``/callers of this
-    function; this float coercion only ever applies to a Decimal value in a
-    genuinely mixed-type column, where exactness is not promised (see
-    ``QueryResultCache.get``'s type-fidelity contract). list/dict become
-    JSON text for the JSON column.
-    """
-    if isinstance(value, Decimal):
-        return float(value)
-    if isinstance(value, (list, dict)):
-        return json.dumps(value)
-    return value
-
-
-def _uniform_decimal_columns(rows: CacheRows) -> frozenset[str]:
-    """Columns whose every non-None value is exactly ``Decimal``.
-
-    DuckDB's fixed-precision DECIMAL can't hold every warehouse NUMERIC
-    (see ``_cache_safe_value``), and float coercion is lossy — so a
-    uniformly-Decimal column is stored as VARCHAR text (``str(value)``,
-    exact) instead, a sidecar type recorded in ``_query_outcomes.
-    decimal_columns`` and restored by ``_restore_decimal_columns`` on read.
-    A column that mixes Decimal with any other type is not uniform and
-    keeps the existing (lossy) float coercion — exactness is only promised
-    where every value in the column shares one type, same as the temporal
-    contract in ``PostgresResultCache``.
-    """
-    if not rows:
-        return frozenset()
-    decimal_cols = set()
-    for col in rows[0]:
-        values = [r[col] for r in rows if r.get(col) is not None]
-        if values and all(type(v) is Decimal for v in values):
-            decimal_cols.add(col)
-    return frozenset(decimal_cols)
-
-
-def _restore_decimal_columns(
-    rows: CacheRows, decimal_columns: frozenset[str]
-) -> CacheRows:
-    """Restore each *decimal_columns* entry's stored VARCHAR text to Decimal.
-
-    A None value (nullable column, NULL row) is left alone.
-    """
-    if not decimal_columns:
-        return rows
-    restored = []
-    for row in rows:
-        new_row = dict(row)
-        for col in decimal_columns:
-            value = new_row.get(col)
-            if value is not None:
-                new_row[col] = Decimal(value)
-        restored.append(new_row)
-    return restored
-
-
-def _infer_type(value: Any) -> str:
-    if value is None:
-        return "VARCHAR"
-    if isinstance(value, bool):
-        return "BOOLEAN"
-    if isinstance(value, int):
-        return "BIGINT"
-    if isinstance(value, (float, Decimal)):
-        return "DOUBLE"
-    if isinstance(value, datetime):
-        # A naive datetime maps to DuckDB's naive TIMESTAMP; a tz-aware one
-        # (BigQuery TIMESTAMP, Postgres timestamptz, Snowflake TIMESTAMP_TZ)
-        # must map to TIMESTAMP WITH TIME ZONE or the round-trip silently
-        # drops tzinfo — the naive TIMESTAMP column has nowhere to put it.
-        return "TIMESTAMP" if value.tzinfo is None else "TIMESTAMP WITH TIME ZONE"
-    # datetime is itself a date subclass, so this must come after the
-    # datetime check — a bare date left unhandled here fell through to
-    # VARCHAR, and a DATE watermark round-tripped through the cache as a
-    # plain string.
-    if isinstance(value, date):
-        return "DATE"
-    if isinstance(value, (list, dict)):
-        return "JSON"
-    return "VARCHAR"
+_OUTCOME_COLUMNS = {
+    "source_hash": "TEXT NOT NULL",
+    "query_hash": "TEXT NOT NULL",
+    "variables_hash": "TEXT NOT NULL",
+    "board_slug": "TEXT NOT NULL",
+    "query_name": "TEXT NOT NULL",
+    "written_at_utc": "TIMESTAMP",
+    "truncated_reason": "TEXT",
+    "payload": "BLOB",
+    "error_class": "TEXT",
+    "error_message": "TEXT",
+    "traceback": "TEXT",
+    "error_written_at_utc": "TIMESTAMP",
+}
 
 
 def _utc_wall_clock() -> datetime:
@@ -208,74 +103,27 @@ def _utc_wall_clock() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-def _rows_from_result(
-    result: duckdb.DuckDBPyConnection, limit: int | None = None
-) -> CacheRows:
-    """Reconstruct row dicts from an executed DuckDB result, decoding JSON columns.
-
-    list/dict columns are stored as JSON text on write (``_cache_safe_value``),
-    and DuckDB hands a JSON-typed column back as a Python ``str``. Decode those
-    columns here so the round-trip is symmetric — callers (and the renderer)
-    expect the original ``list``/``dict``, not the serialized string.
-
-    ``limit`` bounds the fetch itself via ``fetchmany()`` instead of pulling
-    every row over and slicing after — None (the default) fetches everything,
-    unaffected for every caller that doesn't pass one.
-    """
-    description = result.description
-    columns = [d[0] for d in description]
-    json_cols = {i for i, d in enumerate(description) if str(d[1]) == "JSON"}
-    rows = result.fetchmany(limit) if limit else result.fetchall()
-    if not json_cols:
-        return [dict(zip(columns, row, strict=False)) for row in rows]
-    return [
-        dict(
-            zip(
-                columns,
-                [
-                    json.loads(v) if i in json_cols and v is not None else v
-                    for i, v in enumerate(row)
-                ],
-                strict=False,
-            )
-        )
-        for row in rows
-    ]
-
-
 @dataclass(frozen=True)
 class _Slots:
     """Both slots of one cache key, as read in a single lookup.
 
-    ``rows_written_at`` is None when nothing has succeeded for this key yet;
-    ``error`` is None when nothing has failed, or the last failure is past its
-    retry window. Both empty is indistinguishable from an absent row, which is
-    what ``EMPTY`` represents.
+    ``rows_written_at`` and ``payload`` are None together, when nothing has
+    succeeded for this key yet; ``error`` is None when nothing has failed, or
+    the last failure is past its retry window. Both empty is indistinguishable
+    from an absent row, which is what ``EMPTY`` represents.
     """
 
     rows_written_at: datetime | None
-    row_count: int
+    payload: bytes | None
     error: CachedQueryFailure | None
     truncated_reason: TruncatedReason | None
-    # Columns stored as VARCHAR text (see _uniform_decimal_columns) that
-    # get() must convert back to Decimal on read.
-    decimal_columns: frozenset[str]
 
     EMPTY: ClassVar[_Slots]
 
 
 _Slots.EMPTY = _Slots(
-    rows_written_at=None,
-    row_count=0,
-    error=None,
-    truncated_reason=None,
-    decimal_columns=frozenset(),
+    rows_written_at=None, payload=None, error=None, truncated_reason=None
 )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Abstract base class
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class _DuckDBResultCacheBase:
@@ -283,14 +131,15 @@ class _DuckDBResultCacheBase:
 
     Manages: connection lifecycle, outcome store (_query_outcomes).
 
-    Subclasses must implement: get, put, and any storage-specific setup
-    (_drop_*_tables, _ensure_result_table, _insert_rows).
+    Subclasses must implement: get and put.
     """
 
     def __init__(
         self,
         db_path: Path | None = None,
         failure_ttl_seconds: int = 900,
+        lock_timeout_seconds: float = 10.0,
+        max_age: timedelta | None = None,
         *,
         _class_name: str,
     ) -> None:
@@ -302,31 +151,91 @@ class _DuckDBResultCacheBase:
 
         self.db_path = db_path
         self.failure_ttl_seconds = failure_ttl_seconds
+        self.lock_timeout_seconds = lock_timeout_seconds
+        self.max_age = max_age
         self._lock = threading.RLock()
+        # An in-memory database lives only as long as its connection, and no
+        # other process can reach it, so that one connection is kept.
+        self._memory_conn = None if db_path else duckdb.connect(":memory:")
 
+        # The file holds warehouse query results, so a directory or file created
+        # here is readable by its owner alone. One that already exists keeps the
+        # mode it has. DuckDB creates the file itself, with the process umask,
+        # and will not open an empty placeholder, so the file's mode is set
+        # right after the connect that creates it, before any result is written.
+        is_new_file = db_path is not None and not db_path.exists()
         if db_path:
             # Auto-provision: the parent directory may not exist yet (e.g. a
             # project's first opt-in `cache: {path: .dct/cache.duckdb}`)
             # — the documented contract is "created if absent", no manual
             # `mkdir` step.
-            db_path.parent.mkdir(parents=True, exist_ok=True)
-            self.conn = duckdb.connect(str(db_path))
-        else:
-            self.conn = duckdb.connect(":memory:")
+            db_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
 
-        self.conn.execute("SET enable_object_cache = true")
+        with self._connection() as conn:
+            if db_path and is_new_file:
+                db_path.chmod(0o600)
+            self._ensure_schema(conn)
+            if max_age is not None:
+                self._prune(conn, max_age)
+
+    @contextmanager
+    def _connection(self) -> Generator[duckdb.DuckDBPyConnection]:
+        """Yield a connection for one read or write, holding ``self._lock``."""
+        with self._lock:
+            if self._memory_conn is not None:
+                yield self._memory_conn
+                return
+            conn = self._connect_to_file()
+            try:
+                yield conn
+                wal = Path(f"{self.db_path}.wal")
+                if wal.exists() and wal.stat().st_size > _CHECKPOINT_WAL_BYTES:
+                    conn.execute("CHECKPOINT")
+            finally:
+                conn.close()
+
+    def _connect_to_file(self) -> duckdb.DuckDBPyConnection:
+        """Connect to the cache file, waiting out another process's hold on it.
+
+        Every ``IOException`` is retried rather than only a lock conflict: the
+        conflict has no exception type of its own, and its wording differs by
+        platform. A file that is unreadable for another reason fails the same
+        way once the wait runs out, with DuckDB's own message attached.
+        """
+        deadline = time.monotonic() + self.lock_timeout_seconds
+        delay = 0.005
+        while True:
+            try:
+                conn = duckdb.connect(str(self.db_path))
+            except duckdb.IOException as exc:
+                if time.monotonic() >= deadline:
+                    raise ExecutionError.from_code(
+                        ERR_CACHE_FILE_UNAVAILABLE,
+                        path=str(self.db_path),
+                        seconds=self.lock_timeout_seconds,
+                        detail=str(exc).splitlines()[0],
+                    ) from exc
+                time.sleep(delay)
+                delay = min(delay * 2, 0.1)
+            else:
+                conn.execute("PRAGMA disable_checkpoint_on_shutdown")
+                return conn
 
     def _read_slots(
-        self, source_hash: str, query_hash: str, variables_hash: str
+        self,
+        conn: duckdb.DuckDBPyConnection,
+        source_hash: str,
+        query_hash: str,
+        variables_hash: str,
     ) -> _Slots:
-        """Read both slots for this key in one lookup. Callers hold ``self._lock``.
+        """Read both slots for this key in one lookup.
 
         A missing row and two empty slots are the same thing to every caller, so
         an absent key comes back as ``_Slots.EMPTY`` rather than None.
         """
-        row = self.conn.execute(
+        row = conn.execute(
             """
-            SELECT row_count, written_at_utc, truncated_reason, decimal_columns,
+            SELECT written_at_utc, truncated_reason, payload,
                    error_class, error_message, traceback, error_written_at_utc
             FROM _query_outcomes
             WHERE source_hash = ? AND query_hash = ? AND variables_hash = ?
@@ -336,10 +245,9 @@ class _DuckDBResultCacheBase:
         if row is None:
             return _Slots.EMPTY
         (
-            row_count,
             written_at_utc,
             truncated_reason,
-            decimal_columns_json,
+            payload,
             err_class,
             err_message,
             traceback,
@@ -370,52 +278,45 @@ class _DuckDBResultCacheBase:
                 )
         return _Slots(
             rows_written_at=written_at_utc,
-            row_count=row_count or 0,
+            payload=payload,
             error=error,
             truncated_reason=truncated_reason,
-            decimal_columns=(
-                frozenset(json.loads(decimal_columns_json))
-                if decimal_columns_json
-                else frozenset()
-            ),
         )
 
     def _write_rows_slot(
         self,
+        conn: duckdb.DuckDBPyConnection,
         source_hash: str,
         query_hash: str,
         variables_hash: str,
-        row_count: int,
+        payload: bytes,
         board_slug: str,
         query_name: str,
-        truncated_reason: TruncatedReason | None = None,
-        decimal_columns: frozenset[str] = frozenset(),
+        truncated_reason: TruncatedReason | None,
     ) -> None:
         """Record a successful run, clearing the error slot in the same statement.
 
-        That clearing is the whole point of the merge: with two tables a stale
-        failure could outlive the success that superseded it, and there was no
-        way to retire it atomically. Callers hold ``self._lock``.
+        That clearing is the whole point of one row per key: with two tables a
+        stale failure could outlive the success that superseded it, and there
+        was no way to retire it atomically.
 
         ``truncated_reason`` replaces wholesale, never merges — a re-run that
         comes back under the ceiling must clear a prior truncation, not keep
-        reporting one that no longer applies. ``decimal_columns`` replaces
-        wholesale too, same reasoning — see ``_uniform_decimal_columns``.
+        reporting one that no longer applies.
         """
-        self.conn.execute(
+        conn.execute(
             """
             INSERT INTO _query_outcomes
                 (source_hash, query_hash, variables_hash, board_slug, query_name,
-                 row_count, written_at_utc, truncated_reason, decimal_columns,
+                 written_at_utc, truncated_reason, payload,
                  error_class, error_message, traceback, error_written_at_utc)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
             ON CONFLICT (source_hash, query_hash, variables_hash) DO UPDATE SET
                 board_slug = excluded.board_slug,
                 query_name = excluded.query_name,
-                row_count = excluded.row_count,
                 written_at_utc = excluded.written_at_utc,
                 truncated_reason = excluded.truncated_reason,
-                decimal_columns = excluded.decimal_columns,
+                payload = excluded.payload,
                 error_class = NULL,
                 error_message = NULL,
                 traceback = NULL,
@@ -427,15 +328,15 @@ class _DuckDBResultCacheBase:
                 variables_hash,
                 board_slug,
                 query_name,
-                row_count,
                 _utc_wall_clock(),
                 truncated_reason,
-                json.dumps(sorted(decimal_columns)) if decimal_columns else None,
+                payload,
             ],
         )
 
     def _write_error_slot(
         self,
+        conn: duckdb.DuckDBPyConnection,
         source_hash: str,
         query_hash: str,
         variables_hash: str,
@@ -446,16 +347,15 @@ class _DuckDBResultCacheBase:
         """Record an error, leaving any rows slot untouched.
 
         The two writes touch disjoint columns, so a worker whose query failed
-        can never destroy rows another worker just computed — no lock, no
-        read-then-write window. Callers hold ``self._lock``.
+        can never destroy rows another worker just computed — no read-then-write
+        window.
         """
-        self.conn.execute(
+        conn.execute(
             """
             INSERT INTO _query_outcomes
                 (source_hash, query_hash, variables_hash, board_slug, query_name,
-                 row_count, written_at_utc,
                  error_class, error_message, traceback, error_written_at_utc)
-            VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (source_hash, query_hash, variables_hash) DO UPDATE SET
                 board_slug = excluded.board_slug,
                 query_name = excluded.query_name,
@@ -478,24 +378,18 @@ class _DuckDBResultCacheBase:
         )
 
     def clear(self, source_hash: str, query_hash: str, variables_hash: str) -> None:
-        """Remove this key's outcome row and any result rows it points at."""
-        with self._lock:
-            self.conn.execute(
+        """Remove this key's outcome row, rows and error alike."""
+        with self._connection() as conn:
+            conn.execute(
                 "DELETE FROM _query_outcomes WHERE source_hash = ? AND query_hash = ? AND variables_hash = ?",
                 [source_hash, query_hash, variables_hash],
             )
-            self._drop_result_table(
-                _result_table_name(source_hash, query_hash, variables_hash)
-            )
-
-    def _drop_result_table(self, table_name: str) -> None:
-        """Drop a per-key result table if it exists. Callers hold ``self._lock``."""
-        if self._table_exists(table_name):
-            self.conn.execute(f"DROP TABLE {_q(table_name)}")
 
     def close(self) -> None:
+        """Close the in-memory connection; a file-backed cache holds nothing open."""
         with self._lock:
-            self.conn.close()
+            if self._memory_conn is not None:
+                self._memory_conn.close()
 
     # ── Cache-ref composition ({{ queries.X.cache }}) ────────────────────────
     # Composition runs in an isolated in-process DuckDB fed the upstream rows by
@@ -506,105 +400,80 @@ class _DuckDBResultCacheBase:
         """DuckDB-backed cache always supports cache-ref composition."""
         return True
 
-    def _drop_stale_outcomes_and_payloads(self, reason: str) -> None:
-        """Drop _query_outcomes and its orphaned _r_* payload tables.
+    def _prune(self, conn: duckdb.DuckDBPyConnection, max_age: timedelta) -> None:
+        """Drop entries older than *max_age* and give their disk space back.
 
-        Shared by every "on-disk schema predates a column this version
-        writes" check in _ensure_schema — CREATE TABLE IF NOT EXISTS would
-        otherwise leave the mismatched columns in place. It's a disposable
-        cache: every dropped key re-warms naturally on the next request, and
-        the payload tables a dropped outcome row pointed at are unreachable
-        the moment the row is gone (nothing else indexes them).
+        DuckDB does not reuse the blocks of deleted rows while their neighbors
+        live on, so a DELETE would leave the file growing forever. The table is
+        rebuilt from its live rows instead. That rewrites every live payload,
+        so it must not happen on every open: entries within an eighth of
+        *max_age* of the limit go too, which leaves nothing to expire again
+        until that much time has passed.
         """
-        self.conn.execute("DROP TABLE IF EXISTS _query_outcomes")
-        orphans = self.conn.execute(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_type = 'BASE TABLE' AND table_name LIKE '_r_%'"
-        ).fetchall()
-        for (tbl,) in orphans:
-            self.conn.execute(f"DROP TABLE IF EXISTS {_q(tbl)}")
-        logger.info(
-            "trivial cache: dropped %s _query_outcomes and %d payload "
-            "table(s) on open; they will re-warm",
-            reason,
-            len(orphans),
+        age = "coalesce(written_at_utc, error_written_at_utc)"
+        now = _utc_wall_clock()
+        expired = conn.execute(
+            f"SELECT count(*) FROM _query_outcomes WHERE {age} < ?", [now - max_age]
+        ).fetchone()
+        if expired is None or expired[0] == 0:
+            return
+        # One transaction: a process killed partway must leave either the old
+        # table or the rebuilt one, never an empty one.
+        conn.execute("BEGIN")
+        conn.execute(
+            f"CREATE TEMP TABLE _live AS SELECT * FROM _query_outcomes WHERE {age} >= ?",
+            [now - max_age * 7 / 8],
+        )
+        conn.execute("DROP TABLE _query_outcomes")
+        self._create_outcomes_table(conn)
+        conn.execute("INSERT INTO _query_outcomes SELECT * FROM _live")
+        conn.execute("DROP TABLE _live")
+        conn.execute("COMMIT")
+        conn.execute("CHECKPOINT")
+        logger.info("query-result cache: removed %d expired entries", expired[0])
+
+    @staticmethod
+    def _create_outcomes_table(conn: duckdb.DuckDBPyConnection) -> None:
+        column_defs = ", ".join(
+            f"{name} {sql_type}" for name, sql_type in _OUTCOME_COLUMNS.items()
+        )
+        conn.execute(
+            f"CREATE TABLE IF NOT EXISTS _query_outcomes ({column_defs}, "
+            "PRIMARY KEY (source_hash, query_hash, variables_hash))"
         )
 
-    def _ensure_schema(self) -> None:
-        """Create the outcome table if it doesn't exist.
+    def _ensure_schema(self, conn: duckdb.DuckDBPyConnection) -> None:
+        """Create the outcome table, first dropping any superseded layout.
 
-        Also drops `_query_failures` left by a cache file written before the
-        two stores were merged: its rows are re-derivable and the table is
-        never read again.
+        A file whose `_query_outcomes` columns differ from the ones this
+        version writes came from another version. CREATE TABLE IF NOT EXISTS
+        would keep those columns and the first read or write would fail, so the
+        cache's tables are dropped instead — the outcome table, and the
+        per-key `_r_<hash>` result tables and `_query_failures` that earlier
+        layouts kept beside it. It is a disposable cache: each dropped key
+        re-warms on its next request.
         """
-        self.conn.execute("DROP TABLE IF EXISTS _query_failures")
-        columns = self._column_names("_query_outcomes")
-        # A cache file written before the UTC pin holds naive *local* timestamps
-        # under the old `written_at` / `error_written_at` names. The column type
-        # and position are unchanged, so CREATE TABLE IF NOT EXISTS would keep
-        # them and the read path would relabel local as UTC — east of Greenwich
-        # every row then reads younger than it is by the machine's offset and is
-        # served past its authored ttl, silently. The `_utc` suffix makes those
-        # rows unreadable rather than misreadable: their presence is the version
-        # marker, so drop once and re-warm.
-        if "written_at" in columns:
-            self._drop_stale_outcomes_and_payloads("pre-UTC")
-            columns = self._column_names("_query_outcomes")
-        # Same pattern for the face->board rename: an on-disk file created
-        # before the rename still carries `face_slug`, and CREATE TABLE IF NOT
-        # EXISTS would keep it, breaking the first INSERT naming `board_slug`.
-        if "face_slug" in columns:
-            self._drop_stale_outcomes_and_payloads("pre-rename")
-            columns = self._column_names("_query_outcomes")
-        # Same pattern for the truncated_reason column added to persist the
-        # truncation fact alongside cached rows: an on-disk file from before
-        # that change has no such column, and CREATE TABLE IF NOT EXISTS
-        # would keep it missing, breaking the first INSERT naming it.
-        if columns and "truncated_reason" not in columns:
-            self._drop_stale_outcomes_and_payloads("pre-truncated_reason")
-            columns = self._column_names("_query_outcomes")
-        # Same pattern for decimal_columns, added to record which columns of
-        # a rows slot are stored as VARCHAR-text Decimal (see
-        # _uniform_decimal_columns) so get() knows to restore them.
-        if columns and "decimal_columns" not in columns:
-            self._drop_stale_outcomes_and_payloads("pre-decimal_columns")
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS _query_outcomes (
-                source_hash TEXT NOT NULL,
-                query_hash TEXT NOT NULL,
-                variables_hash TEXT NOT NULL,
-                board_slug TEXT NOT NULL,
-                query_name TEXT NOT NULL,
-                row_count BIGINT,
-                written_at_utc TIMESTAMP,
-                truncated_reason TEXT,
-                decimal_columns TEXT,
-                error_class TEXT,
-                error_message TEXT,
-                traceback TEXT,
-                error_written_at_utc TIMESTAMP,
-                PRIMARY KEY (source_hash, query_hash, variables_hash)
-            )
-            """
-        )
-
-    def _table_exists(self, name: str) -> bool:
-        try:
-            result = self.conn.execute(
-                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?",
-                [name],
-            ).fetchone()
-            return bool(result and result[0] > 0)
-        except duckdb.CatalogException:
-            return False
-
-    def _column_names(self, table_name: str) -> set[str]:
-        try:
-            rows = self.conn.execute(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
-                [table_name],
+        columns = {
+            name
+            for (name,) in conn.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = '_query_outcomes'"
             ).fetchall()
-            return {r[0] for r in rows}
-        except duckdb.CatalogException:
-            return set()
+        }
+        if columns != set(_OUTCOME_COLUMNS):
+            superseded = conn.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_type = 'BASE TABLE' AND ("
+                "table_name IN ('_query_outcomes', '_query_failures') "
+                "OR starts_with(table_name, '_r_'))"
+            ).fetchall()
+            for (table,) in superseded:
+                escaped = table.replace('"', '""')
+                conn.execute(f'DROP TABLE "{escaped}"')
+            if superseded:
+                logger.info(
+                    "query-result cache: dropped %d table(s) from a superseded "
+                    "layout on open; entries will re-warm",
+                    len(superseded),
+                )
+        self._create_outcomes_table(conn)

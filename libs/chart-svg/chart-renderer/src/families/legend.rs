@@ -820,7 +820,9 @@ pub fn emit_vega_legend(
     legend_y: f64,
     stamp_series: bool,
 ) {
+    crate::contract::legend_open(out);
     if !legend.title.is_empty() {
+        crate::contract::legend_title_open(out);
         let tf = &cfg.title.font;
         let tfs = tf.size_or(12.0);
         let _ = write!(
@@ -833,6 +835,7 @@ pub fn emit_vega_legend(
             xml_escape_attr(tf.color.as_deref().unwrap_or("#313233")),
             xml_escape(&legend.title)
         );
+        crate::contract::mark_group_close(out);
     }
     let legend_y = legend_y + legend.title_band;
     let grid = &legend.grid;
@@ -842,11 +845,13 @@ pub fn emit_vega_legend(
     let color = label_font.color.as_deref().unwrap_or("#626366");
     let weight = label_font.weight_str();
     let columns = grid.col_x.len();
+    crate::contract::legend_entries_open(out);
     for (i, entry) in legend.order.iter().map(|&idx| &entries[idx]).enumerate() {
         let x = legend_x + grid.col_x[i % columns];
         let y = legend_y + grid.row_y[i / columns];
         let c = grid.size / 2.0;
         let fill = entry.fill;
+        crate::contract::legend_symbol_open(out);
         match entry.symbol.unwrap_or(default_symbol) {
             LegendSymbol::Square(stroke) => {
                 let _ = write!(
@@ -916,6 +921,7 @@ pub fn emit_vega_legend(
                 );
             }
         }
+        crate::contract::mark_group_close(out);
         // `.role-legend-label` -- `chart_interactivity.js`'s `legendSeriesOrder`
         // reads this class + join key off Vega's own legend-label group
         // (`chart_svg_dev/contract.py::extract_contract`'s `legend_labels`
@@ -939,6 +945,8 @@ pub fn emit_vega_legend(
         );
         out.push_str("</g>");
     }
+    crate::contract::mark_group_close(out);
+    crate::contract::mark_group_close(out);
 }
 
 #[derive(Deserialize)]
@@ -1095,7 +1103,9 @@ pub fn emit_vertical_legend(
     let leg_title_color = leg_title_font.color.as_deref().unwrap_or("#313233");
     let leg_title_weight = leg_title_font.weight_str();
 
+    crate::contract::legend_open(svg);
     if !title_text.is_empty() {
+        crate::contract::legend_title_open(svg);
         let _ = write!(
             svg,
             "<text x=\"{x:.2}\" y=\"{:.2}\" text-anchor=\"start\" \
@@ -1105,13 +1115,16 @@ pub fn emit_vertical_legend(
             vega_escape_attr(leg_title_family),
             xml_escape(title_text), leg_title_weight = xml_escape_attr(&leg_title_weight), leg_title_color = xml_escape_attr(leg_title_color)
         );
+        crate::contract::mark_group_close(svg);
     }
 
     let title_band = if title_text.is_empty() { 0.0 } else { LEGEND_TITLE_H };
+    crate::contract::legend_entries_open(svg);
     for (i, entry) in entries.iter().enumerate() {
         let item_y = y + title_band + i as f64 * LEGEND_ROW_H;
         let cx = x + LEGEND_SYMBOL_BOX / 2.0;
         let cy = item_y + LEGEND_SYMBOL_BOX / 2.0;
+        crate::contract::legend_symbol_open(svg);
         let _ = write!(
             svg,
             "<path transform=\"translate({cx:.2},{cy:.2})\" \
@@ -1120,6 +1133,7 @@ pub fn emit_vertical_legend(
              fill=\"{}\"/>",
             xml_escape_attr(entry.fill)
         );
+        crate::contract::mark_group_close(svg);
         let tx = x + LEGEND_SYMBOL_BOX + LEGEND_LABEL_GAP;
         let ty = item_y + LEGEND_SYMBOL_BOX / 2.0 + leg_label_size * 0.27;
         // See `emit_vega_legend`'s doc comment on the `.role-legend-label`
@@ -1136,6 +1150,8 @@ pub fn emit_vertical_legend(
         );
         svg.push_str("</g>");
     }
+    crate::contract::mark_group_close(svg);
+    crate::contract::mark_group_close(svg);
 }
 
 #[cfg(test)]
@@ -1550,5 +1566,53 @@ mod tests {
         emit_vega_legend(&mut svg, &entries, &legend, &cfg, LegendSymbol::Square("#fff"), 0.0, 0.0, false);
         assert!(svg.contains("<rect"), "base entry keeps its square: {svg}");
         assert!(svg.contains("A5,5,0,1,1"), "layer entry paints a circle: {svg}");
+    }
+
+    /// Vega's legend groups (`role-legend` > title + one `role-legend-entry` >
+    /// a `role-legend-symbol` and a `role-legend-label` per entry): the
+    /// thumbnail strips legends by `role-legend` and the hover runtime skips
+    /// a cursor inside one.
+    fn assert_vega_legend_roles(legend_svg: &str, labels: &[&str]) {
+        let svg = format!("<svg>{legend_svg}</svg>");
+        let doc = roxmltree::Document::parse(&svg).unwrap();
+        let has = |n: roxmltree::Node, class: &str| {
+            n.attribute("class").is_some_and(|c| c.split_whitespace().any(|t| t == class))
+        };
+        let root: Vec<_> = doc.root_element().children().filter(|n| n.is_element()).collect();
+        assert_eq!(root.len(), 1, "{svg}");
+        assert!(has(root[0], "role-legend"), "{svg}");
+        let title = root[0].children().find(|n| has(*n, "role-legend-title")).expect("a title group");
+        assert_eq!(title.descendants().find(|n| n.has_tag_name("text")).and_then(|t| t.text()), Some("Segment"));
+        let entries: Vec<_> = root[0].children().filter(|n| has(*n, "role-legend-entry")).collect();
+        assert_eq!(entries.len(), 1, "{svg}");
+        let symbols = entries[0].children().filter(|n| has(*n, "role-legend-symbol")).count();
+        let painted: Vec<_> = entries[0]
+            .children()
+            .filter(|n| has(*n, "role-legend-label"))
+            .map(|n| n.descendants().find(|t| t.has_tag_name("text")).and_then(|t| t.text()).unwrap())
+            .collect();
+        assert_eq!((symbols, painted.as_slice()), (labels.len(), labels), "{svg}");
+    }
+
+    fn titled_entries() -> [LegendEntry<'static>; 2] {
+        ["Enterprise", "SMB"].map(|label| LegendEntry { label, fill: "#40639c", symbol: None, series_key: None })
+    }
+
+    #[test]
+    fn a_vega_legend_draws_vegas_legend_groups() {
+        let mut cfg = legend_cfg("vertical", None);
+        cfg.title.visible = Some(true);
+        let entries = titled_entries();
+        let legend = vega_legend(&entries, "Segment", &cfg, &test_fonts()).unwrap();
+        let mut svg = String::new();
+        emit_vega_legend(&mut svg, &entries, &legend, &cfg, LegendSymbol::Circle, 0.0, 0.0, false);
+        assert_vega_legend_roles(&svg, &["Enterprise", "SMB"]);
+    }
+
+    #[test]
+    fn a_vertical_margin_legend_draws_vegas_legend_groups() {
+        let mut svg = String::new();
+        emit_vertical_legend(&mut svg, &titled_entries(), "Segment", &legend_cfg("vertical", None), 0.0, 0.0, false);
+        assert_vega_legend_roles(&svg, &["Enterprise", "SMB"]);
     }
 }

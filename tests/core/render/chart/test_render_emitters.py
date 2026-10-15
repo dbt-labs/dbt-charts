@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 from typing import Any
 
 import pytest
@@ -26,14 +27,18 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedScatterStyle,
 )
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
-from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
+from dbt_charts.core.compile.models.style.resolved._cartesian import (
+    ResolvedEndpointLabelsConfig,
+)
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
 from dbt_charts.core.compile.resolve.chart.label_data import (
     pie_presentation_fingerprint,
 )
+from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 
+from ..._engine_render import render_pie_svg
 from ...conftest import baked_format
 
 
@@ -49,9 +54,9 @@ def _default_legend():
 
 def _default_charts():
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
-    from dbt_charts.core.compile.resolve.style.board import resolve_style
+    from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-    return resolve_style(get_theme_style(get_default_theme_name())).chart_defaults
+    return resolve_chart_style_context(get_theme_style(get_default_theme_name()))
 
 
 _DEFAULT_CHARTS = _default_charts()
@@ -63,7 +68,7 @@ _B: dict[str, Any] = {
     "legend": _default_legend(),
     "background": _DEFAULT_CHARTS.background,
     "canvas": _DEFAULT_CHARTS.ink_canvas,
-    "title_style": _DEFAULT_CHARTS.title,
+    "title_style": concrete_title_style(_DEFAULT_CHARTS),
     "layout_padding": _ZERO_PADDING,
 }
 _C: dict[str, Any] = dict(_B)
@@ -310,19 +315,6 @@ def test_heatmap_emit_returns_chart_spec(heatmap_style: ResolvedHeatmapStyle) ->
     )
 
 
-def test_pie_emit_returns_chart_spec(pie_style: ResolvedPieStyle) -> None:
-    from dbt_charts.core.render.chart.emitters import (
-        get_emitter,
-    )
-
-    assert isinstance(
-        get_emitter(_pie(pie_style)).emit(
-            _pie(pie_style), _DEFAULT_BOX, regroup((), [])
-        ),
-        ChartSpec,
-    )
-
-
 def test_geoshape_emit_returns_chart_spec(
     geoshape_style: ResolvedGeoshapeStyle,
 ) -> None:
@@ -543,22 +535,6 @@ def test_heatmap_emit_mark_is_rect(heatmap_style: ResolvedHeatmapStyle) -> None:
     assert get_emitter(chart).emit(chart, _DEFAULT_BOX, regroup((), [])).mark == "rect"
 
 
-def test_pie_emit_mark_is_arc(pie_style: ResolvedPieStyle) -> None:
-    from dbt_charts.core.render.chart.emitters import (
-        get_emitter,
-    )
-
-    spec = get_emitter(_pie(pie_style)).emit(
-        _pie(pie_style), _DEFAULT_BOX, regroup((), [])
-    )
-    assert spec.mark == "layered", (
-        f"pie outer spec must be 'layered', got {spec.mark!r}"
-    )
-    assert spec.layers[0].mark == "arc", (
-        f"pie arc layer must have mark 'arc', got {spec.layers[0].mark!r}"
-    )
-
-
 def test_geoshape_emit_mark_is_geoshape(geoshape_style: ResolvedGeoshapeStyle) -> None:
     from dbt_charts.core.render.chart.emitters import (
         get_emitter,
@@ -674,9 +650,10 @@ def test_line_emit_point_overlay_layers_when_point_size_set() -> None:
             halo_multiplier=halo_mult,
             curve=None,
             labels=ResolvedPointLabels(),
+            disconnected_width=0.9,
         ),
         point_mark=ResolvedPointMarkStyle(size=pt_size, filled=True, stroke_width=3.0),
-        endpoint_labels=EndpointLabelsConfig(
+        endpoint_labels=ResolvedEndpointLabelsConfig(
             visible=False, label_offset=8.0, height=20.0
         ),
         single_series_fill=fg_color,
@@ -988,24 +965,6 @@ def test_wide_heatmap_authored_sort_reaches_every_layer_y(
     assert m2_layer.encoding["y"]["scale"]["domain"] == ["Q3", "Q2", "Q1"], (
         f"got {m2_layer.encoding['y'].get('scale')!r}"
     )
-
-
-def test_pie_emit_encoding_has_theta(pie_style: ResolvedPieStyle) -> None:
-    from dbt_charts.core.render.chart.emitters import (
-        get_emitter,
-    )
-
-    spec = get_emitter(_pie(pie_style)).emit(
-        _pie(pie_style), _DEFAULT_BOX, regroup((), [])
-    )
-    assert "theta" in spec.layers[0].encoding, (
-        "theta encoding must be on the arc layer (spec.layers[0]), not the outer spec"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Encoding-intent routing: hints must NOT land in spec.config (hint-bag ban)
-# ---------------------------------------------------------------------------
 
 
 def test_bar_stack_in_y_encoding_not_config(bar_style: ResolvedBarStyle) -> None:
@@ -1650,79 +1609,6 @@ def test_area_emit_honors_baked_zero_scale(area_style: ResolvedAreaStyle) -> Non
     assert y_scale.get("domainMin", 0.0) <= 0.0
 
 
-def test_pie_emitter_donut_uses_vl_expr(pie_style: ResolvedPieStyle) -> None:
-    """inner_radius emitted as a VL expr sourced from the shared hole geometry.
-
-    innerRadius must be exactly pie_hole_radius_expr(outer_fraction, inner_ratio)
-    so the emitted hole and the overflow detector's measured hole cannot drift.
-    """
-    from dbt_charts.core.render.chart.emitters.pie import (
-        PieEmitter,
-        pie_hole_radius_expr,
-    )
-
-    pie = ResolvedPieChart(
-        id="p",
-        chart_type="pie",
-        resolution_width=600.0,
-        outer_fraction=0.9,
-        attached_table_gap=12.0,
-        hybrid_heading_gap=6.0,
-        presentation_fingerprint=pie_presentation_fingerprint([{"sales": 100}]),
-        slice_label_indices=(),
-        theta="sales",
-        style=pie_style.model_copy(update={"inner_radius": 0.6}),
-        dark_companion_stops=("#0e4786",),
-        **_PB,
-        field_labels={},
-    )
-    spec = PieEmitter().emit(pie, _DEFAULT_BOX, regroup((), [{"sales": 100}]))
-    assert spec.mark == "layered"
-    arc_layer = spec.layers[0]
-    assert arc_layer.mark == "arc"
-    outer = arc_layer.mark_props.get("outerRadius")
-    inner = arc_layer.mark_props.get("innerRadius")
-    assert isinstance(outer, dict) and "expr" in outer, (
-        f"outerRadius must be a VL expr, got {outer!r}"
-    )
-    assert isinstance(inner, dict) and "expr" in inner, (
-        f"innerRadius must be a VL expr, got {inner!r}"
-    )
-    assert inner["expr"] == pie_hole_radius_expr(0.9, 0.6), (
-        f"innerRadius must come from the shared hole geometry: {inner['expr']!r}"
-    )
-
-
-def test_pie_emitter_solid_pie_sets_inner_radius_zero(
-    pie_style: ResolvedPieStyle,
-) -> None:
-    """Solid pie (no inner_radius) sets innerRadius=0 — matching oracle explicit 0."""
-    from dbt_charts.core.render.chart.emitters.pie import PieEmitter
-
-    pie = ResolvedPieChart(
-        id="p2",
-        chart_type="pie",
-        resolution_width=600.0,
-        outer_fraction=0.9,
-        attached_table_gap=12.0,
-        hybrid_heading_gap=6.0,
-        presentation_fingerprint=pie_presentation_fingerprint([{"sales": 100}]),
-        slice_label_indices=(),
-        theta="sales",
-        style=pie_style,
-        dark_companion_stops=("#0e4786",),
-        **_PB,
-        field_labels={},
-    )
-    spec = PieEmitter().emit(pie, _DEFAULT_BOX, regroup((), [{"sales": 100}]))
-    assert spec.mark == "layered"
-    arc_layer = spec.layers[0]
-    assert arc_layer.mark == "arc"
-    assert arc_layer.mark_props.get("innerRadius") == 0, (
-        f"Solid pie must set innerRadius=0, got {arc_layer.mark_props.get('innerRadius')!r}"
-    )
-
-
 def test_bar_emit_multi_measure_folds_to_one_unit_spec(
     bar_style: ResolvedBarStyle,
 ) -> None:
@@ -1919,7 +1805,7 @@ def test_emitter_sets_palette_in_config(bar_style: ResolvedBarStyle) -> None:
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
         canvas=_DEFAULT_CHARTS.ink_canvas,
-        title_style=_DEFAULT_CHARTS.title,
+        title_style=concrete_title_style(_DEFAULT_CHARTS),
         layout_padding=_ZERO_PADDING,
         field_labels={},
     )
@@ -1961,7 +1847,7 @@ def test_heatmap_color_scheme_in_color_encoding_not_config(
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
         canvas=_DEFAULT_CHARTS.ink_canvas,
-        title_style=_DEFAULT_CHARTS.title,
+        title_style=concrete_title_style(_DEFAULT_CHARTS),
         layout_padding=_ZERO_PADDING,
         field_labels={},
     )
@@ -2017,7 +1903,7 @@ def test_heatmap_color_gradient_domain_min_max_reaches_scale(
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
         canvas=_DEFAULT_CHARTS.ink_canvas,
-        title_style=_DEFAULT_CHARTS.title,
+        title_style=concrete_title_style(_DEFAULT_CHARTS),
         layout_padding=_ZERO_PADDING,
         field_labels={},
     )
@@ -2062,7 +1948,7 @@ def test_heatmap_hinge_domain_matches_legend_endpoint_labels(
         legend=_default_legend().model_copy(update={"visible": True}),
         background=_DEFAULT_CHARTS.background,
         canvas=_DEFAULT_CHARTS.ink_canvas,
-        title_style=_DEFAULT_CHARTS.title,
+        title_style=concrete_title_style(_DEFAULT_CHARTS),
         layout_padding=_ZERO_PADDING,
         field_labels={},
     )
@@ -2108,7 +1994,7 @@ def test_heatmap_emits_visible_color_legend_by_default(
         background=_DEFAULT_CHARTS.background,
         canvas=_DEFAULT_CHARTS.ink_canvas,
         layout_padding=_ZERO_PADDING,
-        title_style=_DEFAULT_CHARTS.title,
+        title_style=concrete_title_style(_DEFAULT_CHARTS),
         field_labels={},
     )
     spec = HeatmapEmitter().emit(
@@ -2145,7 +2031,7 @@ def test_heatmap_legend_visible_false_suppresses_color_legend(
         background=_DEFAULT_CHARTS.background,
         canvas=_DEFAULT_CHARTS.ink_canvas,
         layout_padding=_ZERO_PADDING,
-        title_style=_DEFAULT_CHARTS.title,
+        title_style=concrete_title_style(_DEFAULT_CHARTS),
         field_labels={},
     )
     spec = HeatmapEmitter().emit(
@@ -2374,123 +2260,6 @@ def test_resolve_geo_projection_structured_projection_extracts_type() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_pie_emitter_color_uses_only_resolved_channels(
-    pie_style: ResolvedPieStyle,
-) -> None:
-    """PieEmitter must not fall back to chart.color when resolved_channels has no color.
-    All cartesian emitters use resolved_channels exclusively; pie must be consistent."""
-    from dbt_charts.core.render.chart.emitters.pie import PieEmitter
-
-    # chart.color is set but resolved_channels has no color entry (empty data)
-    chart = ResolvedPieChart(
-        id="p1",
-        chart_type="pie",
-        resolution_width=600.0,
-        outer_fraction=0.9,
-        attached_table_gap=12.0,
-        hybrid_heading_gap=6.0,
-        presentation_fingerprint=pie_presentation_fingerprint([]),
-        slice_label_indices=(),
-        theta="value",
-        color="category",
-        style=pie_style,
-        dark_companion_stops=("#0e4786",),
-        **_PB,
-        field_labels={},
-    )
-    data: list[dict[str, Any]] = []  # empty → resolved_channels won't have color
-    spec = PieEmitter().emit(chart, _DEFAULT_BOX, regroup((), data))
-    assert "color" not in spec.layers[0].encoding, (
-        "PieEmitter fell back to chart.color when resolved_channels had no color; "
-        "use resolved_channels exclusively to be consistent with cartesian emitters"
-    )
-
-
-def test_pie_emitter_no_color_label_uses_dark_companion_fill(
-    pie_style: ResolvedPieStyle,
-) -> None:
-    """No-color pie slice labels ink with the baked dark-companion stop, not the
-    theme's static label.font color — mirrors the color-channel branch, which
-    never reads label.font.color either."""
-    from dbt_charts.core.render.chart.emitters.pie import PieEmitter
-
-    chart = _pie(pie_style).model_copy(update={"dark_companion_stops": ("#123456",)})
-    spec = PieEmitter().emit(chart, _DEFAULT_BOX, regroup((), []))
-
-    label_layer = next(
-        layer for layer in spec.layers if "lineHeight" in layer.mark_props
-    )
-    assert label_layer.mark_props.get("fill") == "#123456"
-
-
-def test_pie_emitter_no_color_arc_and_label_share_palette_zero(
-    pie_style: ResolvedPieStyle,
-) -> None:
-    """No-color pie wedges are explicitly filled with palette[0] — the same
-    color the label's dark-companion ink is derived from — so the label
-    actually anchors to a color the wedge displays, not an arbitrary one."""
-    from dbt_charts.core.render.chart.emitters.pie import PieEmitter
-
-    chart = _pie(pie_style)
-    spec = PieEmitter().emit(chart, _DEFAULT_BOX, regroup((), []))
-
-    arc_layer = spec.layers[0]
-    assert arc_layer.mark == "arc"
-    assert arc_layer.mark_props.get("fill") == chart.palette[0]
-
-
-def test_pie_emitter_total_value_font_style_reaches_mark(
-    pie_style: ResolvedPieStyle,
-) -> None:
-    """font.style authored on pie.total.value reaches the center-total value
-    mark as VL's fontStyle — the shared FontStyle→mark helper's contract."""
-    from dbt_charts.core.compile.models.chart.authored import ChartTotal
-    from dbt_charts.core.render.chart.emitters.pie import PieEmitter
-
-    total_style = pie_style.total_style
-    italic_value = total_style.value.model_copy(
-        update={"font": total_style.value.font.model_copy(update={"style": "italic"})}
-    )
-    style = pie_style.model_copy(
-        update={"total_style": total_style.model_copy(update={"value": italic_value})}
-    )
-    chart = _pie(style).model_copy(update={"total": ChartTotal(visible=True)})
-    spec = PieEmitter().emit(chart, _DEFAULT_BOX, regroup((), []))
-
-    value_layer = next(
-        layer for layer in spec.layers if layer.mark_props.get("baseline") == "bottom"
-    )
-    assert value_layer.mark_props.get("fontStyle") == "italic"
-
-
-def test_pie_emitter_slice_label_font_style_reaches_mark(
-    pie_style: ResolvedPieStyle,
-) -> None:
-    """font.style authored on the slice-labels font reaches the leader-line
-    label mark as VL's fontStyle, mirroring family/size/weight."""
-    from dbt_charts.core.render.chart.emitters.pie import PieEmitter
-
-    labels = pie_style.slice_mark.labels
-    assert labels is not None
-    italic_labels = labels.model_copy(
-        update={"font": labels.font.model_copy(update={"style": "italic"})}
-    )
-    style = pie_style.model_copy(
-        update={
-            "slice_mark": pie_style.slice_mark.model_copy(
-                update={"labels": italic_labels}
-            )
-        }
-    )
-    chart = _pie(style)
-    spec = PieEmitter().emit(chart, _DEFAULT_BOX, regroup((), []))
-
-    label_layer = next(
-        layer for layer in spec.layers if "lineHeight" in layer.mark_props
-    )
-    assert label_layer.mark_props.get("fontStyle") == "italic"
-
-
 def test_geoshape_emitter_color_uses_only_resolved_channels(
     geoshape_style: ResolvedGeoshapeStyle,
 ) -> None:
@@ -2575,7 +2344,7 @@ def test_heatmap_emitter_string_series_color_is_nominal(
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
         canvas=_DEFAULT_CHARTS.ink_canvas,
-        title_style=_DEFAULT_CHARTS.title,
+        title_style=concrete_title_style(_DEFAULT_CHARTS),
         layout_padding=_ZERO_PADDING,
         field_labels={},
     )
@@ -2647,7 +2416,7 @@ def test_point_map_emitter_series_color_is_quantitative(
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
         canvas=_DEFAULT_CHARTS.ink_canvas,
-        title_style=_DEFAULT_CHARTS.title,
+        title_style=concrete_title_style(_DEFAULT_CHARTS),
         layout_padding=_ZERO_PADDING,
         field_labels={},
     )
@@ -2668,9 +2437,9 @@ def test_channel_to_encoding_with_axis_style_emits_axis_key() -> None:
     from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
     from dbt_charts.core.render.chart.emitters._channels import channel_to_encoding
 
-    style = _make_style()
+    axis, _ = _make_resolved_axes()
     ch = ResolvedStyleChannel(channel="x", mode="series", data_field="month")
-    result = channel_to_encoding(ch, [{"month": "Jan"}], axis_style=style.axis)
+    result = channel_to_encoding(ch, [{"month": "Jan"}], axis_style=axis)
     assert result is not None
     assert "axis" in result, f"Expected 'axis' key, got {list(result.keys())}"
 
@@ -3857,7 +3626,8 @@ def test_binding_capability_matches_every_authored_chart_family(
         )
     )
 
-    pie_data = [{"sales": 10, "cat": "A"}, {"sales": 20, "cat": "B"}]
+    # B first: a wedge keyed by row position would take palette[0].
+    pie_data = [{"sales": 20, "cat": "B"}, {"sales": 10, "cat": "A"}]
     pie_chart = _pie(pie_style).model_copy(
         update={
             "color": "cat",
@@ -3868,7 +3638,10 @@ def test_binding_capability_matches_every_authored_chart_family(
             "dark_companion_stops": ("#000000", "#111111"),
         }
     )
-    _proof(get_emitter(pie_chart).emit(pie_chart, _DEFAULT_BOX, regroup((), pie_data)))
+    # Pie paints in the engine: each wedge's fill is its category's slot.
+    pie_svg = render_pie_svg(pie_chart, pie_data, width=pie_chart.resolution_width)
+    wedge_fills = re.findall(r'<path d="[^"]*" fill="([^"]+)"', pie_svg)
+    assert wedge_fills == [palette[1], palette[0]], pie_svg
 
     geo_chart = ResolvedGeoshapeChart(
         id="geo1",

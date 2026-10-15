@@ -78,7 +78,6 @@ style:
           color: *color_ink
 
     legend:
-      visible: false               # direct-labeling by default (editorial posture)
       label:
         font:
           color: *color_ink
@@ -187,8 +186,7 @@ style:
       drop_line_width: 3.5
 
     support_table:
-      font:
-        color: *color_ink
+      neutral_color: *color_ink
       divider:
         color: *color_ink
       row:
@@ -204,26 +202,17 @@ style:
     # own true anyway.
     line:
       endpoint_labels:
-        visible: true
+        visible: auto
     area:
       endpoint_labels:
-        visible: true
+        visible: auto
     # A vertical bar's labels anchor to the last column's per-series stack
     # midpoints; a horizontal bar's take the top-row rail instead. Resolve
     # turns this back off wherever the rail cannot name every series — see
     # _bar_endpoint_labels_for_stack.
     bar:
       endpoint_labels:
-        visible: true
-      legend:
-        # A bar that direct-labels has this suppressed again by resolve. It is
-        # load-bearing for the bars that cannot — grouped, a negative measure,
-        # or a series absent from the last column — which would otherwise
-        # carry no series key at all, since the theme hides legends globally.
-        # A bar disqualified by `multiples:` instead gets its legend from
-        # `_multiples_wants_top_legend` (compile/resolve/chart/_axes.py), which
-        # this override no longer needs to cover.
-        visible: true
+        visible: auto
 
     pie:
       total:

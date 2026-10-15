@@ -120,9 +120,6 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
     table_cramped,
     table_page_squeezed,
     table_text_truncated,
-    temporal_single_point,
-    too_many_color_categories,
-    too_many_x_categories,
     value_labels_crowd_width,
 ]
 
@@ -145,6 +142,9 @@ _DATA_DETECTORS: list[ModuleType] = [
     query_returned_zero_rows,
     redundant_encoding,
     series_labels_repeat_word,
+    temporal_single_point,
+    too_many_color_categories,
+    too_many_x_categories,
     wide_measure_label_collision,
     y_encoding_mostly_null,
 ]

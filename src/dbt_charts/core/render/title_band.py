@@ -17,7 +17,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.board.normalized import (
     Board,
     TitleShift,
@@ -35,10 +34,12 @@ from dbt_charts.core.compile.models.chart.resolved._base import (
     _SharedResolvedChartFields,
 )
 from dbt_charts.core.compile.models.style.resolved import effective_padding
-from dbt_charts.core.render.chart.spec_builders import (
-    VEGA_SUBTITLE_PADDING,
-    VEGA_TITLE_OFFSET,
+from dbt_charts.core.compile.resolve.chart.plot_height_floor import subtitle_cost_px
+from dbt_charts.core.constants.estimates import (
+    SPARK_BAR_TITLE_BASELINE_Y_PX,
+    SPARK_BAR_TITLE_HEIGHT_PX,
 )
+from dbt_charts.core.render.chart.spec_builders import VEGA_TITLE_OFFSET
 from dbt_charts.core.render.engine import table_title_geometry
 from dbt_charts.core.render.sizing import get_title_height, title_baseline_offset
 
@@ -125,11 +126,10 @@ def chart_title_metrics(
         ascent, tail = table_title_geometry(chart, slot_width)
         return TitleMetrics(ascent=inset_top + ascent, tail=tail)
     if isinstance(chart, ResolvedSparkBarChart):
-        spark = get_chart_rendering().spark_bar
-        block_height = spark.title_height + (int(size) if chart.subtitle else 0)
+        block_height = SPARK_BAR_TITLE_HEIGHT_PX + (int(size) if chart.subtitle else 0)
         return TitleMetrics(
-            ascent=inset_top + spark.title_baseline_y,
-            tail=block_height - spark.title_baseline_y,
+            ascent=inset_top + SPARK_BAR_TITLE_BASELINE_Y_PX,
+            tail=block_height - SPARK_BAR_TITLE_BASELINE_Y_PX,
         )
     # A custom chart's frame lays its title out as Vega-Lite does, so it
     # shares the band with the mark families.
@@ -155,12 +155,7 @@ def vega_title_block_height(chart: ResolvedChart) -> float:
     title_font = chart.style.title_font
     assert title_font is not None, "a titled chart resolves its title font"
     offset = chart.title_style.position.offset
-    # One subtitle line: its font size plus Vega's default subtitle padding.
-    subtitle = 0.0
-    if chart.subtitle:
-        subtitle_size = chart.title_style.subtitle.font.size
-        assert subtitle_size is not None, "the cascade fills the subtitle font size"
-        subtitle = float(subtitle_size) + VEGA_SUBTITLE_PADDING
+    subtitle = subtitle_cost_px(chart.subtitle, chart.title_style.subtitle.font)
     return (
         float(title_font.size)
         + subtitle

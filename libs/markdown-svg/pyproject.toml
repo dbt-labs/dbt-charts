@@ -1,9 +1,6 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-markers = [
-    "network: marks tests as requiring network access (deselect with '-m \"not network\"')",
-]
 
 [tool.mypy]
 python_version = "3.11"

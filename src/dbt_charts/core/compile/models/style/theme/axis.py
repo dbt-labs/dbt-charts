@@ -51,6 +51,9 @@ _TIME_UNIT_LITERAL = Literal[
 ]
 
 
+_TickValues = list[Any]  # type-state: explicit_any — any scale's tick values
+
+
 class AxisLabelOverlapConfig(BaseModel):
     """Two-bool overlap strategy enablement for x-axis labels.
 
@@ -152,9 +155,7 @@ class BaseAxisGridStyle(BaseModel):
         default=None, description="Grid line color; None uses Vega-Lite's default."
     )
     # SkipInheritSlots: dash is not inherited — axis family variants each own their dash independently.
-    dash: Annotated[
-        list[float] | None, SkipInheritSlots(), Merge(Strategy.OVERRIDE)
-    ] = Field(
+    dash: Annotated[list[float] | None, SkipInheritSlots()] = Field(
         default=None,
         description="Dash pattern for grid lines; None renders a solid line.",
     )
@@ -231,10 +232,11 @@ class AxisTicksStyle(BaseModel):
         description="Pixel offset of ticks from their default position; None means no offset.",
     )
     # SkipInheritSlots: count is not inherited — axis family variants each set their own count.
-    count: Annotated[int | None, SkipInheritSlots()] = Field(
+    count: Annotated[int | Literal["auto"] | None, SkipInheritSlots()] = Field(
         default=None,
         description=(
-            "Target number of axis ticks: a target everywhere, never an exact "
+            "Target number of axis ticks, or 'auto' for the engine's own sparse "
+            "ladder: a target everywhere, never an exact "
             "count. On the measure axis (axis_y) the renderer computes an "
             "explicit round-numbered ladder of at most this many ticks. On "
             "axis_x it passes through as VL's axis.tickCount: a temporal scale "
@@ -283,6 +285,7 @@ class DimensionTicksStyle(AxisTicksStyle, ConstrainedModel):
             "ticks.time_unit/step for a step-anchored cadence (every N "
             "years/quarters/months), or ticks.count for VL's advisory "
             "tick-count hint, not both.",
+            auto=("count",),
         ),
     )
 
@@ -335,12 +338,12 @@ class AxisTitleStyle(BaseModel):
             "left/right edge. None uses Vega-Lite's default."
         ),
     )
-    visible: bool | None = Field(
+    visible: bool | Literal["auto"] | None = Field(
         default=None,
         description=(
             "Show the axis title; None uses Vega-Lite's default (title shown). "
-            "An explicit value you set, on the board or on a single chart, "
-            "wins over the title an authored x_label/y_label would force on."
+            "'auto' shows it only when the chart authors an "
+            "x_label/y_label. An explicit true/false from any tier wins."
         ),
     )
 
@@ -478,7 +481,7 @@ class DimensionLabelStyle(AxisLabelStyle):
     # The picker walks this list and returns the first angle whose label widths
     # fit at the chart's drawable width; fall-through uses the last entry (steepest).
     # None means tilt is disabled (used on y-axis and any axis the resolver doesn't target).
-    tilt_increments: Annotated[list[float] | None, Merge(Strategy.OVERRIDE)] = Field(
+    tilt_increments: list[float] | None = Field(
         default=None,
         min_length=1,
         description="Descending tilt angles for label overlap resolution on discrete x-axes; None disables tilt.",
@@ -497,7 +500,7 @@ class DimensionLabelStyle(AxisLabelStyle):
     # axis is never temporal in dbt charts' model), or on a bar chart whose
     # categorical axis renders horizontal (that axis is always nominal,
     # regardless of orientation being forced or auto-inferred).
-    values: Annotated[list[Any] | None, Merge(Strategy.OVERRIDE)] = Field(
+    values: _TickValues | None = Field(
         default=None,
         min_length=1,
         description=(
@@ -798,7 +801,7 @@ class BaseScaleStyle(BaseModel):
     # Explicit tick values for the scale (not to be confused with
     # labels.values, which is a dimension-only label density filter on
     # DimensionLabelStyle). Moved in from the old BaseAxisStyle.values.
-    values: Annotated[list[Any] | None, Merge(Strategy.OVERRIDE)] = Field(
+    values: _TickValues | None = Field(
         default=None,
         description="Explicit tick values; None uses Vega-Lite's auto tick values.",
     )

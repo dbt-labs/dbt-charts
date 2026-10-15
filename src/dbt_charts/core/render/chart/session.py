@@ -4,9 +4,9 @@ Holds the shared board style and drives the per-chart emit → features
 pipeline for a single board/board render.  Call ``emit_chart`` per chart,
 then ``finalize_vl`` to produce Vega-Lite JSON — that path is VL-only.
 
-Non-VL families (``kpi``, ``table``, ``spark_bar``, ``callout``, ``custom``) are
-hand-drawn SVG, not Vega-Lite: ``render_svg_family`` dispatches them straight to
-the Rust engine and returns the SVG string, bypassing
+Non-VL families (``kpi``, ``table``, ``spark_bar``, ``callout``, ``custom``,
+``pie``) are hand-drawn SVG, not Vega-Lite: ``render_svg_family`` dispatches them
+straight to the Rust engine and returns the SVG string, bypassing
 ``emit_chart``/``finalize_vl`` entirely. It returns ``None`` for VL families
 so the caller falls through to the ``emit_chart``/``finalize_vl`` path.
 """
@@ -25,6 +25,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedChart,
     ResolvedCustomChart,
     ResolvedKpiChart,
+    ResolvedPieChart,
     ResolvedSparkBarChart,
     ResolvedTableChart,
 )
@@ -144,6 +145,20 @@ class BoardRenderSession:
                     title_shift=title_shift,
                 )
                 return svg
+            case ResolvedPieChart():
+                svg, _ = render_native(
+                    chart,
+                    data,
+                    width=width,
+                    height=self.board_style.chart_defaults.view.continuous_height
+                    if height is None
+                    else height,  # type-state: silent_fallback — no slot is the theme's view height
+                    padding=padding,
+                    board_style=self.board_style,
+                    title_shift=title_shift,
+                    is_placeholder=is_placeholder,
+                )
+                return svg
             case ResolvedCalloutChart():
                 svg, _ = render_native(
                     chart,
@@ -205,7 +220,7 @@ class BoardRenderSession:
         spec = self.features.apply(spec, chart, box, datasets)
         if (
             spec.data is None
-        ):  # emitters that pre-populate data (e.g. pie) take priority
+        ):  # emitters that pre-populate data (e.g. point_map) take priority
             spec.data = normalize_data_types(data.all_rows())
         # Bake title/subtitle/title_font from the resolved chart so finalize_vl
         # can emit the chart title block with correct typography.

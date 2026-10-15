@@ -2,7 +2,7 @@
 
 Verifies that tooltip.format and axis_y.categorical_orient (plus its
 label.overlap / label.separation defaults) are served from the resolved
-style tree, not from get_chart_rendering().
+style tree.
 """
 
 from __future__ import annotations

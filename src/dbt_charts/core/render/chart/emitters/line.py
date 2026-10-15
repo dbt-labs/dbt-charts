@@ -343,7 +343,9 @@ def _apply_line_step_band(
             data,
             top_encoding,
             chart_id=chart.id,
-            connect=line_mark.connect is not False,
+            disconnected_width=(
+                line_mark.disconnected_width if line_mark.connect is False else None
+            ),
         )
     return None
 

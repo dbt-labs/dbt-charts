@@ -47,7 +47,6 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.axis_cascade import (
     _merge_axis_cascade,
     build_resolved_axis,
-    chart_type_axis_patch,
     resolved_axis_style,
 )
 from dbt_charts.core.compile.resolve.style.board import (
@@ -113,7 +112,7 @@ class TestChartLocalAxisYMerge:
             _board(), BarChart(id="t", type="bar", style=patch)
         )
         merged = resolved_axis_style(
-            result, "axis_y", "quantitative", chart_type="", label_authored=False
+            result, "axis_y", "quantitative", chart_type="", labeled=False
         )
         assert merged.labels.padding == 42
 
@@ -125,7 +124,7 @@ class TestChartLocalAxisYMerge:
             _board(), BarChart(id="t", type="bar", style=patch)
         )
         merged = resolved_axis_style(
-            result, "axis_y", "quantitative", chart_type="", label_authored=False
+            result, "axis_y", "quantitative", chart_type="", labeled=False
         )
         assert merged.ticks.length == 8.5
 
@@ -137,7 +136,7 @@ class TestChartLocalAxisYMerge:
             _board(), BarChart(id="t", type="bar", style=patch)
         )
         merged = resolved_axis_style(
-            result, "axis_y", "quantitative", chart_type="", label_authored=False
+            result, "axis_y", "quantitative", chart_type="", labeled=False
         )
         assert merged.grid.visible is False
 
@@ -149,7 +148,7 @@ class TestChartLocalAxisYMerge:
             _board(), BarChart(id="t", type="bar", style=patch)
         )
         merged = resolved_axis_style(
-            result, "axis_y", "quantitative", chart_type="", label_authored=False
+            result, "axis_y", "quantitative", chart_type="", labeled=False
         )
         assert merged.labels.format.spec == "$,.0f"
 
@@ -162,10 +161,10 @@ class TestChartLocalAxisYMerge:
             board, BarChart(id="t", type="bar", style=patch)
         )
         merged_x = resolved_axis_style(
-            result, "axis_x", "ordinal", chart_type="", label_authored=False
+            result, "axis_x", "ordinal", chart_type="", labeled=False
         )
         baseline_x = resolved_axis_style(
-            board, "axis_x", "ordinal", chart_type="", label_authored=False
+            board, "axis_x", "ordinal", chart_type="", labeled=False
         )
         assert merged_x.labels.padding == baseline_x.labels.padding
 
@@ -177,7 +176,7 @@ class TestChartLocalAxisXMerge:
             _board(), BarChart(id="t", type="bar", style=patch)
         )
         merged = resolved_axis_style(
-            result, "axis_x", "temporal", chart_type="", label_authored=False
+            result, "axis_x", "temporal", chart_type="", labeled=False
         )
         assert merged.time_unit == "yearmonth"
 
@@ -189,7 +188,7 @@ class TestChartLocalAxisXMerge:
             _board(), BarChart(id="t", type="bar", style=patch)
         )
         merged = resolved_axis_style(
-            result, "axis_x", "ordinal", chart_type="", label_authored=False
+            result, "axis_x", "ordinal", chart_type="", labeled=False
         )
         assert merged.labels.angle == -45
 
@@ -206,10 +205,10 @@ class TestChartLocalAxisGlobalMerge:
             _board(), BarChart(id="t", type="bar", style=patch)
         )
         merged_x = resolved_axis_style(
-            result, "axis_x", "ordinal", chart_type="", label_authored=False
+            result, "axis_x", "ordinal", chart_type="", labeled=False
         )
         merged_y = resolved_axis_style(
-            result, "axis_y", "quantitative", chart_type="", label_authored=False
+            result, "axis_y", "quantitative", chart_type="", labeled=False
         )
         assert merged_x.grid.visible is False
         assert merged_y.grid.visible is False
@@ -224,10 +223,10 @@ class TestChartLocalAxisGlobalMerge:
             _board(), BarChart(id="t", type="bar", style=patch)
         )
         merged_x = resolved_axis_style(
-            result, "axis_x", "ordinal", chart_type="", label_authored=False
+            result, "axis_x", "ordinal", chart_type="", labeled=False
         )
         merged_y = resolved_axis_style(
-            result, "axis_y", "quantitative", chart_type="", label_authored=False
+            result, "axis_y", "quantitative", chart_type="", labeled=False
         )
         assert merged_y.grid.visible is True
         assert merged_x.grid.visible is False
@@ -244,7 +243,7 @@ class TestChartLocalAxisQuantitativeMerge:
             _board(), BarChart(id="t", type="bar", style=patch)
         )
         merged = resolved_axis_style(
-            result, "axis_y", "quantitative", chart_type="", label_authored=False
+            result, "axis_y", "quantitative", chart_type="", labeled=False
         )
         assert merged.grid.dash == [2, 2]
 
@@ -258,7 +257,7 @@ class TestChartLocalAxisBandMerge:
             _board(), BarChart(id="t", type="bar", style=patch)
         )
         merged = resolved_axis_style(
-            result, "axis_x", "ordinal", chart_type="", label_authored=False
+            result, "axis_x", "ordinal", chart_type="", labeled=False
         )
         assert merged.labels.padding == 18
 
@@ -274,23 +273,20 @@ class TestChartTypeGapHandlingCascade:
 
     def test_scatter_theme_pins_null_other_families_inherit_global(self) -> None:
         board = _board()
-        scatter_patch = chart_type_axis_patch(board, "scatter", "axis_x")
-        assert scatter_patch is not None
-        assert scatter_patch.fill == "null"
+        assert board.scatter.axis_x is not None
+        assert board.scatter.axis_x.fill == "null"
 
-        bar_patch = chart_type_axis_patch(board, "bar", "axis_x")
-        assert bar_patch is not None
-        assert bar_patch.fill is None
-        for chart_type in ("line", "area"):
-            assert chart_type_axis_patch(board, chart_type, "axis_x") is None
+        assert board.bar.axis_x is not None
+        assert board.bar.axis_x.fill is None
+        for family in (board.line, board.area):
+            assert family.axis_x is None
 
         line_axis = resolved_axis_style(
             board,
             "axis_x",
             "ordinal",
-            chart_type_axis_patch(board, "line", "axis_x"),
-            chart_type="",
-            label_authored=False,
+            chart_type="line",
+            labeled=False,
         )
         assert line_axis.fill == "null"
 
@@ -308,16 +304,14 @@ class TestChartTypeGapHandlingCascade:
             board_linear, BarChart(id="t", type="bar")
         )
 
-        scatter_patch = chart_type_axis_patch(effective, "scatter", "axis_x")
-        assert scatter_patch is not None
-        assert scatter_patch.fill == "null"
+        assert effective.scatter.axis_x is not None
+        assert effective.scatter.axis_x.fill == "null"
         scatter_axis = resolved_axis_style(
             effective,
             "axis_x",
             "ordinal",
-            scatter_patch,
-            chart_type="",
-            label_authored=False,
+            chart_type="scatter",
+            labeled=False,
         )
         assert scatter_axis.fill == "null"
 
@@ -325,74 +319,37 @@ class TestChartTypeGapHandlingCascade:
             effective,
             "axis_x",
             "ordinal",
-            chart_type_axis_patch(effective, "line", "axis_x"),
-            chart_type="",
-            label_authored=False,
+            chart_type="line",
+            labeled=False,
         )
         assert line_axis.fill == "linear"
 
-    def test_board_axis_x_fill_overrides_scatter_pin(self) -> None:
-        """A board-authored style.charts.axis_x.fill overrides the theme's
-        scatter honest-dots pin — board authoring beats theme defaults, the
-        same as a chart-local override already does. (The pin still guards
-        against a *theme* change to the global fill: with no board override
-        the scatter default holds; see the no-override assertion below.)
-
-        Exercised through StylePatch — the path an author actually uses — not
-        dataclasses.replace on the theme passthrough, which lands at a lower
-        theme layer and never reaches the board tier.
+    def test_board_axis_x_fill_loses_to_scatter_pin(self) -> None:
+        """The theme's scatter honest-dots pin (``charts.scatter.axis_x.fill``)
+        is more specific than a board's ``charts.axis_x.fill``, so the board's
+        general value does not reach scatter; the board's own
+        ``charts.scatter.axis_x.fill`` does. Other families take the general one.
         """
         from dbt_charts.core.compile.models.style.authored import StylePatch
 
         base = get_theme_style()
 
-        # No board override: the theme's scatter pin (passed as the chart-type
-        # patch) holds the fill at null.
-        plain = resolve_chart_style_context(base)
-        plain_pin = chart_type_axis_patch(plain, "scatter", "axis_x")
-        assert plain_pin is not None and plain_pin.fill == "null"
-        assert (
-            resolved_axis_style(
-                plain,
+        def fill(patch: dict, chart_type: str) -> str | None:
+            ctx = resolve_chart_style_context(base, StylePatch.model_validate(patch))
+            return resolved_axis_style(
+                ctx,
                 "axis_x",
                 "quantitative",
-                plain_pin,
-                chart_type="scatter",
-                label_authored=False,
+                chart_type=chart_type,
+                labeled=False,
             ).fill
-            == "null"
-        )
 
-        # Explicit board-global fill beats the scatter pin (deliberate author
-        # choice) — the pin is still passed, so this asserts board > pin, not
-        # merely board > theme-global.
-        overridden = resolve_chart_style_context(
-            base, StylePatch.model_validate({"charts": {"axis_x": {"fill": "linear"}}})
-        )
-        over_pin = chart_type_axis_patch(overridden, "scatter", "axis_x")
-        assert over_pin is not None and over_pin.fill == "null"
-        assert (
-            resolved_axis_style(
-                overridden,
-                "axis_x",
-                "quantitative",
-                over_pin,
-                chart_type="scatter",
-                label_authored=False,
-            ).fill
-            == "linear"
-        )
-        assert (
-            resolved_axis_style(
-                overridden,
-                "axis_x",
-                "quantitative",
-                chart_type_axis_patch(overridden, "line", "axis_x"),
-                chart_type="line",
-                label_authored=False,
-            ).fill
-            == "linear"
-        )
+        general = {"charts": {"axis_x": {"fill": "linear"}}}
+        assert fill({}, "scatter") == "null"
+        assert fill(general, "scatter") == "null"
+        assert fill(general, "line") == "linear"
+        specific = {"charts": {"scatter": {"axis_x": {"fill": "linear"}}}}
+        assert fill(specific, "scatter") == "linear"
 
 
 class TestChartTypeAxisAlignCascade:
@@ -421,9 +378,8 @@ class TestChartTypeAxisAlignCascade:
             stark,
             "axis_x",
             "ordinal",
-            chart_type_axis_patch(stark, "bar", "axis_x"),
-            chart_type="",
-            label_authored=False,
+            chart_type="bar",
+            labeled=False,
         )
         assert merged.labels.align is None
 
@@ -434,13 +390,13 @@ class TestChartTypeAxisAlignCascade:
         per-family axis_x patch (align: inward), which resolves to the
         concrete edge once one is known."""
         board = _board()
-        patch = chart_type_axis_patch(board, "bar", "axis_x")
+        patch = board.bar.axis_x
         assert patch is not None
         assert patch.labels is not None
         assert patch.labels.align == "inward"
 
         merged, band_position = _merge_axis_cascade(
-            board, "axis_x", "ordinal", patch, chart_type="", label_authored=False
+            board, "axis_x", "ordinal", chart_type="bar", labeled=False
         )
         assert (
             build_resolved_axis(
@@ -482,18 +438,12 @@ class TestChartTypeAxisAlignCascade:
         custom_bar = board.bar.model_copy(update={"axis_x": align_patch})
         custom_charts = dataclasses.replace(board, bar=custom_bar)
 
-        patch = chart_type_axis_patch(custom_charts, "bar", "axis_x")
-        assert patch is not None
-        assert patch.labels is not None
-        assert patch.labels.align == "inward"
-
         merged, band_position = _merge_axis_cascade(
             custom_charts,
             "axis_x",
             "ordinal",
-            patch,
-            chart_type="",
-            label_authored=False,
+            chart_type="bar",
+            labeled=False,
         )
         assert (
             build_resolved_axis(
@@ -513,18 +463,12 @@ class TestChartTypeAxisAlignCascade:
         custom_heatmap = board.heatmap.model_copy(update={"axis_y": align_patch})
         custom_charts = dataclasses.replace(board, heatmap=custom_heatmap)
 
-        patch = chart_type_axis_patch(custom_charts, "heatmap", "axis_y")
-        assert patch is not None
-        assert patch.labels is not None
-        assert patch.labels.align == "inward"
-
         merged, band_position = _merge_axis_cascade(
             custom_charts,
             "axis_y",
             "nominal",
-            patch,
-            chart_type="",
-            label_authored=False,
+            chart_type="heatmap",
+            labeled=False,
         )
         assert (
             build_resolved_axis(
@@ -553,7 +497,7 @@ class TestOwnSideAlignEdgeMapping:
     ) -> AxisXStyle:
         board = _board()
         merged, _ = _merge_axis_cascade(
-            board, "axis_x", "ordinal", chart_type="", label_authored=False
+            board, "axis_x", "ordinal", chart_type="", labeled=False
         )
         label = merged.labels.model_copy(update={"align": label_align})
         title = merged.title.model_copy(update={"align": title_align})
@@ -749,12 +693,12 @@ class TestPreInheritPatchReMerge:
 
 
 class TestChartLocalLegendMerge:
-    def test_legend_visible_propagates(self) -> None:
-        patch = BarChartStylePatch(legend=LegendStylePatch(visible=False))
+    def test_legend_leaf_propagates(self) -> None:
+        patch = BarChartStylePatch(legend=LegendStylePatch(symbol_limit=5))
         result = build_chart_style_context(
             _board(), BarChart(id="t", type="bar", style=patch)
         )
-        assert result.legend.visible is False
+        assert result.legend.symbol_limit == 5
 
 
 class TestAxisScaleCascade:
@@ -768,7 +712,7 @@ class TestAxisScaleCascade:
             _board(), BarChart(id="t", type="bar", style=patch)
         )
         merged = resolved_axis_style(
-            result, "axis_y", "quantitative", chart_type="", label_authored=False
+            result, "axis_y", "quantitative", chart_type="", labeled=False
         )
         assert merged.scale is not None
         assert merged.scale.continuous is not None
@@ -1145,7 +1089,7 @@ class TestResolvedAxisStyleReturnType:
         board = _board()
         result = build_chart_style_context(board, BarChart(id="t", type="bar"))
         merged = resolved_axis_style(
-            result, "axis_y", "quantitative", chart_type="", label_authored=False
+            result, "axis_y", "quantitative", chart_type="", labeled=False
         )
         assert isinstance(merged, ResolvedAxisStyle), (
             f"expected ResolvedAxisStyle, got {type(merged).__name__}"

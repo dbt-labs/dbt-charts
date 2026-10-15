@@ -63,9 +63,9 @@ install:
 # Testing
 # ============================================
 
-# Run the test suite (excludes slow, e2e, and network-marked tests)
+# Run the test suite (excludes slow and e2e tests)
 test *ARGS: test-windows
-    uv run pytest -q --tb=short tests -n auto -m "not slow and not e2e and not network" {{monorepo_only}} {{ARGS}}
+    uv run pytest -q --tb=short tests -n auto -m "not slow and not e2e" {{monorepo_only}} {{ARGS}}
 
 # Run one test file or node id
 test-file FILE *ARGS:

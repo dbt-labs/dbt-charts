@@ -26,6 +26,7 @@ by quarter as a horizontal bar" is routine.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import re
 from typing import Any
@@ -56,6 +57,7 @@ from dbt_charts.core.compile.resolve.style.board import resolve_style_and_contex
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_LABEL_FORMAT_AXIS_MISMATCH,
+    ERR_TIME_FORMAT_NOT_TEMPORAL,
 )
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
@@ -553,6 +555,96 @@ class TestLegalFormatsAreUntouched:
         )
         assert "Jan 2024" in _tick_labels(chart, data)
 
+    @pytest.mark.parametrize("family", ["bar", "line"])
+    def test_time_format_on_a_category_x_raises_not_invalid_date(
+        self, family: str
+    ) -> None:
+        """A time pattern over team names would paint "Invalid Date"."""
+        patch = {"axis_x": _x_format("%b %Y")}
+        chart = (
+            BarChart(
+                id="c",
+                type="bar",
+                x="stage",
+                y="revenue",
+                style=BarChartStylePatch(**patch),
+            )
+            if family == "bar"
+            else LineChart(
+                id="c",
+                type="line",
+                x="stage",
+                y="revenue",
+                style=LineChartStylePatch(**patch),
+            )
+        )
+        with pytest.raises(ChartDataError) as exc:
+            _render(chart, _STAGES)
+        assert exc.value.code is ERR_TIME_FORMAT_NOT_TEMPORAL
+        message = str(exc.value)
+        assert "style.axis_x.labels.format" in message
+        assert "'stage'" in message
+        assert "%b %Y" in message
+
+    def test_time_format_on_a_quantitative_x_raises(self) -> None:
+        data = [{"customers": i * 140.0, "arr": float(i)} for i in range(30)]
+        chart = LineChart(
+            id="quant",
+            type="line",
+            x="customers",
+            y="arr",
+            style=LineChartStylePatch(axis_x=_x_format("%b %Y")),
+        )
+        with pytest.raises(ChartDataError) as exc:
+            _render(chart, data)
+        assert exc.value.code is ERR_TIME_FORMAT_NOT_TEMPORAL
+
+    def test_heatmap_y_datetime_values_format_with_a_time_format(self) -> None:
+        """Real datetime cells are dates; the gate must not call them non-dates."""
+        data = [
+            {"team": t, "month": dt.datetime(2024, m, 1), "n": float(m)}
+            for t in ("A", "B")
+            for m in (1, 2, 3)
+        ]
+        chart = HeatmapChart(
+            id="hm-dt",
+            type="heatmap",
+            x="team",
+            y="month",
+            style=HeatmapChartStylePatch(
+                axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="%b %Y"))
+            ),
+        )
+        assert "Jan 2024" in _tick_labels(chart, data)
+
+    def test_scatter_categorical_y_datetime_values_format(self) -> None:
+        data = [
+            {"hours": float(m), "when": dt.datetime(2024, m, 1, tzinfo=dt.UTC)}
+            for m in (1, 2, 3)
+        ]
+        chart = ScatterChart(
+            id="sc-dt",
+            type="scatter",
+            x="hours",
+            y="when",
+            style=ScatterChartStylePatch(
+                axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="%b %Y"))
+            ),
+        )
+        assert "Jan 2024" in _tick_labels(chart, data)
+
+    def test_time_format_on_iso_date_buckets_still_formats(self) -> None:
+        """``2024-01`` bands are date-shaped, so the time pattern reads them."""
+        data = [{"month": f"2024-{m:02d}", "revenue": float(m)} for m in range(1, 5)]
+        chart = BarChart(
+            id="buckets",
+            type="bar",
+            x="month",
+            y="revenue",
+            style=BarChartStylePatch(axis_x=_x_format("%b %Y")),
+        )
+        assert "Jan 2024" in _tick_labels(chart, data)
+
     def test_boolean_categories_still_format(self) -> None:
         """d3 reads ``+true`` as 1 and paints 0/1, so a boolean dimension is a
         working board — the gate must not borrow a numeric rule that excludes
@@ -591,11 +683,7 @@ class TestLegalFormatsAreUntouched:
         )
         assert {"100.00", "200.00", "300.00"} <= set(_tick_labels(chart, data))
 
-    def test_scatter_categorical_y_time_format_routes_to_label_expr(self) -> None:
-        """A time spec on a genuinely non-date categorical y is existing,
-        preserved behavior (scatter.py's UTC labelExpr routing) — the
-        fold-in gate must not touch it, since a time spec is exempt on any
-        channel regardless of what the underlying data actually holds."""
+    def test_scatter_categorical_y_time_format_raises(self) -> None:
         chart = ScatterChart(
             id="scatter-time-y",
             type="scatter",
@@ -609,9 +697,7 @@ class TestLegalFormatsAreUntouched:
             {"team": "Onboarding", "hours": 1.8},
             {"team": "Support", "hours": 2.4},
         ]
-        spec = _render(chart, data)
-        y_axis = spec["encoding"]["y"]["axis"]
-        assert "labelExpr" in y_axis
-        # Vega validates "format" independently of labelExpr and rejects a
-        # time spec there, so it must still be removed — not left inert.
-        assert "format" not in y_axis
+        with pytest.raises(ChartDataError) as exc:
+            _render(chart, data)
+        assert exc.value.code is ERR_TIME_FORMAT_NOT_TEMPORAL
+        assert "style.axis_y.labels.format" in str(exc.value)

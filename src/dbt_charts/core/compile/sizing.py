@@ -17,7 +17,6 @@ from datetime import UTC, datetime
 from typing import NamedTuple
 
 from dbt_charts.core.compile.conditions import DrawnPredicate, drawn_items, is_drawn
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.board.normalized import (
     Board,
     Layout,
@@ -162,7 +161,7 @@ def footer_text_width(footer: FooterStyle, font_family: str) -> float:
     match = FOOTER_BRAND_WORD_RE.search(footer.text)
     if match is None:
         return measure(footer.text, size)
-    brand_weight = get_chart_rendering().frame.footer_brand_weight
+    brand_weight = footer.brand_weight
     brand = get_weighted_font_measurer(font_family, brand_weight).measure(
         match.group(0), size
     )
@@ -186,7 +185,7 @@ def _footer_row_width(board: Board) -> float:
     stamp = style.timestamp
     if stamp.visible and stamp.position == "footer":
         assert stamp.font.size is not None, "TimestampStyle guarantees font.size"
-        width += get_chart_rendering().frame.footer_timestamp_gap_px
+        width += stamp.gap
         width += get_font_measurer(family).measure(
             portable_strftime(_SAMPLE_TIMESTAMP, stamp.format), float(stamp.font.size)
         )

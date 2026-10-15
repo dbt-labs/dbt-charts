@@ -9,7 +9,9 @@ import pytest
 from pydantic import ValidationError
 
 from dbt_charts.core.compile.models.chart.authored import TableColumnConfig
-from dbt_charts.core.compile.models.style.authored import TitleStylePatch as TitleStyle
+from dbt_charts.core.compile.models.style.authored import (
+    ChartTitleStylePatch as TitleStyle,
+)
 from dbt_charts.core.compile.models.style.theme import TableRowRoleStyle
 
 # =============================================================================

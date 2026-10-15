@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json as _json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -103,6 +104,33 @@ def _print_warnings(warnings: list[Diagnostic]) -> None:
     print_diagnostics(warnings)
 
 
+def _print_cache_use(hit_ats: list[datetime]) -> None:
+    """Tell the user on stderr that this render reused cached query results.
+
+    A re-render that never reached the warehouse looks identical to one that
+    did, so say how many queries the cache answered, how stale the stalest is,
+    and how to force fresh data.
+    """
+    if not hit_ats:
+        return
+    minutes = int((datetime.now(UTC) - min(hit_ats)).total_seconds()) // 60
+    days, hours = divmod(minutes // 60, 24)
+    if days:
+        age = f"{days}d {hours}h"
+    elif hours:
+        age = f"{hours}h {minutes % 60}m"
+    elif minutes:
+        age = f"{minutes}m"
+    else:
+        age = "under a minute"
+    count = "1 query" if len(hit_ats) == 1 else f"{len(hit_ats)} queries"
+    print(
+        f"{count} served from cache, oldest result {age} old. "
+        "Pass --no-cache to re-query.",
+        file=sys.stderr,
+    )
+
+
 def _merge_warnings_into_json(
     data: dict[str, object],
     result: BoardRenderResult,
@@ -153,6 +181,10 @@ def _emit_result(
             emit_diagnostics_jsonl(all_diags)
     elif not no_warnings:
         _print_warnings(result.warnings)
+    # stderr carries JSON Lines under --diagnostics-json; a prose line would
+    # break its consumers.
+    if not diagnostics_json:
+        _print_cache_use(result.cache_hit_ats)
 
     if format in ("json", "data"):
         assert isinstance(result.data, dict)
@@ -212,7 +244,7 @@ def render_command(
         cache_path: Persist the query-result cache to this DuckDB file (created
             if absent), overriding project config. None (the default) falls
             through to the project's dbt_charts.yml cache: block (path: null
-            there means the zero-config in-memory default).
+            there means the per-user file).
         no_warnings: Suppress stderr warning output (warnings still appear in JSON)
         ignore_codes: Warning codes to suppress via the partition seam
         fail_on_chart_errors: Exit 1 when any per-chart runtime error exists
@@ -319,7 +351,7 @@ def render_command_from_yaml(
         cache_path: Persist the query-result cache to this DuckDB file (created
             if absent), overriding project config. None (the default) falls
             through to the project's dbt_charts.yml cache: block (path: null
-            there means the zero-config in-memory default).
+            there means the per-user file).
         diagnostics_json: Emit all diagnostics (errors and warnings) as JSON Lines
             to stderr. Stdout stays the render payload on success.
         no_warnings: Suppress stderr warning output (warnings still appear in JSON)

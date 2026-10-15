@@ -368,6 +368,7 @@ class TestDbtAdapter:
 
             # Test ref resolution
             sql = "SELECT * FROM {{ ref('customers') }}"
+            adapter._dialect = "postgres"
             resolved = adapter._resolve_dbt_sql(sql)
             assert resolved == "SELECT * FROM public.customers"
 
@@ -450,6 +451,7 @@ class TestDbtAdapter:
 
             # ref() should work
             sql = "SELECT * FROM {{ ref('users') }}"
+            adapter._dialect = "postgres"
             resolved = adapter._resolve_dbt_sql(sql)
             assert resolved == "SELECT * FROM main.users"
 
@@ -503,6 +505,7 @@ class TestDbtAdapter:
             )
 
             sql = "SELECT * FROM {{ ref('users') }}"
+            adapter._dialect = "postgres"
             resolved = adapter._resolve_dbt_sql(sql)
             assert "dev_schema" in resolved
             assert "prod_schema" not in resolved

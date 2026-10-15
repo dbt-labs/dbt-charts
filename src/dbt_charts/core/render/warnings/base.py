@@ -87,6 +87,7 @@ from dbt_charts.core.render.chart.axis_label_collision import AxisLabelCollision
 from dbt_charts.core.render.chart.endpoint_label_overflow import (
     EndpointLabelGapOverflow,
 )
+from dbt_charts.core.render.chart.pie_total_overflow import PieTotalOverflow
 from dbt_charts.core.render.chart.plot_width_floor_record import (
     PlotWidthShareWarning,
 )
@@ -168,6 +169,9 @@ class WarningContext(BaseModel):
     # only a chart whose column block already claims most of the
     # pre-axis-chrome footprint appears).
     plot_width_share_warnings: dict[str, PlotWidthShareWarning] = {}
+    # chart id → the donut whose center total the engine measured wider than
+    # the hole it drew. Sparse.
+    pie_total_overflows: dict[str, PieTotalOverflow] = {}
     # chart id → the query-result truncation record (execution.max_rows /
     # max_result_bytes) for that chart's query, from Executor.truncations().
     # Sparse — only charts whose query was actually truncated appear.

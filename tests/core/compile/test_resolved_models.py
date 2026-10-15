@@ -286,6 +286,7 @@ def test_resolved_line_mark_style_construction():
         halo_multiplier=2.0,
         curve=None,
         labels=ResolvedPointLabels(),
+        disconnected_width=0.9,
     )
     assert mark.stroke.width == 1.5
     assert mark.halo_multiplier == 2.0
@@ -293,7 +294,6 @@ def test_resolved_line_mark_style_construction():
 
 def test_resolved_area_style_uses_resolved_mark_types():
     """ResolvedAreaStyle.area_mark must accept ResolvedAreaMarkStyle."""
-    from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
     from dbt_charts.core.compile.models.style.resolved import (
         ResolvedAreaLineStyle,
         ResolvedAreaMarkStyle,
@@ -302,6 +302,9 @@ def test_resolved_area_style_uses_resolved_mark_types():
         ResolvedPointMarkStyle,
         ResolvedSeriesLabelStyle,
         ResolvedStrokeStyle,
+    )
+    from dbt_charts.core.compile.models.style.resolved._cartesian import (
+        ResolvedEndpointLabelsConfig,
     )
 
     area_mark = ResolvedAreaMarkStyle(opacity=0.3, backdrop=True)
@@ -324,7 +327,7 @@ def test_resolved_area_style_uses_resolved_mark_types():
         area_mark=area_mark,
         line_mark=line_mark,
         point_mark=ResolvedPointMarkStyle(),
-        endpoint_labels=EndpointLabelsConfig(
+        endpoint_labels=ResolvedEndpointLabelsConfig(
             visible=False, label_offset=8.0, height=20.0
         ),
         single_series_fill="#aaa",
@@ -340,7 +343,6 @@ def test_resolved_area_style_uses_resolved_mark_types():
 
 def test_resolved_line_style_uses_resolved_mark_type():
     """ResolvedLineStyle.line_mark must accept ResolvedLineMarkStyle."""
-    from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
     from dbt_charts.core.compile.models.style.resolved import (
         ResolvedLineMarkStyle,
         ResolvedLineStyle,
@@ -349,12 +351,16 @@ def test_resolved_line_style_uses_resolved_mark_type():
         ResolvedSeriesLabelStyle,
         ResolvedStrokeStyle,
     )
+    from dbt_charts.core.compile.models.style.resolved._cartesian import (
+        ResolvedEndpointLabelsConfig,
+    )
 
     line_mark = ResolvedLineMarkStyle(
         stroke=ResolvedStrokeStyle(width=1.5),
         halo_multiplier=2.0,
         curve=None,
         labels=ResolvedPointLabels(),
+        disconnected_width=0.9,
     )
     ax, ay = _bake_test_axes("line")
     style = ResolvedLineStyle(
@@ -369,7 +375,7 @@ def test_resolved_line_style_uses_resolved_mark_type():
         ),
         line_mark=line_mark,
         point_mark=ResolvedPointMarkStyle(),
-        endpoint_labels=EndpointLabelsConfig(
+        endpoint_labels=ResolvedEndpointLabelsConfig(
             visible=False, label_offset=8.0, height=20.0
         ),
         single_series_fill="#aaa",

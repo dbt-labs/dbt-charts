@@ -37,6 +37,7 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
 from dbt_charts.core.compile.resolve.chart.label_data import (
     pie_presentation_fingerprint,
 )
+from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_GAP_FILL_BUCKET_COLLISION
 from dbt_charts.core.render.chart.feature import FeaturePipeline
@@ -62,9 +63,9 @@ def _default_legend():
 
 def _default_charts():
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
-    from dbt_charts.core.compile.resolve.style.board import resolve_style
+    from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-    return resolve_style(get_theme_style(get_default_theme_name())).chart_defaults
+    return resolve_chart_style_context(get_theme_style(get_default_theme_name()))
 
 
 _DEFAULT_CHARTS = _default_charts()
@@ -76,7 +77,7 @@ _B: dict[str, Any] = {
     "legend": _default_legend(),
     "background": _DEFAULT_CHARTS.background,
     "canvas": _DEFAULT_CHARTS.ink_canvas,
-    "title_style": _DEFAULT_CHARTS.title,
+    "title_style": concrete_title_style(_DEFAULT_CHARTS),
     "layout_padding": _ZERO_PADDING,
 }
 _C: dict[str, Any] = dict(_B)
@@ -126,7 +127,7 @@ def _bar(
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
         canvas=_DEFAULT_CHARTS.ink_canvas,
-        title_style=_DEFAULT_CHARTS.title,
+        title_style=concrete_title_style(_DEFAULT_CHARTS),
         layout_padding=_ZERO_PADDING,
         field_labels={},
     )
@@ -151,7 +152,7 @@ def _line(
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
         canvas=_DEFAULT_CHARTS.ink_canvas,
-        title_style=_DEFAULT_CHARTS.title,
+        title_style=concrete_title_style(_DEFAULT_CHARTS),
         layout_padding=_ZERO_PADDING,
         field_labels={},
     )
@@ -176,7 +177,7 @@ def _line_with_binding(
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
         canvas=_DEFAULT_CHARTS.ink_canvas,
-        title_style=_DEFAULT_CHARTS.title,
+        title_style=concrete_title_style(_DEFAULT_CHARTS),
         layout_padding=_ZERO_PADDING,
         field_labels={},
     )
@@ -811,7 +812,7 @@ def test_unity_baseline_applies_to_format_alias_line(
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
         canvas=_DEFAULT_CHARTS.ink_canvas,
-        title_style=_DEFAULT_CHARTS.title,
+        title_style=concrete_title_style(_DEFAULT_CHARTS),
         layout_padding=_ZERO_PADDING,
         field_labels={},
     )
@@ -1411,7 +1412,7 @@ def test_line_emitter_buckets_ordinal_time_unit(line_style: ResolvedLineStyle) -
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
         canvas=_DEFAULT_CHARTS.ink_canvas,
-        title_style=_DEFAULT_CHARTS.title,
+        title_style=concrete_title_style(_DEFAULT_CHARTS),
         layout_padding=_ZERO_PADDING,
         style=line_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
         field_labels={},
@@ -2291,7 +2292,7 @@ def test_dashes_with_empty_chart_local_palette_and_board_category_colors_does_no
         legend=_default_legend(),
         background=_DEFAULT_CHARTS.background,
         canvas=_DEFAULT_CHARTS.ink_canvas,
-        title_style=_DEFAULT_CHARTS.title,
+        title_style=concrete_title_style(_DEFAULT_CHARTS),
         layout_padding=_ZERO_PADDING,
         field_labels={},
     )

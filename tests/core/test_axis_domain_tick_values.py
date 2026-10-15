@@ -20,6 +20,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
+from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 from dbt_charts.core.render.chart.spec import RenderBox
 
 _DEFAULT_BOX = RenderBox(width=600.0, height=300.0)
@@ -225,7 +226,7 @@ def _v2_base_kwargs() -> dict[str, Any]:
         "legend": charts.legend,
         "background": charts.background,
         "canvas": charts.ink_canvas,
-        "title_style": charts.title,
+        "title_style": concrete_title_style(charts),
         "layout_padding": PaddingStyle(left=0.0, right=0.0, top=0.0, bottom=0.0),
     }
 

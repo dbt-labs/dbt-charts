@@ -32,20 +32,21 @@ pydantic ValidationError (``Extra inputs are not permitted``).
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from functools import cache
+from datetime import timedelta
+from functools import cache, reduce
 from pathlib import Path  # noqa: TID251 — reads package-shipped default/theme YAML
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeGuard, get_args
 
 import yaml
 from importlib_resources import files
+from platformdirs import user_cache_dir
 from pydantic import ValidationError
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.merge import deep_merge_dict
 from dbt_charts.core.compile.models.config import (
-    ChartRenderingConfig,
     Config,
     ConfigNode,
     ExecutionConfig,
@@ -54,7 +55,6 @@ from dbt_charts.core.compile.models.config import (
     ProjectCacheConfig,
     RenderingConfig,
     ServerConfig,
-    VegaRuntimeConfig,
     as_plain_mapping,
     is_mapping_like,
 )
@@ -65,7 +65,11 @@ from dbt_charts.core.compile.models.source import (
     reject_credential_literals,
 )
 from dbt_charts.core.compile.sources.dbt_jinja import render_dbt_jinja_in_dict
-from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_CONFIG_INVALID
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_CONFIG_KEY_MOVED,
+    ERR_SOURCE_CONFIG_INVALID,
+)
+from dbt_charts.core.diagnostics.hints import CHART_RENDERING_SUCCESSORS
 from dbt_charts.core.diagnostics.suppression import validate_suppression_codes
 from dbt_charts.core.utils import UniqueKeyLoader
 
@@ -184,6 +188,59 @@ def get_config() -> Config:
     return _config
 
 
+_YamlValue = Any  # type-state: explicit_any — parsed YAML values are heterogeneous by construction
+_YamlTree = Mapping[str, _YamlValue]
+
+
+def _leaf_paths(node: _YamlTree, prefix: str = "") -> Iterator[tuple[str, _YamlValue]]:
+    for key, value in node.items():
+        if isinstance(value, Mapping) and value:
+            yield from _leaf_paths(value, f"{prefix}{key}.")
+        else:
+            yield f"{prefix}{key}", value
+
+
+def _moved_key_error(key: str, replacement: str) -> CompilationError:
+    return CompilationError.from_code(
+        ERR_CONFIG_KEY_MOVED, key=key, replacement=replacement
+    )
+
+
+def _reject_moved_keys(project_data: _YamlTree, filename: str) -> None:
+    """Raise for a project key whose value moved out of ``dbt_charts.yml``.
+
+    The retired ``chart_rendering`` section no longer exists in the config
+    model, so a project that still sets it is told where each key went.
+    """
+    if "vega" in project_data:
+        raise _moved_key_error(
+            "vega",
+            "Vega-Lite styling is theme-owned; set the matching fields under "
+            "`style:` in charts/meta.yml.",
+        )
+    section = project_data.get("chart_rendering")
+    if not isinstance(section, Mapping):
+        return
+    for path, value in _leaf_paths(section):
+        if path not in CHART_RENDERING_SUCCESSORS:
+            continue
+        successor = CHART_RENDERING_SUCCESSORS[path]
+        if successor is None:
+            raise _moved_key_error(
+                f"chart_rendering.{path}",
+                "engine constant, not configurable; delete the key.",
+            )
+        snippet = reduce(
+            lambda inner, part: {part: inner}, reversed(successor.split(".")), value
+        )
+        home = "charts/meta.yml" if successor.startswith("style.") else filename
+        raise _moved_key_error(
+            f"chart_rendering.{path}",
+            f"set `{successor}` in {home} instead:\n"
+            + yaml.safe_dump(snippet, default_flow_style=False),
+        )
+
+
 def load_config(project: Project) -> Config:
     """Load and validate project config from dbt_charts.yml.
 
@@ -205,8 +262,9 @@ def load_config(project: Project) -> Config:
     from dbt_charts.core.compile.resolve.style.board import clear_resolve_style_cache
 
     data = _load_defaults()
-    _, project_data = _load_dbt_charts_yml(project)
+    filename, project_data = _load_dbt_charts_yml(project)
     if project_data:
+        _reject_moved_keys(project_data, filename)
         data = deep_merge_dict(data, project_data)
 
     config = Config.model_validate(data)
@@ -226,11 +284,6 @@ def reset_config() -> None:
     clear_resolve_style_cache()
 
 
-def get_chart_rendering() -> ChartRenderingConfig:
-    """Narrow getter — engine constants for chart layout and formatting."""
-    return get_config().chart_rendering
-
-
 def get_inspector_config() -> InspectorConfig:
     """Narrow getter — inspector / directory-tree config."""
     return get_config().inspector
@@ -244,11 +297,6 @@ def get_terminal_config() -> ConfigNode:
 def get_rendering_config() -> RenderingConfig:
     """Narrow getter — export/output rendering config."""
     return get_config().rendering
-
-
-def get_vega_config() -> VegaRuntimeConfig:
-    """Narrow getter — Vega-Lite renderer runtime config."""
-    return get_config().vega
 
 
 def get_execution_config() -> ExecutionConfig:
@@ -523,16 +571,40 @@ def resolve_file_source_max_tables() -> int:
     return config_value if ceiling is None else min(config_value, ceiling)
 
 
+# How long an entry may sit in the per-user cache file. Nobody chose that file's
+# location, so warehouse data must not accumulate in it without bound.
+DEFAULT_CACHE_MAX_AGE = timedelta(days=7)
+
+
+def default_cache_path() -> Path:
+    """The per-user query-result cache file, shared by every project.
+
+    One file serves every project and every git worktree of a project: the
+    cache key carries the source identity, so entries never cross sources, and
+    worktrees running identical SQL share hits. It sits in the per-user cache
+    directory under dbt's ``com.getdbt`` namespace, beside the warehouse drivers
+    — ``user_cache_dir()`` takes no application name for the same reason as
+    ``driver_cache_path``.
+
+    Example, on macOS::
+
+        ~/Library/Caches/com.getdbt/charts/query-cache.duckdb
+    """
+    return Path(user_cache_dir()) / "com.getdbt" / "charts" / "query-cache.duckdb"
+
+
 @dataclass(frozen=True)
 class CacheBoot:
     """Resolved boot-time decision: whether/where to open the result cache.
 
-    ``path`` is meaningful only when ``enabled`` — ``None`` there means the
-    zero-config in-memory cache (ephemeral, discarded on process exit).
+    ``path`` is None only when not ``enabled``. ``max_age`` is set only for the
+    per-user default file: entries older than it are deleted when the file is
+    opened. A file the user named is theirs to manage and is never pruned.
     """
 
     enabled: bool
     path: Path | None
+    max_age: timedelta | None = None
 
 
 def resolve_cache_boot(
@@ -551,7 +623,7 @@ def resolve_cache_boot(
     is handled upstream by the CLI's ``envvar=`` binding) wins over config.
     Otherwise the project's ``cache:`` block picks the location: a configured
     ``path`` opens that file (created if absent, resolved relative to the
-    project root); no path opens the zero-config in-memory default.
+    project root); no path opens the per-user file (``default_cache_path``).
 
     ``CacheBoot.path`` is always returned absolute and symlink-resolved.
 
@@ -568,7 +640,11 @@ def resolve_cache_boot(
 
     project_cache = get_project_cache_root(project)
     if not project_cache.path:
-        return CacheBoot(enabled=True, path=None)
+        return CacheBoot(
+            enabled=True,
+            path=default_cache_path().resolve(),
+            max_age=DEFAULT_CACHE_MAX_AGE,
+        )
     candidate = Path(project_cache.path)
     resolved_path = candidate if candidate.is_absolute() else project.root / candidate
     return CacheBoot(enabled=True, path=resolved_path.resolve())
@@ -709,9 +785,10 @@ def get_theme_style(theme_name: str | None = None) -> Any:  # -> Style
     same merge_patches core as board compilation so theme YAML is processed
     identically to board extends fragments.
 
-    Token resolution (palette tokens → hex, self-tokens → concrete values)
-    is applied once at load time so the returned Style is ready for use as
-    the base argument to resolve_style().
+    Palette tokens are resolved to hex once at load time. Theme-self tokens
+    (``theme.background``) stay in place until ``resolve_style`` has merged
+    any layer or board canvas; read knockout leaves from a resolved style,
+    not from this base.
 
     Args:
         theme_name: Built-in theme stem (e.g. "clarity", "paper") or None
@@ -727,7 +804,6 @@ def get_theme_style(theme_name: str | None = None) -> Any:  # -> Style
     from dbt_charts.core.compile.models.style.theme import Style
     from dbt_charts.core.compile.resolve.style.tokens import (
         _resolve_color_tokens,
-        _resolve_self_tokens,
         expand_palette_refs,
     )
 
@@ -749,10 +825,7 @@ def get_theme_style(theme_name: str | None = None) -> Any:  # -> Style
         )
     style_data = style_obj.model_dump(exclude_unset=True)
     compiled = Style.model_validate(style_data)
-    # Resolve theme-self tokens before color tokens so a substituted palette
-    # token is itself resolved by the second pass.
-    compiled = _resolve_self_tokens(compiled)
-    compiled = _resolve_color_tokens(compiled)
+    compiled = _resolve_color_tokens(compiled, keep_self_tokens=True)
     # Roles are resolvable only now that `style.palettes` is final; expanding
     # here keeps every downstream consumer seeing plain stop lists.
     compiled = expand_palette_refs(compiled, path="style")
@@ -868,12 +941,17 @@ def _validate_sources_section(
 
 def validate_config_data(
     mapping: dict[str, Any],  # type-state: explicit_any — raw YAML
+    *,
+    filename: str,
 ) -> Config:
     """The engine-knob schema (``Config``) applied to *mapping* over the
     defaults: an unknown top-level key or an invalid value raises
-    ``pydantic.ValidationError``. Publishes nothing to process-global state.
+    ``pydantic.ValidationError``, a moved key raises ``CompilationError``.
+    Publishes nothing to process-global state.
     """
-    return Config.model_validate(deep_merge_dict(_load_defaults(), mapping))
+    defaults = _load_defaults()
+    _reject_moved_keys(mapping, filename)
+    return Config.model_validate(deep_merge_dict(defaults, mapping))
 
 
 def validate_project_config_data(
@@ -905,11 +983,11 @@ def validate_project_config_data(
         TypeError: ``sources.default`` is set, or ``data`` is a non-mapping,
             non-``None`` value (e.g. a bare scalar or list document).
         CompilationError: a source entry fails ``SourceConfig`` validation,
-            or carries a raw credential literal.
+            or carries a raw credential literal, or a retired key is set.
         ValueError: ``warnings.ignore`` names an unregistered code.
     """
     mapping = {} if data is None else _as_mapping(data, filename)
-    validate_config_data(mapping)
+    validate_config_data(mapping, filename=filename)
 
     sources_value = mapping.get("sources")
     sources_section = (

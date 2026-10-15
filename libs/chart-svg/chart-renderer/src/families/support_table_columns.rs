@@ -432,7 +432,7 @@ mod tests {
         serde_json::json!({
             "font": {"family": "'dbt Sans Tabular', Inter, sans-serif", "size": 11.0,
                      "color": "#626366", "weight": "400"},
-            "divider": {"visible": false, "color": "#626366", "width": 1.0, "dasharray": null},
+            "divider": {"gap": 4.0, "visible": false, "color": "#626366", "width": 1.0, "dasharray": null},
             "row": {"padding": {"vertical": 2.0, "horizontal": 6.0},
                     "divider": {"visible": false, "color": "#626366", "width": 1.0, "dasharray": null}},
             "label": {"font": {"family": "'dbt Sans Tabular', Inter, sans-serif", "size": 11.0,

@@ -943,13 +943,12 @@ rows:
             assert level.chart_style_context.background == root_card_fill
 
 
-class TestThemeBackgroundTokenResolvesTheThemesRawCanvas:
-    """``theme.background`` is a theme-self token resolved against the
-    unmodified theme base, never against this board's own (possibly
-    non-inherited-transparent) resolved background. A nested board that
-    authors an unrelated style key must still resolve a
-    theme.background-linked stroke to the theme's own canvas, not
-    'transparent'."""
+class TestThemeBackgroundTokenOnAnUnpaintedNestedBoardIsNotTransparent:
+    """``theme.background`` resolves to the canvas the board composites to. A
+    nested board that authors an unrelated style key paints nothing of its
+    own, so a theme.background-linked stroke reads its parent's canvas (here
+    the stark root's), never 'transparent'. Nested boards inside a root with
+    its own canvas are pinned in test_canvas_knockouts_follow_layer.py."""
 
     _YAML = """\
 title: Root
@@ -968,7 +967,7 @@ rows:
     text: hi
 """
 
-    def test_nested_board_slice_stroke_resolves_theme_canvas_not_transparent(self):
+    def test_unpainted_nested_board_slice_stroke_reads_parent_canvas(self):
         result = compile(self._YAML)
         assert result.success, result.errors
         board = result.board

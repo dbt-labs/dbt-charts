@@ -24,6 +24,8 @@ from dbt_charts.core.compile.models.chart.normalized import (
 )
 from dbt_charts.core.compile.models.chart.resolved._partition import PartitionAxis
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
+from dbt_charts.core.constants.estimates import FACET_CHROME_PX, FACET_MIRROR_AXIS_PX
+from dbt_charts.core.constants.layout import FACET_MIN_PANEL_PX
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart.spec import RenderBox
 
@@ -844,13 +846,6 @@ def _facet_vl(*, row=None, column=None, both_edge=False):
     return {"facet": facet, "spec": unit}
 
 
-def _facet_cfg():
-    """Per-panel sizing constants from chart_rendering.facet (default_config.yml)."""
-    from dbt_charts.core.compile.config import get_chart_rendering
-
-    return get_chart_rendering().facet
-
-
 def _axes(*fields_and_cards: tuple[str, int]) -> tuple[PartitionAxis, ...]:
     """Baked ``panel_axes`` fixture: (field, cardinality) pairs → PartitionAxis tuple.
 
@@ -929,7 +924,7 @@ class TestFacetLayout:
             extra_axis_px=0.0,
         )
         # One column: full slot minus the header/axis gutter.
-        assert vl["spec"]["width"] == 800 - _facet_cfg().chrome_px
+        assert vl["spec"]["width"] == 800 - FACET_CHROME_PX
         # Three regions stacked → height split three ways.
         assert vl["spec"]["height"] == 300 / 3
 
@@ -946,7 +941,7 @@ class TestFacetLayout:
             height=200,
             extra_axis_px=0.0,
         )
-        chrome = _facet_cfg().chrome_px + _facet_cfg().mirror_axis_px
+        chrome = FACET_CHROME_PX + FACET_MIRROR_AXIS_PX
         assert vl["spec"]["width"] == (900 - chrome) / 3
         assert vl["spec"]["height"] == 200  # single row
 
@@ -962,7 +957,7 @@ class TestFacetLayout:
             height=300,
             extra_axis_px=0.0,
         )
-        chrome = _facet_cfg().chrome_px + _facet_cfg().mirror_axis_px
+        chrome = FACET_CHROME_PX + FACET_MIRROR_AXIS_PX
         assert vl["spec"]["width"] == (800 - chrome) / 2
 
     def test_narrow_slot_shrinks_panel_width_below_floor(self):
@@ -981,11 +976,9 @@ class TestFacetLayout:
             height=300,
             extra_axis_px=0.0,
         )
-        # Two product columns, no mirror: (100 - chrome_px) floored at 0, / 2.
-        assert vl["spec"]["width"] < _facet_cfg().min_panel_px
-        assert vl["spec"]["width"] == pytest.approx(
-            max(100 - _facet_cfg().chrome_px, 0.0) / 2
-        )
+        # Two product columns, no mirror: (100 - FACET_CHROME_PX) floored at 0, / 2.
+        assert vl["spec"]["width"] < FACET_MIN_PANEL_PX
+        assert vl["spec"]["width"] == pytest.approx(max(100 - FACET_CHROME_PX, 0.0) / 2)
 
 
 # ---------------------------------------------------------------------------

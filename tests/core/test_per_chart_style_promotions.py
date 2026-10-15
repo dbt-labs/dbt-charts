@@ -745,7 +745,7 @@ class TestSparkBarNestedPatchCascade:
     [
         # LineMarkStyle: cap, join required by renderer. width is NOT
         # required at the theme tier -- the resolve layer (line.py/area.py)
-        # fills it in from chart_rendering.stroke.fallback_width whenever no
+        # fills it in from STROKE_FALLBACK_WIDTH whenever no
         # cascade tier pins one and adaptive can't compute one either, so a
         # theme leaving it unset is the intended default, not a gap. Area's
         # top-edge stroke is a genuine separate line mark sourced from this
@@ -982,7 +982,6 @@ class TestSupportTableFontInheritPropagates:
     """
 
     def test_support_table_font_size_propagates_to_label(self):
-        from dbt_charts.core.compile.models.primitives import FontStyle  # noqa: PLC0415
         from dbt_charts.core.compile.models.style.authored import (
             SupportTableStylePatch,  # noqa: PLC0415
         )
@@ -998,7 +997,7 @@ class TestSupportTableFontInheritPropagates:
             type="bar",
             style=BarChartStylePatch(
                 support_table=SupportTableStylePatch(
-                    font=FontStyle(size=_SUPPORT_TABLE_FONT_SIZE)
+                    font={"size": _SUPPORT_TABLE_FONT_SIZE}
                 )
             ),
         )

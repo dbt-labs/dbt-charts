@@ -18,6 +18,7 @@
 //!   y axis inside its cell; a shared one is a single `row_header` axis at
 //!   the left of every grid row.
 
+use crate::constants::layout::FACET_MIN_PANEL_PX;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
@@ -44,9 +45,6 @@ use crate::text::FontBook;
 use crate::vega_fit;
 use crate::Payload;
 
-/// `chart_rendering.facet.min_panel_px` (`default_config.yml`): the panel
-/// width `extra_axis_is_affordable` must leave.
-const MIN_PANEL_PX: f64 = 120.0;
 /// A horizontal `orient: top` gradient legend is `clamp(unit width, 100, 200)`
 /// long: Vega-Lite `defaultGradientLength` (`src/compile/legend/properties.ts`,
 /// v6.4 lines 206-243) reads `model.getSizeSignalRef('width')`
@@ -641,7 +639,7 @@ pub(crate) fn render_facet(payload: &Payload, fonts: &FontBook, r: &HeatmapResol
             true
         } else {
             let extra = facet_extra_axis_px(&ax_y.labels, &y_shared, fonts)?;
-            if naive_panel_w - extra >= MIN_PANEL_PX {
+            if naive_panel_w - extra >= FACET_MIN_PANEL_PX {
                 return Err("heatmap: multiples narrowing the y axis per column panel is not supported".into());
             }
             false

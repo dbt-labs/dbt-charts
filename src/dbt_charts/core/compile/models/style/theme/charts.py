@@ -10,15 +10,14 @@ from dbt_charts.core.compile.models.markers import (
     Color,
     Inherit,
     InheritSlot,
-    Merge,
     SkipInheritSlots,
-    Strategy,
 )
 from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
     FontStyle,
 )
 from dbt_charts.core.compile.models.style.theme._chart_base import (
+    ChartTitleStylePatch,
     _LegendedChartStyleBase,
     _PaintedChartStyleBase,
 )
@@ -37,7 +36,6 @@ from dbt_charts.core.compile.models.style.theme.bar import (
 )
 from dbt_charts.core.compile.models.style.theme.board import (
     PaddingStyle,
-    TitleStyle,
 )
 from dbt_charts.core.compile.models.style.theme.callout import (
     CalloutChartStyle,
@@ -97,12 +95,9 @@ class HoverEmphasisStyle(BaseModel):
     for the trigger, which would read as gating the tooltip beside it (it
     does not).
 
-    Strength is engine config, not a theme value: there is no wide range of
-    settings that read well, so we tune it rather than the author. The
-    line/area drop line's color and width ARE theme values: each theme picks
-    a neutral one scaffold rung past its own measure gridline, at twice that
-    gridline's width, so the line reads as structure rather than as another
-    data series.
+    The line/area drop line's color and width: each theme picks a neutral one
+    scaffold rung past its own measure gridline, at twice that gridline's
+    width, so the line reads as structure rather than as another data series.
 
     Runtime-only, deliberately: nothing about it reaches the rendered SVG, so
     a board renders the same file either way.
@@ -112,6 +107,11 @@ class HoverEmphasisStyle(BaseModel):
 
     visible: bool = Field(
         description="Whether hovering a mark visually emphasizes it; theme always provides this."
+    )
+    dimmed_opacity: float = Field(
+        gt=0,
+        lt=1,
+        description="Share of its own color a receded bar/arc keeps while another mark is hovered.",
     )
     drop_line_color: Annotated[str, Color()] = Field(
         description="Color of the vertical drop line from a hovered line/area datum down to its axis."
@@ -172,7 +172,11 @@ class ChartsStyle(_PaintedChartStyleBase, _LegendedChartStyleBase):
         description="Per-chart-type padding override; 4 sides in pixels."
     )
 
-    title: Annotated[TitleStyle | None, InheritSlot(from_path="Style.title")] = Field(
+    # A sparse patch: the theme sets only the `auto` font leaves, and the
+    # cascade fills every other field from Style.title.
+    title: Annotated[
+        ChartTitleStylePatch | None, InheritSlot(from_path="Style.title")
+    ] = Field(
         default=None,
         description="Title style for every chart's title.",
     )
@@ -237,7 +241,7 @@ class ChartsStyle(_PaintedChartStyleBase, _LegendedChartStyleBase):
     # — no per-family slot carries dashes; the render layer reads
     # ChartStyleContext.dashes (passed through from this field) and skips emission
     # when None.
-    dashes: Annotated[list[list[int]] | None, Merge(Strategy.OVERRIDE)] = Field(
+    dashes: list[list[int]] | None = Field(
         default=None,
         description="Ordered list of Vega-Lite strokeDash arrays for line-family categorical encoding; None disables dash emission.",
     )

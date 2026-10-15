@@ -66,6 +66,10 @@ from dbt_charts.core.render.chart.endpoint_label_overflow import (
     EndpointLabelGapOverflow,
     collect_endpoint_label_gap_overflows,
 )
+from dbt_charts.core.render.chart.pie_total_overflow import (
+    PieTotalOverflow,
+    collect_pie_total_overflows,
+)
 from dbt_charts.core.render.chart.plot_width_floor_record import (
     PlotWidthShareWarning,
     collect_plot_width_share_warnings,
@@ -226,6 +230,7 @@ def _collect_render_warnings(
     endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow],
     x_domain_paint_orders: dict[str, XDomainPaintOrder],
     plot_width_share_warnings: dict[str, PlotWidthShareWarning],
+    pie_total_overflows: dict[str, PieTotalOverflow],
     contrast_warnings: list[ContrastRecord],
 ) -> list[Diagnostic]:
     """Build WarningContext from cached query results and run all detectors.
@@ -264,7 +269,7 @@ def _collect_render_warnings(
     # the same unmeasured way) keep width=height=0.0.
     #
     # That absence of a real width only invalidates GEOMETRY detectors —
-    # truncation, category counts, band width, panel width — which judge
+    # truncation, band width, panel width — which judge
     # something that was never painted at any width. It says nothing about
     # DATA detectors (WARN-QUERY-RETURNED-ZERO-ROWS, formatter/currency
     # nudges, pie share/segment checks, …): the query still executed and
@@ -347,6 +352,7 @@ def _collect_render_warnings(
         collect_series_label_truncations() as series_label_truncations,
         collect_text_truncations() as _detection_truncations,
         collect_plot_width_share_warnings() as _detection_plot_width_share_warnings,
+        collect_pie_total_overflows() as _detection_pie_total_overflows,
         collect_axis_label_collisions() as axis_label_collisions,
     ):
         for chart_id, (chart, layout_width, _layout_height) in active_charts.items():
@@ -409,6 +415,7 @@ def _collect_render_warnings(
             **plot_width_share_warnings,
             **_detection_plot_width_share_warnings,
         },
+        pie_total_overflows={**pie_total_overflows, **_detection_pie_total_overflows},
         contrast_warnings=contrast_warnings,
     )
     return run_all(ctx)
@@ -613,6 +620,7 @@ def _render(
         str, EndpointLabelGapOverflow | None
     ] = {}
     _sizing_plot_width_share_warnings: dict[str, PlotWidthShareWarning] = {}
+    _sizing_pie_total_overflows: dict[str, PieTotalOverflow] = {}
 
     def _reset_contexts() -> None:
         _set_link_context(None)
@@ -664,6 +672,7 @@ def _render(
         collect_x_domain_paint_orders() as _sizing_x_domain_paint_orders,
         collect_endpoint_label_gap_overflows() as _sizing_endpoint_label_gap_overflows,
         collect_plot_width_share_warnings() as _sizing_plot_width_share_warnings,
+        collect_pie_total_overflows() as _sizing_pie_total_overflows,
         board_variables(merged_variables),
     ):
         try:
@@ -720,6 +729,7 @@ def _render(
         endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow],
         x_domain_paint_orders: dict[str, XDomainPaintOrder],
         plot_width_share_warnings: dict[str, PlotWidthShareWarning],
+        pie_total_overflows: dict[str, PieTotalOverflow],
         contrast_warnings: list[ContrastRecord],
     ) -> tuple[list[Diagnostic], list[Diagnostic]]:
         all_warnings = _collect_render_warnings(
@@ -735,6 +745,7 @@ def _render(
             endpoint_label_gap_overflows,
             x_domain_paint_orders,
             plot_width_share_warnings,
+            pie_total_overflows,
             contrast_warnings,
         )
         return _partition_warnings(
@@ -784,6 +795,7 @@ def _render(
     _endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow | None] = {}
     _x_domain_paint_orders: dict[str, XDomainPaintOrder] = {}
     _plot_width_share_warnings: dict[str, PlotWidthShareWarning] = {}
+    _pie_total_overflows: dict[str, PieTotalOverflow] = {}
     _contrast_warnings: list[ContrastRecord] = []
     try:
         # Render the canonical SVG once; output formats only wrap or convert it.
@@ -822,6 +834,7 @@ def _render(
             collect_endpoint_label_gap_overflows() as _endpoint_label_gap_overflows,
             collect_x_domain_paint_orders() as _x_domain_paint_orders,
             collect_plot_width_share_warnings() as _plot_width_share_warnings,
+            collect_pie_total_overflows() as _pie_total_overflows,
             collect_contrast_warnings() as _contrast_warnings,
             collect_painted_italic_families(),
             interactive_controls(options.get("controls", False)),
@@ -852,7 +865,7 @@ def _render(
         # Render failed before a table could rasterize: finalize with an empty
         # capture so detector warnings still surface alongside the board error.
         render_warnings, suppressed_warnings = _finalize_warnings(
-            {}, {}, {}, {}, {}, {}, {}, {}, []
+            {}, {}, {}, {}, {}, {}, {}, {}, {}, []
         )
     except Exception as e:  # noqa: BLE001
         from dbt_charts.core.diagnostics import ERR_INTERNAL
@@ -861,7 +874,7 @@ def _render(
             ERR_INTERNAL, message=str(e)
         ).to_diagnostic()
         render_warnings, suppressed_warnings = _finalize_warnings(
-            {}, {}, {}, {}, {}, {}, {}, {}, []
+            {}, {}, {}, {}, {}, {}, {}, {}, {}, []
         )
     finally:
         _reset_contexts()
@@ -897,6 +910,7 @@ def _render(
             },
             {**_sizing_x_domain_paint_orders, **_x_domain_paint_orders},
             {**_sizing_plot_width_share_warnings, **_plot_width_share_warnings},
+            {**_sizing_pie_total_overflows, **_pie_total_overflows},
             _contrast_warnings,
         )
 

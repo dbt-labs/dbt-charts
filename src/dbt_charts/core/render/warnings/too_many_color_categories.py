@@ -2,8 +2,9 @@
 core/diagnostics/codes_render.py for what this fires on.
 
 Detection rule:
-  some mark unit's effective color encoding has type in {"nominal", "ordinal"}
-  AND chart.palette is non-empty
+  the chart binds a categorical color channel (``categorical_color_encoding``
+  over the type its rows infer, or nominal for a wide chart's fold) with a
+  non-empty palette
   AND distinct color values in chart_results > max(len(chart.palette), 8)
 
 The threshold is the larger of the chart's resolved palette length and a floor
@@ -13,18 +14,12 @@ that recycles colors across a handful of series is not by itself unreadable
 `palette[i % len(palette)]`). An empty palette is a legal authored value, and no
 emit path recycles from one -- cartesian/wide/heatmap emitters skip the color
 scale outright, layered and pie charts raise -- so it must not trip this
-detector at any series count.
+detector at any series count. A pie has no Vega spec; its color is categorical
+by construction.
 
-The color channel is walked via `iter_mark_units`, not read off the spec's
-top-level `encoding`. A plain bar or line chart's own `color` channel sits on
-the mark's own `layer` entry, which the top-level read already finds fine --
-the gap is specifically the endpoint-label rail (`_wrap_hconcat_label_pane` /
-`_wrap_vconcat_label_rail` in `render/chart/translate.py`), which wraps the
-whole chart in an independent `hconcat`/`vconcat` that the top level never
-inherits into. A `text`-mark unit is excluded from the walk for the opposite
-reason: that same rail's label pane (`_label_color_encoding`) hardcodes
-`"type": "nominal"` on its own color channel regardless of the chart's real
-color type, so trusting it would false-fire on a quantitative color ramp.
+A ``gradient`` or ``conditional`` channel, or a ``series`` channel over numeric
+or temporal data, draws a continuous ramp rather than a legend, so no count of
+distinct values makes it unreadable.
 """
 
 from __future__ import annotations
@@ -35,13 +30,10 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
     raw_wide_series_names,
 )
 from dbt_charts.core.diagnostics import WARN_TOO_MANY_COLOR_CATEGORIES, Diagnostic
-from dbt_charts.core.render.warnings.base import (
-    WarningContext,
-    iter_mark_units,
-    unit_mark_type,
-)
+from dbt_charts.core.render.chart.emitters._channels import categorical_color_encoding
+from dbt_charts.core.render.chart.type_inference import infer_vega_type_from_data
+from dbt_charts.core.render.warnings.base import WarningContext
 
-_CATEGORICAL_TYPES = frozenset({"nominal", "ordinal"})
 _READABLE_CATEGORIES = 8
 
 
@@ -53,32 +45,32 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         color_field = effective_color_field(chart)
         if color_field is None:
             continue
-        if chart_id not in ctx.vega_specs or chart_id not in ctx.chart_results:
+        if chart_id not in ctx.chart_results:
             continue
-
-        has_categorical_color = any(
-            unit_mark_type(unit) != "text"
-            and isinstance(color_def := encoding.get("color"), dict)
-            and color_def.get("type") in _CATEGORICAL_TYPES
-            for unit, encoding in iter_mark_units(ctx.vega_specs[chart_id])
-        )
-        if not has_categorical_color:
-            continue
-
+        # A pie renders in the engine (no Vega spec) and its slices are
+        # categorical by construction.
         rows = ctx.chart_results[chart_id]
+        wide = (
+            chart
+            if isinstance(chart, WIDE_MEASURE_FAMILIES) and chart.wide_measures
+            else None
+        )
+        # A wide fold's series field exists only post-fold, and is nominal.
+        color_type = "nominal" if wide else infer_vega_type_from_data(rows, color_field)
+        if not categorical_color_encoding(chart.resolved_channels["color"], color_type):
+            continue
+
         # The authored key the series come from — what the message names.
         authored_key, authored_field = "color", color_field
-        if isinstance(chart, WIDE_MEASURE_FAMILIES) and chart.wide_measures:
+        if wide is not None:
             # The fold's series field exists only post-fold: count the pinned
             # domain (measures × dimension values — an all-null measure still
             # holds its palette slot), not the cells that carry a value.
-            distinct = len(
-                raw_wide_series_names(chart.wide_measures, chart.color, rows)
-            )
-            if chart.color is None:
+            distinct = len(raw_wide_series_names(wide.wide_measures, wide.color, rows))
+            if wide.color is None:
                 authored_key = authored_field = "y"
             else:
-                authored_field = chart.color
+                authored_field = wide.color
         else:
             distinct = len({row[color_field] for row in rows if color_field in row})
         if not chart.palette:

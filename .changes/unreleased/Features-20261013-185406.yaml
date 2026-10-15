@@ -1,0 +1,3 @@
+kind: Features
+body: Pie label and attached-table thresholds are now fixed engine constants; chart_rendering.pie keys in dbt_charts.yml are rejected.
+time: 2026-10-13T18:54:06.102004-07:00

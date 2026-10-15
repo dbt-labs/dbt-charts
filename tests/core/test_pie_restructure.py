@@ -15,10 +15,12 @@ Covers:
 
 from __future__ import annotations
 
+import html
+import re
+
 import pytest
 from pydantic import TypeAdapter
 
-from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
 from dbt_charts.core.render.chart.spec import RenderBox
 
 _DEFAULT_BOX = RenderBox(width=600.0, height=300.0)
@@ -26,6 +28,8 @@ from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.authored import AuthoredChart
 from dbt_charts.core.compile.models.chart.normalized import PieChart
 from dbt_charts.core.compile.resolve import resolve
+
+from ._engine_render import render_pie_svg
 
 _chart_patch_adapter = TypeAdapter(AuthoredChart)
 
@@ -56,6 +60,13 @@ _BAR_BARE = {
     "y": "value",
     "query": "q",
 }
+
+
+def _total_text(svg: str) -> str:
+    """The center total's painted value (the `layer_1_marks` text)."""
+    match = re.search(r'layer_1_marks"[^>]*><text [^>]*>([^<]*)</text>', svg)
+    assert match is not None, svg
+    return html.unescape(match.group(1))
 
 
 def _patch(**overrides):
@@ -138,44 +149,29 @@ class TestStaleArcKey:
         """style.marks.slice is the flat per-family shape for PieChartStylePatch."""
         _patch(style={"marks": {"slice": {"gap": 0.02}}})
 
-    def test_style_slice_gap_propagates_to_mark(self):
-        """Regression: style.pie.marks.slice.gap (formerly pad_angle) reaches the VL mark."""
+    def test_style_slice_gap_reaches_the_wedges(self):
+        """Regression: marks.slice.gap (formerly pad_angle) reaches the drawn wedges."""
         from dbt_charts.core.compile.config import get_theme_style
         from dbt_charts.core.compile.models.chart.normalized import PieChart
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.compile.resolve.style.board import (
-            resolve_style_and_context,
-        )
-        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
         compiled = get_theme_style("clarity")
-        # Override marks.slice.gap — gap lives at the global level after migration
-        global_slice = compiled.charts.marks.slice
-        updated_slice_mark = global_slice.model_copy(update={"gap": 0.07})
-        updated_marks = compiled.charts.marks.model_copy(
-            update={"slice": updated_slice_mark}
-        )
-        charts = compiled.charts.model_copy(update={"marks": updated_marks})
-        _rs, _ctx = resolve_style_and_context(
-            compiled.model_copy(update={"charts": charts})
-        )
-        chart = PieChart(
-            id="t",
-            type="pie",
-            theta="val",
-            color="cat",
-            query=SqlQuery(sql="SELECT 1", source="src"),
-            query_name="q",
-        )
-        spec = generate_vega_lite_spec(
-            chart,
-            [{"cat": "A", "val": 1}],
-            width=400,
-            board_style=_rs,
-            chart_style_context=_ctx,
-        )
-        mark = spec.get("mark") or spec.get("layer", [{}])[0].get("mark", {})
-        assert mark.get("padAngle") == pytest.approx(0.07)
+        rows = [{"cat": "A", "val": 1}, {"cat": "B", "val": 2}]
+
+        def wedges(gap: float) -> list[str]:
+            marks = compiled.charts.marks
+            updated = marks.slice.model_copy(update={"gap": gap})
+            charts = compiled.charts.model_copy(
+                update={"marks": marks.model_copy(update={"slice": updated})}
+            )
+            chart = PieChart(
+                id="t", type="pie", theta="val", color="cat", query_name="q"
+            )
+            svg = render_pie_svg(
+                chart, rows, theme=compiled.model_copy(update={"charts": charts})
+            )
+            return re.findall(r'<path d="([^"]+)"', svg)
+
+        assert wedges(0.07) != wedges(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -525,19 +521,10 @@ rows:
 class TestTotalFormatResolution:
     """style.total.value.format routes through resolve_format so aliases work."""
 
-    def test_total_format_currency_alias_resolves_in_spec(self):
-        """style.total.value.format: 'currency' must resolve to a format string, not literal."""
-        from dbt_charts.core.compile.config import (
-            get_theme_style,
-        )
+    def test_total_format_currency_alias_paints_resolved(self):
+        """style.total.value.format: 'currency' paints through the theme alias."""
         from dbt_charts.core.compile.models.chart.authored import ChartTotal
-        from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
         from dbt_charts.core.compile.models.style.authored import PieChartStylePatch
-        from dbt_charts.core.compile.resolve.style.board import (
-            resolve_chart_style_context,
-        )
-        from dbt_charts.core.render.chart.emitters.pie import PieEmitter
 
         chart = PieChart(
             id="t",
@@ -548,39 +535,15 @@ class TestTotalFormatResolution:
             style=PieChartStylePatch.model_validate(
                 {"inner_radius": 0.6, "total": {"value": {"format": "currency"}}}
             ),
-            query=SqlQuery(sql="SELECT 1", source="src"),
             query_name="q",
         )
         data = [{"cat": "A", "val": 100}, {"cat": "B", "val": 200}]
-        rc = resolve(
-            chart,
-            data,
-            chart_style_context=resolve_chart_style_context(get_theme_style()),
-        )
-        assert isinstance(rc, ResolvedPieChart)
-        mapped = PieEmitter().emit(rc, _DEFAULT_BOX, regroup((), data))
-        # If format was passed raw, it would still be "currency" string.
-        # After fix, it must be the resolved d3 format spec (not "currency").
-        value_layer = mapped.layers[1]
-        emitted_format = value_layer.encoding["text"].get("format")
-        assert emitted_format != "currency", (
-            "style.total.value.format: 'currency' must resolve via theme aliases, not pass raw"
-        )
-        assert emitted_format is not None
+        assert _total_text(render_pie_svg(chart, data)) == "$300"
 
     def test_total_format_d3_string_passes_through(self):
-        """A literal d3 format string passes through unchanged."""
-        from dbt_charts.core.compile.config import (
-            get_theme_style,
-        )
+        """A literal d3 format string paints unchanged."""
         from dbt_charts.core.compile.models.chart.authored import ChartTotal
-        from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
         from dbt_charts.core.compile.models.style.authored import PieChartStylePatch
-        from dbt_charts.core.compile.resolve.style.board import (
-            resolve_chart_style_context,
-        )
-        from dbt_charts.core.render.chart.emitters.pie import PieEmitter
 
         chart = PieChart(
             id="t",
@@ -591,19 +554,10 @@ class TestTotalFormatResolution:
             style=PieChartStylePatch.model_validate(
                 {"inner_radius": 0.6, "total": {"value": {"format": "$,.2f"}}}
             ),
-            query=SqlQuery(sql="SELECT 1", source="src"),
             query_name="q",
         )
         data = [{"cat": "A", "val": 100}]
-        rc = resolve(
-            chart,
-            data,
-            chart_style_context=resolve_chart_style_context(get_theme_style()),
-        )
-        assert isinstance(rc, ResolvedPieChart)
-        mapped = PieEmitter().emit(rc, _DEFAULT_BOX, regroup((), data))
-        value_layer = mapped.layers[1]
-        assert value_layer.encoding["text"].get("format") == "$,.2f"
+        assert _total_text(render_pie_svg(chart, data)) == "$100.00"
 
     def test_sub_dollar_total_and_tooltip_format_as_plain_digits(self):
         """A donut whose slices sum below $1 must not misread as SI milli.
@@ -617,7 +571,6 @@ class TestTotalFormatResolution:
         from dbt_charts.core.compile.config import get_theme_style
         from dbt_charts.core.compile.models.chart.authored import ChartTotal
         from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
         from dbt_charts.core.compile.models.style.authored import (
             PieChartStylePatch,
             StylePatch,
@@ -625,14 +578,12 @@ class TestTotalFormatResolution:
         from dbt_charts.core.compile.resolve.style.board import (
             resolve_style_and_context,
         )
-        from dbt_charts.core.render.chart.emitters.pie import PieEmitter
-        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
         from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
 
         tooltip_patch = StylePatch.model_validate(
             {"charts": {"tooltip": {"format": "currency"}}}
         )
-        board_style, ctx = resolve_style_and_context(get_theme_style(), tooltip_patch)
+        _, ctx = resolve_style_and_context(get_theme_style(), tooltip_patch)
         chart = PieChart(
             id="t",
             type="pie",
@@ -642,35 +593,15 @@ class TestTotalFormatResolution:
             style=PieChartStylePatch.model_validate(
                 {"inner_radius": 0.6, "total": {"value": {"format": "currency"}}}
             ),
-            query=SqlQuery(sql="SELECT 1", source="src"),
             query_name="q",
         )
         data = [{"cat": "A", "cents": 0.42}, {"cat": "B", "cents": 0.25}]
         rc = resolve(chart, data, chart_style_context=ctx)
         assert isinstance(rc, ResolvedPieChart)
-
-        # Center total: baked spec must be the plain-digit fallback.
-        mapped = PieEmitter().emit(rc, _DEFAULT_BOX, regroup((), data))
-        value_layer = mapped.layers[1]
-        assert (
-            value_layer.encoding["text"].get("format")
-            == PREDEFINED_SPECS["currency_full"].d3
-        )
-
-        # Slice tooltip: the theta encoding's format must match.
         assert rc.style.tooltip_format.spec == PREDEFINED_SPECS["currency_full"].d3
 
-        import vl_convert as vlc
-
-        spec = generate_vega_lite_spec(
-            chart,
-            data,
-            width=600,
-            board_style=board_style,
-            chart_style_context=ctx,
-        )
-        svg = vlc.vegalite_to_svg(spec)
-        assert "$0.67" in svg
+        svg = render_pie_svg(chart, data, width=600, patches=(tooltip_patch,))
+        assert _total_text(svg) == "$0.67"
         assert "670m" not in svg
 
     @pytest.mark.parametrize(
@@ -694,12 +625,7 @@ class TestTotalFormatResolution:
         """The default 2-line label's value line is formatted like the slice's
         tooltip, not a hardcoded integer: $0.42 must not paint as ``0`` or
         ``$420m``."""
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
         from dbt_charts.core.compile.models.style.authored import StylePatch
-        from dbt_charts.core.compile.resolve.style.board import (
-            resolve_style_and_context,
-        )
-        from dbt_charts.core.render.chart.emitters.pie import prepare_pie_render_rows
 
         patches = (
             [
@@ -713,19 +639,15 @@ class TestTotalFormatResolution:
             if fmt
             else []
         )
-        _, ctx = resolve_style_and_context(get_theme_style(), *patches)
-        chart = PieChart(
-            id="t",
-            type="pie",
-            theta="v",
-            color="cat",
-            query=SqlQuery(sql="SELECT 1", source="src"),
-            query_name="q",
-        )
+        chart = PieChart(id="t", type="pie", theta="v", color="cat", query_name="q")
         rows = [{"cat": name, "v": v} for name, v in zip("AB", data, strict=True)]
-        rc = resolve(chart, rows, chart_style_context=ctx)
-        painted, _ = prepare_pie_render_rows(rc, rows)
-        assert [row["__dbt_label"][1] for row in painted] == expected
+        svg = render_pie_svg(chart, rows, width=600, patches=tuple(patches))
+        labels = re.findall(
+            r'aria-roledescription="text mark"><tspan[^>]*>[^<]*</tspan>'
+            r"<tspan[^>]*>([^<]*)</tspan>",
+            svg,
+        )
+        assert [html.unescape(label) for label in labels] == expected
 
 
 # ---------------------------------------------------------------------------
@@ -744,21 +666,11 @@ class TestTotalFormatConfig:
         )
         assert value.format is not None
 
-    def test_total_format_config_prefix_propagates_to_spec(self):
-        """FormatConfig with prefix reaches the VL encoding. d3's grammar admits only
-        "$"/"#" as a spec's own symbol character (libs/d3-format's spec.py).
-        """
-        from dbt_charts.core.compile.config import (
-            get_theme_style,
-        )
+    def test_total_format_config_prefix_paints(self):
+        """A FormatConfig prefix d3's grammar cannot hold paints ahead of the
+        digits."""
         from dbt_charts.core.compile.models.chart.authored import ChartTotal
-        from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
         from dbt_charts.core.compile.models.style.authored import PieChartStylePatch
-        from dbt_charts.core.compile.resolve.style.board import (
-            resolve_chart_style_context,
-        )
-        from dbt_charts.core.render.chart.emitters.pie import PieEmitter
 
         chart = PieChart(
             id="t",
@@ -772,29 +684,10 @@ class TestTotalFormatConfig:
                     "total": {"value": {"format": {"spec": ",.2s", "prefix": "▲ "}}},
                 }
             ),
-            query=SqlQuery(sql="SELECT 1", source="src"),
             query_name="q",
         )
         data = [{"cat": "A", "val": 100}]
-        rc = resolve(
-            chart,
-            data,
-            chart_style_context=resolve_chart_style_context(get_theme_style()),
-        )
-        assert isinstance(rc, ResolvedPieChart)
-        mapped = PieEmitter().emit(rc, _DEFAULT_BOX, regroup((), data))
-        value_layer = mapped.layers[1]
-        text_enc = value_layer.encoding["text"]
-        # The prefix has nowhere to live inside a plain text.format d3 spec,
-        # so it composes into a calculate transform instead.
-        calc_field = text_enc["field"]
-        calculate_exprs = [
-            t["calculate"] for t in value_layer.transforms if t.get("as") == calc_field
-        ]
-        assert len(calculate_exprs) == 1
-        # json.dumps escapes non-ASCII by default, so check for the decoded
-        # prefix inside the expression's JSON-quoted literal.
-        assert '"\\u25b2 "' in calculate_exprs[0]
+        assert _total_text(render_pie_svg(chart, data)) == "▲ 100"
 
 
 # ---------------------------------------------------------------------------

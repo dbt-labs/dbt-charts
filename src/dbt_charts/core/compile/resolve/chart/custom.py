@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import JsonValue
+from pydantic import BaseModel, JsonValue
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.normalized import CustomChart
@@ -12,15 +12,32 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedCustomChart,
     ResolvedCustomStyle,
 )
+from dbt_charts.core.compile.models.style.authored import (
+    LegendStylePatch,
+    PieLegendStylePatch,
+)
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
+from dbt_charts.core.compile.models.style.theme import (
+    LegendPositionStyle,
+    LegendStyle,
+    PieLegendStyle,
+)
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
     _shared_kwargs,
-    _title_font,
 )
+from dbt_charts.core.compile.resolve.style.axis_cascade import (
+    AUTO_AXIS_FORMAT,
+    target_tick_count,
+)
+from dbt_charts.core.compile.resolve.style.board import concrete_family_defaults
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
+)
+from dbt_charts.core.compile.resolve.style.legend_position import (
+    decide_legend_position,
+    merge_authored_position,
 )
 from dbt_charts.core.compile.resolve.style.palette import (
     ToneAsPaletteError,
@@ -29,6 +46,10 @@ from dbt_charts.core.compile.resolve.style.palette import (
     tone_colors,
 )
 from dbt_charts.core.compile.resolve.style.tokens import _resolve_color_tokens
+from dbt_charts.core.compile.resolve.style.typography import (
+    concrete_title_style,
+    resolve_title_font,
+)
 from dbt_charts.core.compile.template.custom_template import OptionValue
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.codes_compile import ERR_CUSTOM_FIELDS
@@ -44,12 +65,83 @@ def _palette_value(name: str) -> JsonValue:
         return dict(tone_colors(name))
 
 
+_ENGINE_DECIDED_PLACEMENT = ("edge", "align", "overlay")
+
+
+def _concrete(node: JsonValue, path: tuple[str, ...] = ()) -> JsonValue:
+    """*node* with each remaining engine-decided leaf resolved the way the
+    resolvers do: ``auto`` ticks to the engine target, ``auto`` legend values to
+    the decided placement, and an axis title that shows when labeled to hidden."""
+    if isinstance(node, list):
+        return [_concrete(v, path) for v in node]
+    if not isinstance(node, dict):
+        return node
+    out = {k: _concrete(v, (*path, k)) for k, v in node.items()}
+    if path[-1:] == ("ticks",) and out.get("count") == "auto":
+        out["count"] = target_tick_count("auto")
+    if path[-1:] == ("title",) and out.get("visible") == "auto":
+        out["visible"] = False
+    if path[-1:] == ("labels",) and out.get("format") == AUTO_AXIS_FORMAT:
+        out["format"] = None
+    if path[-1:] == ("legend",) and out.get("visible") == "auto":
+        out["visible"] = True
+    if path[-2:] == ("legend", "title") and out.get("visible") == "auto":
+        out["visible"] = None
+    return out
+
+
+def _decided_position(
+    board: LegendPositionStyle,
+    family_legend: LegendStyle | PieLegendStyle | None,
+    *,
+    radial: bool = False,
+) -> dict[str, JsonValue]:
+    """The placement a chart of this family with no chart-local style gets,
+    decided by the chart resolver's own functions."""
+    decided = decide_legend_position(
+        merge_authored_position(board, family_legend), top_strip=False, radial=radial
+    )
+    return {k: getattr(decided, k) for k in _ENGINE_DECIDED_PLACEMENT}
+
+
 def _style_tree(context: ChartStyleContext) -> dict[str, JsonValue]:
-    tree = context.cascaded.model_dump(mode="json")
-    tree["palettes"] = {
+    cascaded = context.cascaded
+    defaults = concrete_family_defaults(context)
+    charts = cascaded.charts.model_copy(
+        update={
+            "title": concrete_title_style(context),
+            "support_table": defaults.support_table,
+            "bar": defaults.bar,
+            "line": defaults.line,
+            "area": defaults.area,
+            "heatmap": defaults.heatmap,
+            "histogram": defaults.histogram,
+            "scatter": defaults.scatter,
+        }
+    )
+    dumped = cascaded.model_copy(update={"charts": charts}).model_dump(mode="json")
+    concrete = _concrete(dumped)
+    assert isinstance(concrete, dict)
+    tree_charts = concrete["charts"]
+    assert isinstance(tree_charts, dict)
+    general = cascaded.charts.legend
+    general_node = tree_charts["legend"]
+    assert isinstance(general_node, dict)
+    general_node["position"] = _decided_position(general.position, None)
+    for name, family in charts:
+        legend = dict(family).get("legend") if isinstance(family, BaseModel) else None
+        node = tree_charts[name]
+        legend_node = node.get("legend") if isinstance(node, dict) else None
+        if isinstance(legend, (LegendStylePatch, PieLegendStylePatch)) and isinstance(
+            legend_node, dict
+        ):
+            legend_node["position"] = _decided_position(
+                general.position, legend, radial=name == "pie"
+            )
+    concrete["palettes"] = {
         role: _palette_value(name) for role, name in context.palettes.items()
     }
-    return tree
+    return concrete
 
 
 def _resolve_token(context: ChartStyleContext, token: str) -> str:
@@ -116,7 +208,7 @@ def _resolve_custom(
             for column, binding in chart_style_context.category_color_pins.items()
         },
         style=ResolvedCustomStyle(
-            title_font=_title_font(normalized, local_context, width),
+            title_font=resolve_title_font(local_context, width),
             tree=_style_tree(chart_style_context),
         ),
     )

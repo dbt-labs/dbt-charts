@@ -44,17 +44,33 @@ none can ever carry a ``palette``/``single_series_palette`` field.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
+from pydantic import BaseModel
+
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.chart.normalized import Chart, KpiChart
 from dbt_charts.core.compile.resolve.style.tokens import expand_palette_refs
 
 
-def validate_board_palette_specs(board: Board) -> None:
-    """Walk a normalized Board tree, raising on any unresolved palette field."""
-    _validate_board(board, set())
+def validate_board_palette_specs(
+    board: Board,
+    chart_styles: Mapping[
+        str, BaseModel | None
+    ],  # type-state: optional — None when the chart authors no style
+) -> None:
+    """Walk a normalized Board tree, raising on any unresolved palette field.
+
+    ``chart_styles`` maps chart id to the style patch the chart itself authored.
+    """
+    _validate_board(board, chart_styles, set())
 
 
-def _validate_board(board: Board, validated: set[int]) -> None:
+def _validate_board(
+    board: Board,
+    chart_styles: Mapping[str, BaseModel | None],
+    validated: set[int],  # type-state: optional — None when the chart authors no style
+) -> None:
     """Validate one board's board style and charts.
 
     Recurses into nested boards first: a nested board's own board-level style
@@ -67,7 +83,7 @@ def _validate_board(board: Board, validated: set[int]) -> None:
     """
     for item in board.layout.items:
         if item.type == "board" and item.board is not None:
-            _validate_board(item.board, validated)
+            _validate_board(item.board, chart_styles, validated)
 
     expand_palette_refs(
         board.chart_style_context.pre_style.charts, {}, path="style.charts"
@@ -77,12 +93,14 @@ def _validate_board(board: Board, validated: set[int]) -> None:
         if id(chart) in validated:
             continue
         validated.add(id(chart))
-        _validate_chart(chart)
+        _validate_chart(chart, chart_styles[chart.id])
 
 
-def _validate_chart(chart: Chart) -> None:
+def _validate_chart(
+    chart: Chart, style: BaseModel | None
+) -> None:  # type-state: optional — None when the chart authors no style
     """Check one chart's palette-bearing surfaces: its own style patch, and,
     for a KPI, its background channel."""
-    expand_palette_refs(chart.style, {}, path=f"charts.{chart.id}.style")
+    expand_palette_refs(style, {}, path=f"charts.{chart.id}.style")
     if isinstance(chart, KpiChart):
         expand_palette_refs(chart.background, {}, path=f"charts.{chart.id}.background")

@@ -48,6 +48,8 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
+from .conftest import theme_without_tick_count
+
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
 
@@ -821,7 +823,7 @@ def test_ladderless_zero_anchor_keeps_nice_off():
     always been nice-rounded and adding the companion there would change
     shipped geometry — the visual gate caught exactly that.
     """
-    board_style, ctx = resolve_style_and_context(get_theme_style("stark"))
+    board_style, ctx = resolve_style_and_context(theme_without_tick_count("stark"))
     chart = TypeAdapter(Chart).validate_python(
         {
             "id": "t",
@@ -973,12 +975,11 @@ def test_unauthored_all_negative_area_under_independent_multiples_stays_fitted()
 
 
 def test_independent_multiples_unset_tick_count_keeps_per_panel_scales():
-    """The other early exit the floor escaped through: `ticks.count` is unset
-    in `_base.yaml` and only clarity/vivid/neon set it, so on stark any
-    all-negative zero-anchored chart under independent multiples took the
-    `ticks.count is None` return — no authoring required.
+    """The other early exit the floor escaped through: with `ticks.count`
+    unset, any all-negative zero-anchored chart under independent multiples
+    took the `ticks.count is None` return.
     """
-    board_style, ctx = resolve_style_and_context(get_theme_style("stark"))
+    board_style, ctx = resolve_style_and_context(theme_without_tick_count("stark"))
     chart = TypeAdapter(Chart).validate_python(
         {
             "id": "t",
@@ -1309,7 +1310,7 @@ def test_zero_rule_uses_theme_zero_color_and_width():
 
     resolved = resolve_chart_style_context(get_theme_style("clarity"))
     axis_y = resolved_axis_style(
-        resolved, "axis_y", "quantitative", chart_type="", label_authored=False
+        resolved, "axis_y", "quantitative", chart_type="", labeled=False
     )
     expected_color = axis_y.grid.threshold.color
     expected_width = axis_y.grid.threshold.width

@@ -32,6 +32,7 @@ class _Probe(ConstrainedModel):
     __constraints__: ClassVar[tuple[Constraint, ...]] = (
         AtLeastOneOf(("a", "inner.c", "items"), "need one", nonempty=("items",)),
         AtMostOneOf(("a", "b"), "not both: {set}"),
+        AtMostOneOf(("a", "m"), "a or m: {set}", auto=("m",)),
         Requires(("b",), "kind x needs b", when=(ValueIn("kind", ("x",)),)),
         Forbids(
             ("a",),
@@ -53,6 +54,7 @@ class _Probe(ConstrainedModel):
     inner: _Inner | None = None
     items: list[str] | str | None = None
     n: str | None = None
+    m: str | None = None
 
 
 _VALIDATOR = Draft202012Validator(
@@ -83,6 +85,9 @@ _CASES: list[dict[str, Any]] = [
     {"a": "x", "flag": False, "kind": "z"},
     {"a": "x", "n": None},
     {"a": "x", "n": "x"},
+    {"a": "x", "m": "auto"},
+    {"a": "x", "m": "v"},
+    {"m": "auto"},
 ]
 
 

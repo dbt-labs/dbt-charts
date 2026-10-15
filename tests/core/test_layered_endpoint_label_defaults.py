@@ -25,6 +25,7 @@ from dbt_charts.core.compile.models.style.authored import (
     AreaChartStylePatch,
     EndpointLabelsConfigPatch,
     LineChartStylePatch,
+    StylePatch,
 )
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
@@ -185,6 +186,33 @@ def test_layered_line_labels_directly_when_the_author_asks_for_it() -> None:
     assert resolved.style.endpoint_labels.visible is True
     # The rail names the base AND the layer directly — nothing left for the
     # legend to repeat.
+    assert resolved.legend.visible is False
+
+
+def test_board_level_opt_in_keeps_the_rail_on_a_layered_line() -> None:
+    """A board-level `charts.line.endpoint_labels.visible: true` is as concrete
+    as a chart-local one: the layer rule only steers an `auto` default."""
+    chart = LineChart(
+        id="t",
+        query=SqlQuery(sql="SELECT 1", source="t"),
+        query_name="q",
+        type="line",
+        x="month",
+        y="baseline",
+        layers=[LineLayer(type="line", y="overlay")],
+    )
+    board_patch = StylePatch.model_validate(
+        {"charts": {"line": {"endpoint_labels": {"visible": True}}}}
+    )
+    resolved = resolve(
+        chart,
+        _DATA,
+        resolve_chart_style_context(get_theme_style(), board_patch),
+        width=_WIDTH,
+    )
+    assert isinstance(resolved, ResolvedLineChart)
+
+    assert resolved.style.endpoint_labels.visible is True
     assert resolved.legend.visible is False
 
 

@@ -53,6 +53,12 @@ class _CartesianResolvedStyle(BaseModel):
     )
 
 
+class ResolvedEndpointLabelsConfig(EndpointLabelsConfig):
+    """The endpoint-label config once the engine has decided ``auto``."""
+
+    visible: bool = Field(description="Whether the series names print on the chart.")
+
+
 class _SeriesCartesianResolvedStyle(_CartesianResolvedStyle):
     """Shared resolved fields for the series cartesian families: bar, line, area.
 
@@ -64,7 +70,7 @@ class _SeriesCartesianResolvedStyle(_CartesianResolvedStyle):
     series_label: ResolvedSeriesLabelStyle = Field(
         description="Resolved series-label typography + dark-companion ink palette.",
     )
-    endpoint_labels: EndpointLabelsConfig = Field(
+    endpoint_labels: ResolvedEndpointLabelsConfig = Field(
         description=(
             "Cascade-merged endpoint-label config (visible + label_offset). "
             "Gates the EndpointLabelFeature and color-legend suppression."
@@ -78,4 +84,8 @@ class _SeriesCartesianResolvedStyle(_CartesianResolvedStyle):
     )
 
 
-__all__ = ["_CartesianResolvedStyle", "_SeriesCartesianResolvedStyle"]
+__all__ = [
+    "ResolvedEndpointLabelsConfig",
+    "_CartesianResolvedStyle",
+    "_SeriesCartesianResolvedStyle",
+]

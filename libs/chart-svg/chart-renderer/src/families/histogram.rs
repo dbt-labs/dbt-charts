@@ -129,10 +129,9 @@
 use std::fmt::Write as _;
 
 use serde::Deserialize;
-use serde_json::Value;
 
 use crate::common::{
-    axis_title_band, axis_title_text, emit_axis_title_bottom,
+    axis_title_text, emit_axis_title_bottom,
     emit_axis_title_rotated, format_y_label, row_num, AxisStyle, Font, TitleStyle,
 };
 use crate::families::cartesian::{d3_nice_domain, vl_default_tick_count, LinearScale};
@@ -144,6 +143,7 @@ use crate::Payload;
 
 #[derive(Deserialize)]
 struct Resolved {
+    id: String,
     x: String,
     x_label: Option<String>,
     #[serde(default)]
@@ -249,11 +249,14 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         Some("right") => true,
         _ => return Err("histogram: axis_y.position other than left or right is not supported".into()),
     };
-    // `mirror_axis.py` reaches histogram (module doc), but no ghost-axis
-    // paint is modeled here — same gate bar.rs's own `axis_y.mirror` check
-    // uses.
-    if !matches!(&ax_y.mirror, None | Some(Value::Null) | Some(Value::Bool(false))) {
-        return Err("histogram: axis_y.mirror is not supported".into());
+    // `axis_y.mirror: true` repeats the labels and ticks on the opposite edge at
+    // the primary's own offset (`mirror_axis.py`); a ghost `format` refuses.
+    let mirror_active = ax_y.mirror_ghost("histogram", false)?.is_some();
+    if mirror_active && ax_y.labels.angle.is_some_and(|a| a != 0.0) {
+        return Err("histogram: axis_y.mirror with axis_y.labels.angle is not supported".into());
+    }
+    if mirror_active && ax_y.labels.align.is_some() {
+        return Err("histogram: axis_y.mirror with an authored axis_y.labels.align is not supported".into());
     }
     // `measure_axis_to_vl` bakes a measured `labelPadding` only for an
     // own-side `labelAlign` (`vl_field_maps.py:457-461`) on an axis whose
@@ -269,13 +272,6 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         && ax_y.labels.expr.is_none()
         && !matches!(ax_y.labels.font.case.as_deref(), Some("upper") | Some("lower"))
         && ax_y.authored_continuous_domain().is_some();
-    // Unmodeled on both sides (left MISMATCH 4.87%, right CLOSE 1.71%
-    // against production) — every label below paints horizontally with no
-    // rotation term. Refuse a non-zero authored angle rather than silently
-    // drop it.
-    if ax_y.labels.angle.is_some_and(|a| a != 0.0) {
-        return Err("histogram: axis_y.labels.angle is not supported".into());
-    }
     // The count y-scale below is always `[0, d3_nice(0, max_count, 10).1]`
     // (`y_domain_max`): production's y encoding carries no `scale`
     // (`emitters/bar.py::_emit_histogram`), so an authored pair reaches Vega
@@ -389,7 +385,53 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
     let y_label_gap = measured_label_pad.unwrap_or(y_label_pad);
     let y_labels_flipped = measured_label_pad.is_some();
     let y_labels_start = val_on_right != y_labels_flipped;
-    let y_ink_gutter = |widest_label: f64| if y_labels_flipped { 0.0 } else { widest_label.min(y_limit) };
+    let y_angle = ax_y.labels.angle.unwrap_or(0.0);
+    // Vega-Lite's default label anchor for a rotated y axis (`defaultLabelAlign`
+    // /`defaultLabelBaseline`): straight up or down centers the label, a tilt
+    // past the vertical flips its side, and a steep one hangs from the top or
+    // bottom. A measured own-side `labelAlign` is authored, so only the
+    // baseline follows the angle.
+    let y_angle_norm = vega_fit::normalize_angle(y_angle);
+    let y_align = if y_labels_flipped || y_angle == 0.0 {
+        if y_labels_start { "left" } else { "right" }
+    } else if y_angle_norm == 90.0 || y_angle_norm == 270.0 {
+        "center"
+    } else if y_angle_norm > 90.0 && y_angle_norm < 270.0 {
+        if y_labels_start { "right" } else { "left" }
+    } else if y_labels_start {
+        "left"
+    } else {
+        "right"
+    };
+    // Vega-Lite mirrors the baseline on a right axis: a steep tilt hangs from
+    // the bottom there where a left axis hangs from the top.
+    let y_baseline = if y_angle_norm > 45.0 && y_angle_norm < 135.0 {
+        if val_on_right { "bottom" } else { "top" }
+    } else if y_angle_norm > 225.0 && y_angle_norm < 315.0 {
+        if val_on_right { "top" } else { "bottom" }
+    } else {
+        "middle"
+    };
+    // How far the labels' ink reaches past their anchor, away from the plot
+    // (`s = -bounds.x1` for a left axis): the widest label, or the widest
+    // rotated ink about each label's own anchor.
+    let y_ink_gutter = |widths: &[f64], ticks: &[f64], ph: f64| -> f64 {
+        if y_labels_flipped {
+            return 0.0;
+        }
+        if y_angle == 0.0 {
+            return widths.iter().cloned().fold(0.0_f64, f64::max).min(y_limit);
+        }
+        widths
+            .iter()
+            .zip(ticks)
+            .map(|(&w, &tv)| {
+                let y = ph * (1.0 - tv / y_domain_max);
+                let ink = vega_fit::text_ink(0.0, y, w.min(y_limit), y_font_size, y_align, y_baseline).rotate(y_angle, 0.0, y);
+                if val_on_right { ink.x2 } else { -ink.x1 }
+            })
+            .fold(0.0_f64, f64::max)
+    };
 
     let x_title_text = axis_title_text(&r.x, r.x_label.as_deref(), &r.field_labels);
     // `emitters/bar.py`: `chart.y_label or COUNT_TITLE` — an authored
@@ -400,16 +442,14 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         .y_label
         .as_deref()
         .filter(|s| !s.is_empty())
-        .unwrap_or("#")
-        .to_string();
-    let x_title_band = axis_title_band(&ax_x.title, &x_title_text);
-    let y_title_extra = crate::common::y_title_extra(&ax_y.title, &y_title_text);
-    let x_title_extra = if x_title_band > 0.0 {
-        let fs = ax_x.title.font.size_or(11.0);
-        ax_x.title.padding.unwrap_or(10.0) + fs + (0.79 * fs).round() - (0.8 * fs).round()
-    } else {
-        0.0
-    };
+        .map_or_else(|| "#".to_string(), crate::common::collapse_title_newlines);
+    let x_title_paint =
+        crate::common::wrapped_axis_title(&r.id, "x_label", &x_title_text, &ax_x.title.font, svg_w, fonts)?;
+    let y_title_paint = y_title_text.clone();
+    let y_title_extra = crate::common::y_title_extra(&ax_y.title, &y_title_paint);
+    let x_title_extra = crate::common::x_title_extra(&ax_x.title, &x_title_paint);
+    let x_title_w = crate::common::widest_title_line(&ax_x.title, &x_title_paint, fonts)?;
+    let y_title_w = crate::common::widest_title_line(&ax_y.title, &y_title_paint, fonts)?;
 
     let stroke_color = "none";
     let _ = stroke_color;
@@ -437,8 +477,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
                     .iter()
                     .map(|lbl| fonts.measure_shaped(lbl, y_family, y_font_size))
                     .collect::<Result<_, _>>()?;
-                let y_max_label_w = y_label_ws.iter().cloned().fold(0.0_f64, f64::max);
-                let y_gutter = y_ink_gutter(y_max_label_w);
+                let y_gutter = y_ink_gutter(&y_label_ws, &y_ticks, ph);
                 // The FREE edge (no value axis) still keeps a minimum
                 // breathing room past the plot (`AXIS_FREE_EDGE_PAD`, same
                 // small reservation `bar.rs`'s own axis-free edge uses) —
@@ -463,14 +502,34 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
                         ph,
                     ));
                 }
-                for &lw in &y_label_ws {
+                if y_title_extra > 0.0 {
+                    let x = if val_on_right { pw + gutter_reserve } else { -gutter_reserve };
+                    b.union(&vega_fit::Bounds::new(x, ph / 2.0 - y_title_w / 2.0, x, ph / 2.0 + y_title_w / 2.0));
+                }
+                if mirror_active {
+                    let (x, align) = if val_on_right {
+                        (-(y_tick_eff + y_label_gap), "right")
+                    } else {
+                        (pw + y_tick_eff + y_label_gap, "left")
+                    };
+                    for (&lw, &tv) in y_label_ws.iter().zip(&y_ticks) {
+                        let y = ph * (1.0 - tv / y_domain_max);
+                        b.union(&vega_fit::text_ink(x, y, lw.min(y_limit), y_font_size, align, "middle"));
+                    }
+                }
+                for (&lw, &tv) in y_label_ws.iter().zip(&y_ticks) {
                     let x = if val_on_right {
                         pw + y_tick_eff + y_label_gap
                     } else {
                         -(y_tick_eff + y_label_gap)
                     };
-                    let align = if y_labels_start { "left" } else { "right" };
-                    b.union(&vega_fit::text_ink(x, 0.0, lw.min(y_limit), y_font_size, align, "middle"));
+                    if y_angle == 0.0 {
+                        b.union(&vega_fit::text_ink(x, 0.0, lw.min(y_limit), y_font_size, y_align, "middle"));
+                    } else {
+                        let y = ph * (1.0 - tv / y_domain_max);
+                        let ink = vega_fit::text_ink(x, y, lw.min(y_limit), y_font_size, y_align, y_baseline);
+                        b.union(&ink.rotate(y_angle, x, y));
+                    }
                 }
                 let row_y = ph + x_axis_offset + x_tick_eff + x_label_pad;
                 let pass_x_scale = LinearScale::new(bin_start, bin_stop, 0.0, pw);
@@ -487,7 +546,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
                 }
                 if x_title_extra > 0.0 {
                     let ext = (b.y2 - ph).max(0.0);
-                    b.union(&vega_fit::Bounds::new(0.0, 0.0, 0.0, ph + ext + x_title_extra));
+                    b.union(&vega_fit::Bounds::new(pw / 2.0 - x_title_w / 2.0, 0.0, pw / 2.0 + x_title_w / 2.0, ph + ext + x_title_extra));
                 }
                 // Bar rect ink (top corner radius only — never exceeds the
                 // straight rect bounds).
@@ -524,8 +583,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         .iter()
         .map(|lbl| fonts.measure_shaped(lbl, y_family, y_font_size))
         .collect::<Result<_, _>>()?;
-    let y_max_label_w = y_label_ws.iter().cloned().fold(0.0_f64, f64::max);
-    let y_gutter = y_ink_gutter(y_max_label_w);
+    let y_gutter = y_ink_gutter(&y_label_ws, &y_ticks, plot_h);
     let y_pos = |count: f64| plot_h * (1.0 - count / y_domain_max);
 
     // ── Emission ─────────────────────────────────────────────────────────
@@ -628,7 +686,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
 
     emit_axis_title_bottom(
         &mut svg,
-        &x_title_text,
+        &x_title_paint,
         &ax_x.title,
         plot_w / 2.0,
         x_label_y,
@@ -666,7 +724,25 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
     };
     let y_label_anchor = if y_labels_start { "start" } else { "end" };
     for (&tv, lbl) in y_ticks.iter().zip(y_labels.iter()) {
-        let gy = y_pos(tv) + 0.5 + vega_fit::baseline_shift("middle", y_font_size);
+        let shift = vega_fit::baseline_shift(if y_angle == 0.0 { "middle" } else { y_baseline }, y_font_size);
+        if y_angle != 0.0 {
+            let gy = y_pos(tv) + 0.5;
+            let anchor = match y_align {
+                "left" => "start",
+                "right" => "end",
+                _ => "middle",
+            };
+            let _ = write!(
+                svg,
+                "<text text-anchor=\"{anchor}\" transform=\"translate({y_label_x:.3},{gy:.3}) \
+                 rotate({y_angle}) translate(0,{shift})\" font-family=\"{}\" font-size=\"{y_font_size}\" \
+                 font-weight=\"{y_label_weight}\" fill=\"{y_label_color}\">{}</text>",
+                vega_escape_attr(y_family),
+                xml_escape(lbl), y_label_weight = xml_escape_attr(&y_label_weight), y_label_color = xml_escape_attr(y_label_color)
+            );
+            continue;
+        }
+        let gy = y_pos(tv) + 0.5 + shift;
         let _ = write!(
             svg,
             "<text x=\"{y_label_x:.3}\" y=\"{gy:.3}\" text-anchor=\"{y_label_anchor}\" \
@@ -691,7 +767,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
     };
     emit_axis_title_rotated(
         &mut svg,
-        &y_title_text,
+        &y_title_paint,
         &ax_y.title,
         label_edge_x,
         plot_h / 2.0,
@@ -699,6 +775,47 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         Some(crate::contract::LabelKey::Y),
     );
     crate::contract::axis_group_close(&mut svg);
+    if mirror_active {
+        crate::contract::axis_group_open(
+            &mut svg,
+            crate::contract::AxisChannel::Y,
+            (if val_on_right { 0.5 } else { plot_w + 0.5 }, 0.0),
+        );
+        if y_tick_eff > 0.0 {
+            let tc = ax_y.ticks.color.as_deref().unwrap_or("#D0D3D9");
+            let tw = ax_y.ticks.width.unwrap_or(1.0);
+            let (tick_x1, tick_x2) =
+                if val_on_right { (-y_tick_eff, 0.0) } else { (plot_w, plot_w + y_tick_eff) };
+            for &tv in &y_ticks {
+                let gy = y_pos(tv).round() + 0.5;
+                let _ = write!(
+                    svg,
+                    "<line x1=\"{tick_x1:.3}\" y1=\"{gy:.3}\" x2=\"{tick_x2:.3}\" y2=\"{gy:.3}\" \
+                     stroke=\"{tc}\" stroke-width=\"{tw}\"/>",
+                    tc = xml_escape_attr(tc)
+                );
+            }
+        }
+        let (ghost_x, ghost_anchor) = if val_on_right {
+            (-(y_tick_eff + y_label_gap) + 0.5, "end")
+        } else {
+            (plot_w + y_tick_eff + y_label_gap + 0.5, "start")
+        };
+        for (&tv, lbl) in y_ticks.iter().zip(y_labels.iter()) {
+            let gy = y_pos(tv) + 0.5 + vega_fit::baseline_shift("middle", y_font_size);
+            let _ = write!(
+                svg,
+                "<text x=\"{ghost_x:.3}\" y=\"{gy:.3}\" text-anchor=\"{ghost_anchor}\" \
+                 font-family=\"{}\" font-size=\"{y_font_size}\" font-weight=\"{y_label_weight}\" \
+                 fill=\"{y_label_color}\">{}</text>",
+                vega_escape_attr(y_family),
+                xml_escape(lbl),
+                y_label_weight = xml_escape_attr(&y_label_weight),
+                y_label_color = xml_escape_attr(y_label_color)
+            );
+        }
+        crate::contract::axis_group_close(&mut svg);
+    }
 
     svg.push_str("</g></svg>");
     Ok(svg)
@@ -993,7 +1110,7 @@ mod tests {
                     "format": ".3~s",
                     "visible": true
                 },
-                "title": {"font": {"family": TEST_FONT}, "padding": 0.0, "visible": true},
+                "title": {"font": {"family": TEST_FONT, "weight": "600"}, "padding": 0.0, "visible": true},
                 "position": position,
                 "fiscal_year_start_month": 1,
                 "is_quantitative": true,
@@ -1004,7 +1121,7 @@ mod tests {
             "chart_type": "histogram",
             "field_labels": {},
             "x": "amount",
-            "x_label": null,
+            "id": "c", "x_label": null,
             "y_label": y_label,
             "title": null,
             "subtitle": null,
@@ -1147,24 +1264,60 @@ mod tests {
         resolved
     }
 
+    /// `axis_y.mirror: true` repeats the count labels on the opposite edge, on
+    /// either side.
     #[test]
-    fn axis_y_mirror_refuses_by_name_on_the_right() {
-        let rows = serde_json::json!([{"amount": 1.0}, {"amount": 2.0}]);
-        let resolved = with_axis_y_mirror(
-            minimal_valid_json(None, None, Some("right")),
-            serde_json::json!(true),
-        );
-        let err = render_err(resolved, rows);
-        assert_eq!(err, "histogram: axis_y.mirror is not supported");
+    fn axis_y_mirror_repeats_the_count_labels_on_either_side() {
+        for position in [Some("right"), None] {
+            let rows = serde_json::json!([{"amount": 1.0}, {"amount": 2.0}]);
+            let plain = render_ok(minimal_valid_json(None, None, position), rows.clone());
+            let resolved = with_axis_y_mirror(minimal_valid_json(None, None, position), serde_json::json!(true));
+            let mirrored = render_ok(resolved, rows);
+            assert!(
+                mirrored.matches("</text>").count() > plain.matches("</text>").count(),
+                "{position:?}: {mirrored}"
+            );
+        }
     }
 
+    /// A newline in an authored `y_label` reads as a space, like every axis
+    /// title, so the title paints one line and reserves one line.
     #[test]
-    fn axis_y_mirror_refuses_by_name_on_the_left() {
+    fn a_newline_in_the_y_label_paints_one_line() {
         let rows = serde_json::json!([{"amount": 1.0}, {"amount": 2.0}]);
-        let resolved =
-            with_axis_y_mirror(minimal_valid_json(None, None, None), serde_json::json!(true));
-        let err = render_err(resolved, rows);
-        assert_eq!(err, "histogram: axis_y.mirror is not supported");
+        let svg = render_ok(minimal_valid_json(None, Some("Count\nof orders"), None), rows);
+        assert!(svg.contains(">Count of orders</text>"), "{svg}");
+        assert!(!svg.contains("<tspan"), "{svg}");
+    }
+
+    /// Vega-Lite flips a steep tilt's baseline on a right axis: 90 degrees hangs
+    /// from the top on the left (`translate(0,9)`) and from the bottom on the
+    /// right (`translate(0,-2)`).
+    #[test]
+    fn a_steep_label_angle_flips_its_baseline_on_a_right_axis() {
+        let rows = serde_json::json!([{"amount": 1.0}, {"amount": 2.0}]);
+        for (position, shift) in [(None, "rotate(90) translate(0,9)"), (Some("right"), "rotate(90) translate(0,-2)")] {
+            let mut resolved = minimal_valid_json(None, None, position);
+            resolved["style"]["axis_y"]["labels"]["angle"] = serde_json::json!(90.0);
+            let svg = render_ok(resolved, rows.clone());
+            assert!(svg.contains(shift), "{position:?}: {svg}");
+        }
+    }
+
+    /// The mirrored ghost copies the primary's label angle and inherited align,
+    /// which this arm does not paint: both refuse by name.
+    #[test]
+    fn mirror_refuses_a_label_angle_and_an_authored_align() {
+        let rows = serde_json::json!([{"amount": 1.0}, {"amount": 2.0}]);
+        let mut resolved = with_axis_y_mirror(minimal_valid_json(None, None, None), serde_json::json!(true));
+        resolved["style"]["axis_y"]["labels"]["angle"] = serde_json::json!(45.0);
+        assert_eq!(render_err(resolved, rows.clone()), "histogram: axis_y.mirror with axis_y.labels.angle is not supported");
+        let mut resolved = with_axis_y_mirror(minimal_valid_json(None, None, None), serde_json::json!(true));
+        resolved["style"]["axis_y"]["labels"]["align"] = serde_json::json!("right");
+        assert_eq!(
+            render_err(resolved, rows),
+            "histogram: axis_y.mirror with an authored axis_y.labels.align is not supported"
+        );
     }
 
     fn with_axis_y_labels_align_and_domain(
@@ -1381,32 +1534,27 @@ mod tests {
         }
     }
 
-    /// `axis_y.labels.angle` is unmodeled on both sides (left MISMATCH
-    /// 4.87%, right CLOSE 1.71% against production) — a non-zero authored
-    /// value refuses by name rather than silently painting horizontal
-    /// labels for a rotated authoring.
+    /// A non-zero `axis_y.labels.angle` rotates every label about its anchor
+    /// on either side; Vega-Lite's default anchor flips past the vertical.
     #[test]
-    fn right_axis_labels_angle_refuses_by_name() {
-        let rows = serde_json::json!([{"amount": 1.0}, {"amount": 2.0}]);
-        let mut resolved = minimal_valid_json(None, None, Some("right"));
-        resolved["style"]["axis_y"]["labels"]["angle"] = serde_json::json!(45.0);
-        let err = render_err(resolved, rows);
-        assert_eq!(err, "histogram: axis_y.labels.angle is not supported");
-    }
-
-    #[test]
-    fn left_axis_labels_angle_refuses_by_name() {
+    fn a_labels_angle_rotates_each_label_on_either_side() {
+        for position in [None, Some("right")] {
+            let rows = serde_json::json!([{"amount": 1.0}, {"amount": 2.0}]);
+            let mut resolved = minimal_valid_json(None, None, position);
+            resolved["style"]["axis_y"]["labels"]["angle"] = serde_json::json!(45.0);
+            let svg = render_ok(resolved, rows);
+            assert!(svg.contains("rotate(45) translate(0,3)"), "{position:?}: {svg}");
+        }
         let rows = serde_json::json!([{"amount": 1.0}, {"amount": 2.0}]);
         let mut resolved = minimal_valid_json(None, None, None);
-        resolved["style"]["axis_y"]["labels"]["angle"] = serde_json::json!(45.0);
-        let err = render_err(resolved, rows);
-        assert_eq!(err, "histogram: axis_y.labels.angle is not supported");
+        resolved["style"]["axis_y"]["labels"]["angle"] = serde_json::json!(135.0);
+        assert!(render_ok(resolved, rows).contains("text-anchor=\"start\" transform=\"translate("));
     }
 
     #[test]
     fn zero_labels_angle_still_renders() {
         // An authored, literal 0.0 is the same as unauthored -- horizontal
-        // labels either way -- so the refusal must not fire on it.
+        // labels either way -- so the rotation must not fire on it.
         let rows = serde_json::json!([{"amount": 1.0}, {"amount": 2.0}, {"amount": 3.0}]);
         let mut resolved = minimal_valid_json(None, None, None);
         resolved["style"]["axis_y"]["labels"]["angle"] = serde_json::json!(0.0);

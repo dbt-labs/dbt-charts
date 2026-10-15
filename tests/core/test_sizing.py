@@ -12,6 +12,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from dbt_charts.core.compile.models.board.normalized import NO_TITLE_SHIFT
+from dbt_charts.core.constants.estimates import SPARK_BAR_TITLE_HEIGHT_PX
 
 # The direct import `import dbt_charts.core.render.converters.chart` fails because
 # dbt_charts.core imports `render` as a function, shadowing the render subpackage
@@ -3685,7 +3686,6 @@ class TestSvgFamilyChartSizing:
         (yaml/json/text output, compile-only callers) rely on this
         value instead of the old DEFAULT_CHART_HEIGHT fallback.
         """
-        from dbt_charts.core.compile.config import get_chart_rendering
         from dbt_charts.core.render.sizing import get_chart_content_height
 
         sb = get_theme_style().charts.spark_bar
@@ -3696,12 +3696,11 @@ class TestSvgFamilyChartSizing:
             get_chart_content_height(self._chart("spark_bar"), resolved_style=rs)
             == body
         )
-        # With title — adds chart_rendering.spark_bar.title_height
-
+        # With title — adds SPARK_BAR_TITLE_HEIGHT_PX
         titled = self._chart("spark_bar", title="Titled")
         assert (
             get_chart_content_height(titled, resolved_style=rs)
-            == body + get_chart_rendering().spark_bar.title_height
+            == body + SPARK_BAR_TITLE_HEIGHT_PX
         )
 
     def test_spark_bar_compile_only_layout_uses_config_estimate(self):

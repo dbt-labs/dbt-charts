@@ -14,7 +14,7 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.compile.models.markers import Merge, Strategy
+from dbt_charts.core.compile.models.markers import Exclusive, Merge, Strategy
 
 # ---------------------------------------------------------------------------
 # Small helper models for merge_patches tests — no dependency on AuthoredBoard.
@@ -39,14 +39,9 @@ class _SimplePatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: Annotated[str | None, Merge(Strategy.OVERRIDE)] = None
-    tags: Annotated[list[str] | None, Merge(Strategy.APPEND, nested=Strategy.CHILD)] = (
-        None
-    )
+    tags: Annotated[list[str] | None, Merge(Strategy.OVERRIDE)] = None
     mapping: Annotated[dict[str, str] | None, Merge(Strategy.BY_KEY)] = None
     nested: Annotated[_InnerPatch | None, Merge(Strategy.DEEP)] = None
-    child_field: Annotated[
-        str | None, Merge(Strategy.APPEND, nested=Strategy.CHILD)
-    ] = None
 
 
 # ===========================================================================
@@ -55,31 +50,13 @@ class _SimplePatch(BaseModel):
 
 
 def test_merge_marker_valid_strategies() -> None:
-    m = Merge(Strategy.APPEND)
-    assert m.file == Strategy.APPEND
-    assert m.nested is None
-
-    m2 = Merge(Strategy.BY_KEY, nested=Strategy.CHILD)
-    assert m2.file == Strategy.BY_KEY
-    assert m2.nested == Strategy.CHILD
-
-
-def test_merge_marker_nested_defaults_to_none() -> None:
-    assert Merge(Strategy.APPEND).nested is None
+    assert Merge(Strategy.OVERRIDE).file == Strategy.OVERRIDE
+    assert Merge(Strategy.BY_KEY).file == Strategy.BY_KEY
 
 
 def test_merge_marker_all_strategies_accepted() -> None:
-    for strat in (
-        Strategy.OVERRIDE,
-        Strategy.DEEP,
-        Strategy.BY_KEY,
-        Strategy.APPEND,
-        Strategy.CHILD,
-    ):
-        m = Merge(strat)
-        assert m.file == strat
-        m2 = Merge(Strategy.OVERRIDE, nested=strat)
-        assert m2.nested == strat
+    for strat in (Strategy.OVERRIDE, Strategy.DEEP, Strategy.BY_KEY):
+        assert Merge(strat).file == strat
 
 
 # ===========================================================================
@@ -92,8 +69,6 @@ def test_strategy_enum_str_compat() -> None:
     assert Strategy.OVERRIDE == "override"
     assert Strategy.DEEP == "deep"
     assert Strategy.BY_KEY == "by_key"
-    assert Strategy.APPEND == "append"
-    assert Strategy.CHILD == "child"
 
 
 def test_strategy_enum_merge_field_identity() -> None:
@@ -118,21 +93,7 @@ def test_strategy_reads_explicit_file_marker() -> None:
     from dbt_charts.core.compile.merge import strategy
 
     field = _SimplePatch.model_fields["tags"]
-    assert strategy(field, nested=False) == "append"
-
-
-def test_strategy_nested_override_when_nested_set() -> None:
-    from dbt_charts.core.compile.merge import strategy
-
-    field = _SimplePatch.model_fields["tags"]  # Merge("append", nested="child")
-    assert strategy(field, nested=True) == "child"
-
-
-def test_strategy_nested_falls_back_to_file_when_no_nested() -> None:
-    from dbt_charts.core.compile.merge import strategy
-
-    field = _SimplePatch.model_fields["mapping"]  # Merge("by_key"), no nested
-    assert strategy(field, nested=True) == "by_key"
+    assert strategy(field) == "override"
 
 
 def test_strategy_type_inferred_model() -> None:
@@ -143,7 +104,7 @@ def test_strategy_type_inferred_model() -> None:
         sub: _InnerPatch | None = None
 
     field = _NakedPatch.model_fields["sub"]
-    assert strategy(field, nested=False) == "deep"
+    assert strategy(field) == "deep"
 
 
 def test_strategy_type_inferred_dict() -> None:
@@ -153,7 +114,7 @@ def test_strategy_type_inferred_dict() -> None:
         d: dict[str, str] | None = None
 
     field = _NakedPatch.model_fields["d"]
-    assert strategy(field, nested=False) == "by_key"
+    assert strategy(field) == "by_key"
 
 
 def test_strategy_type_inferred_scalar() -> None:
@@ -163,20 +124,17 @@ def test_strategy_type_inferred_scalar() -> None:
         s: str | None = None
 
     field = _NakedPatch.model_fields["s"]
-    assert strategy(field, nested=False) == "override"
+    assert strategy(field) == "override"
 
 
-def test_strategy_list_without_merge_raises() -> None:
-    """List-typed fields with no Merge marker must raise — silent override would
-    clobber accumulated lists from lower layers."""
+def test_strategy_infers_override_for_an_unmarked_list() -> None:
     from dbt_charts.core.compile.merge import strategy
 
     class _NakedListPatch(BaseModel):
         items: list[str] | None = None
 
     field = _NakedListPatch.model_fields["items"]
-    with pytest.raises(TypeError, match="list"):
-        strategy(field, nested=False)
+    assert strategy(field) == "override"
 
 
 # ===========================================================================
@@ -194,7 +152,7 @@ def test_merge_patches_override_upper_wins() -> None:
 
     lo = _make(_SimplePatch, title="base")
     hi = _make(_SimplePatch, title="override")
-    result = merge_patches(lo, hi, nested=False)
+    result = merge_patches(lo, hi)
     assert result.title == "override"
 
 
@@ -218,7 +176,7 @@ def test_merge_patches_override_empty_model_upper_changes_nothing() -> None:
     hi = _OuterPatch.model_validate({"inner": {}})
     assert hi.inner is not None and not hi.inner.model_fields_set
 
-    result = merge_patches(lo, hi, nested=False)
+    result = merge_patches(lo, hi)
     assert result.inner is not None
     assert (result.inner.x, result.inner.y) == ("keep", 1)
 
@@ -229,7 +187,7 @@ def test_merge_patches_unset_upper_keeps_lower() -> None:
     lo = _make(_SimplePatch, title="base")
     hi = _SimplePatch()  # title not in model_fields_set
     assert "title" not in hi.model_fields_set
-    result = merge_patches(lo, hi, nested=False)
+    result = merge_patches(lo, hi)
     assert result.title == "base"
 
 
@@ -243,26 +201,8 @@ def test_merge_patches_explicit_null_clears() -> None:
     hi = _make(_SimplePatch, title=None)
     # model_validate({"title": None}) sets model_fields_set = {"title"}
     assert "title" in hi.model_fields_set
-    result = merge_patches(lo, hi, nested=False)
+    result = merge_patches(lo, hi)
     assert result.title is None
-
-
-def test_merge_patches_append_list() -> None:
-    from dbt_charts.core.compile.merge import merge_patches
-
-    lo = _make(_SimplePatch, tags=["a"])
-    hi = _make(_SimplePatch, tags=["b"])
-    result = merge_patches(lo, hi, nested=False)
-    assert result.tags == ["a", "b"]
-
-
-def test_merge_patches_append_lo_none_takes_hi() -> None:
-    from dbt_charts.core.compile.merge import merge_patches
-
-    lo = _SimplePatch()
-    hi = _make(_SimplePatch, tags=["b"])
-    result = merge_patches(lo, hi, nested=False)
-    assert result.tags == ["b"]
 
 
 def test_merge_patches_by_key_merges_dicts() -> None:
@@ -270,7 +210,7 @@ def test_merge_patches_by_key_merges_dicts() -> None:
 
     lo = _make(_SimplePatch, mapping={"a": "1"})
     hi = _make(_SimplePatch, mapping={"b": "2"})
-    result = merge_patches(lo, hi, nested=False)
+    result = merge_patches(lo, hi)
     assert result.mapping == {"a": "1", "b": "2"}
 
 
@@ -279,44 +219,8 @@ def test_merge_patches_by_key_upper_wins_collision() -> None:
 
     lo = _make(_SimplePatch, mapping={"a": "old"})
     hi = _make(_SimplePatch, mapping={"a": "new"})
-    result = merge_patches(lo, hi, nested=False)
+    result = merge_patches(lo, hi)
     assert result.mapping == {"a": "new"}
-
-
-def test_merge_patches_child_takes_upper_even_when_none() -> None:
-    """child strategy: result is always upper's value, even when it is None."""
-    from dbt_charts.core.compile.merge import merge_patches
-
-    lo = _make(_SimplePatch, child_field="parent_value")
-    # upper explicitly sets child_field=None
-    hi = _make(_SimplePatch, child_field=None)
-    result = merge_patches(lo, hi, nested=True)
-    assert result.child_field is None
-
-
-def test_merge_patches_child_unset_in_upper_suppresses_parent() -> None:
-    """child strategy: upper did not set the field at all → parent is suppressed.
-
-    This is the key child invariant: even when upper leaves the field completely
-    unset (not in model_fields_set), the parent's value is not carried through.
-    The result is the patch default (None), not the parent's value.
-    """
-    from dbt_charts.core.compile.merge import merge_patches
-
-    lo = _make(_SimplePatch, child_field="parent_value")
-    hi = _SimplePatch()  # child_field NOT in model_fields_set
-    assert "child_field" not in hi.model_fields_set
-    result = merge_patches(lo, hi, nested=True)
-    assert result.child_field is None  # parent contribution suppressed
-
-
-def test_merge_patches_child_takes_upper_set_value() -> None:
-    from dbt_charts.core.compile.merge import merge_patches
-
-    lo = _make(_SimplePatch, child_field="parent_value")
-    hi = _make(_SimplePatch, child_field="child_value")
-    result = merge_patches(lo, hi, nested=True)
-    assert result.child_field == "child_value"
 
 
 def test_merge_patches_deep_recurses() -> None:
@@ -324,7 +228,7 @@ def test_merge_patches_deep_recurses() -> None:
 
     lo = _make(_SimplePatch, nested={"x": "from_lo", "y": 1})
     hi = _make(_SimplePatch, nested={"x": "from_hi"})
-    result = merge_patches(lo, hi, nested=False)
+    result = merge_patches(lo, hi)
     assert result.nested is not None
     assert result.nested.x == "from_hi"
     assert result.nested.y == 1  # preserved from lo, unset in hi
@@ -336,7 +240,7 @@ def test_merge_patches_lo_none_takes_hi() -> None:
 
     lo = _SimplePatch()  # mapping not set (None)
     hi = _make(_SimplePatch, mapping={"k": "v"})
-    result = merge_patches(lo, hi, nested=False)
+    result = merge_patches(lo, hi)
     assert result.mapping == {"k": "v"}
 
 
@@ -345,7 +249,7 @@ def test_merge_patches_returns_same_type() -> None:
 
     lo = _SimplePatch()
     hi = _SimplePatch()
-    result = merge_patches(lo, hi, nested=False)
+    result = merge_patches(lo, hi)
     assert type(result) is _SimplePatch
 
 
@@ -356,12 +260,8 @@ def test_merge_patches_returns_same_type() -> None:
 
 class _LayoutPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    rows: Annotated[list[str] | None, Merge(Strategy.APPEND, nested=Strategy.CHILD)] = (
-        None
-    )
-    cols: Annotated[list[str] | None, Merge(Strategy.APPEND, nested=Strategy.CHILD)] = (
-        None
-    )
+    rows: Annotated[list[str] | None, Exclusive("layout")] = None
+    cols: Annotated[list[str] | None, Exclusive("layout")] = None
     title: Annotated[str | None, Merge(Strategy.OVERRIDE)] = None
 
 
@@ -371,19 +271,49 @@ def test_cross_axis_layout_lower_cleared() -> None:
 
     lo = _make(_LayoutPatch, rows=["x"], title="keep")
     hi = _make(_LayoutPatch, cols=["y"])
-    result = merge_patches(lo, hi, nested=False)
+    result = merge_patches(lo, hi)
     assert result.rows is None
     assert result.cols == ["y"]
     assert result.title == "keep"  # non-layout field unaffected
 
 
-def test_same_axis_layout_appends() -> None:
+def test_same_kind_layout_replaces() -> None:
     from dbt_charts.core.compile.merge import merge_patches
 
     lo = _make(_LayoutPatch, rows=["x"])
     hi = _make(_LayoutPatch, rows=["y"])
-    result = merge_patches(lo, hi, nested=False)
-    assert result.rows == ["x", "y"]
+    result = merge_patches(lo, hi)
+    assert result.rows == ["y"]
+
+
+def test_layout_group_marker_matches_at_most_one_of() -> None:
+    """The Exclusive("layout") members are exactly the AtMostOneOf layout keys."""
+    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+    from dbt_charts.core.compile.models.board.patch import BoardPatch
+    from dbt_charts.core.compile.models.constraints import AtMostOneOf
+
+    (at_most_one,) = [
+        c for c in AuthoredBoard.__constraints__ if isinstance(c, AtMostOneOf)
+    ]
+    for model in (AuthoredBoard, BoardPatch):
+        marked = {
+            name
+            for name, field in model.model_fields.items()
+            if Exclusive("layout") in field.metadata
+        }
+        assert marked == set(at_most_one.keys)
+
+
+def test_style_layout_cols_keeps_inherited_style_layout_rows() -> None:
+    """style.layout has rows/cols fields of its own; they are not board layouts."""
+    from dbt_charts.core.compile.merge import merge_patches
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+
+    lo = StylePatch.model_validate({"layout": {"rows": {"gap": 5}}})
+    hi = StylePatch.model_validate({"layout": {"cols": {"gap": 7}}})
+    result = merge_patches(lo, hi)
+    assert result.layout.rows.gap == 5
+    assert result.layout.cols.gap == 7
 
 
 # ===========================================================================
@@ -398,16 +328,11 @@ def test_board_patch_all_fields_optional() -> None:
     assert p is not None
 
 
-def test_board_patch_carries_merge_marker_on_tags() -> None:
+def test_board_patch_tags_infers_override() -> None:
+    from dbt_charts.core.compile.merge import strategy
     from dbt_charts.core.compile.models.board.patch import BoardPatch
-    from dbt_charts.core.compile.models.markers import Merge
 
-    meta = BoardPatch.model_fields["tags"].metadata
-    merge_markers = [m for m in meta if isinstance(m, Merge)]
-    assert len(merge_markers) == 1
-    m = merge_markers[0]
-    assert m.file == "append"
-    assert m.nested == "child"
+    assert strategy(BoardPatch.model_fields["tags"]) == "override"
 
 
 def test_board_patch_carries_merge_marker_on_queries() -> None:
@@ -430,70 +355,6 @@ def test_empty_patch_title_is_none() -> None:
     from dbt_charts.core.compile.models.board.patch import EMPTY_PATCH
 
     assert EMPTY_PATCH.title is None  # type: ignore[attr-defined]
-
-
-# ===========================================================================
-# Guard: every list field in every patch model must carry a Merge marker
-# ===========================================================================
-
-
-def _collect_patch_models(
-    cls: type[BaseModel], visited: set[type[BaseModel]] | None = None
-) -> set[type[BaseModel]]:
-    """Walk cls and all nested BaseModel fields, collecting every reachable model."""
-    import types
-    import typing
-
-    if visited is None:
-        visited = set()
-    if cls in visited:
-        return visited
-    visited.add(cls)
-    for _name, field in cls.model_fields.items():
-        ann = field.annotation
-        if typing.get_origin(ann) is Annotated:
-            ann = typing.get_args(ann)[0]
-        origin = typing.get_origin(ann)
-        if origin is typing.Union or isinstance(ann, types.UnionType):
-            non_none = [a for a in typing.get_args(ann) if a is not type(None)]
-            if non_none:
-                ann = non_none[0]
-        if isinstance(ann, type) and issubclass(ann, BaseModel):
-            _collect_patch_models(ann, visited)
-    return visited
-
-
-def test_patch_list_fields_all_have_merge_markers() -> None:
-    """Every list-typed field reachable from StylePatch must carry a Merge marker.
-
-    strategy() raises TypeError on list fields without one. A multi-layer board
-    composition (board → template → theme) triggers exactly this path.
-    Any regression here is caught at import/test time, not at merge time.
-
-    Scope note: this test only walks models reachable from StylePatch via
-    _collect_patch_models. A list field on a model NOT reachable from StylePatch
-    (e.g. a model only used in BoardPatch but not in StylePatch's tree) is out of
-    scope and must carry its own Merge marker without this guard.
-    """
-    from dbt_charts.core.compile.merge import _unwrap_type, strategy
-    from dbt_charts.core.compile.models.style.authored import StylePatch
-
-    all_models = _collect_patch_models(StylePatch)
-
-    bad: list[str] = []
-    for cls in sorted(all_models, key=lambda c: c.__name__):
-        for field_name, field in cls.model_fields.items():
-            t = _unwrap_type(field)
-            if t is list:
-                try:
-                    strategy(field, nested=False)
-                except TypeError:
-                    bad.append(f"{cls.__name__}.{field_name}")
-
-    assert not bad, (
-        "List fields without Merge markers (will crash on multi-layer merge):\n"
-        + "\n".join(f"  {b}" for b in sorted(bad))
-    )
 
 
 def test_unwrap_type_resolves_tuple_behind_a_nested_annotated_constraint() -> None:

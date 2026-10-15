@@ -1,0 +1,3 @@
+kind: Fixes
+body: An unrecognized warehouse type now fails with a clear error instead of silently using Postgres SQL.
+time: 2026-10-12T03:50:29.733245Z

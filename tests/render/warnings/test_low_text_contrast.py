@@ -4,7 +4,7 @@ Detection rule: ``check_text_contrast``/``check_markdown_contrast``
 (``render/contrast_warning.py``) run wherever a text block's resolved font
 is about to paint — heading and body ink — and record a ``ContrastRecord``
 when the ink and its opaque background clear less than the configured WCAG
-floor (``chart_rendering.text_contrast``, one config node).
+floor (``constants/contrast.py``).
 ``render/warnings/low_text_contrast.py`` turns each record into a
 ``Diagnostic``.
 
@@ -615,30 +615,18 @@ def test_check_text_contrast_composites_alpha_ink_over_background() -> None:
     assert records[0].ink == "#06101d"
 
 
-def test_check_text_contrast_uses_large_text_floor(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A ratio that clears the patched large-text floor but not the patched
-    normal floor must warn only when the text is NOT large."""
-    from types import SimpleNamespace
-
-    from dbt_charts.core.render import contrast_warning
+def test_check_text_contrast_uses_large_text_floor() -> None:
+    """#8a8a8a on white is ~3.45:1: clears the 3.0 large-text floor, misses
+    the 4.5 normal floor, so only normal-size text warns."""
+    from dbt_charts.core.constants.contrast import (
+        LARGE_TEXT_MIN_RATIO,
+        TEXT_MIN_RATIO,
+    )
     from dbt_charts.core.render.contrast_warning import (
         check_text_contrast,
         collect_contrast_warnings,
     )
 
-    patched_min_ratio, patched_large_text_min_ratio = 4.0, 3.0
-    fake_config = SimpleNamespace(
-        text_contrast=SimpleNamespace(
-            min_ratio=patched_min_ratio,
-            large_text_min_ratio=patched_large_text_min_ratio,
-        )
-    )
-    monkeypatch.setattr(contrast_warning, "get_chart_rendering", lambda: fake_config)
-
-    # #8a8a8a on #ffffff is ~3.45:1 -- clears the patched large-text floor
-    # (3.0) but not the patched normal floor (4.0).
     ink, background = "#8a8a8a", "#ffffff"
     with collect_contrast_warnings() as records:
         check_text_contrast("text_body", ink, background, 30.0)  # large (>=24px)
@@ -647,33 +635,6 @@ def test_check_text_contrast_uses_large_text_floor(
     with collect_contrast_warnings() as records:
         check_text_contrast("text_body", ink, background, 16.0)  # normal
     assert len(records) == 1
-    assert records[0].floor == patched_min_ratio
+    assert records[0].floor == TEXT_MIN_RATIO
     assert records[0].large_text is False
-
-
-def test_check_text_contrast_threshold_reads_from_config(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The floor comes from ``get_chart_rendering().text_contrast`` — proven
-    by moving it: #767676 on white is 4.54:1, which clears the real 4.5
-    default, so patching the floor to 5.0 must make it warn."""
-    from types import SimpleNamespace
-
-    from dbt_charts.core.render import contrast_warning
-    from dbt_charts.core.render.contrast_warning import (
-        check_text_contrast,
-        collect_contrast_warnings,
-    )
-
-    patched_min_ratio = 5.0
-    fake_config = SimpleNamespace(
-        text_contrast=SimpleNamespace(
-            min_ratio=patched_min_ratio, large_text_min_ratio=1.0
-        )
-    )
-    monkeypatch.setattr(contrast_warning, "get_chart_rendering", lambda: fake_config)
-
-    with collect_contrast_warnings() as records:
-        check_text_contrast("text_body", "#767676", "#ffffff", 16.0)
-    assert len(records) == 1
-    assert records[0].floor == patched_min_ratio
+    assert LARGE_TEXT_MIN_RATIO < TEXT_MIN_RATIO

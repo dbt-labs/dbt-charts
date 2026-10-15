@@ -62,7 +62,7 @@ here, from below in the categorical case), so it gets its own comparison in
 case, per this repo's inform-don't-intervene policy (a bound ``min_size``
 clamp, or an author's own oversized ``bar.size``, is never silently squeezed
 to fit, only reported), but its OWN message wording
-(``_CONTINUOUS_MESSAGE_TEMPLATE`` below): there is no band scale here at all
+(``CONTINUOUS_MESSAGE_TEMPLATE`` below): there is no band scale here at all
 (``distinct`` counting "bands" is a categorical-only concept), and the two
 branches' numbers don't share a printable shape — ``codes_render.py``'s
 shared ``message_template`` prints one rounded number into both the bar
@@ -104,7 +104,7 @@ _CATEGORICAL_TYPES = frozenset({"nominal", "ordinal"})
 # categorical branch's "N bands" framing doesn't apply to a scale with no
 # band, and printing bar_width/min_band_width through the same rounded shape
 # reads self-contradictory once min_band_width carries a live step_px).
-_CONTINUOUS_MESSAGE_TEMPLATE = (
+CONTINUOUS_MESSAGE_TEMPLATE = (
     "Chart {chart_id!r} draws {distinct} bars ~{bar_width:.2f}px wide across "
     "{render_width:.0f}px, but the closest two x values are only "
     "~{step_px:.2f}px apart — bars will overlap their neighbors."
@@ -277,7 +277,7 @@ def _detect_continuous_overlap(
         chart=chart_id,
         path=f"charts.{chart_id}.x",
         field=x_field,
-        message=_CONTINUOUS_MESSAGE_TEMPLATE.format(
+        message=CONTINUOUS_MESSAGE_TEMPLATE.format(
             chart_id=chart_id,
             distinct=len(xs),
             render_width=render_width,

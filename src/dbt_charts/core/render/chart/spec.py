@@ -122,7 +122,7 @@ class EndpointLabelData:
     # Label pane pixel width measured from series names.  0 = unset (no explicit
     # pane width — VL auto-sizes, which causes the overshoot corrector to compress
     # the main pane).  Set by EndpointLabelFeature, already capped there to
-    # chart_rendering.endpoint_labels.max_width_fraction of the chart's width.
+    # constants.marks.ENDPOINT_LABEL_MAX_WIDTH_FRACTION of the chart's width.
     label_pane_width: float = 0.0
     # VL text-mark font props {"fontSize", "font", "fontWeight", "fontStyle"}
     # for the label pane.
@@ -182,7 +182,7 @@ class ChartSpec:
             overlay layer (lookup join); by a wide (``y: [a, b]``) bar/area/line/scatter
             emitter for its VL ``fold`` transform.  Empty list → no transform key emitted.
         resolve: VL ``resolve`` block for layered specs (e.g. scale independence
-            across layers).  Set by pie emitter as ``{"scale": {"color": "independent"}}``.
+            across layers), e.g. an overlay's or a mirror axis's.
             Empty dict → no resolve key emitted.
     """
 
@@ -203,9 +203,8 @@ class ChartSpec:
     # value (features/value_labels.py's per-segment/line/point/scatter label,
     # an overlay layer's own label via emitters/_overlay.py's reuse of
     # text_layer_spec(), or features/zero_value_label.py's direct "0" label
-    # for a genuine-zero bar row) -- never on a nested "layered" sub-spec, a
-    # stack's aggregate total label, or any of pie.py's own text layers
-    # (center total, outside labels), which never set this flag. vega_lite.py
+    # for a genuine-zero bar row) -- never on a nested "layered" sub-spec
+    # or a stack's aggregate total label, which never set this flag. vega_lite.py
     # reads it off the assembled spec to stamp `$df_value_label_layers`, the
     # join key chart_interactivity.js's recedableMarks() twin search gates on.
     value_label: bool = False

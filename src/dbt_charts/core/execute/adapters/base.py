@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections import Counter
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
@@ -34,10 +35,11 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BINDER_UNKNOWN_COLUMN,
     ERR_BINDER_UNKNOWN_RELATION,
     ERR_QUERY_INTERRUPTED,
+    ERR_RESULT_DUPLICATE_COLUMN,
     ERR_WAREHOUSE_CONNECTION,
     ERR_WAREHOUSE_RUNTIME,
 )
-from dbt_charts.core.diagnostics.execution import QueryError
+from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
 from dbt_charts.core.diagnostics.registry import ErrorCode
 from dbt_charts.core.dialects import SQLDialect, get_dialect
 
@@ -175,6 +177,19 @@ def apply_row_limit_truncation(
             : limit.effective_limit
         ], "max_rows" if limit.ceiling_binding else None
     return rows, None
+
+
+def reject_duplicate_columns(columns: Sequence[str]) -> None:
+    """Raise ERR-RESULT-DUPLICATE-COLUMN if *columns* repeats a name.
+
+    Call this on the final column names, before rows are keyed by them.
+    """
+    duplicated = sorted(name for name, n in Counter(columns).items() if n > 1)
+    if duplicated:
+        raise ExecutionError.from_code(
+            ERR_RESULT_DUPLICATE_COLUMN,
+            columns=", ".join(repr(c) for c in duplicated),
+        )
 
 
 def resolve_setup_sql(

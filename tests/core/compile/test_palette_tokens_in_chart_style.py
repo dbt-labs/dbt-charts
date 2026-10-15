@@ -71,7 +71,7 @@ class TestAxisTokenResolution:
             _board(), BarChart(id="t", type="bar", style=patch)
         )
         merged = resolved_axis_style(
-            effective, "axis_x", "ordinal", chart_type="", label_authored=False
+            effective, "axis_x", "ordinal", chart_type="", labeled=False
         )
         assert merged.ticks.color == HEX
 
@@ -81,7 +81,7 @@ class TestAxisTokenResolution:
             _board(), BarChart(id="t", type="bar", style=patch)
         )
         merged = resolved_axis_style(
-            effective, "axis_y", "quantitative", chart_type="", label_authored=False
+            effective, "axis_y", "quantitative", chart_type="", labeled=False
         )
         assert merged.grid.color == HEX
 
@@ -93,7 +93,7 @@ class TestAxisTokenResolution:
             _board(), BarChart(id="t", type="bar", style=patch)
         )
         merged = resolved_axis_style(
-            effective, "axis_y", "quantitative", chart_type="", label_authored=False
+            effective, "axis_y", "quantitative", chart_type="", labeled=False
         )
         assert merged.labels.font.color == HEX
 

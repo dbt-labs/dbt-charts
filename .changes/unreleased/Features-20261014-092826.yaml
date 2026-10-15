@@ -1,0 +1,3 @@
+kind: Features
+body: The stacked-area edge width is now `style.charts.marks.area.stacked.stroke.width`; the other stroke and point sizing values are fixed engine constants no longer configurable under chart_rendering.
+time: 2026-10-14T09:28:26.201224-07:00

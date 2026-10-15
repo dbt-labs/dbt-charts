@@ -2,9 +2,8 @@
 
 Pure-function unit tests. See ``test_bar_plot_height_floor.py`` for the
 integration path (``resolve()`` on a real ``BarChart`` and the
-``WARN-PLOT-HEIGHT-BELOW-MINIMUM`` diagnostic) and ``ChartRenderingConfig.
-PlotHeightFloorConfig`` (compile/models/config.py) for the sweep the
-calibrated constants below were measured against.
+``WARN-PLOT-HEIGHT-BELOW-MINIMUM`` diagnostic) and ``constants/estimates.py`` for the calibrated
+constants below.
 
 This function only measures — it never decides to remove chrome. See its
 module docstring for why the earlier chrome-reduction ladder was retired.
@@ -17,10 +16,15 @@ from collections.abc import Iterator
 import pytest
 
 from dbt_charts.core.compile.config import reset_config
+from dbt_charts.core.compile.models.primitives import FontStyle
+from dbt_charts.core.compile.models.style.theme import AxisTitleStyle
 from dbt_charts.core.compile.resolve.chart.plot_height_floor import (
+    axis_title_cost_px,
     estimate_plot_height,
     plot_height_floor_px,
+    subtitle_cost_px,
 )
+from dbt_charts.core.constants.layout import VEGA_AXIS_TITLE_PADDING
 
 # The wired-up caller (bar.py, and now every cartesian family's own rung-2
 # floor check) passes estimate_cartesian_plot_height's output as
@@ -38,6 +42,8 @@ _WIDE_CARD_HEIGHT = 432.0
 # something it derives from config itself, so this value need not match any
 # real legend calculation.
 _CALIBRATION_LEGEND_HEIGHT = 63.0
+_AXIS_TITLE_HEIGHT = 21.0
+_SUBTITLE_HEIGHT = 14.0
 
 
 @pytest.fixture(autouse=True)
@@ -47,12 +53,12 @@ def _reset() -> Iterator[None]:
     reset_config()
 
 
-def _defaults(**overrides: float | bool) -> dict[str, float | bool]:
-    base: dict[str, float | bool] = {
+def _defaults(**overrides: float) -> dict[str, float]:
+    base: dict[str, float] = {
         "card_padding_px": _CARD_PADDING,
         "legend_height_px": _CALIBRATION_LEGEND_HEIGHT,
-        "subtitle_present": True,
-        "axis_title_costs_height": True,
+        "subtitle_height_px": _SUBTITLE_HEIGHT,
+        "axis_title_height_px": _AXIS_TITLE_HEIGHT,
     }
     base.update(overrides)
     return base
@@ -63,8 +69,8 @@ def _below_floor(
     *,
     card_padding_px: float,
     legend_height_px: float,
-    subtitle_present: bool,
-    axis_title_costs_height: bool,
+    subtitle_height_px: float,
+    axis_title_height_px: float,
 ) -> bool:
     """The comparison ``_resolve_bar`` makes, built from the same two
     imported pieces it uses — no test-side copy of the formula."""
@@ -72,8 +78,8 @@ def _below_floor(
         card_height,
         card_padding_px=card_padding_px,
         legend_height_px=legend_height_px,
-        subtitle_present=subtitle_present,
-        axis_title_costs_height=axis_title_costs_height,
+        subtitle_height_px=subtitle_height_px,
+        axis_title_height_px=axis_title_height_px,
     ) < plot_height_floor_px(card_height)
 
 
@@ -90,8 +96,8 @@ def test_no_chrome_present_is_not_flagged() -> None:
             _TINY_CARD_HEIGHT,
             card_padding_px=_CARD_PADDING,
             legend_height_px=0.0,
-            subtitle_present=False,
-            axis_title_costs_height=False,
+            subtitle_height_px=0.0,
+            axis_title_height_px=0.0,
         )
         is False
     )
@@ -111,8 +117,8 @@ def test_large_legend_alone_can_trip_the_floor() -> None:
             _TINY_CARD_HEIGHT,
             card_padding_px=_CARD_PADDING,
             legend_height_px=500.0,
-            subtitle_present=False,
-            axis_title_costs_height=False,
+            subtitle_height_px=0.0,
+            axis_title_height_px=0.0,
         )
         is True
     )
@@ -147,3 +153,37 @@ def test_card_padding_is_charged_against_the_plot() -> None:
     """
     without = estimate_plot_height(_TINY_CARD_HEIGHT, **_defaults(card_padding_px=0.0))
     assert estimate_plot_height(_TINY_CARD_HEIGHT, **_defaults()) == without - 32.0
+
+
+def test_axis_title_costs_its_font_size_plus_padding() -> None:
+    title = AxisTitleStyle(font=FontStyle(size=11), padding=10.0)
+    assert axis_title_cost_px(title) == 21.0
+
+
+def test_a_hidden_axis_title_costs_nothing() -> None:
+    title = AxisTitleStyle(visible=False, font=FontStyle(size=11), padding=10.0)
+    assert axis_title_cost_px(title) == 0.0
+
+
+def test_subtitle_costs_one_line_of_its_font() -> None:
+    font = FontStyle(size=11)
+    assert subtitle_cost_px("A subtitle", font) == 14.0
+    assert subtitle_cost_px(None, font) == 0.0
+
+
+def test_cost_helpers_follow_a_non_default_font_size_and_padding() -> None:
+    title = AxisTitleStyle(font=FontStyle(size=16), padding=7.0)
+    assert axis_title_cost_px(title) == 23.0
+    assert subtitle_cost_px("A subtitle", FontStyle(size=16)) == 19.0
+
+
+def test_an_unset_axis_title_padding_is_vega_lites_default() -> None:
+    title = AxisTitleStyle(font=FontStyle(size=11))
+    assert axis_title_cost_px(title) == 11.0 + VEGA_AXIS_TITLE_PADDING
+
+
+def test_an_unset_font_size_raises() -> None:
+    with pytest.raises(ValueError, match="axis title font size is unset"):
+        axis_title_cost_px(AxisTitleStyle(padding=10.0))
+    with pytest.raises(ValueError, match="subtitle font size is unset"):
+        subtitle_cost_px("A subtitle", FontStyle())

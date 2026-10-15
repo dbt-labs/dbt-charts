@@ -28,6 +28,8 @@ from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
+from .conftest import theme_without_tick_count
+
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
 # ratio = min/max <= 0.25 -> smart-zero heuristic extends to zero (zero-anchored).
@@ -70,6 +72,7 @@ def _x_ticks_visible(
     style: Any = None,
     *,
     theme_name: str | None = None,
+    compiled_style: Any = None,
     multiples: dict[str, Any] | None = None,
     panel_field: str | None = None,
 ) -> bool:
@@ -81,7 +84,9 @@ def _x_ticks_visible(
     board_style, chart_style_context = (
         (_BOARD_STYLE, _BOARD_CTX)
         if theme_name is None
-        else resolve_style_and_context(get_theme_style(theme_name))
+        else resolve_style_and_context(
+            get_theme_style(theme_name) if compiled_style is None else compiled_style
+        )
     )
     spec = generate_vega_lite_spec(
         chart,
@@ -146,12 +151,19 @@ def test_log_y_axis_keeps_x_ticks() -> None:
     assert _x_ticks_visible("scatter", _ZOOMED_DATA, style) is True
 
 
-def test_stark_theme_with_no_tick_count_keeps_x_ticks() -> None:
-    """``stark`` never sets ``axis_quantitative.ticks.count`` (only
-    clarity/neon/vivid do), so ``_resolve_cartesian_ticks`` bakes no
-    ladder for any cartesian chart on it -- same undecidable case as log,
+def test_unset_tick_count_keeps_x_ticks() -> None:
+    """With no ``axis_quantitative.ticks.count``, ``_resolve_cartesian_ticks``
+    bakes no ladder for any cartesian chart -- same undecidable case as log,
     reached through a different door."""
-    assert _x_ticks_visible("scatter", _ZOOMED_DATA, theme_name="stark") is True
+    assert (
+        _x_ticks_visible(
+            "scatter",
+            _ZOOMED_DATA,
+            theme_name="stark",
+            compiled_style=theme_without_tick_count("stark"),
+        )
+        is True
+    )
 
 
 def test_independent_scale_small_multiples_keeps_x_ticks() -> None:

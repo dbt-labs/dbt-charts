@@ -10,7 +10,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from dbt_charts.core.execute._duckdb_cache_base import _result_table_name
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure, CacheHit
 from dbt_charts.core.execute.duckdb_cache import (
     compute_query_hash,
@@ -356,75 +355,7 @@ class TestConcurrentSlotWrites:
             cache.close()
 
 
-class TestPreUtcCacheFileIsDroppedNotMisread:
-    """A cache file written before the UTC pin must not be read in the new frame.
-
-    `_query_outcomes` shipped one PR earlier and persistent files are a shipped
-    feature (`DCT_CACHE_PATH`, `cache: {path: ...}`, `--cache`), so real files
-    carry rows whose timestamp is a naive *local* clock. The column type and
-    position did not change, so `CREATE TABLE IF NOT EXISTS` would keep them and
-    the read path would relabel local as UTC: east of Greenwich every such row
-    reads younger than it is by the machine's offset and is served past its
-    authored ttl — silently, which is the failure this whole change exists to
-    remove.
-
-    Renaming to `written_at_utc` makes those rows unreadable rather than
-    misreadable, and their presence is the version marker that triggers the drop.
-    """
-
-    def test_old_schema_file_is_dropped_on_open(self, tmp_path) -> None:
-        import duckdb
-
-        db = tmp_path / "old.duckdb"
-        # Hand-build the pre-UTC table: old column names, a naive LOCAL clock.
-        conn = duckdb.connect(str(db))
-        conn.execute(
-            """
-            CREATE TABLE _query_outcomes (
-                source_hash TEXT NOT NULL, query_hash TEXT NOT NULL,
-                variables_hash TEXT NOT NULL, board_slug TEXT NOT NULL,
-                query_name TEXT NOT NULL, row_count BIGINT,
-                written_at TIMESTAMP, error_class TEXT, error_message TEXT,
-                traceback TEXT, error_written_at TIMESTAMP,
-                PRIMARY KEY (source_hash, query_hash, variables_hash)
-            )
-            """
-        )
-        conn.execute(
-            "INSERT INTO _query_outcomes VALUES (?,?,?,?,?,?,?,NULL,NULL,NULL,NULL)",
-            [SOURCE_HASH, QUERY_HASH, VARS_HASH, "f", "q", 1, datetime.now()],
-        )
-        # The payload table the outcome row points at, named the way the cache
-        # derives it — so the orphan assertion below has something to catch.
-        payload = _result_table_name(SOURCE_HASH, QUERY_HASH, VARS_HASH)
-        conn.execute(f'CREATE TABLE "{payload}" (v BIGINT)')
-        conn.execute(f'INSERT INTO "{payload}" VALUES (1)')
-        conn.close()
-
-        cache = TrivialDuckDBCache(db_path=db)
-        try:
-            cols = cache._column_names("_query_outcomes")
-            assert "written_at_utc" in cols, "the new schema must be in place"
-            assert "written_at" not in cols, (
-                "the pre-UTC column must be gone — leaving it means the old rows "
-                "are still being read, in the wrong frame"
-            )
-            assert cache.get(SOURCE_HASH, QUERY_HASH, VARS_HASH) is None, (
-                "a pre-UTC row must read as a miss and re-warm, never as a hit "
-                "whose age is off by the machine's UTC offset"
-            )
-            leftover = cache.conn.execute(
-                "SELECT count(*) FROM information_schema.tables "
-                "WHERE table_type = 'BASE TABLE' AND table_name LIKE '_r_%'"
-            ).fetchone()[0]
-            assert leftover == 0, (
-                "the payload tables the dropped rows pointed at are unreachable "
-                "afterwards — nothing indexes them and no sweep collects them, "
-                "so leaving them is permanent dead weight in a persistent file"
-            )
-        finally:
-            cache.close()
-
+class TestCurrentFileSurvivesReopen:
     def test_a_current_file_is_preserved_across_reopen(self, tmp_path) -> None:
         """The drop must be version-triggered, not unconditional.
 
@@ -470,7 +401,7 @@ class TestTimestampsAreAwareUTC:
         DuckDB's TIMESTAMP is WITHOUT TIME ZONE, so binding an *aware* datetime
         makes the driver cast it against the connection's TimeZone — with ICU
         present that defaults to the machine's zone, and the column would then
-        hold the local wall clock while `_read_slots` relabels it as UTC. East of
+        hold the local wall clock while the read relabels it as UTC. East of
         Greenwich that reads as future-dated, `now - written_at` goes negative,
         and every ttl comparison passes unconditionally: nothing ever expires.
 
@@ -483,19 +414,16 @@ class TestTimestampsAreAwareUTC:
         for zone in ("UTC", "Asia/Tokyo", "America/Phoenix"):
             c = TrivialDuckDBCache()
             try:
-                c.conn.execute(f"SET TimeZone='{zone}'")
+                with c._connection() as conn:
+                    conn.execute(f"SET TimeZone='{zone}'")
                 put_rows(c, [{"v": 1}])
-                stored = c.conn.execute(
-                    "SELECT written_at_utc FROM _query_outcomes"
-                ).fetchone()[0]
-                assert stored.tzinfo is None, "the column is WITHOUT TIME ZONE"
-                drift = abs(
-                    (stored - datetime.now(UTC).replace(tzinfo=None)).total_seconds()
-                )
+                hit = c.get(SOURCE_HASH, QUERY_HASH, VARS_HASH)
+                assert isinstance(hit, CacheHit)
+                drift = abs((hit.written_at - datetime.now(UTC)).total_seconds())
                 assert drift < 300, (
-                    f"TimeZone={zone}: stored {stored} is {drift / 3600:.1f}h from "
-                    "the UTC wall clock — an aware bind was cast against the "
-                    "session zone instead of stored as UTC"
+                    f"TimeZone={zone}: written_at {hit.written_at} is "
+                    f"{drift / 3600:.1f}h from the UTC wall clock — an aware bind "
+                    "was cast against the session zone instead of stored as UTC"
                 )
             finally:
                 c.close()

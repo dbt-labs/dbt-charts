@@ -34,7 +34,7 @@ def _axis_x_temporal(
 
     charts = resolve_chart_style_context(get_theme_style())
     axis_x = resolved_axis_style(
-        charts, "axis_x", "temporal", chart_type="", label_authored=False
+        charts, "axis_x", "temporal", chart_type="", labeled=False
     )
     font = axis_x.labels.font.model_copy(update={"size": font_size})
     overlap = dataclasses.replace(axis_x.labels.overlap, skip=True, tilt=True)
@@ -1742,7 +1742,7 @@ class TestCadenceLadderReachesYear:
         labels.time_unit — must keep every monthly bucket in `values` and
         restore `ticks: True`, even once the label text promotes to year.
 
-        48 months (under ``chart_rendering.type_inference.max_ordinal_buckets``,
+        48 months (under ``MAX_ORDINAL_BUCKETS``,
         60) keeps this chart on bar's ordinal band scale rather than the
         density gate's continuous-temporal fallback — the branch this
         regression is actually about.

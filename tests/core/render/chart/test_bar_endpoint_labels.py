@@ -47,7 +47,9 @@ def seed_with_bar_endpoint_labels(model_copy_at):
             get_theme_style("stark"),
             "charts.bar.endpoint_labels",
             EndpointLabelsConfig(
-                visible=enabled, label_offset=label_offset, height=20.0
+                visible="auto" if enabled else False,
+                label_offset=label_offset,
+                height=20.0,
             ),
         )
         return resolve_chart_style_context(seed)
@@ -136,7 +138,7 @@ def test_all_themes_compile_with_bar_endpoint_labels_field(compiled_themes):
         cfg = ctx.bar.endpoint_labels
         assert cfg is not None
         # Field is present and typed; we don't pin theme literal values.
-        assert isinstance(cfg.visible, bool)
+        assert cfg.visible in (True, False, "auto")
         assert isinstance(cfg.label_offset, float)
 
 

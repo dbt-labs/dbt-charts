@@ -6,6 +6,7 @@ import contextlib
 import json
 import shutil
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -168,6 +169,7 @@ def test_cli_render_command_uses_project_with_block(tmp_path: Path) -> None:
         warnings=[],
         suppressed_warnings=[],
         chart_errors=[],
+        cache_hit_ats=[],
         validation_errors=None,
         board_error=None,
     )
@@ -489,33 +491,129 @@ class TestDftRenderVarAndNoCache:
         assert result.exit_code == 0, result.output + (result.stderr or "")
 
 
-class TestDftRenderCacheFlag:
-    """dct render --cache <path>: default is in-memory; --cache persists to a file."""
+_SQL_BOARD = """\
+title: Cached board
+queries:
+  answer:
+    sql: SELECT 42 AS v
+    source: mem
+charts:
+  answer_table:
+    type: table
+    query: answer
+rows:
+  - cols:
+      - answer_table
+"""
 
-    def test_default_creates_no_cache_file_on_disk(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Without --cache, the query-result cache is in-memory — no .duckdb file appears."""
-        # --cache is env-backed by DCT_CACHE_PATH; a dev with it exported (it's a
-        # documented knob) would otherwise flip this default and fail spuriously.
+
+def _sql_project(tmp_path: Path) -> list[str]:
+    """A project with one DuckDB-backed SQL query; returns the render args."""
+    project = tmp_path / "project"
+    (project / "charts").mkdir(parents=True)
+    (project / "dbt_charts.yml").write_text(
+        "sources:\n  mem:\n    type: duckdb\n    path: ':memory:'\n"
+    )
+    (project / "charts" / "board.yml").write_text(_SQL_BOARD)
+    return [
+        "render",
+        "charts/board.yml",
+        "--format",
+        "terminal",
+        "--project-dir",
+        str(project),
+    ]
+
+
+class TestDftRenderDefaultCache:
+    """dct render with no cache flag keeps results in the per-user file."""
+
+    @pytest.fixture(autouse=True)
+    def _no_cache_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # --cache is env-backed by DCT_CACHE_PATH; a dev with it exported would
+        # otherwise move the default these tests are about.
         monkeypatch.delenv("DCT_CACHE_PATH", raising=False)
-        shutil.copytree(_FIXTURE_DIR / "no-warehouse-board", tmp_path / "project")
-        (tmp_path / "project" / "dbt_charts.yml").write_text("# project marker\n")
-        result = runner.invoke(
-            app,
-            [
-                "render",
-                "charts/board.yml",
-                "--format",
-                "terminal",
-                "--project-dir",
-                str(tmp_path / "project"),
-            ],
-        )
+
+    def test_default_persists_outside_the_project(self, tmp_path: Path) -> None:
+        from dbt_charts.core.compile.config import default_cache_path
+
+        result = runner.invoke(app, _sql_project(tmp_path))
         assert result.exit_code == 0, result.output + (result.stderr or "")
+        assert default_cache_path().exists()
         assert not list(tmp_path.rglob("*.duckdb")), (
-            "default render must not create a cache file on disk"
+            "the default cache must not write into the project"
         )
+
+    def test_a_fresh_render_says_nothing_about_the_cache(self, tmp_path: Path) -> None:
+        result = runner.invoke(app, _sql_project(tmp_path))
+        assert result.exit_code == 0, result.output + (result.stderr or "")
+        assert "cache" not in result.stderr
+
+    def test_a_second_render_reports_what_the_cache_served(
+        self, tmp_path: Path
+    ) -> None:
+        args = _sql_project(tmp_path)
+        assert runner.invoke(app, args).exit_code == 0
+
+        second = runner.invoke(app, args)
+        assert second.exit_code == 0, second.output + (second.stderr or "")
+        assert "1 query served from cache" in second.stderr
+        assert "oldest result under a minute old" in second.stderr
+        assert "--no-cache" in second.stderr
+
+    def test_no_cache_re_queries_and_reports_nothing(self, tmp_path: Path) -> None:
+        args = _sql_project(tmp_path)
+        assert runner.invoke(app, args).exit_code == 0
+
+        second = runner.invoke(app, [*args, "--no-cache"])
+        assert second.exit_code == 0, second.output + (second.stderr or "")
+        assert "cache" not in second.stderr
+
+    def test_diagnostics_json_keeps_stderr_machine_readable(
+        self, tmp_path: Path
+    ) -> None:
+        args = _sql_project(tmp_path)
+        assert runner.invoke(app, args).exit_code == 0
+
+        second = runner.invoke(app, [*args, "--diagnostics-json"])
+        assert second.exit_code == 0, second.output + (second.stderr or "")
+        assert "served from cache" not in second.stderr
+
+
+@pytest.mark.parametrize(
+    ("ages", "expected"),
+    [
+        (
+            [timedelta(seconds=20)],
+            "1 query served from cache, oldest result under a minute old.",
+        ),
+        (
+            [timedelta(minutes=5), timedelta(seconds=1)],
+            "2 queries served from cache, oldest result 5m old.",
+        ),
+        (
+            [timedelta(hours=2, minutes=14)] * 3,
+            "3 queries served from cache, oldest result 2h 14m old.",
+        ),
+        (
+            [timedelta(days=3, hours=4, minutes=50)],
+            "1 query served from cache, oldest result 3d 4h old.",
+        ),
+    ],
+)
+def test_cache_use_notice_states_count_and_oldest_age(
+    ages: list[timedelta], expected: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dbt_charts.cli.commands.render import _print_cache_use
+
+    # Half a minute of slack keeps a slow test run inside the same minute.
+    now = datetime.now(UTC) - timedelta(seconds=30)
+    _print_cache_use([now - age for age in ages])
+    assert capsys.readouterr().err == f"{expected} Pass --no-cache to re-query.\n"
+
+
+class TestDftRenderCacheFlag:
+    """dct render --cache <path> keeps the cache in that file."""
 
     def test_cache_flag_creates_and_reuses_file(self, tmp_path: Path) -> None:
         """--cache <path> creates the file, and a second invocation reuses it."""
@@ -769,6 +867,7 @@ class TestRenderCommandWalkRootWhenNoProjectDir:
             warnings=[],
             suppressed_warnings=[],
             chart_errors=[],
+            cache_hit_ats=[],
             validation_errors=None,
             board_error=None,
         )

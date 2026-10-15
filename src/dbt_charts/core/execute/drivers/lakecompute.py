@@ -38,9 +38,9 @@ if TYPE_CHECKING:
 
 _PREFIX = "adbc.dbt."
 
-# The packages the `lakecompute` extra installs: the loader, the decompressor for
-# the CDN artifact, and the finder for the cache dbt shares.
-_EXTRA_MODULES = ("adbc_driver_manager", "zstandard", "platformdirs")
+# The packages the `lakecompute` extra installs: the loader and the decompressor
+# for the CDN artifact.
+_EXTRA_MODULES = ("adbc_driver_manager", "zstandard")
 
 
 def lakecompute_db_kwargs(

@@ -18,13 +18,7 @@ from typing import Any
 
 import pytest
 
-from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.colors import hex_to_oklch, is_sanitizable_color, oklch_to_hex
-from dbt_charts.core.compile.config import (
-    get_chart_rendering,
-    load_config,
-    reset_config,
-)
 from dbt_charts.core.compile.resolve.style.palette import (
     CategoricalOverrequestError,
     SurfaceUnsupportedError,
@@ -43,6 +37,8 @@ from dbt_charts.core.compile.resolve.style.palette import (
     select_default_palette,
     variant,
 )
+from dbt_charts.core.constants.color import DARK_K, DARK_POLE
+from dbt_charts.core.constants.contrast import LABEL_INK_MIN_CONTRAST
 
 from .._paths import DBT_CHARTS_DIR
 
@@ -904,7 +900,7 @@ class TestVariant:
         from dbt_charts.core.colors import wcag_contrast
 
         stops = _all_palettes()[name]
-        min_contrast = get_chart_rendering().color_variants.label_ink_min_contrast
+        min_contrast = LABEL_INK_MIN_CONTRAST
         for base in stops:
             for canvas in ("#ffffff", "#fafafa", "#faf7f0", "#161616"):
                 ink = label_ink(base, canvas)
@@ -928,13 +924,12 @@ class TestVariant:
         not just its downstream contrast outcome."""
         from dbt_charts.core.colors import is_light_canvas
 
-        config = get_chart_rendering().color_variants
         for base in (palette("vivid-10")[0], palette("editorial-10")[4]):
             L = hex_to_oklch(base)[0]
             for canvas in ("#ffffff", "#161616"):
-                pole = config.dark_pole if is_light_canvas(canvas) else 1.0
-                stepped_l = hex_to_oklch(_label_ink_step(base, canvas, config))[0]
-                expected_move = config.dark_k * abs(pole - L)
+                pole = DARK_POLE if is_light_canvas(canvas) else 1.0
+                stepped_l = hex_to_oklch(_label_ink_step(base, canvas))[0]
+                expected_move = DARK_K * abs(pole - L)
                 assert abs(abs(L - stepped_l) - expected_move) < 2e-3, (base, canvas)
 
     def test_label_ink_step_never_moves_toward_the_canvas(self) -> None:
@@ -951,23 +946,21 @@ class TestVariant:
         """
         from dbt_charts.core.colors import wcag_contrast
 
-        config = get_chart_rendering().color_variants
-
         near_black, light_canvas = "#0a0a12", "#ffffff"
         base_l = hex_to_oklch(near_black)[0]
-        stepped_l = hex_to_oklch(_label_ink_step(near_black, light_canvas, config))[0]
+        stepped_l = hex_to_oklch(_label_ink_step(near_black, light_canvas))[0]
         assert abs(stepped_l - base_l) < 1e-9, "clamp must hold the step at base L"
         ink = label_ink(near_black, light_canvas)
-        assert wcag_contrast(ink, light_canvas) >= config.label_ink_min_contrast - 1e-6
+        assert wcag_contrast(ink, light_canvas) >= LABEL_INK_MIN_CONTRAST - 1e-6
 
         near_white, dark_canvas = "#f4f4f4", "#161616"
         base_l = hex_to_oklch(near_white)[0]
-        stepped_l = hex_to_oklch(_label_ink_step(near_white, dark_canvas, config))[0]
+        stepped_l = hex_to_oklch(_label_ink_step(near_white, dark_canvas))[0]
         assert stepped_l >= base_l - 1e-9, (
             "the dark-canvas step is unclamped and moves away from the canvas"
         )
         ink = label_ink(near_white, dark_canvas)
-        assert wcag_contrast(ink, dark_canvas) >= config.label_ink_min_contrast - 1e-6
+        assert wcag_contrast(ink, dark_canvas) >= LABEL_INK_MIN_CONTRAST - 1e-6
 
     @pytest.mark.parametrize("base", ["#ffffff", "#fafafa", "#faf7f0", "#ffff66"])
     def test_light_of_a_near_white_base_stays_in_gamut(self, base: str) -> None:
@@ -996,10 +989,9 @@ class TestVariant:
         printed -- see _is_multi_hue.
         """
         stops = _all_palettes()[name]
-        config = get_chart_rendering().color_variants
         base_worst = _worst_pair_delta_e(stops)
         dark_worst = _worst_pair_delta_e([variant(s, "dark") for s in stops])
-        required = (1 - config.dark_k) * base_worst
+        required = (1 - DARK_K) * base_worst
         print(
             f"{name}: base={base_worst:.2f} dark={dark_worst:.2f} required={required:.2f}"
         )
@@ -1015,28 +1007,6 @@ class TestVariant:
             print(f"{name} {kind}: worst pair={worst:.2f}")
         ink_worst = _worst_pair_delta_e([label_ink(s, "#ffffff") for s in stops])
         print(f"{name} label_ink(white): worst pair={ink_worst:.2f}")
-
-    def test_reloading_config_changes_the_derived_color(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        """Reloading with a different color_variants constant must change
-        variant()'s output color -- asserts the color changes, not that the
-        cache invalidates (it doesn't need to: the frozen config is the
-        cache key)."""
-        reset_config()
-        try:
-            base = palette("vivid-10")[0]
-            before = variant(base, "dark")
-
-            (tmp_path / "dbt_charts.yml").write_text(
-                "chart_rendering:\n  color_variants:\n    dark_k: 0.6\n"
-            )
-            load_config(local_project(tmp_path))
-            after = variant(base, "dark")
-
-            assert after != before
-        finally:
-            reset_config()
 
 
 class TestMarkInk:

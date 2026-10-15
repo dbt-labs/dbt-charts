@@ -156,9 +156,7 @@ def _theme_from_extends(extends: str | list[str] | None) -> str | None:
 
 
 # (theme name, this board's own merged patch's fields) — everything the
-# cascade varies on within one compile. Project config
-# (`get_config().vega.config`) is the other input and is fixed for a
-# compile's duration, so it is deliberately not in the key.
+# cascade varies on within one compile.
 #
 # `repr` of the dumped fields, not `model_dump_json`: JSON writes inf and nan as
 # null, so `gap: .inf` would key the same as `gap: null` and silently take the
@@ -249,12 +247,10 @@ def _pin_unauthored_nested_background(
     resolved model's required `str` type, so pyright reads a bare `is not
     None` as statically impossible even though it is meaningful at runtime.
 
-    A single-field ``model_copy(update=...)``, not ``scope_patch``/
-    ``merge_patches``: several Style fields (``layout``, ``frame``, ...)
-    carry ``Merge(nested=Strategy.CHILD)``, "take the whole field from the
-    child's own patch, even when unset" -- merging a second, background-only
-    patch via that machinery would re-trigger CHILD's whole-field
-    replacement and wipe out every CHILD field ``patch`` already resolved.
+    A single-field ``model_copy(update=...)``, not ``scope_patch``: several
+    Style fields (``layout``, ``frame``, ...) are ``NotInherited``, so
+    scoping a second, background-only patch onto ``patch`` would drop every
+    such field ``patch`` already resolved.
     """
     if not is_nested:
         return patch
@@ -316,14 +312,12 @@ def compile_board_resolved_style(
 
     When this board authors its own ``style:`` (``board_style is not None``),
     merge order is:
-       relation (``scope_patch(parent_patch, board_style)``, which merges via
-       ``merge_patches(..., nested=True)``). Each style field's own
-       ``Merge`` marker settles it: most default to the ancestor's authored
-       value crossing in when this board leaves them unset; a field marked
-       ``Merge(nested=Strategy.CHILD)`` — a per-board structural or
-       root-only concern (spacing/frame, footer/timestamp chrome), not
-       thematic identity — always takes this board's own value instead,
-       even when that value is unset.
+    1. Board-to-board relation (``scope_patch(parent_patch, board_style)``).
+       Most fields default to the ancestor's authored value crossing in when
+       this board leaves them unset; a field marked ``NotInherited`` — a
+       per-board structural or root-only concern (spacing/frame,
+       footer/timestamp chrome), not thematic identity — never crosses, so
+       this board's own value (or the theme's) applies.
     2. Theme defaults (theme_name → compiled theme → resolve_style) fill
        whatever the merged patch left unset.
 
@@ -466,9 +460,7 @@ def _block_font_sets_prose_font(style: StylePatch) -> StylePatch:
     }
     if not prose:
         return style
-    return merge_patches(
-        StylePatch.model_validate({"text": {"font": prose}}), style, nested=False
-    )
+    return merge_patches(StylePatch.model_validate({"text": {"font": prose}}), style)
 
 
 def _board_regional(board: AuthoredBoard, parent: Regional | None) -> Regional:
@@ -1035,7 +1027,7 @@ def normalize_board(
             from dbt_charts.core.compile.merge import merge_patches
 
             board_style = (
-                merge_patches(board_style, root_width_patch, nested=False)
+                merge_patches(board_style, root_width_patch)
                 if board_style is not None
                 else root_width_patch
             )

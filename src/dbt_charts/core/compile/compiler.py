@@ -491,12 +491,16 @@ def compile_authored_board(
             )
         )
 
+    chart_styles = {
+        chart_id: chart.style for chart_id, chart in compiled.charts.items()
+    }
+
     # Format specs: every authored format: string must resolve through the
     # alias table, the native (non-d3) formatter keys, or d3_format.parse —
     # a typo like `percent_1` fails here instead of surfacing as ERR-INTERNAL
     # deep inside rasterization (see validate/formats.py).
     try:
-        validate_board_format_specs(compiled)
+        validate_board_format_specs(compiled, chart_styles)
     except CompilationError as e:
         return CompileResult(errors=[e.to_diagnostic(file=file)])
 
@@ -511,18 +515,20 @@ def compile_authored_board(
     # the model validators' deferral (see validate/palettes.py) must not
     # reach render as a bare string.
     try:
-        validate_board_palette_specs(compiled)
+        validate_board_palette_specs(compiled, chart_styles)
     except CompilationError as e:
         return CompileResult(errors=[e.to_diagnostic(file=file)])
 
     # A cropped zero baseline: an error on a bar, a warning on an area (see
     # validate/zero_baseline.py).
     try:
-        warnings.extend(validate_board_zero_baselines(compiled))
+        warnings.extend(validate_board_zero_baselines(compiled, chart_styles))
     except CompilationError as e:
         return CompileResult(errors=[e.to_diagnostic(file=file)])
 
-    warnings.extend(detect_board_warnings(compiled, _own_format_names(_yaml_content)))
+    warnings.extend(
+        detect_board_warnings(compiled, _own_format_names(_yaml_content), chart_styles)
+    )
     authored_queries = authored.queries
     warnings.extend(
         _sql_parse_warnings(
@@ -1085,7 +1091,7 @@ def _compile_file(
         yaml_content = board.content
 
     # Parse the board text to a mapping. Meta + extends patches are merged under
-    # the board via the resolution engine (merge_patches semantics: lists APPEND,
+    # the board via the resolution engine (merge_patches semantics: lists replace,
     # nested structures merge recursively). Lint is extracted separately from the
     # meta chain so it still reaches result.meta_lint.
     meta_lint: MetaLintConfig | None = None

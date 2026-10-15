@@ -32,7 +32,6 @@ from dbt_charts.core.render.chart.spec import RenderBox
 _DEFAULT_BOX = RenderBox(width=600.0, height=300.0)
 
 from dbt_charts.core.compile.config import (
-    get_chart_rendering,
     get_theme_style,
     reset_config,
 )
@@ -335,8 +334,8 @@ def test_disconnected_step_insets_xoffset_range():
     ], "disconnected markers must inset off the full band edges"
     assert isinstance(rng[0], dict) and "expr" in rng[0]
     assert isinstance(rng[1], dict) and "expr" in rng[1]
-    # Inset width comes from engine config, not a Python literal.
-    width = get_chart_rendering().step_band.disconnected_width
+    # Inset width comes from the theme, not a Python literal.
+    width = get_theme_style().charts.marks.line.disconnected_width
     lo = (1 - width) / 2
     assert rng[0]["expr"] == f"bandwidth('x')*{lo}"
     assert rng[1]["expr"] == f"bandwidth('x')*{1 - lo}"
@@ -520,6 +519,40 @@ def test_disconnected_cap_resolves_on_an_overlay_layer():
     assert all(c == "butt" for c in caps), (
         f"a disconnected-step overlay layer must butt-cap too; got {caps!r}"
     )
+
+
+def test_overlay_layer_inset_uses_the_layers_own_disconnected_width():
+    board_rs, board_ctx = _board_with_mark("line", curve="step", connect=False)
+    spec = _v2_spec(
+        {
+            "type": "bar",
+            "x": "month",
+            "y": "actual",
+            "query": "q",
+            "layers": [
+                {
+                    "type": "line",
+                    "y": "target",
+                    "style": {
+                        "marks": {
+                            "line": {
+                                "curve": "step",
+                                "connect": False,
+                                "disconnected_width": 0.5,
+                            }
+                        }
+                    },
+                }
+            ],
+        },
+        BARS,
+        (board_rs, board_ctx),
+    )
+    enc = _step_band_encoding(spec)
+    assert enc is not None
+    rng = enc["xOffset"]["scale"]["range"]
+    assert rng[0]["expr"] == "bandwidth('x')*0.25"
+    assert rng[1]["expr"] == "bandwidth('x')*0.75"
 
 
 def test_area_edge_line_is_unaffected_by_the_disconnected_default():
@@ -1087,7 +1120,7 @@ def _eval_dash(expr: str, bandwidth: float) -> list[float]:
 
 def _fit_expr(dashes: list[float]) -> str:
     """Re-derive the expected expression independently of the helper."""
-    width = get_chart_rendering().step_band.disconnected_width
+    width = get_theme_style().charts.marks.line.disconnected_width
     span = f"(bandwidth('x')*{width})"
     period, last = sum(dashes), dashes[-1]
     n = f"max(1,round(({span}+{last})/{period}))"
@@ -1114,11 +1147,21 @@ def test_fitted_dasharray_spans_the_plateau_exactly(dasharray: str, bandwidth: f
     ratios = [d / a for d, a in zip(dashes, authored, strict=True)]
     assert max(ratios) - min(ratios) < 1e-9
     # N dashes + (N-1) gaps cover the plateau: ink at both ends.
-    span = bandwidth * get_chart_rendering().step_band.disconnected_width
+    span = bandwidth * get_theme_style().charts.marks.line.disconnected_width
     period, last = sum(dashes), dashes[-1]
     n = (span + last) / period
     assert abs(n - round(n)) * period < 1e-6
     assert n >= 1 - 1e-9
+
+
+def test_authored_disconnected_width_reaches_the_fitted_dasharray():
+    got = _dash(
+        curve="step",
+        connect=False,
+        disconnected_width=0.5,
+        stroke=StrokeStyle(dasharray="5 4"),
+    )
+    assert "bandwidth('x')*0.5" in got["expr"]
 
 
 @pytest.mark.parametrize("dasharray", ["0 8", "0 0"])

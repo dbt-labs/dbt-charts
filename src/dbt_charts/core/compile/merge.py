@@ -4,9 +4,9 @@ Provides the generic ``merge_patches`` binary merge and the extends/metas
 resolution layer that the compilation pipeline builds on. Public functions:
 
     merge_marker(field)              -> Merge | None
-    strategy(field, nested)          -> str
-    merge_patches(lower, upper, nested) -> P
-    scope_patch(inherited, own)      -> P | None
+    strategy(field)                  -> Strategy
+    merge_patches(lower, upper)      -> P
+    scope_patch(inherited, own)      -> StylePatch | None
     merge_extends(node, board_path, boards_root) -> BoardPatch
     merge_metas(board_dir, boards_root) -> BoardPatch
     merged_patch(board_node, board_path, boards_root) -> BoardPatch
@@ -35,7 +35,7 @@ from __future__ import annotations
 import dataclasses
 import types
 import typing
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from functools import cache
 from pathlib import PurePosixPath
@@ -46,30 +46,28 @@ from pydantic.fields import FieldInfo
 
 from dbt_charts.core.compile.errors import CompilationError, FileValidationError
 from dbt_charts.core.compile.file_refs import anchor_images, resolve_ref
-from dbt_charts.core.compile.models.factories import FontSlotBase
-from dbt_charts.core.compile.models.markers import Merge, Strategy
-from dbt_charts.core.compile.models.primitives import FontStyle
+from dbt_charts.core.compile.models.markers import (
+    Exclusive,
+    Merge,
+    NotInherited,
+    ResetOnSet,
+    Strategy,
+)
 from dbt_charts.core.compile.models.style.authored import (
     PaddingStylePatch,
+    StylePatch,
 )
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_EXTENDS_UNRESOLVED,
-    WARN_EXTENDS_LAYOUT_APPENDED,
+    WARN_INHERITED_LAYOUT_REPLACED,
 )
 
 if TYPE_CHECKING:
     from dbt_charts.core.project import ProjectDirectory, ProjectPath
 
 P = TypeVar("P", bound=BaseModel)
-
-# Layout fields for the cross-axis clearing rule (policy ruling 2).
-# Each of the four fields is its own axis; when upper declares any field
-# different from lower's layout field(s), lower's fields are zeroed.
-# Public: Cloud derives its "does this board declare content?" check from this
-# set, so a new layout axis reaches both places at once.
-LAYOUT_FIELDS: frozenset[str] = frozenset({"rows", "cols", "grid", "tabs"})
 
 
 def deep_merge_dict(
@@ -149,21 +147,14 @@ def _is_dict(t: type) -> bool:
     return t is dict
 
 
-def strategy(field: FieldInfo, nested: bool) -> Strategy:
-    """Return the effective merge strategy for *field* under the given relation.
+def strategy(field: FieldInfo) -> Strategy:
+    """Return the effective merge strategy for *field*.
 
     Precedence:
-    1. Explicit ``Merge(nested=...)`` when ``nested=True`` and marker is set.
-    2. Explicit ``Merge(file=...)`` when marker is set.
-    3. Type-inferred: BaseModel→deep, dict→by_key, else→override.
-
-    Raises ``TypeError`` for list-typed fields with no explicit ``Merge`` marker.
-    Silently defaulting list fields to override would clobber accumulated lists
-    from lower layers — callers must declare intent explicitly.
+    1. Explicit ``Merge(file=...)`` when marker is set.
+    2. Type-inferred: BaseModel→deep, dict→by_key, else→override (lists included).
     """
     m = merge_marker(field)
-    if nested and m is not None and m.nested is not None:
-        return m.nested
     if m is not None:
         return m.file
     t = _unwrap_type(field)
@@ -171,140 +162,89 @@ def strategy(field: FieldInfo, nested: bool) -> Strategy:
         return Strategy.DEEP
     if _is_dict(t):
         return Strategy.BY_KEY
-    if t is list:
-        raise TypeError(
-            f"Field {field!r} has a list type but no explicit Merge marker. "
-            "Declare an explicit Merge marker, e.g. Merge(Strategy.APPEND), "
-            "Merge(Strategy.OVERRIDE), Merge(Strategy.CHILD)."
-        )
     return Strategy.OVERRIDE
 
 
-def _cross_axis_layout_clear(
-    lower: P,
-    upper: P,
-    out: dict[str, Any],
+@cache
+def _exclusive_groups(model: type[BaseModel]) -> tuple[tuple[str, ...], ...]:
+    """The field names of each ``Exclusive`` group declared on *model*."""
+    groups: dict[str, list[str]] = {}
+    for name, field in model.model_fields.items():
+        for marker in field.metadata:
+            if isinstance(marker, Exclusive):
+                groups.setdefault(marker.group, []).append(name)
+    return tuple(tuple(members) for members in groups.values())
+
+
+def _clear_exclusive_groups(
+    upper: BaseModel,
+    out: dict[str, Any],  # type-state: explicit_any — merged field values of any model
 ) -> None:
-    """Implement policy ruling 2: cross-axis layout closest-wins.
+    """Zero every member of each exclusive group that *upper* sets, in *out*."""
+    for members in _exclusive_groups(type(upper)):
+        if any(
+            name in upper.model_fields_set and getattr(upper, name) is not None
+            for name in members
+        ):
+            for name in members:
+                out[name] = None
 
-    When upper declares any layout field from a different axis than lower
-    (e.g. lower has ``rows`` and upper has ``cols``), the lower axis fields
-    are zeroed in *out* before the main merge loop processes them.
 
-    Same-axis fields are left alone (append continues normally).
-    ``out`` is mutated in place.
+def _reset_on_set(lower: P, upper: BaseModel) -> P:
+    """``lower`` stripped of the fields *upper*'s type declares reset on set.
+
+    Reads the ``merge_reset`` declaration (``ResetOnSet``): when upper sets the
+    declared field, the layer replaces what lower put there, so lower's reset
+    fields drop and the rest survive.
     """
-    upper_fields = type(upper).model_fields
-    lower_fields = type(lower).model_fields
-    upper_layout = {
-        name
-        for name in LAYOUT_FIELDS
-        if name in upper_fields
-        and name in upper.model_fields_set
-        and getattr(upper, name) is not None
-    }
-    lower_layout = {
-        name
-        for name in LAYOUT_FIELDS
-        if name in lower_fields and getattr(lower, name) is not None
-    }
-    if not upper_layout or not lower_layout:
-        return  # nothing to clear
-
-    # Same axis = upper uses the same field(s) as lower. Each of the four
-    # layout fields is its own axis. Overlap means same-axis: append applies.
-    if upper_layout & lower_layout:
-        return  # at least one shared field → same axis, normal strategy
-
-    # Different axis: the upper fragment's axis wins; zero out lower's fields.
-    for name in lower_layout:
-        out[name] = None
-
-
-def _child_strategy(field: FieldInfo, nested: bool) -> bool:
-    """Return True iff this field uses the ``child`` strategy for this merge relation.
-
-    Reads the Merge marker directly — never falls back to type inference — so
-    it is safe to call on list-typed fields that carry no full Merge marker.
-    """
-    m = merge_marker(field)
-    if m is None:
-        return False
-    effective = m.nested if (nested and m.nested is not None) else m.file
-    return effective == Strategy.CHILD
-
-
-def _under_named_font(lower: P, upper: BaseModel) -> P:
-    """``lower`` stripped of its ``FontStyle`` fields when ``upper`` names a font.
-
-    A slot that sets ``extends`` is exactly the font it names plus its own
-    overrides, not a tweak of what a lower layer put on the slot. Fields only
-    the slot's subclass declares (``compact_size``, ``emoji``) are not part of
-    a named font and survive.
-    """
-    if not (
-        isinstance(upper, FontSlotBase)
-        and isinstance(lower, FontSlotBase)
-        and upper.extends is not None
-    ):
+    reset: ResetOnSet | None = getattr(  # type-state: silent_fallback — opt-in
+        type(upper), "merge_reset", None
+    )
+    if reset is None or getattr(upper, reset.field) is None:
         return lower
-    font_fields = FontStyle.model_fields
     return type(lower).model_construct(
-        _fields_set=lower.model_fields_set - font_fields.keys(),
+        _fields_set=lower.model_fields_set - reset.resets,
         **{
-            name: None if name in font_fields else getattr(lower, name)
+            name: None if name in reset.resets else getattr(lower, name)
             for name in type(lower).model_fields
         },
     )
 
 
-def merge_patches(lower: P, upper: P, nested: bool) -> P:
+def merge_patches(lower: P, upper: P) -> P:
     """Binary merge of two patch models of the same type.
 
     Semantics per field:
-    - ``child``    (nested=True only): result = upper (even when upper is None/unset)
     - unset in upper (name not in model_fields_set): keep lower
     - upper is None (explicit null): clear to None
     - lower is None: take upper
-    - else: apply strategy (override / append / by_key / deep)
+    - else: apply strategy (override / by_key / deep)
 
-    The cross-axis layout rule (policy ruling 2) is applied before the main
-    loop: when upper declares a layout axis different from lower's, lower's
-    layout fields are zeroed first.
-
-    ``strategy()`` is called lazily — only when both lo and hi are non-None
-    and the field is set in upper. This avoids raising TypeError for list-typed
-    fields with no explicit Merge marker when neither patch sets that field.
+    A ``ResetOnSet`` declaration is applied first, then ``Exclusive`` groups
+    (when upper sets any member of a group, lower's members are zeroed), then
+    the field loop.
 
     The returned model is constructed with an accurate ``model_fields_set``
     that reflects only fields genuinely authored in this merge, so subsequent
     merges do not mistake default-None values for explicit nulls.
     """
-    lower = _under_named_font(lower, upper)
+    lower = _reset_on_set(lower, upper)
     out: dict[str, Any] = {}
-    # Pre-populate with lower values so _cross_axis_layout_clear can read them.
+    # Pre-populate with lower values so exclusive groups can clear them.
     for name in type(upper).model_fields:
         out[name] = getattr(lower, name)
 
-    _cross_axis_layout_clear(lower, upper, out)
+    _clear_exclusive_groups(upper, out)
 
     result_fields_set: set[str] = set()
 
     for name, field in type(upper).model_fields.items():
-        # ``child`` is detected from the marker alone — no type inference needed.
-        # It fires even when upper never set the field (that's the point of child).
-        if _child_strategy(field, nested):
-            out[name] = getattr(upper, name)
-            if name in upper.model_fields_set:
-                result_fields_set.add(name)
-            continue
-
         lo = out[name]
         hi = getattr(upper, name)
 
         if name not in upper.model_fields_set:
-            # Field not written in upper → keep whatever lo is (may be cross-axis
-            # cleared to None, or the original lower value).
+            # Field not written in upper → keep whatever lo is (may be cleared
+            # by an exclusive group, or the original lower value).
             out[name] = lo
             if name in lower.model_fields_set or lo is not None:
                 result_fields_set.add(name)
@@ -318,32 +258,43 @@ def merge_patches(lower: P, upper: P, nested: bool) -> P:
             result_fields_set.add(name)
         else:
             # Both lo and hi are set and non-None: resolve the strategy now.
-            # strategy() raises TypeError for list-typed fields with no Merge
-            # marker — that case implies both sides carry a list, which is an
-            # authoring error that deserves a loud failure.
             out[name] = _combine_field(
                 lo,
                 hi,
-                recurse=lambda a, b: merge_patches(a, b, nested),
-                strat=strategy(field, nested),
+                recurse=merge_patches,
+                strat=strategy(field),
             )
             result_fields_set.add(name)
 
     return type(upper).model_construct(_fields_set=result_fields_set, **out)
 
 
+@cache
+def _not_inherited_fields(model: type[BaseModel]) -> frozenset[str]:
+    """The field names of *model* marked ``NotInherited``."""
+    return frozenset(
+        name
+        for name, field in model.model_fields.items()
+        if any(isinstance(marker, NotInherited) for marker in field.metadata)
+    )
+
+
 @overload
-def scope_patch(inherited: P | None, own: P) -> P: ...
+def scope_patch(inherited: StylePatch | None, own: StylePatch) -> StylePatch: ...
 @overload
-def scope_patch(inherited: P | None, own: P | None) -> P | None: ...
-def scope_patch(inherited: P | None, own: P | None) -> P | None:
+def scope_patch(
+    inherited: StylePatch | None, own: StylePatch | None
+) -> StylePatch | None: ...
+def scope_patch(
+    inherited: StylePatch | None, own: StylePatch | None
+) -> StylePatch | None:
     """The patch in force inside a nested scope, given its parent's.
 
     A scope that authors nothing (``own is None``) inherits the parent's
     patch unchanged. A scope with nothing to inherit from (``inherited is
     None``, the root or an unstyled lineage) takes its own patch as-is.
-    Otherwise ``own`` merges onto ``inherited`` via ``merge_patches(...,
-    nested=True)`` — the same nested-board relation used everywhere else.
+    Otherwise ``own`` merges onto ``inherited`` once the fields marked
+    ``NotInherited`` are dropped from it.
 
     Shared by the compile cascade (``compile_board_resolved_style``) and any
     read-only walk that needs to mirror it (design-verb scope offering) —
@@ -353,7 +304,15 @@ def scope_patch(inherited: P | None, own: P | None) -> P | None:
         return inherited
     if inherited is None:
         return own
-    return merge_patches(inherited, own, nested=True)
+    dropped = _not_inherited_fields(type(inherited))
+    kept = type(inherited).model_construct(
+        _fields_set=inherited.model_fields_set - dropped,
+        **{
+            name: None if name in dropped else getattr(inherited, name)
+            for name in type(inherited).model_fields
+        },
+    )
+    return merge_patches(kept, own)
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +330,7 @@ def _combine_field(
     """Combine two present, non-None field values — the ONE shared dispatch ladder.
 
     Called by both ``merge_patches`` and ``merge_onto_base``. Owns the only
-    place in the engine that decides append vs recurse vs dict-union vs override.
+    place in the engine that decides recurse vs dict-union vs override.
 
     Args:
         lo:      Lower / base value (present and non-None).
@@ -379,12 +338,10 @@ def _combine_field(
         recurse: Callable for nested BaseModel merges. Caller supplies its own
                  recursion (either ``merge_patches`` or ``merge_onto_base``).
         strat:   Resolved strategy string (from ``strategy()``).
-                 ``"append"`` → concatenate; ``"override"`` → return hi;
+                 ``"override"`` → return hi;
                  empty string (default, used by merge_onto_base) and all
                  other values fall through to isinstance dispatch.
     """
-    if strat == "append":
-        return lo + hi
     if strat == "override":
         return hi
     if isinstance(lo, BaseModel) and isinstance(hi, BaseModel):
@@ -427,8 +384,9 @@ def merge_onto_base(base: P, patch: BaseModel | None) -> P:
     - field omitted from patch → inherit from base.
     - set patch field is None → clear to None; terminal validation decides whether
       the compiled field is nullable.
-    - A font patch that sets ``extends`` replaces the base slot outright: a named
-      font is not a tweak of what the theme bound there.
+    - A patch whose type declares ``merge_reset`` and sets that field replaces the
+      declared base fields outright (a named font is not a tweak of what the
+      theme bound there).
     - Both base_val and patch_val are BaseModel → recurse via merge_onto_base.
     - Both are dict → key-wise merge (patch keys win, base keys survive; a
       ``Merge(Strategy.DEEP)`` dict also merges entries present on both sides).
@@ -450,7 +408,7 @@ def merge_onto_base(base: P, patch: BaseModel | None) -> P:
         )
     if not patch_fields_set:
         return base
-    base = _under_named_font(base, patch)
+    base = _reset_on_set(base, patch)
 
     result: dict[str, Any] = {}
     result_fields_set = set(base.model_fields_set)
@@ -683,6 +641,7 @@ def _resolve_entry(
     ctx: _ExtendCtx,
     seen: frozenset[str],
     theme_sink: list[str] | None = None,
+    layer_sink: list[tuple[str, BaseModel]] | None = None,
 ) -> BaseModel:
     """Resolve one extends entry to a BoardPatch.
 
@@ -713,7 +672,7 @@ def _resolve_entry(
                 "this position — update the YAML by hand.",
                 stacklevel=2,
             )
-            return _resolve_entry(redirect, ctx, seen, theme_sink)
+            return _resolve_entry(redirect, ctx, seen, theme_sink, layer_sink)
 
     if not is_path_ref(entry) and entry in ctx.theme_names:
         if theme_sink is not None:
@@ -740,7 +699,7 @@ def _resolve_entry(
         extends_patch = _merge_extends_inner(
             fragment, ctx, seen | {theme_relpath}, theme_sink
         )
-        return merge_patches(extends_patch, _fragment_own_patch(fragment), nested=False)
+        return merge_patches(extends_patch, _fragment_own_patch(fragment))
 
     fragment_path = _resolve_fragment_file(entry, ctx)
     fragment_relpath = fragment_path.relpath
@@ -758,10 +717,16 @@ def _resolve_entry(
             theme_names=ctx.theme_names,
         )
         extends_patch = _merge_extends_inner(
-            fragment, fragment_ctx, seen | {fragment_relpath}, theme_sink
+            fragment,
+            fragment_ctx,
+            seen | {fragment_relpath},
+            theme_sink,
+            layer_sink,
         )
     own_patch = _fragment_own_patch(fragment)
-    return merge_patches(extends_patch, own_patch, nested=False)
+    if layer_sink is not None:
+        layer_sink.append((fragment_relpath, own_patch))
+    return merge_patches(extends_patch, own_patch)
 
 
 def _merge_extends_inner(
@@ -769,6 +734,7 @@ def _merge_extends_inner(
     ctx: _ExtendCtx,
     seen: frozenset[str],
     theme_sink: list[str] | None = None,
+    layer_sink: list[tuple[str, BaseModel]] | None = None,
 ) -> BaseModel:
     """Recursive core of merge_extends."""
     from dbt_charts.core.compile.models.board.patch import EMPTY_PATCH
@@ -783,8 +749,8 @@ def _merge_extends_inner(
 
     acc: BaseModel = EMPTY_PATCH
     for entry in entries:  # low → high priority
-        patch = _resolve_entry(entry, ctx, seen, theme_sink)
-        acc = merge_patches(acc, patch, nested=False)
+        patch = _resolve_entry(entry, ctx, seen, theme_sink, layer_sink)
+        acc = merge_patches(acc, patch)
     return acc
 
 
@@ -807,6 +773,7 @@ def merge_extends(
     board_path: ProjectPath,
     boards_root: ProjectDirectory | None = None,
     theme_sink: list[str] | None = None,
+    layer_sink: list[tuple[str, BaseModel]] | None = None,
 ) -> BaseModel:
     """Fold the extends chain of *node* low→high into a BoardPatch.
 
@@ -827,6 +794,8 @@ def merge_extends(
         boards_root:  Root directory for named-board lookup. Optional.
         theme_sink:  When not None (board-compile lane), built-in theme names are
                      collected here instead of being loaded as style fragments.
+        layer_sink:  When not None, each fragment's ``(relpath, own patch)`` is
+                     appended in priority order, before the layers are folded.
 
     Returns:
         BoardPatch accumulating all inherited fields. ``EMPTY_PATCH`` when
@@ -840,13 +809,14 @@ def merge_extends(
         boards_root=boards_root,
         theme_names=get_theme_names(),
     )
-    return _merge_extends_inner(node, ctx, frozenset(), theme_sink)
+    return _merge_extends_inner(node, ctx, frozenset(), theme_sink, layer_sink)
 
 
 def merge_metas(
     board_dir: ProjectDirectory,
     boards_root: ProjectDirectory,
     theme_sink: list[str] | None = None,
+    layer_sink: list[tuple[str, BaseModel]] | None = None,
 ) -> BaseModel:
     """Fold all meta.yml files from *boards_root* down to *board_dir* into a BoardPatch.
 
@@ -861,6 +831,9 @@ def merge_metas(
     Args:
         board_dir:    The board file's parent directory (ProjectDirectory).
         boards_root:  Upper bound for the meta walk (ProjectDirectory).
+        layer_sink:   When not None, each meta's extends fragments and then the
+                      meta's own ``(relpath, patch)`` are appended root→leaf,
+                      before the layers are folded.
 
     Returns:
         BoardPatch with all meta layers folded in. ``EMPTY_PATCH`` when no
@@ -921,37 +894,73 @@ def merge_metas(
                 theme_names=get_theme_names(),
             )
             extends_patch = _merge_extends_inner(
-                fragment, meta_ctx, frozenset(), theme_sink
+                fragment, meta_ctx, frozenset(), theme_sink, layer_sink
             )
             own_patch = _fragment_own_patch(fragment)
-            meta_patch: BaseModel = merge_patches(
-                extends_patch, own_patch, nested=False
-            )
-        acc = merge_patches(acc, meta_patch, nested=False)
+            meta_patch: BaseModel = merge_patches(extends_patch, own_patch)
+        if layer_sink is not None:
+            layer_sink.append((meta_path.relpath, own_patch))
+        acc = merge_patches(acc, meta_patch)
     return acc
 
 
-def _appended_layout_warnings(
-    board_node: BaseModel, extends_patch: BaseModel, own_patch: BaseModel
+_Held = tuple[str, int | None, object]  # type-state: object_annotation — compared only
+
+
+def _replaced_layout_warnings(
+    layers: Sequence[tuple[str, BaseModel]],
 ) -> list[Diagnostic]:
-    """One WARN-EXTENDS-LAYOUT-APPENDED per list layout the board and its parents share."""
-    raw = board_node.extends  # type: ignore[attr-defined]  # type-state: type_ignore — any BaseModel carrying `extends`
-    if not raw:
-        return []
-    parents = ", ".join([raw] if isinstance(raw, str) else raw)
-    return [
-        Diagnostic.from_code(
-            WARN_EXTENDS_LAYOUT_APPENDED,
-            message=WARN_EXTENDS_LAYOUT_APPENDED.message_template.format(
-                axis=axis, inherited_count=len(inherited), parents=parents
-            ),
-            fix=WARN_EXTENDS_LAYOUT_APPENDED.fix_template,
-            path=axis,
-        )
-        for axis in ("rows", "cols")
-        if getattr(own_patch, axis) is not None
-        and (inherited := getattr(extends_patch, axis)) is not None
-    ]
+    """One warning per layer that replaces a non-empty layout or tag list.
+
+    *layers* are every ``(source, own patch)`` that contributes to a board,
+    low→high; the board's own layer has the empty source. A list set empty has
+    nothing to lose when replaced, and restating an equal value loses nothing.
+    """
+    held: dict[str, _Held] = {}
+    warnings: list[Diagnostic] = []
+    for source, patch in layers:
+        for group in (("tags",), *_exclusive_groups(type(patch))):
+            written = [
+                name
+                for name in group
+                if name in patch.model_fields_set and getattr(patch, name) is not None
+            ]
+            if not written:
+                for name in group:
+                    if name in patch.model_fields_set:
+                        held.pop(name, None)
+                continue
+            for name in group:
+                if (
+                    name in held
+                    and held[name][1] != 0
+                    and held[name][2] != getattr(patch, name)
+                ):
+                    origin, count, _ = held[name]
+                    warnings.append(
+                        Diagnostic.from_code(
+                            WARN_INHERITED_LAYOUT_REPLACED,
+                            message=WARN_INHERITED_LAYOUT_REPLACED.message_template.format(
+                                field=written[0],
+                                replacer=f"in {source}" if source else "here",
+                                inherited=f"the {count} {name}"
+                                if count is not None
+                                else f"the {name}",
+                                source=origin,
+                            ),
+                            fix=WARN_INHERITED_LAYOUT_REPLACED.fix_template,
+                            path=None if source else written[0],
+                        )
+                    )
+                held.pop(name, None)
+            for name in written:
+                value = getattr(patch, name)
+                held[name] = (
+                    source,
+                    len(value) if isinstance(value, list) else None,
+                    value,
+                )
+    return warnings
 
 
 def merged_patch(
@@ -984,18 +993,19 @@ def merged_patch(
         warning_sink: When not None, merge-time warnings are appended here.
     """
     # Base: merge of all meta files root→leaf
-    base = merge_metas(board_path.parent, boards_root, theme_sink)
+    layers: list[tuple[str, BaseModel]] = []
+    base = merge_metas(board_path.parent, boards_root, theme_sink, layers)
     # Middle: extends chain of the board itself
-    extends_patch = merge_extends(board_node, board_path, boards_root, theme_sink)
+    extends_patch = merge_extends(
+        board_node, board_path, boards_root, theme_sink, layers
+    )
     # Top: board's own explicitly-set fields (identity fields stripped)
     own_patch = _fragment_own_patch(board_node)
     if warning_sink is not None:
-        warning_sink.extend(
-            _appended_layout_warnings(board_node, extends_patch, own_patch)
-        )
+        warning_sink.extend(_replaced_layout_warnings([*layers, ("", own_patch)]))
     # fold: base < extends < own
-    board_contribution = merge_patches(extends_patch, own_patch, nested=False)
-    return merge_patches(base, board_contribution, nested=False)
+    board_contribution = merge_patches(extends_patch, own_patch)
+    return merge_patches(base, board_contribution)
 
 
 def to_padding_style(padding: PaddingStyle | PaddingStylePatch) -> PaddingStyle:

@@ -62,7 +62,7 @@ def test_axis_grid_color_cascades_to_axis_x():
     # Use "ordinal" (not "quantitative") so axis_quantitative's own Layer-3
     # authored grid.color doesn't mask the axis_x/axis cascade under test.
     emitted = resolved_axis_style(
-        resolved, "axis_x", "ordinal", chart_type="", label_authored=False
+        resolved, "axis_x", "ordinal", chart_type="", labeled=False
     )
     assert emitted.grid.color == "#aabbcc"
 
@@ -108,14 +108,14 @@ def test_axis_grid_threshold_color_cascades_to_measure_axis():
     )
     resolved = resolve_chart_style_context(patched)
     emitted_y = resolved_axis_style(
-        resolved, "axis_y", "quantitative", chart_type="", label_authored=False
+        resolved, "axis_y", "quantitative", chart_type="", labeled=False
     )
     assert emitted_y.grid.threshold.color == "#ff0000"
     # x-axis has no channel-level override, so it inherits the shared `axis`
     # slot's threshold instead of the y-only distinctive value — no longer
     # structurally absent the way grid.zero was pre-generalization.
     emitted_x = resolved_axis_style(
-        resolved, "axis_x", "quantitative", chart_type="", label_authored=False
+        resolved, "axis_x", "quantitative", chart_type="", labeled=False
     )
     assert emitted_x.grid.threshold.color != "#ff0000"
 
@@ -140,7 +140,7 @@ def test_axis_grid_threshold_visible_false_resolves_on_x_axis():
     )
     resolved = resolve_chart_style_context(patched)
     emitted_x = resolved_axis_style(
-        resolved, "axis_x", "ordinal", chart_type="", label_authored=False
+        resolved, "axis_x", "ordinal", chart_type="", labeled=False
     )
     assert emitted_x.grid.threshold.visible is False
 
@@ -169,10 +169,10 @@ def test_axis_grid_visible_cascades_to_child_axes():
     )
     resolved = resolve_chart_style_context(patched)
     emitted_x = resolved_axis_style(
-        resolved, "axis_x", "quantitative", chart_type="", label_authored=False
+        resolved, "axis_x", "quantitative", chart_type="", labeled=False
     )
     emitted_y = resolved_axis_style(
-        resolved, "axis_y", "quantitative", chart_type="", label_authored=False
+        resolved, "axis_y", "quantitative", chart_type="", labeled=False
     )
     assert emitted_x.grid.visible is False
     assert emitted_y.grid.visible is False
@@ -196,7 +196,7 @@ def test_child_axis_explicit_value_wins_over_cascade():
     )
     resolved = resolve_chart_style_context(patched)
     emitted = resolved_axis_style(
-        resolved, "axis_x", "ordinal", chart_type="", label_authored=False
+        resolved, "axis_x", "ordinal", chart_type="", labeled=False
     )
     assert emitted.grid.color == "#1b7d57"
 
@@ -224,10 +224,10 @@ def test_axis_line_visible_cascades():
     )
     resolved = resolve_chart_style_context(patched)
     emitted_x = resolved_axis_style(
-        resolved, "axis_x", "quantitative", chart_type="", label_authored=False
+        resolved, "axis_x", "quantitative", chart_type="", labeled=False
     )
     emitted_y = resolved_axis_style(
-        resolved, "axis_y", "quantitative", chart_type="", label_authored=False
+        resolved, "axis_y", "quantitative", chart_type="", labeled=False
     )
     assert emitted_x.line.visible is True
     assert emitted_y.line.visible is True
@@ -256,7 +256,7 @@ def test_axis_line_color_is_not_transparent_when_visible(theme: str) -> None:
     )
     resolved = resolve_chart_style_context(patched)
     emitted = resolved_axis_style(
-        resolved, "axis_x", "ordinal", chart_type="", label_authored=False
+        resolved, "axis_x", "ordinal", chart_type="", labeled=False
     )
     assert emitted.line.visible is True
     assert emitted.line.color != "transparent"
@@ -285,7 +285,7 @@ def test_axis_ticks_visible_cascades():
     )
     resolved = resolve_chart_style_context(patched)
     emitted_y = resolved_axis_style(
-        resolved, "axis_y", "quantitative", chart_type="", label_authored=False
+        resolved, "axis_y", "quantitative", chart_type="", labeled=False
     )
     assert emitted_y.ticks.visible is True
 
@@ -320,7 +320,7 @@ def test_base_axis_with_null_grid_color_raises():
     resolved = resolve_chart_style_context(patched)
     with pytest.raises(ValueError, match="grid.color"):
         resolved_axis_style(
-            resolved, "axis_y", "quantitative", chart_type="", label_authored=False
+            resolved, "axis_y", "quantitative", chart_type="", labeled=False
         )
 
 
@@ -335,10 +335,10 @@ def test_paper_resolves_without_error():
     style = get_theme_style("paper")
     resolved = resolve_chart_style_context(style)
     emitted_y = resolved_axis_style(
-        resolved, "axis_y", "quantitative", chart_type="", label_authored=False
+        resolved, "axis_y", "quantitative", chart_type="", labeled=False
     )
     emitted_x = resolved_axis_style(
-        resolved, "axis_x", "quantitative", chart_type="", label_authored=False
+        resolved, "axis_x", "quantitative", chart_type="", labeled=False
     )
     # Compare against the resolved theme slot itself (charts.axis.grid.threshold
     # is paper's one authored color; axis_x/axis_y stay sparse overlays that

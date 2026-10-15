@@ -16,10 +16,9 @@ import json
 import math
 from collections.abc import Callable
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Literal
 
 from dbt_charts import _engine
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.format import (
     format_fields,
     sub_unit_spec,
@@ -47,6 +46,11 @@ from dbt_charts.core.compile.template.output_budget import (
     draw_down_template_output,
     remaining_template_output_bytes,
 )
+from dbt_charts.core.constants.estimates import (
+    SPARK_BAR_TITLE_BASELINE_Y_PX,
+    SPARK_BAR_TITLE_HEIGHT_PX,
+)
+from dbt_charts.core.constants.layout import SUPPORT_TABLE_COLUMN_BLOCK_SHARE_WARN_RATIO
 from dbt_charts.core.diagnostics import REGISTRY, Diagnostic, display_message
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_CUSTOM_RENDER
@@ -58,6 +62,24 @@ from dbt_charts.core.render.board_variables import (
     current_root_board_width,
 )
 from dbt_charts.core.render.chart.auto_link import get_filter_variables_context
+from dbt_charts.core.render.chart.axis_label_collision import (
+    AxisLabelCollision,
+    record_axis_label_collision,
+)
+from dbt_charts.core.render.chart.endpoint_label_overflow import (
+    EndpointLabelGapOverflow,
+    record_endpoint_label_gap_overflow,
+)
+from dbt_charts.core.render.chart.pie_total_overflow import (
+    PieTotalOverflow,
+    record_pie_total_overflow,
+)
+from dbt_charts.core.render.chart.plot_width_floor_record import (
+    record_plot_width_share_warning,
+)
+from dbt_charts.core.render.chart.series_label_truncation import (
+    record_series_label_truncations,
+)
 from dbt_charts.core.render.chart.table_overflow import (
     TableCramping,
     TableOverflow,
@@ -75,6 +97,10 @@ from dbt_charts.core.render.chart.table_static_pagination import (
 from dbt_charts.core.render.chart.text_truncation import (
     TruncationSurface,
     record_text_truncation,
+)
+from dbt_charts.core.render.chart.x_domain_paint_order import (
+    XDomainPaintOrder,
+    record_x_domain_paint_order,
 )
 from dbt_charts.core.render.controls import controls_are_interactive
 from dbt_charts.core.render.sizing import TABLE_PAGINATION_CONTROL_HEIGHT
@@ -121,6 +147,50 @@ def _encode_cells(value: _JsonValue) -> _JsonValue:
     if isinstance(value, list | tuple):
         return [_encode_cells(v) for v in value]
     return value
+
+
+def _cell_kind(cell: CellValue) -> str:
+    # bool before int (a subclass), datetime before date (a subclass). Anything
+    # json_default stringifies (UUID, time, bytes, ...) travels as a string cell.
+    if isinstance(cell, bool):
+        return "boolean"
+    if isinstance(cell, int):
+        return "integer"
+    if isinstance(cell, float):
+        return "float"
+    if isinstance(cell, decimal.Decimal):
+        return "decimal"
+    if isinstance(cell, datetime.datetime):
+        return "datetime"
+    if isinstance(cell, datetime.date):
+        return "date"
+    if isinstance(cell, dict | list | tuple):
+        return "nested"
+    return "string"
+
+
+def column_types(rows: Rows) -> dict[str, str]:
+    """Each column's type for the engine, which never infers it from the JSON
+    cells (a date and a string both arrive as strings): one of `string`,
+    `integer`, `float`, `decimal`, `boolean`, `date`, `datetime`, `nested`,
+    `null` for a column with no non-null cell, or `mixed` for a column whose
+    cells are of several kinds (a VALUES query can hold `1`, `1.0` and `true`).
+
+    Integers and floats in one column widen to `float`. `mixed` is reported,
+    not resolved: the engine errors if a family needs the type of such a column.
+    """
+    kinds: dict[str, set[str]] = {}
+    for row in rows:
+        for name, cell in row.items():
+            seen = kinds.setdefault(name, set())
+            if cell is not None:
+                seen.add(_cell_kind(cell))
+    types: dict[str, str] = {}
+    for name, seen in kinds.items():
+        if seen == {"integer", "float"}:
+            seen = {"float"}
+        types[name] = "mixed" if len(seen) > 1 else next(iter(seen), "null")
+    return types
 
 
 def dumps_payload(payload: JsonDict) -> str:
@@ -193,7 +263,8 @@ def board_style_envelope(
     time_locale: TimeLocaleDefinition,
 ) -> JsonDict:
     """The board-level style tokens every chart payload carries beyond its own
-    style slice (KPI support-row tones, the pie attached-table view height) and
+    style slice (KPI support-row tones, the pie attached-table view height, the
+    placeholder overlay's board font) and
     the root board width WARN-TABLE-CRAMPED sizes its fix from. `None` is a
     render with no board; a table that needs the width then errors."""
     rule = board_style.vega_config.get("rule")
@@ -202,15 +273,19 @@ def board_style_envelope(
         "tones": board_style.tones.model_dump(mode="json"),
         "title_case": board_style.title.font.case,
         "continuous_height": board_style.chart_defaults.view.continuous_height,
-        "support_table_font_color": board_style.chart_defaults.support_table.font.color,
         "rule_stroke_width": None if rule is None else rule.get("strokeWidth"),
         "font": board_style.vega_config.get("font"),
         "font_color": board_style.font.color,
         "board_width": board_width,
+        "text_mark_font": {
+            "family": board_style.chart_defaults.marks.text.font.family,
+            "size": board_style.chart_defaults.marks.text.font.size,
+        },
         "pagination_control_height": TABLE_PAGINATION_CONTROL_HEIGHT,
+        "column_block_share_warn_ratio": SUPPORT_TABLE_COLUMN_BLOCK_SHARE_WARN_RATIO,
         "spark_bar_title": {
-            "height": get_chart_rendering().spark_bar.title_height,
-            "baseline_y": get_chart_rendering().spark_bar.title_baseline_y,
+            "height": SPARK_BAR_TITLE_HEIGHT_PX,
+            "baseline_y": SPARK_BAR_TITLE_BASELINE_Y_PX,
         },
         "placeholder": {
             "opacity": board_style.placeholder.opacity,
@@ -218,6 +293,7 @@ def board_style_envelope(
                 "text": board_style.placeholder.overlay.text,
                 "background": board_style.placeholder.overlay.background,
                 "font": {
+                    "family": board_style.font.family,
                     "size": board_style.placeholder.overlay.font.size,
                     "weight": board_style.placeholder.overlay.font.weight,
                     "color": board_style.placeholder.overlay.font.color,
@@ -322,6 +398,10 @@ def build_chart_payload(
         "resolved": resolved,
         "rows": datasets[chart.query_name],
         "datasets": datasets,
+        "column_types": {
+            "rows": column_types(datasets[chart.query_name]),
+            "datasets": {name: column_types(rows) for name, rows in datasets.items()},
+        },
         "variables": variables,
         "title_shift": title_shift.model_dump(mode="json"),
         "filter_variables": sorted(get_filter_variables_context()),
@@ -364,6 +444,7 @@ def measure_table_natural_width(
     payload = {
         "resolved": chart.model_dump(mode="json"),
         "rows": rows,
+        "column_types": {"rows": column_types(rows)},
         "fonts_dir": str(get_fonts_dir()),
         "format_locale": format_locale_wire(active_format_locale()),
         "time_locale": active_time_locale(),
@@ -403,9 +484,58 @@ def _truncations(
         record_text_truncation(chart_id, surface, "", field)
 
 
+def _endpoint_rail_degraded(
+    p: JsonDict,
+    cause: Literal["gap_did_not_fit", "no_slope", "rail_overflow"],
+    dropped_series: tuple[str, ...] = (),
+) -> None:
+    record_endpoint_label_gap_overflow(
+        p["chart_id"],
+        EndpointLabelGapOverflow(
+            series_count=p["series_count"],
+            gap_px=p["gap_px"],
+            cause=cause,
+            dropped_series=dropped_series,
+        ),
+    )
+
+
 _WARNING_SINKS: dict[str, Callable[[JsonDict], None]] = {
+    "WARN-AXIS-LABEL-COLLISION": lambda p: record_axis_label_collision(
+        p["chart_id"],
+        AxisLabelCollision(field=p["field"], label_count=p["label_count"]),
+    ),
+    "WARN-ENDPOINT-LABEL-GAP-OVERFLOW": lambda p: _endpoint_rail_degraded(
+        p, "gap_did_not_fit"
+    ),
+    "WARN-ENDPOINT-LABEL-RAIL-OVERFLOW": lambda p: _endpoint_rail_degraded(
+        p, "rail_overflow", tuple(p["dropped_series"])
+    ),
+    "WARN-ENDPOINT-LABEL-RAIL-TIED": lambda p: _endpoint_rail_degraded(p, "no_slope"),
+    "WARN-AXIS-TITLE-TRUNCATED": lambda p: record_text_truncation(
+        p["chart_id"], "axis_title", p["authored_text"], p["authored_field"]
+    ),
+    "WARN-CHART-TITLE-TRUNCATED": lambda p: record_text_truncation(
+        p["chart_id"], "chart_title", p["authored_text"], p["authored_field"]
+    ),
     "WARN-CALLOUT-TEXT-TRUNCATED": lambda p: record_text_truncation(
         p["chart_id"], "callout_text", p["authored_text"], p["authored_field"]
+    ),
+    "WARN-LAYER-X-DOMAIN-PAINT-ORDER": lambda p: record_x_domain_paint_order(
+        p["chart_id"],
+        XDomainPaintOrder(x_field=p["x_field"], layer_only=tuple(p["layer_only"])),
+    ),
+    "WARN-SUPPORT-TABLE-CELL-OVERFLOW": lambda p: record_text_truncation(
+        p["chart_id"], "support_table_cell_overflow", p["detail"], "support_table"
+    ),
+    "WARN-PLOT-WIDTH-BELOW-MINIMUM": lambda p: record_plot_width_share_warning(
+        p["chart_id"],
+        column_block_width_px=p["block_width"],
+        plot_width_px=p["plot_width"],
+        card_width_px=p["card_width"],
+    ),
+    "WARN-SERIES-LABEL-TRUNCATED": lambda p: record_series_label_truncations(
+        p["chart_id"], p["authored_field"], p["series_names"]
     ),
     "WARN-KPI-ALIGN-OVERFLOW": lambda p: record_text_truncation(
         p["chart_id"], "kpi_align_overflow", "", "style.align"
@@ -435,6 +565,16 @@ _WARNING_SINKS: dict[str, Callable[[JsonDict], None]] = {
             rendered_pages=p["rendered_pages"],
             total_pages=p["total_pages"],
             cap_note_dropped=p["cap_note_dropped"],
+        ),
+    ),
+    "WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS": lambda p: record_pie_total_overflow(
+        p["chart_id"],
+        PieTotalOverflow(
+            formatted_value=p["formatted_value"],
+            text_width=p["text_width"],
+            hole_diameter=p["hole_diameter"],
+            slot_width=p["slot_width"],
+            slot_height=p["slot_height"],
         ),
     ),
     "WARN-TABLE-COLUMNS-OVERFLOW": lambda p: record_table_overflow(
@@ -572,6 +712,7 @@ def render_callout_card(
                 "placard": placard,
             },
             "rows": [],
+            "column_types": {"rows": {}},
             "width": width,
             "height": height,
             "background": None,

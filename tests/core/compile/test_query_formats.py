@@ -8,6 +8,7 @@ from unittest.mock import Mock
 import pytest
 
 from dbt_charts.core.compile.compiler import compile as compile_board
+from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.format import (
     column_format,
     finalize_kpi_value_format,
@@ -19,6 +20,8 @@ from dbt_charts.core.compile.resolve.chart._table import _with_resolved_scale_st
 from dbt_charts.core.execute import Executor, QueryError
 
 from .._svg_render import render_board_to_svg
+
+_KPI_COMPACT = get_theme_style().charts.kpi.value.compact
 
 _STYLE = "style:\n  formats:\n    currency: '$,.0f'\n    integer: ',.0f'\n"
 _FORMATS = "    formats:\n      revenue: currency\n"
@@ -118,8 +121,10 @@ _BOARD_KPI_USD = (
 
 def test_an_affix_only_format_keeps_its_affix_whichever_tier_it_is() -> None:
     suffix = FormatConfig(suffix=" USD")
-    as_slot = finalize_kpi_value_format(suffix, 12345.0)
-    as_lower_tier = finalize_kpi_value_format(None, 12345.0, column=suffix)
+    as_slot = finalize_kpi_value_format(suffix, 12345.0, compact=_KPI_COMPACT)
+    as_lower_tier = finalize_kpi_value_format(
+        None, 12345.0, column=suffix, compact=_KPI_COMPACT
+    )
     assert as_slot is not None and as_lower_tier is not None
     assert as_lower_tier.suffix == as_slot.suffix == " USD"
     assert as_lower_tier.spec == as_slot.spec

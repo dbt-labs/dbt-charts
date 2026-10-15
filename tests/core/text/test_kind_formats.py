@@ -298,18 +298,6 @@ type: line
 x: date
 y: secs
 """,
-    "pie": """
-query: cat
-type: donut
-theta: secs
-color: day
-total:
-  label: Total
-style:
-  total:
-    value:
-      format: NAME
-""",
 }
 
 
@@ -341,6 +329,31 @@ def test_vega_capable_native_paints_in_every_vega_slot(
         assert f'"format": "{name}"' not in spec
         assert f'\\"{name}\\")' not in spec
     assert "invalid format" not in capfd.readouterr().err
+
+
+_PIE_BOARD = """
+query: cat
+type: donut
+theta: secs
+color: day
+total:
+  label: Total
+style:
+  total:
+    value:
+      format: NAME
+"""
+
+
+@pytest.mark.parametrize("name", ["duration", "bytes"])
+def test_a_pie_total_paints_the_native_text(name: str) -> None:
+    """The engine-drawn pie's center total prints the native's own text."""
+    board = (
+        f"title: T\n{_SLOT_QUERIES}charts:\n  c:\n"
+        + "\n".join("    " + line for line in _PIE_BOARD.splitlines())
+        + "\nrows:\n  - c\n"
+    ).replace("NAME", name)
+    assert f">{format_value(10800, name)}</text>" in render_board_to_svg(board)
 
 
 @pytest.mark.parametrize(

@@ -48,15 +48,13 @@ def test_axis_offset_reserves_two_label_lines_by_default():
     cs = _charts_style()
     style = _dt_style()
 
-    offset_two_line = axis_offset(cs, style, x_label_authored=False, chart_type="")
+    offset_two_line = axis_offset(cs, style, x_labeled=False, chart_type="")
     # Build a style with label_max_lines=1 so we can compare.
     style_one_line = style.model_copy(update={"label_max_lines": 1})
-    offset_one_line = axis_offset(
-        cs, style_one_line, x_label_authored=False, chart_type=""
-    )
+    offset_one_line = axis_offset(cs, style_one_line, x_labeled=False, chart_type="")
 
     label_size = resolved_axis_style(
-        cs, "axis_x", "band", chart_type="", label_authored=False
+        cs, "axis_x", "band", chart_type="", labeled=False
     ).labels.font.size
     assert offset_two_line == offset_one_line + label_size, (
         f"two-line reservation must add exactly one extra label-line height "
@@ -81,23 +79,12 @@ def test_label_position_field_rejected_by_validation():
 
 
 def test_axis_offset_uses_merged_visibility_for_authored_label():
-    """axis_offset must read the merged axis (Layer 5) not the base (Layer 1+2).
+    """axis_offset must read the merged axis, not the base (Layers 1+2).
 
-    When the caller passes x_label_authored=True, resolved_axis_style forces
-    title.visible=True as a Layer-5 default — a default, not an override, so
-    it only matters when something earlier in the cascade (the theme tier,
-    Layers 1-4) hides the title. This test synthesizes that condition
-    directly on the resolved theme tier (rather than depending on the
-    shipped theme's own default, which is visible by default — see the
-    default-axis-titles-casing task) so it keeps covering the Layer-5
-    mechanism itself: without an authored label the theme's hidden title
-    stays hidden (title_h==0); with one, Layer 5 forces it back on so the
+    With ``title.visible: auto`` on the theme tier, x_labeled=False
+    leaves the title hidden (title_h==0) and x_labeled=True shows it, so the
     support-table strip is positioned below the title rather than colliding
     with it.
-
-    Regression: before the fix, axis_offset read charts_style.axis_x directly
-    (Layers 1+2 only), so the authored-label override was invisible and title_h
-    was always 0, causing the strip to overlap the axis title.
     """
     import dataclasses
 
@@ -107,9 +94,7 @@ def test_axis_offset_uses_merged_visibility_for_authored_label():
     from dbt_charts.core.compile.support_table import axis_offset
 
     base_resolved = resolve_chart_style_context(get_theme_style())
-    # Synthesize a theme tier that hides the title — decoupled from whatever
-    # the shipped theme's own default currently is.
-    hidden_title = base_resolved.axis.title.model_copy(update={"visible": False})
+    hidden_title = base_resolved.axis.title.model_copy(update={"visible": "auto"})
     base_resolved = dataclasses.replace(
         base_resolved,
         axis=base_resolved.axis.model_copy(update={"title": hidden_title}),
@@ -120,11 +105,11 @@ def test_axis_offset_uses_merged_visibility_for_authored_label():
 
     cs = build_chart_style_context(base_resolved, BarChart(id="t", type="bar"))
 
-    # Without authored label: synthesized theme tier has title.visible=False → title_h==0
-    offset_without = axis_offset(cs, dt_style, x_label_authored=False, chart_type="")
+    # Without authored label: the title stays hidden
+    offset_without = axis_offset(cs, dt_style, x_labeled=False, chart_type="")
 
-    # With authored label: Layer-5 default sets title.visible=True
-    offset_with = axis_offset(cs, dt_style, x_label_authored=True, chart_type="")
+    # With authored label: the title shows
+    offset_with = axis_offset(cs, dt_style, x_labeled=True, chart_type="")
 
     assert offset_with > offset_without, (
         f"axis_offset must reserve more space when axis title is visible "
@@ -228,9 +213,9 @@ def test_axis_offset_honors_axis_band_title_suppression() -> None:
         base_resolved, BarChart(id="t", type="bar", style=hide_band)
     )
 
-    assert axis_offset(
-        plain, dt_style, x_label_authored=True, chart_type=""
-    ) > axis_offset(suppressed, dt_style, x_label_authored=True, chart_type=""), (
+    assert axis_offset(plain, dt_style, x_labeled=True, chart_type="") > axis_offset(
+        suppressed, dt_style, x_labeled=True, chart_type=""
+    ), (
         "style.axis_band.title.visible:false must give the title's pixels back "
         "in the support-table offset, same as it does in the emitted spec"
     )
@@ -356,10 +341,10 @@ def test_axis_offset_font_size_matches_every_axis_x_channel_type(
 
     cs = resolve_chart_style_context(get_theme_style(theme_name))
     band_size = resolved_axis_style(
-        cs, "axis_x", "band", chart_type="bar", label_authored=False
+        cs, "axis_x", "band", chart_type="bar", labeled=False
     ).labels.font.size
     other_size = resolved_axis_style(
-        cs, "axis_x", channel_type, chart_type="bar", label_authored=False
+        cs, "axis_x", channel_type, chart_type="bar", labeled=False
     ).labels.font.size
     assert other_size == band_size, (
         f"{theme_name}: axis_x label font.size diverges between channel_type "

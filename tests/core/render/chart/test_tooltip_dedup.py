@@ -31,6 +31,8 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
+from ..._engine_render import render_pie_svg
+
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
 
@@ -175,9 +177,7 @@ def test_pie_with_total_no_duplicate_theta_in_aria_label():
         total=ChartTotal(),
         style=PieChartStylePatch.model_validate({"inner_radius": 0.6}),
     )
-    _rc = resolve(chart, _PIE_DATA, chart_style_context=_BOARD_STYLE)
-    spec = generate_vega_lite_spec(chart, _PIE_DATA, width=400)
-    labels = _svg_aria_labels(spec)
+    labels = re.findall(r'aria-label="([^"]+)"', render_pie_svg(chart, _PIE_DATA))
     assert labels, "Expected at least one aria-label in rendered SVG"
     duped = [lb for lb in labels if _has_case_insensitive_duplicate(lb)]
     assert not duped, (
@@ -196,9 +196,7 @@ def test_pie_with_total_measure_formatted_in_aria_label():
         total=ChartTotal(),
         style=PieChartStylePatch.model_validate({"inner_radius": 0.6}),
     )
-    _rc = resolve(chart, _PIE_DATA, chart_style_context=_BOARD_STYLE)
-    spec = generate_vega_lite_spec(chart, _PIE_DATA, width=400)
-    labels = _svg_aria_labels(spec)
+    labels = re.findall(r'aria-label="([^"]+)"', render_pie_svg(chart, _PIE_DATA))
     formatted = [
         lb for lb in labels if "User Count: 8.5" in lb or "User Count: 3.3" in lb
     ]

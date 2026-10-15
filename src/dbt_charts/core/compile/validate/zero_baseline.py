@@ -9,9 +9,17 @@ warns. A floating bar (``y_start``) has no zero baseline and is exempt.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
+from pydantic import BaseModel
+
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.chart.normalized import AreaChart, BarChart
+from dbt_charts.core.compile.models.style.authored import (
+    AreaChartStylePatch,
+    BarChartStylePatch,
+)
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_BAR_ZERO_BASELINE_CROPPED,
@@ -19,13 +27,26 @@ from dbt_charts.core.diagnostics.codes_compile import (
 )
 
 
-def validate_board_zero_baselines(board: Board) -> list[Diagnostic]:
-    """Raise for a cropped bar baseline; return a warning per cropped area."""
+def validate_board_zero_baselines(
+    board: Board,
+    chart_styles: Mapping[
+        str, BaseModel | None
+    ],  # type-state: optional — None when the chart authors no style
+) -> list[Diagnostic]:
+    """Raise for a cropped bar baseline; return a warning per cropped area.
+
+    ``chart_styles`` maps chart id to the style patch the chart itself authored.
+    """
     warnings: list[Diagnostic] = []
     for chart_id, chart in board.charts.items():
         if not isinstance(chart, (BarChart, AreaChart)):
             continue
-        axis_y = chart.style.axis_y if chart.style is not None else None
+        style = chart_styles[chart_id]
+        axis_y = (
+            style.axis_y
+            if isinstance(style, (BarChartStylePatch, AreaChartStylePatch))
+            else None
+        )
         scale = axis_y.scale if axis_y is not None else None
         continuous = scale.continuous if scale is not None else None
         if continuous is None or continuous.zero is not False:

@@ -216,9 +216,8 @@ __all__ = [
 NON_ASPECT_RATIO_TYPES = frozenset({"table", "kpi", "spark_bar", "callout", "custom"})
 SVG_LAYOUT_PADDED_TYPES = frozenset({"table", "kpi", "spark_bar"})
 
-# Chart-type strings dispatched through get_emitter() (render/chart/emitters/__init__.py)
-# — the families that emit Vega-Lite marks. The complement (table, kpi, spark_bar,
-# callout, custom) never paints a mark; it is drawn by a hand-crafted SVG renderer instead.
+# Chart-type strings for the families that paint data marks. The complement (table,
+# kpi, spark_bar, callout, custom) paints none of its own.
 # This is a different fact from SVG_LAYOUT_PADDED_TYPES above (that one is about
 # layout padding, not mark-painting): a custom chart paints no marks of its own
 # yet frames itself inside its padding as a Vega-Lite chart does, so don't fold

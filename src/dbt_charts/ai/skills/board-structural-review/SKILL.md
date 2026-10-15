@@ -32,7 +32,7 @@ this is the cheap pass.
 
 - Visual problems ("the legend is overlapping the title") — use
   `{{ s_skill_name_visual_review }}`
-- Comparing two versions of a board — use `looker-compare-diff` pattern instead
+- Comparing two versions of a board — out of scope for this skill
 
 ## Protocol
 
@@ -105,7 +105,7 @@ A number preset on `style.axis_x` or `style.axis_y` raises `ERR-LABEL-FORMAT-AXI
 |---|---|
 | `bar` over a category | band |
 | `bar` over `yearweek` / `yearmonthdate` buckets | band, always |
-| `bar` over `year` / `yearquarter` / `yearmonth` buckets | band, up to 60 distinct buckets (`max_ordinal_buckets`); temporal at 61+ |
+| `bar` over `year` / `yearquarter` / `yearmonth` buckets | band, up to 60 distinct buckets; temporal at 61+ |
 | `line` / `area` / `scatter` over a text category | band |
 | `line` / `area` / `scatter` over bucketed dates | temporal |
 | `line` / `area` with `curve: step` over bucketed dates | band — the step plateau needs a band scale |

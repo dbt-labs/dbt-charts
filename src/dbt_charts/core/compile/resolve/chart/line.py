@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import date
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.normalized import (
     LineChart,
@@ -21,9 +20,8 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedPointMarkStyle,
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
-    _author_asked_for_endpoint_labels,
-    _authored_legend,
     _bake_ay_orient,
+    _cascaded_legend,
     _endpoint_labels_off_for_layers,
     _endpoint_labels_off_for_multiples,
     _reject_dual_axis_layered_endpoint_labels,
@@ -41,7 +39,6 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     LayerDatasets,
 )
 from dbt_charts.core.compile.resolve.chart._domain import (
-    _authored_axis_y_ticks_count,
     _bake_y_zero,
     _bake_zero_flag,
     _check_bar_layer_spans,
@@ -56,7 +53,6 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
     _cartesian_kwargs,
-    _title_font,
 )
 from dbt_charts.core.compile.resolve.chart._layers import (
     _check_layers_y_domain,
@@ -88,12 +84,18 @@ from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
     resolve_px_per_point,
     stroke_from_px_per_point,
 )
+from dbt_charts.core.compile.resolve.chart.plot_height_floor import (
+    axis_title_cost_px,
+    subtitle_cost_px,
+)
 from dbt_charts.core.compile.resolve.chart.tick_values import numeric_domain_bounds
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
+from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
+from dbt_charts.core.constants.marks import STROKE_FALLBACK_WIDTH
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_LINE_Y_NOT_NUMERIC,
 )
@@ -161,7 +163,6 @@ def _resolve_line(
     channels, wide_measure_series = resolve_wide_measure_channels(
         normalized, channels, "line", has_layers=bool(normalized.layers)
     )
-    author_asked_for_rail = _author_asked_for_endpoint_labels(normalized.style)
     endpoint_label_has_layers = layered_endpoint_rail_fires(
         layered_endpoint_rail_shape(normalized.x, normalized.y),
         [layer.color is None for layer in normalized.layers],
@@ -183,15 +184,12 @@ def _resolve_line(
     naming = cartesian_series_naming(
         normalized,
         channels,
-        _authored_legend(primary),
+        *_cascaded_legend(chart_style_context, line.legend),
         merge_legend(chart_style_context.legend, line.legend),
         width,
         _endpoint_labels_off_for_multiples(
-            _endpoint_labels_off_for_layers(
-                line.endpoint_labels, normalized, author_asked_for_rail
-            ),
+            _endpoint_labels_off_for_layers(line.endpoint_labels, normalized),
             normalized,
-            author_asked_for_rail,
         ),
         endpoint_label_has_layers=endpoint_label_has_layers,
         has_layers=bool(normalized.layers),
@@ -213,11 +211,13 @@ def _resolve_line(
             None, merge_legend(chart_style_context.legend, line.legend)
         ),
         card_padding_px=chart_style_context.card_padding,
-        subtitle_present=bool(normalized.subtitle),
+        subtitle_height_px=subtitle_cost_px(
+            normalized.subtitle, chart_style_context.title.subtitle.font
+        ),
         # Line never flips its dimension field onto Vega-Lite's y-channel
         # the way a horizontal bar does -- the x-axis is always the
         # horizontal rail.
-        axis_title_costs_height=plan.axes.x.style.title.visible is not False,
+        axis_title_height_px=axis_title_cost_px(plan.axes.x.style.title),
     )
     endpoint_labels = naming.endpoint_labels
     _reject_dual_axis_layered_endpoint_labels(
@@ -310,7 +310,6 @@ def _resolve_line(
         ay_merged,
         line_y_values,
         zero_anchor=zero_anchored_line,
-        authored_ticks_count=_authored_axis_y_ticks_count(normalized.style),
         scale=multiples_scale,
         is_quantitative=True,  # line's y is always the measure
     )
@@ -382,7 +381,7 @@ def _resolve_line(
         )
     _adaptive_stroke = stroke_from_px_per_point(_px_per_point)
     line_mark_baked = _apply_line_width(
-        line_mark_baked, _adaptive_stroke, get_chart_rendering().stroke.fallback_width
+        line_mark_baked, _adaptive_stroke, STROKE_FALLBACK_WIDTH
     )
     resolved_line_mark = _build_resolved_line_mark(
         line_mark_baked, resolved_line_labels
@@ -410,7 +409,7 @@ def _resolve_line(
             resolved_line_mark.stroke.width,
             _px_per_point,
         )
-    _tf = _title_font(normalized, chart_local_style_context, width)
+    _tf = resolve_title_font(chart_local_style_context, width)
     bkw = _base_kwargs(
         normalized,
         chart_style_context,
@@ -425,7 +424,6 @@ def _resolve_line(
         suppress_legend=naming.suppress_legend,
         top_legend=naming.top_legend,
         wrap_legend=naming.wrap_legend,
-        force_legend_visible=naming.force_legend_visible,
         legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
     )
     resolved_layers = _resolve_layer_list(

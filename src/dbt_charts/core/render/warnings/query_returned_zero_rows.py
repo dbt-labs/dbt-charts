@@ -4,9 +4,8 @@ core/diagnostics/codes_render.py for what this fires on.
 Detection rule:
   len(ctx.chart_results[chart_id]) == 0
 
-This detector intentionally does NOT gate on ctx.vega_specs. KPI, text, and
-markdown charts are omitted from vega_specs, but zero rows is still meaningful
-for them — e.g. a KPI with no data is a silent failure.
+It gates on nothing but the rows: zero rows is meaningful for every family,
+e.g. a KPI with no data is a silent failure.
 """
 
 from __future__ import annotations

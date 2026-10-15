@@ -80,6 +80,7 @@ from dbt_charts.core.execute.adapters.base import (
     handle_adapter_error,
     interrupted,
     plain_error,
+    reject_duplicate_columns,
     resolve_effective_row_limit,
     resolve_setup_sql,
 )
@@ -772,6 +773,7 @@ class DuckDBAdapter(BaseAdapter):
             columns = [desc[0] for desc in description] if description else []
             rows, truncated_reason = apply_row_limit_truncation(rows, row_fetch_limit)
 
+            reject_duplicate_columns(columns)
             data = [dict(zip(columns, row, strict=False)) for row in rows]
             col_descs = (
                 {desc[0]: tuple(desc) for desc in description} if description else None

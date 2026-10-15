@@ -2,7 +2,7 @@
 
 Detection rule: fires when a faceted chart's inner unit spec width — the same
 per-panel width facet_panel_width() computes at resolve and render — is below
-chart_rendering.facet.min_panel_px.
+FACET_MIN_PANEL_PX.
 
 These are unit tests for the comparison logic only, driven by a hand-built
 vega_specs entry — they do NOT prove the real render pipeline produces that

@@ -262,7 +262,7 @@ field-by-field. Every scope but the project root takes any scalar below
 
 ```yaml-schema
 cache: 1h        # on, expire after an hour (units: s m h d w — compound 1h30m OK)
-cache: forever   # on, never auto-expire
+cache: forever   # on, never auto-expire (the default cache file still drops entries after ~1 week; --cache PATH keeps them)
 cache: true      # on, inherit the parent scope's ttl
 cache: false     # off — the only opt-out
 ```
@@ -814,7 +814,7 @@ Put a number preset on an axis whose ticks can't carry it and the engine raises 
 |---|---|
 | `bar` over a category | band |
 | `bar` over `yearweek` / `yearmonthdate` buckets | band, always |
-| `bar` over `year` / `yearquarter` / `yearmonth` buckets | band, up to 60 distinct buckets (`max_ordinal_buckets`); temporal at 61+ |
+| `bar` over `year` / `yearquarter` / `yearmonth` buckets | band, up to 60 distinct buckets; temporal at 61+ |
 | `line` / `area` / `scatter` over a text category | band |
 | `line` / `area` / `scatter` over bucketed dates | temporal |
 | `line` / `area` with `curve: step` over bucketed dates | band — the step plateau needs a band scale |

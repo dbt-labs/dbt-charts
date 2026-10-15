@@ -15,7 +15,6 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedGeoshapeChart,
     ResolvedHeatmapChart,
     ResolvedLineChart,
-    ResolvedPieChart,
     ResolvedPointMapChart,
     ResolvedScatterChart,
 )
@@ -26,7 +25,6 @@ from dbt_charts.core.render.chart.emitters.bar import BarEmitter
 from dbt_charts.core.render.chart.emitters.geo import GeoshapeEmitter, PointMapEmitter
 from dbt_charts.core.render.chart.emitters.heatmap import HeatmapEmitter
 from dbt_charts.core.render.chart.emitters.line import LineEmitter
-from dbt_charts.core.render.chart.emitters.pie import PieEmitter
 from dbt_charts.core.render.chart.emitters.scatter import ScatterEmitter
 from dbt_charts.core.render.errors import RenderError
 
@@ -35,7 +33,6 @@ _LINE_EMITTER = LineEmitter()
 _AREA_EMITTER = AreaEmitter()
 _SCATTER_EMITTER = ScatterEmitter()
 _HEATMAP_EMITTER = HeatmapEmitter()
-_PIE_EMITTER = PieEmitter()
 _GEOSHAPE_EMITTER = GeoshapeEmitter()
 _POINT_MAP_EMITTER = PointMapEmitter()
 
@@ -53,8 +50,6 @@ def get_emitter(chart: Any) -> ChartEmitter[Any]:
             return _SCATTER_EMITTER
         case ResolvedHeatmapChart():
             return _HEATMAP_EMITTER
-        case ResolvedPieChart():
-            return _PIE_EMITTER
         case ResolvedGeoshapeChart():
             return _GEOSHAPE_EMITTER
         case ResolvedPointMapChart():

@@ -248,11 +248,12 @@ class TestTtlLazyExpiry:
 
             query = result.board.queries["q"]
             key = compute_cache_key(query, {}, result.board.sources)
-            cache.conn.execute(
-                "UPDATE _query_outcomes SET written_at_utc = TIMESTAMP '2000-01-01' "
-                "WHERE source_hash = ? AND query_hash = ? AND variables_hash = ?",
-                list(key),
-            )
+            with cache._connection() as conn:
+                conn.execute(
+                    "UPDATE _query_outcomes SET written_at_utc = TIMESTAMP '2000-01-01' "
+                    "WHERE source_hash = ? AND query_hash = ? AND variables_hash = ?",
+                    list(key),
+                )
 
             adapter.execute.return_value.data = [{"value": 2}]
             # A fresh Executor forces the persistent-cache path (bypasses the
@@ -315,11 +316,12 @@ class TestTtlLazyExpiry:
             from dbt_charts.core.execute.duckdb_cache import compute_cache_key
 
             key = compute_cache_key(query, {}, result.board.sources)
-            cache.conn.execute(
-                "UPDATE _query_outcomes SET written_at_utc = TIMESTAMP '2000-01-01' "
-                "WHERE source_hash = ? AND query_hash = ? AND variables_hash = ?",
-                list(key),
-            )
+            with cache._connection() as conn:
+                conn.execute(
+                    "UPDATE _query_outcomes SET written_at_utc = TIMESTAMP '2000-01-01' "
+                    "WHERE source_hash = ? AND query_hash = ? AND variables_hash = ?",
+                    list(key),
+                )
 
             executor2 = Executor(
                 result.board,
@@ -484,11 +486,12 @@ def _age_shared_entry(cache, board, names: tuple[str, str], hours: int) -> None:
         "the two queries must share a key — otherwise this test proves nothing"
     )
     aged = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
-    cache.conn.execute(
-        "UPDATE _query_outcomes SET written_at_utc = ? "
-        "WHERE source_hash = ? AND query_hash = ? AND variables_hash = ?",
-        [aged, *key],
-    )
+    with cache._connection() as conn:
+        conn.execute(
+            "UPDATE _query_outcomes SET written_at_utc = ? "
+            "WHERE source_hash = ? AND query_hash = ? AND variables_hash = ?",
+            [aged, *key],
+        )
 
 
 class TestSiblingQueriesKeepTheirOwnTtl:

@@ -814,7 +814,7 @@ class TestBarAxisXLabelAlignInward:
 
     def test_horizontal_bar_authored_align_wins_over_inward(self):
         """An explicit chart-local style.axis_x.labels.align still wins over
-        the theme's inward switch — chart-local (Layer 13) always wins over
+        the theme's inward switch — chart-local (Layer 12) always wins over
         the theme's chart-type patch (Layer 4)."""
         board_rs, board_ctx = _board_with_bar_axis_x_label(align="inward")
         style = BarChartStylePatch(

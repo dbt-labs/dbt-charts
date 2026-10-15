@@ -139,6 +139,12 @@ style:
       font: subtitle
 
   charts:
+    # Each chart title leaf follows the card's width tier unless a tier sets it.
+    title:
+      font:
+        size: auto
+        weight: auto
+        family: auto
     preferred_width: 600.0
     aspect_ratio: 1.5
     min_height: 150.0
@@ -172,6 +178,7 @@ style:
       ticks:
         visible: false
         length: 6  # default tick length cascades to all axes; matches VL's geometric idiom
+        width: 1.5
       grid:
         visible: true
         opacity: 1
@@ -190,24 +197,24 @@ style:
       labels:
         font: label
         padding: 6
+        format: auto
         overlap:                         # default: all strategies enabled; the ONE home for this setting
           tilt: true
           skip: true
         min_gap: 16       # 16px minimum gap between adjacent labels
         # bound, flush, offset intentionally absent — VL per-axis defaults apply.
       title:
-        # Hidden by default. An axis whose own labels name the dimension —
-        # temporal (Jan 2025, Apr) or nominal (North, South) — gains nothing
-        # from a title repeating the column slug, and the chart title usually
-        # names the measure already. The families that DO need one opt back in:
-        # scatter (both axes quantitative, so neither self-names) and
-        # histogram's y. An authored `x_label`/`y_label` also forces a title on
-        # via Layer 5 in compile/resolve/style/axis_cascade.py.
+        # Hidden unless the chart authors an `x_label`/`y_label`. An axis whose
+        # own labels name the dimension — temporal (Jan 2025, Apr) or nominal
+        # (North, South) — gains nothing from a title repeating the column
+        # slug, and the chart title usually names the measure already. The
+        # families that DO need one opt back in: scatter (both axes
+        # quantitative, so neither self-names) and histogram's y.
         #
         # Default (unlabeled) title TEXT bypasses this font's `case: title`
         # transform (core/text/case.py's field_title), wherever a default
         # title renders.
-        visible: false
+        visible: auto
         font:
           extends: label
           weight: &weight_bold 600
@@ -239,22 +246,20 @@ style:
         padding: 0  # band/point padding around categorical x-axis values
       # Engine fills missing time buckets on ordinal bucketed-time x-axes.
       # Bar/line/area inherit this global default. Scatter pins null under
-      # style.charts.scatter.axis_x (layer 4) — scatter should never zero-fill or interpolate.
+      # style.charts.scatter.axis_x — scatter should never zero-fill or interpolate.
       fill: "null"
       fiscal_year_start_month: 1
 
     axis_y:
-      # Y-specific tweaks only — orientation and tick width. Empty
+      # Y-specific tweaks only — orientation and scale. Empty
       # grid/line/labels/title cascade from the canonical `axis`
-      # block via the InheritSlot graph at resolve time, so board-level patches on
+      # block at resolve time, so board-level patches on
       # `style.axis.*` reach axis_y through the same path.
       # "auto" → "right" by default; flips to "left" when endpoint labels are
       # on the right edge (line charts with style.line.endpoint_labels.visible).
       # Also serves the categorical-orient role for horizontal bar's swapped
       # categorical axis (categorical_orient was deleted 2026-08 trim).
       position: auto
-      ticks:
-        width: 1.5
       scale:
         # Editorial default (settled 2026-07-16): data marks sit ~8% from
         # the visible axis edges. Zero-anchored: domain_max = data_max * 1.08.
@@ -267,17 +272,12 @@ style:
 
     axis_quantitative:
       # Quantitative-specific tweaks only — tabular font on numeric labels and
-      # tick width matching axis_y. Colors cascade from `axis` via the inherit graph.
+      # tick width. Colors cascade from `axis`.
       ticks:
         width: 1.5
+        count: auto
       labels:
         font: numeral
-        # References the shared `number` name (.3~s) so quantitative axes
-        # AND the value labels that inherit this format read a bounded 3-sig-fig
-        # SI number (9.18, 21.5M) — not the unbounded 6-sig-fig 9.18039 a bare ~s
-        # gives on real data. Axis ticks are round, so the bound is invisible there.
-        # Authors override per-chart via chart.format or style.axis_y.labels.format.
-        format: "number"
 
     tooltip:
       format: ",.2~f"
@@ -315,14 +315,25 @@ style:
 
     # Whether a chart visually answers "what am I pointing at", beyond the
     # tooltip. One switch for the whole family of mechanisms; each chart
-    # family picks its own, and their strengths are engine config.
+    # family picks its own.
     hover_emphasis:
       visible: true
+      dimmed_opacity: 0.7
 
     legend:
+      # `auto`: shown unless direct labeling retires it. A concrete value from
+      # any tier wins.
+      visible: auto
+      position:
+        edge: auto
+        align: auto
+        overlay: auto
       columns: 0
       compact_columns: 2
       symbol_limit: 20
+      row:
+        swatch_width: 10.0
+        entry_gap: 16.0
       label:
         font: label
         # Gap between a legend symbol and its label text (VL labelOffset).
@@ -330,6 +341,7 @@ style:
         # legends), which overflow VL's default offset of 4.
         padding: 8.0
       title:
+        visible: auto
         font:
           extends: label
           size: 12
@@ -490,8 +502,9 @@ style:
         border:
           width: 1
           # Halo knockout: tracks the theme's canvas so adjacent bars separate
-          # cleanly on any theme background. Resolved at theme-compile time
-          # (see ``_resolve_self_tokens`` in models/style/resolved.py).
+          # cleanly on any theme background. Resolved against the board's canvas
+          # after the layers merge (see ``_resolve_self_tokens`` in
+          # compile/resolve/style/tokens.py).
           color: theme.background
           radius: 2
         # Bar width is set at the mark layer (band_width = 0.8 → 80% of band
@@ -510,7 +523,7 @@ style:
         stroke:
           # No width here: the resolve layer bakes a density-adaptive width
           # for normal line/area charts, or falls back to
-          # chart_rendering.stroke.fallback_width (default_config.yml) when
+          # STROKE_FALLBACK_WIDTH (constants/marks.py) when
           # it can't (no data, no x field, non-cartesian). Leaving width
           # unset at every theme tier lets that fallback apply; a theme that
           # wants a fixed, non-adaptive width can set it here instead.
@@ -522,6 +535,7 @@ style:
         # the connect:false inset exists to create. Connected lines keep round:
         # there the cap touches only the two outer ends of one continuous path.
         disconnected_cap: "butt"
+        disconnected_width: 0.9
         curve: "linear"
         halo_multiplier: 2.0
       area:
@@ -557,10 +571,7 @@ style:
           # vertices.
           stroke:
             color: theme.background
-            # No width here: falls back to
-            # chart_rendering.stroke.stacked_fallback_width
-            # (default_config.yml) when nothing pins one, same reasoning as
-            # marks.line.stroke above.
+            width: 1.0
             cap: "round"
             join: "round"
           halo_multiplier: 0.0
@@ -588,8 +599,8 @@ style:
         gap: 0
         corner_radius: 3
         # Canvas-coupling: ``theme.background`` is a self-reference token
-        # resolved at theme-compile time (see ``_resolve_self_tokens`` in
-        # models/style/resolved.py).
+        # resolved against the board's canvas after the layers merge (see
+        # ``_resolve_self_tokens`` in compile/resolve/style/tokens.py).
         stroke:
           color: theme.background
           width: 3
@@ -644,13 +655,14 @@ style:
         visible: false
         label_offset: 6.0
         height: 20.0
+      grouped:
+        padding_inner: 0.2
+        padding_outer: 0.2
       axis_x:
         grid:
           visible: false
         ticks:
           visible: false
-        labels:
-          padding: 6.0
 
     line:
       endpoint_labels:
@@ -670,13 +682,11 @@ style:
           visible: true
       marks:
         point:
-          # Matches chart_rendering.stroke.fallback_width — hollow rings
-          # should read with the same weight as a line's fallback stroke
-          # (a separate literal, not a live reference: overriding
-          # fallback_width in dbt_charts.yml will not move this). Family-tier,
-          # not global: the global slot must stay unset so
-          # bake_point_companions can detect an authored ring on the
-          # families that do track a line.
+          # Matches STROKE_FALLBACK_WIDTH (constants/marks.py): hollow rings
+          # should read with the same weight as a line's fallback stroke.
+          # Family-tier, not global: the global slot must stay unset so
+          # bake_point_companions can detect an authored ring on the families
+          # that do track a line.
           stroke_width: 2.5
 
     histogram:
@@ -715,6 +725,9 @@ style:
       value:
         font:
           size: 24
+        compact:
+          spec: ".2~s"
+          threshold: 1000.0
         affix:
           font: label
         glyph:
@@ -778,11 +791,13 @@ style:
       font:
         extends: numeral
         size: 11
+        color: auto
       # No divider by default: the strip flows directly from the x-axis.
       # Themes that want a visible separator set visible: true.
       divider:
         visible: false
         width: 1
+        gap: 4.0
       row:
         padding:
           vertical: 2.0
@@ -829,9 +844,8 @@ style:
       axis_y:
         title:
           visible: true  # scatter always shows y-axis title (column name / authored label)
-      # Categorical color on scatter needs a key. Keep this as a family default
-      # so themes that globally suppress legends can still inherit an honest
-      # color legend for scatter, just as bars opt back in.
+      # Categorical color on scatter needs a key: a board-wide
+      # `legend.visible: false` does not reach it.
       legend:
         visible: true
       marks:
@@ -841,13 +855,11 @@ style:
           # 60 sq px, diameter = sqrt(size) ≈ 7.75px (≈3.9px radius), a clean
           # unobtrusive dot.
           size: 60
-          # Matches chart_rendering.stroke.fallback_width — hollow rings
-          # should read with the same weight as a line's fallback stroke
-          # (a separate literal, not a live reference: overriding
-          # fallback_width in dbt_charts.yml will not move this). Family-tier,
-          # not global: the global slot must stay unset so
-          # bake_point_companions can detect an authored ring on the
-          # families that do track a line.
+          # Matches STROKE_FALLBACK_WIDTH (constants/marks.py): hollow rings
+          # should read with the same weight as a line's fallback stroke.
+          # Family-tier, not global: the global slot must stay unset so
+          # bake_point_companions can detect an authored ring on the families
+          # that do track a line.
           stroke_width: 2.5
 
     pie:
@@ -877,10 +889,8 @@ style:
         gradient:
           palette: blues
       # Choropleth color channel carries the whole measure — a reader can't
-      # decode dark-vs-light without a key. Keep this a family default so
-      # themes that globally suppress legends (clarity direct-labeling)
-      # still inherit an honest gradient legend here, just as heatmap and
-      # scatter opt back in.
+      # decode dark-vs-light without a key: a board-wide
+      # `legend.visible: false` does not reach it.
       legend:
         visible: true
 
@@ -896,13 +906,11 @@ style:
           # matches scatter's own 60 sq px (diameter = sqrt(size) ≈ 7.75px,
           # ≈3.9px radius) so a bare point_map isn't invisible by default.
           size: 60
-          # Matches chart_rendering.stroke.fallback_width — hollow rings
-          # should read with the same weight as a line's fallback stroke
-          # (a separate literal, not a live reference: overriding
-          # fallback_width in dbt_charts.yml will not move this). Family-tier,
-          # not global: the global slot must stay unset so
-          # bake_point_companions can detect an authored ring on the
-          # families that do track a line.
+          # Matches STROKE_FALLBACK_WIDTH (constants/marks.py): hollow rings
+          # should read with the same weight as a line's fallback stroke.
+          # Family-tier, not global: the global slot must stay unset so
+          # bake_point_companions can detect an authored ring on the families
+          # that do track a line.
           stroke_width: 2.5
           # No opacity override: point maps inherit the global point mark's
           # opacity: 1, the same as scatter. A translucent default would make
@@ -926,10 +934,8 @@ style:
         grid:
           visible: false
       # Heatmap's color channel carries the whole measure — a reader can't
-      # decode dark-vs-light without a key. Keep this a family default so
-      # themes that globally suppress legends (clarity direct-labeling)
-      # still inherit an honest gradient legend here, just as scatter opts
-      # back in.
+      # decode dark-vs-light without a key: a board-wide
+      # `legend.visible: false` does not reach it.
       legend:
         visible: true
 
@@ -1120,10 +1126,12 @@ style:
     link: "https://dbtcharts.com"
     font: caption
     y_offset: 14
+    brand_weight: 600
     divider:
       visible: true
       color: "#e5e5e5"
       width: 0.5
+      gap: 2
 
   timestamp:
     visible: true
@@ -1131,4 +1139,5 @@ style:
     align: left
     format: "Data as of %H:%M %Z on %-d %b %Y"
     y: 14
+    gap: 12
     font: caption

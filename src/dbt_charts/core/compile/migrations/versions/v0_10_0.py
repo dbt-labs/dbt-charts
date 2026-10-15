@@ -52,10 +52,16 @@ Changes in this release:
   ``style.axis_x.labels.format`` (``Move``s scoped to the chart family). A
   ``Move`` raises when the chart's own ``axis`` or ``axis_quantitative`` labels
   already carry a format. ``time_format`` and a scatter's ``number_format``
-  raise: the old keys applied only on a date or numeric channel, which the YAML
-  does not say. A heatmap's
+  move too, though the old keys applied only on a date or numeric channel, which
+  the YAML does not say: a pattern that does not fit the axis raises at render
+  (``ERR-TIME-FORMAT-NOT-TEMPORAL``, ``ERR-LABEL-FORMAT-AXIS-MISMATCH``). A heatmap's
   keys, and ``style.charts.<family>.number_format`` / ``time_format`` (never
   read), are ``Deletion``s with a reason.
+- **A board's own `rows`, `cols`, `grid`, `tabs` or `tags` replace the ones it
+  inherits** from a `meta.yml` or an `extends:` parent instead of being added
+  after them. Not mechanically migratable: the inherited items live in another
+  file, so no rewrite of the board can restore them. `WARN-INHERITED-LAYOUT-REPLACED`
+  marks every board where the old reading differed.
 """
 
 from __future__ import annotations
@@ -207,27 +213,6 @@ _HEATMAP_FORMAT_REASON = (
 )
 
 
-def _ambiguous_chart_format(message: str) -> Callable[[JsonValue], JsonValue | Dropped]:
-    def refuse(value: JsonValue) -> JsonValue | Dropped:
-        raise MigrationError(f"Cannot migrate {message} Migrate this field manually.")
-
-    return refuse
-
-
-# The old keys formatted an axis only when its channel was numeric (number_format)
-# or temporal (time_format), and the YAML cannot say which channel an axis is.
-_TIME_FORMAT_REFUSAL = _ambiguous_chart_format(
-    "style.time_format: it formatted x only when x is a date, and the YAML does "
-    "not say. If x is a date, move it to style.axis_x.labels.format (or "
-    "style.axis_y.labels.format on a scatter's date y); otherwise delete it."
-)
-_SCATTER_NUMBER_FORMAT_REFUSAL = _ambiguous_chart_format(
-    "style.number_format on a scatter chart: it formatted y only when y is "
-    "numeric, and a dot plot puts the measure on x. Move it to "
-    "style.axis_y.labels.format or style.axis_x.labels.format."
-)
-
-
 def _chart_format_moves(
     source_schema: str, target_schema: str, catalog: YamlSchemaCatalog
 ) -> tuple[Move, ...]:
@@ -238,7 +223,6 @@ def _chart_format_moves(
         new_axis: str,
         families: tuple[str, ...],
         *,
-        rewrite: Callable[[JsonValue], JsonValue | Dropped] | None = None,
         conflicts_with: tuple[YamlKeyPath, ...] = (),
     ) -> tuple[Move, ...]:
         found = suffix_rename_moves(
@@ -252,32 +236,21 @@ def _chart_format_moves(
             dataclasses.replace(
                 move,
                 chart_type=family,
-                rewrite=rewrite,
                 conflicts_with=conflicts_with,
             )
             for move in found
             for family in families
         )
 
-    return (
-        scoped(
-            "number_format",
-            "axis_y",
-            _CHART_FORMAT_MEASURE_FAMILIES,
-            conflicts_with=_MEASURE_FORMAT_COMPETITORS,
-        )
-        + scoped(
-            "number_format",
-            "axis_y",
-            ("scatter",),
-            rewrite=_SCATTER_NUMBER_FORMAT_REFUSAL,
-        )
-        + scoped(
-            "time_format",
-            "axis_x",
-            (*_CHART_FORMAT_MEASURE_FAMILIES, "scatter"),
-            rewrite=_TIME_FORMAT_REFUSAL,
-        )
+    return scoped(
+        "number_format",
+        "axis_y",
+        (*_CHART_FORMAT_MEASURE_FAMILIES, "scatter"),
+        conflicts_with=_MEASURE_FORMAT_COMPETITORS,
+    ) + scoped(
+        "time_format",
+        "axis_x",
+        (*_CHART_FORMAT_MEASURE_FAMILIES, "scatter"),
     )
 
 

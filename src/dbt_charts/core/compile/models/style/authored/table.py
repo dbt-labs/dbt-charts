@@ -34,9 +34,7 @@ from dbt_charts.core.compile.models.markers import (
     Color,
     DisplayText,
     Format,
-    Merge,
     Palette,
-    Strategy,
     Url,
 )
 from dbt_charts.core.compile.models.primitives import (
@@ -237,7 +235,6 @@ class ColumnScaleTargetConfig(ScaleTargetConfig):
 
     palette: Annotated[
         ScalePaletteName | list[str] | str,
-        Merge(Strategy.OVERRIDE),
         Palette(),
     ] = Field(
         description="Which colors the scale draws from: a built-in palette name or Vega scheme, or a CSS color list."

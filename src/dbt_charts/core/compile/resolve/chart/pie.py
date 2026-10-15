@@ -5,7 +5,6 @@ from __future__ import annotations
 from types import EllipsisType
 from typing import Any, Literal
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import column_format, resolve_format_parts
 from dbt_charts.core.compile.merge import merge_onto_base
@@ -42,7 +41,6 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     _base_kwargs,
     _bound_scales,
     _shared_kwargs,
-    _title_font,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
@@ -75,9 +73,17 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 from dbt_charts.core.compile.resolve.style.legend_position import (
     merge_authored_position,
     merge_legend,
+    placed_align,
+    placed_edge,
 )
 from dbt_charts.core.compile.resolve.style.palette import mark_ink
+from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
+from dbt_charts.core.constants.pie import (
+    ATTACHED_TABLE_GAP_PX,
+    HYBRID_HEADING_GAP_PX,
+    OUTER_FRACTION,
+)
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import ERR_PIE_TOTAL_WITHOUT_HOLE
 from dbt_charts.core.text.predefined_formats import PredefinedNumberFormat
@@ -155,7 +161,7 @@ def _resolve_pie(
     # wedge with when there's no color channel, so label ink and wedge fill
     # always match. marks.slice.labels.font.color is never read here — an
     # authored value (single-series only; the merged sentinel is real, so no
-    # patch-peeking is needed) is applied later by PieEmitter, which prefers
+    # patch-peeking is needed) is applied later by the engine's pie family, which prefers
     # it over dark_companion_stops[0]. Multi-series pies never honor font.color.
     dark_stops: tuple[str, ...]
     canvas = chart_local_style_context.ink_canvas
@@ -274,9 +280,9 @@ def _resolve_pie(
     # the width heuristic. (The resolved legend always carries a concrete edge,
     # which cannot say whether anyone chose it.)
     authored_position = merge_authored_position(
-        chart_style_context.pre_style.charts.legend.position, pie.legend
+        chart_style_context.cascaded.charts.legend.position, pie.legend
     )
-    authored_edge = authored_position.edge
+    authored_edge = placed_edge(authored_position.edge)
 
     slice_authored = (
         normalized.format if normalized.format is not None else theta_declared
@@ -300,7 +306,7 @@ def _resolve_pie(
             width,
             chart_category_colors,
             authored_edge,
-            authored_position.align,
+            placed_align(authored_position.align),
         )
 
     mode = dominance_mode(width)
@@ -378,11 +384,10 @@ def _resolve_pie(
         heading_font = resolve_hybrid_heading_font(attached_table.style.table)
 
     _tf = (
-        _title_font(normalized, chart_local_style_context, width)
+        resolve_title_font(chart_local_style_context, width)
         if title_font is ...
         else title_font
     )
-    pie_config = get_chart_rendering().pie
     return ResolvedPieChart(
         **_base_kwargs(
             normalized,
@@ -395,7 +400,8 @@ def _resolve_pie(
             ),
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=pie.padding,
-            suppress_legend=mode != "direct",
+            suppress_legend=True,
+            drop_legend=mode != "direct",
             radial_legend=True,
             wrap_legend=not legend_row_fits(
                 color_legend_entries(channels, data, resolved_color_field),
@@ -423,9 +429,9 @@ def _resolve_pie(
         ),
         dark_companion_stops=dark_stops,
         resolution_width=width,
-        outer_fraction=pie_config.outer_fraction,
-        attached_table_gap=pie_config.attached_table_gap_px,
-        hybrid_heading_gap=pie_config.hybrid_heading_gap_px,
+        outer_fraction=OUTER_FRACTION,
+        attached_table_gap=ATTACHED_TABLE_GAP_PX,
+        hybrid_heading_gap=HYBRID_HEADING_GAP_PX,
         presentation_fingerprint=pie_presentation_fingerprint(data),
         slice_label_indices=tuple(
             index for index, lines in enumerate(slice_label_lines) if lines

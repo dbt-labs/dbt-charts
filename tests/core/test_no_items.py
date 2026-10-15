@@ -118,11 +118,11 @@ def test_resolve_geo_source_city_neighborhoods():
 
 
 # ---------------------------------------------------------------------------
-# 8. sizing — height constants live in chart_rendering config, not Python literals
+# 8. sizing — height constants live in the theme, not Python literals
 # ---------------------------------------------------------------------------
 
 
-def test_sizing_constants_in_chart_rendering_config():
+def test_sizing_constants_in_theme():
     """DEFAULT_CHART_HEIGHT, DEFAULT_TABLE_HEIGHT, TITLE_INLINE_BAND_BOTTOM_PAD
     must be present in the theme style cascade (not hard-coded Python literals)."""
 

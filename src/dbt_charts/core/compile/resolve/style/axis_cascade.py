@@ -1,4 +1,4 @@
-"""Axis style cascade — the 13-layer merge from theme defaults down to
+"""Axis style cascade — the ordered merge from ``charts.axis`` down to
 chart-local overrides, and the ResolvedAxisStyle builder it feeds.
 
 The chart-local cascade walk (``resolved_axis_style`` / ``_merge_axis_cascade``)
@@ -66,6 +66,7 @@ from dbt_charts.core.compile.resolve.style.scale import (
     build_resolved_scale,
     ladder_anchor_at_start,
 )
+from dbt_charts.core.constants.axis import AUTO_TICK_TARGET
 from dbt_charts.core.font_measure import compose_decimal_units
 from dbt_charts.core.text.format_d3 import is_d3_fixed_decimal_spec, is_d3_si_spec
 from dbt_charts.core.text.numeral_scale import (
@@ -112,8 +113,14 @@ _ELEM_X_LABEL_PASSTHROUGH = (
 # has none of the label-overlap/VL-passthrough machinery above.
 _TITLE_PASSTHROUGH = ("padding", "angle", "visible")
 
-# One board-override slot: (patch class, raw model_dump value re-validated below).
-_BoardSlot = tuple[type[BaseModel], Any]  # type-state: explicit_any — board-dump value
+AUTO_AXIS_FORMAT = "auto"
+
+
+def decided_axis_format(channel_type: str) -> str | None:
+    """What an axis's ``labels.format: auto`` means: the bounded SI ``number`` on a
+    quantitative axis (9.18, 21.5M, never 9.18039), no format on any other, whose
+    labels name themselves."""
+    return "number" if channel_type == "quantitative" else None
 
 
 def _resolve_own_side_align(
@@ -258,6 +265,11 @@ def _anchors_affix(fmt: ResolvedFormat) -> bool:
     return fmt.repeat == "anchor" and bool(fmt.prefix or fmt.suffix)
 
 
+def target_tick_count(count: int | Literal["auto"] | None) -> int | None:
+    """The tick count an axis aims for; ``auto`` is the engine's own target."""
+    return AUTO_TICK_TARGET if count == "auto" else count
+
+
 def ladderless_tick_label(
     fmt: ResolvedFormat, measure_values: Sequence[float]
 ) -> ResolvedTickLabel:
@@ -383,8 +395,8 @@ def build_resolved_axis(
     currency-warning detector) or ``label.expr`` (a sentinel several other
     consumers read as "the author opted out").
 
-    A ladder-LESS axis (``tick_values`` empty — a theme leaving
-    ``ticks.count`` unset, or ``multiples.scale: independent``) has no step
+    A ladder-LESS axis (``tick_values`` empty — an unset
+    ``ticks.count``, or ``multiples.scale: independent``) has no step
     for ``tick_label.format`` to derive a precision from, so it bakes
     ``tick_label.si_format``/``.scientific_format`` alongside it instead: the
     axis's own SI spec, untouched, and the scientific register for a tick too
@@ -778,7 +790,7 @@ def build_resolved_axis(
             width=axis.ticks.width,
             length=axis.ticks.length,
             offset=axis.ticks.offset,
-            count=axis.ticks.count,
+            count=target_tick_count(axis.ticks.count),
             step=tick_step,
             time_unit=(
                 axis.ticks.time_unit
@@ -835,7 +847,7 @@ P = TypeVar("P", bound=BaseModel)
 
 @dataclasses.dataclass(frozen=True)
 class AxisOverrides:
-    """Chart-local axis override patches for layers 11-13 of the cascade.
+    """Chart-local axis override patches: the last three layers of the cascade.
 
     Used by the resolve path to pass chart-local axis patches explicitly
     to resolved_axis_style without requiring a per-chart ChartStyleContext.
@@ -847,23 +859,6 @@ class AxisOverrides:
     y: AxisYStylePatch | None = None
     quantitative: QuantitativeAxisStylePatch | None = None
     band: BandAxisStylePatch | None = None
-
-
-def chart_type_axis_patch(
-    chart_style_context: ChartStyleContext,
-    chart_type: str,
-    axis_name: Literal["axis_x", "axis_y"],
-) -> AxisXStylePatch | AxisYStylePatch | None:
-    """Return the chart-type-specific axis patch (Layer 4 of the cascade).
-
-    Pie charts have no cartesian axes, so this always returns None for them.
-    """
-    chart_type_style = getattr(chart_style_context, chart_type, None)
-    return (
-        getattr(chart_type_style, axis_name, None)
-        if chart_type_style is not None
-        else None
-    )
 
 
 def _full_model_as_overlay(model: BaseModel, patch_cls: type[P]) -> P:
@@ -883,17 +878,100 @@ def _full_model_as_overlay(model: BaseModel, patch_cls: type[P]) -> P:
     return patch_cls.model_validate(model.model_dump(exclude_none=True))
 
 
+_BAND_CHANNEL_TYPES = ("ordinal", "nominal", "band")
+
+
+def _family_axis_slot(
+    chart_style_context: ChartStyleContext, chart_type: str, slot: str
+) -> BaseModel | None:
+    """The chart family's own ``slot`` patch, None when it sets none. A family
+    carries only the slots it can paint: chart_type is "" when no family applies,
+    and heatmap has no ``axis_quantitative``."""
+    family = getattr(
+        chart_style_context, chart_type, None
+    )  # type-state: silent_fallback — see docstring
+    return getattr(family, slot, None)  # type-state: silent_fallback — see docstring
+
+
+def _without_band_position(patch: BaseModel | None) -> BaseModel | None:
+    """``patch`` minus ``band_position``, which only ``BandAxisStylePatch`` carries
+    and no merged axis has a field for (it is returned beside the axis instead)."""
+    if not isinstance(patch, BandAxisStylePatch):
+        return patch
+    return BandAxisStylePatch.model_validate(
+        patch.model_dump(exclude={"band_position"}, exclude_unset=True)
+    )
+
+
+def _axis_layers(
+    chart_style_context: ChartStyleContext,
+    axis_name: Literal["axis_x", "axis_y"],
+    channel_type: str,
+    chart_type: str,
+    column_layer_format: AuthoredFormat | None,
+    local: AxisOverrides,
+) -> list[BaseModel | None]:
+    """The cascade's layers above ``charts.axis``, lowest first.
+
+    Specificity decides, whichever file set a path: the channel slot beats the
+    general one, the type slot beats the channel slot, a chart family beats the
+    whole ``charts`` tier, and the chart's own style beats both. The axis
+    column's declared format sits between the family and the chart. There is
+    no ``charts.axis_band``: a band axis styles itself per family or per chart.
+    """
+    channel_patch_cls = AxisXStylePatch if axis_name == "axis_x" else AxisYStylePatch
+    channel_axis = getattr(chart_style_context, axis_name)
+    type_slot = (
+        "axis_quantitative"
+        if channel_type == "quantitative"
+        else "axis_band"
+        if channel_type in _BAND_CHANNEL_TYPES
+        else None
+    )
+
+    def family_slot(slot: str | None) -> BaseModel | None:
+        if slot is None:
+            return None
+        return _without_band_position(
+            _family_axis_slot(chart_style_context, chart_type, slot)
+        )
+
+    local_type = (
+        local.quantitative
+        if type_slot == "axis_quantitative"
+        else _without_band_position(local.band)
+    )
+    return [
+        _full_model_as_overlay(channel_axis, channel_patch_cls),
+        _full_model_as_overlay(
+            chart_style_context.axis_quantitative, QuantitativeAxisStylePatch
+        )
+        if type_slot == "axis_quantitative"
+        else None,
+        family_slot("axis"),
+        family_slot(axis_name),
+        family_slot(type_slot),
+        None
+        if column_layer_format is None
+        else BaseAxisStylePatch.model_validate(
+            {"labels": {"format": column_layer_format}}
+        ),
+        local.global_,
+        local.x if axis_name == "axis_x" else local.y,
+        local_type if type_slot is not None else None,
+    ]
+
+
 @overload
 def _merge_axis_cascade(
     chart_style_context: ChartStyleContext,
     axis_name: Literal["axis_x"],
     channel_type: str,
-    chart_type_axis_patch: AxisXStylePatch | AxisYStylePatch | None = None,
     *,
     column_layer_format: AuthoredFormat | None = None,
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
-    label_authored: bool,
+    labeled: bool,
 ) -> tuple[AxisXStyle, float | None]: ...
 
 
@@ -902,12 +980,11 @@ def _merge_axis_cascade(
     chart_style_context: ChartStyleContext,
     axis_name: Literal["axis_y"],
     channel_type: str,
-    chart_type_axis_patch: AxisXStylePatch | AxisYStylePatch | None = None,
     *,
     column_layer_format: AuthoredFormat | None = None,
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
-    label_authored: bool,
+    labeled: bool,
 ) -> tuple[AxisYStyle, float | None]: ...
 
 
@@ -915,60 +992,43 @@ def _merge_axis_cascade(
     chart_style_context: ChartStyleContext,
     axis_name: Literal["axis_x", "axis_y"],
     channel_type: str,
-    chart_type_axis_patch: AxisXStylePatch | AxisYStylePatch | None = None,
     *,
     column_layer_format: AuthoredFormat | None = None,
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
-    label_authored: bool,
+    labeled: bool,
 ) -> tuple[AxisXStyle | AxisYStyle, float | None]:
-    """Walk the 13-layer axis cascade and return the merged, channel-typed axis,
-    plus any band_position found along the way.
+    """Walk the axis cascade and return the merged, channel-typed axis, plus any
+    band_position the chart's own band patch sets.
 
     ``base.labels.format`` on the returned axis is the *raw*, pre-resolution
-    format string (a predefined name like ``"number"``, a ``style.formats``
-    alias key, or a literal d3 spec) — whichever layer (theme default or an
-    authored one) won the merge last. This function does not resolve it and
-    tracks no provenance about which tier wrote it — see
+    format (a predefined name like ``"number"``, a ``style.formats`` alias key,
+    or a literal d3 spec), whichever layer wrote it last. ``auto`` is the one
+    value decided here, once, from ``channel_type``. See
     ``ResolvedAxisStyle.format_raw`` for what that raw winner decides.
 
-    Extracted from ``resolved_axis_style`` so a caller that needs a field off
-    the merge (e.g. ``position``/``categorical_orient``/``time_unit`` — all
-    plain passthrough values, unaffected by inward/outward align resolution)
-    can read it before the final narrow-typed ``build_resolved_axis`` call,
-    which needs to know the axis's final left/right edge to resolve
-    ``label.align``/``title.align``. See ``resolved_axis_style``'s own
-    docstring for the 13-layer order this walks.
-
     Seeds a channel-typed base (``AxisXStyle``/``AxisYStyle``) from the
-    channel-agnostic ``effective.axis`` (``BaseAxisStyle``, a raw passthrough
-    — see ``_build_resolved_charts``) so channel-specific fields (fill,
-    mirror, tilt_increments, ...) survive the merge chain and reach
-    ``build_resolved_axis``. ``fill``/``fiscal_year_start_month`` are
-    required on ``AxisXStyle``, so they're seeded directly from the
-    theme-level ``axis_x`` value (always populated — required fields backed
-    by ``_base.yaml`` defaults) before any merge runs.
+    channel-agnostic ``charts.axis`` (``BaseAxisStyle``, a raw passthrough)
+    so channel-specific fields (fill, mirror, tilt_increments, ...) survive the
+    merge and reach ``build_resolved_axis``. ``fill``/``fiscal_year_start_month``
+    are required on ``AxisXStyle``, so they are seeded from the theme-level
+    ``axis_x`` (always populated) before any merge runs.
 
-    ``band_position`` lives only on ``BandAxisStyle``/``BandAxisStylePatch``
-    — structurally absent from ``AxisXStyle``/``AxisYStyle`` so it cannot
-    survive the merge chain above. Extracted separately from the band
-    override patch and returned alongside the merged axis.
+    ``band_position`` lives only on ``BandAxisStyle``/``BandAxisStylePatch``,
+    structurally absent from ``AxisXStyle``/``AxisYStyle``, so it cannot
+    survive the merge. It is read off the chart-local band patch and returned
+    alongside the merged axis.
 
-    ``label_authored`` (Layer 5) is the caller's own ``bool(chart.x_label)``/
-    ``bool(chart.y_label)`` for the axis this call is merging — truthy, not
-    ``is not None``, so a blank label forces no title and reserves no space
-    for one. Every caller must spell it the same way or the emitted title and
-    the space budgeted for it drift apart. When
-    True, a synthesized ``{"title": {"visible": True}}`` patch is merged in
-    right here — after Layer 4, before Layer 6 — so an authored label
-    still overrides the theme's blanket title suppression by default, but
-    any later authored layer (board 6-9 or chart-local 11-13) that itself
-    sets ``title.visible`` on this
-    axis wins over the forced default via the normal
-    ``merge_onto_base``/``model_fields_set`` precedence, exactly like every
-    other layer below it. This is the *only* place the forcing default is
-    injected — see ``resolved_axis_style``'s docstring for why a per-slot
-    guard at the call site was the wrong shape.
+    ``labeled`` is the caller's own ``bool(chart.x_label)``/``bool(chart.y_label)``
+    for the axis this call is merging: truthy, not ``is not None``, so a blank
+    label shows no title and reserves no space for one. Every caller must spell
+    it the same way or the emitted title and the space budgeted for it drift
+    apart. It resolves a cascaded ``title.visible: auto`` to a bool once,
+    after the last layer; a concrete ``true``/``false`` from any tier is never
+    touched.
+
+    Chart-local patches come from ``axis_overrides`` when given, else from the
+    context's ``axis_overrides_*``.
     """
     axis_dict = chart_style_context.axis.model_dump()
     if axis_name == "axis_x":
@@ -980,119 +1040,45 @@ def _merge_axis_cascade(
     else:
         base = AxisYStyle.model_validate(axis_dict)
 
-    channel_patch_cls = AxisXStylePatch if axis_name == "axis_x" else AxisYStylePatch
-    base = merge_onto_base(
-        base,
-        _full_model_as_overlay(
-            getattr(chart_style_context, axis_name),
-            channel_patch_cls,
-        ),
+    local = axis_overrides or AxisOverrides(
+        global_=chart_style_context.axis_overrides_global,
+        x=chart_style_context.axis_overrides_x,
+        y=chart_style_context.axis_overrides_y,
+        quantitative=chart_style_context.axis_overrides_quantitative,
+        band=chart_style_context.axis_overrides_band,
     )
+    for layer in _axis_layers(
+        chart_style_context,
+        axis_name,
+        channel_type,
+        chart_type,
+        column_layer_format,
+        local,
+    ):
+        base = merge_onto_base(base, layer)
 
-    if channel_type == "quantitative":
+    if base.title.visible == "auto":
         base = merge_onto_base(
-            base,
-            _full_model_as_overlay(
-                chart_style_context.axis_quantitative, QuantitativeAxisStylePatch
-            ),
-        )
-    # axis_band has no theme-resolved representation; only chart-local applies.
-
-    # Layer 4: theme+board-commingled chart-type patch.  Applied before the
-    # board-only layers so those can still override a theme chart-type default.
-    base = merge_onto_base(base, chart_type_axis_patch)
-
-    if label_authored:
-        # Layer 5: an authored x_label/y_label defaults this axis's title to
-        # visible. Placed after the theme tier and before the board tier, so
-        # it beats the theme's blanket title suppression but loses to any
-        # explicit title.visible authored at board scope (layers 6-9) or
-        # chart-local scope (layers 11-13) — a *default*, not an override.
-        base = merge_onto_base(
-            base, BaseAxisStylePatch.model_validate({"title": {"visible": True}})
+            base, BaseAxisStylePatch.model_validate({"title": {"visible": labeled}})
         )
 
-    # Board layers 6-9 — the author's own `style.charts.*`, applied after the
-    # whole theme tier so an authored leaf is never overwritten by a theme
-    # default. Two scopes walk the same three slots in the same order
-    # (global -> channel -> quantitative):
-    #
-    #   6-8. board scope   (charts.axis / axis_x|axis_y / axis_quantitative)
-    #   9.   family scope  (charts.<family>.axis*) — applied second so a
-    #        board-authored family key beats a board-authored global one. The
-    #        commingled Layer 4 merge already carried the raw value, but it
-    #        would otherwise lose to layers 5-7; re-applying the board-only
-    #        part here restores family > global without disturbing theme
-    #        contributions that are not also board-authored.
-    #
-    # Read through model_dump(exclude_none=True) to sidestep the TYPE_CHECKING
-    # stub (ChartsStylePatch inherits ChartsStyle's non-optional field types,
-    # so `_cbo.axis is not None` trips reportUnnecessaryComparison). The dump
-    # doubles as the null-leaf guard: an authored `padding:` with no value is
-    # stripped, so it cannot clear a theme-required field. Key presence
-    # therefore means "authored, with non-null content".
-    #
-    # axis_band has no board-level authoring surface (extra_forbidden on
-    # ChartsStyle), so there is no board-level band slot here.
-    # model_dump values are dynamic; each is re-validated into a typed patch below.
-    _cbo_data: dict[str, Any]  # type-state: explicit_any — Pydantic model_dump result
-    _cbo_data = chart_style_context.charts_board_overrides.model_dump(exclude_none=True)
-    _scopes: list[dict[str, Any]]  # type-state: explicit_any — model_dump dicts
-    _scopes = [_cbo_data]
-    if chart_type and _cbo_data.get(chart_type) is not None:
-        _scopes.append(_cbo_data[chart_type])
-    for _scope in _scopes:
-        _slots: list[_BoardSlot] = [
-            (BaseAxisStylePatch, _scope.get("axis")),
-            (channel_patch_cls, _scope.get(axis_name)),
-        ]
-        if channel_type == "quantitative":
-            _slots.append((QuantitativeAxisStylePatch, _scope.get("axis_quantitative")))
-        for _cls, _raw in _slots:
-            if _raw is None:
-                continue
-            base = merge_onto_base(base, _cls.model_validate(_raw))
-
-    # Layer 10: the format the chart's query declares for the axis column. Sits
-    # after all board layers so a column's format beats the board's slot default,
-    # but before chart-local style.axis_* so a chart's own slot format still wins.
-    # Merges the raw authored value; resolution happens once, after the cascade.
-    if column_layer_format is not None:
+    if base.labels.format == AUTO_AXIS_FORMAT:
         base = merge_onto_base(
             base,
             BaseAxisStylePatch.model_validate(
-                {"labels": {"format": column_layer_format}}
+                {"labels": {"format": decided_axis_format(channel_type)}}
             ),
         )
 
-    band_position: float | None = None
-    if axis_overrides is not None:
-        # v2 path: chart-local patches passed explicitly.
-        base = merge_onto_base(base, axis_overrides.global_)
-        if channel_type == "quantitative":
-            base = merge_onto_base(base, axis_overrides.quantitative)
-        elif channel_type in ("ordinal", "nominal", "band"):
-            band_patch = axis_overrides.band
-            if band_patch is not None:
+    band_position = None
+    if channel_type in _BAND_CHANNEL_TYPES:
+        family_band = _family_axis_slot(chart_style_context, chart_type, "axis_band")
+        for band_patch in (local.band, family_band):
+            if isinstance(band_patch, BandAxisStylePatch) and (
+                band_patch.band_position is not None
+            ):
                 band_position = band_patch.band_position
-            base = merge_onto_base(base, band_patch)
-        _channel_patch = axis_overrides.x if axis_name == "axis_x" else axis_overrides.y
-        base = merge_onto_base(base, _channel_patch)
-    else:
-        # v1 path: read chart-local patches from effective (set by build_chart_style_context).
-        base = merge_onto_base(base, chart_style_context.axis_overrides_global)
-        if channel_type == "quantitative":
-            base = merge_onto_base(
-                base, chart_style_context.axis_overrides_quantitative
-            )
-        elif channel_type in ("ordinal", "nominal", "band"):
-            band_patch = chart_style_context.axis_overrides_band
-            if band_patch is not None:
-                band_position = band_patch.band_position
-            base = merge_onto_base(base, band_patch)
-        _channel_patch = getattr(chart_style_context, f"axis_overrides_{axis_name[-1]}")
-        base = merge_onto_base(base, _channel_patch)
-
+                break
     return base, band_position
 
 
@@ -1100,74 +1086,50 @@ def resolved_axis_style(
     chart_style_context: ChartStyleContext,
     axis_name: Literal["axis_x", "axis_y"],
     channel_type: str,
-    chart_type_axis_patch: AxisXStylePatch | AxisYStylePatch | None = None,
     *,
     column_layer_format: AuthoredFormat | None = None,
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
-    label_authored: bool,
+    labeled: bool,
 ) -> ResolvedAxisStyle:
-    """Walk the 13-layer axis cascade and return a merged ResolvedAxisStyle.
+    """Walk the axis cascade and return a merged ResolvedAxisStyle.
 
     Single source of truth for axis state at emit time. The renderer reads
     every axis field (ticks, grid, domain, position, offset, ...) from this
-    return value — never from ``effective.axis_x`` / ``axis_y`` directly,
-    since those reflect only Layers 1+2 and silently miss type-conditional,
-    chart-type, and chart-local overrides.
+    return value, never from ``chart_style_context.axis_x`` / ``axis_y``
+    directly, since those carry only the ``charts`` tier and silently miss
+    family and chart-local overrides.
 
-    Layer order (each overrides the previous):
-      1.  theme global                     (effective.axis)
-      2.  theme channel-specific           (effective.axis_x / axis_y)
-      3.  theme type-conditional           (effective.axis_quantitative / band)
-      4.  theme+board chart-type-specific  (chart_type_axis_patch)
-      5.  label-forced title default       (label_authored)
-      6.  board global                     (charts_board_overrides.axis)
-      7.  board channel-specific           (charts_board_overrides.axis_x / axis_y)
-      8.  board type-conditional           (charts_board_overrides.axis_quantitative)
-      9.  board family re-apply            (charts_board_overrides.<chart_type>.axis*)
-      10. the axis column's declared format (column_layer_format)
-      11. chart-local global               (effective.axis_overrides_global)
-      12. chart-local type-conditional     (effective.axis_overrides_quantitative / _band)
-      13. chart-local channel-specific     (effective.axis_overrides_{{x,y}}) — wins
+    Layer order (each overrides the previous; ``T`` is ``axis_quantitative`` on
+    a quantitative channel, ``axis_band`` on a band channel, no slot otherwise):
+      1.  ``charts.axis``
+      2.  ``charts.axis_x`` / ``axis_y``
+      3.  ``charts.axis_quantitative`` (no ``charts.axis_band`` exists)
+      4.  ``charts.<chart_type>.axis``
+      5.  ``charts.<chart_type>.axis_x`` / ``axis_y``
+      6.  ``charts.<chart_type>.T``
+      7.  the axis column's declared format (``column_layer_format``)
+      8.  the chart's own ``axis``
+      9.  the chart's own ``axis_x`` / ``axis_y``
+      10. the chart's own ``T``
+
+    A path's tier is whichever files set it: a board's ``charts.axis_y`` merges
+    into the theme's slot and loses to the theme's more specific
+    ``charts.bar.axis_y``. After layer 10, a cascaded ``title.visible: auto``
+    becomes ``labeled`` and ``labels.format: auto`` becomes the channel's own
+    default.
 
     ``axis_x``/``axis_y``/``axis_quantitative`` are authored-only overlays
-    (SkipInheritSlots — apply_inherit never fills their unset leaves from the
-    shared ``axis`` global). Merging them explicitly here, in this order, is
-    the only place they combine — no independent inheritance between axis
-    fields means no risk of an inherited-not-authored value on one slot
-    clobbering another slot's own deviation from the shared global.
+    (SkipInheritSlots: apply_inherit never fills their unset leaves from the
+    shared ``axis``), so an unset leaf never masquerades as an override of a
+    sibling slot's value.
 
-    ``column_layer_format`` (Layer 10) is the format the chart's query declares for the
-    axis column, computed by ``axis_layer_format()``. It sits after all board
-    layers so a column's format beats any board-level slot default, while still
-    losing to an explicit ``style.axis_x``/``axis_y`` ``.labels.format``
-    (layers 11-13) that the chart itself authors.
-
-    ``label_authored`` (Layer 5) is ``bool(chart.x_label)``/
-    ``bool(chart.y_label)`` for the axis being merged — truthy, not
-    ``is not None``, so a blank label forces no title — the same
-    "synthesized default, beats the theme, loses to authored layers below"
-    shape as ``column_layer_format``'s default for format. An authored label
-    forces the axis title on over the theme's blanket suppression, but any
-    later layer that itself sets ``title.visible`` — a board-level
-    ``style.charts.axis*.title.visible`` (layers 6-9) or a chart-local
-    ``axis_x``/``axis_y``/``axis_quantitative``/``axis_band`` patch (layers
-    11-13) — wins over the forced default with no special-casing, because it
-    is simply a later layer in the same merge chain. Placed here, after the
-    theme tier and before the board tier, so board-level and chart-local
-    ``title.visible: false`` both override it — an earlier version of the fix
-    (before the board tier existed) placed it after the theme chart-type
-    patch and above only chart-local, which would let a board-level
-    ``title.visible: false`` lose to it.
-
-    Chart-local layers (11-13) are read from ``effective.axis_overrides_*``
-    by default (v1 path, populated by ``build_chart_style_context``).  When
-    ``axis_overrides`` is provided (v2 path), those values are used instead —
-    allowing the caller to pass chart-local patches without constructing a
-    per-chart ChartStyleContext.  v1 callers are byte-identical.
+    The chart's own patches (layers 8-10) are read from ``axis_overrides`` when
+    given, else from the context's ``axis_overrides_*``, so the caller needs no
+    per-chart ChartStyleContext.
 
     Returns the axis with ``label.align``/``title.align`` resolved with no
-    known left/right edge (``inward``/``outward`` collapse to ``None`` — the
+    known left/right edge (``inward``/``outward`` collapse to ``None``, the
     away-from-plot default). Callers that need own-side align resolved
     against a real edge (e.g. the cartesian resolvers, once orientation/
     position is known) call ``_merge_axis_cascade`` + ``build_resolved_axis``
@@ -1177,15 +1139,13 @@ def resolved_axis_style(
         chart_style_context,
         axis_name,
         channel_type,
-        chart_type_axis_patch,
         column_layer_format=column_layer_format,
         axis_overrides=axis_overrides,
         chart_type=chart_type,
-        label_authored=label_authored,
+        labeled=labeled,
     )
-    # No tick_values here -- this cascade never bakes a ruler ladder, so
-    # No ladder here, so chart_id (only used by the tabular-guarantee error) is "".
-    # Only axis geometry is read off this axis.
+    # No ladder is baked here, so chart_id (only used by the tabular-guarantee
+    # error) is "". Only axis geometry is read off this axis.
     return build_resolved_axis(
         base,
         band_position=band_position,
@@ -1200,9 +1160,7 @@ def resolved_axis_style(
         is_quantitative=channel_type == "quantitative",
         chart_id="",
         # This wrapper resolves one axis in isolation, with no paired y-axis
-        # to ask the geometric question against -- explicit, not relying on
-        # the parameter default, since this axis's own `ticks` field is never
-        # read on this no-ladder path regardless (see the comment above).
+        # to ask the geometric question against.
         y_gridline_caps_bottom=None,
         formats=chart_style_context.formats,
     )

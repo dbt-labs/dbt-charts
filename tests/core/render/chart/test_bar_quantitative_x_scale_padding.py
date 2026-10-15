@@ -31,6 +31,7 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import (
     build_resolved_axis,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
+from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 from dbt_charts.core.render.chart.emitters.bar import BarEmitter
 from dbt_charts.core.render.chart.spec import RenderBox
 
@@ -110,7 +111,7 @@ def _build_chart(bar_style, ax=None):
         legend=_default_legend(),
         background=charts.background,
         canvas=charts.ink_canvas,
-        title_style=charts.title,
+        title_style=concrete_title_style(charts),
         layout_padding=PaddingStyle(left=0.0, right=0.0, top=0.0, bottom=0.0),
         field_labels={},
     )

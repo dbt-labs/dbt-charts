@@ -134,6 +134,12 @@ class ResolvedLineMarkStyle(BaseModel):
             "Selected in place of stroke.cap only in that geometry."
         ),
     )
+    disconnected_width: float = Field(
+        description=(
+            "Baked share of the band width a disconnected band-step plateau "
+            "spans (curve='step' + connect=False on a categorical x)."
+        ),
+    )
     labels: ResolvedPointLabels = Field(
         description="Baked point labels style.",
     )

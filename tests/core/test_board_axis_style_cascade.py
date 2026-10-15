@@ -18,6 +18,7 @@ SVG render. The rest isolate one mechanism each at the style-cascade level.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 
 import pytest
@@ -27,14 +28,17 @@ from dbt_charts.core.compile.models.chart.normalized import LineChart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import (
     AxisLabelStylePatch,
+    AxisXStylePatch,
     AxisYStylePatch,
+    BandAxisStylePatch,
+    DimensionLabelStylePatch,
     LineChartStylePatch,
+    QuantitativeAxisStylePatch,
     StylePatch,
 )
 from dbt_charts.core.compile.resolve.style.axis_cascade import (
     AxisOverrides,
     _merge_axis_cascade,
-    chart_type_axis_patch as get_chart_type_axis_patch,
     resolved_axis_style,
 )
 from dbt_charts.core.compile.resolve.style.board import (
@@ -130,7 +134,7 @@ def test_board_level_axis_y_non_si_format_isolates_m1():
     )
     ctx = resolve_chart_style_context(get_theme_style(), patch)
     resolved = resolved_axis_style(
-        ctx, "axis_y", "quantitative", chart_type="", label_authored=False
+        ctx, "axis_y", "quantitative", chart_type="", labeled=False
     )
     assert resolved.labels.format.spec == "$,.0f"
 
@@ -143,7 +147,7 @@ def test_board_level_axis_x_format_cascades_on_quantitative_channel():
     )
     ctx = resolve_chart_style_context(get_theme_style(), patch)
     resolved = resolved_axis_style(
-        ctx, "axis_x", "quantitative", chart_type="", label_authored=False
+        ctx, "axis_x", "quantitative", chart_type="", labeled=False
     )
     assert resolved.labels.format.spec == "$,.0f"
 
@@ -162,7 +166,7 @@ def test_chart_local_axis_y_still_wins_over_board_level():
         "quantitative",
         axis_overrides=AxisOverrides(y=chart_local),
         chart_type="",
-        label_authored=False,
+        labeled=False,
     )
     assert resolved.labels.format.spec == "$,.0f"
 
@@ -180,7 +184,7 @@ def test_board_level_axis_y_beats_theme_default():
         "axis_y",
         "quantitative",
         chart_type="",
-        label_authored=False,
+        labeled=False,
     ).labels.format.spec
 
     assert board_format == "$,.3~s"
@@ -194,7 +198,7 @@ def test_board_level_axis_y_padding_leaf_regression():
     )
     ctx = resolve_chart_style_context(get_theme_style(), patch)
     resolved = resolved_axis_style(
-        ctx, "axis_y", "quantitative", chart_type="", label_authored=False
+        ctx, "axis_y", "quantitative", chart_type="", labeled=False
     )
     assert resolved.labels.padding == 42
 
@@ -206,7 +210,7 @@ def test_board_axis_global_cascades():
     )
     ctx = resolve_chart_style_context(get_theme_style(), patch)
     resolved = resolved_axis_style(
-        ctx, "axis_y", "quantitative", chart_type="", label_authored=False
+        ctx, "axis_y", "quantitative", chart_type="", labeled=False
     )
     assert resolved.labels.format.spec == "$,.0f"
 
@@ -223,7 +227,7 @@ def test_board_axis_quantitative_beats_board_channel():
     )
     ctx = resolve_chart_style_context(get_theme_style(), patch)
     resolved = resolved_axis_style(
-        ctx, "axis_y", "quantitative", chart_type="", label_authored=False
+        ctx, "axis_y", "quantitative", chart_type="", labeled=False
     )
     assert resolved.labels.format.spec == ",.1%"
 
@@ -240,7 +244,7 @@ def test_column_layer_format_beats_board_axis_y():
         "quantitative",
         column_layer_format=",.1%",
         chart_type="",
-        label_authored=False,
+        labeled=False,
     )
     assert resolved.labels.format.spec == ",.1%"
 
@@ -286,47 +290,83 @@ def test_null_board_axis_leaf_does_not_crash():
     )
     ctx = resolve_chart_style_context(get_theme_style(), patch)
     resolved = resolved_axis_style(
-        ctx, "axis_y", "quantitative", chart_type="", label_authored=False
+        ctx, "axis_y", "quantitative", chart_type="", labeled=False
     )
     assert resolved.labels.padding is not None
 
 
-def test_theme_family_axis_leaf_loses_to_board_channel():
-    """A theme-family axis leaf (Layer 4) loses to a board-channel override (Layer 6).
-
-    _base.yaml sets charts.bar.axis_x.labels.padding: 6.0 — a theme-authored value
-    baked into the commingled chart_type_axis_patch for bar. A board authoring
-    charts.axis_x.labels.padding: 42 must win because board layer 6 (channel) is
-    applied AFTER Layer 4. This test fails if the layer ordering is wrong or if
-    the board-channel patch is not reaching _merge_axis_cascade.
+def test_theme_family_axis_leaf_beats_board_channel():
+    """The more specific path wins whichever file set it: the theme's
+    charts.bar.axis_x.grid.visible (false) beats the board's charts.axis_x (true);
+    the board's own charts.bar.axis_x (true) beats the theme's.
     """
-    board_patch = StylePatch.model_validate(
-        {"charts": {"axis_x": {"labels": {"padding": 42}}}}
+
+    def grid_visible(patch: dict) -> bool:
+        ctx = resolve_chart_style_context(
+            get_theme_style(), StylePatch.model_validate({"charts": patch})
+        )
+        return resolved_axis_style(
+            ctx, "axis_x", "ordinal", chart_type="bar", labeled=False
+        ).grid.visible
+
+    assert grid_visible({"axis_x": {"grid": {"visible": True}}}) is False
+    assert grid_visible({"bar": {"axis_x": {"grid": {"visible": True}}}}) is True
+
+
+def test_board_axis_y_leaf_loses_to_theme_axis_quantitative():
+    """The theme's axis_quantitative.ticks.width (type slot) beats a board's
+    charts.axis_y.ticks.width (channel slot) on a quantitative axis."""
+    base = resolve_chart_style_context(get_theme_style())
+    theme_width = base.axis_quantitative.ticks.width
+    assert theme_width is not None
+    ctx = resolve_chart_style_context(
+        get_theme_style(),
+        StylePatch.model_validate(
+            {"charts": {"axis_y": {"ticks": {"width": theme_width + 7}}}}
+        ),
     )
-    ctx = resolve_chart_style_context(get_theme_style(), board_patch)
-    bar_axis_x_patch = get_chart_type_axis_patch(ctx, "bar", "axis_x")
-    # Layer 4 carries theme-authored padding 6.0; board layer 6 must win.
-    merged, _ = _merge_axis_cascade(
+    resolved = resolved_axis_style(
+        ctx, "axis_y", "quantitative", chart_type="", labeled=False
+    )
+    assert resolved.ticks.width == theme_width
+
+
+def test_chart_local_axis_x_beats_theme_and_board_family():
+    """A chart's own axis_x beats the theme's and the board's charts.bar.axis_x."""
+    ctx = resolve_chart_style_context(
+        get_theme_style(),
+        StylePatch.model_validate(
+            {"charts": {"bar": {"axis_x": {"labels": {"padding": 42}}}}}
+        ),
+    )
+    chart_ctx = dataclasses.replace(
         ctx,
-        "axis_x",
-        "ordinal",
-        bar_axis_x_patch,
-        chart_type="bar",
-        label_authored=False,
+        axis_overrides_x=AxisXStylePatch(labels=DimensionLabelStylePatch(padding=3)),
     )
-    assert merged.labels.padding == 42
+    resolved = resolved_axis_style(
+        chart_ctx, "axis_x", "ordinal", chart_type="bar", labeled=False
+    )
+    assert resolved.labels.padding == 3
+
+
+def test_chart_local_axis_quantitative_beats_chart_local_axis_y():
+    """On one chart the type slot beats the channel slot, as it does in every tier."""
+    ctx = dataclasses.replace(
+        resolve_chart_style_context(get_theme_style()),
+        axis_overrides_y=AxisYStylePatch(labels=AxisLabelStylePatch(padding=11)),
+        axis_overrides_quantitative=QuantitativeAxisStylePatch(
+            labels=AxisLabelStylePatch(padding=22)
+        ),
+    )
+    resolved = resolved_axis_style(
+        ctx, "axis_y", "quantitative", chart_type="", labeled=False
+    )
+    assert resolved.labels.padding == 22
 
 
 def test_board_title_visible_false_beats_label_forced_default():
     """A board-level charts.axis_y.title.visible: false wins over the
-    label-forced title default (#7278's layer 5).
-
-    An authored x_label/y_label defaults the axis title to visible (layer 5).
-    The board tier sits above it (layers 6-9), so a board author's explicit
-    title.visible: false suppresses the title despite the authored label. This
-    fails if the label default is moved back above the board tier — which would
-    reintroduce #7278's own bug one scope up.
-    """
+    theme's `auto` title despite an authored label."""
     ctx = resolve_chart_style_context(
         get_theme_style(),
         StylePatch.model_validate(
@@ -334,25 +374,38 @@ def test_board_title_visible_false_beats_label_forced_default():
         ),
     )
     merged, _ = _merge_axis_cascade(
-        ctx, "axis_y", "quantitative", chart_type="", label_authored=True
+        ctx, "axis_y", "quantitative", chart_type="", labeled=True
+    )
+    assert merged.title.visible is False
+
+
+def test_board_family_title_visible_false_beats_label_forced_default():
+    """A board-level charts.bar.axis_x.title.visible: false hides the title
+    even when the chart authors an x_label."""
+    ctx = resolve_chart_style_context(
+        get_theme_style(),
+        StylePatch.model_validate(
+            {"charts": {"bar": {"axis_x": {"title": {"visible": False}}}}}
+        ),
+    )
+    merged, _ = _merge_axis_cascade(
+        ctx, "axis_x", "nominal", chart_type="bar", labeled=True
     )
     assert merged.title.visible is False
 
 
 def test_label_forced_title_default_shows_without_board_override():
-    """With an authored label and no title.visible override, the label-forced
-    default (layer 5) makes the title visible over the theme's suppression —
-    #7278's behavior, preserved through the board-tier integration.
-    """
+    """With an authored label and no title.visible override, the theme's
+    `auto` title is shown."""
     ctx = resolve_chart_style_context(get_theme_style())
     merged, _ = _merge_axis_cascade(
-        ctx, "axis_y", "quantitative", chart_type="", label_authored=True
+        ctx, "axis_y", "quantitative", chart_type="", labeled=True
     )
     assert merged.title.visible is True
 
 
 def test_board_family_axis_reaches_resolved_axis_style_via_chart_type():
-    """The board family scope (layer 9) must reach the resolved_axis_style
+    """The board family scope must reach the resolved_axis_style
     wrapper, not just the direct _merge_axis_cascade render path.
 
     axis_offset (the support-table geometry path) resolves axis state through
@@ -370,10 +423,10 @@ def test_board_family_axis_reaches_resolved_axis_style_via_chart_type():
         ),
     )
     with_family = resolved_axis_style(
-        ctx, "axis_x", "band", chart_type="bar", label_authored=False
+        ctx, "axis_x", "band", chart_type="bar", labeled=False
     )
     without_family = resolved_axis_style(
-        ctx, "axis_x", "band", chart_type="", label_authored=False
+        ctx, "axis_x", "band", chart_type="", labeled=False
     )
     assert with_family.labels.padding == 40
     assert without_family.labels.padding != 40
@@ -425,3 +478,103 @@ def test_board_family_axis_x_beats_board_axis_x():
     assert re.search(r">[0-9,]+\.00<", svg), (
         f"expected the family's ,.2f labels on the x-axis; got {svg[:400]}"
     )
+
+
+def _resolved(patch: dict, axis_name: str, channel: str, chart_type: str, theme=None):
+    ctx = resolve_chart_style_context(
+        get_theme_style(theme), StylePatch.model_validate({"charts": patch})
+    )
+    return resolved_axis_style(
+        ctx, axis_name, channel, chart_type=chart_type, labeled=False
+    )
+
+
+def test_board_family_axis_beats_board_axis_and_channel():
+    """charts.bar.axis (family, general) beats charts.axis_x (charts tier, channel)."""
+    resolved = _resolved(
+        {
+            "axis_x": {"labels": {"padding": 11}},
+            "bar": {"axis": {"labels": {"padding": 22}}},
+        },
+        "axis_x",
+        "ordinal",
+        "bar",
+        theme="stark",
+    )
+    assert resolved.labels.padding == 22
+
+
+def test_board_family_axis_quantitative_beats_family_axis_y():
+    resolved = _resolved(
+        {
+            "bar": {
+                "axis_y": {"labels": {"padding": 11}},
+                "axis_quantitative": {"labels": {"padding": 22}},
+            }
+        },
+        "axis_y",
+        "quantitative",
+        "bar",
+    )
+    assert resolved.labels.padding == 22
+
+
+def test_board_family_axis_band_applies_on_a_band_axis_only():
+    patch = {"bar": {"axis_band": {"labels": {"padding": 33}}}}
+    assert _resolved(patch, "axis_x", "ordinal", "bar").labels.padding == 33
+    assert _resolved(patch, "axis_x", "temporal", "bar").labels.padding != 33
+
+
+def test_family_axis_band_position_does_not_crash_and_is_returned():
+    ctx = resolve_chart_style_context(
+        get_theme_style(),
+        StylePatch.model_validate(
+            {"charts": {"bar": {"axis_band": {"band_position": 0.3}}}}
+        ),
+    )
+    _, position = _merge_axis_cascade(
+        ctx, "axis_x", "nominal", chart_type="bar", labeled=False
+    )
+    assert position == 0.3
+
+
+def test_chart_local_band_position_beats_family():
+    ctx = resolve_chart_style_context(
+        get_theme_style(),
+        StylePatch.model_validate(
+            {"charts": {"bar": {"axis_band": {"band_position": 0.3}}}}
+        ),
+    )
+    _, position = _merge_axis_cascade(
+        ctx,
+        "axis_x",
+        "nominal",
+        chart_type="bar",
+        labeled=False,
+        axis_overrides=AxisOverrides(band=BandAxisStylePatch(band_position=0.7)),
+    )
+    assert position == 0.7
+
+
+def test_board_axis_label_color_reaches_a_quantitative_y_axis():
+    resolved = _resolved(
+        {"axis": {"labels": {"font": {"color": "#aa1122"}}}},
+        "axis_y",
+        "quantitative",
+        "",
+        theme="stark",
+    )
+    assert resolved.labels.font.color == "#aa1122"
+
+
+@pytest.mark.parametrize("channel", ["temporal", "ordinal", "nominal"])
+def test_auto_axis_format_is_no_format_off_a_quantitative_axis(channel: str):
+    ctx = resolve_chart_style_context(get_theme_style())
+    merged, _ = _merge_axis_cascade(
+        ctx, "axis_x", channel, chart_type="", labeled=False
+    )
+    assert merged.labels.format is None
+    quantitative, _ = _merge_axis_cascade(
+        ctx, "axis_y", "quantitative", chart_type="", labeled=False
+    )
+    assert quantitative.labels.format == "number"

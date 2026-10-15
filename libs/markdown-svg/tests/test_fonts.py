@@ -291,7 +291,6 @@ class TestGoogleFonts:
         fonts = list_cached_fonts()
         assert isinstance(fonts, list)
 
-    @pytest.mark.network
     def test_download_google_font(self, tmp_path: Path) -> None:
         """Test downloading a font from Google Fonts."""
         from mdsvg.fonts import download_google_font
@@ -308,7 +307,6 @@ class TestGoogleFonts:
         width = measurer.measure("Test", 14)
         assert width > 0
 
-    @pytest.mark.network
     def test_download_caches_font(self, tmp_path: Path) -> None:
         """Test that downloading caches the font."""
         import os
@@ -326,7 +324,6 @@ class TestGoogleFonts:
         assert path1 == path2
         assert mtime1 == mtime2  # File wasn't re-downloaded
 
-    @pytest.mark.network
     def test_download_invalid_font_raises(self, tmp_path: Path) -> None:
         """Test that invalid font name raises error."""
         from mdsvg.fonts import download_google_font

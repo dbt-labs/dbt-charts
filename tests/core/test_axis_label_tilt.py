@@ -35,7 +35,7 @@ def _pick_tilt_angle(
     merges it onto charts.axis to get the complete, theme-cascaded axis state.
     """
     axis_x = resolved_axis_style(
-        charts, "axis_x", "ordinal", chart_type="", label_authored=False
+        charts, "axis_x", "ordinal", chart_type="", labeled=False
     )
     label = axis_x.labels
     values = list(dict.fromkeys(str(row.get(x_field, "")) for row in data[:100]))
@@ -228,7 +228,7 @@ class TestLadderReachability:
     @staticmethod
     def _angles_over_band_sweep(text: str) -> set[float]:
         label = resolved_axis_style(
-            _resolved_charts(), "axis_x", "ordinal", chart_type="", label_authored=False
+            _resolved_charts(), "axis_x", "ordinal", chart_type="", labeled=False
         ).labels
         width = get_font_measurer(label.font.family).measure(text, label.font.size)
         # Two labels share the usable width, so band == usable_width / 2.

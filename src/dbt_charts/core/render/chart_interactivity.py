@@ -5,7 +5,6 @@ from functools import cache
 from importlib.resources import files
 from typing import TYPE_CHECKING, Any
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.render.comment_stripping import strip_js_comments
 from dbt_charts.core.render.svg_utils import attr_name, escape_attr
 from dbt_charts.core.text.format_d3 import NULL_DISPLAY
@@ -57,11 +56,9 @@ def _build_hover_emphasis_dict(
 ) -> dict[str, bool | float | str]:
     """Build the JSON dict consumed by the JS hover-emphasis runtime.
 
-    Three sources, deliberately: `visible` and the drop-line color/width are
-    theme-cascaded (a theme decides whether hover emphasis happens at all,
-    and picks its own neutral drop-line paint), while `opacity` is engine
-    config (picking the bar/arc recession strength is ours -- there is no
-    wide range of settings that read well).
+    Every value is theme-cascaded: a theme decides whether hover emphasis
+    happens at all, how strongly bars/arcs recede, and its own neutral
+    drop-line paint.
 
     The bar/arc recession color still rides no wire of its own: it is the
     chart's own canvas, stamped on each chart wrapper as
@@ -73,7 +70,7 @@ def _build_hover_emphasis_dict(
     hover_emphasis = resolved_style.chart_defaults.hover_emphasis
     return {
         "visible": hover_emphasis.visible,
-        "opacity": get_chart_rendering().hover_emphasis.dimmed_opacity,
+        "opacity": hover_emphasis.dimmed_opacity,
         "dropLineColor": hover_emphasis.drop_line_color,
         "dropLineWidth": hover_emphasis.drop_line_width,
     }

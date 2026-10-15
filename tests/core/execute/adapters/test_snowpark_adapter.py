@@ -16,31 +16,40 @@ import sys
 from collections.abc import Iterator
 from typing import Any
 
+import pytest
+
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import (
     DuckDBSourceConfig,
     SnowflakeSourceConfig,
 )
-from dbt_charts.core.diagnostics.codes_execute import ERR_WAREHOUSE_RUNTIME
+from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_RESULT_DUPLICATE_COLUMN,
+    ERR_WAREHOUSE_RUNTIME,
+)
+from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.adapters.snowpark_adapter import SnowparkAdapter
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
 
 class _FakeRow:
-    """Duck-typed stand-in for a Snowpark ``Row`` — only ``as_dict()`` is used."""
+    """Duck-typed stand-in for a Snowpark ``Row`` — iterates its values."""
 
     def __init__(self, data: dict[str, Any]) -> None:
         self._data = data
 
-    def as_dict(self) -> dict[str, Any]:
-        return self._data
+    def __iter__(self) -> Iterator[Any]:
+        return iter(self._data.values())
 
 
 class _FakeResultSet:
-    def __init__(self, rows: list[_FakeRow], fetched: list[_FakeRow]) -> None:
+    def __init__(
+        self, rows: list[_FakeRow], fetched: list[_FakeRow], columns: list[str]
+    ) -> None:
         self._rows = rows
         self._fetched = fetched
+        self.columns = columns
 
     def to_local_iterator(self) -> Iterator[_FakeRow]:
         for row in self._rows:
@@ -59,8 +68,10 @@ class _FakeSession:
         raises: Exception | None = None,
         database: str | None = '"ANALYTICS"',
         schema: str | None = '"PUBLIC"',
+        columns: list[str] | None = None,
     ) -> None:
         self._rows = [_FakeRow(r) for r in (rows or [])]
+        self._columns = columns or list((rows or [{}])[0])
         self._raises = raises
         self._database = database
         self._schema = schema
@@ -77,7 +88,7 @@ class _FakeSession:
         self.received_sql.append(sql)
         if self._raises is not None:
             raise self._raises
-        return _FakeResultSet(self._rows, self.fetched)
+        return _FakeResultSet(self._rows, self.fetched, self._columns)
 
 
 def _snowflake_source() -> SnowflakeSourceConfig:
@@ -230,6 +241,8 @@ class _MidStreamFailure:
     def get_current_schema(self) -> str | None:
         return '"PUBLIC"'
 
+    columns = ["ID"]
+
     def to_local_iterator(self) -> Iterator[_FakeRow]:
         try:
             yield _FakeRow({"ID": 1})
@@ -257,6 +270,8 @@ def test_stream_is_closed_when_the_ceiling_stops_the_fetch_early(
     closed: list[bool] = []
 
     class _Stream:
+        columns = ["ID"]
+
         def sql(self, sql: str) -> _Stream:
             return self
 
@@ -279,6 +294,31 @@ def test_stream_is_closed_when_the_ceiling_stops_the_fetch_early(
         source_config=_snowflake_source(),
     )
     assert closed == [True]
+
+
+def test_identifier_quoted_columns_become_raw_names(tmp_path: Any) -> None:
+    session = _FakeSession(
+        rows=[{"X": 1, "Y": 2, "Z": 3}], columns=["ID", '"my col"', '"a""b"']
+    )
+    adapter = SnowparkAdapter(session=session, project=FilesystemProject(tmp_path))
+    result = adapter.execute(
+        SqlQuery(sql="SELECT 1", source="sf"), source_config=_snowflake_source()
+    )
+    assert result.data == [{"id": 1, "my col": 2, 'a"b': 3}]
+
+
+@pytest.mark.parametrize("columns", [["ID", "ID"], ["ID", "id"], ["A", '"a"']])
+def test_repeated_or_case_colliding_columns_raise(
+    tmp_path: Any, columns: list[str]
+) -> None:
+    session = _FakeSession(rows=[{"X": 1, "Y": 2}], columns=columns)
+    adapter = SnowparkAdapter(session=session, project=FilesystemProject(tmp_path))
+    with pytest.raises(ExecutionError) as excinfo:
+        adapter.execute(
+            SqlQuery(sql="SELECT 1 AS id, 2 AS id", source="sf"),
+            source_config=_snowflake_source(),
+        )
+    assert excinfo.value.code is ERR_RESULT_DUPLICATE_COLUMN
 
 
 class TestSessionContext:

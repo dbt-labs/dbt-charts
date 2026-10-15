@@ -27,13 +27,6 @@ fn resolve_fonts_dir(fonts_dir: &Option<String>, payload_path: &str) -> Option<s
     })
 }
 
-/// The same directory as a string, for the payload a custom chart's child
-/// process reads `fonts_dir` from (`sandbox`): the child has no payload
-/// path to resolve a relative one against.
-fn resolved_fonts_dir(fonts_dir: &Option<String>, payload_path: &str) -> Option<String> {
-    resolve_fonts_dir(fonts_dir, payload_path).map(|p| p.to_string_lossy().into_owned())
-}
-
 /// `FontBook::empty()` when `fonts_dir` is absent.
 fn load_fonts(fonts_dir: &Option<String>, payload_path: &str) -> FontBook {
     match resolve_fonts_dir(fonts_dir, payload_path) {
@@ -89,7 +82,7 @@ fn run_board(args: &[String]) {
     // error:` shape every other board-level law violation uses — never a
     // raw Rust panic, which the cutover plan's error mapping cannot read
     // as anything but ERR_INTERNAL.
-    let mut payload: board::BoardPayload = serde_json::from_str(&raw).unwrap_or_else(|e| {
+    let payload: board::BoardPayload = serde_json::from_str(&raw).unwrap_or_else(|e| {
         eprintln!("render error: board payload does not match the engine contract: {e}");
         std::process::exit(1);
     });
@@ -98,7 +91,6 @@ fn run_board(args: &[String]) {
     // an omitted fonts_dir already falls through to via `Path::new(".")`.
     let fonts_base = if payload_arg == "-" { "." } else { payload_arg };
     let fonts = load_fonts(&payload.fonts_dir, fonts_base);
-    payload.fonts_dir = resolved_fonts_dir(&payload.fonts_dir, fonts_base);
 
     // Computed once here (board::render_board computes its own copy
     // internally — see size_board's doc) purely so board_sweep.py can diff
@@ -495,15 +487,6 @@ fn run_table_width(args: &[String]) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() >= 2 && args[1] == "custom-child" {
-        chart_renderer::families::custom::child_main();
-        return;
-    }
-    let own = std::env::current_exe().expect("the engine's own path");
-    chart_renderer::sandbox::configure(chart_renderer::sandbox::Runner::Spawn(vec![
-        own.to_string_lossy().into_owned(),
-        "custom-child".to_string(),
-    ]));
     if args.len() >= 2 && args[1] == "table-width" {
         run_table_width(&args[2..]);
         return;
@@ -543,9 +526,8 @@ fn main() {
         std::process::exit(2);
     }
     let raw = std::fs::read_to_string(&args[1]).expect("read payload");
-    let mut payload: Payload = serde_json::from_str(&raw).expect("parse payload");
+    let payload: Payload = serde_json::from_str(&raw).expect("parse payload");
     let fonts = load_fonts(&payload.fonts_dir, &args[1]);
-    payload.fonts_dir = resolved_fonts_dir(&payload.fonts_dir, &args[1]);
     let diagnostics_path = flag_value(&args, "--diagnostics");
     let write_diagnostics = |doc: serde_json::Value| {
         if let Some(path) = diagnostics_path {

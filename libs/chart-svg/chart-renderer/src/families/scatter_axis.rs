@@ -14,9 +14,9 @@
 use std::fmt::Write as _;
 
 use crate::common::AxisStyle;
-use crate::families::line::{flush_align, flush_anchor, resolve_tilted_temporal_label};
+use crate::families::line::{flush_align, flush_anchor, tilted_temporal_label};
 use crate::families::temporal::{
-    detect_time_unit, parse_iso_date, resolve_vega_x_labels, tooltip_header_date, utc_domain_extent,
+    detect_time_unit, parse_authored_time_unit, parse_iso_date, resolve_vega_x_labels, tooltip_header_date, utc_domain_extent,
     utc_fraction_at, TimeUnit,
 };
 use crate::svg::{vega_escape_attr, xml_escape, xml_escape_attr};
@@ -43,6 +43,8 @@ pub(crate) struct TemporalXAxis {
     data_tu: TimeUnit,
     extent: (i64, i64),
     angle: f64,
+    /// An authored `labels.align` wins over every derived anchor.
+    align: Option<String>,
     parity: bool,
     labels: Vec<AxisLabel>,
     font_size: f64,
@@ -88,17 +90,11 @@ impl TemporalXAxis {
             ));
         }
         let labels_cfg = &ax_x.labels;
-        if ax_x.time_unit.as_ref().is_some_and(|v| !v.is_null()) {
-            return Err("scatter: an authored axis_x.time_unit is not supported".into());
-        }
-        if labels_cfg.time_unit.as_deref().is_some_and(|u| u != "auto") {
-            return Err("scatter: an authored axis_x.labels.time_unit is not supported".into());
-        }
-        if labels_cfg.align.is_some() {
-            return Err("scatter: an authored axis_x.labels.align on a date x is not supported".into());
-        }
-        if labels_cfg.angle.is_some() {
-            return Err("scatter: an authored axis_x.labels.angle on a date x is not supported".into());
+        // An authored grain that re-buckets the dates would move every point to
+        // its bucket start; only the grain the data already sits on is modeled.
+        let authored_tu = ax_x.time_unit.as_ref().filter(|v| !v.is_null());
+        if authored_tu.is_some_and(|v| v.as_str().and_then(parse_authored_time_unit) != Some(data_tu)) {
+            return Err("scatter: an authored axis_x.time_unit other than the data's own grain is not supported".into());
         }
         crate::families::temporal::refuse_authored_time_format("scatter", labels_cfg.spec())?;
         crate::families::temporal::refuse_grain_format("scatter", &ax_x.grain_formats, data_tu)?;
@@ -131,10 +127,11 @@ impl TemporalXAxis {
             None,
             &mut measure,
         )?;
+        // An authored angle bypasses the tilt ladder and rotates every label.
+        let angle = labels_cfg.angle.unwrap_or(resolved.angle);
         let mut labels = Vec::with_capacity(resolved.labels.len());
         for tl in &resolved.labels {
-            let (text, rows, tilted_align, baseline) =
-                resolve_tilted_temporal_label(tl, resolved.angle, resolved.format_tu)?;
+            let (text, rows, tilted_align, baseline) = tilted_temporal_label(tl, angle, resolved.format_tu);
             let mut width = fonts.measure(&text, &family, font_size)?;
             if rows == 2 {
                 width = width.max(fonts.measure(&tl.row2, &family, font_size)?);
@@ -153,7 +150,8 @@ impl TemporalXAxis {
         Ok(Self {
             data_tu,
             extent,
-            angle: resolved.angle,
+            angle,
+            align: labels_cfg.align.clone(),
             parity: resolved.parity,
             labels,
             font_size,
@@ -201,8 +199,21 @@ impl TemporalXAxis {
         self.axis_offset + self.tick_eff() + self.label_pad
     }
 
-    fn align(&self, l: &AxisLabel) -> &'static str {
-        if self.angle != 0.0 { l.tilted_align } else { flush_align(l.frac) }
+    fn align(&self, l: &AxisLabel) -> &str {
+        match self.align.as_deref() {
+            Some(authored) => authored,
+            None if self.angle != 0.0 => l.tilted_align,
+            None => flush_align(l.frac),
+        }
+    }
+
+    /// `text-anchor` for [`Self::align`]'s vocabulary.
+    fn anchor(&self, l: &AxisLabel) -> &'static str {
+        match self.align(l) {
+            "left" => "start",
+            "right" => "end",
+            _ => "middle",
+        }
     }
 
     fn ink(&self, l: &AxisLabel, pw: f64, row_y: f64) -> Bounds {
@@ -270,26 +281,30 @@ impl TemporalXAxis {
             reach = reach.max(self.ink(l, plot_w, 0.0).y2);
             let gx = plot_left + plot_w * l.frac + 0.5;
             if self.angle != 0.0 {
-                let text_anchor = match l.tilted_align {
-                    "left" => "start",
-                    "right" => "end",
-                    _ => "middle",
+                let text_anchor = self.anchor(l);
+                let rows = match &l.row2 {
+                    Some(row2) => format!(
+                        "<tspan>{}</tspan><tspan x=\"0\" dy=\"{}\">{}</tspan>",
+                        xml_escape(&l.text),
+                        fs + 2.0,
+                        xml_escape(row2)
+                    ),
+                    None => xml_escape(&l.text),
                 };
                 let _ = write!(
                     svg,
                     "<text text-anchor=\"{text_anchor}\" transform=\"translate({gx:.3},{anchor_y:.3}) \
                      rotate({}) translate(0,{})\" font-family=\"{}\" font-size=\"{fs}\" \
-                     font-weight=\"{}\" fill=\"{}\">{}</text>",
+                     font-weight=\"{}\" fill=\"{}\">{rows}</text>",
                     self.angle,
                     vega_fit::baseline_shift(l.baseline, fs),
                     vega_escape_attr(&self.family),
                     xml_escape_attr(&self.weight),
                     xml_escape_attr(&self.color),
-                    xml_escape(&l.text)
                 );
                 continue;
             }
-            let anchor = flush_anchor(l.frac);
+            let anchor = if self.align.is_some() { self.anchor(l) } else { flush_anchor(l.frac) };
             let mut row = |y: f64, text: &str| {
                 let _ = write!(
                     svg,

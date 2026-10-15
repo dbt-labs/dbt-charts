@@ -23,10 +23,7 @@ from collections.abc import Generator
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style, reset_config
-from dbt_charts.core.compile.resolve.style.axis_cascade import (
-    chart_type_axis_patch,
-    resolved_axis_style,
-)
+from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
 
@@ -53,6 +50,7 @@ def test_axis_x_inherits_label_color_from_axis() -> None:
     board = _compile(
         """\
         title: Board
+        extends: stark
         style:
           charts:
             axis:
@@ -75,12 +73,8 @@ def test_axis_x_inherits_label_color_from_axis() -> None:
         """
     )
     ctx = board.chart_style_context
-    x = resolved_axis_style(
-        ctx, "axis_x", "quantitative", chart_type="", label_authored=False
-    )
-    y = resolved_axis_style(
-        ctx, "axis_y", "quantitative", chart_type="", label_authored=False
-    )
+    x = resolved_axis_style(ctx, "axis_x", "quantitative", chart_type="", labeled=False)
+    y = resolved_axis_style(ctx, "axis_y", "quantitative", chart_type="", labeled=False)
     assert x.labels.font.color == "#aa1122"
     assert y.labels.font.color == "#aa1122"
 
@@ -90,6 +84,7 @@ def test_axis_x_explicit_override_wins_over_axis() -> None:
     board = _compile(
         """\
         title: Board
+        extends: stark
         style:
           charts:
             axis:
@@ -116,12 +111,8 @@ def test_axis_x_explicit_override_wins_over_axis() -> None:
         """
     )
     ctx = board.chart_style_context
-    x = resolved_axis_style(
-        ctx, "axis_x", "quantitative", chart_type="", label_authored=False
-    )
-    y = resolved_axis_style(
-        ctx, "axis_y", "quantitative", chart_type="", label_authored=False
-    )
+    x = resolved_axis_style(ctx, "axis_x", "quantitative", chart_type="", labeled=False)
+    y = resolved_axis_style(ctx, "axis_y", "quantitative", chart_type="", labeled=False)
     assert x.labels.font.color == "#ff0000"
     assert y.labels.font.color == "#aabbcc"  # not overridden
 
@@ -140,9 +131,8 @@ def test_bar_category_axis_label_color_matches_global_axis() -> None:
     """Default theme: the bar x-axis (category) label color == the global axis."""
 
     rs = resolve_chart_style_context(get_theme_style())
-    patch = chart_type_axis_patch(rs, "bar", "axis_x")
     emitted = resolved_axis_style(
-        rs, "axis_x", "ordinal", patch, chart_type="", label_authored=False
+        rs, "axis_x", "ordinal", chart_type="bar", labeled=False
     )
     assert emitted.labels.font.color == rs.axis.labels.font.color
 
@@ -181,9 +171,8 @@ def test_bar_category_axis_label_color_is_axis_not_prose_font() -> None:
         """
     )
     ctx = board.chart_style_context
-    patch = chart_type_axis_patch(ctx, "bar", "axis_x")
     emitted = resolved_axis_style(
-        ctx, "axis_x", "ordinal", patch, chart_type="", label_authored=False
+        ctx, "axis_x", "ordinal", chart_type="bar", labeled=False
     )
     assert emitted.labels.font.color == "#aa1122"
 
@@ -201,6 +190,7 @@ def test_nested_board_axis_override_rederives_axis_x() -> None:
     board = _compile(
         """\
         title: Parent
+        extends: stark
         style:
           charts:
             axis:
@@ -236,16 +226,16 @@ def test_nested_board_axis_override_rederives_axis_x() -> None:
     child_ctx = child.chart_style_context
 
     parent_x = resolved_axis_style(
-        parent_ctx, "axis_x", "quantitative", chart_type="", label_authored=False
+        parent_ctx, "axis_x", "quantitative", chart_type="", labeled=False
     )
     assert parent_x.labels.font.color == "#aabbcc"
     # Child overrides axis → axis_x/axis_y must re-derive from child's axis value.
     assert child_ctx.axis.labels.font.color == "#ff0000"
     child_x = resolved_axis_style(
-        child_ctx, "axis_x", "quantitative", chart_type="", label_authored=False
+        child_ctx, "axis_x", "quantitative", chart_type="", labeled=False
     )
     child_y = resolved_axis_style(
-        child_ctx, "axis_y", "quantitative", chart_type="", label_authored=False
+        child_ctx, "axis_y", "quantitative", chart_type="", labeled=False
     )
     assert child_x.labels.font.color == "#ff0000"
     assert child_y.labels.font.color == "#ff0000"
@@ -281,7 +271,7 @@ def test_axis_quantitative_unauthored_field_never_clobbers_axis_x() -> None:
     assert rs.axis_x.ticks.visible != rs.axis.ticks.visible
 
     emitted = resolved_axis_style(
-        rs, "axis_x", "quantitative", chart_type="", label_authored=False
+        rs, "axis_x", "quantitative", chart_type="", labeled=False
     )
     assert emitted.grid.width == rs.axis_x.grid.width
     # axis_x.ticks.visible is "auto" (resolved to a concrete bool, never the
@@ -305,7 +295,7 @@ def test_axis_quantitative_authored_field_still_wins_over_axis_x() -> None:
     assert authored_ticks_width != rs.axis_x.ticks.width
 
     emitted = resolved_axis_style(
-        rs, "axis_x", "quantitative", chart_type="", label_authored=False
+        rs, "axis_x", "quantitative", chart_type="", labeled=False
     )
     assert emitted.ticks.width == authored_ticks_width
 
@@ -330,17 +320,15 @@ def test_scatter_grid_is_even() -> None:
         rs,
         "axis_x",
         "quantitative",
-        chart_type_axis_patch(rs, "scatter", "axis_x"),
-        chart_type="",
-        label_authored=False,
+        chart_type="scatter",
+        labeled=False,
     )
     emitted_y = resolved_axis_style(
         rs,
         "axis_y",
         "quantitative",
-        chart_type_axis_patch(rs, "scatter", "axis_y"),
-        chart_type="",
-        label_authored=False,
+        chart_type="scatter",
+        labeled=False,
     )
     assert emitted_x.grid.width == emitted_y.grid.width
 
@@ -353,17 +341,15 @@ def test_histogram_hides_x_grid_like_bar() -> None:
         rs,
         "axis_x",
         "quantitative",
-        chart_type_axis_patch(rs, "histogram", "axis_x"),
-        chart_type="",
-        label_authored=False,
+        chart_type="histogram",
+        labeled=False,
     )
     bar_x = resolved_axis_style(
         rs,
         "axis_x",
         "ordinal",
-        chart_type_axis_patch(rs, "bar", "axis_x"),
-        chart_type="",
-        label_authored=False,
+        chart_type="bar",
+        labeled=False,
     )
     assert bar_x.grid.visible is False  # scenario precondition: bar hides x-grid
     assert hist_x.grid.visible is False
@@ -381,17 +367,15 @@ def test_heatmap_hides_both_grids() -> None:
         rs,
         "axis_x",
         "nominal",
-        chart_type_axis_patch(rs, "heatmap", "axis_x"),
-        chart_type="",
-        label_authored=False,
+        chart_type="heatmap",
+        labeled=False,
     )
     heatmap_y = resolved_axis_style(
         rs,
         "axis_y",
         "nominal",
-        chart_type_axis_patch(rs, "heatmap", "axis_y"),
-        chart_type="",
-        label_authored=False,
+        chart_type="heatmap",
+        labeled=False,
     )
     assert heatmap_x.grid.visible is False
     assert heatmap_y.grid.visible is False

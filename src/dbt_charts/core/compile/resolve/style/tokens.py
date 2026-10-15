@@ -13,9 +13,10 @@ from typing import Any
 from pydantic import BaseModel
 
 from dbt_charts.core.colors import is_color_token, is_unknown_color_name
-from dbt_charts.core.compile.models.markers import Color
+from dbt_charts.core.compile.models.markers import AUTO, Color
 from dbt_charts.core.compile.models.primitives import SingleLineFontStyle
 from dbt_charts.core.compile.models.style.theme import Style
+from dbt_charts.core.compile.models.style.theme.board import ChartTitleFontStyle
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     CategoryColorBinding,
 )
@@ -25,24 +26,17 @@ from dbt_charts.core.fonts import NOTO_EMOJI_FONT_FAMILY
 # models can validate token *shape* without importing this cascade module
 # (models -> resolve would close an import cycle).
 
-# Theme-self tokens: strings that name a value elsewhere in the same compiled
-# style tree, resolved against the root Style. The canonical use case
-# is canvas coupling — any field that should track the theme's background
-# color (knockout strokes, halos) sets the field to ``theme.background`` and
-# the resolver substitutes the theme's actual ``style.background`` value.
+# Theme-self tokens: strings that stand for the canvas the chart paints on. The
+# canonical use is canvas coupling — a field that should track the effective
+# background (knockout strokes, halos) is set to ``theme.background``.
 #
-# Resolution runs BEFORE ``_resolve_color_tokens`` so the substituted value
-# (which may itself be a palette token like ``dbt-creams.cream-025``) is
-# carried through the color-token pass. Each theme resolves against its own
-# ``style.background``, so cream's arc.stroke ends up at the cream
-# canvas color while stark's stays white — without per-theme
-# override duplication.
-#
-# Resolution runs at theme-load time inside ``get_theme_style()`` so cached
-# themes carry concrete values.  Board-level patches that introduce self-tokens
-# are resolved by ``_resolve_tokens_on_patch`` (which uses the base Style as
-# the resolution root) before the deep-merge, so the final merged result never
-# carries a raw ``theme.background`` sentinel.
+# The token survives theme loading and every patch merge. ``_resolve_self_tokens``
+# substitutes it once, in ``_resolve_canvas_tokens`` (resolve/style/board.py),
+# with the card canvas: ``style.charts.background`` over ``style.background``
+# over the parent's canvas. A project layer or board that changes either fill
+# re-colors every knockout, and a transparent nested board reads its parent's
+# canvas. A patch's own root ``background: theme.background`` takes the base
+# theme's canvas at patch time, since the merged canvas does not exist yet.
 _THEME_SELF_TOKENS = {"theme.background"}
 
 # Fields on Style that hold the resolver's own lookup tables rather than
@@ -61,8 +55,8 @@ _RESOLUTION_CONTEXT_FIELDS = frozenset({"palettes", "roles"})
 _COLOR_FIELD_NAMES = frozenset({"color", "background", "null_color", "glyph_color"})
 
 
-def _self_token_replacement(token: str, root: Style) -> str:
-    """Look up a theme-self token's replacement value on ``root``.
+def _self_token_replacement(token: str, canvas: str) -> str:
+    """Look up a theme-self token's replacement value.
 
     ``token`` is guaranteed to be a member of ``_THEME_SELF_TOKENS`` by the
     caller; raises ``ValueError`` for any unknown token so a future
@@ -70,41 +64,41 @@ def _self_token_replacement(token: str, root: Style) -> str:
     instead of silently leaking the literal sentinel into compiled output.
     """
     if token == "theme.background":
-        return root.background
+        return canvas
     raise ValueError(f"Unknown theme-self token: {token!r}")
 
 
-def _resolve_self_tokens(node: Any, root: Any | None = None) -> Any:
-    """Walk a Style subtree and substitute theme-self tokens.
+def _resolve_self_tokens(
+    node: Any,  # type-state: explicit_any — recursive walk over heterogeneous Style nodes
+    canvas: str,
+) -> Any:  # type-state: explicit_any — the same node shape, substituted
+    """Walk a Style subtree and substitute theme-self tokens with ``canvas``.
 
-    ``root`` is the top-level Style the substitution looks values up
-    on; it defaults to ``node`` for the initial top-level call. The recursion
-    keeps the same root so deeply nested fields (e.g. ``charts.arc.stroke.color``)
-    resolve against the theme root, not against an enclosing sub-model.
+    ``canvas`` is the opaque canvas the board paints on (see
+    ``resolve_style_and_context``), so a knockout tracks what the reader sees
+    rather than the base theme's own fill.
     """
-    if root is None:
-        root = node
     if isinstance(node, BaseModel):
         updates: dict[str, Any] = {}
         for name, value in node:
-            new = _resolve_self_tokens(value, root)
+            new = _resolve_self_tokens(value, canvas)
             if new is not value:
                 updates[name] = new
         return node.model_copy(update=updates) if updates else node
     if isinstance(node, str):
         if node in _THEME_SELF_TOKENS:
-            assert isinstance(root, Style), (
-                "root Style required for self-token replacement"
-            )
-            return _self_token_replacement(node, root)
+            return _self_token_replacement(node, canvas)
         return node
     if isinstance(node, list):
-        new_list = [_resolve_self_tokens(item, root) for item in node]
+        new_list = [_resolve_self_tokens(item, canvas) for item in node]
         return (
             new_list
             if any(a is not b for a, b in zip(new_list, node, strict=True))
             else node
         )
+    if isinstance(node, dict):
+        new_dict = {k: _resolve_self_tokens(v, canvas) for k, v in node.items()}
+        return new_dict if any(new_dict[k] is not v for k, v in node.items()) else node
     return node
 
 
@@ -174,6 +168,7 @@ def _unknown_color_name(
         not isinstance(value, str)
         or color is None
         or color.column_ref
+        or value in color.keywords
         or not is_unknown_color_name(value)
     ):
         return None
@@ -186,8 +181,14 @@ def _resolve_color_tokens(
     roles: dict[str, str] | None = None,
     in_keyed_collection: bool = False,
     single_series_palette: list[str] | None = None,
+    keep_self_tokens: bool = False,
 ) -> Any:
     """Walk a Style subtree and resolve every dotted palette token to hex.
+
+    ``keep_self_tokens`` leaves ``theme.background`` in place for
+    ``_resolve_self_tokens``; only the theme-load walk sets it. Every
+    chart-local walk keeps the default, so a sentinel there raises as the
+    unknown role it is.
 
     Strings that don't look like a palette token (literal hex, rgb()/rgba(),
     CSS named colors, font-family lists, etc.) pass through unchanged. Lists
@@ -335,11 +336,14 @@ def _resolve_color_tokens(
                 roles,
                 in_keyed_collection,
                 single_series_palette,
+                keep_self_tokens,
             )
             if new is not value:
                 updates[name] = new
         return node.model_copy(update=updates) if updates else node
     if isinstance(node, str):
+        if keep_self_tokens and node in _THEME_SELF_TOKENS:
+            return node
         if is_color_token(node):
             return _resolve_one_color_token(
                 node, palettes, roles, single_series_palette
@@ -353,6 +357,7 @@ def _resolve_color_tokens(
                 roles,
                 in_keyed_collection,
                 single_series_palette,
+                keep_self_tokens,
             )
             for item in node
         ]
@@ -369,7 +374,9 @@ def _resolve_color_tokens(
         # the SVG as `fill="negative.text"`. The name-based guard belongs on the
         # model branch above, where a name is what the walk actually has.
         new_dict = {
-            k: _resolve_color_tokens(v, palettes, roles, True, single_series_palette)
+            k: _resolve_color_tokens(
+                v, palettes, roles, True, single_series_palette, keep_self_tokens
+            )
             for k, v in node.items()
         }
         return new_dict if any(new_dict[k] is not v for k, v in node.items()) else node
@@ -420,8 +427,8 @@ def _append_emoji_family(node: Any, emoji_family: str) -> Any:
     FontStyle never appears inside a list/dict field in this schema; if that
     changes, add a list branch mirroring _resolve_color_tokens.
     """
-    if isinstance(node, SingleLineFontStyle):
-        if node.family is not None:
+    if isinstance(node, (SingleLineFontStyle, ChartTitleFontStyle)):
+        if node.family is not None and node.family != AUTO:
             new_family = insert_emoji_family(node.family, emoji_family)
             if new_family != node.family:
                 return node.model_copy(update={"family": new_family})
@@ -445,9 +452,10 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
 
     ``base`` is the token-resolved Style coming from ``get_theme_style``; its
     ``palettes``, ``roles``, and ``background`` fields supply the resolution
-    context.  Theme-self tokens (``theme.background``) resolve against the
-    base's own value so a board patch that says ``background: theme.background``
-    inherits the theme hex rather than creating a circular reference.
+    context.  Theme-self tokens (``theme.background``) stay in place for
+    ``_resolve_self_tokens`` to substitute after the merge, except a patch's own
+    root ``background``, which takes the base's value rather than creating a
+    circular reference.
     ``single_series_palette`` comes off ``base.charts.color.categorical``,
     already resolved to hex at this point, for the ``single_series[N]`` form.
     """
@@ -504,12 +512,14 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
                         ERR_COLOR_TOKEN, scope=f"{path}.{name}", reason=reason
                     )
                 new = _walk(value, f"{path}.{name}")
+                if node is patch and name == "background" and new in _THEME_SELF_TOKENS:
+                    new = _self_token_replacement(new, base.background)
                 if new is not value:
                     updates[name] = new
             return node.model_copy(update=updates) if updates else node
         if isinstance(node, str):
             if node in _THEME_SELF_TOKENS:
-                return _self_token_replacement(node, base)
+                return node
             if is_color_token(node):
                 try:
                     return _resolve_one_color_token(
@@ -549,6 +559,7 @@ __all__ = [
     "_EMOJI_MODE_TO_FAMILY",
     "_append_emoji_family",
     "_resolve_color_tokens",
+    "_resolve_self_tokens",
     "_resolve_tokens_on_patch",
 ]
 

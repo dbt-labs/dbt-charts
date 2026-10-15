@@ -1,0 +1,3 @@
+kind: Features
+body: Axis label spacing, ordinal bucket limit and gradient tick count are now fixed engine constants; their chart_rendering keys in dbt_charts.yml are rejected.
+time: 2026-10-13T19:07:06.01548-07:00

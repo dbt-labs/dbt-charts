@@ -148,9 +148,6 @@ def _plot_key_fields(
             fields.append(color)
         return fields
 
-    if chart_type in {"arc", "pie"}:
-        return [color] if color else []
-
     if chart_type in {"rect", "square", "heatmap"}:
         x_field = chart.x
         y_field = chart.y if isinstance(chart.y, str) else None

@@ -36,8 +36,8 @@ from dbt_charts.core.compile.models.primitives import (
     StaticGradientColorStyle,
 )
 from dbt_charts.core.compile.models.style.theme.board import (
+    ChartTitleStyle,
     PaddingStyle,
-    TitleStyle,
 )
 from dbt_charts.core.compile.models.style.theme.legend import (
     LegendStyle,
@@ -50,19 +50,19 @@ from dbt_charts.core.compile.models.style.theme.marks import (
 )
 
 # Built locally (not injected from authored/, unlike the axis patches above)
-# since TitleStyle is already a normal, non-forward-ref import here: building
+# since ChartTitleStyle is already a normal, non-forward-ref import here: building
 # it eagerly avoids deferring _ChartStyleBase's own field resolution to a
 # model_rebuild() that, unlike its subclasses, it never otherwise receives.
 # build_patch_model_ext is @cache'd, so authored/_base.py's later
-# build_patch_model(TitleStyle) call for the authored surface returns this
+# build_patch_model(ChartTitleStyle) call for the authored surface returns this
 # exact object rather than building a second one.
 if TYPE_CHECKING:
 
-    class TitleStylePatch(TitleStyle):
+    class ChartTitleStylePatch(ChartTitleStyle):
         pass
 
 else:
-    TitleStylePatch = build_patch_model_ext(TitleStyle, is_recursive=True)
+    ChartTitleStylePatch = build_patch_model_ext(ChartTitleStyle, is_recursive=True)
 
 
 class _ChartStyleBase(BaseModel):
@@ -130,9 +130,9 @@ class _TitledChartStyleBase(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # TitleStylePatch: authoring only font.family must not require every other
+    # ChartTitleStylePatch: authoring only font.family must not require every other
     # TitleStyle field. SkipInheritSlots: read-time fallback to ChartsStyle.title.
-    title: Annotated[TitleStylePatch | None, SkipInheritSlots()] = Field(
+    title: Annotated[ChartTitleStylePatch | None, SkipInheritSlots()] = Field(
         default=None,
         description="Chart-level title style override; None inherits the theme title style.",
     )

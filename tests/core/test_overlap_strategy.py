@@ -70,7 +70,7 @@ def _axis_x_with(
 
     charts = _resolved_charts()
     axis_x = resolved_axis_style(
-        charts, "axis_x", "ordinal", chart_type="", label_authored=False
+        charts, "axis_x", "ordinal", chart_type="", labeled=False
     )
     label = axis_x.labels
     font = label.font
@@ -114,7 +114,7 @@ def _axis_x_temporal_with(
 
     charts = _resolved_charts()
     axis_x = resolved_axis_style(
-        charts, "axis_x", "temporal", chart_type="", label_authored=False
+        charts, "axis_x", "temporal", chart_type="", labeled=False
     )
     label = dataclasses.replace(
         axis_x.labels,
@@ -233,7 +233,7 @@ class TestOverlapThemeCascade:
 
         charts = resolve_chart_style_context(get_theme_style())
         axis_x = resolved_axis_style(
-            charts, "axis_x", "ordinal", chart_type="", label_authored=False
+            charts, "axis_x", "ordinal", chart_type="", labeled=False
         )
         overlap = axis_x.labels.overlap
         assert isinstance(overlap, ResolvedAxisLabelOverlapConfig)
@@ -250,7 +250,7 @@ class TestOverlapThemeCascade:
 
         charts = resolve_chart_style_context(get_theme_style())
         axis_x = resolved_axis_style(
-            charts, "axis_x", "ordinal", chart_type="", label_authored=False
+            charts, "axis_x", "ordinal", chart_type="", labeled=False
         )
         overlap = axis_x.labels.overlap
         assert overlap is not None

@@ -51,8 +51,8 @@ extend-select = [
 # Combine aliased imports from same module into single statement
 combine-as-imports = true
 # Packages imported within dbt-charts/ (src + tests), pruned from the full
-# monorepo list in root pyproject.toml. Unlisted packages (asql, evals, lexp,
-# likeml, etc.) have no actual imports here. Notable inclusions:
+# monorepo list in root pyproject.toml. Unlisted packages (asql, evals, etc.)
+# have no actual imports here. Notable inclusions:
 # `tasks` -- imported by tests/visual/series_naming.py to resolve a defect
 # register entry's task status;
 # `dbt-charts` -- test-namespace package (from dbt-charts.tests.*);

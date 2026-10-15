@@ -22,6 +22,7 @@ from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.normalized.geoshape import GeoshapeChart
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
 from dbt_charts.core.compile.models.chart.resolved.geoshape import ResolvedGeoshapeChart
+from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
 from dbt_charts.core.compile.models.style.authored.geoshape import (
     GeoshapeChartStylePatch,
 )
@@ -42,6 +43,8 @@ from dbt_charts.core.render.warnings import (
 )
 
 from ...core._board_utils import make_test_resolved_board, make_test_resolved_chart
+from ...core._engine_render import render_pie_svg
+from ...core._svg_render import legend_label_order
 from ...core.conftest import chart_pane
 
 _BOGUS = "TOTALLY_BOGUS_ENTRY"
@@ -126,11 +129,9 @@ def _pie(make_chart: Any) -> _Case:
         style={"legend": {"visible": True, "values": ["Direct", _BOGUS]}},
     )
     resolved = make_test_resolved_chart(chart, rows)
-    spec = render_resolved_chart(
-        resolved, rows, resolve_style(get_theme_style())
-    ).payload
-    assert isinstance(spec, dict)
-    return resolved, rows, spec["layer"][0]["encoding"]["color"]["legend"]["values"]
+    assert isinstance(resolved, ResolvedPieChart)
+    svg = render_pie_svg(resolved, rows, width=resolved.resolution_width)
+    return resolved, rows, legend_label_order(svg)
 
 
 def _geoshape(_make_chart: Any) -> _Case:

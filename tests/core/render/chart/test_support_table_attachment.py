@@ -12,7 +12,6 @@ from typing import Literal
 import pytest
 
 from dbt_charts.core.compile.config import (
-    get_chart_rendering,
     get_theme_style,
 )
 from dbt_charts.core.compile.models.chart.resolved import (
@@ -21,8 +20,9 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedSupportTablePerSeries,
     ResolvedSupportTableSource,
 )
-from dbt_charts.core.compile.models.primitives import DividerStyle
+from dbt_charts.core.compile.models.style.theme.table import SupportTableDividerStyle
 from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
+from dbt_charts.core.constants.layout import SUPPORT_TABLE_MAX_X_TICKS
 from dbt_charts.core.render.chart.support_table_attachment import (
     attach_support_table,
     plain_numerals,
@@ -122,7 +122,7 @@ def _axis_label_padding(charts_style):
     helper the resolver itself uses.
     """
     return resolved_axis_style(
-        charts_style, "axis_y", "quantitative", chart_type="", label_authored=False
+        charts_style, "axis_y", "quantitative", chart_type="", labeled=False
     ).labels.padding
 
 
@@ -434,7 +434,11 @@ def test_attach_aggregate_translates_count_distinct_to_distinct():
 def test_attach_emits_divider_rule_when_width_positive():
     spec = _base_spec()
     table = _table([ResolvedSupportTableSource(source="revenue")])
-    style = _dt_style(divider=DividerStyle(visible=True, width=1.5, color="#888888"))
+    style = _dt_style(
+        divider=SupportTableDividerStyle(
+            gap=4.0, visible=True, width=1.5, color="#888888"
+        )
+    )
     out = _attach(spec, table, style=style)
     rule_layers = [
         layer
@@ -458,7 +462,11 @@ def test_attach_divider_rule_explicitly_nulls_x_to_avoid_stray_domain_entry():
     """
     spec = _base_spec()
     table = _table([ResolvedSupportTableSource(source="revenue")])
-    style = _dt_style(divider=DividerStyle(visible=True, width=1.5, color="#888888"))
+    style = _dt_style(
+        divider=SupportTableDividerStyle(
+            gap=4.0, visible=True, width=1.5, color="#888888"
+        )
+    )
     out = _attach(spec, table, style=style)
     rule_layers = [
         layer
@@ -479,7 +487,11 @@ def test_attach_divider_rule_is_not_announced_to_screen_readers():
     """
     spec = _base_spec()
     table = _table([ResolvedSupportTableSource(source="revenue")])
-    style = _dt_style(divider=DividerStyle(visible=True, width=1.5, color="#888888"))
+    style = _dt_style(
+        divider=SupportTableDividerStyle(
+            gap=4.0, visible=True, width=1.5, color="#888888"
+        )
+    )
     out = _attach(spec, table, style=style)
     rule_layers = [
         layer
@@ -494,7 +506,11 @@ def test_attach_divider_rule_is_not_announced_to_screen_readers():
 def test_attach_omits_divider_rule_when_width_zero():
     spec = _base_spec()
     table = _table([ResolvedSupportTableSource(source="revenue")])
-    style = _dt_style(divider=DividerStyle(visible=False, width=1, color="#888888"))
+    style = _dt_style(
+        divider=SupportTableDividerStyle(
+            gap=4.0, visible=False, width=1, color="#888888"
+        )
+    )
     out = _attach(spec, table, style=style)
     rule_layers = [
         layer
@@ -861,9 +877,15 @@ def test_attach_emits_row_rule_layer_between_rows_when_width_positive():
     # without filtering on stroke width — the test is then robust to
     # width tweaks rather than coupled to a specific value.
     style = _dt_style(
-        divider=DividerStyle(visible=False, width=1, color="#888888"),
+        divider=SupportTableDividerStyle(
+            gap=4.0, visible=False, width=1, color="#888888"
+        ),
         row=_dt_style().row.model_copy(
-            update={"divider": DividerStyle(visible=True, width=0.5, color="#ddd")}
+            update={
+                "divider": SupportTableDividerStyle(
+                    gap=4.0, visible=True, width=0.5, color="#ddd"
+                )
+            }
         ),
     )
     out = _attach(spec, table, style=style)
@@ -894,7 +916,11 @@ def test_attach_row_rule_explicitly_nulls_x_to_avoid_stray_domain_entry():
     )
     style = _dt_style(
         row=_dt_style().row.model_copy(
-            update={"divider": DividerStyle(visible=True, width=0.5, color="#888888")}
+            update={
+                "divider": SupportTableDividerStyle(
+                    gap=4.0, visible=True, width=0.5, color="#888888"
+                )
+            }
         )
     )
     out = _attach(spec, table, style=style)
@@ -918,7 +944,11 @@ def test_attach_row_rule_is_not_announced_to_screen_readers():
     )
     style = _dt_style(
         row=_dt_style().row.model_copy(
-            update={"divider": DividerStyle(visible=True, width=0.5, color="#888888")}
+            update={
+                "divider": SupportTableDividerStyle(
+                    gap=4.0, visible=True, width=0.5, color="#888888"
+                )
+            }
         )
     )
     out = _attach(spec, table, style=style)
@@ -976,7 +1006,7 @@ def test_attach_label_left_orient_anchors_at_negative_axis_padding():
     ]
     assert len(stub_layers) == 1
     axis_pad = resolved_axis_style(
-        _charts_style(), "axis_y", "quantitative", chart_type="", label_authored=False
+        _charts_style(), "axis_y", "quantitative", chart_type="", labeled=False
     ).labels.padding
     assert stub_layers[0]["encoding"]["x"]["value"] == -axis_pad, (
         f"left-orient label x must be -axis_y.labels.padding={-axis_pad}; "
@@ -1145,9 +1175,7 @@ def test_attach_sampling_step_gt1_adds_window_filter_to_text_layers():
 
     spec = _temporal_spec()
     table = _table([ResolvedSupportTableSource(source="revenue")])
-    step = math.ceil(
-        97 / get_chart_rendering().support_table.chart_support_table_max_x_ticks
-    )
+    step = math.ceil(97 / SUPPORT_TABLE_MAX_X_TICKS)
     out = attach_support_table(
         spec,
         support_table=table,
@@ -1250,9 +1278,7 @@ def test_attach_aggregate_sampling_places_window_after_aggregate():
 
     spec = _temporal_spec()
     table = _table([ResolvedSupportTableAggregate(aggregate="sum", source="revenue")])
-    step = math.ceil(
-        80 / get_chart_rendering().support_table.chart_support_table_max_x_ticks
-    )
+    step = math.ceil(80 / SUPPORT_TABLE_MAX_X_TICKS)
     out = attach_support_table(
         spec,
         support_table=table,
@@ -1617,7 +1643,9 @@ def test_per_series_emits_inter_row_rules_within_block():
         update={
             "row": base_style.row.model_copy(
                 update={
-                    "divider": DividerStyle(visible=True, width=1.0, color="#888888")
+                    "divider": SupportTableDividerStyle(
+                        gap=4.0, visible=True, width=1.0, color="#888888"
+                    )
                 }
             )
         }
@@ -1976,7 +2004,7 @@ def test_right_orient_label_anchors_at_spec_width_plus_axis_padding():
     assert len(label_layers) == 1
     layer = label_layers[0]
     axis_pad = resolved_axis_style(
-        _charts_style(), "axis_y", "quantitative", chart_type="", label_authored=False
+        _charts_style(), "axis_y", "quantitative", chart_type="", labeled=False
     ).labels.padding
     expected_x = spec["width"] + axis_pad
     assert layer["encoding"]["x"]["value"] == expected_x, (
@@ -2010,7 +2038,7 @@ def test_left_orient_label_anchors_at_negative_axis_padding():
     assert len(label_layers) == 1
     layer = label_layers[0]
     axis_pad = resolved_axis_style(
-        _charts_style(), "axis_y", "quantitative", chart_type="", label_authored=False
+        _charts_style(), "axis_y", "quantitative", chart_type="", labeled=False
     ).labels.padding
     expected_x = -axis_pad
     assert layer["encoding"]["x"]["value"] == expected_x, (
@@ -2408,7 +2436,11 @@ def test_top_position_inter_row_rule_y_is_between_adjacent_rows():
     style = _dt_style(
         position="top",
         row=_dt_style().row.model_copy(
-            update={"divider": DividerStyle(visible=True, width=1.0, color="#888888")}
+            update={
+                "divider": SupportTableDividerStyle(
+                    gap=4.0, visible=True, width=1.0, color="#888888"
+                )
+            }
         ),
     )
     cs = _charts_style()
@@ -2560,14 +2592,14 @@ def test_support_table_strip_height_includes_axis_offset_for_bottom():
     cs = _charts_style()
     table = _table([ResolvedSupportTableSource(source="a")])
     h = support_table_strip_height(
-        table, style, axis_offset(cs, style, x_label_authored=False, chart_type="")
+        table, style, axis_offset(cs, style, x_labeled=False, chart_type="")
     )
-    expected = axis_offset(
-        cs, style, x_label_authored=False, chart_type=""
-    ) + _strip_height(style, 1)
+    expected = axis_offset(cs, style, x_labeled=False, chart_type="") + _strip_height(
+        style, 1
+    )
     assert h == expected
     assert (
-        axis_offset(cs, style, x_label_authored=False, chart_type="") > 0
+        axis_offset(cs, style, x_labeled=False, chart_type="") > 0
     )  # default theme has visible x-axis labels
 
 
@@ -2626,14 +2658,14 @@ def test_bottom_position_strip_height_drives_padding_bottom():
     cs = _charts_style()
     table = _table([ResolvedSupportTableSource(source="a")])
     h = support_table_strip_height(
-        table, style, axis_offset(cs, style, x_label_authored=False, chart_type="")
+        table, style, axis_offset(cs, style, x_labeled=False, chart_type="")
     )
-    expected = axis_offset(
-        cs, style, x_label_authored=False, chart_type=""
-    ) + _strip_height(style, 1)
+    expected = axis_offset(cs, style, x_labeled=False, chart_type="") + _strip_height(
+        style, 1
+    )
     assert h == expected
     assert (
-        axis_offset(cs, style, x_label_authored=False, chart_type="") > 0
+        axis_offset(cs, style, x_labeled=False, chart_type="") > 0
     )  # default theme has visible x-axis labels
 
 
@@ -2654,7 +2686,7 @@ def test_top_position_strip_height_excludes_axis_offset():
     bottom_h = support_table_strip_height(
         table,
         bottom_style,
-        axis_offset(cs, bottom_style, x_label_authored=False, chart_type=""),
+        axis_offset(cs, bottom_style, x_labeled=False, chart_type=""),
     )
     assert h < bottom_h, (
         f"top-position strip height {h} should be < bottom-position {bottom_h} "
@@ -2677,14 +2709,14 @@ def test_strip_height_and_row_y_use_label_max_lines():
     spec_height = 300.0
 
     height_2 = support_table_strip_height(
-        table, style_2, axis_offset(cs, style_2, x_label_authored=False, chart_type="")
+        table, style_2, axis_offset(cs, style_2, x_labeled=False, chart_type="")
     )
     height_1 = support_table_strip_height(
-        table, style_1, axis_offset(cs, style_1, x_label_authored=False, chart_type="")
+        table, style_1, axis_offset(cs, style_1, x_labeled=False, chart_type="")
     )
 
     label_size = resolved_axis_style(
-        cs, "axis_x", "band", chart_type="", label_authored=False
+        cs, "axis_x", "band", chart_type="", labeled=False
     ).labels.font.size
     assert abs((height_2 - height_1) - label_size) < 0.5, (
         "strip_height with label_max_lines=2 must exceed label_max_lines=1 "
@@ -2695,13 +2727,13 @@ def test_strip_height_and_row_y_use_label_max_lines():
     y2 = _row_y_pixel(
         0,
         style_2,
-        axis_offset(cs, style_2, x_label_authored=False, chart_type=""),
+        axis_offset(cs, style_2, x_labeled=False, chart_type=""),
         spec_height,
     )
     y1 = _row_y_pixel(
         0,
         style_1,
-        axis_offset(cs, style_1, x_label_authored=False, chart_type=""),
+        axis_offset(cs, style_1, x_labeled=False, chart_type=""),
         spec_height,
     )
     assert abs((y2 - y1) - label_size) < 0.5, (
@@ -2741,9 +2773,7 @@ def test_validate_temporal_over_40_returns_step_and_does_not_raise():
     data = _big_temporal_data(97)
     table = _table([ResolvedSupportTableSource(source="revenue")])
     step = validate_support_table_against_data(table, "date", data, x_type="temporal")
-    assert step == math.ceil(
-        97 / get_chart_rendering().support_table.chart_support_table_max_x_ticks
-    )
+    assert step == math.ceil(97 / SUPPORT_TABLE_MAX_X_TICKS)
     assert step > 1
 
 
@@ -2758,9 +2788,7 @@ def test_validate_quantitative_over_40_returns_step_and_does_not_raise():
     step = validate_support_table_against_data(
         table, "x_val", data, x_type="quantitative"
     )
-    assert step == math.ceil(
-        80 / get_chart_rendering().support_table.chart_support_table_max_x_ticks
-    )
+    assert step == math.ceil(80 / SUPPORT_TABLE_MAX_X_TICKS)
     assert step > 1
 
 
@@ -3198,8 +3226,8 @@ def test_attach_divider_dasharray_becomes_stroke_dash(
         spec,
         table,
         style=_dt_style(
-            divider=DividerStyle(
-                visible=True, width=1, color="#888888", dasharray=dasharray
+            divider=SupportTableDividerStyle(
+                gap=4.0, visible=True, width=1, color="#888888", dasharray=dasharray
             )
         ),
     )
@@ -3217,7 +3245,11 @@ def test_attach_solid_divider_has_no_stroke_dash() -> None:
     out = _attach(
         spec,
         table,
-        style=_dt_style(divider=DividerStyle(visible=True, width=1, color="#888888")),
+        style=_dt_style(
+            divider=SupportTableDividerStyle(
+                gap=4.0, visible=True, width=1, color="#888888"
+            )
+        ),
     )
     (rule,) = [
         layer["mark"]

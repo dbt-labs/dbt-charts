@@ -11,7 +11,6 @@ from dbt_charts.core.compile.models.chart.resolved._base import (
     _BaseResolvedChartFields,
     _CartesianResolvedChartFields,
 )
-from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     WIDE_KEY_FIELD,
     WIDE_MEASURE_FAMILIES,
@@ -57,10 +56,6 @@ def _channel_field(chart: ResolvedChart, channel: str) -> str | None:
             return chart.color if chart.color is not None else WIDE_KEY_FIELD
         color_ch = chart.resolved_channels.get("color")
         return color_ch.data_field if color_ch is not None else None
-    if channel == "theta":
-        if isinstance(chart, ResolvedPieChart):
-            return chart.theta
-        return None
     return None
 
 

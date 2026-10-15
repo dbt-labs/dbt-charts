@@ -14,7 +14,7 @@ Text with no font-family of its own (tab labels, ``details`` disclosures) is
 measured in the typeface the root declares in ``data-dbt-font-family``, and text
 the renderer set in the tabular numeric typeface is measured in it too.
 
-Tuning knobs live in ``chart_rendering.thumbnail`` (``default_config.yml``).
+Tuning knobs live in ``rendering.thumbnail`` (``default_config.yml``).
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from dbt_charts.core.colors import (
     relative_luminance,
     rgb01_to_hex,
 )
-from dbt_charts.core.compile.config import get_chart_rendering
+from dbt_charts.core.compile.config import get_rendering_config
 from dbt_charts.core.diagnostics import ERR_INPUT_INVALID
 from dbt_charts.core.font_measure import (
     FontMeasurer,
@@ -135,7 +135,7 @@ class _Ctx:
     def __init__(self, root: ET.Element, canvas: Rgb | None) -> None:
         self.root = root
         self.canvas = canvas
-        self.config = get_chart_rendering().thumbnail
+        self.config = get_rendering_config().thumbnail
         self.ink: Rgb = (
             (0.0, 0.0, 0.0)
             if canvas is None or is_light_canvas(rgb01_to_hex(*canvas))

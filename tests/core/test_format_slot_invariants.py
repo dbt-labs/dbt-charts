@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 import dbt_charts.core.compile.models as _models_pkg
 from dbt_charts.core.compile.compiler import compile as compile_board
+from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.format_value import format_value
 from dbt_charts.core.compile.models.markers import Format
 from dbt_charts.core.text.format_d3 import format_d3, is_d3_si_spec
@@ -23,6 +24,8 @@ from dbt_charts.core.text.numeral_scale import sub_unit_digit_format
 from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
 
 from ._svg_render import render_board_to_svg
+
+_KPI_COMPACT = get_theme_style().charts.kpi.value.compact
 
 # Slot derivation -- from the model classes, never a hand-written list or a board-
 # instance walk (see module docstring for why the latter undercounts).
@@ -1020,7 +1023,9 @@ def test_native_preset_beside_an_affix_paints_unit_and_affix_in_text_and_termina
     text_parts = _kpi_text_parts(resolved, data[0], None)
     assert expected in text_parts["value" if slot == "headline" else "support"]
     if slot == "headline":
-        assert expected in render_kpi_terminal(chart, data, "Revenue", formats=None)
+        assert expected in render_kpi_terminal(
+            chart, data, "Revenue", formats=None, kpi_compact=_KPI_COMPACT
+        )
 
 
 # A prefix beside a suffix on one native preset, and a prefix that carries its own
@@ -1078,7 +1083,11 @@ def test_native_preset_beside_a_prefix_and_suffix_paints_both(
             "kpi", value="v", label="L", style={"value": {"format": fmt}}
         )
         assert expected in render_kpi_terminal(
-            chart, [{"headline": 1.0, "v": value}], "Revenue", formats=None
+            chart,
+            [{"headline": 1.0, "v": value}],
+            "Revenue",
+            formats=None,
+            kpi_compact=_KPI_COMPACT,
         )
 
 

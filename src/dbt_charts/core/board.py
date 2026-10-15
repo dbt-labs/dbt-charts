@@ -117,6 +117,10 @@ class BoardRenderResult(BaseModel):
     # Per-query (name, data_as_of, policy) records populated on success. Consumed
     # by Cloud's snapshot writer to compute expires_at anchored on actual data age.
     board_query_data_ages: list[tuple[str, datetime, CachePolicy]] = []
+    # When each query this render took from the result cache was written; empty
+    # when every query ran fresh. `dct render` reports it so a re-render that
+    # skipped the warehouse says so.
+    cache_hit_ats: list[datetime] = []
 
 
 def raise_on_dashboard_failure(result: BoardRenderResult) -> None:
@@ -610,4 +614,5 @@ def render_dashboard(
         ],
         url=url,
         board_query_data_ages=executor.query_data_ages,
+        cache_hit_ats=executor.cache_hit_ats,
     )

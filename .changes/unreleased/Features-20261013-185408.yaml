@@ -1,0 +1,3 @@
+kind: Features
+body: 'Project dbt_charts.yml no longer accepts a vega: block or retired chart_rendering keys; each raises ERR-CONFIG-KEY-MOVED naming where the setting lives now.'
+time: 2026-10-13T18:54:08.247617-07:00

@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import pytest
 
-from dbt_charts.core.compile.config import get_chart_rendering, get_theme_style
+from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style_and_context,
 )
+from dbt_charts.core.constants.marks import ENDPOINT_LABEL_MAX_WIDTH_FRACTION
 from dbt_charts.core.render.chart.series_label_truncation import (
     SeriesLabelTruncation,
     collect_series_label_truncations,
@@ -107,7 +108,7 @@ def test_label_width_capped_at_configured_fraction_of_chart_width(make_resolved_
     very_long_name = "A" * 40  # extremely wide label
     resolved, data = make_resolved_chart([very_long_name, "B"])
 
-    cap = 400 * get_chart_rendering().endpoint_labels.max_width_fraction
+    cap = 400 * ENDPOINT_LABEL_MAX_WIDTH_FRACTION
     # Should not raise
     pane_width = _render_and_get_label_pane_width(resolved, data, chart_width=400)
     assert pane_width <= cap + 1, (
@@ -128,7 +129,7 @@ def test_hundred_char_series_name_renders_instead_of_raising(make_resolved_chart
     artifact = render_resolved_chart(resolved, data, _BOARD_STYLE, width=600)
     label_pane = artifact.payload["hconcat"][1]
 
-    cap = 600 * get_chart_rendering().endpoint_labels.max_width_fraction
+    cap = 600 * ENDPOINT_LABEL_MAX_WIDTH_FRACTION
     assert label_pane["width"] == pytest.approx(cap)
     # VL ellipsizes at the mark limit, so the limit must match the capped pane.
     assert label_pane["mark"]["limit"] == label_pane["width"]

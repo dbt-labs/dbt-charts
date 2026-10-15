@@ -5,11 +5,6 @@
 
 use d3rs::js_math::js_round;
 
-/// A disconnected plateau's share of its band —
-/// `chart_rendering.step_band.disconnected_width` (`default_config.yml:179`),
-/// read by `fit_dash_to_plateau` (`step_band.py:92`) and `apply_step_band`.
-pub(crate) const STEP_BAND_DISCONNECTED_WIDTH: f64 = 0.9;
-
 /// The authored list: whitespace-separated lengths, as `_dasharray_to_vl`
 /// splits it. A list SVG cannot paint (empty, negative, non-finite) refuses.
 pub(crate) fn parse(family: &str, raw: &str) -> Result<Vec<f64>, String> {
@@ -29,18 +24,17 @@ pub(crate) fn parse(family: &str, raw: &str) -> Result<Vec<f64>, String> {
     Ok(lengths)
 }
 
-/// `fit_dash_to_plateau`: the dashes rescaled so a plateau of `bandwidth *
-/// STEP_BAND_DISCONNECTED_WIDTH` holds `n` periods less the trailing gap — ink
+/// `fit_dash_to_plateau`: the dashes rescaled so a plateau `span` pixels wide
+/// (`bandwidth * line_mark.disconnected_width`) holds `n` periods less the trailing gap — ink
 /// on both its edges. An odd list repeats first (SVG repeats it, so its last
 /// entry is a gap); a list with no ink is returned as repeated. Production
 /// emits `d*span/(n*period-last)` as one Vega expression, which evaluates left
 /// to right: `(d*span)/(n*period-last)`.
-pub(crate) fn fit_to_plateau(dashes: &[f64], bandwidth: f64) -> Vec<f64> {
+pub(crate) fn fit_to_plateau(dashes: &[f64], span: f64) -> Vec<f64> {
     let repeated: Vec<f64> = if dashes.len() % 2 == 1 { [dashes, dashes].concat() } else { dashes.to_vec() };
     if repeated.iter().step_by(2).sum::<f64>() == 0.0 {
         return repeated;
     }
-    let span = bandwidth * STEP_BAND_DISCONNECTED_WIDTH;
     let period: f64 = repeated.iter().sum();
     let last = repeated[repeated.len() - 1];
     let periods = js_round((span + last) / period).max(1.0);
@@ -63,16 +57,16 @@ pub(crate) fn svg_value(family: &str, dashes: &[f64]) -> Result<String, String> 
 }
 
 /// The ` stroke-dasharray="..."` attribute of a foreground line, fitted to the
-/// plateau when `plateau_bandwidth` is the band of a disconnected step.
+/// plateau when `plateau_span` is the pixel width of a disconnected step's plateau.
 pub(crate) fn attr(
     family: &str,
     dashes: &[f64],
-    plateau_bandwidth: Option<f64>,
+    plateau_span: Option<f64>,
 ) -> Result<String, String> {
     let fitted;
-    let dashes = match plateau_bandwidth {
-        Some(bandwidth) => {
-            fitted = fit_to_plateau(dashes, bandwidth);
+    let dashes = match plateau_span {
+        Some(span) => {
+            fitted = fit_to_plateau(dashes, span);
             &fitted
         }
         None => dashes,
@@ -90,7 +84,7 @@ mod tests {
     fn a_plateau_holds_n_dashes_and_n_less_one_gaps() {
         let bandwidth = 122.352_941_176_470_59;
         let span = bandwidth * 0.9;
-        let fitted = fit_to_plateau(&[5.0, 4.0], bandwidth);
+        let fitted = fit_to_plateau(&[5.0, 4.0], span);
         let n = 13.0; // round((span + 4) / 9) = round(12.68)
         assert_eq!(fitted, [5.0 * span / (n * 9.0 - 4.0), 4.0 * span / (n * 9.0 - 4.0)]);
         assert!((n * (fitted[0] + fitted[1]) - fitted[1] - span).abs() < 1e-9);
@@ -98,15 +92,15 @@ mod tests {
 
     #[test]
     fn a_plateau_shorter_than_one_period_still_holds_one_dash() {
-        let fitted = fit_to_plateau(&[5.0, 4.0], 2.0);
+        let fitted = fit_to_plateau(&[5.0, 4.0], 1.8);
         assert!((fitted[0] - 5.0 * 1.8 / (9.0 - 4.0)).abs() < 1e-12, "{fitted:?}");
     }
 
     #[test]
     fn an_odd_list_repeats_and_a_zero_ink_list_stays_as_repeated() {
-        assert_eq!(fit_to_plateau(&[6.0, 2.0, 1.0], 100.0).len(), 6);
-        assert_eq!(fit_to_plateau(&[0.0, 8.0], 100.0), [0.0, 8.0]);
-        assert_eq!(fit_to_plateau(&[0.0, 8.0, 0.0], 100.0).len(), 6);
+        assert_eq!(fit_to_plateau(&[6.0, 2.0, 1.0], 90.0).len(), 6);
+        assert_eq!(fit_to_plateau(&[0.0, 8.0], 90.0), [0.0, 8.0]);
+        assert_eq!(fit_to_plateau(&[0.0, 8.0, 0.0], 90.0).len(), 6);
     }
 
     #[test]
@@ -128,8 +122,9 @@ mod tests {
     #[test]
     fn a_dash_is_scaled_as_d_times_span_then_divided() {
         let bandwidth = 129.338_839_331_346_83;
-        let fitted = fit_to_plateau(&[5.0, 6.0], bandwidth);
-        let (span, den) = (bandwidth * 0.9, 11.0 * 11.0 - 6.0);
+        let span = bandwidth * 0.9;
+        let fitted = fit_to_plateau(&[5.0, 6.0], span);
+        let den = 11.0 * 11.0 - 6.0;
         assert_ne!(5.0 * span / den, 5.0 * (span / den));
         assert_eq!(fitted[0], 5.061_085_017_313_572);
         assert_eq!(fitted[1], 6.0 * span / den);
@@ -139,7 +134,7 @@ mod tests {
     /// plateau still holds one dash.
     #[test]
     fn a_plateau_below_half_a_period_rounds_up_to_one_dash() {
-        let fitted = fit_to_plateau(&[5.0, 1.0], 1.0);
+        let fitted = fit_to_plateau(&[5.0, 1.0], 0.9);
         assert_eq!(fitted, [5.0 * 0.9 / 5.0, 1.0 * 0.9 / 5.0]);
     }
 }

@@ -377,6 +377,7 @@ class TestRuntimeMutatingSqlGuard:
         """
         adapter = _dbt(dbt_project_path=tmp_path, local_project=local_project)
         adapter._adapter = MagicMock()
+        adapter._dialect = "postgres"
         with patch.object(adapter, "_resolve_dbt_sql", return_value="DROP TABLE x"):
             query = SqlQuery(
                 sql="SELECT * FROM {{ ref('innocent') }}", source="my_named_source"
@@ -395,6 +396,7 @@ class TestRuntimeMutatingSqlGuard:
         """
         adapter = _dbt(dbt_project_path=tmp_path, local_project=local_project)
         adapter._adapter = MagicMock()
+        adapter._dialect = "postgres"
         mock_table = MagicMock()
         mock_table.column_names = ["a"]
         mock_table.rows = [(1,)]
@@ -422,6 +424,7 @@ class TestDbtAdapterMaxRowsCeiling:
         monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "2")
         adapter = _dbt(dbt_project_path=tmp_path, local_project=local_project)
         adapter._adapter = MagicMock()
+        adapter._dialect = "postgres"
         mock_table = MagicMock()
         mock_table.column_names = ["a"]
         # Simulates the driver's own fetchmany(limit=3) coming back with all
@@ -451,6 +454,7 @@ class TestDbtAdapterMaxRowsCeiling:
         monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "1000")
         adapter = _dbt(dbt_project_path=tmp_path, local_project=local_project)
         adapter._adapter = MagicMock()
+        adapter._dialect = "postgres"
         mock_table = MagicMock()
         mock_table.column_names = ["a"]
         mock_table.rows = [(1,)]
@@ -476,6 +480,7 @@ class TestDbtAdapterMaxRowsCeiling:
         truncation flag, and no SQL rewrite of any kind."""
         adapter = _dbt(dbt_project_path=tmp_path, local_project=local_project)
         adapter._adapter = MagicMock()
+        adapter._dialect = "postgres"
         mock_table = MagicMock()
         mock_table.column_names = ["a"]
         mock_table.rows = [(i,) for i in range(2)]
@@ -613,6 +618,7 @@ class TestLoadManifestThroughProjectSeam:
             project=project, dbt_project_path=tmp_path, target_name="dev"
         )
 
+        adapter._dialect = "postgres"
         resolved = adapter._resolve_dbt_sql("SELECT * FROM {{ ref('orders') }}")
 
         assert resolved == "SELECT * FROM analytics.orders"

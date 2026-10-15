@@ -1,0 +1,3 @@
+kind: Features
+body: Color derivation and text contrast floors are fixed engine constants; `chart_rendering.color_variants` and `chart_rendering.text_contrast` are no longer configurable and a project that sets them now errors.
+time: 2026-10-14T09:40:43.276896-07:00

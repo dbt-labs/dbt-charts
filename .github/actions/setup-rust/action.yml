@@ -1,5 +1,5 @@
 name: Set up Rust
-description: Rust toolchain, a source-keyed cache, and a fast CI build profile for the dbt_charts._engine extension
+description: Rust toolchain and a source-keyed cache for the dbt_charts._engine extension
 
 runs:
   using: composite
@@ -8,14 +8,9 @@ runs:
       run: rustup toolchain install 1.98.0 --profile minimal --no-self-update && rustup default 1.98.0
       shell: bash
 
-    # Test environments never ship this build: skip the fat-LTO link and widen
-    # codegen. Cargo.toml's release profile is untouched. The profile is a cargo
-    # fingerprint input; the cache key hashes this file, so changing it starts a
-    # fresh cache.
-    - name: Use the fast CI build profile
-      run: |
-        echo "CARGO_PROFILE_RELEASE_LTO=false" >> "$GITHUB_ENV"
-        echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16" >> "$GITHUB_ENV"
+    # Incremental state only bloats the cached target/: CI builds each source once.
+    - name: Disable incremental compilation
+      run: echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
       shell: bash
 
     # The crate is abi3-py310, so only the interpreter's major.minor shapes the
@@ -31,8 +26,21 @@ runs:
       shell: bash
 
     # Keyed on every extension input, so an exact hit is a build of these sources.
+    - name: Restore cargo registry and extension build
+      id: cargo-restore
+      if: github.event_name == 'merge_group'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          libs/chart-svg/python/target
+        key: cargo-${{ runner.os }}-py${{ steps.python.outputs.version }}-${{ hashFiles('.github/actions/setup-rust/action.yml', 'libs/chart-svg/**', 'dbt-charts/src/dbt_charts/core/defaults/palettes/tone/*.yml') }}
+        restore-keys: cargo-${{ runner.os }}-py${{ steps.python.outputs.version }}-
+
     - name: Cache cargo registry and extension build
       id: cargo-cache
+      if: github.event_name != 'merge_group'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       with:
         path: |
@@ -47,6 +55,6 @@ runs:
     # re-links the whole extension. Safe only on an exact hit: sources are
     # byte-identical to the cached build.
     - name: Backdate extension sources to reuse the cached build
-      if: steps.cargo-cache.outputs.cache-hit == 'true'
+      if: steps.cargo-cache.outputs.cache-hit == 'true' || steps.cargo-restore.outputs.cache-hit == 'true'
       run: git ls-files -z libs/chart-svg dbt-charts/src/dbt_charts/core/defaults/palettes/tone | xargs -0 touch -t 197001010000
       shell: bash

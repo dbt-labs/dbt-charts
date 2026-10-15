@@ -235,9 +235,9 @@ class TestDescriptionContent:
             for name in get_args(ThemeName)
             for family in ("bar", "line", "area")
         }
-        assert shipped == {True}
+        assert shipped == {"auto"}
         text = (EndpointLabelsConfig.model_fields["visible"].description or "").lower()
-        assert "true on every built-in theme" in text
+        assert "'auto' on every built-in theme" in text
 
     def test_endpoint_labels_visible_scopes_the_claim_to_shapes_that_get_a_rail(
         self,

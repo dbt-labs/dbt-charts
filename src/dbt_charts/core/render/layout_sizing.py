@@ -23,7 +23,6 @@ from dataclasses import dataclass, field
 from types import EllipsisType
 from typing import TYPE_CHECKING, Any
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.board.normalized import (
     NO_TITLE_SHIFT,
     Board,
@@ -58,6 +57,7 @@ from dbt_charts.core.compile.sizing import (
     get_board_gap,
     table_width_is_pinned,
 )
+from dbt_charts.core.constants.layout import SUPPORT_TABLE_PLOT_WIDTH_FLOOR_RATIO
 from dbt_charts.core.diagnostics import ERR_INPUT_INVALID
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
@@ -996,7 +996,7 @@ def _make_data_aware_height_provider(
                                 )
                                 floor_px = (
                                     render_inner_width
-                                    * get_chart_rendering().support_table.plot_width_floor_ratio
+                                    * SUPPORT_TABLE_PLOT_WIDTH_FLOOR_RATIO
                                 )
                                 if category_axis_vertical and would_be_width < floor_px:
                                     # Record and degrade like the spark_bar

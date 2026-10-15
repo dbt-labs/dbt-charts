@@ -19,6 +19,8 @@
 //!    `AUTOSIZE_PADDING_PASSES`, which is also why the title's x can end up
 //!    outside the padded view and get clamped back to it.
 
+use crate::constants::layout::VEGA_SUBTITLE_PADDING;
+
 /// Vega-Lite's default `labelLimit` — the width cap it truncates axis and
 /// legend labels to when the theme doesn't override it.
 pub const DEFAULT_VL_LABEL_LIMIT: f64 = 180.0;
@@ -339,10 +341,6 @@ pub struct TitleInk {
     pub width: f64,
 }
 
-/// Gap between the title's ink bottom and the subtitle's top (Vega title
-/// layout `sy = title.bounds.height() + padding`; measured 3px on every
-/// captured spec — VL's default subtitlePadding).
-pub const SUBTITLE_PADDING: f64 = 3.0;
 
 impl TitleInk {
     pub fn single(font_size: f64, offset: f64, width: f64) -> Self {
@@ -370,7 +368,7 @@ impl TitleInk {
     /// Title with a subtitle stacked under it. The group's box top follows
     /// the title row (so `dy_quirk` stays the title's, as in `single`), and
     /// its bottom is the subtitle line at
-    /// `title_fs + SUBTITLE_PADDING + sub_fs + q(sub)` below that row — so
+    /// `title_fs + VEGA_SUBTITLE_PADDING + sub_fs + q(sub)` below that row — so
     /// the box height carries both quirks: `t + 3 + s + q(s) − q(t)`.
     /// Oracle: scenegraph origin sweeps over (t, s) ∈ {12,14,17,18} ×
     /// {11,12,17} all land `margin = ink_h + offset − dy_quirk` exactly.
@@ -402,7 +400,7 @@ impl TitleInk {
             + (subtitle_lines.max(1) - 1) as f64
                 * (subtitle_font_size + Self::LINE_ADVANCE_EXTRA);
         TitleInk {
-            ink_h: font_size + SUBTITLE_PADDING + subtitle_font_size
+            ink_h: font_size + VEGA_SUBTITLE_PADDING + subtitle_font_size
                 + q(subtitle_font_size)
                 - q(font_size)
                 + extra,

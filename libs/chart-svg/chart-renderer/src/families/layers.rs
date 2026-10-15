@@ -51,6 +51,8 @@ pub(crate) struct OverlayLineMark {
     /// (`emitters/_layers.py`'s `line_mark.disconnected_cap`).
     #[serde(default)]
     pub disconnected_cap: Option<String>,
+    /// Share of its band a disconnected band-step plateau spans.
+    pub disconnected_width: f64,
     pub labels: MarkLabels,
 }
 

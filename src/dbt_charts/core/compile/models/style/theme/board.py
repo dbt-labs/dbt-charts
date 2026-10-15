@@ -12,12 +12,16 @@ from pydantic import (
 )
 
 from dbt_charts.core.compile.models.factories import (
+    FontAlias,
     FontSlotBase,
     build_patch_model_ext,
     register_patch,
 )
 from dbt_charts.core.compile.models.markers import (
+    AUTO,
     Color,
+    FontFamily,
+    FontWeightValue,
     InheritSlot,
     SkipInheritSlots,
 )
@@ -330,14 +334,61 @@ class TitleSubtitleStyle(BaseModel):
     )
 
 
-class TitleStyle(BaseModel):
-    """Typography shared by every heading: board, prose, chart, table, and spark titles."""
+class ChartTitleFontStyle(FontSlotBase):
+    """A chart title's font: a font whose ``size``, ``weight`` and ``family`` also
+    take ``auto``, the card width tier's choice."""
+
+    extends: FontAlias | None = Field(
+        default=None,
+        description=(
+            "Name of a ``style.fonts`` entry this slot starts from; the fields "
+            "set beside it override that entry."
+        ),
+    )
+    family: Annotated[str | Literal["auto"] | None, FontFamily(keywords=(AUTO,))] = (
+        Field(
+            default=None,
+            description="Font family name, or 'auto' to follow the card width.",
+        )
+    )
+    color: Annotated[str | None, Color()] = Field(
+        default=None, description="Text color as a CSS color string."
+    )
+    size: float | Literal["auto"] | None = Field(
+        default=None,
+        description="Font size in pixels, or 'auto' to follow the card width.",
+    )
+    weight: Annotated[
+        str | float | Literal["auto"] | None,
+        FontWeightValue(keywords=(AUTO,)),
+    ] = Field(
+        default=None,
+        description=(
+            "How heavy the type is drawn (e.g., 'bold', 400, 700), or 'auto' "
+            "to follow the card width."
+        ),
+    )
+    style: Literal["normal", "italic"] | None = Field(
+        default=None, description="Upright or slanted type (normal or italic)."
+    )
+    decoration: Literal["none", "line-through", "underline"] | None = Field(
+        default=None,
+        description="Line drawn on the text (underline, line-through, or none).",
+    )
+    case: (
+        Literal["none", "sentence", "title", "upper", "lower", "slug", "camel"] | None
+    ) = Field(default=None, description="Letter-case transform applied at render time.")
+    line_height: float | None = Field(
+        default=None,
+        description="Line height as a unitless multiple of font size.",
+    )
+
+
+class _TitleBase(BaseModel):
+    """The title fields every title shares; the font differs by title."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    font: Annotated[FontStyle, InheritSlot(from_path="Style.font")] = Field(
-        default_factory=FontStyle, description="Title font style overrides."
-    )
     compact_weight: str | float = Field(
         description="Object-title font weight on tiny cards."
     )
@@ -383,6 +434,23 @@ class TitleStyle(BaseModel):
     subtitle: Annotated[TitleSubtitleStyle, SkipInheritSlots(cascade=True)] = Field(
         default_factory=TitleSubtitleStyle,
         description="Subtitle font styles.",
+    )
+
+
+class TitleStyle(_TitleBase):
+    """Typography shared by every heading: board, prose, chart, table, and spark titles."""
+
+    font: Annotated[FontStyle, InheritSlot(from_path="Style.font")] = Field(
+        default_factory=FontStyle, description="Title font style overrides."
+    )
+
+
+class ChartTitleStyle(_TitleBase):
+    """A chart's title style, whose font also takes ``auto``."""
+
+    font: Annotated[ChartTitleFontStyle, InheritSlot(from_path="Style.font")] = Field(
+        default_factory=ChartTitleFontStyle,
+        description="Title font style overrides.",
     )
 
 

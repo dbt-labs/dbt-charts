@@ -53,6 +53,7 @@ from dbt_charts.core.compile.models.style.theme import (
     LegendAlign,
     LegendDirection,
     LegendEdge,
+    LegendRowStyle,
     LineChartStyle,
     PaddingStyle,
     PieChartStyle,
@@ -557,9 +558,7 @@ class ResolvedLegendElementStyle(BaseModel):
     font: ResolvedFontStyle
     padding: float
     max_width: float | None = None
-    # Only meaningful on the title slot (authored as legend.title.visible).
-    # None remains meaningful until the top-horizontal auto-hide policy runs;
-    # False suppresses the title and True preserves an explicit opt-in. The
+    # Only meaningful on the title slot (authored as legend.title.visible); the
     # label slot is constructed with True because it has no separate visibility.
     visible: bool | None = None
 
@@ -593,6 +592,7 @@ class ResolvedLegendStyle(BaseModel):
     # type(base).model_validate) — an authored compact_columns: 0 must fail
     # loudly here, not surface as a resolve-time ZeroDivisionError.
     compact_columns: int = Field(ge=1)
+    row: LegendRowStyle
     label: ResolvedLegendElementStyle
     title: ResolvedLegendElementStyle
     visible: bool
@@ -624,8 +624,7 @@ class ResolvedChartDefaults:
 
     Exactly ``ChartStyleContext`` minus its compiler-working-state fields:
     the raw ``axis``/``axis_x``/``axis_y``/``axis_quantitative`` theme
-    passthroughs; the ``charts_board_overrides`` board-patch accumulator;
-    the ``axis_overrides_*``/``scale``/``color`` chart-local patch sentinels;
+    passthroughs; the ``axis_overrides_*``/``scale``/``color`` chart-local patch sentinels;
     ``palettes``/``roles``/``pre_style``; ``callout``, the pre-tone callout
     style each callout chart resolves its own colors from; ``bold_font_weight``,
     already baked onto every resolved callout; and ``card_padding``, which is a

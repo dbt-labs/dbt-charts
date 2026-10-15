@@ -2,7 +2,7 @@
 core/diagnostics/codes_render.py for what this fires on.
 
 Detection rule:
-  vega_specs[chart_id].encoding.x.type in {"nominal", "ordinal"} (or, for a
+  the chart's x scale (x_scale_type) is "nominal" or "ordinal" (or, for a
   bar chart, also "temporal" — see _BAR_ALLOWED_X_TYPES below)
   AND distinct x values in chart_results > _MAX_CATEGORIES
 
@@ -17,17 +17,19 @@ from dbt_charts.core.compile.models.chart.resolved._base import (
 )
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.diagnostics import WARN_TOO_MANY_X_CATEGORIES, Diagnostic
-from dbt_charts.core.render.warnings.base import WarningContext, encoding_channel_type
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.render.warnings.base import WarningContext
+from dbt_charts.core.render.warnings.x_axis import x_scale_type
 
 # Beyond this many categories a band axis is unreadable.
 _MAX_CATEGORIES = 50
 
 _CATEGORICAL_TYPES = frozenset({"nominal", "ordinal"})
 
-# A bar draws one band per distinct x value regardless of whether Vega-Lite
-# encodes that axis as ordinal or temporal — the density gate that flips
-# bucketed temporal data off ordinal above ~60 distinct values does so purely
-# to manage axis-label layout, not because the chart stopped being banded.
+# A bar draws one band per distinct x value regardless of whether the axis
+# resolves ordinal or temporal — the density gate that flips bucketed temporal
+# data off ordinal above ~60 distinct values does so purely to manage
+# axis-label layout, not because the chart stopped being banded.
 # Line/area/scatter charts don't get this widening: a dense temporal axis
 # there is a continuous draw, not a crowded band, however many points it has.
 _BAR_ALLOWED_X_TYPES = _CATEGORICAL_TYPES | frozenset({"temporal"})
@@ -58,7 +60,13 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             continue
         if chart.x is None:
             continue
-        if chart_id not in ctx.vega_specs or chart_id not in ctx.chart_results:
+        if chart_id not in ctx.chart_results:
+            continue
+
+        x_field: str = chart.x
+        rows = ctx.chart_results[chart_id]
+        distinct = len({row[x_field] for row in rows if x_field in row})
+        if distinct <= _MAX_CATEGORIES:
             continue
 
         allowed_x_types = (
@@ -66,15 +74,12 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             if isinstance(chart, ResolvedBarChart)
             else _CATEGORICAL_TYPES
         )
-        x_type = encoding_channel_type(ctx.vega_specs[chart_id], "x")
-        if x_type not in allowed_x_types:
+        try:
+            x_type = x_scale_type(chart, rows)
+        except (ValueError, ChartDataError):
+            # The emitter rejects this x column too; that error says why.
             continue
-
-        x_field: str = chart.x
-        distinct = len(
-            {row[x_field] for row in ctx.chart_results[chart_id] if x_field in row}
-        )
-        if distinct <= _MAX_CATEGORIES:
+        if x_type not in allowed_x_types:
             continue
 
         temporal = x_type == "temporal"

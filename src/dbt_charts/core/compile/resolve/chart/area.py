@@ -6,7 +6,6 @@ from dataclasses import replace
 from datetime import date
 from typing import Literal
 
-from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
@@ -20,9 +19,8 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedPointLabels,
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
-    _author_asked_for_endpoint_labels,
-    _authored_legend,
     _bake_ay_orient,
+    _cascaded_legend,
     _endpoint_labels_off_for_layers,
     _endpoint_labels_off_for_multiples,
     _reject_dual_axis_layered_endpoint_labels,
@@ -40,7 +38,6 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     LayerDatasets,
 )
 from dbt_charts.core.compile.resolve.chart._domain import (
-    _authored_axis_y_ticks_count,
     _bake_normalize_domain,
     _bake_y_zero,
     _CartesianTickResolution,
@@ -57,7 +54,6 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
     _cartesian_kwargs,
-    _title_font,
 )
 from dbt_charts.core.compile.resolve.chart._layers import (
     _check_layers_y_domain,
@@ -93,11 +89,17 @@ from dbt_charts.core.compile.resolve.chart.enrich import (
     classify_column_type,
     first_non_null_samples,
 )
+from dbt_charts.core.compile.resolve.chart.plot_height_floor import (
+    axis_title_cost_px,
+    subtitle_cost_px,
+)
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
+from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
+from dbt_charts.core.constants.marks import STROKE_FALLBACK_WIDTH
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_AREA_ENCODING_SWAPPED,
     ERR_AREA_LOG_SCALE_INDEPENDENT_MULTIPLES,
@@ -283,7 +285,6 @@ def _resolve_area(
     channels, wide_measure_series = resolve_wide_measure_channels(
         normalized, channels, "area", has_layers=bool(normalized.layers)
     )
-    author_asked_for_rail = _author_asked_for_endpoint_labels(normalized.style)
     endpoint_label_has_layers = layered_endpoint_rail_fires(
         layered_endpoint_rail_shape(normalized.x, normalized.y),
         [layer.color is None for layer in normalized.layers],
@@ -301,15 +302,12 @@ def _resolve_area(
     naming = cartesian_series_naming(
         normalized,
         channels,
-        _authored_legend(primary),
+        *_cascaded_legend(chart_style_context, area.legend),
         merge_legend(chart_style_context.legend, area.legend),
         width,
         _endpoint_labels_off_for_multiples(
-            _endpoint_labels_off_for_layers(
-                area.endpoint_labels, normalized, author_asked_for_rail
-            ),
+            _endpoint_labels_off_for_layers(area.endpoint_labels, normalized),
             normalized,
-            author_asked_for_rail,
         ),
         endpoint_label_has_layers=endpoint_label_has_layers,
         has_layers=bool(normalized.layers),
@@ -331,11 +329,13 @@ def _resolve_area(
             None, merge_legend(chart_style_context.legend, area.legend)
         ),
         card_padding_px=chart_style_context.card_padding,
-        subtitle_present=bool(normalized.subtitle),
+        subtitle_height_px=subtitle_cost_px(
+            normalized.subtitle, chart_style_context.title.subtitle.font
+        ),
         # Area never flips its dimension field onto Vega-Lite's y-channel
         # the way a horizontal bar does -- the x-axis is always the
         # horizontal rail.
-        axis_title_costs_height=plan.axes.x.style.title.visible is not False,
+        axis_title_height_px=axis_title_cost_px(plan.axes.x.style.title),
     )
     endpoint_labels = naming.endpoint_labels
     _reject_dual_axis_layered_endpoint_labels(
@@ -512,7 +512,6 @@ def _resolve_area(
             ay_merged,
             area_y_values,
             zero_anchor=zero_anchored_area,
-            authored_ticks_count=_authored_axis_y_ticks_count(normalized.style),
             scale=multiples_scale,
             is_quantitative=True,  # area's y is always the measure
         )
@@ -601,10 +600,21 @@ def _resolve_area(
             area_mark_merged = area_mark_merged.model_copy(
                 update={"opacity": stacked_mark.opacity}
             )
+        stacked_stroke = stacked_mark.stroke
+        if (
+            stacked_stroke is None
+            or stacked_stroke.width is None
+            or stacked_stroke.cap is None
+            or stacked_stroke.join is None
+        ):
+            raise CompilationError.from_code(
+                ERR_AREA_STACKED_STROKE_INCOMPLETE,
+                chart_id=normalized.id,
+            )
         line_overrides = {
             field: value
             for field, value in (
-                ("stroke", stacked_mark.stroke),
+                ("stroke", stacked_stroke),
                 ("halo_multiplier", stacked_mark.halo_multiplier),
             )
             if value is not None
@@ -618,13 +628,6 @@ def _resolve_area(
             # multi-series overlap keeps marks.line.stroke intact, where an
             # authored `cap: null` is a legal state (ResolvedStrokeStyle
             # documents None as "use the VL default").
-            if stacked_mark.stroke is not None and (
-                stacked_mark.stroke.cap is None or stacked_mark.stroke.join is None
-            ):
-                raise CompilationError.from_code(
-                    ERR_AREA_STACKED_STROKE_INCOMPLETE,
-                    chart_id=normalized.id,
-                )
             line_mark_merged = line_mark_merged.model_copy(update=line_overrides)
     axis_house_default = plan.axes.y.is_house
     resolved_area_line_labels, area_label_is_house = _label_format_fallback(
@@ -647,18 +650,12 @@ def _resolve_area(
             normalized.multiples,
             bool(ay.mirror),
         )
-    stroke_cfg = get_chart_rendering().stroke
-    # The stacked edge is a separator, not a trend line, so it never adapts to
-    # density (adaptive = 0.0). Its single-series form is background-colored:
-    # a thicker edge would knock visible pixels off the band and understate
-    # every value.
-    line_mark_merged = (
-        _apply_line_width(line_mark_merged, 0.0, stroke_cfg.stacked_fallback_width)
-        if on_stacked_recipe
-        else _apply_line_width(
-            line_mark_merged, _area_adaptive_stroke, stroke_cfg.fallback_width
+    # The stacked edge is a separator, not a trend line: its width is the
+    # theme's fixed design value, never density-derived.
+    if not on_stacked_recipe:
+        line_mark_merged = _apply_line_width(
+            line_mark_merged, _area_adaptive_stroke, STROKE_FALLBACK_WIDTH
         )
-    )
     # Area charts have no point-companion block: area.marks.point size is not
     # coupled to the top-edge stroke thickness (unlike line where point rings
     # visually track the line width).
@@ -666,7 +663,7 @@ def _resolve_area(
     resolved_line_mark = _build_resolved_area_line(
         line_mark_merged, resolved_area_line_labels
     )
-    _tf = _title_font(normalized, chart_local_style_context, width)
+    _tf = resolve_title_font(chart_local_style_context, width)
     bkw = _base_kwargs(
         normalized,
         chart_style_context,
@@ -681,7 +678,6 @@ def _resolve_area(
         suppress_legend=naming.suppress_legend,
         top_legend=naming.top_legend,
         wrap_legend=naming.wrap_legend,
-        force_legend_visible=naming.force_legend_visible,
         legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
     )
     resolved_layers = _resolve_layer_list(

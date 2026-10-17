@@ -16,6 +16,7 @@
 //! `step` with `loopbacks`, and a label that would overlap another label or
 //! a node.
 
+use display_text::language::tr;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
@@ -262,15 +263,16 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         None => vec![st.single_series_fill.clone(); nodes.len()],
     };
 
-    mark_group_open(&mut out, "path", "sankey-links");
+    mark_group_open(&mut out, "path", "sankey-links")?;
     for (li, (f, (d, looped))) in flows.iter().zip(&laid.links).enumerate() {
         let (s, t) = (&nodes[f.source].name, &nodes[f.target].name);
         let share = crate::number_locale::d3_format(".0%", f.value / outflow[f.source])
             .map_err(|e| format!("sankey: share format: {e}"))?;
         let label = format!(
-            "{ROLE_HEADER}{s} → {t}; {}: {}; {MUTED}Share of {s}: {share}",
+            "{ROLE_HEADER}{s} → {t}; {}: {}; {MUTED}{}: {share}",
             r.value_title,
-            fmt(f.value)?
+            fmt(f.value)?,
+            tr("tooltip.share_of", None, &[("node", s)])?
         );
         let color = &colors[if by_target == Some(true) { f.target } else { f.source }];
         let _ = write!(
@@ -279,23 +281,23 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
             xml_escape_attr(color),
             num(st.link_opacity),
             if *looped { " data-loop=\"true\"" } else { "" },
-            aria_attr(Some(&label), ItemRole::PathMark),
+            aria_attr(Some(&label), ItemRole::PathMark)?,
         );
     }
     mark_group_close(&mut out);
 
-    mark_group_open(&mut out, "rect", "sankey-nodes");
+    mark_group_open(&mut out, "rect", "sankey-nodes")?;
     for (ni, ([nx0, nx1, ny0, ny1], _)) in laid.nodes.iter().enumerate() {
         let (has_in, has_out) = (inflow[ni] > 0.0, outflow[ni] > 0.0);
         let mut rows = vec![format!("{ROLE_HEADER}{}", nodes[ni].name)];
         if has_in {
-            rows.push(format!("In: {}", fmt(inflow[ni])?));
+            rows.push(format!("{}: {}", tr("tooltip.in", None, &[])?, fmt(inflow[ni])?));
         }
         if has_out {
-            rows.push(format!("Out: {}", fmt(outflow[ni])?));
+            rows.push(format!("{}: {}", tr("tooltip.out", None, &[])?, fmt(outflow[ni])?));
         }
         if has_in && has_out && inflow[ni] != outflow[ni] {
-            rows.push(format!("{MUTED}Difference: {}", fmt(outflow[ni] - inflow[ni])?));
+            rows.push(format!("{MUTED}{}: {}", tr("tooltip.difference", None, &[])?, fmt(outflow[ni] - inflow[ni])?));
         }
         let _ = write!(
             out,
@@ -305,7 +307,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
             num(nx1 - nx0),
             num(ny1 - ny0),
             xml_escape_attr(&colors[ni]),
-            aria_attr(Some(&rows.join("; ")), ItemRole::RectMark),
+            aria_attr(Some(&rows.join("; ")), ItemRole::RectMark)?,
         );
     }
     mark_group_close(&mut out);

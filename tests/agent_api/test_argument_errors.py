@@ -39,7 +39,7 @@ def test_a_null_variable_value_is_one_clause_not_one_per_union_member() -> None:
 
     assert message == (
         "execute_query: variables.0.value: got null, expected one of "
-        "str, int, float, bool"
+        "str, int, float, bool, list[str]"
     )
 
 

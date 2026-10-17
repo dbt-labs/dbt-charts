@@ -33,6 +33,9 @@
 use crate::constants::axis::{LABEL_GAP_SPACES, LABEL_GAP_SPACES_NUMERIC, SPARSE_CEILING_PX};
 use super::table_dates::{strftime, Moment};
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
+
+use regex::Regex;
 
 /// Detected or authored calendar bucketing grain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -86,27 +89,8 @@ const AUTHORED_DIRECTIVES: &str = "aAbBdeGjmuUVwWyY";
 impl<'a> AuthoredTimeFormat<'a> {
     /// `None` for an absent format or a number format; `Some` for a d3 time
     /// format made only of [`AUTHORED_DIRECTIVES`]; `Err` naming the directive
-    /// (or the spec fault) for anything else. `labels.time_unit: none` hands
-    /// the format to Vega's own tick labels (`resolve_label_time_unit` returns
-    /// no vocabulary), a layout no family here models: it refuses.
-    pub fn parse(
-        family: &str,
-        labels_format: Option<&'a str>,
-        labels_time_unit: Option<&str>,
-    ) -> Result<Option<Self>, String> {
-        if labels_time_unit == Some("none") && labels_format.is_some_and(is_time_format) {
-            return Err(format!(
-                "{family}: authored time format {:?} with axis_x.labels.time_unit: none is not \
-                 supported; production hands the format to Vega's own tick labels there",
-                labels_format.unwrap_or_default()
-            ));
-        }
-        Self::parse_for_vega_labels(family, labels_format)
-    }
-
-    /// [`Self::parse`] for a family that runs `resolve_vega_x_labels`, whose
-    /// `labels.time_unit: none` layout paints the format itself.
-    pub fn parse_for_vega_labels(family: &str, labels_format: Option<&'a str>) -> Result<Option<Self>, String> {
+    /// (or the spec fault) for anything else.
+    pub fn parse(family: &str, labels_format: Option<&'a str>) -> Result<Option<Self>, String> {
         let Some(fmt) = labels_format.filter(|f| is_time_format(f)) else {
             return Ok(None);
         };
@@ -138,10 +122,13 @@ impl<'a> AuthoredTimeFormat<'a> {
 
     /// The text one tick paints: `portable_strftime` of the tick's date.
     /// d3 pads `%Y` to four digits where strftime does not, so a year before
-    /// 1000 paints its `%Y` padded; a modified `%Y` there has no ported
-    /// reading and refuses, as does a year before 100 (JavaScript's Date
-    /// reads it as 19xx).
+    /// 1000 paints its `%Y` padded (`%-Y` bare, `%_Y` space-padded, `%0Y`
+    /// zero-padded); a year before 100 refuses (JavaScript's Date reads it as
+    /// 19xx).
     pub fn text(self, year: i32, month: u8, day: u8) -> Result<String, String> {
+        // The real gap: Vega's timeunit transform yields NaN for a year below 100, so
+        // production draws no tick for it and plots its mark at x 0 (path broken, domain
+        // excluded); the "19xx" in the message is the ledger's identity, not the cause.
         if year < 100 {
             return Err(format!(
                 "authored time format {:?} on the year {year} is not supported (JavaScript's Date reads years 0-99 as 19xx)",
@@ -161,11 +148,13 @@ impl<'a> AuthoredTimeFormat<'a> {
             }
             match chars.next() {
                 Some('Y') => spec.push_str(&format!("{year:04}")),
-                Some(m @ ('-' | '_' | '0')) if chars.peek() == Some(&'Y') => {
-                    return Err(format!(
-                        "authored time format {:?}: %{m}Y on the year {year} is not supported (d3 pads %Y to four digits)",
-                        self.0
-                    ));
+                Some(pad @ ('-' | '_' | '0')) if chars.peek() == Some(&'Y') => {
+                    chars.next();
+                    spec.push_str(&match pad {
+                        '-' => year.to_string(),
+                        '_' => format!("{year:>4}"),
+                        _ => format!("{year:04}"),
+                    });
                 }
                 Some(other) => {
                     spec.push('%');
@@ -215,40 +204,9 @@ pub fn axis_time_format<'a>(
     labels_format.filter(|f| is_time_format(f)).or_else(|| grain_format(formats, tu))
 }
 
-/// A redefined `date_<grain>` name on an axis whose family does not paint it as
-/// the label text: refuses by name instead of painting the per-grain vocabulary
-/// where production paints the board's spec.
-pub fn refuse_grain_format(family: &str, formats: &BTreeMap<String, String>, tu: TimeUnit) -> Result<(), String> {
-    match grain_format(formats, Some(tu)) {
-        Some(spec) => Err(format!(
-            "{family}: a redefined date grain name ({spec:?}) on a temporal axis is not \
-             supported; production paints it as the label text"
-        )),
-        None => Ok(()),
-    }
-}
-
-/// A board that redefines a grain name beside an authored `labels.time_unit`:
-/// production keys the redefinition by the grain the label vocabulary resolves
-/// to; the data and `axis_x.time_unit` decide that grain, `labels.time_unit` is
-/// not followed, so that combination refuses by name.
-pub fn refuse_grain_formats_under_an_authored_unit(
-    family: &str,
-    axis: &crate::common::AxisStyle,
-) -> Result<(), String> {
-    if axis.grain_formats.is_empty() || axis.labels.time_unit.is_none() {
-        return Ok(());
-    }
-    Err(format!(
-        "{family}: a redefined date grain name on an x axis with an authored time_unit is not \
-         supported; production keys the redefinition by the grain the labels resolve to"
-    ))
-}
-
-/// A time `labels.format` on a temporal x axis whose family does not paint it
-/// as the label text (`AuthoredTimeFormat` is the ported law): refuses by name
-/// instead of painting the per-grain vocabulary where production paints the
-/// author's format. A number format (`,.0f`) is not a time format and passes.
+/// A time `labels.format` on a standard date no calendar grain explains: a
+/// family that draws no continuous time axis (bar) refuses by name instead of
+/// painting raw band strings where production labels every tick through the format.
 pub fn refuse_authored_time_format(family: &str, labels_format: Option<&str>) -> Result<(), String> {
     match labels_format {
         Some(fmt) if is_time_format(fmt) => Err(format!(
@@ -256,6 +214,235 @@ pub fn refuse_authored_time_format(family: &str, labels_format: Option<&str>) ->
              supported; production paints it as the label text"
         )),
         _ => Ok(()),
+    }
+}
+
+/// What `resolve_label_time_unit` leaves an ordinal calendar axis to paint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelUnit {
+    /// A calendar grain's vocabulary: the authored `labels.time_unit`, else the
+    /// encoding's own grain.
+    Calendar(TimeUnit),
+    /// `none` or a time-part grain: no smart `labelExpr`, so Vega paints the
+    /// raw band strings. The part names the vocabulary the crowding test
+    /// measures instead (`_GENERIC_FORMATTERS`).
+    Raw(Option<TimePart>),
+}
+
+/// A cyclic time part, `labels.time_unit`'s `monthofyear` .. `hourofday`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimePart {
+    MonthOfYear,
+    DayOfWeek,
+    DayOfMonth,
+    DayOfYear,
+    HourOfDay,
+}
+
+impl TimePart {
+    /// The part an `axis_x.time_unit` / `labels.time_unit` name picks.
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "monthofyear" => TimePart::MonthOfYear,
+            "dayofweek" => TimePart::DayOfWeek,
+            "dayofmonth" => TimePart::DayOfMonth,
+            "dayofyear" => TimePart::DayOfYear,
+            "hourofday" => TimePart::HourOfDay,
+            _ => return None,
+        })
+    }
+
+    /// `_GENERIC_FORMATTERS`: the text the crowding test measures for a date.
+    fn text(self, y: i32, m: u8, d: u8, hour: u32) -> String {
+        let moment = || Moment::midnight(y as u32, m.into(), d.into());
+        match self {
+            TimePart::MonthOfYear => strftime(moment(), "%b").expect("%b is a plain directive"),
+            TimePart::DayOfWeek => strftime(moment(), "%a").expect("%a is a plain directive"),
+            TimePart::DayOfMonth => d.to_string(),
+            TimePart::DayOfYear => (days_from_civil(y, m, d) - days_from_civil(y, 1, 1) + 1).to_string(),
+            TimePart::HourOfDay => hour.to_string(),
+        }
+    }
+
+    /// Where Vega-Lite's `timeUnit` puts the instant `day` (days since the
+    /// epoch, fractional for a clock): its unit's own field kept, every other
+    /// field on 2012-01-01, a leap year that starts on a Sunday.
+    pub fn instant(self, day: f64) -> f64 {
+        let whole = day.floor();
+        let (y, m, d) = civil_from_days(whole as i64);
+        let base = days_from_civil(2012, 1, 1);
+        match self {
+            TimePart::MonthOfYear => days_from_civil(2012, m, 1) as f64,
+            TimePart::DayOfWeek => (base + i64::from((weekday(y, m, d) + 1) % 7)) as f64,
+            TimePart::DayOfMonth => days_from_civil(2012, 1, d) as f64,
+            TimePart::DayOfYear => (base + days_from_civil(y, m, d) - days_from_civil(y, 1, 1)) as f64,
+            TimePart::HourOfDay => base as f64 + f64::from(clock_hour(day)) / 24.0,
+        }
+    }
+
+    /// What Vega-Lite's own axis format paints at a tick of the part's scale
+    /// (`timeUnitSpecifier`): `%b`, `%a`, `%d`, `%j`, `%H:00`.
+    fn tick_text(self, instant: f64) -> String {
+        let (y, m, d) = civil_from_days(instant.floor() as i64);
+        match self {
+            TimePart::MonthOfYear => MONTH_ABBR[(m - 1) as usize].to_string(),
+            TimePart::DayOfWeek => WEEKDAY_ABBR[weekday(y, m, d) as usize].to_string(),
+            TimePart::DayOfMonth => format!("{d:02}"),
+            TimePart::DayOfYear => format!("{:03}", days_from_civil(y, m, d) - days_from_civil(y, 1, 1) + 1),
+            TimePart::HourOfDay => format!("{:02}:00", clock_hour(instant)),
+        }
+    }
+
+    /// Vega-Lite's default `tickCount` for the part's axis: none for the
+    /// parts whose unit it exempts, else `ceil(plot_w / 40)`.
+    fn default_tick_count(self, plot_w: f64) -> Option<usize> {
+        match self {
+            TimePart::MonthOfYear | TimePart::DayOfWeek | TimePart::HourOfDay => None,
+            TimePart::DayOfMonth | TimePart::DayOfYear => {
+                Some(crate::families::cartesian::vl_default_tick_count(plot_w).max(1))
+            }
+        }
+    }
+
+    /// The `tickMinStep` Vega-Lite compiles for the part's unit, in days.
+    fn min_step_days(self) -> Option<f64> {
+        match self {
+            TimePart::MonthOfYear => Some(31.0),
+            TimePart::DayOfWeek => None,
+            TimePart::DayOfMonth | TimePart::DayOfYear => Some(1.0),
+            TimePart::HourOfDay => Some(1.0 / 24.0),
+        }
+    }
+}
+
+fn clock_hour(day: f64) -> u32 {
+    (((day - day.floor()) * 86_400.0).round() as u32 / 3600).min(23)
+}
+
+/// The labels whose widths the crowding test measures on a time-part axis
+/// (`_generic_temporal_labels`): one text per band, a band being the distinct
+/// text of the label vocabulary (the axis's part, an authored part, or an
+/// authored calendar grain's single row); an authored format repaints each
+/// band's first date.
+pub fn part_band_texts(
+    values: &[String],
+    axis_part: TimePart,
+    labels_time_unit: Option<&str>,
+    authored: Option<AuthoredTimeFormat>,
+) -> Result<Vec<String>, String> {
+    let vocabulary = |(y, m, d): (i32, u8, u8), hour: u32| -> Result<String, String> {
+        match labels_time_unit {
+            None | Some("auto" | "none") => Ok(axis_part.text(y, m, d, hour)),
+            Some(name) => match TimePart::parse(name) {
+                Some(part) => Ok(part.text(y, m, d, hour)),
+                None => {
+                    let tu = parse_authored_time_unit(name)
+                        .ok_or_else(|| format!("axis_x.labels.time_unit {name:?} is not a label time unit"))?;
+                    pinned_label_text((y, m, d), tu, None)
+                }
+            },
+        }
+    };
+    let mut bands: Vec<(String, (i32, u8, u8))> = Vec::new();
+    for value in values {
+        let day = date_text_day(value).ok_or_else(|| format!("x value {value:?} is not an ISO date"))?;
+        let date = civil_from_days(day.floor() as i64);
+        let label = vocabulary(date, clock_hour(day))?;
+        if !bands.iter().any(|(seen, _)| *seen == label) {
+            bands.push((label, date));
+        }
+    }
+    bands
+        .into_iter()
+        .map(|(label, (y, m, d))| match authored {
+            Some(format) => format.text(y, m, d),
+            None => Ok(label),
+        })
+        .collect()
+}
+
+/// One tick of a time-part axis.
+pub struct PartTick {
+    /// The tick's instant, in days since the epoch.
+    pub at: f64,
+    /// Its position as a fraction of the scale domain.
+    pub frac: f64,
+    pub text: String,
+}
+
+/// Vega's ticks of a time-part axis: d3's local-time ladder over the part's
+/// `domain` (days, fractional for a clock), `authored` replacing Vega-Lite's
+/// default `tickCount` and both capped by the unit's `tickMinStep`
+/// (vega-scale `tickCount`); `format` replaces the part's own text.
+pub fn time_part_ticks(
+    domain: (f64, f64),
+    plot_w: f64,
+    part: TimePart,
+    authored: Option<usize>,
+    format: Option<AuthoredTimeFormat>,
+) -> Result<Vec<PartTick>, String> {
+    let (lo, hi) = domain;
+    let text = |at: f64| -> Result<String, String> {
+        let (y, m, d) = civil_from_days(at.floor() as i64);
+        match format {
+            Some(f) => f.text(y, m, d),
+            None => Ok(part.tick_text(at)),
+        }
+    };
+    if lo == hi {
+        return Ok(vec![PartTick { at: lo, frac: 0.5, text: text(lo)? }]);
+    }
+    // Vega asks d3 for ten ticks when no `tickCount` reaches the axis.
+    let count = authored.or_else(|| part.default_tick_count(plot_w)).unwrap_or(10);
+    let count = part.min_step_days().map_or(count, |step| count.min(min_step_ticks(hi - lo, step)));
+    utc_instants(lo, hi, count)?
+        .into_iter()
+        .map(|at| Ok(PartTick { at, frac: (at - lo) / (hi - lo), text: text(at)? }))
+        .collect()
+}
+
+impl LabelUnit {
+    /// `resolve_label_time_unit` over `labels.time_unit`: unauthored or `auto`
+    /// inherits the encoding grain `data_tu`.
+    pub fn resolve(data_tu: TimeUnit, authored: Option<&str>) -> Result<Self, String> {
+        Ok(match authored {
+            None | Some("auto") => LabelUnit::Calendar(data_tu),
+            Some("none") => LabelUnit::Raw(None),
+            Some(other) => match TimePart::parse(other) {
+                Some(part) => LabelUnit::Raw(Some(part)),
+                None => LabelUnit::Calendar(
+                    parse_authored_time_unit(other)
+                        .ok_or_else(|| format!("axis_x.labels.time_unit {other:?} is not a label time unit"))?,
+                ),
+            },
+        })
+    }
+
+    /// The calendar grain the axis's `date_<grain>` redefinition is keyed by.
+    pub fn grain(self) -> Option<TimeUnit> {
+        match self {
+            LabelUnit::Calendar(tu) => Some(tu),
+            LabelUnit::Raw(_) => None,
+        }
+    }
+
+    /// The text a raw-labeled band's crowding is measured on: the author's
+    /// format, else the time part's vocabulary, else the band string itself
+    /// (`_generic_temporal_labels`).
+    pub fn raw_measure_text(
+        self,
+        band: &str,
+        authored: Option<AuthoredTimeFormat>,
+    ) -> Result<String, String> {
+        let LabelUnit::Raw(part) = self else {
+            return Err("raw_measure_text on a calendar label unit".into());
+        };
+        let Some((y, m, d)) = parse_iso_date(band) else { return Ok(band.to_string()) };
+        match (authored, part) {
+            (Some(format), _) => format.text(y, m, d),
+            (None, Some(part)) => Ok(part.text(y, m, d, date_text_day(band).map_or(0, clock_hour))),
+            (None, None) => Ok(band.to_string()),
+        }
     }
 }
 
@@ -286,9 +473,10 @@ pub fn parse_authored_time_unit(s: &str) -> Option<TimeUnit> {
 
 // ── Date parsing ─────────────────────────────────────────────────────────────
 
-/// A date cell as days since the epoch, with a `[T ]HH:MM[:SS]` clock as the
-/// day's fraction. A clock is UTC (the render pins the zone); an offset is not
-/// modeled. `None` for any other shape.
+/// A date cell as days since the epoch, with a `[T ]HH:MM[:SS[.f]]` clock as the
+/// day's fraction and an optional `Z` or `±HH:MM` offset. A clock without an
+/// offset is UTC (the render pins the zone). Fractional seconds keep V8's
+/// millisecond precision. `None` for any other shape.
 pub fn date_text_day(text: &str) -> Option<f64> {
     let digits = |part: &str, max: u32| -> Option<f64> {
         (part.len() == 2 && part.bytes().all(|b| b.is_ascii_digit()))
@@ -304,14 +492,35 @@ pub fn date_text_day(text: &str) -> Option<f64> {
         return None;
     }
     let clock = text.get(11..)?;
+    let (clock, offset_minutes) = match clock.char_indices().find(|(_, c)| matches!(c, 'Z' | '+' | '-')) {
+        None => (clock, 0.0),
+        Some((i, 'Z')) if i + 1 == clock.len() => (&clock[..i], 0.0),
+        Some((i, sign @ ('+' | '-'))) => {
+            let zone = clock[i + 1..].split(':').collect::<Vec<_>>();
+            let [hours, minutes] = zone[..] else { return None };
+            let total = digits(hours, 24)? * 60.0 + digits(minutes, 60)?;
+            (&clock[..i], if sign == '+' { total } else { -total })
+        }
+        Some(_) => return None,
+    };
     let mut parts = clock.split(':');
     let hours = digits(parts.next()?, 24)?;
     let minutes = digits(parts.next()?, 60)?;
-    let seconds = parts.next().map_or(Some(0.0), |s| digits(s, 60))?;
+    let (seconds, millis) = match parts.next() {
+        None => (0.0, 0.0),
+        Some(field) => {
+            let (whole, fraction) = field.split_once('.').map_or((field, ""), |(w, f)| (w, f));
+            if field.contains('.') && (fraction.is_empty() || !fraction.bytes().all(|b| b.is_ascii_digit())) {
+                return None;
+            }
+            let padded = format!("{fraction:0<3}");
+            (digits(whole, 60)?, padded[..3].parse::<f64>().ok()?)
+        }
+    };
     if parts.next().is_some() {
         return None;
     }
-    Some(day + (hours * 3600.0 + minutes * 60.0 + seconds) / 86_400.0)
+    Some(day + (hours * 3600.0 + minutes * 60.0 + seconds + millis / 1000.0 - offset_minutes * 60.0) / 86_400.0)
 }
 
 /// Parse an ISO date string `"YYYY-MM-DD"` → `(year, month, day)`.
@@ -753,6 +962,17 @@ fn is_date_like_shape(s: &str) -> bool {
         }
     }
     false
+}
+
+static DATE_LIKE_ISO_SHAPES: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^(?:\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)$")
+        .expect("a literal pattern compiles")
+});
+
+/// `is_date_like_string`: the shapes `DATE_LIKE_PATTERNS` lists — the labeled
+/// buckets `is_date_like_shape` covers plus its three standard-date entries.
+pub fn is_date_like_string(s: &str) -> bool {
+    is_date_like_shape(s) || DATE_LIKE_ISO_SHAPES.is_match(s)
 }
 
 // ── `_BUCKET_FAMILIES` (`time_unit_detect.py:96-108`) ──────────────────────
@@ -1702,12 +1922,146 @@ pub fn inline_label(label: &TemporalLabel, format_tu: TimeUnit) -> String {
     }
 }
 
+/// Production's `steep_tilt`: an authored angle of 90 degrees or more.
+pub fn is_steep_tilt(angle: f64) -> bool {
+    angle.abs() >= 90.0
+}
+
+/// A steep authored angle flows each label's context row inline on one row.
+pub fn fold_steep(labels: Vec<TemporalLabel>, angle: Option<f64>, format_tu: TimeUnit) -> Vec<TemporalLabel> {
+    if !angle.is_some_and(is_steep_tilt) {
+        return labels;
+    }
+    labels.into_iter().map(|l| TemporalLabel { row1: inline_label(&l, format_tu), row2: String::new(), ..l }).collect()
+}
+
+/// An authored `labels.expr` rewrites each label's text from the raw band
+/// (`datum.value`): one row, no calendar vocabulary.
+pub fn rewrite_with_expr(labels: Vec<TemporalLabel>, domain: &[String], n: i64) -> Vec<TemporalLabel> {
+    labels
+        .into_iter()
+        .map(|l| TemporalLabel { row1: crate::common::apply_labels_expr(&domain[l.domain_idx], n), row2: String::new(), ..l })
+        .collect()
+}
+
+/// Which buckets an authored `labels.expr` rewrites on an ordinal date axis.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ExprBands {
+    /// Every bucket `values` keeps, ungated: a bar keeps one tick per bucket.
+    AllBuckets,
+    /// The ticks the cadence ladder keeps: a heatmap collapses `values` to them.
+    KeptByLadder,
+}
+
+/// The labels an ordinal calendar-grain x paints, as `build_cartesian_x_encoding`
+/// and `resolve_axis_x_overlap` decide them: `none` and the time-part grains paint
+/// the raw band strings (crowded by `_generic_layout` over the author's format or
+/// the time part's vocabulary), an authored `labels.angle` returns before the
+/// cadence ladder, and an authored `labels.expr` rewrites the text of `expr_bands`.
+pub struct OrdinalDateLabels {
+    pub labels: Vec<TemporalLabel>,
+    /// The axis keeps a tick at every bucket once its labels grow sparser than its
+    /// buckets (`_LABEL_THINNING_TICK_MARK_TYPES`).
+    pub ticks_restored: bool,
+    /// The tilt the crowding remedies picked; an authored angle wins over it.
+    pub angle: Option<f64>,
+    /// Vega's `labelOverlap: parity` is asked for: label text only, never ticks.
+    pub parity: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn ordinal_date_labels(
+    domain: &[String],
+    data_tu: TimeUnit,
+    unit: LabelUnit,
+    labels_cfg: &crate::common::AxisLabels,
+    fiscal_start: u8,
+    authored: Option<AuthoredTimeFormat>,
+    // The width the cadence ladder measures against, and the chart's own width
+    // that the crowding remedies scale by `label_usable_ratio`.
+    ladder_w: f64,
+    chart_w: f64,
+    usable_ratio: Option<f64>,
+    expr_n: Option<i64>,
+    expr_bands: ExprBands,
+    measure: &mut dyn FnMut(&str) -> Result<f64, String>,
+    font_size: f64,
+) -> Result<OrdinalDateLabels, String> {
+    let skip = labels_cfg.overlap.as_ref().is_some_and(|o| o.skip);
+    let (mut labels, ticks_restored, angle, parity) = match unit {
+        LabelUnit::Raw(_) => {
+            let (mut angle, mut parity) = (None, false);
+            if let (None, Some(overlap)) = (labels_cfg.angle, &labels_cfg.overlap) {
+                let ratio = usable_ratio.ok_or("label_usable_ratio absent (theme required for overlap)")?;
+                let gap = measure(" ")?;
+                let widths = domain
+                    .iter()
+                    .map(|band| unit.raw_measure_text(band, authored).and_then(|t| measure(&t).map(|w| w + gap)))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let layout = generic_layout(
+                    &widths,
+                    chart_w * ratio,
+                    overlap.skip,
+                    overlap.tilt,
+                    labels_cfg.tilt_increments.as_deref(),
+                    font_size,
+                )?;
+                (angle, parity) = (Some(layout.angle), layout.parity);
+            }
+            let labels = domain
+                .iter()
+                .enumerate()
+                .map(|(domain_idx, band)| TemporalLabel { domain_idx, row1: band.clone(), row2: String::new() })
+                .collect();
+            (labels, false, angle, parity)
+        }
+        LabelUnit::Calendar(label_tu) if labels_cfg.angle.is_some() => {
+            let labels = build_temporal_labels(domain, data_tu, label_tu, label_tu, fiscal_start, authored)?;
+            (fold_steep(labels, labels_cfg.angle, label_tu), label_tu != data_tu, None, false)
+        }
+        LabelUnit::Calendar(label_tu) => {
+            let authored_label_tu = labels_cfg.time_unit.as_deref().filter(|u| *u != "auto").map(|_| label_tu);
+            let (labels, visibility_tu) = resolve_temporal_labels(
+                domain,
+                data_tu,
+                authored_label_tu,
+                ladder_w,
+                // An ordinal axis is never `vl_type == "temporal"`, so
+                // `temporal_edge_labels_flushed` is false for it.
+                false,
+                true, // discrete/ordinal x-scale: bucket-aligned
+                false,
+                fiscal_start,
+                skip,
+                authored,
+                measure,
+            )?;
+            (labels, visibility_tu != data_tu, None, false)
+        }
+    };
+    if let Some(n) = expr_n {
+        labels = match (unit, expr_bands) {
+            (_, ExprBands::KeptByLadder) => labels,
+            (LabelUnit::Calendar(label_tu), ExprBands::AllBuckets) if label_tu != data_tu => {
+                build_temporal_labels(domain, data_tu, label_tu, label_tu, fiscal_start, authored)?
+            }
+            _ => (0..domain.len())
+                .map(|domain_idx| TemporalLabel { domain_idx, row1: String::new(), row2: String::new() })
+                .collect(),
+        };
+        labels = rewrite_with_expr(labels, domain, n);
+    }
+    Ok(OrdinalDateLabels { labels, ticks_restored, angle, parity })
+}
+
 /// L1's outcome once a native/bucketed cadence is chosen: whether Vega's
 /// parity thinning is requested (`overlap.skip` fired and the flat test
 /// failed) and the tilt angle (0 when untilted).
 pub struct GenericLayout {
     pub parity: bool,
     pub angle: f64,
+    /// `AxisLabelLayout.label_block_height`.
+    pub block_height: f64,
     /// The labels measured when every enabled strategy was tried and they
     /// still collide (`AxisLabelLayout.collision_label_count`).
     pub collision: Option<usize>,
@@ -1728,11 +2082,11 @@ pub fn generic_layout(
     font_size: f64,
 ) -> Result<GenericLayout, String> {
     if widths.is_empty() {
-        return Ok(GenericLayout { parity: false, angle: 0.0, collision: None });
+        return Ok(GenericLayout { parity: false, angle: 0.0, block_height: font_size, collision: None });
     }
     let band0 = usable_width / widths.len() as f64;
     if crate::vega_fit::fits_flat(widths, band0) {
-        return Ok(GenericLayout { parity: false, angle: 0.0, collision: None });
+        return Ok(GenericLayout { parity: false, angle: 0.0, block_height: font_size, collision: None });
     }
     let mut parity = false;
     let mut considered: Vec<f64> = widths.to_vec();
@@ -1741,7 +2095,7 @@ pub fn generic_layout(
         let halved: Vec<f64> = widths.iter().step_by(2).copied().collect();
         let band1 = usable_width / halved.len().max(1) as f64;
         if crate::vega_fit::fits_flat(&halved, band1) {
-            return Ok(GenericLayout { parity, angle: 0.0, collision: None });
+            return Ok(GenericLayout { parity, angle: 0.0, block_height: font_size, collision: None });
         }
         considered = halved;
     }
@@ -1750,9 +2104,14 @@ pub fn generic_layout(
             .ok_or("line: labels.tilt_increments absent (theme required for overlap.tilt)")?;
         let band = usable_width / considered.len().max(1) as f64;
         let tilt = crate::vega_fit::pick_tilt(&considered, band, increments, font_size);
-        return Ok(GenericLayout { parity, angle: tilt.angle, collision: (!tilt.fits).then_some(considered.len()) });
+        return Ok(GenericLayout {
+            parity,
+            angle: tilt.angle,
+            block_height: tilt.block_height,
+            collision: (!tilt.fits).then_some(considered.len()),
+        });
     }
-    Ok(GenericLayout { parity, angle: 0.0, collision: Some(considered.len()) })
+    Ok(GenericLayout { parity, angle: 0.0, block_height: font_size, collision: Some(considered.len()) })
 }
 
 /// L4: the bucketed cadence ladder LOOPS — port of
@@ -1848,7 +2207,8 @@ pub struct VerticalTemporalLabels {
 /// of the x cadence for a date-valued band axis. Two adjacent visible labels
 /// clear when their band spacing covers half of each text block plus
 /// `min_gap`. A block is `font_size` per row: two on the anchor and on a
-/// year-opening month/quarter tick, two on every day/week tick, else one.
+/// year-opening month/quarter tick, two on every day/week tick, else one;
+/// an authored time format paints one row everywhere.
 /// `plot_height` is the chart height times `label_usable_ratio`.
 pub fn resolve_vertical_temporal_labels(
     domain: &[String],
@@ -1858,6 +2218,7 @@ pub fn resolve_vertical_temporal_labels(
     skip: bool,
     font_size: f64,
     min_gap: f64,
+    authored: Option<AuthoredTimeFormat>,
 ) -> Result<VerticalTemporalLabels, String> {
     let dates = parse_domain_dates(domain);
     let band = plot_height / dates.len() as f64;
@@ -1876,6 +2237,7 @@ pub fn resolve_vertical_temporal_labels(
                 .map(|(k, &i)| {
                     let (y, m, d) = dates[i];
                     let rows = match vocab_tu {
+                        _ if authored.is_some() => 1,
                         TimeUnit::Year => 1,
                         TimeUnit::YearWeek | TimeUnit::YearMonthDate => 2,
                         _ if k == anchor || is_opener(y, m, d, data_tu, TimeUnit::Year, fiscal_start) => 2,
@@ -1890,7 +2252,7 @@ pub fn resolve_vertical_temporal_labels(
         },
     )?;
     let format_tu = if visibility_tu == TimeUnit::Year { TimeUnit::Year } else { data_tu };
-    let labels = build_temporal_labels(domain, data_tu, format_tu, visibility_tu, fiscal_start, None)?;
+    let labels = build_temporal_labels(domain, data_tu, format_tu, visibility_tu, fiscal_start, authored)?;
     Ok(VerticalTemporalLabels { labels, fits })
 }
 
@@ -1907,6 +2269,8 @@ pub struct VegaLabelLayout {
     /// `overlap.skip` fired against a band that didn't clear.
     pub parity: bool,
     pub angle: f64,
+    /// `AxisLabelLayout.label_block_height`.
+    pub block_height: f64,
     /// The labels measured when every enabled strategy was tried and they
     /// still collide (`AxisLabelLayout.collision_label_count`).
     pub collision: Option<usize>,
@@ -1966,7 +2330,14 @@ pub fn resolve_vega_label_layout(
         dates
     };
     if dates.len() < 2 {
-        return Ok(VegaLabelLayout { format_tu, visibility_tu: format_tu, parity: false, angle: 0.0, collision: None });
+        return Ok(VegaLabelLayout {
+            format_tu,
+            visibility_tu: format_tu,
+            parity: false,
+            angle: 0.0,
+            block_height: font_size,
+            collision: None,
+        });
     }
     if continuous_temporal && data_tu == TimeUnit::YearMonthDate && label_auto && authored.is_none() {
         for candidate in [TimeUnit::YearMonthDate, TimeUnit::YearWeek] {
@@ -1976,6 +2347,7 @@ pub fn resolve_vega_label_layout(
                     visibility_tu: candidate,
                     parity: false,
                     angle: 0.0,
+                    block_height: font_size,
                     collision: None,
                 });
             }
@@ -2004,19 +2376,20 @@ pub fn resolve_vega_label_layout(
         }
         let widths: Vec<f64> =
             mondays.iter().map(|&i| measure(&dates[i].2.to_string())).collect::<Result<_, _>>()?;
-        let (angle, fits) = if tilt {
+        let (angle, block_height, fits) = if tilt {
             let increments = tilt_increments
                 .ok_or("line: labels.tilt_increments absent (theme required for overlap.tilt)")?;
             let pick = crate::vega_fit::pick_tilt(&widths, usable_width / widths.len() as f64, increments, font_size);
-            (pick.angle, pick.fits)
+            (pick.angle, pick.block_height, pick.fits)
         } else {
-            (0.0, crate::vega_fit::fits_flat(&widths, usable_width / widths.len() as f64))
+            (0.0, font_size, crate::vega_fit::fits_flat(&widths, usable_width / widths.len() as f64))
         };
         return Ok(VegaLabelLayout {
             format_tu: TimeUnit::YearWeek,
             visibility_tu: TimeUnit::YearWeek,
             parity: false,
             angle,
+            block_height,
             collision: (!fits).then_some(widths.len()),
         });
     }
@@ -2047,6 +2420,7 @@ pub fn resolve_vega_label_layout(
                 visibility_tu: format_tu,
                 parity: gl.parity,
                 angle: gl.angle,
+                block_height: gl.block_height,
                 collision: gl.collision,
             });
         }
@@ -2121,6 +2495,7 @@ fn resolve_vega_bucketed(
             visibility_tu,
             parity: false,
             angle: 0.0,
+            block_height: font_size,
             collision: None,
         });
     }
@@ -2142,20 +2517,21 @@ fn resolve_vega_bucketed(
     // Without a tilt to try, `widths` is the set the visibility loop already
     // judged not to fit; only the year-cadence parity halving produced a set
     // that was never checked and needs a fresh verdict.
-    let (angle, fits) = if tilt {
+    let (angle, block_height, fits) = if tilt {
         let increments = tilt_increments
             .ok_or("line: labels.tilt_increments absent (theme required for overlap.tilt)")?;
         let band2 = usable_width / widths.len().max(1) as f64;
         let pick = crate::vega_fit::pick_tilt(&widths, band2, increments, font_size);
-        (pick.angle, pick.fits)
+        (pick.angle, pick.block_height, pick.fits)
     } else {
-        (0.0, parity && crate::vega_fit::fits_flat(&widths, usable_width / widths.len().max(1) as f64))
+        (0.0, font_size, parity && crate::vega_fit::fits_flat(&widths, usable_width / widths.len().max(1) as f64))
     };
     Ok(VegaLabelLayout {
         format_tu: promoted_format_tu,
         visibility_tu,
         parity,
         angle,
+        block_height,
         collision: (!fits).then_some(widths.len()),
     })
 }
@@ -2170,13 +2546,44 @@ fn resolve_vega_bucketed(
 pub fn vl_default_format(y: i32, m: u8, d: u8, tu: TimeUnit) -> Result<String, String> {
     match tu {
         TimeUnit::Year => Ok(format!("{y}")),
-        TimeUnit::YearQuarter => Ok(format!("{y} Q{}", (m - 1) / 3 + 1)),
+        TimeUnit::YearQuarter => display_text::language::tr(
+            "time.year_quarter",
+            None,
+            &[("year", &y.to_string()), ("n", &((m - 1) / 3 + 1).to_string())],
+        ),
         TimeUnit::YearMonth => Ok(format!("{} {y}", MONTH_ABBR[(m - 1) as usize])),
         TimeUnit::YearMonthDate => Ok(format!("{} {d:02}, {y}", MONTH_ABBR[(m - 1) as usize])),
         TimeUnit::YearWeek => {
             Err("line: labels.time_unit: none on weekly data is unmodeled (no ISO week arithmetic)".into())
         }
     }
+}
+
+/// The single row Vega paints at a date on a `labels.time_unit: none` axis:
+/// the author's format, else the grain's own [`vl_default_format`].
+fn none_label_text(y: i32, m: u8, d: u8, tu: TimeUnit, authored: Option<AuthoredTimeFormat>) -> Result<String, String> {
+    match authored {
+        Some(fmt) => fmt.text(y, m, d),
+        None => vl_default_format(y, m, d, tu),
+    }
+}
+
+/// The labels of a `labels.time_unit: none` bucketed axis on Vega's interval
+/// ticks: no `labelExpr`, so every tick speaks in [`none_label_text`], an
+/// empty bucket's included. `TemporalLabel.domain_idx` indexes `tick_days`.
+pub fn none_tick_labels(
+    tick_days: &[i64],
+    data_tu: TimeUnit,
+    authored: Option<AuthoredTimeFormat>,
+) -> Result<Vec<TemporalLabel>, String> {
+    tick_days
+        .iter()
+        .enumerate()
+        .map(|(domain_idx, &day)| {
+            let (y, m, d) = civil_from_days(day);
+            Ok(TemporalLabel { domain_idx, row1: none_label_text(y, m, d, data_tu, authored)?, row2: String::new() })
+        })
+        .collect()
 }
 
 /// L5 in full: every native bucket keeps a label (no cadence coarsening),
@@ -2203,10 +2610,10 @@ fn resolve_none_layout(
         .collect();
     let dates: Vec<(i32, u8, u8)> = dated.iter().map(|&(_, d)| d).collect();
     let openers = openers_at(&dates, data_tu, data_tu, fiscal_start);
-    // Production's fit decision measures the RAW domain values plus
-    // `label_gap_spaces` (`_label_overlap.py:341-358`: `format_time_unit`
-    // is "" for "none", so `_generic_temporal_labels` returns `values`
-    // UNCHANGED) — a different, wider text than what Vega actually draws
+    // Production's fit decision measures the author's format, else the RAW domain
+    // values, plus `label_gap_spaces` (`_label_overlap.py:341-358`:
+    // `format_time_unit` is "" for "none", so `_generic_temporal_labels` returns
+    // `values` unchanged without a format) — a different, wider text than what Vega actually draws
     // (`vl_default_format`, no gap). Both are computed here: `widths` feeds
     // `generic_layout`'s flat/parity/tilt decision; `text` is what the
     // caller renders.
@@ -2215,15 +2622,49 @@ fn resolve_none_layout(
     let mut labels = Vec::with_capacity(openers.len());
     for &p in &openers {
         let (domain_idx, (y, m, d)) = dated[p];
-        widths.push(measure(&domain[domain_idx])? + gap);
-        let text = match authored {
-            Some(fmt) => fmt.text(y, m, d)?,
-            None => vl_default_format(y, m, d, data_tu)?,
-        };
-        labels.push(TemporalLabel { domain_idx, row1: text, row2: String::new() });
+        widths.push(measure(&LabelUnit::Raw(None).raw_measure_text(&domain[domain_idx], authored)?)? + gap);
+        labels.push(TemporalLabel { domain_idx, row1: none_label_text(y, m, d, data_tu, authored)?, row2: String::new() });
     }
     let gl = generic_layout(&widths, usable_width, skip, tilt, tilt_increments, font_size)?;
     Ok((labels, gl))
+}
+
+/// The text one band paints in `_generic_temporal_labels`' single-row
+/// vocabulary (`cadence_label_text` and the `yearmonthdate` form), what
+/// production measures for a tilt the author pinned.
+fn pinned_label_text(
+    (y, m, d): (i32, u8, u8),
+    format_tu: TimeUnit,
+    authored: Option<AuthoredTimeFormat>,
+) -> Result<String, String> {
+    if let Some(format) = authored {
+        return format.text(y, m, d);
+    }
+    let spec = match format_tu {
+        TimeUnit::Year => return Ok(y.to_string()),
+        TimeUnit::YearQuarter => return Ok(format!("Q{}", (m - 1) / 3 + 1)),
+        TimeUnit::YearMonth => "%b",
+        TimeUnit::YearWeek => "W%V",
+        TimeUnit::YearMonthDate => "%-d %b",
+    };
+    strftime(Moment::midnight(y as u32, m.into(), d.into()), spec)
+}
+
+/// `_pinned_angle_block_height` over a bucketed temporal axis: the widest
+/// label across every band, measured bare, rotated by the author's `angle`.
+pub fn pinned_block_height(
+    domain: &[String],
+    format_tu: TimeUnit,
+    authored: Option<AuthoredTimeFormat>,
+    angle: f64,
+    font_size: f64,
+    measure: &mut dyn FnMut(&str) -> Result<f64, String>,
+) -> Result<f64, String> {
+    let mut widest = 0.0_f64;
+    for date in parse_domain_dates(domain) {
+        widest = widest.max(measure(&pinned_label_text(date, format_tu, authored)?)?);
+    }
+    Ok(crate::vega_fit::label_block_height(widest, font_size, angle))
 }
 
 /// The labels a Vega arm (fit or rail-concat) actually builds under L1-L5,
@@ -2234,6 +2675,8 @@ fn resolve_none_layout(
 pub struct ResolvedVegaLabels {
     pub labels: Vec<TemporalLabel>,
     pub angle: f64,
+    /// `AxisLabelLayout.label_block_height`.
+    pub block_height: f64,
     pub parity: bool,
     pub collision: Option<usize>,
     pub format_tu: TimeUnit,
@@ -2259,20 +2702,39 @@ pub fn resolve_vega_x_labels(
     tilt_increments: Option<&[f64]>,
     font_size: f64,
     authored: Option<AuthoredTimeFormat>,
+    authored_angle: Option<f64>,
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
 ) -> Result<ResolvedVegaLabels, String> {
     if authored_label_tu_str == Some("none") {
         let (labels, gl) = resolve_none_layout(
             domain, data_tu, fiscal_start, usable_width, skip, tilt, tilt_increments, font_size, authored, measure,
         )?;
-        return Ok(ResolvedVegaLabels {
-            labels,
-            angle: gl.angle,
-            parity: gl.parity,
-            collision: gl.collision,
-            format_tu: data_tu,
-            visibility_tu: data_tu,
-        });
+        return match authored_angle {
+            None => Ok(ResolvedVegaLabels {
+                labels,
+                angle: gl.angle,
+                block_height: gl.block_height,
+                parity: gl.parity,
+                collision: gl.collision,
+                format_tu: data_tu,
+                visibility_tu: data_tu,
+            }),
+            Some(angle) => {
+                let mut widest = 0.0_f64;
+                for value in domain {
+                    widest = widest.max(measure(value)?);
+                }
+                Ok(ResolvedVegaLabels {
+                    labels,
+                    angle,
+                    block_height: crate::vega_fit::label_block_height(widest, font_size, angle),
+                    parity: false,
+                    collision: None,
+                    format_tu: data_tu,
+                    visibility_tu: data_tu,
+                })
+            }
+        };
     }
     // A time-PART grain (`monthofyear`/`dayofweek`/`dayofmonth`/
     // `dayofyear`/`hourofday` — `style/theme/axis.py`'s
@@ -2294,6 +2756,20 @@ pub fn resolve_vega_x_labels(
     let authored_label_tu = authored_label_tu_str.and_then(parse_authored_time_unit);
     let format_tu = authored_label_tu.unwrap_or(data_tu);
     let label_auto = authored_label_tu_str.is_none() || authored_label_tu_str == Some("auto");
+    if let Some(angle) = authored_angle {
+        // An authored angle short-circuits the overlap ladder
+        // (`resolve_axis_x_overlap`): every band keeps its label at the
+        // axis's own grain.
+        return Ok(ResolvedVegaLabels {
+            labels: build_temporal_labels(domain, data_tu, format_tu, format_tu, fiscal_start, authored)?,
+            angle,
+            block_height: pinned_block_height(domain, format_tu, authored, angle, font_size, measure)?,
+            parity: false,
+            collision: None,
+            format_tu,
+            visibility_tu: format_tu,
+        });
+    }
     let dates = parse_domain_dates(domain);
     let layout = resolve_vega_label_layout(
         &dates,
@@ -2322,6 +2798,7 @@ pub fn resolve_vega_x_labels(
     Ok(ResolvedVegaLabels {
         labels,
         angle: layout.angle,
+        block_height: layout.block_height,
         parity: layout.parity,
         collision: layout.collision,
         format_tu: layout.format_tu,
@@ -2343,11 +2820,15 @@ pub(crate) const MONTH_ABBR: [&str; 12] = [
 /// "Feb"); a week reads as its start-to-end range (`_week_range_expr`).
 /// `tu: None` is the continuous/sub-daily case, sharing
 /// `YearMonthDate`'s day-level format (production's own `else` branch).
-pub fn tooltip_header_date(y: i32, m: u8, d: u8, tu: Option<TimeUnit>) -> String {
+pub fn tooltip_header_date(y: i32, m: u8, d: u8, tu: Option<TimeUnit>) -> Result<String, String> {
     let mon = |m: u8| MONTH_ABBR[(m - 1) as usize];
-    match tu {
+    Ok(match tu {
         Some(TimeUnit::Year) => format!("{y}"),
-        Some(TimeUnit::YearQuarter) => format!("Q{} {y}", (m - 1) / 3 + 1),
+        Some(TimeUnit::YearQuarter) => display_text::language::tr(
+            "time.quarter_year",
+            None,
+            &[("year", &y.to_string()), ("n", &((m - 1) / 3 + 1).to_string())],
+        )?,
         Some(TimeUnit::YearMonth) => format!("{} {y}", mon(m)),
         Some(TimeUnit::YearWeek) => {
             let (ey, em, ed) = civil_from_days(days_from_civil(y, m, d) + 6);
@@ -2360,7 +2841,7 @@ pub fn tooltip_header_date(y: i32, m: u8, d: u8, tu: Option<TimeUnit>) -> String
             }
         }
         Some(TimeUnit::YearMonthDate) | None => format!("{d} {} {y}", mon(m)),
-    }
+    })
 }
 
 /// A formatted two-row x-axis label.
@@ -2402,7 +2883,37 @@ pub fn build_temporal_labels(
         .collect();
     let dates: Vec<(i32, u8, u8)> = dated.iter().map(|&(_, d)| d).collect();
     let openers = openers_at(&dates, data_tu, visibility_tu, fiscal_start);
-    let anchor = chronological_first(&dates, &openers);
+    label_openers(&dated, &dates, &openers, format_tu, fiscal_start, authored)
+}
+
+/// [`build_temporal_labels`] for an unthinned axis: every domain entry is a
+/// tick that speaks, whatever the opener rule would say of it (production
+/// keeps `values` at the full bucket list until the labels thin).
+pub fn build_all_temporal_labels(
+    domain: &[String],
+    format_tu: TimeUnit,
+    fiscal_start: u8,
+    authored: Option<AuthoredTimeFormat>,
+) -> Result<Vec<TemporalLabel>, String> {
+    let dated: Vec<(usize, (i32, u8, u8))> = domain
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, s)| parse_iso_date(s).map(|d| (idx, d)))
+        .collect();
+    let dates: Vec<(i32, u8, u8)> = dated.iter().map(|&(_, d)| d).collect();
+    let all: Vec<usize> = (0..dated.len()).collect();
+    label_openers(&dated, &dates, &all, format_tu, fiscal_start, authored)
+}
+
+fn label_openers(
+    dated: &[(usize, (i32, u8, u8))],
+    dates: &[(i32, u8, u8)],
+    openers: &[usize],
+    format_tu: TimeUnit,
+    fiscal_start: u8,
+    authored: Option<AuthoredTimeFormat>,
+) -> Result<Vec<TemporalLabel>, String> {
+    let anchor = chronological_first(dates, openers);
     openers
         .iter()
         .enumerate()
@@ -2449,7 +2960,7 @@ fn label_rows(
 ) -> Result<(String, String), String> {
     match authored {
         Some(format) => Ok((format.text(year, month, day)?, String::new())),
-        None => Ok(format_label(year, month, day, label_tu, is_first, fiscal_start)),
+        None => format_label(year, month, day, label_tu, is_first, fiscal_start),
     }
 }
 
@@ -2469,13 +2980,13 @@ fn format_label(
     label_tu: TimeUnit,
     is_first: bool,
     fiscal_start: u8,
-) -> (String, String) {
+) -> Result<(String, String), String> {
     // Mirrors `_fiscal_month_is_year_start`: true when `month` falls in the
     // fiscal year's first month. A no-op at the default `fiscal_start == 1`.
     let is_year_start = opens_fiscal_period(month, 12, fiscal_start);
     let year2 = year % 100;
 
-    match label_tu {
+    Ok(match label_tu {
         TimeUnit::Year => (format!("{year}"), String::new()),
 
         TimeUnit::YearQuarter => {
@@ -2484,7 +2995,7 @@ fn format_label(
             let offset = fiscal_start as i32 - 1;
             let fiscal_month = (month as i32 - 1 - offset).rem_euclid(12);
             let q = fiscal_month / 3 + 1;
-            let row1 = format!("Q{q}");
+            let row1 = display_text::language::tr("time.quarter", None, &[("n", &q.to_string())])?;
             let row2 = if is_first || is_year_start {
                 format!("{year}")
             } else {
@@ -2522,7 +3033,7 @@ fn format_label(
             };
             (row1, row2)
         }
-    }
+    })
 }
 
 /// Parse distinct ISO date strings from the x domain.
@@ -2578,14 +3089,26 @@ pub(crate) fn floor_to_bucket_start(date: (i32, u8, u8), tu: TimeUnit, fiscal_st
     (sy, sm as u8, 1)
 }
 
-/// The bucket after `date` (`_next_bucket`): a fixed 1/3-month or 1/7-day
-/// step — and for a year, 1 January of the next, whatever the fiscal
-/// anchor (a detected yearly grain is Jan-1 dates, so a fiscal floor lands
-/// one synthesized off-anchor bucket ahead of them, as production's does).
+/// The ISO start of the bucket `text` falls inside (`_enclosing_bucket`) when it
+/// is not already a bucket start: a month-end, quarter-end or off-anchor
+/// yearly date is keyed by the bucket that contains it. `None` for a date on its
+/// bucket's start, an unparseable value, and a week (its start is wherever the
+/// data's own first week puts it).
+pub fn off_anchor_bucket_start(text: &str, tu: TimeUnit, fiscal_start: u8) -> Option<String> {
+    if tu == TimeUnit::YearWeek {
+        return None;
+    }
+    let date = parse_iso_date(text)?;
+    let start = floor_to_bucket_start(date, tu, fiscal_start);
+    (start != date).then(|| format!("{:04}-{:02}-{:02}", start.0, start.1, start.2))
+}
+
+/// The bucket after `date` (`_next_bucket`): a fixed 1/3/12-month or 1/7-day
+/// step, which keeps a fiscal anchor's month once the bucket start is anchored.
 pub(crate) fn next_bucket(date: (i32, u8, u8), tu: TimeUnit) -> (i32, u8, u8) {
     let (y, m, d) = date;
     let months = match tu {
-        TimeUnit::Year => return (y + 1, 1, 1),
+        TimeUnit::Year => return (y + 1, m, 1),
         TimeUnit::YearQuarter => 3,
         TimeUnit::YearMonth => 1,
         TimeUnit::YearWeek => return civil_from_days(days_from_civil(y, m, d) + 7),
@@ -2629,7 +3152,7 @@ fn submonth_candidate_fits(
     let mut context_row: Vec<(usize, String)> = Vec::new();
     for (position, &index) in indices.iter().enumerate() {
         let (y, m, d) = dates[index];
-        let (day, context) = format_label(y, m, d, candidate, position == 0, fiscal_start);
+        let (day, context) = format_label(y, m, d, candidate, position == 0, fiscal_start)?;
         day_row.push((index, day));
         if !context.is_empty() {
             context_row.push((index, context));
@@ -2704,17 +3227,20 @@ pub fn complete_buckets(domain: &[String], tu: TimeUnit, fiscal_start: u8) -> Ve
     out
 }
 
-/// Production's `complete_ordinal_time_series` over one series (no dimension
-/// columns to cross-join): every calendar bucket from the floored minimum to
-/// the maximum gets exactly one row, in chronological order. A row lands in
+/// Production's `complete_ordinal_time_series`: every calendar bucket from the
+/// floored minimum to the maximum gets exactly one row per combination of the
+/// `dim_fields` values the rows hold (the color series), in chronological
+/// order, each bucket's rows in ascending dimension order. A row lands in
 /// the bucket enclosing its date and is keyed to that bucket's ISO date; an
-/// empty bucket is synthesized with `fill` in every measure column (`"zero"`
-/// writes 0, every other mode null, then the interpolating modes fill the
-/// interior gaps from the observed rows). Rows that carry no parseable `x`
-/// are dropped, as production's key lookup never matches them to a bucket.
+/// empty (bucket, series) slot is synthesized with `fill` in every measure
+/// column (`"zero"` writes 0, every other mode null, then the interpolating
+/// modes fill the interior gaps of each series from its observed rows). Rows
+/// that carry no parseable `x` are dropped, as production's key lookup never
+/// matches them to a bucket.
 pub fn complete_ordinal_rows(
     rows: &[serde_json::Map<String, serde_json::Value>],
     x_field: &str,
+    dim_fields: &[&str],
     tu: TimeUnit,
     fill: &str,
     fiscal_start: u8,
@@ -2736,61 +3262,104 @@ pub fn complete_ordinal_rows(
         buckets.push(cursor);
         cursor = next_bucket(cursor, tu);
     }
-    let mut placed: Vec<Option<&serde_json::Map<String, Value>>> = vec![None; buckets.len()];
+    // Each dimension's distinct values over every row, ascending, a null last
+    // (`sorted(seen, key=lambda x: (x is None, x))`); the combinations are
+    // their product, the last dimension varying fastest.
+    let mut combos: Vec<Vec<Value>> = vec![Vec::new()];
+    for dim in dim_fields {
+        let mut values: Vec<Value> = Vec::new();
+        for row in rows {
+            let v = row.get(*dim).cloned().unwrap_or(Value::Null);
+            if !values.contains(&v) {
+                values.push(v);
+            }
+        }
+        let numbers = values.iter().all(|v| matches!(v, Value::Null | Value::Number(_) | Value::Bool(_)));
+        let texts = values.iter().all(|v| v.is_null() || v.is_string());
+        if !numbers && !texts {
+            return Err(format!("line: the values of the gap-filled series field {dim:?} mix numbers and text"));
+        }
+        values.sort_by(|a, b| match (a, b) {
+            (Value::Null, Value::Null) => std::cmp::Ordering::Equal,
+            (Value::Null, _) => std::cmp::Ordering::Greater,
+            (_, Value::Null) => std::cmp::Ordering::Less,
+            _ => crate::common::raw_x_order(a, b).expect("one kind of value is ordered"),
+        });
+        combos = combos.iter().flat_map(|head| values.iter().map(move |v| [head.clone(), vec![v.clone()]].concat())).collect();
+    }
+    let combo_of = |row: &serde_json::Map<String, Value>| -> Vec<Value> {
+        dim_fields.iter().map(|d| row.get(*d).cloned().unwrap_or(Value::Null)).collect()
+    };
+    let mut placed: Vec<Vec<Option<&serde_json::Map<String, Value>>>> = vec![vec![None; combos.len()]; buckets.len()];
     for (date, row) in &dated {
         let at = buckets.partition_point(|b| b <= date) - 1;
-        if placed[at].replace(row).is_some() {
+        let slot = combos.iter().position(|c| *c == combo_of(row)).expect("a row's dimension values are among the combinations");
+        if placed[at][slot].replace(row).is_some() {
             return Err(format!("{x_field}: two rows fall in the {tu:?} bucket starting {:?}", buckets[at]));
         }
     }
     let first = rows.first().expect("dated rows imply a first row");
     let fill_value = if fill == "zero" { Value::from(0) } else { Value::Null };
-    let mut out: Vec<serde_json::Map<String, Value>> = buckets
-        .iter()
-        .zip(&placed)
-        .map(|(&(y, m, d), existing)| {
+    let mut out: Vec<serde_json::Map<String, Value>> = Vec::with_capacity(buckets.len() * combos.len());
+    for (&(y, m, d), slots) in buckets.iter().zip(&placed) {
+        for (combo, existing) in combos.iter().zip(slots) {
             let mut row = match existing {
                 Some(row) => (*row).clone(),
-                None => first.keys().map(|k| (k.clone(), fill_value.clone())).collect(),
+                None => {
+                    let mut synthesized: serde_json::Map<String, Value> =
+                        first.keys().map(|k| (k.clone(), fill_value.clone())).collect();
+                    for (dim, value) in dim_fields.iter().zip(combo) {
+                        synthesized.insert((*dim).to_string(), value.clone());
+                    }
+                    synthesized
+                }
             };
             row.insert(x_field.to_string(), Value::String(format!("{y:04}-{m:02}-{d:02}")));
-            row
-        })
-        .collect();
+            out.push(row);
+        }
+    }
     if !matches!(fill, "linear" | "step-after" | "step-before" | "step-center" | "curve") {
         return Ok(out);
     }
-    let measures: Vec<String> = first.keys().filter(|k| k.as_str() != x_field).cloned().collect();
-    for col in measures {
-        let anchors: Vec<usize> = (0..out.len()).filter(|&i| !out[i][&col].is_null()).collect();
-        for i in 0..out.len() {
-            if !out[i][&col].is_null() {
-                continue;
-            }
-            let left = anchors.iter().rev().find(|&&a| a < i).copied();
-            let right = anchors.iter().find(|&&a| a > i).copied();
-            let filled = match (fill, left, right) {
-                ("step-after", Some(l), _) => out[l][&col].clone(),
-                ("step-before", _, Some(r)) => out[r][&col].clone(),
-                ("step-after" | "step-before", _, _) => continue,
-                (_, Some(l), Some(r)) => {
-                    let number = |at: usize| {
-                        out[at][&col].as_f64().ok_or_else(|| format!("gap fill {fill:?}: {col:?} holds a non-numeric value"))
-                    };
-                    let (lv, rv) = (number(l)?, number(r)?);
-                    let t = (i - l) as f64 / (r - l) as f64;
-                    match fill {
-                        "linear" => Value::from(lv + (rv - lv) * t),
-                        "curve" => Value::from(lv + (rv - lv) * (t * t * (3.0 - 2.0 * t))),
-                        _ => {
-                            let mid = l as f64 + (r - l) as f64 / 2.0;
-                            out[if (i as f64) < mid { l } else { r }][&col].clone()
+    let measures: Vec<String> =
+        first.keys().filter(|k| k.as_str() != x_field && !dim_fields.contains(&k.as_str())).cloned().collect();
+    for slot in 0..combos.len() {
+        // One series' rows in bucket order; the interpolation never crosses series.
+        let series: Vec<usize> = (0..buckets.len()).map(|b| b * combos.len() + slot).collect();
+        for col in &measures {
+            let anchors: Vec<usize> = (0..series.len()).filter(|&i| !out[series[i]][col].is_null()).collect();
+            for i in 0..series.len() {
+                if !out[series[i]][col].is_null() {
+                    continue;
+                }
+                let left = anchors.iter().rev().find(|&&a| a < i).copied();
+                let right = anchors.iter().find(|&&a| a > i).copied();
+                let filled = match (fill, left, right) {
+                    ("step-after", Some(l), _) => out[series[l]][col].clone(),
+                    ("step-before", _, Some(r)) => out[series[r]][col].clone(),
+                    ("step-after" | "step-before", _, _) => continue,
+                    (_, Some(l), Some(r)) => {
+                        let number = |at: usize| {
+                            out[series[at]][col]
+                                .as_f64()
+                                .ok_or_else(|| format!("gap fill {fill:?}: {col:?} holds a non-numeric value"))
+                        };
+                        let (lv, rv) = (number(l)?, number(r)?);
+                        let t = (i - l) as f64 / (r - l) as f64;
+                        match fill {
+                            "linear" => Value::from(lv + (rv - lv) * t),
+                            "curve" => Value::from(lv + (rv - lv) * (t * t * (3.0 - 2.0 * t))),
+                            _ => {
+                                let mid = l as f64 + (r - l) as f64 / 2.0;
+                                out[series[if (i as f64) < mid { l } else { r }]][col].clone()
+                            }
                         }
                     }
-                }
-                _ => continue,
-            };
-            out[i].insert(col.clone(), filled);
+                    _ => continue,
+                };
+                let target = series[i];
+                out[target].insert(col.clone(), filled);
+            }
         }
     }
     Ok(out)
@@ -2914,6 +3483,8 @@ pub fn time_unit_floor(date: &str, tu: TimeUnit) -> Option<String> {
 /// One tick of Vega's bare temporal axis.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct BareTick {
+    /// The tick's day number.
+    pub day: i64,
     /// Position as a fraction of the scale domain ([`utc_fraction_at`]).
     pub frac: f64,
     /// The tick's label under d3's multi-scale UTC format.
@@ -2948,6 +3519,9 @@ const D3_TICK_INTERVAL_MS: [f64; 18] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UtcTickInterval {
     Day(i64),
+    /// d3's `unixDay`, the day rung of `utcTicks`: its `every(step)` keeps the
+    /// days whose epoch day number divides the step (no calendar field).
+    EpochDay(i64),
     Week(i64),
     Month(i64),
     Year(i64),
@@ -3039,6 +3613,7 @@ fn utc_tick_days(interval: UtcTickInterval, lo: i64, hi: i64) -> Vec<i64> {
                 }
             }
         }
+        UtcTickInterval::EpochDay(step) => out.extend((lo..=hi).filter(|day| day.rem_euclid(step) == 0)),
         UtcTickInterval::Week(step) => {
             for day in lo..=hi {
                 let (y, m, d) = civil_from_days(day);
@@ -3342,11 +3917,44 @@ impl AuthoredTickCadence {
     /// The d3 interval the cadence names over a scale domain: an authored
     /// interval is its own, a count is the rung `utcTickInterval` picks for
     /// that many ticks across `extent`.
-    pub fn interval(self, extent: (i64, i64)) -> Result<UtcTickInterval, String> {
+    pub fn interval(self, extent: (f64, f64)) -> Result<UtcTickInterval, String> {
         match self {
             Self::Interval(interval) => Ok(interval),
-            Self::Count(count) => utc_tick_interval(extent.0 as f64, extent.1 as f64, count),
+            Self::Count(count) => utc_tick_interval(extent.0, extent.1, count),
         }
+    }
+
+    /// [`Self::interval`] on a bucketed axis, whose scale is UTC and whose
+    /// axis Vega-Lite gives the grain's `tickMinStep`: a number `tickCount` is
+    /// capped at `floor(span / minStep) + 1` (vega-scale `tickCount`), and the
+    /// ladder's 2-day rung strides epoch days ([`UtcTickInterval::EpochDay`]).
+    pub fn bucketed_interval(self, grain: TimeUnit, extent: (f64, f64)) -> Result<UtcTickInterval, String> {
+        let Self::Count(count) = self else { return self.interval(extent) };
+        let capped = count.min(min_step_ticks(extent.1 - extent.0, tick_min_step_days(grain)));
+        Ok(match utc_tick_interval(extent.0, extent.1, capped)? {
+            UtcTickInterval::Day(2) => UtcTickInterval::EpochDay(2),
+            interval => interval,
+        })
+    }
+}
+
+/// vega-scale `tickCount`'s cap, `floor(span / minStep || 1) + 1`, with both
+/// lengths in whole milliseconds as JavaScript holds them.
+fn min_step_ticks(span_days: f64, step_days: f64) -> usize {
+    let ratio = (span_days * MS_PER_DAY).round() / (step_days * MS_PER_DAY).round();
+    (if ratio == 0.0 || ratio.is_nan() { 1.0 } else { ratio }).floor() as usize + 1
+}
+
+/// The `tickMinStep` Vega-Lite compiles for a bucketed grain, in days: the
+/// span of one `timeUnit` unit from 2001-01-01 (`datetime(2001, 1, 1) -
+/// datetime(2001, 0, 1)` for a month).
+fn tick_min_step_days(grain: TimeUnit) -> f64 {
+    match grain {
+        TimeUnit::Year => 365.0,
+        TimeUnit::YearQuarter => 90.0,
+        TimeUnit::YearMonth => 31.0,
+        TimeUnit::YearWeek => 7.0,
+        TimeUnit::YearMonthDate => 1.0,
     }
 }
 
@@ -3366,28 +3974,46 @@ pub fn authored_tick_count(count: f64) -> Result<usize, String> {
 /// `tickCount` default `ceil(plot_w / 40)` — or, when the axis authors a
 /// cadence, that one instead ([`AuthoredTickCadence`]): an authored
 /// `ticks.count` replaces the default count, an authored `ticks.time_unit`
-/// ([`authored_tick_interval`]) names the interval outright. `extent` is
+/// ([`authored_tick_interval`]) names the interval outright; an authored time
+/// `format` replaces the multi-scale text on every tick. `extent` is
 /// [`utc_domain_extent`]'s.
 pub fn bare_temporal_ticks(
-    extent: (i64, i64),
+    domain: (f64, f64),
     plot_w: f64,
     authored: Option<AuthoredTickCadence>,
+    format: Option<AuthoredTimeFormat>,
 ) -> Result<Vec<BareTick>, String> {
+    let (lo, hi) = domain;
+    // A one-instant domain ticks that instant, the finest interval d3 tries.
+    if lo == hi {
+        let day = lo as i64;
+        let (y, m, d) = civil_from_days(day);
+        let text = match format {
+            Some(f) => f.text(y, m, d)?,
+            None => d3_multi_format(y, m, d),
+        };
+        return Ok(vec![BareTick { day, frac: 0.5, text }]);
+    }
+    let (first, last) = (lo.floor() as i64, hi.ceil() as i64);
     let interval = match authored {
-        Some(cadence) => cadence.interval(extent)?,
+        Some(cadence) => cadence.interval((lo, hi))?,
         None => {
             let count = crate::families::cartesian::vl_default_tick_count(plot_w).max(1);
-            utc_tick_interval(extent.0 as f64, extent.1 as f64, count)?
+            utc_tick_interval(lo, hi, count)?
         }
     };
-    let span = (extent.1 - extent.0) as f64;
-    Ok(utc_tick_days(interval, extent.0, extent.1)
+    utc_tick_days(interval, first, last)
         .into_iter()
+        .filter(|&day| lo <= day as f64 && day as f64 <= hi)
         .map(|day| {
             let (y, m, d) = civil_from_days(day);
-            BareTick { frac: (day - extent.0) as f64 / span, text: d3_multi_format(y, m, d) }
+            let text = match format {
+                Some(f) => f.text(y, m, d)?,
+                None => d3_multi_format(y, m, d),
+            };
+            Ok(BareTick { day, frac: (day as f64 - lo) / (hi - lo), text })
         })
-        .collect())
+        .collect()
 }
 
 // ── Axis-free-edge overhang ─────────────────────────────────────────────────
@@ -3462,8 +4088,8 @@ pub fn axis_free_edge_overhang(label_half_width: f64, band_center_from_edge: f64
 
 #[cfg(test)]
 mod tests {
-    /// One reading of a date cell for every family: clock as the day's
-    /// fraction, any other shape (an offset included) unread.
+    /// One reading of a date cell for every family: clock as the day's fraction
+    /// (V8's millisecond precision), an offset applied, any other shape unread.
     #[test]
     fn a_date_text_is_its_day_with_the_clock_as_the_fraction() {
         let jan_first = 19723.0;
@@ -3471,18 +4097,16 @@ mod tests {
         assert_eq!(date_text_day("2024-01"), Some(jan_first));
         assert_eq!(date_text_day("2024-01-01T12:00:00"), Some(jan_first + 0.5));
         assert_eq!(date_text_day("2024-01-01 06:00"), Some(jan_first + 0.25));
-        for unread in ["soon", "2024-01-01T", "2024/01/05", "2024-01-01T24:00:00", "2024-01-01T1:00", "2024-01-01T12:00:00Z", "2024-01-01T12:00:00+06:00"] {
+        assert_eq!(date_text_day("2024-01-01T12:00:00Z"), Some(jan_first + 0.5));
+        assert_eq!(date_text_day("2024-01-01T12:00:00+06:00"), Some(jan_first + 0.25));
+        assert_eq!(date_text_day("2024-01-01T12:00:00-06:00"), Some(jan_first + 0.75));
+        assert_eq!(date_text_day("2024-01-01T12:00:00.5"), Some(jan_first + 0.5 + 0.5 / 86_400.0));
+        assert_eq!(date_text_day("2024-01-01T12:00:00Z05:00"), None);
+        assert_eq!(date_text_day("2024-01-01T12:00:00."), None);
+        assert_eq!(date_text_day("2024-01-01T12:00:00.123456"), Some(jan_first + 0.5 + 0.123 / 86_400.0));
+        for unread in ["soon", "2024-01-01T", "2024/01/05", "2024-01-01T24:00:00", "2024-01-01T1:00", "2024-01-01T12:00:00+6", "2024-01-01T12:00:00.x", "2024-01-01T12:00:00Zulu"] {
             assert_eq!(date_text_day(unread), None, "{unread}");
         }
-    }
-
-    #[test]
-    fn authored_time_format_refuses_a_time_spec_and_ignores_a_number_spec() {
-        assert!(refuse_authored_time_format("bar", Some("%b %Y")).is_err());
-        assert!(refuse_authored_time_format("bar", Some("%-d %b")).is_err());
-        assert!(refuse_authored_time_format("bar", Some(",.0f")).is_ok());
-        assert!(refuse_authored_time_format("bar", Some("100%%")).is_ok());
-        assert!(refuse_authored_time_format("bar", None).is_ok());
     }
 
     use super::*;
@@ -3582,42 +4206,64 @@ mod tests {
 
     // ── tooltip_header_date ──────────────────────────────────────────────
 
+    fn in_language<T>(code: &str, f: impl FnOnce() -> T) -> T {
+        display_text::language::with_language(display_text::language::Language::new(code).unwrap(), f)
+    }
+
+    /// The quarter words follow the board language: the house tooltip header
+    /// puts the quarter before the year where Vega-Lite's default format puts
+    /// it after, and a language may spell both its own way.
+    #[test]
+    fn quarter_labels_follow_the_board_language() {
+        let header = |code: &str| {
+            in_language(code, || tooltip_header_date(2024, 2, 3, Some(TimeUnit::YearQuarter))).unwrap()
+        };
+        assert_eq!(header("en"), "Q1 2024");
+        assert_eq!(header("fr"), "T1 2024");
+        assert_eq!(header("ja"), "2024年第1四半期");
+        let native = |code: &str| in_language(code, || vl_default_format(2024, 11, 3, TimeUnit::YearQuarter)).unwrap();
+        assert_eq!(native("en"), "2024 Q4");
+        assert_eq!(native("tr"), "2024 Ç4");
+        let axis = in_language("tr", || format_label(2024, 5, 1, TimeUnit::YearQuarter, true, 1)).unwrap();
+        assert_eq!(axis, ("Ç2".to_string(), "2024".to_string()));
+    }
+
     /// Ports `tooltip_header_date_expr` (time_unit_detect.py:2159-2183):
     /// full bucket text, never the coarsened bare form an axis label uses.
     #[test]
     fn tooltip_header_date_matches_production_vocabulary() {
-        assert_eq!(tooltip_header_date(2024, 2, 3, Some(TimeUnit::Year)), "2024");
+        assert_eq!(tooltip_header_date(2024, 2, 3, Some(TimeUnit::Year)).unwrap(), "2024");
         assert_eq!(
-            tooltip_header_date(2024, 2, 3, Some(TimeUnit::YearQuarter)),
+            tooltip_header_date(2024, 2, 3, Some(TimeUnit::YearQuarter)).unwrap(),
             "Q1 2024"
         );
         assert_eq!(
-            tooltip_header_date(2024, 11, 3, Some(TimeUnit::YearQuarter)),
+            tooltip_header_date(2024, 11, 3, Some(TimeUnit::YearQuarter)).unwrap(),
             "Q4 2024"
         );
         assert_eq!(
-            tooltip_header_date(2024, 2, 3, Some(TimeUnit::YearMonth)),
+            tooltip_header_date(2024, 2, 3, Some(TimeUnit::YearMonth)).unwrap(),
             "Feb 2024"
         );
         assert_eq!(
-            tooltip_header_date(2024, 2, 3, Some(TimeUnit::YearWeek)),
+            tooltip_header_date(2024, 2, 3, Some(TimeUnit::YearWeek)).unwrap(),
             "3\u{2013}9 Feb 2024"
         );
         assert_eq!(
-            tooltip_header_date(2024, 1, 29, Some(TimeUnit::YearWeek)),
+            tooltip_header_date(2024, 1, 29, Some(TimeUnit::YearWeek)).unwrap(),
             "29 Jan \u{2013} 4 Feb 2024"
         );
         assert_eq!(
-            tooltip_header_date(2025, 12, 27, Some(TimeUnit::YearWeek)),
+            tooltip_header_date(2025, 12, 27, Some(TimeUnit::YearWeek)).unwrap(),
             "27 Dec 2025 \u{2013} 2 Jan 2026"
         );
         // YearMonthDate and the continuous/sub-daily `None` case share one
         // fallback format (production's own `else` branch).
         assert_eq!(
-            tooltip_header_date(2024, 2, 3, Some(TimeUnit::YearMonthDate)),
+            tooltip_header_date(2024, 2, 3, Some(TimeUnit::YearMonthDate)).unwrap(),
             "3 Feb 2024"
         );
-        assert_eq!(tooltip_header_date(2024, 2, 3, None), "3 Feb 2024");
+        assert_eq!(tooltip_header_date(2024, 2, 3, None).unwrap(), "3 Feb 2024");
     }
 
     // ── detect_time_unit ──────────────────────────────────────────────────
@@ -3681,6 +4327,18 @@ mod tests {
         assert!(x_values_are_temporal_candidates(&["Jan 15, 2024", "Feb 20, 2024"]));
         assert!(x_values_are_temporal_candidates(&["Jan 15,\u{a0}2024", "Feb 20,\u{a0}2024"]));
         assert!(x_values_are_temporal_candidates(&["Jan 15 2024", "Feb 20 2024"]));
+    }
+
+    /// `is_date_like_string` is `DATE_LIKE_PATTERNS`: the bucket shapes plus the ISO date,
+    /// US date and naive timestamp, but not a slash-ordered year-first date.
+    #[test]
+    fn date_like_strings_are_the_date_like_patterns_and_no_wider() {
+        for yes in ["2024-Q1", "Jan 2024", "2024-01-15", "01/15/2024", "2024-01-15 13:30", "2024-01-15T13:30:00.5"] {
+            assert!(is_date_like_string(yes), "{yes}");
+        }
+        for no in ["North", "2024/01/15", "2024-01-15T13", "15", ""] {
+            assert!(!is_date_like_string(no), "{no}");
+        }
     }
 
     #[test]
@@ -3941,17 +4599,17 @@ mod tests {
     #[test]
     fn yearmonth_labels_anchor_and_jan() {
         // Jan 2024 (first) → "Jan" / "2024"
-        let (r1, r2) = format_label(2024, 1, 1, TimeUnit::YearMonth, true, 1);
+        let (r1, r2) = format_label(2024, 1, 1, TimeUnit::YearMonth, true, 1).unwrap();
         assert_eq!(r1, "Jan");
         assert_eq!(r2, "2024");
 
         // Feb 2024 (inner) → "Feb" / ""
-        let (r1, r2) = format_label(2024, 2, 1, TimeUnit::YearMonth, false, 1);
+        let (r1, r2) = format_label(2024, 2, 1, TimeUnit::YearMonth, false, 1).unwrap();
         assert_eq!(r1, "Feb");
         assert_eq!(r2, "");
 
         // Jan 2025 (year boundary, not first) → "Jan" / "2025"
-        let (r1, r2) = format_label(2025, 1, 1, TimeUnit::YearMonth, false, 1);
+        let (r1, r2) = format_label(2025, 1, 1, TimeUnit::YearMonth, false, 1).unwrap();
         assert_eq!(r1, "Jan");
         assert_eq!(r2, "2025");
     }
@@ -3959,15 +4617,15 @@ mod tests {
     /// yearquarter cadence: Q labels with year at anchor / Q1.
     #[test]
     fn yearquarter_labels() {
-        let (r1, r2) = format_label(2024, 1, 1, TimeUnit::YearQuarter, true, 1);
+        let (r1, r2) = format_label(2024, 1, 1, TimeUnit::YearQuarter, true, 1).unwrap();
         assert_eq!(r1, "Q1");
         assert_eq!(r2, "2024");
 
-        let (r1, r2) = format_label(2024, 4, 1, TimeUnit::YearQuarter, false, 1);
+        let (r1, r2) = format_label(2024, 4, 1, TimeUnit::YearQuarter, false, 1).unwrap();
         assert_eq!(r1, "Q2");
         assert_eq!(r2, "");
 
-        let (r1, r2) = format_label(2025, 1, 1, TimeUnit::YearQuarter, false, 1);
+        let (r1, r2) = format_label(2025, 1, 1, TimeUnit::YearQuarter, false, 1).unwrap();
         assert_eq!(r1, "Q1");
         assert_eq!(r2, "2025");
     }
@@ -3975,7 +4633,7 @@ mod tests {
     /// year cadence: plain year, no row2.
     #[test]
     fn year_labels() {
-        let (r1, r2) = format_label(2024, 1, 1, TimeUnit::Year, true, 1);
+        let (r1, r2) = format_label(2024, 1, 1, TimeUnit::Year, true, 1).unwrap();
         assert_eq!(r1, "2024");
         assert_eq!(r2, "");
     }
@@ -3993,22 +4651,22 @@ mod tests {
 
         // March is the fiscal year's first month → Q1, with year row (fiscal
         // year opener, mirrors the `is_first`/year-start OR in production).
-        let (r1, r2) = format_label(2024, 3, 1, TimeUnit::YearQuarter, false, fiscal_start);
+        let (r1, r2) = format_label(2024, 3, 1, TimeUnit::YearQuarter, false, fiscal_start).unwrap();
         assert_eq!(r1, "Q1");
         assert_eq!(r2, "2024");
 
         // June/September/December step through Q2/Q3/Q4.
-        let (r1, _) = format_label(2024, 6, 1, TimeUnit::YearQuarter, false, fiscal_start);
+        let (r1, _) = format_label(2024, 6, 1, TimeUnit::YearQuarter, false, fiscal_start).unwrap();
         assert_eq!(r1, "Q2");
-        let (r1, _) = format_label(2024, 9, 1, TimeUnit::YearQuarter, false, fiscal_start);
+        let (r1, _) = format_label(2024, 9, 1, TimeUnit::YearQuarter, false, fiscal_start).unwrap();
         assert_eq!(r1, "Q3");
-        let (r1, _) = format_label(2024, 12, 1, TimeUnit::YearQuarter, false, fiscal_start);
+        let (r1, _) = format_label(2024, 12, 1, TimeUnit::YearQuarter, false, fiscal_start).unwrap();
         assert_eq!(r1, "Q4");
 
         // January/February still belong to the fiscal year that opened the
         // previous March — still Q4, and NOT a fiscal year-start month, so
         // no year row.
-        let (r1, r2) = format_label(2025, 1, 1, TimeUnit::YearQuarter, false, fiscal_start);
+        let (r1, r2) = format_label(2025, 1, 1, TimeUnit::YearQuarter, false, fiscal_start).unwrap();
         assert_eq!(r1, "Q4");
         assert_eq!(r2, "");
     }
@@ -4029,22 +4687,22 @@ mod tests {
     #[test]
     fn yearmonthdate_labels_anchor_and_openers() {
         // First label (Jan 1): "1" / "Jan'24"
-        let (r1, r2) = format_label(2024, 1, 1, TimeUnit::YearMonthDate, true, 1);
+        let (r1, r2) = format_label(2024, 1, 1, TimeUnit::YearMonthDate, true, 1).unwrap();
         assert_eq!(r1, "1");
         assert_eq!(r2, "Jan'24");
 
         // Feb 1 (month opener, not year start): "1" / "Feb"
-        let (r1, r2) = format_label(2024, 2, 1, TimeUnit::YearMonthDate, false, 1);
+        let (r1, r2) = format_label(2024, 2, 1, TimeUnit::YearMonthDate, false, 1).unwrap();
         assert_eq!(r1, "1");
         assert_eq!(r2, "Feb");
 
         // Jan 1 2025 (year boundary, not first): "1" / "Jan'25"
-        let (r1, r2) = format_label(2025, 1, 1, TimeUnit::YearMonthDate, false, 1);
+        let (r1, r2) = format_label(2025, 1, 1, TimeUnit::YearMonthDate, false, 1).unwrap();
         assert_eq!(r1, "1");
         assert_eq!(r2, "Jan'25");
 
         // Inner day: "15" / ""
-        let (r1, r2) = format_label(2024, 3, 15, TimeUnit::YearMonthDate, false, 1);
+        let (r1, r2) = format_label(2024, 3, 15, TimeUnit::YearMonthDate, false, 1).unwrap();
         assert_eq!(r1, "15");
         assert_eq!(r2, "");
     }
@@ -4742,11 +5400,12 @@ mod tests {
         // Quarters floor to the fiscal anchor: April-start year, data from June.
         let quarters = complete_buckets(&s(&["2025-06-01", "2025-10-01"]), TimeUnit::YearQuarter, 4);
         assert_eq!(quarters, s(&["2025-04-01", "2025-07-01", "2025-10-01"]));
-        // A yearly grain is Jan-1 dates: a February fiscal anchor floors the
-        // first to the previous February, then steps to each 1 January.
+        // A yearly grain floors to the fiscal anchor (a February start puts the
+        // first Jan-1 date in the previous February) and steps a year at a time
+        // from there, keeping the anchor's month.
         assert_eq!(
             complete_buckets(&s(&["2024-01-01", "2025-01-01"]), TimeUnit::Year, 2),
-            s(&["2023-02-01", "2024-01-01", "2025-01-01"])
+            s(&["2023-02-01", "2024-02-01"])
         );
         // Months across a year end.
         assert_eq!(
@@ -5115,6 +5774,7 @@ mod tests {
                 Some(&TILT_LADDER),
                 11.0,
                 None,
+                None,
                 &mut char_measure,
             );
             match result {
@@ -5208,7 +5868,7 @@ mod tests {
         ];
         for &(lo, hi, plot_w, want) in cases {
             let extent = utc_domain_extent(&[lo.to_string(), hi.to_string()]).unwrap();
-            let ticks = bare_temporal_ticks(extent, plot_w, None).expect("ticks");
+            let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), plot_w, None, None).expect("ticks");
             let got: Vec<&str> = ticks.iter().map(|t| t.text.as_str()).collect();
             assert_eq!(got, want, "{lo}..{hi} at {plot_w}px");
             let span = (extent.1 - extent.0) as f64;
@@ -5257,9 +5917,10 @@ mod tests {
             let extent = utc_domain_extent(&[lo.to_string(), hi.to_string()]).unwrap();
             for plot_w in [120.0, 4000.0] {
                 let ticks = bare_temporal_ticks(
-                    extent,
+                    (extent.0 as f64, extent.1 as f64),
                     plot_w,
                     Some(AuthoredTickCadence::Count(count)),
+                    None,
                 )
                 .expect("ticks");
                 let got: Vec<&str> = ticks.iter().map(|t| t.text.as_str()).collect();
@@ -5281,7 +5942,7 @@ mod tests {
         let extent = utc_domain_extent(&[lo.to_string(), hi.to_string()]).unwrap();
         let interval = authored_tick_interval(unit, step).expect("modeled interval");
         let authored = Some(AuthoredTickCadence::Interval(interval));
-        let ticks = bare_temporal_ticks(extent, 600.0, authored).expect("ticks");
+        let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), 600.0, authored, None).expect("ticks");
         ticks.into_iter().map(|t| t.text).collect()
     }
 
@@ -5573,7 +6234,7 @@ mod tests {
     #[test]
     fn a_sub_day_tick_interval_refuses() {
         let extent = utc_domain_extent(&["2024-01-03".into(), "2024-01-05".into()]).unwrap();
-        let err = bare_temporal_ticks(extent, 1200.0, None).expect_err("sub-day rung is unmodeled");
+        let err = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), 1200.0, None, None).expect_err("sub-day rung is unmodeled");
         assert!(err.contains("finer than a day"), "{err}");
     }
 
@@ -5586,7 +6247,7 @@ mod tests {
     }
 
     fn authored(fmt: &str) -> Option<AuthoredTimeFormat<'_>> {
-        AuthoredTimeFormat::parse("bar", Some(fmt), None).unwrap()
+        AuthoredTimeFormat::parse("bar", Some(fmt)).unwrap()
     }
 
     #[test]
@@ -5607,9 +6268,9 @@ mod tests {
 
     #[test]
     fn a_number_format_or_no_format_is_not_an_authored_time_format() {
-        assert!(AuthoredTimeFormat::parse("bar", None, None).unwrap().is_none());
-        assert!(AuthoredTimeFormat::parse("bar", Some(",.0f"), None).unwrap().is_none());
-        assert!(AuthoredTimeFormat::parse("bar", Some("100%%"), None).unwrap().is_none());
+        assert!(AuthoredTimeFormat::parse("bar", None).unwrap().is_none());
+        assert!(AuthoredTimeFormat::parse("bar", Some(",.0f")).unwrap().is_none());
+        assert!(AuthoredTimeFormat::parse("bar", Some("100%%")).unwrap().is_none());
     }
 
     /// A directive whose Vega paint (d3-time-format, en-US) and cadence
@@ -5620,20 +6281,14 @@ mod tests {
     fn an_authored_format_refuses_what_vega_and_the_measurement_may_paint_differently() {
         for letter in ['q', 'g', 'H', 'M', 'c', 'x', 'X', 'Z', 'z', 's', 'F', 'C', 'p', 'L'] {
             let fmt = format!("%b %{letter}");
-            let err = AuthoredTimeFormat::parse("bar", Some(&fmt), None).expect_err(&fmt);
+            let err = AuthoredTimeFormat::parse("bar", Some(&fmt)).expect_err(&fmt);
             assert!(err.starts_with("bar: authored time format"), "{err}");
             assert!(err.contains(&format!("uses %{letter},")), "{fmt}: {err}");
         }
         for (fmt, named) in [("%-b", "%-b"), ("%Y%", "trailing")] {
-            let err = AuthoredTimeFormat::parse("bar", Some(fmt), None).expect_err(fmt);
+            let err = AuthoredTimeFormat::parse("bar", Some(fmt)).expect_err(fmt);
             assert!(err.contains(named), "{fmt}: {err}");
         }
-    }
-
-    #[test]
-    fn labels_time_unit_none_parses_only_for_the_vega_label_families() {
-        assert!(AuthoredTimeFormat::parse("bar", Some("%Y-%m"), Some("none")).is_err());
-        assert!(AuthoredTimeFormat::parse_for_vega_labels("line", Some("%Y-%m")).unwrap().is_some());
     }
 
     #[test]
@@ -5641,8 +6296,63 @@ mod tests {
         assert_eq!(authored("%Y").unwrap().text(100, 1, 1).unwrap(), "0100");
         assert!(authored("%Y").unwrap().text(99, 1, 1).is_err());
         assert_eq!(authored("%Y-%m").unwrap().text(999, 3, 1).unwrap(), "0999-03");
-        let err = authored("%-Y").unwrap().text(999, 1, 1).expect_err("modified %Y");
-        assert!(err.contains("999"), "{err}");
+        assert_eq!(authored("%-Y").unwrap().text(999, 1, 1).unwrap(), "999");
+        assert_eq!(authored("%_Y").unwrap().text(999, 1, 1).unwrap(), " 999");
+        assert_eq!(authored("%0Y-%m").unwrap().text(999, 3, 1).unwrap(), "0999-03");
+    }
+
+    #[test]
+    fn the_label_unit_reads_none_and_the_time_parts_as_raw_bands() {
+        use TimeUnit::{Year, YearMonth};
+        assert_eq!(LabelUnit::resolve(YearMonth, None), Ok(LabelUnit::Calendar(YearMonth)));
+        assert_eq!(LabelUnit::resolve(YearMonth, Some("auto")), Ok(LabelUnit::Calendar(YearMonth)));
+        assert_eq!(LabelUnit::resolve(YearMonth, Some("year")), Ok(LabelUnit::Calendar(Year)));
+        assert_eq!(LabelUnit::resolve(YearMonth, Some("none")), Ok(LabelUnit::Raw(None)));
+        assert_eq!(
+            LabelUnit::resolve(YearMonth, Some("dayofweek")),
+            Ok(LabelUnit::Raw(Some(TimePart::DayOfWeek)))
+        );
+        assert!(LabelUnit::resolve(YearMonth, Some("fortnight")).is_err());
+        assert_eq!(LabelUnit::Calendar(Year).grain(), Some(Year));
+        assert_eq!(LabelUnit::Raw(None).grain(), None);
+    }
+
+    /// A raw band's crowding is measured on the author's format first, then the
+    /// time part's vocabulary, then the band string itself.
+    #[test]
+    fn a_raw_band_measures_the_format_then_the_time_part_then_itself() {
+        let _locale = crate::time_locale::en_us_scope();
+        let format = AuthoredTimeFormat::parse("bar", Some("%b %Y")).unwrap();
+        let none = LabelUnit::Raw(None);
+        assert_eq!(none.raw_measure_text("2024-03-05", format).unwrap(), "Mar 2024");
+        assert_eq!(none.raw_measure_text("2024-03-05", None).unwrap(), "2024-03-05");
+        let part = |p| LabelUnit::Raw(Some(p)).raw_measure_text("2024-03-05", None).unwrap();
+        assert_eq!(part(TimePart::MonthOfYear), "Mar");
+        assert_eq!(part(TimePart::DayOfWeek), "Tue");
+        assert_eq!(part(TimePart::DayOfMonth), "5");
+        assert_eq!(part(TimePart::DayOfYear), "65");
+        assert_eq!(part(TimePart::HourOfDay), "0");
+        assert_eq!(LabelUnit::Raw(None).raw_measure_text("Core", format).unwrap(), "Core");
+        assert!(LabelUnit::Calendar(TimeUnit::Year).raw_measure_text("2024-03-05", None).is_err());
+    }
+
+    /// `labels.time_unit: none` measures the author's format, not the raw band:
+    /// "Jan" clears twelve bands that "2024-01-01" would crowd into parity.
+    #[test]
+    fn the_none_layout_measures_the_authored_format() {
+        let _locale = crate::time_locale::en_us_scope();
+        let domain = months(12);
+        let format = AuthoredTimeFormat::parse("line", Some("%b")).unwrap();
+        let layout = |authored| {
+            let mut measure = |s: &str| Ok(s.len() as f64 * 6.0);
+            resolve_vega_x_labels(
+                &domain, TimeUnit::YearMonth, Some("none"), 300.0, false, true, 1, true, false, None, 11.0, authored, None,
+                &mut measure,
+            )
+            .unwrap()
+        };
+        assert!(!layout(format).parity);
+        assert!(layout(None).parity);
     }
 
     // ── the authored format in the cadence ladder ───────────────────────────
@@ -5741,18 +6451,6 @@ mod tests {
         assert_eq!(labels[31].row1, "1");
     }
 
-    /// `labels.time_unit: none` hands an authored format to Vega's own tick
-    /// labels; only a number format (not a time format) passes through it.
-    #[test]
-    fn an_authored_format_with_labels_time_unit_none_refuses_by_name() {
-        let _locale = crate::time_locale::en_us_scope();
-        let err = AuthoredTimeFormat::parse("bar", Some("%b"), Some("none")).expect_err("refuses");
-        assert!(err.starts_with("bar: authored time format"), "{err}");
-        assert!(err.contains("time_unit: none"), "{err}");
-        assert!(AuthoredTimeFormat::parse("bar", Some(",.0f"), Some("none")).unwrap().is_none());
-        assert!(AuthoredTimeFormat::parse("bar", Some("%b"), Some("auto")).unwrap().is_some());
-    }
-
     fn months(count: usize) -> Vec<String> {
         (0..count).map(|i| format!("{}-{:02}-01", 2024 + i / 12, i % 12 + 1)).collect()
     }
@@ -5766,7 +6464,7 @@ mod tests {
     #[test]
     fn a_vertical_ladder_steps_from_months_to_quarter_openers() {
         let domain = months(24);
-        let out = resolve_vertical_temporal_labels(&domain, TimeUnit::YearMonth, 272.0, 1, true, 11.0, 16.0).unwrap();
+        let out = resolve_vertical_temporal_labels(&domain, TimeUnit::YearMonth, 272.0, 1, true, 11.0, 16.0, None).unwrap();
         assert!(out.fits);
         assert_eq!(first_rows(&out.labels), ["Jan", "Apr", "Jul", "Oct", "Jan", "Apr", "Jul", "Oct"]);
         assert_eq!(out.labels[0].row2, "2024");
@@ -5779,10 +6477,10 @@ mod tests {
     #[test]
     fn a_vertical_ladder_ends_at_years_and_reports_a_collision() {
         let domain = months(37);
-        let years = resolve_vertical_temporal_labels(&domain, TimeUnit::YearMonth, 260.0, 1, true, 11.0, 16.0).unwrap();
+        let years = resolve_vertical_temporal_labels(&domain, TimeUnit::YearMonth, 260.0, 1, true, 11.0, 16.0, None).unwrap();
         assert!(years.fits);
         assert_eq!(first_rows(&years.labels), ["2024", "2025", "2026", "2027"]);
-        let tight = resolve_vertical_temporal_labels(&domain, TimeUnit::YearMonth, 20.0, 1, true, 11.0, 16.0).unwrap();
+        let tight = resolve_vertical_temporal_labels(&domain, TimeUnit::YearMonth, 20.0, 1, true, 11.0, 16.0, None).unwrap();
         assert!(!tight.fits);
     }
 
@@ -5790,8 +6488,141 @@ mod tests {
     #[test]
     fn a_vertical_ladder_without_skip_keeps_every_label() {
         let domain = months(24);
-        let out = resolve_vertical_temporal_labels(&domain, TimeUnit::YearMonth, 100.0, 1, false, 11.0, 16.0).unwrap();
+        let out = resolve_vertical_temporal_labels(&domain, TimeUnit::YearMonth, 100.0, 1, false, 11.0, 16.0, None).unwrap();
         assert!(!out.fits);
         assert_eq!(out.labels.len(), 24);
+    }
+
+    /// Vega-Lite's `timeUnit: month` keeps the month and puts it in 2012; a
+    /// `day` maps a Sunday to Jan 1 and the rest of the week after it.
+    #[test]
+    fn a_time_part_maps_an_instant_into_2012() {
+        let day = |y, m, d| days_from_civil(y, m, d) as f64;
+        assert_eq!(TimePart::MonthOfYear.instant(day(2024, 5, 17)), day(2012, 5, 1));
+        assert_eq!(TimePart::DayOfWeek.instant(day(2024, 1, 21)), day(2012, 1, 1));
+        assert_eq!(TimePart::DayOfWeek.instant(day(2024, 1, 15)), day(2012, 1, 2));
+        assert_eq!(TimePart::DayOfMonth.instant(day(2023, 11, 28)), day(2012, 1, 28));
+        assert_eq!(TimePart::DayOfYear.instant(day(2023, 3, 1)), day(2012, 1, 1) + 59.0);
+        let clock = day(2024, 2, 4) + (14.0 * 3600.0 + 45.0 * 60.0) / 86_400.0;
+        assert_eq!(TimePart::HourOfDay.instant(clock), day(2012, 1, 1) + 14.0 / 24.0);
+    }
+
+    fn part_texts(ticks: &[PartTick]) -> Vec<&str> {
+        ticks.iter().map(|t| t.text.as_str()).collect()
+    }
+
+    /// Vega asks d3 for ten ticks, but `tickMinStep` (a month is 31 days)
+    /// caps that at `floor(span / 31) + 1`: five over Feb..Jul, so the month rung.
+    #[test]
+    fn a_month_part_axis_ticks_month_starts_under_its_min_step() {
+        let lo = days_from_civil(2012, 2, 1) as f64;
+        let hi = days_from_civil(2012, 7, 1) as f64;
+        let ticks = time_part_ticks((lo, hi), 455.0, TimePart::MonthOfYear, None, None).unwrap();
+        assert_eq!(part_texts(&ticks), ["Feb", "Mar", "Apr", "May", "Jun", "Jul"]);
+        assert_eq!(ticks[0].frac, 0.0);
+        assert_eq!(ticks[5].frac, 1.0);
+    }
+
+    /// An hour part spans one hour here: the one-hour min step caps the ten
+    /// ticks at two, which d3 answers with the 30-minute rung.
+    #[test]
+    fn an_hour_part_axis_over_one_hour_ticks_the_half_hour() {
+        let lo = days_from_civil(2012, 1, 1) as f64 + 9.0 / 24.0;
+        let ticks = time_part_ticks((lo, lo + 1.0 / 24.0), 445.0, TimePart::HourOfDay, None, None).unwrap();
+        assert_eq!(part_texts(&ticks), ["09:00", "09:00", "10:00"]);
+    }
+
+    /// A day part has no `tickMinStep`; its default count is Vega's ten, so a
+    /// four-day span ticks every 12 hours.
+    #[test]
+    fn a_weekday_part_axis_ticks_every_half_day() {
+        let lo = days_from_civil(2012, 1, 1) as f64;
+        let ticks = time_part_ticks((lo, lo + 4.0), 455.0, TimePart::DayOfWeek, None, None).unwrap();
+        assert_eq!(part_texts(&ticks), ["Sun", "Sun", "Mon", "Mon", "Tue", "Tue", "Wed", "Wed", "Thu"]);
+    }
+
+    /// A number `tickCount` on a bucketed axis is capped by the grain's
+    /// `tickMinStep` and its 2-day rung strides epoch days, not month dates.
+    #[test]
+    fn a_bucketed_count_is_capped_by_the_grain_min_step_and_strides_epoch_days() {
+        let lo = days_from_civil(2024, 1, 1) as f64;
+        let monthly = AuthoredTickCadence::Count(12).bucketed_interval(TimeUnit::YearMonth, (lo, lo + 152.0)).unwrap();
+        assert_eq!(monthly, UtcTickInterval::Month(1));
+        let daily = AuthoredTickCadence::Count(5).bucketed_interval(TimeUnit::YearMonthDate, (lo, lo + 9.0)).unwrap();
+        assert_eq!(daily, UtcTickInterval::EpochDay(2));
+        let days = interval_tick_days((lo as i64, lo as i64 + 9), daily);
+        assert_eq!(days, [lo as i64 + 1, lo as i64 + 3, lo as i64 + 5, lo as i64 + 7, lo as i64 + 9]);
+    }
+
+    /// The crowding test measures one text per band of the part's vocabulary:
+    /// every 15th is one band, and an authored format repaints its first date.
+    #[test]
+    fn a_part_axis_measures_one_text_per_band() {
+        let dates: Vec<String> = ["2023-01-15", "2024-02-15", "2024-03-02"].map(String::from).to_vec();
+        let texts = part_band_texts(&dates, TimePart::DayOfMonth, None, None).unwrap();
+        assert_eq!(texts, ["15", "2"]);
+        let authored = AuthoredTimeFormat::parse("scatter", Some("%d.%m.%Y")).unwrap();
+        assert_eq!(part_band_texts(&dates, TimePart::DayOfMonth, None, authored).unwrap(), ["15.01.2023", "02.03.2024"]);
+    }
+
+    /// Under `labels.time_unit: none` every tick speaks in Vega-Lite's own
+    /// per-grain format, an empty bucket's included.
+    #[test]
+    fn a_none_axis_labels_every_tick_in_the_grains_own_format() {
+        let days = [days_from_civil(2024, 3, 1), days_from_civil(2024, 4, 1)];
+        let labels = none_tick_labels(&days, TimeUnit::YearMonth, None).unwrap();
+        assert_eq!(labels.iter().map(|l| l.row1.as_str()).collect::<Vec<_>>(), ["Mar 2024", "Apr 2024"]);
+        assert!(labels.iter().all(|l| l.row2.is_empty()));
+    }
+
+    /// `complete_ordinal_time_series` crosses the buckets with each series: a
+    /// month one series lacks gets a null row for it, bucket-major with the
+    /// series ascending, and the other series keep their rows.
+    #[test]
+    fn a_gap_fill_with_a_series_field_synthesizes_each_series_missing_slot() {
+        let row = |x: &str, series: &str, v: f64| {
+            serde_json::json!({"x": x, "seg": series, "v": v}).as_object().unwrap().clone()
+        };
+        let rows = [row("2024-01-01", "b", 1.0), row("2024-02-01", "a", 2.0), row("2024-03-01", "a", 3.0), row("2024-03-01", "b", 4.0)];
+        let filled = complete_ordinal_rows(&rows, "x", &["seg"], TimeUnit::YearMonth, "null", 1).unwrap();
+        let shape: Vec<(String, String, serde_json::Value)> = filled
+            .iter()
+            .map(|r| (r["x"].as_str().unwrap().to_string(), r["seg"].as_str().unwrap().to_string(), r["v"].clone()))
+            .collect();
+        let null = serde_json::Value::Null;
+        let at = |x: &str, seg: &str, v: serde_json::Value| (x.to_string(), seg.to_string(), v);
+        assert_eq!(
+            shape,
+            [
+                at("2024-01-01", "a", null.clone()),
+                at("2024-01-01", "b", serde_json::json!(1.0)),
+                at("2024-02-01", "a", serde_json::json!(2.0)),
+                at("2024-02-01", "b", null),
+                at("2024-03-01", "a", serde_json::json!(3.0)),
+                at("2024-03-01", "b", serde_json::json!(4.0)),
+            ]
+        );
+    }
+
+    /// A date off its bucket's start is keyed by the bucket that holds it;
+    /// a date on a start, and a week (anchored by the data), are left alone.
+    #[test]
+    fn a_date_off_its_bucket_start_is_keyed_by_the_enclosing_bucket() {
+        assert_eq!(off_anchor_bucket_start("2024-01-31", TimeUnit::YearMonth, 1).as_deref(), Some("2024-01-01"));
+        assert_eq!(off_anchor_bucket_start("2024-01-01", TimeUnit::Year, 4).as_deref(), Some("2023-04-01"));
+        assert_eq!(off_anchor_bucket_start("2024-04-01", TimeUnit::Year, 4), None);
+        assert_eq!(off_anchor_bucket_start("2024-01-31", TimeUnit::YearWeek, 1), None);
+    }
+
+    /// A bool series field is ordered like the ints Python reads it as: false,
+    /// true, then a null last.
+    #[test]
+    fn a_gap_fill_orders_a_bool_series_field_false_true_null() {
+        let row = |x: &str, seg: serde_json::Value| serde_json::json!({"x": x, "seg": seg, "v": 1.0}).as_object().unwrap().clone();
+        let rows = [row("2024-01-01", serde_json::json!(true)), row("2024-01-01", serde_json::json!(false)), row("2024-01-01", serde_json::Value::Null), row("2024-03-01", serde_json::json!(true))];
+        let filled = complete_ordinal_rows(&rows, "x", &["seg"], TimeUnit::YearMonth, "null", 1).unwrap();
+        let first: Vec<&serde_json::Value> = filled.iter().take(3).map(|r| &r["seg"]).collect();
+        assert_eq!(first, [&serde_json::json!(false), &serde_json::json!(true), &serde_json::Value::Null]);
+        assert_eq!(filled.len(), 9);
     }
 }

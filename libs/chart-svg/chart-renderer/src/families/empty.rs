@@ -257,8 +257,8 @@ fn render_discrete(family: &str, payload: &Payload, fonts: &FontBook) -> Result<
     let (ax_x, ax_y) = (&head.style.axis_x, &head.style.axis_y);
     let val_on_right = value_axis_on_right(family, ax_y)?;
     let (off_x, off_y) = (ax_x.ticks.offset.unwrap_or(0.0), ax_y.ticks.offset.unwrap_or(0.0));
-    let x_text = crate::common::axis_title_text(&extra.x, extra.x_label.as_deref(), &extra.field_labels);
-    let y_text = crate::common::axis_title_text(&extra.y, extra.y_label.as_deref(), &extra.field_labels);
+    let x_text = crate::common::axis_title_text(&extra.x, extra.x_label.as_deref(), &extra.field_labels)?;
+    let y_text = crate::common::axis_title_text(&extra.y, extra.y_label.as_deref(), &extra.field_labels)?;
     let x_shown = crate::common::axis_title_band(&ax_x.title, &x_text) > 0.0;
     let y_shown = crate::common::axis_title_band(&ax_y.title, &y_text) > 0.0;
     if y_shown {

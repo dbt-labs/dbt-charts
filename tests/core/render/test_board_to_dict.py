@@ -16,6 +16,7 @@ from dbt_charts.core.render.board_to_dict import (
     CHART_FIELDS,
     _render_chart_item,
     board_to_dict,
+    chart_to_dict,
 )
 from dbt_charts.core.render.errors import RenderError
 
@@ -196,6 +197,7 @@ _OMITTED_FROM_PROJECTION = {
     "stack": "authored as style.stack, not a chart-root field",
     "variant": "authored as KPI style.variant, not a chart-root field",
     "text_link": "derived from the KPI's `email`/`url` format, never authored",
+    "link_open": "folded into `link` as its `{url, open}` object form",
     # Reads like an authored field but is resolved from the style cascade and
     # rejected on the authored bar surface.
     "orientation": "resolved from style; not authorable",
@@ -354,3 +356,17 @@ def test_y_range_display_takes_the_standalone_sign_placement(config, expected):
     chart = SimpleNamespace(y="v")
     data = [{"v": -500}, {"v": 1000}]
     assert _cartesian_y_range_display(chart, data, fmt, None) == expected
+
+
+@pytest.mark.parametrize(
+    ("link_open", "expected"),
+    [
+        ("modal", {"url": "/detail", "open": "modal"}),
+        ("page", "/detail"),
+    ],
+)
+def test_link_open_folds_into_the_authored_link(link_open: str, expected: Any) -> None:
+    """The projection re-compiles as authored, so a modal link keeps its mode."""
+    item = {"chart": {"chart_type": "bar", "link": "/detail", "link_open": link_open}}
+
+    assert chart_to_dict(item, "q")["link"] == expected

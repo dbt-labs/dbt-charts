@@ -376,6 +376,11 @@
     pointer-events: auto;
 }
 
+{# Linked text is a link first: the text cursor above would hide that. #}
+.dbt-chart a text {
+    cursor: pointer;
+}
+
 .dbt-chart text::selection {
     background: rgba(102, 126, 234, 0.25);
 }
@@ -532,15 +537,16 @@
   user-select: none;
 }
 
-{# The row-link band is drawn transparent; on hover it tints with the theme's
-   link color, which the rect carries as --dbt-link. One rule for every theme:
+{# The row-link band is drawn transparent; while its row is hovered (a cell's
+   own link included) it tints with the theme's link color, which the rect
+   carries as --dbt-link. One rule for every theme:
    two linked tables with different link colors on one page each read their
    own property, where a per-color class used to be minted to keep them apart. #}
 .dbt-table-row-link {
   cursor: pointer;
 }
 
-.dbt-table-row-link:hover {
+.dbt-table-row:hover .dbt-table-row-link {
   fill: color-mix(in srgb, var(--dbt-link) 8%, transparent);
 }
 

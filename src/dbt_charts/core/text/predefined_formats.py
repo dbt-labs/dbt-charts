@@ -28,9 +28,10 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Mapping
 from enum import StrEnum
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from d3_format import format as _d3_format
 
@@ -225,7 +226,39 @@ class NativeFormat(NamedTuple):
     vega: Callable[[str], str] | None = None
 
 
-_DURATION_UNITS = ((86400, "d"), (3600, "h"), (60, "m"), (1, "s"))
+def js_str(text: str) -> str:
+    """``text`` as a single-quoted Vega expression string literal."""
+    return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def template_expr(template: str, slots: Mapping[str, str]) -> str:
+    """A Vega expression that builds ``template``, each ``{name}`` filled by
+    the Vega expression ``slots[name]``."""
+    names = re.findall(r"\{(\w+)\}", template)
+    pieces = ["''"] if names and template.startswith("{") else []
+    for index, piece in enumerate(re.split(r"\{\w+\}", template)):
+        if piece:
+            pieces.append(js_str(piece))
+        if index < len(names):
+            pieces.append(slots[names[index]])
+    return " + ".join(pieces)
+
+
+def _word(message_id: str) -> str:
+    # Deferred: format_d3 imports this module for the names above, and owns
+    # the board-language scope the words read.
+    from dbt_charts.core.text.format_d3 import board_word
+
+    return board_word(message_id)
+
+
+# Seconds in a unit, largest first, with the catalog id of its letter.
+_DURATION_UNITS = (
+    (86400, "unit.day"),
+    (3600, "unit.hour"),
+    (60, "unit.minute"),
+    (1, "unit.second"),
+)
 # Each unit with the one below it, which a value shows beside it.
 _DURATION_PAIRS = tuple(zip(_DURATION_UNITS, _DURATION_UNITS[1:], strict=False))
 
@@ -240,19 +273,19 @@ def _duration(v: Any) -> tuple[str, str]:  # type-state: explicit_any — a raw 
     for (size, unit), (lower_size, lower_unit) in _DURATION_PAIRS:
         if seconds >= size:
             lower = seconds % size // lower_size
-            tail = f" {lower}{lower_unit}" if lower else ""
-            return f"{sign}{seconds // size}{unit}{tail}", ""
-    return f"{sign}{seconds}s", ""
+            tail = f" {lower}{_word(lower_unit)}" if lower else ""
+            return f"{sign}{seconds // size}{_word(unit)}{tail}", ""
+    return f"{sign}{seconds}{_word(_DURATION_UNITS[-1][1])}", ""
 
 
 def _duration_vega(value_expr: str) -> str:
     """``_duration``, term for term."""
     t = f"floor(abs({value_expr}) + 0.5)"
-    expr = f"{t} + 's'"
+    expr = f"{t} + {js_str(_word(_DURATION_UNITS[-1][1]))}"
     for (size, unit), (lower_size, lower_unit) in reversed(_DURATION_PAIRS):
         lower = f"floor({t} % {size} / {lower_size})"
-        head = f"floor({t} / {size}) + '{unit}'"
-        tail = f"({lower} ? ' ' + {lower} + '{lower_unit}' : '')"
+        head = f"floor({t} / {size}) + {js_str(_word(unit))}"
+        tail = f"({lower} ? ' ' + {lower} + {js_str(_word(lower_unit))} : '')"
         expr = f"({t} >= {size} ? {head} + {tail} : {expr})"
     sign = f"({value_expr} < 0 && {t} >= 1 ? {json.dumps(_MINUS)} : '')"
     return f"{sign} + {expr}"
@@ -269,26 +302,33 @@ def _bytes(v: Any) -> tuple[str, str]:  # type-state: explicit_any — a raw cel
     x = float(v)
     # Under one byte d3's SI would reach for milli.
     text = _d3_format(".3~r" if abs(x) < 1 else ".3~s")(x)
+    byte = _word("unit.byte")
     if text[-1] in _SI_PREFIXES:
-        return text[:-1], f" {text[-1]}B"
-    return text, " B"
+        return text[:-1], f" {text[-1]}{byte}"
+    return text, f" {byte}"
 
 
 def _bytes_vega(value_expr: str) -> str:
     plain = f"format({value_expr}, '.3~r')"
     si = f"format({value_expr}, '.3~s')"
-    return f"replace(abs({value_expr}) < 1 ? {plain} : {si}, /([{_SI_PREFIXES}]?)$/, ' $1B')"
+    return (
+        f"replace(abs({value_expr}) < 1 ? {plain} : {si}, "
+        f"/([{_SI_PREFIXES}]?)$/, {js_str(' $1' + _word('unit.byte'))})"
+    )
 
 
 def _unit_value(
-    spec: str, unit: str
+    spec: str, unit: tuple[Literal["symbol", "word"], str]
 ) -> Callable[[Any], tuple[str, str]]:  # type-state: explicit_any — a raw cell
-    """A native painting the cell as ``spec`` with ``unit`` glued after it."""
+    """A native painting the cell as ``spec`` with ``unit`` glued after it: a
+    symbol glued as is, or the catalog id of a word, spaced from the number."""
+    kind, text = unit
 
     def paint(v: Any) -> tuple[str, str]:  # type-state: explicit_any — a raw cell
         if v is None:
             return _NULL_DISPLAY, ""
-        return _with_minus(format(float(v), spec)), unit
+        glued = f" {_word(text)}" if kind == "word" else text
+        return _with_minus(format(float(v), spec)), glued
 
     return paint
 
@@ -298,10 +338,14 @@ def _unit_value(
 # (number_str, unit_str) so callers that split prefix/number/suffix continue to
 # work unchanged.
 PREDEFINED_NATIVE: dict[str, NativeFormat] = {
-    PredefinedNumberFormat.percent_number: NativeFormat(_unit_value(".1f", "%")),
-    PredefinedNumberFormat.percent_number_delta: NativeFormat(_unit_value("+.1f", "%")),
+    PredefinedNumberFormat.percent_number: NativeFormat(
+        _unit_value(".1f", ("symbol", "%"))
+    ),
+    PredefinedNumberFormat.percent_number_delta: NativeFormat(
+        _unit_value("+.1f", ("symbol", "%"))
+    ),
     PredefinedNumberFormat.percentage_points_delta: NativeFormat(
-        _unit_value("+.1f", " pts")
+        _unit_value("+.1f", ("word", "unit.points"))
     ),
     PredefinedNumberFormat.duration: NativeFormat(_duration, _duration_vega),
     PredefinedNumberFormat.bytes: NativeFormat(_bytes, _bytes_vega),

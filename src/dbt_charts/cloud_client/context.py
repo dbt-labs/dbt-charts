@@ -510,7 +510,7 @@ def _no_project_message(
         org_hint = org_slugs[0] if len(org_slugs) == 1 else "<org>"
         body = (
             "No project to work on. Connect this repository with"
-            f" `dct cloud project connect --org {org_hint}`."
+            f" `dct cloud project connect <host> --org {org_hint}`."
         )
     elif refuse_default is None:
         body = (

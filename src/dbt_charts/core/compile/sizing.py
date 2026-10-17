@@ -149,7 +149,11 @@ class WidthMeasurer:
 _SAMPLE_TIMESTAMP = datetime(2026, 12, 28, 22, 22, tzinfo=UTC)
 
 
-FOOTER_BRAND_WORD_RE = re.compile(r"\bdbt charts\b", re.IGNORECASE)
+# ASCII neighbors only: a translated footer may run the brand into non-Latin
+# text (`dbt Chartsで`), which no `\b` would split.
+FOOTER_BRAND_WORD_RE = re.compile(
+    r"(?<![A-Za-z0-9_])dbt charts(?![A-Za-z0-9_])", re.IGNORECASE
+)
 
 
 def footer_text_width(footer: FooterStyle, font_family: str) -> float:
@@ -158,20 +162,23 @@ def footer_text_width(footer: FooterStyle, font_family: str) -> float:
     assert footer.font.size is not None
     size = float(footer.font.size)
     measure = get_font_measurer(font_family).measure
-    match = FOOTER_BRAND_WORD_RE.search(footer.text)
+    text = footer.text
+    match = FOOTER_BRAND_WORD_RE.search(text)
     if match is None:
-        return measure(footer.text, size)
+        return measure(text, size)
     brand_weight = footer.brand_weight
     brand = get_weighted_font_measurer(font_family, brand_weight).measure(
         match.group(0), size
     )
-    prefix = footer.text[: match.start()].rstrip()
-    suffix = footer.text[match.end() :].lstrip()
-    gap = measure(" ", size)
+    prefix = text[: match.start()].rstrip()
+    suffix = text[match.end() :].lstrip()
+    space = measure(" ", size)
+    prefix_gap = space if prefix != text[: match.start()] else 0.0
+    suffix_gap = space if suffix != text[match.end() :] else 0.0
     return (
         brand
-        + (gap + measure(prefix, size) if prefix else 0.0)
-        + (measure(suffix, size) + gap if suffix else 0.0)
+        + (prefix_gap + measure(prefix, size) if prefix else 0.0)
+        + (measure(suffix, size) + suffix_gap if suffix else 0.0)
     )
 
 

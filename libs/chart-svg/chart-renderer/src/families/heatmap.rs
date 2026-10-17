@@ -23,7 +23,7 @@ use crate::common::{
 };
 use crate::families::cartesian::BandScale;
 use crate::families::heatmap_facet::{
-    date_dimension, first_appearance, refuse_unmodeled_x_labels, AxisLabel, GradientLegend, HeatmapXAxis,
+    date_dimension, first_appearance, AxisLabel, GradientLegend, HeatmapXAxis,
 };
 use crate::families::legend::{
     emit_vega_legend, legend_fit_bounds, legend_origin, legend_slide, legend_title_text, slide_block,
@@ -34,7 +34,8 @@ use crate::families::legend::{
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::svg::{xml_escape, xml_escape_attr, vega_escape_attr};
 use crate::families::temporal::{
-    date_text_day, infer_vega_type, is_time_format, parse_iso_date, resolve_vertical_temporal_labels, TimeUnit, VegaType,
+    axis_time_format, date_text_day, fold_steep, infer_vega_type, parse_iso_date, rewrite_with_expr, resolve_vertical_temporal_labels, AuthoredTimeFormat,
+    TimeUnit, VegaType,
 };
 use crate::text::FontBook;
 use crate::vega_fit::{self, Bounds};
@@ -198,9 +199,6 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     }
     let categorical = categorical && !date_color;
     if r.multiples.is_some() {
-        if r.style.axis_y.position.as_deref() == Some("right") {
-            return Err("heatmap: multiples with axis_y.position right not supported".into());
-        }
         if r.style.axis_y.mirror_requested("heatmap")? {
             return Err("heatmap: multiples with axis_y.mirror not supported".into());
         }
@@ -254,22 +252,11 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     let ax_x = &r.style.axis_x;
     let x_first_seen = first_appearance(&rows, x_field);
     let x_dates = if let Some(data_tu) = x_grain {
-        const LEAD: &str = "a single chart with";
-        refuse_unmodeled_x_labels(ax_x, LEAD)?;
-        if ax_x.labels.visible == Some(false) {
-            return Err(format!("heatmap: {LEAD} hidden axis_x labels is not supported").into());
-        }
-        if ax_x.labels.angle.is_some() {
-            return Err(format!("heatmap: {LEAD} a date x with an authored axis_x.labels.angle is not supported").into());
-        }
-        if ax_x.labels.time_unit.as_deref().is_some_and(|u| u != "auto") {
-            return Err(format!("heatmap: {LEAD} an authored axis_x.labels.time_unit is not supported").into());
-        }
         let usable_ratio = r
             .style
             .label_usable_ratio
             .ok_or("heatmap: label_usable_ratio absent (theme required for the x axis ladder)")?;
-        let axis = HeatmapXAxis::dates(&x_first_seen, data_tu, ax_x, w, usable_ratio, fonts, LEAD)?;
+        let axis = HeatmapXAxis::dates(&x_first_seen, data_tu, ax_x, w, usable_ratio, fonts)?;
         Some(axis)
     } else {
         None
@@ -331,6 +318,16 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         Some(labels) => labels.iter().map(|l| l.w1.max(l.w2).min(y_label_limit)).collect(),
         None => measure_all(fonts, &y_domain, y_label_family, y_label_fs, y_label_limit)?,
     };
+    // Each drawn label's width and whether it carries a second row; hidden
+    // labels draw none.
+    let y_label_specs: Vec<(f64, bool)> = if ax_y.labels.visible == Some(false) {
+        Vec::new()
+    } else {
+        match &y_dates {
+            Some(labels) => labels.iter().zip(&y_label_ws).map(|(l, &w)| (w, !l.row2.is_empty())).collect(),
+            None => y_label_ws.iter().map(|&w| (w, false)).collect(),
+        }
+    };
     // An own-side `labels.align` grows the row labels back ACROSS the axis
     // line, which Vega-Lite's own fit estimate does not reserve for. Rather
     // than leave them over the plot, production measures the exact nominal
@@ -359,7 +356,22 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         return Err("heatmap: a right y axis is only modeled with a date-free y, a resolved axis_y.labels.align of right and no upper or lower case; every other align is not supported".into());
     }
     let y_label_pad = if y_right { y_label_max_w.min(y_label_limit) + BREATHING_ROOM_PX } else { y_label_pad };
-    let (y_ink_align, y_text_anchor) = if y_own_side { ("left", "start") } else { ("right", "end") };
+    // An authored align wins; else Vega-Lite's default for the angle (`right`, the
+    // text ending at the axis, when flat).
+    let y_angle = vega_fit::normalize_angle(ax_y.labels.angle.unwrap_or(0.0));
+    let (vl_y_align, y_baseline) = vega_fit::vl_y_label_anchor(y_angle, !y_right);
+    let y_ink_align = if y_own_side {
+        "left"
+    } else if y_right {
+        "right"
+    } else {
+        vl_y_align
+    };
+    let y_text_anchor = svg_text_anchor(y_ink_align);
+    let y_labels_hidden = ax_y.labels.visible == Some(false);
+    let y_ink = |anchor_x: f64, cy: f64, label_w: f64, extra_row: bool| {
+        crate::common::rotated_category_label_ink(anchor_x, cy, label_w, y_label_fs, y_ink_align, y_baseline, y_angle, extra_row)
+    };
     let y_gutter = y_tick_len + y_label_pad;
     // The labels' anchor x past the plot's left edge, for a plot `pw` wide.
     let y_anchor_x = |pw: f64| if y_right { pw + y_gutter } else { -y_gutter };
@@ -374,7 +386,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     let x_title_text = crate::common::wrapped_axis_title(
         &r.id,
         "x_label",
-        &crate::common::axis_title_text(x_field, r.x_label.as_deref(), &r.field_labels),
+        &crate::common::axis_title_text(x_field, r.x_label.as_deref(), &r.field_labels)?,
         &ax_x.title.font,
         w,
         fonts,
@@ -382,7 +394,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     let y_title_text = crate::common::wrapped_axis_title(
         &r.id,
         "y_label",
-        &crate::common::axis_title_text(y_field, r.y_label.as_deref(), &r.field_labels),
+        &crate::common::axis_title_text(y_field, r.y_label.as_deref(), &r.field_labels)?,
         &ax_y.title.font,
         h,
         fonts,
@@ -396,8 +408,10 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     // before `axisTitleLayout` (`vega.js:20422-20432`) sits the title `padding`
     // past it. Own-side labels start at the gutter and grow toward the plot;
     // away-side ones end there and grow left.
-    let y_label_edge = y_label_ws.iter().fold(0.0_f64, |edge, lw| {
-        let ink = vega_fit::text_ink(y_anchor_x(0.0), 0.0, *lw, y_label_fs, y_ink_align, "middle");
+    // Hidden labels leave the axis its ticks, which the title clears.
+    let y_tick_edge = if y_labels_hidden { y_tick_len } else { 0.0 };
+    let y_label_edge = y_label_specs.iter().fold(if y_right { y_tick_edge } else { -y_tick_edge }, |edge, &(lw, extra_row)| {
+        let ink = y_ink(y_anchor_x(0.0), 0.0, lw, extra_row);
         if y_right { edge.max(ink.x2) } else { edge.min(ink.x1) }
     });
     // How far the x labels reach below their row's anchor: the bottom title
@@ -534,12 +548,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                 let cy = ys.position(&y_domain[label.domain_idx]).expect("a label names a band of its own domain")
                     + ys.bandwidth() / 2.0
                     - AXIS_TRANSLATE;
-                let mut ink = vega_fit::text_ink(y_anchor_x(pw), cy, label.w1.min(y_label_limit), y_label_fs, y_ink_align, "middle");
-                if !label.row2.is_empty() {
-                    let cy2 = cy + vega_fit::label_row_advance(y_label_fs);
-                    ink.union(&vega_fit::text_ink(y_anchor_x(pw), cy2, label.w2.min(y_label_limit), y_label_fs, y_ink_align, "middle"));
-                }
-                ink
+                y_ink(y_anchor_x(pw), cy, label.w1.max(label.w2).min(y_label_limit), !label.row2.is_empty())
             })
             .collect()
     };
@@ -560,7 +569,17 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         // The axis group sits a crisp half pixel above its labels' own
         // coordinates in the bounds Vega reads (`axis.js:77`), which only
         // shows where a label overhangs the plot top.
-        if y_dates.is_some() {
+        if y_labels_hidden {
+            // Hidden labels leave the axis its ticks alone.
+            if y_tick_len > 0.0 {
+                let (x1, x2) = if y_right { (pw, pw + y_tick_len) } else { (-y_tick_len, 0.0) };
+                for cat in &y_label_bands {
+                    let Some(by) = ys.position(cat) else { continue };
+                    let cy = by + ys.bandwidth() / 2.0 - AXIS_TRANSLATE;
+                    y_axis.union(&Bounds::new(x1, cy, x2, cy));
+                }
+            }
+        } else if y_dates.is_some() {
             let visible = y_date_visible(pw, ph);
             for (ink, _) in y_date_ink(pw, ph).iter().zip(&visible).filter(|(_, v)| **v) {
                 y_axis.union(ink);
@@ -569,7 +588,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             for (cat, lw) in y_label_bands.iter().zip(&y_label_ws) {
                 let Some(by) = ys.position(cat) else { continue };
                 let cy = by + ys.bandwidth() / 2.0 - AXIS_TRANSLATE;
-                y_axis.union(&vega_fit::text_ink(y_anchor_x(pw), cy, *lw, y_label_fs, y_ink_align, "middle"));
+                y_axis.union(&y_ink(y_anchor_x(pw), cy, *lw, false));
             }
         }
         if y_title_extra > 0.0 {
@@ -673,7 +692,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     if let Some(axis) = &x_dates {
         axis.paint(&mut svg, ax_x, plot_left, plot_w, plot_top + plot_h)?;
     } else {
-        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::X, (plot_left + AXIS_TRANSLATE, x_axis_top));
+        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::X, (plot_left + AXIS_TRANSLATE, x_axis_top))?;
     }
     for band_val in x_domain.iter().filter(|_| x_dates.is_none()) {
         let Some(band_x) = x_scale.position(band_val) else { continue };
@@ -707,6 +726,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                 (label_x, x_label_row, x_angle, dy),
                 (anchor, x_label_family, x_label_fs, &x_label_weight, x_label_color),
                 (band_val, ""),
+                "",
             );
         }
     }
@@ -729,7 +749,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     let y_label_x = if y_right { y_axis_x + y_gutter } else { y_axis_x - y_gutter };
     // One row per drawn label: every band for a category y, only the ladder's
     // openers (and a second context row under them) for a date y.
-    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (y_axis_x, plot_top));
+    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (y_axis_x, plot_top))?;
     let y_visible = y_date_visible(plot_w, plot_h);
     let y_rows: Vec<(&str, &str)> = match &y_dates {
         Some(labels) => labels.iter().map(|l| (y_domain[l.domain_idx].as_str(), l.row1.as_str())).collect(),
@@ -748,8 +768,21 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                 y_tick_color = xml_escape_attr(y_tick_color)
             );
         }
+        if y_labels_hidden {
+            continue;
+        }
         let row2 = y_dates.as_ref().map(|labels| labels[i].row2.as_str()).unwrap_or("");
         let hidden = if y_dates.is_some() && !y_visible[i] { " opacity=\"0\"" } else { "" };
+        if y_angle != 0.0 {
+            emit_rotated_x_label(
+                &mut svg,
+                (y_label_x, plot_top + center, y_angle, vega_fit::baseline_shift(y_baseline, y_label_fs)),
+                (y_text_anchor, y_label_family, y_label_fs, &y_label_weight, y_label_color),
+                (row1, row2),
+                hidden,
+            );
+            continue;
+        }
         let row1_y = plot_top + center + vega_fit::baseline_shift("middle", y_label_fs);
         for (text, y) in [(row1, row1_y), (row2, row1_y + vega_fit::label_row_advance(y_label_fs))] {
             if text.is_empty() {
@@ -911,20 +944,11 @@ fn y_date_labels(
     if let Some(cell) = domain.iter().find(|d| parse_iso_date(d).is_none()) {
         return Err(format!("heatmap: a date y holds {cell:?}, which is not an ISO date"));
     }
-    crate::families::temporal::refuse_grain_format("heatmap", &ax_y.grain_formats, data_tu)?;
     let labels_cfg = &ax_y.labels;
-    if labels_cfg.expr.is_some() {
-        return Err("heatmap: a date y with an authored axis_y.labels.expr is not supported".into());
-    }
-    if labels_cfg.visible == Some(false) {
-        return Err("heatmap: a date y with hidden axis_y labels is not supported".into());
-    }
-    if labels_cfg.angle.is_some() {
-        return Err("heatmap: a date y with an authored axis_y.labels.angle is not supported".into());
-    }
-    if labels_cfg.spec().is_some_and(is_time_format) {
-        return Err("heatmap: a date y with an authored time axis_y.labels.format is not supported".into());
-    }
+    let authored = AuthoredTimeFormat::parse(
+        "heatmap",
+        axis_time_format(labels_cfg.spec(), &ax_y.grain_formats, Some(data_tu)),
+    )?;
     let usable_ratio = usable_ratio.ok_or("heatmap: label_usable_ratio absent (theme required for the y axis ladder)")?;
     let overlap = labels_cfg.overlap.as_ref().ok_or("heatmap: axis_y.labels.overlap absent (theme required)")?;
     let min_gap = labels_cfg.min_gap.ok_or("heatmap: axis_y.labels.min_gap absent (theme required)")?;
@@ -936,10 +960,18 @@ fn y_date_labels(
         overlap.skip,
         font_size,
         min_gap,
+        authored,
     )?;
     let greedy_gap = (!ladder.fits && overlap.skip).then_some(min_gap);
-    let labels = ladder
-        .labels
+    let labels = ladder.labels;
+    let labels = match labels_cfg.expr.as_deref() {
+        Some(expr) => {
+            let n = crate::common::parse_labels_expr_slice_n(expr).map_err(|e| format!("heatmap: {e}"))?;
+            rewrite_with_expr(labels, domain, n)
+        }
+        None => fold_steep(labels, labels_cfg.angle, data_tu),
+    };
+    let labels = labels
         .into_iter()
         .map(|l| AxisLabel::measured(l.domain_idx, l.row1, l.row2, &|t| fonts.measure(t, family, font_size)))
         .collect::<Result<Vec<_>, _>>()?;
@@ -1046,9 +1078,9 @@ pub(crate) fn paint_cells(
             }
             None => None,
         };
-        let label_attr = crate::contract::aria_attr(aria.as_deref(), crate::contract::ItemRole::RectMark);
+        let label_attr = crate::contract::aria_attr(aria.as_deref(), crate::contract::ItemRole::RectMark)?;
         if aria.is_some() {
-            crate::contract::mark_group_open(svg, "rect", "marks");
+            crate::contract::mark_group_open(svg, "rect", "marks")?;
         }
         let _ = write!(
             svg,
@@ -1146,6 +1178,7 @@ pub(crate) fn emit_rotated_x_label(
     (x, anchor_y, angle, dy): (f64, f64, f64, f64),
     (text_anchor, family, size, weight, fill): (&str, &str, f64, &str, &str),
     (text, row2): (&str, &str),
+    opacity: &str,
 ) {
     // A second row rides the same rotated block, one line advance below.
     let rows = if row2.is_empty() {
@@ -1161,7 +1194,7 @@ pub(crate) fn emit_rotated_x_label(
     let _ = write!(
         svg,
         "<text text-anchor=\"{}\" transform=\"translate({x:.2},{anchor_y:.2}) rotate({angle}) translate(0,{dy})\" \
-         font-family=\"{}\" font-size=\"{size}\" font-weight=\"{}\" fill=\"{}\">{rows}</text>",
+         font-family=\"{}\" font-size=\"{size}\" font-weight=\"{}\" fill=\"{}\"{opacity}>{rows}</text>",
         xml_escape_attr(text_anchor),
         vega_escape_attr(family),
         xml_escape_attr(weight),
@@ -1616,36 +1649,33 @@ mod tests {
         assert_label_order(&svg, &["alpha", "gamma"]);
     }
 
-    /// A sort field present but non-numeric on some row refuses by name —
-    /// see `common::dimension_sort_domain`'s doc comment.
+    /// A sort column of numbers and text makes Python's sort raise, which
+    /// `x_domain_order` answers with row order — see
+    /// `common::dimension_sort_domain`'s doc comment.
     #[test]
-    fn heatmap_authored_sort_refuses_a_non_numeric_sort_value() {
+    fn heatmap_authored_sort_over_numbers_and_text_keeps_row_order() {
         let mut json = sort_heatmap_payload(json!({"by": "seq", "order": "asc"}));
         json["rows"] = json!([
             {"month": "Feb", "seq": "second", "series": "alpha", "revenue": 200.0},
             {"month": "Jan", "seq": 1, "series": "alpha", "revenue": 100.0}
         ]);
-        let payload: Payload = serde_json::from_value(json).unwrap();
-        let err = render(&payload, &test_fonts()).expect_err("must refuse");
-        assert!(err.contains("seq"), "{err}");
+        let svg = render_json(json);
+        assert_label_order(&svg, &["Feb", "Jan"]);
     }
 
-    /// A NUMERIC-LOOKING string ("9", "2", "10") still refuses under
-    /// MIN — production's real `min` is d3's own comparator over the raw
-    /// JSON value, which orders a JSON string LEXICOGRAPHICALLY, never by
-    /// parsing it as a number first.
+    /// A NUMERIC-LOOKING string ("9", "2", "10") is text under MIN —
+    /// production's real `min` orders a JSON string LEXICOGRAPHICALLY, never
+    /// by parsing it as a number first, so "10" ranks before "2" and "9".
     #[test]
-    fn heatmap_authored_sort_refuses_a_numeric_looking_string_sort_value() {
+    fn heatmap_authored_sort_ranks_numeric_looking_text_lexicographically() {
         let mut json = sort_heatmap_payload(json!({"by": "seq", "order": "asc"}));
         json["rows"] = json!([
             {"month": "Feb", "seq": "9", "series": "alpha", "revenue": 200.0},
             {"month": "Mar", "seq": "2", "series": "alpha", "revenue": 50.0},
             {"month": "Jan", "seq": "10", "series": "alpha", "revenue": 100.0}
         ]);
-        let payload: Payload = serde_json::from_value(json).unwrap();
-        let err = render(&payload, &test_fonts())
-            .expect_err("must refuse — MIN never parses a JSON string as a number");
-        assert!(err.contains("seq"), "{err}");
+        let svg = render_json(json);
+        assert_label_order(&svg, &["Jan", "Mar", "Feb"]);
     }
 
     /// An unranked category (no `sort.by` value on any row) trails
@@ -2252,7 +2282,7 @@ mod tests {
         assert_eq!(attr(&text_tag(&svg, "Tier"), "x"), 16.0, "{svg}");
     }
 
-    /// `RECEDE_ROLES` matches `rect mark` literally: a heatmap cell recedes
+    /// `RECEDE_ROLES` matches `rect` literally: a heatmap cell recedes
     /// on hover only when stamped so.
     #[test]
     fn every_cell_carries_the_role_the_runtime_recedes() {
@@ -2365,7 +2395,7 @@ mod tests {
     fn a_date_color_cell_is_read_filtered_or_refused() {
         let cells = |v: &[serde_json::Value]| super::color_values_are_dates(v.iter());
         assert!(cells(&[serde_json::json!("2024-01-01"), serde_json::json!(null), serde_json::json!("soon")]).is_ok());
-        for unreadable in [serde_json::json!(5), serde_json::json!("2024/01/05"), serde_json::json!("2024-01-01T00:00:00Z")] {
+        for unreadable in [serde_json::json!(5), serde_json::json!("2024/01/05"), serde_json::json!("2024-01-01T25:00:00")] {
             let err = cells(&[unreadable]).unwrap_err();
             assert!(err.contains("which is not an ISO date"), "{err}");
         }

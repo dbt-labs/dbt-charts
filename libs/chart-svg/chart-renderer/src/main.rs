@@ -204,7 +204,7 @@ fn run_case(args: &[String]) {
         eprintln!("usage: chart-renderer case case-value text");
         std::process::exit(2);
     }
-    match chart_renderer::case::apply_case(&args[1], &args[0]) {
+    match display_text::case::apply_case(&args[1], &args[0]) {
         Ok(result) => println!("{result}"),
         Err(e) => {
             eprintln!("error: {e}");
@@ -447,7 +447,7 @@ fn run_pdf(args: &[String]) {
 /// a fresh `str.capitalize()` computation — exercises the wired table, not
 /// just the generated source file's text.
 fn run_capitalize_dump() {
-    let entries: Vec<_> = chart_renderer::titlecase_first_char::TITLECASE_FIRST_CHAR_EXCEPTIONS
+    let entries: Vec<_> = display_text::titlecase_first_char::TITLECASE_FIRST_CHAR_EXCEPTIONS
         .iter()
         .map(|&(cp, s)| (cp.to_string(), s))
         .collect();

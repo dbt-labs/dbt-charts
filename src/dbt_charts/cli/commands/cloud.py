@@ -17,11 +17,9 @@ token may also come from the ``DCT_CLOUD_TOKEN`` environment variable (CI,
 agents) or a hand-written ``token:`` line in the user config file — every
 verb that needs one says exactly that when it is missing.
 
-**Connecting a project.** ``project connect`` (with no ``--git-url``) hands a
-repository pick to the browser and waits for it. The same split applies:
-``connect --start`` prints the install/pick URL and exits immediately
-(persisting the pending connect), and a later ``connect --wait`` blocks for
-the pick and finishes the project.
+**Connecting a project.** ``project connect`` is one subcommand per git host
+(``github``, ``gitlab``, ``bitbucket``, ``git``). ``connect github`` with no
+``--git-url`` hands a repository pick to the browser and waits for it.
 
 **Secrets never reach argv** (the initiative's warehouse-secret decision):
 ``connection create`` takes key material from a file, from stdin, or from a
@@ -215,6 +213,31 @@ HostOption = Annotated[
         help="Cloud deployment to talk to (default: the configured host)",
     ),
 ]
+ConnectGitUrlOption = Annotated[
+    str, typer.Option("--git-url", help="HTTPS URL of the repository")
+]
+ConnectTokenOption = Annotated[
+    str,
+    typer.Option(
+        "--token",
+        envvar="DCT_GIT_TOKEN",
+        help="Access token Cloud uses to read, push, and open pull requests",
+    ),
+]
+ConnectRootOption = Annotated[
+    str | None,
+    typer.Option("--root", help="Folder holding dbt_project.yml inside the repo"),
+]
+ConnectTrunkOption = Annotated[
+    str | None,
+    typer.Option("--trunk", help="Branch Cloud pulls from (default: the repo's)"),
+]
+ConnectNameOption = Annotated[
+    str | None, typer.Option("--name", help="Project name (default: the repo's)")
+]
+ConnectSlugOption = Annotated[
+    str | None, typer.Option("--slug", help="Project slug (default: from the name)")
+]
 JsonOption = Annotated[
     bool, typer.Option("--json", help="Emit the raw API response as JSON")
 ]
@@ -233,7 +256,7 @@ Operate dbt charts Cloud from the terminal.
   dct cloud login                  Sign in (once per machine)
   dct cloud status                 What is set up, and what is missing next
   dct cloud use acme/analytics     Pin the org and project for this machine
-  dct cloud project connect        Connect this repository as a project
+  dct cloud project connect <host> Connect this repository as a project
 
 Every verb takes --json. Context resolves from --org/--project, then this
 repository's own published_to (written by `project connect`), then its git
@@ -245,6 +268,11 @@ remote, then `dct cloud use`.
 org_app = typer.Typer(name="org", help="Create organizations.", no_args_is_help=True)
 project_app = typer.Typer(
     name="project", help="Connect and sync projects.", no_args_is_help=True
+)
+connect_app = typer.Typer(
+    name="connect",
+    help="Connect a repository as a project, by git host.",
+    no_args_is_help=True,
 )
 connection_app = typer.Typer(
     name="connection",
@@ -281,6 +309,7 @@ audit_app = typer.Typer(
     name="audit", help="The authorization audit trail.", no_args_is_help=True
 )
 cloud_app.add_typer(org_app, name="org")
+project_app.add_typer(connect_app, name="connect")
 cloud_app.add_typer(project_app, name="project")
 cloud_app.add_typer(connection_app, name="connection")
 cloud_app.add_typer(source_app, name="source")
@@ -914,70 +943,77 @@ def _cloud_tie_line(
             )
         return _CloudTie(
             f"cloud: not tied to any of {escape(org)}'s projects. If this"
-            " repository is not connected yet, connect it: dct cloud"
-            f" project connect --org {escape(org)}",
+            " repository is not connected yet, connect it:"
+            f" {_connect_hint(escape(org))}",
             True,
             None,
         )
     return _CloudTie(None, False, None)
 
 
-def _github_https_url(origin: str | None) -> str | None:
-    """*origin* as an https GitHub URL for `--git-url`, or None when it
-    isn't a github.com remote at all (ssh, scp-style, and https all
-    normalize through the same `repo_key` this checks against)."""
-    if origin is None:
-        return None
+def _connect_hint(org: str) -> str:
+    return (
+        f"dct cloud project connect <host> --org {org}"
+        " (<host> is github, gitlab, bitbucket, or git)"
+    )
+
+
+_CONNECT_SUBCOMMAND_BY_DOMAIN = {
+    "github.com": "github",
+    "gitlab.com": "gitlab",
+    "bitbucket.org": "bitbucket",
+}
+
+
+def _known_host_url(origin: str) -> tuple[str, str] | None:
+    """The `project connect` subcommand and https URL for *origin*, or None
+    when it is not on github.com, gitlab.com, or bitbucket.org."""
     key = repo_key(origin)
-    if not key.startswith("github.com/"):
+    subcommand = _CONNECT_SUBCOMMAND_BY_DOMAIN.get(key.partition("/")[0])
+    if subcommand is None:
         return None
-    return f"https://{key}.git"
+    return subcommand, f"https://{key}.git"
 
 
 def _pick_step_line(git_facts: GitCheckoutFacts) -> str | None:
-    """The GitHub-connect line, or None when there is no origin to name at
-    all. `dct cloud` only ever connects a GitHub repository -- headlessly
-    via `--git-url` for a public one, or a browser pick otherwise; `status`
-    cannot know visibility, so both paths are named rather than assuming
-    the browser hop.
+    """The connect line, or None when there is no origin to name at all.
 
-    A non-`github.com` host is named, never asserted to be "not on GitHub"
-    outright: an SSH host alias (`git@github-work:acme/analytics.git`, a
-    `Host github-work` entry in `~/.ssh/config` pointing at github.com) reads
-    as host `github-work` here, and this probe has no way to resolve SSH
-    config -- claiming certainty either way would be exactly the "confident
-    wrong fact" this command must never print. The origin whose userinfo
-    could not even be parsed (`_strip_userinfo`'s placeholder) is named as
-    unreadable for the same reason: neither "on GitHub" nor "not on GitHub"
-    is a fact this probe actually has.
+    SSH host aliases (`git@github-work:...`) read as host `github-work`; this
+    probe cannot resolve ssh config, so name the host rather than assert it.
     """
     if git_facts.origin is None:
         return None
     if git_facts.origin == UNPARSEABLE_ORIGIN_PLACEHOLDER:
         return (
             "- this repository's origin could not be read, so dct cloud"
-            " cannot tell whether it connects to GitHub"
+            " cannot tell which git host it is on"
         )
-    github_url = _github_https_url(git_facts.origin)
-    if github_url is not None:
-        return (
-            f"- connect this repository: dct cloud project connect --git-url"
-            f" {github_url} if it's public (no browser needed), otherwise pick"
-            " it in the browser: dct cloud project connect --start, then --wait"
+    known = _known_host_url(git_facts.origin)
+    if known is not None:
+        subcommand, url = known
+        line = (
+            f"- connect this repository: dct cloud project connect {subcommand}"
+            f" --git-url {url} --token <token>"
         )
+        if subcommand == "github":
+            line += (
+                ", or pick it in the browser through the GitHub App: dct cloud"
+                " project connect github --start, then --wait"
+            )
+        return line
     key = repo_key(git_facts.origin)
     host, _, path = key.partition("/")
     if not host or not path:
         return (
-            "- this repository's origin is not on GitHub; dct cloud only"
-            " connects GitHub repositories"
+            "- this repository's origin has no host or path to connect; pass"
+            " the real URL: dct cloud project connect <host> --git-url <url>"
         )
     return (
-        f"- this repository's origin resolves to host {escape(host)}, not"
-        " github.com; dct cloud only connects GitHub repositories. If"
-        f" {escape(host)} is an SSH alias for github.com, connect with the"
-        " real URL instead: dct cloud project connect --git-url"
-        f" https://github.com/{escape(path)}.git"
+        f"- this repository's origin resolves to host {escape(host)}, which is"
+        " not github.com, gitlab.com, or bitbucket.org. Connect it as plain"
+        f" git: dct cloud project connect git --git-url https://{escape(key)}.git."
+        f" If {escape(host)} is an SSH alias for one of those hosts, use that"
+        " host's subcommand with the real URL instead"
     )
 
 
@@ -1281,7 +1317,7 @@ def org_create(
         print_json_result(result)
         return
     typer.echo(f"Created {result.slug} ({result.name}); you are {result.role}.")
-    typer.echo(f"Next: dct cloud project connect --org {result.slug}")
+    typer.echo(f"Next: {_connect_hint(result.slug)}")
 
 
 @org_app.command("delete")
@@ -2140,43 +2176,28 @@ def projects(
     _print_projects(org_slug, result)
 
 
-@project_app.command("connect")
-def project_connect(
+@connect_app.command("github")
+def connect_github(
+    ctx: typer.Context,
     git_url: Annotated[
         str | None,
         typer.Option(
-            "--git-url", help="Connect a repository by HTTPS URL, with no browser hop"
+            "--git-url",
+            help="Connect by HTTPS URL with --token instead of the browser pick",
         ),
     ] = None,
-    git_username: Annotated[
+    token: Annotated[
         str | None,
         typer.Option(
-            "--git-username",
-            help="Username for a private --git-url repo (blank: anonymous)",
+            "--token",
+            envvar="DCT_GIT_TOKEN",
+            help="Access token for --git-url",
         ),
     ] = None,
-    git_password: Annotated[
-        str | None,
-        typer.Option(
-            "--git-password",
-            help="Password or token for --git-username (blank: none)",
-            envvar="DCT_GIT_PASSWORD",
-        ),
-    ] = None,
-    root: Annotated[
-        str | None,
-        typer.Option("--root", help="Folder holding dbt_project.yml inside the repo"),
-    ] = None,
-    trunk: Annotated[
-        str | None,
-        typer.Option("--trunk", help="Branch Cloud pulls from (default: the repo's)"),
-    ] = None,
-    name: Annotated[
-        str | None, typer.Option("--name", help="Project name (default: the repo's)")
-    ] = None,
-    slug: Annotated[
-        str | None, typer.Option("--slug", help="Project slug (default: from the name)")
-    ] = None,
+    root: ConnectRootOption = None,
+    trunk: ConnectTrunkOption = None,
+    name: ConnectNameOption = None,
+    slug: ConnectSlugOption = None,
     timeout: Annotated[
         float,
         typer.Option("--timeout", help="Seconds to wait for the browser repo pick"),
@@ -2203,15 +2224,13 @@ def project_connect(
 
     \b
     Two paths:
-      --git-url URL   fully headless; private repos with --git-username and
-                      --git-password (or DCT_GIT_PASSWORD)
       (default)       prints a URL, waits for you to install the GitHub App
                       and pick the repo in the browser, then finishes here
+      --git-url URL   fully headless, with --token (or DCT_GIT_TOKEN)
 
     The browser pick is not bypassable: Cloud authorizes it from your own
     GitHub account's list of repositories you administer.
 
-    Bare connect blocks until the pick lands -- for a human at a terminal.
     A script splits it: `--start` prints the install/pick URL and returns
     immediately (persisting the pending connect); a later `--wait` blocks
     for the pick `--start` began and finishes the project. Neither applies
@@ -2226,15 +2245,35 @@ def project_connect(
             "--git-url has no browser pick to start or wait for",
             param_hint="--git-url",
         )
-    if git_username and not git_url:
-        raise typer.BadParameter(
-            "--git-username applies only to --git-url", param_hint="--git-username"
-        )
     if poll_interval < MIN_POLL_INTERVAL_SECONDS:
         raise typer.BadParameter(
             f"must be at least {MIN_POLL_INTERVAL_SECONDS}s, got {poll_interval!r}",
             param_hint="--poll-interval",
         )
+    token_source = ctx.get_parameter_source("token")
+    if not git_url and token_source and token_source.name == "COMMANDLINE":
+        raise typer.BadParameter(
+            "--token applies only to --git-url", param_hint="--token"
+        )
+    if git_url:
+        if not token:
+            raise typer.BadParameter(
+                "--token is required with --git-url", param_hint="--token"
+            )
+        _connect_by_url(
+            "github",
+            git_url,
+            name,
+            slug,
+            trunk,
+            root,
+            "",
+            token,
+            org,
+            host,
+            as_json,
+        )
+        return
     if wait:
         with _reporting(as_json):
             pending = read_pending_connect()
@@ -2252,49 +2291,155 @@ def project_connect(
                 pick,
             )
         clear_pending_connect()
-        org_slug = pending.org
-    else:
-        with _cloud(host, as_json) as (client, config):
-            org_slug = _org(client, config, org, refuse_default=REFUSE_DEFAULT_CONNECT)
-            if start:
-                save_pending_connect(
-                    PendingConnect(
-                        org=org_slug,
-                        host=client.host,
-                        name=name,
-                        slug=slug,
-                        trunk=trunk,
-                        root=root,
-                    )
+        _report_connected(client.host, pending.org, project, None, as_json)
+        return
+    with _cloud(host, as_json) as (client, config):
+        org_slug = _org(client, config, org, refuse_default=REFUSE_DEFAULT_CONNECT)
+        if start:
+            save_pending_connect(
+                PendingConnect(
+                    org=org_slug,
+                    host=client.host,
+                    name=name,
+                    slug=slug,
+                    trunk=trunk,
+                    root=root,
                 )
-                url = client.connect_url(org_slug)
-                if as_json:
-                    print_json_result(ProjectConnectStarted(org=org_slug, url=url))
-                    return
-                # Bare stdout, no wrapping prose: an agent captures this with
-                # plain command substitution (`URL=$(dct cloud project connect
-                # --start)`).
-                typer.echo(url)
-                err_console.print(
-                    "Next: dct cloud project connect --wait to finish connecting"
-                    " once you've picked the repo."
-                )
+            )
+            url = client.connect_url(org_slug)
+            if as_json:
+                print_json_result(ProjectConnectStarted(org=org_slug, url=url))
                 return
-            if git_url:
-                project = client.create_project(
-                    org_slug,
-                    name or _repo_name(git_url),
-                    slug or _slugify(name or _repo_name(git_url)),
-                    git_url,
-                    trunk or "",
-                    root or "",
-                    git_username=git_username or "",
-                    git_password=git_password or "",
-                )
-            else:
-                project = _connect_through_github(
-                    client, org_slug, name, slug, trunk, root, timeout, poll_interval
-                )
+            # Bare stdout, no prose: agents capture this via `$(...)`.
+            typer.echo(url)
+            err_console.print(
+                "Next: dct cloud project connect github --wait to finish"
+                " connecting once you've picked the repo."
+            )
+            return
+        project = _connect_through_github(
+            client, org_slug, name, slug, trunk, root, timeout, poll_interval
+        )
+    _report_connected(client.host, org_slug, project, None, as_json)
+
+
+@connect_app.command("gitlab")
+def connect_gitlab(
+    git_url: ConnectGitUrlOption,
+    token: ConnectTokenOption,
+    root: ConnectRootOption = None,
+    trunk: ConnectTrunkOption = None,
+    name: ConnectNameOption = None,
+    slug: ConnectSlugOption = None,
+    org: RefusingOrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Connect a GitLab repository as a project, with an access token."""
+    _connect_by_url(
+        "gitlab", git_url, name, slug, trunk, root, "", token, org, host, as_json
+    )
+
+
+@connect_app.command("bitbucket")
+def connect_bitbucket(
+    git_url: ConnectGitUrlOption,
+    token: ConnectTokenOption,
+    root: ConnectRootOption = None,
+    trunk: ConnectTrunkOption = None,
+    name: ConnectNameOption = None,
+    slug: ConnectSlugOption = None,
+    org: RefusingOrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Connect a Bitbucket repository as a project, with an access token."""
+    _connect_by_url(
+        "bitbucket", git_url, name, slug, trunk, root, "", token, org, host, as_json
+    )
+
+
+@connect_app.command("git")
+def connect_git(
+    git_url: ConnectGitUrlOption,
+    git_username: Annotated[
+        str | None,
+        typer.Option(
+            "--git-username",
+            help="Username for a private repo (blank: anonymous)",
+        ),
+    ] = None,
+    git_password: Annotated[
+        str | None,
+        typer.Option(
+            "--git-password",
+            help="Password or token for --git-username (blank: none)",
+            envvar="DCT_GIT_PASSWORD",
+        ),
+    ] = None,
+    root: ConnectRootOption = None,
+    trunk: ConnectTrunkOption = None,
+    name: ConnectNameOption = None,
+    slug: ConnectSlugOption = None,
+    org: RefusingOrgOption = None,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Connect a repository on any other git host by HTTPS URL.
+
+    Cloud syncs it but opens no pull requests and registers no webhooks.
+    """
+    _connect_by_url(
+        "other",
+        git_url,
+        name,
+        slug,
+        trunk,
+        root,
+        git_username or "",
+        git_password or "",
+        org,
+        host,
+        as_json,
+    )
+
+
+def _connect_by_url(
+    git_host: str,
+    git_url: str,
+    name: str | None,
+    slug: str | None,
+    trunk: str | None,
+    root: str | None,
+    git_username: str,
+    git_password: str,
+    org: str | None,
+    host: str | None,
+    as_json: bool,
+) -> None:
+    with _cloud(host, as_json) as (client, config):
+        org_slug = _org(client, config, org, refuse_default=REFUSE_DEFAULT_CONNECT)
+        project = client.create_project(
+            org_slug,
+            name or _repo_name(git_url),
+            slug or _slugify(name or _repo_name(git_url)),
+            git_url,
+            trunk or "",
+            root or "",
+            git_host,
+            git_username=git_username,
+            git_password=git_password,
+        )
+    _report_connected(client.host, org_slug, project, git_url, as_json)
+
+
+def _report_connected(
+    cloud_host: str,
+    org_slug: str,
+    project: ProjectSummary,
+    git_url: str | None,
+    as_json: bool,
+) -> None:
     # The project exists in Cloud from here on: the result is emitted first,
     # so no local bookkeeping can take it away from the caller.
     if as_json:
@@ -2305,13 +2450,7 @@ def project_connect(
             f" (trunk: {project.trunk_branch}, work: {project.work_branch})"
         )
         typer.echo(_connect_next_step(org_slug, project))
-        if git_url and repo_key(git_url).startswith("github.com/"):
-            typer.echo(
-                "Note: scaffold PRs and private repositories need the GitHub App"
-                f" flow, not a plain git URL: dct cloud project connect --org"
-                f" {org_slug} --start"
-            )
-    _record_published_to(client.host, org_slug, project, git_url)
+    _record_published_to(cloud_host, org_slug, project, git_url)
 
 
 def _connect_next_step(org: str, project: ProjectSummary) -> str:
@@ -2509,7 +2648,7 @@ def project_scaffold(
     host: HostOption = None,
     as_json: JsonOption = False,
 ) -> None:
-    """Open the dbt_charts.yml scaffold PR. GitHub-connected projects only."""
+    """Open the dbt_charts.yml scaffold PR. Projects on GitHub, GitLab, or Bitbucket."""
     with _cloud(host, as_json) as (client, config):
         context = _context(client, config, org, project)
         result = client.scaffold_project(context.org, context.project)
@@ -2896,11 +3035,9 @@ def _print_orgs(result: OrgList, here: tuple[str, str] | None = None) -> None:
 
 def _print_projects(org: str, result: ProjectList) -> None:
     if not result.projects:
-        typer.echo(
-            f"No projects yet. Connect one: dct cloud project connect --org {org}"
-        )
+        typer.echo(f"No projects yet. Connect one: {_connect_hint(org)}")
         return
-    table = _table("SLUG", "REPOSITORY", "TRUNK", "UNMAPPED SOURCES")
+    table = _table("SLUG", "REPOSITORY", "HOST", "AUTH", "TRUNK", "UNMAPPED SOURCES")
     for project in result.projects:
         # A count Cloud could not compute prints as a word, not a number: the
         # reason is under the table, but the cell has to say it too or the
@@ -2909,6 +3046,8 @@ def _print_projects(org: str, result: ProjectList) -> None:
         table.add_row(
             project.slug,
             project.repo_label,
+            "unknown" if project.git_host is None else project.git_host,
+            "unknown" if project.git_auth is None else project.git_auth,
             project.trunk_branch,
             "unknown" if unmapped is None else str(unmapped),
         )
@@ -3227,9 +3366,7 @@ def _print_status(org: str, status_result: OrgStatus) -> None:
         f" ({status_result.tested_connection_count} tested)"
     )
     if not status_result.projects:
-        typer.echo(
-            f"No projects yet. Connect one: dct cloud project connect --org {org}"
-        )
+        typer.echo(f"No projects yet. Connect one: {_connect_hint(org)}")
         return
     table = _table("PROJECT", "STAGE", "SYNCED", "UNMAPPED")
     for project in status_result.projects:

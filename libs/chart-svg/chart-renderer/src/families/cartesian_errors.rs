@@ -49,6 +49,7 @@ struct LayerAxis {
 struct Layer {
     #[serde(rename = "type")]
     kind: String,
+    x: Option<String>,
     y: Option<Value>,
     color: Option<String>,
     query_name: Option<String>,
@@ -637,10 +638,56 @@ fn layers(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
         }
         return Ok(());
     }
+    layer_x(facts, payload)?;
     // `apply_step_band` rejects a data-driven color field; it only runs on a band x.
     let colored_step = |l: &Layer| step_curve(l) && l.color.is_some();
     if facts.layers.iter().any(colored_step) && super::cartesian_x_errors::x_is_band(&payload.resolved, &payload.rows)? {
         return Err(Diagnostic::new(&codes::ERR_STEP_BAND_MULTI_SERIES, [("chart_id", chart_id())]));
+    }
+    Ok(())
+}
+
+/// `_overlay.py::_resolve_layer_x_encoding`: a layer authoring its own x column
+/// shares the base's x scale, so its type must be one that scale takes.
+fn layer_x(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
+    let Some(base_field) = facts.x.as_deref().filter(|_| facts.layers.iter().any(|l| l.x.is_some())) else { return Ok(()) };
+    let Some(base_type) = super::cartesian_x_errors::base_x_type(&payload.resolved, &payload.rows)? else { return Ok(()) };
+    let base_rows = super::temporal::normalize_labeled_temporal(&payload.rows, base_field)?;
+    let mut base_values = base_rows.iter().filter_map(|row| row.get(base_field)).filter(|v| !v.is_null()).peekable();
+    // Only a date-like base takes a temporal layer.
+    let base_date_shaped =
+        base_values.peek().is_some() && base_values.all(|v| v.as_str().is_some_and(super::temporal::is_date_like_string));
+    for layer in facts.layers.iter().filter(|l| l.y.as_ref().is_some_and(|y| !y.is_null())) {
+        let Some(x_field) = layer.x.as_deref() else { continue };
+        let own_rows;
+        let rows: &[Row] = if layer.query_name == facts.query_name {
+            &payload.rows
+        } else {
+            let dataset = super::layers::resolve_layer_rows(payload, layer.query_name.as_deref(), facts.query_name.as_deref(), &facts.chart_type)?;
+            own_rows = super::temporal::normalize_labeled_temporal(dataset, x_field)?;
+            &own_rows
+        };
+        let layer_type = infer_vega_type(rows, x_field);
+        let code = if base_type == VegaType::Quantitative && rows.first().is_some_and(|row| row.contains_key(x_field)) && layer_type != VegaType::Quantitative {
+            &codes::ERR_LAYER_X_NOT_QUANTITATIVE
+        } else if !matches!(base_type, VegaType::Nominal | VegaType::Ordinal)
+            || matches!(layer_type, VegaType::Nominal | VegaType::Ordinal)
+            || (layer_type == VegaType::Temporal && base_date_shaped)
+        {
+            continue;
+        } else {
+            &codes::ERR_LAYER_X_DOMAIN_MISMATCH
+        };
+        return Err(Diagnostic::new(
+            code,
+            [
+                ("base_field", json!(base_field)),
+                ("base_type", json!(base_type.name())),
+                ("chart_id", json!(facts.chart_id())),
+                ("layer_type", json!(layer_type.name())),
+                ("x_field", json!(x_field)),
+            ],
+        ));
     }
     Ok(())
 }

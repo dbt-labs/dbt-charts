@@ -198,8 +198,8 @@ def find_local_project_dir(start: Path, git_subdirectory: str) -> Path | None:
     value Cloud just resolved for this connect, whatever `--root`, an
     auto-detected sole dbt root, or the repo root produced it.
 
-    None when *start* is not inside a git checkout at all (a `--git-url`
-    connect run with no local clone) -- there is nowhere on disk to write,
+    None when *start* is not inside a git checkout at all (a `connect <host>
+    --git-url` run with no local clone) -- there is nowhere on disk to write,
     and the caller falls back to printing instructions instead.
 
     Raises ValueError when *git_subdirectory* is not a path inside the

@@ -212,6 +212,9 @@ def chart_to_dict(item: dict[str, Any], query_name: str | None) -> dict[str, Any
             continue
         d[field] = clean_value(val)
 
+    if "link" in d and chart["link_open"] != "page":
+        d["link"] = {"url": d["link"], "open": chart["link_open"]}
+
     return d
 
 

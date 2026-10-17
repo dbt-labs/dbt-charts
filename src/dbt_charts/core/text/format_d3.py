@@ -46,6 +46,7 @@ from d3_format import (
     parse as _d3_parse,
 )
 from d3_format.errors import D3FormatError
+from dbt_charts import _engine
 from dbt_charts.core.text.magnitude_words import MagnitudeWords, magnitude_words
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_NATIVE,
@@ -265,21 +266,39 @@ _TIME_LOCALE: ContextVar[TimeLocaleDefinition] = ContextVar(
     "dct_time_locale", default=EN_US_TIME
 )
 _WEEK_START: ContextVar[int] = ContextVar("dct_week_start", default=0)
+_LANGUAGE: ContextVar[str] = ContextVar("dct_language", default="en")
 
 
 @contextmanager
 def regional_scope(
-    number: HouseLocale, time: TimeLocaleDefinition, week_start: int
+    number: HouseLocale,
+    time: TimeLocaleDefinition,
+    week_start: int,
+    language: str = "en",
 ) -> Generator[None]:
     number_token = _NUMBER_LOCALE.set(number)
     time_token = _TIME_LOCALE.set(time)
     week_token = _WEEK_START.set(week_start)
+    language_token = _LANGUAGE.set(language)
     try:
         yield
     finally:
+        _LANGUAGE.reset(language_token)
         _WEEK_START.reset(week_token)
         _TIME_LOCALE.reset(time_token)
         _NUMBER_LOCALE.reset(number_token)
+
+
+@contextmanager
+def language_scope(language: str) -> Generator[None]:
+    """Open only the word-language scope: for words printed with no board's
+    number and time locales behind them (authoring warnings, the controls
+    runtime's English slice)."""
+    token = _LANGUAGE.set(language)
+    try:
+        yield
+    finally:
+        _LANGUAGE.reset(token)
 
 
 def active_format_locale() -> HouseLocale:
@@ -292,6 +311,16 @@ def active_time_locale() -> TimeLocaleDefinition:
 
 def active_week_start() -> int:
     return _WEEK_START.get()
+
+
+def active_language() -> str:
+    return _LANGUAGE.get()
+
+
+def board_word(message_id: str, count: int | None = None, **args: str) -> str:
+    """Message `message_id` in the board's language (`regional.language`);
+    `count` picks a plural form and fills `{n}`, `args` fill other placeholders."""
+    return _engine.message(_LANGUAGE.get(), message_id, count, args)
 
 
 def locale_definition(locale: FormatLocale) -> LocaleDefinition:

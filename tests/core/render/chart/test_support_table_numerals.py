@@ -1150,7 +1150,11 @@ def test_left_axis_trailing_currency_declares_once_with_the_magnitude():
     regional = Regional(locale=RegionalLocale(number="de-DE"))
     locale = regional.format_locale
     values = [441e6, 448e6, -456e6]
-    with regional_scope(locale, regional.time_locale, regional.week_start):
+    with regional_scope(
+        locale,
+        regional.time_locale,
+        regional.week_start,
+    ):
         strip = _house_affix_numerals_values(values, hang="right", spec="currency")
         painted = _paint(strip, values, locale_definition(locale))
         twins = [

@@ -16,8 +16,9 @@ from typing import Any, TypeVar, get_args
 from pydantic import BaseModel, TypeAdapter
 from pydantic.fields import FieldInfo
 
+from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.factories import _PatchBase
-from dbt_charts.core.compile.models.markers import Absent
+from dbt_charts.core.compile.models.markers import Absent, AutoUnset, Overlay
 from dbt_charts.core.compile.models.style.theme import Style
 from dbt_charts.core.compile.resolve.style.inherit_graph import InheritGraph
 
@@ -226,6 +227,8 @@ def _model_copy_paths(model: _ModelT, updates_by_path: dict[str, _ValueT]) -> _M
 
 
 def _is_sparse(field: FieldInfo) -> bool:
+    if any(isinstance(meta, Overlay) for meta in field.metadata):
+        return True
     pending = [field.annotation]
     while pending:
         node = pending.pop()
@@ -241,9 +244,10 @@ def _none_paths(model: BaseModel, path: str) -> Iterator[str]:
             continue
         value = getattr(model, name)
         child = f"{path}.{name}"
+        if any(isinstance(meta, Absent) for meta in field.metadata):
+            continue
         if value is None:
-            if not any(isinstance(meta, Absent) for meta in field.metadata):
-                yield child
+            yield child
         elif isinstance(value, BaseModel):
             yield from _none_paths(value, child)
 
@@ -251,8 +255,45 @@ def _none_paths(model: BaseModel, path: str) -> Iterator[str]:
 def assert_style_total(style: Style) -> None:
     """Raise when a style field is ``None`` where a value was required.
 
-    ``None`` is legal on a field carrying ``Absent`` and anywhere inside a sparse
-    (``*Patch``-typed) slot.
+    ``None`` is legal on a field carrying ``Absent`` (whose value is authored as
+    written and is not walked) and anywhere inside a sparse
+    (``*Patch``-typed or ``Overlay``) slot.
     """
     if missing := list(_none_paths(style, "Style")):
-        raise ValueError("Style fields left unset:\n" + "\n".join(missing))
+        raise unset_fields_error(missing)
+
+
+def unset_fields_error(paths: list[str]) -> ValueError:
+    return ValueError("Style fields left unset:\n" + "\n".join(paths))
+
+
+def unset_autos(value: _ValueT) -> _ValueT:
+    """*value* with every ``AutoUnset`` field that reads ``auto`` set to None.
+
+    Runs once the cascade is done, so the readers of a resolved style see the
+    field as the unset state they have always handled.
+    """
+    if not isinstance(value, BaseModel):
+        return value
+    updates: dict[str, Any] = {}  # type-state: explicit_any — replacement field values
+    for name, field in type(value).model_fields.items():
+        child = getattr(value, name)
+        if child == "auto" and any(isinstance(m, AutoUnset) for m in field.metadata):
+            updates[name] = None
+        else:
+            unset = unset_autos(child)
+            if unset is not child:
+                updates[name] = unset
+    return value.model_copy(update=updates) if updates else value
+
+
+def settled(value: _ValueT | None) -> _ValueT:
+    """A leaf ``assert_style_total`` has already proven set, narrowed for the type checker."""
+    assert value is not None
+    return value
+
+
+def merge_unset(base: _ModelT, patch: BaseModel | None) -> _ModelT:
+    """``merge_onto_base`` for a patch that lands after the cascade: an ``auto``
+    it writes on a renderer-default leaf resets that leaf to unset."""
+    return unset_autos(merge_onto_base(base, patch))

@@ -186,6 +186,9 @@ dependencies = [
 [[package]]
 name = "d3rs"
 version = "0.0.1"
+dependencies = [
+ "display-text",
+]
 
 [[package]]
 name = "data-url"
@@ -198,6 +201,7 @@ name = "dbt-charts-core-py"
 version = "0.0.1"
 dependencies = [
  "chart-renderer",
+ "display-text",
  "pyo3",
  "serde",
  "serde_json",
@@ -227,6 +231,11 @@ dependencies = [
 [[package]]
 name = "display-text"
 version = "0.0.1"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "equivalent"

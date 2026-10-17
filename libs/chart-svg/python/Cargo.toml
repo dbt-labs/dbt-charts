@@ -19,6 +19,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 chart-renderer = { path = "../chart-renderer" }
+display-text = { path = "../display-text" }
 serde = "1"
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 

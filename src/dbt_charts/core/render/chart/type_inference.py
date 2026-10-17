@@ -16,6 +16,7 @@ from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.vl_field_maps import emit_resolved_scale_vl
 from dbt_charts.core.text.format_d3 import is_time_format, reads_as_number
+from dbt_charts.core.text.predefined_formats import js_str
 from dbt_charts.core.utils import CellValue, vega_infers_quantitative
 
 if TYPE_CHECKING:
@@ -68,9 +69,7 @@ def _utc_time_label_expr(fmt: str) -> str:
     visible set — see ``build_cartesian_x_encoding``, which routes a bucketed
     cadence through ``default_label_expr_for``'s gated form instead.
     """
-    from dbt_charts.core.render.chart.time_unit_detect import vega_quoted_format
-
-    return f"utcFormat(toDate(datum.value), {vega_quoted_format(fmt)})"
+    return f"utcFormat(toDate(datum.value), {js_str(fmt)})"
 
 
 DATE_LIKE_PATTERNS = [

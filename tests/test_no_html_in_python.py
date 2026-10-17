@@ -62,11 +62,6 @@ _MARKUP_PATTERNS = (_DOC_MARKER, _OPEN_WITH_ATTR, _SELF_CLOSING, _CLOSING)
 # the legitimate Class-2/3 reason.
 _RENDER = DBT_CHARTS_PKG_DIR / "core" / "render"
 _ALLOWLIST: dict[Path, str] = {
-    # WHY: embed_svg_script() wraps JS in <script> for inline SVG execution —
-    # this is SVG scripting, not page-chrome HTML.
-    (_RENDER / "script_embedding.py").resolve(): (
-        "SVG script embedding (<script> in SVG context)"
-    ),
     # WHY: font_selection reads finished markup to decide which boards an export
     # carries, so its <style> pattern matches markup rather than authoring any —
     # the CSS-rule scan is scoped to style blocks because an unscoped one walked

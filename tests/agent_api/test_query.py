@@ -42,6 +42,27 @@ rows:
   - c
 """
 
+MULTISELECT_BOARD = """
+source: db
+variables:
+  segment:
+    input: multiselect
+    options:
+      static: [COMMERCIAL, SMB]
+queries:
+  picked:
+    sql: |
+      select count(*) as n
+      from (values ('COMMERCIAL'), ('SMB')) as t(segment)
+      where {{ filter('segment', segment) }}
+charts:
+  c:
+    query: picked
+    type: table
+rows:
+  - c
+"""
+
 # ---------------------------------------------------------------------------
 # SqlQuery model — lenient_variables field
 # ---------------------------------------------------------------------------
@@ -742,6 +763,55 @@ class TestVariableBinding:
         ]
         with pytest.raises(ValueError, match="region"):
             variables_to_dict(bindings)
+
+    @pytest.mark.parametrize(
+        ("selection", "selected"), [([], 2), (["COMMERCIAL"], 1)], ids=["none", "one"]
+    )
+    def test_a_multiselect_binds_to_a_list(
+        self,
+        tmp_path: Path,
+        registry: AdapterRegistry,
+        local_project: Callable[..., FilesystemProject],
+        selection: list[str],
+        selected: int,
+    ) -> None:
+        from dbt_charts.agent_api.query import (
+            VariableBinding,
+            query_board,
+            variables_to_dict,
+        )
+
+        path = _write_board(tmp_path, MULTISELECT_BOARD)
+        bound = variables_to_dict([VariableBinding(name="segment", value=selection)])
+
+        result = query_board(
+            "picked",
+            path,
+            local_project(tmp_path),
+            vars=bound,
+            adapter_registry=registry,
+        )
+
+        assert result.errors == []
+        assert result.data == [{"n": selected}]
+
+    def test_an_unbound_multiselect_asks_for_a_list(
+        self,
+        tmp_path: Path,
+        registry: AdapterRegistry,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        path = _write_board(tmp_path, MULTISELECT_BOARD)
+
+        result = query_board(
+            "picked", path, local_project(tmp_path), adapter_registry=registry
+        )
+
+        (error,) = result.errors
+        assert "list of strings" in error
+        assert "plain value" not in error
 
     def test_variables_to_dict_empty_returns_empty(self) -> None:
         from dbt_charts.agent_api.query import variables_to_dict

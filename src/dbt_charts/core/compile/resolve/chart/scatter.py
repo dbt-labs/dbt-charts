@@ -6,7 +6,6 @@ from dataclasses import replace
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import column_format
-from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     ScatterChart,
 )
@@ -78,6 +77,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
     declared_column_format,
 )
+from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
@@ -147,7 +147,7 @@ def _resolve_scatter(
         has_quantitative_axis=True,
     )
     primary = plan.primary
-    scatter = merge_onto_base(chart_style_context.scatter, primary)
+    scatter = merge_unset(chart_style_context.scatter, primary)
     channels = plan.channels
     channels, wide_measure_series = resolve_wide_measure_channels(
         normalized, channels, "scatter", has_layers=bool(normalized.layers)

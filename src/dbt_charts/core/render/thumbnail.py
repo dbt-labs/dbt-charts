@@ -57,7 +57,13 @@ _REMOVED_CLASSES = frozenset(
     {"role-axis-label", "role-axis-tick", "role-axis-grid", "role-legend"}
 )
 _FOOTER_CLASS = "dbt-footer-link"
-_A11Y_ATTRS = ("aria-label", "aria-roledescription", "aria-hidden", "role")
+_A11Y_ATTRS = (
+    "aria-label",
+    "aria-roledescription",
+    "aria-hidden",
+    "role",
+    "data-dct-role",
+)
 _A11Y_ELEMENTS = frozenset({"title", "desc"})
 # Attributes that carry the board's own words, which a thumbnail must not keep.
 _PROSE_ATTRS = (

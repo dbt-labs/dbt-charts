@@ -8,6 +8,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 from dbt_charts.agent_api._link_scan import board_slug, rewrite_links, scan_links
 from dbt_charts.core.project import Project
 
@@ -141,6 +143,26 @@ class TestRewriteLinks:
         assert project.read_text("charts/exec.yml") == (
             "charts:\n  a:\n    link: growth/rev\n"
         )
+
+    @pytest.mark.parametrize(
+        "board",
+        [
+            "charts:\n  a:\n    link:\n      url: /{slug}?x=1\n      open: modal\n",
+            "charts:\n  a:\n    link: {{url: /{slug}, open: modal}}\n",
+        ],
+    )
+    def test_rewrites_object_form_link_url(
+        self,
+        board: str,
+        tmp_path: Path,
+        in_memory_project: Callable[[Path, dict[str, str]], Project],
+    ) -> None:
+        project = in_memory_project(
+            tmp_path, {"charts/exec.yml": board.format(slug="finance/rev")}
+        )
+        result = rewrite_links(project, "finance/rev", "growth/rev")
+        assert len(result.exact) == 1
+        assert project.read_text("charts/exec.yml") == board.format(slug="growth/rev")
 
     def test_leaves_fuzzy_hit_byte_identical(
         self,

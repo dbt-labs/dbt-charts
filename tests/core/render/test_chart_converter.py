@@ -429,6 +429,30 @@ def test_correct_concat_overshoot_raises_on_nonpositive_width(
         )
 
 
+def test_stamp_roles_gives_axes_and_marks_a_machine_key() -> None:
+    """The hover runtime selects axes and recedable marks by ``data-dct-role``,
+    never by the (translatable) aria text."""
+    from dbt_charts.core.render.converters import chart as chart_converter
+
+    svg = (
+        '<g class="mark-group role-axis" role="graphics-symbol" '
+        'aria-roledescription="axis" aria-label="X-axis for a linear scale">'
+        '<path aria-label="a: 1" role="graphics-symbol" aria-roledescription="bar"/>'
+        '<path aria-label="b: 1" role="graphics-symbol" aria-roledescription="arc mark"/>'
+        '<g aria-roledescription="arc mark container"/>'
+        '<g class="mark-group role-axis" role="graphics-symbol" '
+        'aria-roledescription="axis" aria-label="Y-axis for a linear scale"/>'
+    )
+
+    out = chart_converter._stamp_roles(svg)
+
+    assert out.count('data-dct-role="x-axis"') == 1
+    assert out.count('data-dct-role="y-axis"') == 1
+    assert 'data-dct-role="bar" aria-label="a: 1"' in out
+    assert 'data-dct-role="arc" aria-label="b: 1"' in out
+    assert 'aria-roledescription="arc mark container"/>' in out
+
+
 def test_stamp_value_label_layers_raises_when_no_matching_group() -> None:
     """Every index in ``$df_value_label_layers`` must name a real mark-text
     group -- bare, facet ``child_``, or concat ``concat_N_`` prefixed. A miss
@@ -977,7 +1001,13 @@ def test_correct_facet_overshoot_runs_through_render_vega_spec(
     )
 
     result = chart_converter.render_vega_spec(
-        spec, "svg", resolve_style(get_theme_style()), 600.0, 200, False, "chart"
+        spec,
+        "svg",
+        resolve_style(get_theme_style()),
+        600.0,
+        200,
+        False,
+        "chart",
     )
 
     assert probe_calls == 1

@@ -5,3 +5,4 @@ edition = "2021"
 description = "Spike-scoped ports of d3 functions used by dbt charts: d3-path, d3-shape, d3-format, d3-scale (ticks/nice), d3-sankey, and SI-unit utilities."
 
 [dependencies]
+display-text = { path = "../display-text" }

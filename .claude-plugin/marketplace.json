@@ -1,0 +1,15 @@
+{
+  "name": "dbt-charts-plugins",
+  "owner": {
+    "name": "dbt Labs",
+    "url": "https://dbtcharts.com"
+  },
+  "description": "Claude plugins for dbt Charts.",
+  "plugins": [
+    {
+      "name": "dbt-charts",
+      "source": "./plugins/dbt-charts",
+      "description": "Build, review, and query dbt Charts boards from Claude: the dbtcharts.com connector plus the board authoring skills."
+    }
+  ]
+}

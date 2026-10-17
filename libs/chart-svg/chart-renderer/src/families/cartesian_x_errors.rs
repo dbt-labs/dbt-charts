@@ -133,7 +133,7 @@ fn label_values_not_temporal(rows: &[Row], field: &str) -> Result<(), Diagnostic
 /// so any ISO date or datetime string counts as one: a deliberate superset of
 /// production, which refuses a datetime-shaped `str`. A bucket label such as
 /// `Jan 2024` is not a date.
-fn time_format(spec: &str, setting: &str, field: &str, rows: &[Row], remedy: Option<&str>) -> Result<(), Diagnostic> {
+pub(crate) fn time_format(spec: &str, setting: &str, field: &str, rows: &[Row], remedy: Option<&str>) -> Result<(), Diagnostic> {
     let iso_date = |s: &str| s.as_bytes().get(4) == Some(&b'-') && s.as_bytes().get(7) == Some(&b'-') && parse_date(s).is_some();
     let is_date = |cell: &Value| cell.as_str().is_some_and(|s| utc_safe_date(s) || iso_date(s));
     let Some(offender) = rows.iter().filter_map(|row| row.get(field)).find(|v| !v.is_null() && !is_date(v)) else { return Ok(()) };
@@ -307,11 +307,16 @@ fn band_step_of(facts: &Facts) -> bool {
 /// Whether the x axis resolves a band scale (nominal or ordinal) once the chart's own curve has
 /// had its say: the verdict `step_band.is_band_step` reads for the base and for every layer.
 pub fn x_is_band(resolved: &Value, rows: &[Row]) -> Result<bool, Diagnostic> {
+    Ok(matches!(base_x_type(resolved, rows)?, Some(VegaType::Nominal | VegaType::Ordinal)))
+}
+
+/// The base's x encoding type, `None` when the chart has no x.
+pub fn base_x_type(resolved: &Value, rows: &[Row]) -> Result<Option<VegaType>, Diagnostic> {
     let facts: Facts = serde_json::from_value(resolved.clone()).map_err(|e| format!("x axis facts: {e}"))?;
-    let Some(field) = facts.x.as_deref() else { return Ok(false) };
+    let Some(field) = facts.x.as_deref() else { return Ok(None) };
     let rows = normalize_labeled_temporal(rows, field)?;
     let filled = resolve_filled_x(&rows, field, &x_axis_of(&facts), &facts.chart_type, band_step_of(&facts), &panel_fields_of(&facts))?;
-    Ok(matches!(filled.resolution.vl_type, VegaType::Nominal | VegaType::Ordinal))
+    Ok(Some(filled.resolution.vl_type))
 }
 
 fn panel_fields_of(facts: &Facts) -> Vec<&str> {

@@ -51,6 +51,40 @@ class Absent:
 
 
 @dataclasses.dataclass(frozen=True)
+class AutoUnset:
+    """``auto`` on this field leaves the choice to the renderer.
+
+    Attached via ``Annotated[T | None, AutoUnset()]``: the marker adds the
+    ``auto`` arm to validation and to the published schema. A theme spells the
+    default ``auto`` so the field is total; resolve reads it as ``None`` once
+    the cascade has run, so the declared type is the resolved one.
+    """
+
+    def __get_pydantic_core_schema__(
+        self,
+        source: Any,  # type-state: explicit_any — pydantic's annotation hook receives any source type
+        handler: GetCoreSchemaHandler,
+    ) -> CoreSchema:
+        return core_schema.no_info_wrap_validator_function(
+            lambda value, validate: value if value == AUTO else validate(value),
+            handler(source),
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                lambda value: value
+            ),
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class Overlay:
+    """A slot of overrides authored over a parent slot, merged at chart resolve.
+
+    Attached via ``Annotated[T, Overlay()]`` on a nested model field. Its leaves
+    are ``None`` until an author sets one; the cascade never fills them, so
+    ``None`` there means "no override", not an unfilled value.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
 class InheritSlot:
     """Marks that an entire nested slot mirrors another subtree.
 

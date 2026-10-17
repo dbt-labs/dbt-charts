@@ -16,7 +16,7 @@ def test_a_static_export_carries_the_host_stylesheet_but_no_runtime() -> None:
     page = to_html(render_board_to_svg(), controls=False)
 
     assert ".dbt-chart text.dbt-table-cell-inert" in page
-    assert ".dbt-table-row-link:hover" in page
+    assert ".dbt-table-row:hover .dbt-table-row-link" in page
     assert "dbtControls" not in page
 
 

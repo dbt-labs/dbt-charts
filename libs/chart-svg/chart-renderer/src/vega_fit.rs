@@ -117,6 +117,30 @@ pub fn vl_x_label_anchor(angle: f64, orient_bottom: bool) -> (&'static str, &'st
     (align, baseline)
 }
 
+/// Vega-Lite's default `(labelAlign, labelBaseline)` for a rotated y-axis
+/// label (`compile/axis/properties.ts`, `angle` already normalized): the
+/// anchor is `center` at 90 and 270 degrees, else the side of the axis the
+/// half-turn falls on; the baseline is `top`/`bottom` within 45 degrees of
+/// vertical (swapped on the right axis), `middle` elsewhere. Probe-pinned
+/// against `vegalite_to_svg` at 28 angles per orient.
+pub fn vl_y_label_anchor(angle: f64, orient_left: bool) -> (&'static str, &'static str) {
+    let align = if (angle - 90.0) % 180.0 == 0.0 {
+        "center"
+    } else if (90.0 < angle && angle < 270.0) == orient_left {
+        "left"
+    } else {
+        "right"
+    };
+    let baseline = if 45.0 < angle && angle < 135.0 {
+        if orient_left { "top" } else { "bottom" }
+    } else if 225.0 < angle && angle < 315.0 {
+        if orient_left { "bottom" } else { "top" }
+    } else {
+        "middle"
+    };
+    (align, baseline)
+}
+
 /// `offset(item)` from vega-scenegraph `util/text.js` — the font-baseline
 /// shift Vega applies to every text item instead of SVG's
 /// `alignment-baseline`.
@@ -140,6 +164,16 @@ pub fn middle_rise(font_size: f64) -> f64 {
 /// `lineHeight`: the font size plus 2).
 pub fn label_row_advance(font_size: f64) -> f64 {
     font_size + 2.0
+}
+
+/// Vega's `padDomain` for a linear or time scale: the domain widened about its
+/// center so its ends sit `pad` pixels inside a range `pw` wide.
+pub fn pad_domain((lo, hi): (f64, f64), pw: f64, pad: f64) -> (f64, f64) {
+    if pad <= 0.0 || lo == hi {
+        return (lo, hi);
+    }
+    let (mid, half) = ((lo + hi) / 2.0, (hi - lo) / 2.0 * pw / (pw - 2.0 * pad));
+    (mid - half, mid + half)
 }
 
 /// Ink bounds of a single-line text item, per vega-scenegraph
@@ -183,6 +217,16 @@ pub fn fits_flat(widths: &[f64], band: f64) -> bool {
 pub struct TiltPick {
     pub angle: f64,
     pub fits: bool,
+    /// The widest label's rotated bounding-box height at `angle`
+    /// (`_label_block_height`): what the tilt costs below the axis.
+    pub block_height: f64,
+}
+
+/// `_label_block_height`: the rotated bounding-box height of the widest label,
+/// read as one line of text.
+pub fn label_block_height(max_width: f64, font_size: f64, angle: f64) -> f64 {
+    let (sin, cos) = angle.abs().to_radians().sin_cos();
+    max_width * sin + font_size * cos
 }
 
 /// Shallowest ladder angle whose rotated footprint fits one `band` — port of
@@ -192,17 +236,18 @@ pub struct TiltPick {
 /// against whatever `widths` slice — full or parity-halved — is passed in).
 pub fn pick_tilt(widths: &[f64], band: f64, increments: &[f64], font_size: f64) -> TiltPick {
     if increments.is_empty() || widths.is_empty() {
-        return TiltPick { angle: 0.0, fits: true };
+        return TiltPick { angle: 0.0, fits: true, block_height: font_size };
     }
     let max_width = widths.iter().cloned().fold(0.0, f64::max);
     let fits = |angle: &&f64| {
         let (sin, cos) = angle.abs().to_radians().sin_cos();
         max_width * cos + font_size * sin <= band
     };
-    match increments.iter().find(fits) {
-        Some(&angle) => TiltPick { angle, fits: true },
-        None => TiltPick { angle: increments.last().copied().unwrap_or(0.0), fits: false },
-    }
+    let (angle, fit) = match increments.iter().find(fits) {
+        Some(&angle) => (angle, true),
+        None => (increments.last().copied().unwrap_or(0.0), false),
+    };
+    TiltPick { angle, fits: fit, block_height: label_block_height(max_width, font_size, angle) }
 }
 
 /// An ordinal category axis's label layout: the tilt angle and, when every
@@ -534,6 +579,32 @@ pub fn fit_plot(
     view_w: f64,
     view_h: f64,
     pad: (f64, f64, f64, f64), // (left, right, top, bottom)
+    ink: impl FnMut(f64, f64, &mut Bounds),
+    title: Option<&TitleInk>,
+) -> FitMargins {
+    fit_passes(view_w, view_h, pad, false, ink, title)
+}
+
+/// [`fit_plot`] with the plot width pinned to `view_w`: the horizontal
+/// ink only widens the canvas (`autosize: pad` width-wise) while the height
+/// still fits the card. A support_table's concat-over-block spec lays out so:
+/// its first render overshoots the slot width by the block's reach, which is
+/// the overhead the width correction measures.
+pub fn fit_plot_height(
+    view_w: f64,
+    view_h: f64,
+    pad: (f64, f64, f64, f64),
+    ink: impl FnMut(f64, f64, &mut Bounds),
+    title: Option<&TitleInk>,
+) -> FitMargins {
+    fit_passes(view_w, view_h, pad, true, ink, title)
+}
+
+fn fit_passes(
+    view_w: f64,
+    view_h: f64,
+    pad: (f64, f64, f64, f64),
+    fixed_width: bool,
     mut ink: impl FnMut(f64, f64, &mut Bounds),
     title: Option<&TitleInk>,
 ) -> FitMargins {
@@ -559,7 +630,9 @@ pub fn fit_plot(
         top = (-b.y1).ceil().max(0.0);
         right = (b.x2 - pw).ceil().max(0.0);
         bottom = (b.y2 - ph).ceil().max(0.0);
-        pw = (avail_w - left - right).max(0.0);
+        if !fixed_width {
+            pw = (avail_w - left - right).max(0.0);
+        }
         ph = (avail_h - top - bottom).max(0.0);
         if pass == SCENEGRAPH_PADDING_PASSES {
             scenegraph_plot = (pw, ph);
@@ -978,6 +1051,22 @@ mod tests {
         assert_eq!(vl_x_label_anchor(270.0, true), ("right", "middle"));
         assert_eq!(vl_x_label_anchor(45.0, true), ("left", "top"));
         assert_eq!(vl_x_label_anchor(270.0, false), ("left", "middle"));
+    }
+
+    #[test]
+    fn vl_y_label_anchor_follows_the_angle_quadrants() {
+        assert_eq!(vl_y_label_anchor(0.0, true), ("right", "middle"));
+        assert_eq!(vl_y_label_anchor(45.0, true), ("right", "middle"));
+        assert_eq!(vl_y_label_anchor(60.0, true), ("right", "top"));
+        assert_eq!(vl_y_label_anchor(90.0, true), ("center", "top"));
+        assert_eq!(vl_y_label_anchor(91.0, true), ("left", "top"));
+        assert_eq!(vl_y_label_anchor(180.0, true), ("left", "middle"));
+        assert_eq!(vl_y_label_anchor(240.0, true), ("left", "bottom"));
+        assert_eq!(vl_y_label_anchor(270.0, true), ("center", "bottom"));
+        assert_eq!(vl_y_label_anchor(300.0, true), ("right", "bottom"));
+        assert_eq!(vl_y_label_anchor(60.0, false), ("left", "bottom"));
+        assert_eq!(vl_y_label_anchor(240.0, false), ("right", "top"));
+        assert_eq!(vl_y_label_anchor(285.0, false), ("left", "top"));
     }
 
     #[test]

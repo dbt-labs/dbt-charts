@@ -653,3 +653,18 @@ def test_download_error_page_omits_nav_when_server_nav_false(tmp_path: Path) -> 
         response = client.get("/broken.svg")
     assert response.status_code == 422
     assert "dbt-nav" not in response.text
+
+
+def test_embed_param_serves_the_board_without_nav(tmp_path: Path) -> None:
+    """`?_embed` is a host param for a modal's iframe: chrome-less, never a variable."""
+    with TestClient(
+        create_server(FilesystemProject(_project(tmp_path))),
+        raise_server_exceptions=False,
+    ) as client:
+        page = client.get("/overview/")
+        embedded = client.get("/overview/?_embed=")
+    assert page.status_code == 200, page.text
+    assert embedded.status_code == 200, embedded.text
+    assert 'class="dbt-nav' in page.text
+    assert 'class="dbt-nav' not in embedded.text
+    assert "Overview" in embedded.text

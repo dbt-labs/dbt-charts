@@ -6,6 +6,7 @@
 //! `render/converters/chart.py` (`safe_svg_id`, `svg_utils.authored_kind_attr`).
 //! See `docs/laws-shared.md#front-end-contract`.
 
+use display_text::language::tr;
 use crate::common::FormatSlot;
 use crate::svg::xml_escape_attr;
 use std::fmt::Write as _;
@@ -33,8 +34,8 @@ pub const SWATCH: char = '\u{200B}'; // ZERO WIDTH SPACE
 /// (`chart_svg_dev/contract.py::_group_role`). `kind` is Vega's own mark
 /// tag ("rect", "rule"); `name` is cosmetic -- the extractor never reads
 /// the group's third class token.
-pub fn mark_group_open(out: &mut String, kind: &str, name: &str) {
-    open_mark_group(out, kind, name, "");
+pub fn mark_group_open(out: &mut String, kind: &str, name: &str) -> Result<(), String> {
+    open_mark_group(out, kind, name, "")
 }
 
 /// Open a value-label text mark set: the `.role-mark` group carrying the
@@ -44,18 +45,21 @@ pub fn mark_group_open(out: &mut String, kind: &str, name: &str) {
 /// mark only through this stamp, so a pie's center total or a series-label
 /// rail -- text marks with the same `role-mark` ancestor and a `key: value`
 /// label -- never recede with a datum.
-pub fn value_label_group_open(out: &mut String, name: &str) {
-    open_mark_group(out, "text", name, " data-dbt-value-label=\"true\"");
+pub fn value_label_group_open(out: &mut String, name: &str) -> Result<(), String> {
+    open_mark_group(out, "text", name, " data-dbt-value-label=\"true\"")
 }
 
-fn open_mark_group(out: &mut String, kind: &str, name: &str, stamp: &str) {
+fn open_mark_group(out: &mut String, kind: &str, name: &str, stamp: &str) -> Result<(), String> {
+    let container = tr(&format!("aria.container_{kind}"), None, &[])?;
     let _ = write!(
         out,
         "<g class=\"mark-{kind} role-mark {name}\"{stamp} role=\"graphics-object\" \
-         aria-roledescription=\"{kind} mark container\">",
+         aria-roledescription=\"{container}\">",
         kind = xml_escape_attr(kind),
-        name = xml_escape_attr(name)
+        name = xml_escape_attr(name),
+        container = xml_escape_attr(&container),
     );
+    Ok(())
 }
 
 pub fn mark_group_close(out: &mut String) {
@@ -63,7 +67,8 @@ pub fn mark_group_close(out: &mut String) {
 }
 
 /// Which of Vega's two axis channels a group describes. `chart_interactivity.js`
-/// finds an axis by the `X-axis` / `Y-axis` prefix of its group's `aria-label`.
+/// finds an axis by its group's `data-dct-role` (`x-axis` / `y-axis`); the
+/// `aria-label` beside it is a label, never a key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AxisChannel {
     X,
@@ -80,20 +85,27 @@ pub enum AxisChannel {
 /// opened at `origin` and the items sit in a second `<g>` that undoes the
 /// translate: the frame origin is the real axis origin and no item moves.
 /// Close with [`axis_group_close`].
-pub fn axis_group_open(out: &mut String, channel: AxisChannel, origin: (f64, f64)) {
-    let label = match channel {
-        AxisChannel::X => "X-axis",
-        AxisChannel::Y => "Y-axis",
+pub fn axis_group_open(
+    out: &mut String,
+    channel: AxisChannel,
+    origin: (f64, f64),
+) -> Result<(), String> {
+    let (label_id, key) = match channel {
+        AxisChannel::X => ("aria.x_axis", "x-axis"),
+        AxisChannel::Y => ("aria.y_axis", "y-axis"),
     };
+    let label = xml_escape_attr(&tr(label_id, None, &[])?);
+    let axis = xml_escape_attr(&tr("aria.axis", None, &[])?);
     let (ox, oy) = origin;
     let _ = write!(
         out,
-        "<g class=\"mark-group role-axis\" role=\"graphics-symbol\" aria-roledescription=\"axis\" \
-         aria-label=\"{label}\"><g transform=\"translate({ox:.3},{oy:.3})\">\
+        "<g class=\"mark-group role-axis\" data-dct-role=\"{key}\" role=\"graphics-symbol\" \
+         aria-roledescription=\"{axis}\" aria-label=\"{label}\"><g transform=\"translate({ox:.3},{oy:.3})\">\
          <g transform=\"translate({nx:.3},{ny:.3})\">",
         nx = -ox,
         ny = -oy,
     );
+    Ok(())
 }
 
 pub fn axis_group_close(out: &mut String) {
@@ -156,14 +168,16 @@ pub fn legend_label_open(out: &mut String, series_attr: &str) {
 /// authored-kind stamp is the converter's regex over every such group, so a
 /// header carries the chart-title kind exactly as the chart's own title does.
 /// Close with [`mark_group_close`].
-pub fn facet_header_open(out: &mut String, header: &str) {
+pub fn facet_header_open(out: &mut String, header: &str) -> Result<(), String> {
     let _ = write!(
         out,
         "<g class=\"mark-text role-title-text\"{kind} role=\"graphics-symbol\" \
-         aria-roledescription=\"title\" aria-label=\"{label}\" pointer-events=\"none\">",
+         aria-roledescription=\"{title}\" aria-label=\"{label}\" pointer-events=\"none\">",
         kind = authored_kind_attr("title"),
-        label = xml_escape_attr(&format!("Title text '{header}'")),
+        title = xml_escape_attr(&tr("aria.title", None, &[])?),
+        label = xml_escape_attr(&tr("aria.title_text", None, &[("header", header)])?),
     );
+    Ok(())
 }
 
 /// Whether `svg` announces nothing but axes: no mark carries an `aria-label`.
@@ -220,7 +234,7 @@ pub fn paint_item(
     role: ItemRole,
     reads: Reads,
     item: impl FnOnce(&str) -> String,
-) {
+) -> Result<(), String> {
     match reads {
         Reads::Bare => out.push_str(&item("")),
         Reads::Hidden => {
@@ -229,11 +243,12 @@ pub fn paint_item(
             mark_group_close(out);
         }
         Reads::Label(label) => {
-            mark_group_open(out, kind, name);
-            out.push_str(&item(&aria_attr(Some(label), role)));
+            mark_group_open(out, kind, name)?;
+            out.push_str(&item(&aria_attr(Some(label), role)?));
             mark_group_close(out);
         }
     }
+    Ok(())
 }
 
 /// Mark a Vega-family chart's root `<svg>` as the view root Vega writes
@@ -254,11 +269,12 @@ pub fn stamp_view_root(svg: String) -> Result<String, String> {
     Ok(format!("{ROOT} class=\"marks\"{rest}"))
 }
 
-/// The `aria-roledescription` Vega gives a mark's items. The runtime reads
-/// three of these literally -- `chart_interactivity.js`'s `RECEDE_ROLES`
-/// (`bar`, `arc mark`, `rect mark`) decide which marks recede on hover, and
-/// `point` at `opacity="0"` marks a line/area/scatter hover target -- so a
-/// wrong string here silently turns the hover treatment off.
+/// The role of a mark's items. `aria-roledescription` carries Vega's
+/// description (a label); `data-dct-role` carries the machine key. The runtime
+/// reads the key: `chart_interactivity.js`'s `RECEDE_ROLES` (`bar`, `arc`,
+/// `rect`) decide which marks recede on hover, and `point` at `opacity="0"`
+/// marks a line/area/scatter hover target -- so a wrong key here silently
+/// turns the hover treatment off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemRole {
     /// A bar (`mark: bar`); Vega-Lite names it explicitly.
@@ -273,18 +289,22 @@ pub enum ItemRole {
     TextMark,
     /// A sankey ribbon, Vega's default `<type> mark` naming.
     PathMark,
+    /// An authored annotation (rule, band, note or trend).
+    Annotation,
 }
 
 impl ItemRole {
-    fn description(self) -> &'static str {
+    /// `(catalog id of the aria-roledescription, data-dct-role)`.
+    fn description_id_and_key(self) -> (&'static str, &'static str) {
         match self {
-            ItemRole::Bar => "bar",
-            ItemRole::ArcMark => "arc mark",
-            ItemRole::RectMark => "rect mark",
-            ItemRole::Point => "point",
-            ItemRole::RuleMark => "rule mark",
-            ItemRole::TextMark => "text mark",
-            ItemRole::PathMark => "path mark",
+            ItemRole::Bar => ("aria.role_bar", "bar"),
+            ItemRole::ArcMark => ("aria.role_arc", "arc"),
+            ItemRole::RectMark => ("aria.role_rect", "rect"),
+            ItemRole::Point => ("aria.role_point", "point"),
+            ItemRole::RuleMark => ("aria.role_rule", "rule"),
+            ItemRole::TextMark => ("aria.role_text", "text"),
+            ItemRole::PathMark => ("aria.role_path", "path"),
+            ItemRole::Annotation => ("aria.role_annotation", "annotation"),
         }
     }
 }
@@ -294,26 +314,27 @@ impl ItemRole {
 /// stamps on every item that has a description. Empty when the shape wires
 /// no label (an unlabeled mark is bare in production too, never an
 /// approximation).
-pub fn aria_attr(label: Option<&str>, role: ItemRole) -> String {
-    match label {
-        Some(l) => format!(
-            " aria-label=\"{}\" role=\"graphics-symbol\" aria-roledescription=\"{}\"",
-            crate::svg::xml_escape_attr(l),
-            role.description()
-        ),
-        None => String::new(),
-    }
+pub fn aria_attr(label: Option<&str>, role: ItemRole) -> Result<String, String> {
+    let Some(label) = label else { return Ok(String::new()) };
+    let (description_id, key) = role.description_id_and_key();
+    let description = tr(description_id, None, &[])?;
+    Ok(format!(
+        " data-dct-role=\"{key}\" aria-label=\"{}\" role=\"graphics-symbol\" \
+         aria-roledescription=\"{}\"",
+        crate::svg::xml_escape_attr(label),
+        crate::svg::xml_escape_attr(&description),
+    ))
 }
 
 /// The attributes a support-table cell carries; a cell nobody described stays bare.
-pub fn cell_label_attr(label: &str) -> String {
+pub fn cell_label_attr(label: &str) -> Result<String, String> {
     aria_attr((!label.is_empty()).then_some(label), ItemRole::TextMark)
 }
 
 /// The attributes a series-label rail text carries: Vega's default
 /// description of a text mark bound to a nominal field, the raw `field: value`
 /// pair (never the truncated display text).
-pub fn series_label_attr(color_field: &str, series: &str) -> String {
+pub fn series_label_attr(color_field: &str, series: &str) -> Result<String, String> {
     aria_attr(Some(&format!("{color_field}: {series}")), ItemRole::TextMark)
 }
 
@@ -404,10 +425,10 @@ pub struct GhostRule<'a> {
 /// panel's own marks (`features/mirror_axis.py`). It paints above the real
 /// marks, so the runtime resolves a hit on it and finds the real mark by its
 /// byte-identical label (`resolveSymbolMark`). `floor` is the plot height.
-pub fn mirror_ghost_layer(out: &mut String, rules: &[GhostRule], floor: f64) {
-    mark_group_open(out, "rule", "ghost_marks");
+pub fn mirror_ghost_layer(out: &mut String, rules: &[GhostRule], floor: f64) -> Result<(), String> {
+    mark_group_open(out, "rule", "ghost_marks")?;
     for rule in rules {
-        let label = aria_attr(rule.aria, ItemRole::RuleMark);
+        let label = aria_attr(rule.aria, ItemRole::RuleMark)?;
         let _ = write!(
             out,
             "<line transform=\"translate({:.3},{:.3})\" x2=\"0\" y2=\"{:.3}\" stroke=\"{}\" \
@@ -419,6 +440,7 @@ pub fn mirror_ghost_layer(out: &mut String, rules: &[GhostRule], floor: f64) {
         );
     }
     mark_group_close(out);
+    Ok(())
 }
 
 /// Vega-Lite's own description of a mark: one `title: value` row per described
@@ -612,7 +634,7 @@ pub fn tooltip_header_text(
         .ok_or_else(|| format!("tooltip header: unparsed date {cat:?}"))?;
     match grain_format {
         Some(format) => format.text(y, m, d),
-        None => Ok(crate::families::temporal::tooltip_header_date(y, m, d, detected_tu)),
+        None => crate::families::temporal::tooltip_header_date(y, m, d, detected_tu),
     }
 }
 
@@ -662,7 +684,7 @@ mod tests {
     #[test]
     fn mark_group_wraps_a_datum_as_the_reference_does() {
         let mut svg = String::new();
-        mark_group_open(&mut svg, "rect", "layer_0_marks");
+        mark_group_open(&mut svg, "rect", "layer_0_marks").unwrap();
         svg.push_str("<path aria-label=\"x\"/>");
         mark_group_close(&mut svg);
         assert_eq!(
@@ -677,7 +699,7 @@ mod tests {
         let mut svg = String::new();
         paint_item(&mut svg, "rule", "layer_1_marks", ItemRole::RuleMark, Reads::Hidden, |aria| {
             format!("<line{aria}/>")
-        });
+        }).unwrap();
         assert_eq!(
             svg,
             "<g class=\"mark-rule role-mark layer_1_marks\" aria-hidden=\"true\"><line/></g>"
@@ -688,22 +710,22 @@ mod tests {
     fn paint_item_announces_a_label_and_leaves_a_bare_mark_ungrouped() {
         let item = |aria: &str| format!("<line{aria}/>");
         let mut announced = String::new();
-        paint_item(&mut announced, "rule", "layer_1_marks", ItemRole::RuleMark, Reads::Label("v: 1"), item);
+        paint_item(&mut announced, "rule", "layer_1_marks", ItemRole::RuleMark, Reads::Label("v: 1"), item).unwrap();
         assert_eq!(
             announced,
             "<g class=\"mark-rule role-mark layer_1_marks\" role=\"graphics-object\" \
-             aria-roledescription=\"rule mark container\"><line aria-label=\"v: 1\" \
-             role=\"graphics-symbol\" aria-roledescription=\"rule mark\"/></g>"
+             aria-roledescription=\"rule mark container\"><line data-dct-role=\"rule\" \
+             aria-label=\"v: 1\" role=\"graphics-symbol\" aria-roledescription=\"rule mark\"/></g>"
         );
         let mut bare = String::new();
-        paint_item(&mut bare, "rule", "layer_1_marks", ItemRole::RuleMark, Reads::Bare, item);
+        paint_item(&mut bare, "rule", "layer_1_marks", ItemRole::RuleMark, Reads::Bare, item).unwrap();
         assert_eq!(bare, "<line/>");
     }
 
     #[test]
     fn value_label_group_carries_the_stamp_between_class_and_role() {
         let mut svg = String::new();
-        value_label_group_open(&mut svg, "layer_2_marks");
+        value_label_group_open(&mut svg, "layer_2_marks").unwrap();
         assert_eq!(
             svg,
             "<g class=\"mark-text role-mark layer_2_marks\" data-dbt-value-label=\"true\" \
@@ -730,28 +752,31 @@ mod tests {
     #[test]
     fn aria_attr_stamps_role_and_roledescription_beside_the_label() {
         assert_eq!(
-            aria_attr(Some("a: 1"), ItemRole::Bar),
-            " aria-label=\"a: 1\" role=\"graphics-symbol\" aria-roledescription=\"bar\""
+            aria_attr(Some("a: 1"), ItemRole::Bar).unwrap(),
+            " data-dct-role=\"bar\" aria-label=\"a: 1\" role=\"graphics-symbol\" aria-roledescription=\"bar\""
         );
-        assert_eq!(aria_attr(None, ItemRole::Bar), "");
+        assert_eq!(aria_attr(None, ItemRole::Bar).unwrap(), "");
     }
 
-    /// The strings Vega/Vega-Lite write on the reference corpus's marks,
-    /// including the three `chart_interactivity.js` `RECEDE_ROLES` entries
-    /// that are matched literally.
+    /// The description strings Vega/Vega-Lite write on the reference corpus's
+    /// marks, and the machine key `chart_interactivity.js` matches instead.
     #[test]
-    fn item_roles_spell_the_strings_the_runtime_matches() {
-        let spelled = |role| aria_attr(Some("x"), role);
-        for (role, want) in [
-            (ItemRole::Bar, "bar"),
-            (ItemRole::ArcMark, "arc mark"),
-            (ItemRole::RectMark, "rect mark"),
-            (ItemRole::Point, "point"),
-            (ItemRole::RuleMark, "rule mark"),
-            (ItemRole::TextMark, "text mark"),
+    fn item_roles_spell_the_description_and_the_key() {
+        for (role, description, key) in [
+            (ItemRole::Bar, "bar", "bar"),
+            (ItemRole::ArcMark, "arc mark", "arc"),
+            (ItemRole::RectMark, "rect mark", "rect"),
+            (ItemRole::Point, "point", "point"),
+            (ItemRole::RuleMark, "rule mark", "rule"),
+            (ItemRole::TextMark, "text mark", "text"),
+            (ItemRole::PathMark, "path mark", "path"),
         ] {
-            assert!(
-                spelled(role).ends_with(&format!("aria-roledescription=\"{want}\"")),
+            assert_eq!(
+                aria_attr(Some("x"), role).unwrap(),
+                format!(
+                    " data-dct-role=\"{key}\" aria-label=\"x\" role=\"graphics-symbol\" \
+                     aria-roledescription=\"{description}\""
+                ),
                 "{role:?}"
             );
         }
@@ -951,7 +976,7 @@ mod tests {
             2,
             1,
             Some(crate::families::temporal::TimeUnit::YearMonth),
-        );
+        ).unwrap();
         let t = BarTooltip {
             header: &header,
             series: None,
@@ -984,7 +1009,7 @@ mod tests {
     fn tooltip_header_text_paints_a_redefined_grain() {
         let _locale = crate::time_locale::en_us_scope();
         use crate::families::temporal::{AuthoredTimeFormat, TimeUnit};
-        let spec = AuthoredTimeFormat::parse("test", Some("%b '%y"), None).unwrap();
+        let spec = AuthoredTimeFormat::parse("test", Some("%b '%y")).unwrap();
         assert_eq!(
             tooltip_header_text("2024-02-01", Some(TimeUnit::YearMonth), false, spec).unwrap(),
             "Feb '24"
@@ -1222,6 +1247,17 @@ mod tests {
             value: 47_368.0,
         };
         assert!(heatmap_aria_label(&t).is_err());
+    }
+
+    // ── data-dct-role machine keys ──────────────────────────────────────
+
+    #[test]
+    fn axis_groups_carry_a_machine_role_key() {
+        let mut out = String::new();
+        axis_group_open(&mut out, AxisChannel::X, (0.0, 0.0)).unwrap();
+        axis_group_open(&mut out, AxisChannel::Y, (0.0, 0.0)).unwrap();
+        assert_eq!(out.matches(" data-dct-role=\"x-axis\"").count(), 1);
+        assert_eq!(out.matches(" data-dct-role=\"y-axis\"").count(), 1);
     }
 
     // ── authored_kind_attr / safe_svg_id ────────────────────────────────

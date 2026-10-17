@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Top Products
+notes: Top-N with detail pattern — bar chart and table from the same query
+
+queries:
+  top_products:
+    notes: Top 5 products by revenue, pre-ranked
+    columns: [product, revenue, orders, avg_order]
+    values:
+      - ["Widget B", 85680, 320, 268]
+      - ["Widget A", 66300, 281, 236]
+      - ["Tool Z",   34900, 145, 241]
+      - ["Gadget Y", 30490, 122, 250]
+      - ["Gadget X", 18350,  88, 208]
+
+charts:
+  ranking_bar:
+    notes: Top products ranked by revenue
+    type: bar
+    query: top_products
+    x: product
+    y: revenue
+    title: Top Products by Revenue
+
+  detail_table:
+    notes: Row-level detail for the same top-5 ranking
+    type: table
+    query: top_products
+    title: Product Detail
+    style:
+      columns:
+        product:
+          label: Product
+        revenue:
+          label: Revenue
+          format: currency_whole
+        orders:
+          label: Orders
+        avg_order:
+          label: Avg Order
+          format: currency_whole
+
+rows:
+  - cols:
+      - ranking_bar
+      - detail_table

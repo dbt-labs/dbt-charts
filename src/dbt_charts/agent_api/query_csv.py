@@ -46,6 +46,57 @@ def model_json(result: dict[str, Any]) -> str:
     return json.dumps(model_facing_result(result), ensure_ascii=False, default=str)
 
 
+ERROR_TEXT_FLOOR = 400
+
+
+def _cut(text: str, cap: int) -> str:
+    return text if len(text) <= cap else f"{text[:cap].rstrip()} (truncated)"
+
+
+def _over_budget(result: dict[str, Any]) -> bool:
+    return len(model_json(result).encode("utf-8")) > MODEL_RESULT_BYTE_BUDGET
+
+
+def fit_failure(result: dict[str, Any]) -> dict[str, Any]:
+    """Cut a failed result to the budget, losing the error text last.
+
+    The echoed ``sql`` and ``notes`` shrink first, then each error down to
+    ``ERROR_TEXT_FLOOR`` characters (cut text ends ``(truncated)``), then drops
+    trailing errors for one ``+K more errors`` line.
+
+    Raises:
+        ValueError: if something other than the errors (e.g. ``diagnostics``)
+            alone exceeds the budget.
+    """
+    fitted = result
+    for field in ("sql", "notes"):
+        cap = len(result.get(field) or "")
+        while _over_budget(fitted) and cap:
+            cap //= 2
+            fitted = {**fitted, field: _cut(result[field], cap)}
+    cap = max((len(error) for error in result["errors"]), default=0)
+    while _over_budget(fitted) and cap > ERROR_TEXT_FLOOR:
+        cap = max(cap // 2, ERROR_TEXT_FLOOR)
+        fitted = {**fitted, "errors": [_cut(error, cap) for error in result["errors"]]}
+    result_errors = fitted["errors"]
+    kept = len(fitted["errors"])
+    while _over_budget(fitted) and kept > 1:
+        kept -= 1
+        fitted = {
+            **fitted,
+            "errors": [
+                *result_errors[:kept],
+                f"+{len(result_errors) - kept} more errors",
+            ],
+        }
+    if _over_budget(fitted):
+        raise ValueError(
+            "A failed result cannot be fitted to the model budget: "
+            f"{result.get('error_code')} carries too much outside its error text."
+        )
+    return fitted
+
+
 def with_csv(payload: dict[str, Any], *, hint: str) -> dict[str, Any]:
     """Add a ``csv`` of the rows that fit the budget and trim ``data`` to them.
 

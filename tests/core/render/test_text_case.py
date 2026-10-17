@@ -69,7 +69,7 @@ def test_sentence_single_char() -> None:
 
 
 # ---------------------------------------------------------------------------
-# title — Chicago/Gruber algorithm via titlecase library
+# title — Chicago/Gruber algorithm via the engine (display-text case.rs)
 # ---------------------------------------------------------------------------
 
 
@@ -98,7 +98,7 @@ def test_sentence_single_char() -> None:
             "monthly recurring revenue by segment",
             "Monthly Recurring Revenue by Segment",
         ),
-        # Standalone all-caps acronym preserved. The titlecase library
+        # Standalone all-caps acronym preserved. The engine
         # lowercases whole strings detected as all-caps before per-word
         # logic runs, so the apply_case wrapper has to short-circuit
         # these cases. Single-token acronyms from ``slug_to_text``'s
@@ -130,7 +130,7 @@ def test_sentence_single_char() -> None:
         # it; the post-process explicitly skips all-caps tokens.
         ("scale UP now", "Scale UP Now"),
         # "dbt" is stylized lowercase always (dbt Labs' own convention),
-        # never an acronym. Without an explicit guard, the titlecase
+        # never an acronym. Without an explicit guard, the engine's title-case
         # library's built-in all-consonant heuristic (the same rule that
         # promotes "mrr"/"sql") misreads "dbt" as an acronym-to-uppercase
         # and renders "DBT Charts ..." — visibly wrong for the product

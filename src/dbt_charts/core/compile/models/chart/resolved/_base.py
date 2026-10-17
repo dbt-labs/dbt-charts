@@ -33,6 +33,7 @@ from dbt_charts.core.compile.models.chart.resolved._support_table import (
     ResolvedSupportTable,
 )
 from dbt_charts.core.compile.models.primitives import (
+    LinkOpen,
     ResolvedFormat,
     VariableDependencies,
 )
@@ -93,6 +94,10 @@ class _BaseResolvedChartFields(BaseModel):
     link: str | None = Field(
         default=None,
         description="URL to navigate to on chart click.",
+    )
+    link_open: LinkOpen = Field(
+        default="page",
+        description="How a click on the chart link opens its target.",
     )
     conditional_formatting: dict[str, FieldConditionalFormatting] | None = Field(
         default=None,

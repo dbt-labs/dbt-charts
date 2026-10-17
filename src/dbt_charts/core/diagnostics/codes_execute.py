@@ -631,11 +631,22 @@ ERR_BINDER_UNKNOWN_RELATION = REGISTRY.register(
             "Fired when the warehouse reports that a table, view or schema the "
             "query names does not exist or is not visible to the connection. For a "
             "ref() or source() the relation may have moved since the dbt "
-            "manifest was built."
+            "manifest was built. On Snowflake the message adds that a missing "
+            "object and a missing grant are reported identically, so check the "
+            "name and schema for a typo before asking for access."
         ),
         docs_topic="queries",
     )
 )
+
+#: Extra sentence for ERR-BINDER-UNKNOWN-RELATION on a warehouse whose
+#: not-found text is also its not-authorized text.
+UNKNOWN_RELATION_DIALECT_NOTES: dict[str, str] = {
+    "snowflake": (
+        "Snowflake reports a missing object and a missing grant identically, "
+        "so check the name and schema for a typo before asking for access."
+    ),
+}
 
 ERR_BINDER_TYPE_MISMATCH = REGISTRY.register(
     ErrorCode(
@@ -659,7 +670,10 @@ ERR_WAREHOUSE_RUNTIME = REGISTRY.register(
         code="ERR-WAREHOUSE-RUNTIME",
         domain="execute",
         title="Warehouse rejected the query at runtime",
-        message_template=("Warehouse rejected the query: {detail}."),
+        message_template=(
+            "Warehouse rejected the query: {detail}. "
+            "Change the SQL to address what that message names, then run it again."
+        ),
         doc=(
             "Fired when the warehouse rejects a query for an unclassified runtime "
             "error. The detail carries the warehouse's original error message."
@@ -901,7 +915,9 @@ ERR_QUERY_DURATION_EXCEEDED = REGISTRY.register(
         domain="execute",
         title="Query exceeded the maximum allowed duration",
         message_template=(
-            "Query exceeded max_query_duration_seconds={seconds}s on source {source!r}."
+            "Query exceeded max_query_duration_seconds={seconds}s on source {source!r}. "
+            "Narrow the query (filter, aggregate, select fewer columns) rather "
+            "than running it again unchanged."
         ),
         doc=(
             "Fired when a query runs longer than the configured "
@@ -1226,6 +1242,115 @@ ERR_QUERY_INTERRUPTED = REGISTRY.register(
             "board once the server is back."
         ),
         docs_topic="queries",
+    )
+)
+
+ERR_ADAPTER_UNAVAILABLE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ADAPTER-UNAVAILABLE",
+        domain="execute",
+        title="This deployment cannot run the query",
+        message_template=(
+            "This deployment cannot run the query: {reason} "
+            "Use a source it supports, or ask whoever operates it to enable this one."
+        ),
+        doc=(
+            "Fired when no adapter in this deployment can run a query: none is "
+            "registered for its query type, none supports its source's type, or "
+            "the source is a file source and the host configured no file-source "
+            "materializer. The query and source are fine; the host cannot run "
+            "them. Nothing in the board or SQL fixes it."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_BOARD_FILE_UNREADABLE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BOARD-FILE-UNREADABLE",
+        domain="execute",
+        title="Board path is not a readable board file",
+        message_template=(
+            "Board path {path} is a directory or not UTF-8 text, so it cannot be "
+            "read as a board. Pass the path of a board YAML file."
+        ),
+        doc=(
+            "Fired when a named-query run is pointed at a path that exists but "
+            "cannot be read as a board: a directory, or a file that is not "
+            "UTF-8 text. Pass the path of a board YAML file."
+        ),
+        docs_topic="errors",
+    )
+)
+
+ERR_BOARD_QUERY_NOT_FOUND = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BOARD-QUERY-NOT-FOUND",
+        domain="execute",
+        title="Board has no query with this name",
+        message_template=(
+            "Board {path} has no query {query_name!r}. Available queries: {available}."
+        ),
+        doc=(
+            "Fired when a named-query run (`dct query BOARD NAME`, or "
+            "`execute_query` with `board` and `query`) names a query the board "
+            "does not declare under `queries:`. Distinct from ERR-UNKNOWN-QUERY, "
+            "where a chart references the missing query."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_VARIABLE_UNBOUND = REGISTRY.register(
+    ErrorCode(
+        code="ERR-VARIABLE-UNBOUND",
+        domain="execute",
+        title="Query uses a variable with no value",
+        message_template=(
+            "Query {query_name!r} uses variable {variable!r} (input: {input}), "
+            "which the board declares without a default. Pass a binding for it, "
+            '{{"name": "{variable}", "value": ...}}, where the value is {value_hint}.'
+        ),
+        doc=(
+            "Fired when a named-query run uses a variable the board declares "
+            "without a default and the caller supplied no binding. Pass a value "
+            "for each variable named."
+        ),
+        docs_topic="variables",
+    )
+)
+
+ERR_TOOL_ARGUMENTS_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TOOL-ARGUMENTS-INVALID",
+        domain="execute",
+        title="Tool call arguments are malformed",
+        message_template="{message}",
+        doc=(
+            "Fired when a tool call's arguments fail validation: an unknown "
+            "argument, a missing one, or a value of the wrong type. The message "
+            "names the tool, the argument, and what is wrong with it; correct "
+            "that argument and call the tool again."
+        ),
+        docs_topic="errors",
+    )
+)
+
+ERR_ACCESS_DENIED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ACCESS-DENIED",
+        domain="execute",
+        title="Caller may not run this query",
+        message_template=(
+            "Not permitted: {reason}. Ask an owner of the board or connection "
+            "for access; retrying will not change the answer."
+        ),
+        doc=(
+            "Fired by a host that authorizes callers when the caller lacks the "
+            "right to view the named board or to query the connection a query "
+            "runs on. Core has no principal and never raises it."
+        ),
+        docs_topic="errors",
     )
 )
 

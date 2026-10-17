@@ -82,10 +82,19 @@ def _print_diagnostic(d: QueryDiagnostic, target: Console = err_console) -> None
         target.print(f"   evidence: {ev}", markup=False)
 
 
+def _print_errors(
+    result: QueryBoardResult | ExecuteQueryResult | BoardQueryLookupResult,
+) -> None:
+    for index, err in enumerate(result.errors):
+        shown = (
+            f"[{result.error_code}] {err}" if index == 0 and result.error_code else err
+        )
+        err_console.print(f"[red]Error:[/red] {escape(shown)}")
+
+
 def _print_board_result(result: QueryBoardResult) -> None:
     if not result.success:
-        for err in result.errors:
-            err_console.print(f"[red]Error:[/red] {escape(err)}")
+        _print_errors(result)
         if result.available_queries:
             matches = difflib.get_close_matches(
                 result.name, result.available_queries, n=3
@@ -96,17 +105,13 @@ def _print_board_result(result: QueryBoardResult) -> None:
                 err_console.print(
                     "Did you mean to use a source name instead of a board path?"
                 )
-            err_console.print(
-                f"Available queries: {escape(', '.join(result.available_queries))}"
-            )
         raise typer.Exit(1)
     _print_csv(result, BOARD_QUERY_HINT)
 
 
 def _print_sql_result(result: ExecuteQueryResult) -> None:
     if not result.success:
-        for err in result.errors:
-            err_console.print(f"[red]Error:[/red] {escape(err)}")
+        _print_errors(result)
         raise typer.Exit(1)
     _print_csv(result, SQL_QUERY_HINT)
 
@@ -223,8 +228,7 @@ def _looks_like_sql(name: str) -> bool:
 
 def _handle_lookup_failure(lr: BoardQueryLookupResult, query_name: str) -> NoReturn:
     """Emit errors from a failed BoardQueryLookupResult and raise typer.Exit(1)."""
-    for err in lr.errors:
-        typer.echo(f"Error: {err}", err=True)
+    _print_errors(lr)
     if lr.available_queries:
         matches = difflib.get_close_matches(query_name, lr.available_queries, n=3)
         if matches:
@@ -234,7 +238,6 @@ def _handle_lookup_failure(lr: BoardQueryLookupResult, query_name: str) -> NoRet
                 "Did you mean to use a source name instead of a board path?",
                 err=True,
             )
-        typer.echo("Available queries: " + ", ".join(lr.available_queries), err=True)
     raise typer.Exit(1)
 
 

@@ -55,6 +55,7 @@ from dbt_charts.core.execute.adapters.base import (
     BaseAdapter,
     QueryParams,
     QueryResult,
+    adapter_unavailable,
     apply_row_limit_truncation,
     handle_adapter_error,
     plain_error,
@@ -582,13 +583,10 @@ class AdapterRegistry:
                 )
             materializer = self._get_file_materializer()
             if materializer is None:
-                return plain_error(
+                return adapter_unavailable(
                     f"Source {query.source!r} is a {source_config.type} "
-                    "file source, but no file-source materializer is "
-                    "configured for this session. Pass one via "
-                    "AdapterRegistry(file_materializer=...) or "
-                    "ProjectSession(file_materializer=...) to run ad-hoc "
-                    "queries against file sources."
+                    "file source, and this session has no file-source "
+                    "materializer."
                 )
 
             assert isinstance(
@@ -638,13 +636,11 @@ class AdapterRegistry:
                     if source_config is not None
                     else "this query"
                 )
-                return plain_error(
-                    f"No adapter for query type {query.query_type!r} "
-                    f"supports {detail} in this deployment."
+                return adapter_unavailable(
+                    f"No adapter for query type {query.query_type!r} supports {detail}."
                 )
-            return plain_error(
-                f"No adapter registered for query type {query.query_type!r} "
-                "in this deployment."
+            return adapter_unavailable(
+                f"No adapter registered for query type {query.query_type!r}."
             )
 
         # Composition: expand {{ queries.X }} references and parameterize

@@ -68,16 +68,8 @@ impl ContinuousColor {
     pub(crate) fn gradient(scale: &ScaleTarget, all: Option<(f64, f64)>, kept: (f64, f64)) -> Result<Self, String> {
         let palette = Palette::of(scale)?;
         if let Some(hinge) = &scale.hinge {
-            if let (Some(min), Some(max)) = (scale.min, scale.max) {
-                if min > max {
-                    return Err(format!("gradient min {min} above max {max} beside a hinge is not supported"));
-                }
-            }
             if let Some(bounds) = diverging_bounds(scale, all) {
                 let raw = raw_bounds(scale, all).expect("bounds resolve only from raw bounds");
-                if raw.0 > raw.1 {
-                    return Err(format!("gradient bounds {} to {} inverted by the data extent beside a hinge is not supported", raw.0, raw.1));
-                }
                 if let Some(pivot) = resolve_hinge(Some(hinge), raw.0, raw.1, None) {
                     let (lo, hi) = (bounds.0.min(pivot), bounds.1.max(pivot));
                     let asymmetric = scale.arm_mode == "asymmetric";
@@ -120,6 +112,10 @@ impl ContinuousColor {
     pub(crate) fn fill(&self, v: f64) -> String {
         match &self.ramp {
             Ramp::Diverging { domain, colors } => {
+                // d3 pairs a one-point domain with no second stop, so every value takes the lone color.
+                if domain.len() == 1 {
+                    return rgb_text(colors[0]);
+                }
                 let v = v.clamp(self.lo, self.hi);
                 let i = domain.partition_point(|&x| x <= v).saturating_sub(1).min(domain.len() - 2);
                 // d3 maps a zero-width segment to its middle.
@@ -145,13 +141,17 @@ impl ContinuousColor {
 
     /// The color a sequential ramp takes at position `t` of its domain.
     pub(crate) fn fill_at(&self, t: f64) -> String {
+        // A pivoted scale is positioned by value; only its collapsed legend
+        // (`lo == hi`) asks by fraction, and every fraction is that one value.
+        if matches!(self.ramp, Ramp::Diverging { .. } | Ramp::Windowed { .. } | Ramp::Halved { .. }) {
+            assert!(self.lo == self.hi, "a pivoted scale is positioned by value, never by fraction");
+            return self.fill(self.lo);
+        }
         rgb_text(match &self.ramp {
             Ramp::Rgb(colors) => interpolate_rgb_piecewise(colors, t),
             Ramp::DateBlues => d3rs::color::quantized_pair_hcl(&BLUES, t),
             Ramp::Stops(colors) => piecewise_hcl(colors, t),
-            Ramp::Diverging { .. } | Ramp::Windowed { .. } | Ramp::Halved { .. } => {
-                unreachable!("a pivoted scale is positioned by value, never by fraction")
-            }
+            Ramp::Diverging { .. } | Ramp::Windowed { .. } | Ramp::Halved { .. } => unreachable!("handled above"),
         })
     }
 
@@ -616,18 +616,30 @@ mod tests {
         assert_ne!(scale.fill(100_000.0), "rgb(0, 0, 0)");
     }
 
+    /// Oracle: `ladder/histogram/82` to `/87`. A min above the data collapses the
+    /// light arm onto the pivot; a min above the max collapses the whole domain to
+    /// one stop, which d3 paints on every value, legend included.
     #[test]
-    fn inverted_gradient_bounds_beside_a_hinge_are_refused() {
-        for extra in [serde_json::json!({"min": 20.0, "max": 0.0, "hinge": 10.0}), serde_json::json!({"min": 30.0, "hinge": 10.0})] {
-            for palette in [serde_json::json!(["#2166ac", "#f7f7f7", "#b2182b"]), serde_json::json!("viridis")] {
-                let mut scale = serde_json::json!({"palette": palette, "nice": true, "arm_mode": "asymmetric"});
-                for (k, v) in extra.as_object().expect("an object").clone() {
-                    scale[k] = v;
-                }
-                let target: ScaleTarget = serde_json::from_value(scale).expect("a scale target");
-                let err = ContinuousColor::gradient(&target, Some((2.5, 20.0)), (2.5, 20.0)).err().expect("refuses");
-                assert!(err.contains("beside a hinge is not supported"), "{err}");
-            }
+    fn inverted_bounds_beside_a_hinge_follow_d3() {
+        let palette = serde_json::json!(["#ffffcc", "#41b6c4", "#0c2c84"]);
+        let above_data = gradient(palette.clone(), serde_json::json!({"min": 30.0, "hinge": 7.5}));
+        assert_eq!(fills(&above_data, &[2.5, 7.5, 20.0]), ["rgb(65, 182, 196)", "rgb(65, 182, 196)", "rgb(12, 44, 132)"]);
+        let above_max = gradient(palette, serde_json::json!({"min": 20.0, "max": 0.0, "hinge": 7.5}));
+        assert_eq!(fills(&above_max, &[2.5, 7.5, 20.0]), ["rgb(65, 182, 196)"; 3]);
+        assert_eq!(above_max.fill_at(0.0), above_max.fill_at(1.0));
+    }
+
+    /// A scheme palette over collapsed bounds paints one color at every position.
+    #[test]
+    fn a_collapsed_pivoted_scheme_paints_one_color() {
+        for arm_mode in ["asymmetric", "symmetric"] {
+            let scale = gradient(
+                serde_json::json!("viridis"),
+                serde_json::json!({"min": 20.0, "max": 0.0, "hinge": 7.5, "arm_mode": arm_mode}),
+            );
+            let at = |t| scale.fill_at(t);
+            assert_eq!((at(0.0), at(0.5)), (at(1.0), at(1.0)), "{arm_mode}");
+            assert_eq!(scale.fill(2.5), at(0.0), "{arm_mode}");
         }
     }
 

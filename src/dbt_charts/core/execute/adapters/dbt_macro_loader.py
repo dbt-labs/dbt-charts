@@ -6,9 +6,10 @@ a populated `_macro_resolver`. Without it, every adapter built by
 `build_adapter()` raises "no macro registered" the moment we try to introspect.
 
 This module loads the bundled macros — dbt-core's global project plus the
-active warehouse adapter's package — into a fresh `MacroManifest` that can be
-attached to an adapter via `set_macro_resolver()`. No user files required,
-no `dbt_project.yml`, no `target/manifest.json`. Just pip-installed packages.
+active warehouse adapter's package and those it depends on — into a fresh
+`MacroManifest` that can be attached to an adapter via `set_macro_resolver()`.
+No user files required, no `dbt_project.yml`, no `target/manifest.json`. Just
+pip-installed packages.
 
 Coupled to dbt-internal API (`MacroParser`, `MacroManifest`,
 `load_source_file`, `FACTORY.packages`); the smoke tests are the canary for
@@ -38,15 +39,18 @@ def _resolve_macro_packages(adapter_type: str) -> list[tuple[str, Path]]:
 
     Uses dbt's adapter FACTORY to resolve include paths the same way dbt-core
     does — by loading the plugin and reading the registered include directory.
-    Warehouse package comes first so its macros parse before the global ones,
+    Warehouse packages (adapter first, then its dependencies, e.g. redshift →
+    postgres) come first so their macros parse before the global ones,
     matching dbt-core's lookup precedence (warehouse-specific overrides win).
     """
     from dbt.adapters.factory import FACTORY
 
     FACTORY.load_plugin(adapter_type)
-    plugin = FACTORY.get_plugin_by_name(adapter_type)
     return [
-        (plugin.project_name, FACTORY.packages[plugin.project_name]),
+        *(
+            (plugin.project_name, FACTORY.packages[plugin.project_name])
+            for plugin in FACTORY.get_adapter_plugins(adapter_type)
+        ),
         ("dbt", FACTORY.packages["dbt"]),
     ]
 

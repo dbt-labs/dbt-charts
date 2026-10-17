@@ -16,8 +16,7 @@ minijinja = { version = "=2.24.0", features = ["fuel"] }
 # non-trivial regexes read off the composed board's own painted markup —
 # genuinely multi-pattern, unlike every other crate module's own hand-rolled
 # single-literal scan (`board::find_brand_phrase`'s own doc explains why
-# those stay hand-rolled). `case.rs` compiles the `titlecase` library's own
-# `SMALL_*`, `SUBPHRASE`, `UC_ELSEWHERE` and `APOS_SECOND` patterns.
+# those stay hand-rolled).
 regex = "1"
 quick-xml = "0.42"
 roxmltree = "0.20"

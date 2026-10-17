@@ -12,6 +12,7 @@ from dbt_charts.core.compile.models.markers import (
     Color,
     Inherit,
     InheritSlot,
+    Overlay,
     SkipInheritSlots,
 )
 from dbt_charts.core.compile.models.primitives import (
@@ -285,15 +286,17 @@ class ChartsStyle(_PaintedChartStyleBase, _LegendedChartStyleBase):
     # identical to an explicit override and wrongly clobber a sibling layer's
     # own deviation from that global. Only `axis` itself inherits (from
     # non-axis theme fields, e.g. label.font from Style.charts.font).
-    axis_x: Annotated[AxisXStyle, SkipInheritSlots()] = Field(
+    axis_x: Annotated[AxisXStyle, SkipInheritSlots(), Overlay()] = Field(
         description="X-axis style overrides applied after the shared axis. "
         "Unset fields fall back to style.charts.axis."
     )
-    axis_y: Annotated[AxisYStyle, SkipInheritSlots()] = Field(
+    axis_y: Annotated[AxisYStyle, SkipInheritSlots(), Overlay()] = Field(
         description="Y-axis style overrides applied after the shared axis. "
         "Unset fields fall back to style.charts.axis."
     )
-    axis_quantitative: Annotated[QuantitativeAxisStyle, SkipInheritSlots()] = Field(
+    axis_quantitative: Annotated[
+        QuantitativeAxisStyle, SkipInheritSlots(), Overlay()
+    ] = Field(
         description="Quantitative axis style overrides applied after axis_x/axis_y. "
         "Unset fields fall back to style.charts.axis."
     )

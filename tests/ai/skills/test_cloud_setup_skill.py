@@ -134,14 +134,17 @@ def test_blocked_is_not_a_state_to_re_render_past(body: str) -> None:
     assert "dct cloud connection test" in step7
 
 
-def test_github_only(body: str) -> None:
-    """Cloud connects GitHub repositories only; the skill must not promise any
-    other git host, and must keep the public-URL path to GitHub URLs."""
-    lowered = body.lower()
-    assert "any repo cloud can clone" not in lowered
-    assert "any git host" not in lowered
-    assert "other git hosts" in lowered, "must say other hosts are unsupported"
-    assert "https://github.com/" in body
+def test_connect_names_one_subcommand_per_host(body: str) -> None:
+    """The skill names each `project connect` host subcommand and never the
+    bare `--git-url`/`--start` forms."""
+    connect_at = body.index("Connect the project")
+    connect_section = " ".join(
+        body[connect_at : body.index("Boards, if none exist")].split()
+    )
+    for subcommand in ("github", "gitlab", "bitbucket", "git"):
+        assert f"dct cloud project connect {subcommand} " in connect_section
+    assert "project connect --" not in " ".join(body.split())
+    assert "only connects GitHub" not in body
 
 
 def test_connect_runs_right_after_login(body: str) -> None:
@@ -151,8 +154,8 @@ def test_connect_runs_right_after_login(body: str) -> None:
     connect_at = body.index("Connect the project")
     assert body.index("## Step 1") < connect_at < body.index("Boards, if none exist")
     connect_section = body[connect_at : body.index("Boards, if none exist")]
-    assert "dct cloud project connect --org <org> --start" in connect_section
-    assert "dct cloud project connect --wait" in connect_section
+    assert "dct cloud project connect github --org <org> --start" in connect_section
+    assert "dct cloud project connect github --wait" in connect_section
     assert "/tmp/dct-connect.log" not in body
 
 
@@ -168,8 +171,10 @@ def test_connect_wait_is_not_deferred_past_board_authoring(body: str) -> None:
     lowered = connect_section.lower()
     assert "inseparable unit" in lowered
     assert "before any board authoring" in lowered
-    start_at = connect_section.index("dct cloud project connect --org <org> --start")
-    wait_at = connect_section.index("dct cloud project connect --wait")
+    start_at = connect_section.index(
+        "dct cloud project connect github --org <org> --start"
+    )
+    wait_at = connect_section.index("dct cloud project connect github --wait")
     assert start_at < wait_at
     between = connect_section[start_at:wait_at]
     assert "step 4" not in between.lower(), (

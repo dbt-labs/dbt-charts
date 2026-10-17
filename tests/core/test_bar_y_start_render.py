@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 import pytest
+import vl_convert
 from pydantic import TypeAdapter
 
 from dbt_charts.core.compile.config import get_theme_style, reset_config
@@ -397,8 +398,8 @@ class TestDateSpans:
         field = text["encoding"]["text"]["field"]
         (calc,) = [t for t in text["transform"] if t.get("as") == field]
         # One unit for the whole chart: the median task runs a few weeks.
-        assert '"weeks"' in calc["calculate"]
-        assert '"days"' not in calc["calculate"]
+        assert "' weeks'" in calc["calculate"]
+        assert "' days'" not in calc["calculate"]
 
 
 def _descriptions(spec: dict[str, Any]) -> list[str]:
@@ -650,8 +651,16 @@ class TestDurationText:
         from dbt_charts.core.render.chart.emitters._tooltip import span_duration_expr
 
         expr = span_duration_expr("e", "s", "week")
-        # The singular test compares the text Vega prints, not the raw count.
-        assert "== '1'" in expr or '== "1"' in expr
+        # The plural is chosen by the number Vega prints, not the raw count:
+        # 7.2 days print "1" week.
+        spec = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "data": {"values": [{"s": "2026-01-01", "e": "2026-01-08T05:00:00"}]},
+            "transform": [{"calculate": expr, "as": "t"}],
+            "mark": {"type": "text"},
+            "encoding": {"text": {"field": "t"}},
+        }
+        assert ">1 week<" in vl_convert.vegalite_to_svg(spec)
 
     def test_string_dates_pick_the_unit_from_their_lengths(self):
         from dbt_charts.core.render.chart.emitters._tooltip import span_duration_unit

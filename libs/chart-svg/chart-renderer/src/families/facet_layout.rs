@@ -66,9 +66,9 @@ impl GridCell {
 pub struct GridOpt {
     pub padding: f64,
     pub columns: usize,
-    /// `align: "none"` across columns: each column advances by its own cell's
+    /// `align: "none"`: each column and each row advances by its own cell's
     /// ink instead of one shared pitch (a facet whose x axis lives in every
-    /// cell).
+    /// cell, or a rows-only facet with independent scales).
     pub align_none: bool,
 }
 
@@ -127,12 +127,18 @@ pub fn grid_layout(cells: &[GridCell], opt: &GridOpt) -> (Vec<(f64, f64)>, Bound
     }
 
     // enforce row alignment constraints
-    let mut offset = 0.0_f64;
-    for i in ncols..n {
-        offset = offset.max(y_offset[i]);
-    }
-    for i in ncols..n {
-        y_offset[i] = offset + y_max;
+    if opt.align_none {
+        for i in ncols..n {
+            y_offset[i] += boxes[i - ncols].y2.ceil();
+        }
+    } else {
+        let mut offset = 0.0_f64;
+        for i in ncols..n {
+            offset = offset.max(y_offset[i]);
+        }
+        for i in ncols..n {
+            y_offset[i] = offset + y_max;
+        }
     }
 
     // perform horizontal grid layout
@@ -222,6 +228,24 @@ mod tests {
             assert_eq!(dy, 0.0);
         }
         assert!((bounds.x2 - (2.0 * col_step + 200.0)).abs() < 1e-9);
+    }
+
+    /// `align: "none"` advances each row by its own cell's ink instead of one
+    /// shared pitch: a rows-only facet with independent scales, whose rows
+    /// differ in height and top overhang.
+    #[test]
+    fn align_none_advances_each_row_by_its_own_extent() {
+        let tall = GridCell::new(Bounds::new(0.0, -6.0, 100.0, 90.0));
+        let short = GridCell::new(Bounds::new(0.0, -1.0, 100.0, 60.0));
+        let cells = [tall, short, tall];
+        let opt = GridOpt { padding: 20.0, columns: 1, align_none: true };
+        let (offsets, _) = grid_layout(&cells, &opt);
+        // padding + ceil(-y1) of the row, past the row above's ceil(y2).
+        assert_eq!(offsets[1].1, 20.0 + 1.0 + 90.0);
+        assert_eq!(offsets[2].1, offsets[1].1 + 20.0 + 6.0 + 60.0);
+        let all = GridOpt { padding: 20.0, columns: 1, align_none: false };
+        let (uniform, _) = grid_layout(&cells, &all);
+        assert_eq!(uniform[2].1 - uniform[1].1, uniform[1].1, "align all spaces every row alike");
     }
 
     #[test]

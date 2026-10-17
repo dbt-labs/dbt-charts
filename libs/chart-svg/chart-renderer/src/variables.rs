@@ -15,7 +15,7 @@
 //!
 //! `Variable.enabled` is `crate::conditions::eval_bool_condition`, the same
 //! law a layout item's `visible` reads. An unlabeled control's
-//! inferred display name runs through `crate::case::apply_case` — the same
+//! inferred display name runs through `display_text::case::apply_case` — the same
 //! law production's `text/case.py::apply_case` applies to both a chart
 //! title's and a variable label's `FontStyle.case`, so this module owns no
 //! second copy of it.
@@ -26,7 +26,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::board::{px, translate_group};
-use crate::case::apply_case;
+use display_text::case::apply_case;
 use crate::conditions::eval_bool_condition;
 use crate::diagnostic::py_str;
 use crate::time_locale::active_time_locale;
@@ -592,7 +592,7 @@ pub fn lay_out_variables(
     let mut x = 0.0_f64;
     let mut row: i64 = 0;
     for spec in specs {
-        let label_width = text_width(&format!("{}:", spec.label), font_size, fonts_dir);
+        let label_width = text_width(&field_label(&spec.label)?, font_size, fonts_dir);
         let control_width = label_width
             + vs.control_gap
             + input_width(spec, vs, font_size, fonts_dir)?
@@ -781,9 +781,17 @@ impl ResolvedControl {
     }
 }
 
-const UNSET_SELECT_LABEL: &str = "All";
-const UNSET_DATERANGE_LABEL: &str = "All dates";
-const UNSET_DATE_LABEL: &str = "Any date";
+fn field_label(label: &str) -> Result<String, String> {
+    display_text::language::tr("controls.field_label", None, &[("label", label)])
+}
+
+fn word(id: &str) -> Result<String, String> {
+    display_text::language::tr(id, None, &[])
+}
+
+fn dated(id: &str, date: &str) -> Result<String, String> {
+    display_text::language::tr(id, None, &[("date", date)])
+}
 
 /// `variables_resolve.py::resolve_query_options`'s column-priority
 /// extraction (`value` > `label` > `name` > `id` > the row's first key).
@@ -884,10 +892,10 @@ fn coerce_multiselect(value: &Value) -> Vec<Value> {
     }
 }
 
-fn read_only_unset_label(placeholder: Option<&str>, default: &str) -> String {
+fn read_only_unset_label(placeholder: Option<&str>, default_id: &str) -> Result<String, String> {
     match placeholder {
-        Some(p) if !p.is_empty() => p.to_string(),
-        _ => default.to_string(),
+        Some(p) if !p.is_empty() => Ok(p.to_string()),
+        _ => word(default_id),
     }
 }
 
@@ -929,7 +937,23 @@ fn month((_, m, _): (i32, u32, u32)) -> Result<String, String> {
 }
 
 fn fmt(date: (i32, u32, u32)) -> Result<String, String> {
-    Ok(format!("{} {} {}", date.2, month(date)?, date.0))
+    display_text::language::tr(
+        "controls.date",
+        None,
+        &[("day", &date.2.to_string()), ("month", &month(date)?), ("year", &date.0.to_string())],
+    )
+}
+
+fn fmt_no_year(date: (i32, u32, u32)) -> Result<String, String> {
+    display_text::language::tr(
+        "controls.date_no_year",
+        None,
+        &[("day", &date.2.to_string()), ("month", &month(date)?)],
+    )
+}
+
+fn range(start: &str, end: &str) -> Result<String, String> {
+    display_text::language::tr("controls.range", None, &[("start", start), ("end", end)])
 }
 
 /// `variables_resolve.py::format_date_label`.
@@ -940,18 +964,27 @@ fn format_date_label(iso: &str) -> Result<String, String> {
 /// `variables_resolve.py::format_daterange_label`.
 fn format_daterange_label(start_iso: &str, end_iso: &str) -> Result<String, String> {
     let (Some(s), Some(e)) = (parse_iso_date(start_iso), parse_iso_date(end_iso)) else {
-        return Ok(format!("{start_iso} \u{2013} {end_iso}"));
+        return range(start_iso, end_iso);
     };
     if s == e {
         return fmt(s);
     }
     if s.0 == e.0 && s.1 == e.1 {
-        return Ok(format!("{}\u{2013}{} {} {}", s.2, e.2, month(s)?, s.0));
+        return display_text::language::tr(
+            "controls.range_same_month",
+            None,
+            &[
+                ("start_day", &s.2.to_string()),
+                ("end_day", &e.2.to_string()),
+                ("month", &month(s)?),
+                ("year", &s.0.to_string()),
+            ],
+        );
     }
     if s.0 == e.0 {
-        return Ok(format!("{} {} \u{2013} {}", s.2, month(s)?, fmt(e)?));
+        return range(&fmt_no_year(s)?, &fmt(e)?);
     }
-    Ok(format!("{} \u{2013} {}", fmt(s)?, fmt(e)?))
+    range(&fmt(s)?, &fmt(e)?)
 }
 
 /// `variables_resolve.py::format_variable_display_value`.
@@ -963,10 +996,10 @@ fn format_variable_display_value(
     match input_type {
         "select" | "radio" => {
             if value_is_unset(value) {
-                return Ok(read_only_unset_label(
+                return read_only_unset_label(
                     var_def.placeholder.as_deref(),
-                    UNSET_SELECT_LABEL,
-                ));
+                    "controls.all",
+                );
             }
             if matches!(value, Value::Array(_)) {
                 return Err(format!(
@@ -978,19 +1011,19 @@ fn format_variable_display_value(
         "multiselect" => {
             let selected = coerce_multiselect(value);
             if selected.is_empty() {
-                return Ok(read_only_unset_label(
+                return read_only_unset_label(
                     var_def.placeholder.as_deref(),
-                    UNSET_SELECT_LABEL,
-                ));
+                    "controls.all",
+                );
             }
-            Ok(selected.iter().map(py_str).collect::<Vec<_>>().join(", "))
+            Ok(selected.iter().map(py_str).collect::<Vec<_>>().join(&word("controls.list_join")?))
         }
         "daterange" => {
             if daterange_is_unset(value) {
-                return Ok(read_only_unset_label(
+                return read_only_unset_label(
                     var_def.placeholder.as_deref(),
-                    UNSET_DATERANGE_LABEL,
-                ));
+                    "controls.all_dates",
+                );
             }
             let Value::Array(a) = value else {
                 return Err("daterange variable expects a 2-element list".to_string());
@@ -1002,36 +1035,29 @@ fn format_variable_display_value(
                 ));
             }
             if value_is_unset(&a[0]) {
-                return Ok(format!("Until {}", format_date_label(&py_str(&a[1]))?));
+                return dated("controls.until", &format_date_label(&py_str(&a[1]))?);
             }
             if value_is_unset(&a[1]) {
-                return Ok(format!("From {}", format_date_label(&py_str(&a[0]))?));
+                return dated("controls.from", &format_date_label(&py_str(&a[0]))?);
             }
             format_daterange_label(&py_str(&a[0]), &py_str(&a[1]))
         }
-        "checkbox" => Ok(match value {
-            Value::Null => "No".to_string(),
-            Value::String(s) => {
-                if matches!(s.trim().to_lowercase().as_str(), "true" | "yes" | "1") {
-                    "Yes".to_string()
-                } else {
-                    "No".to_string()
+        "checkbox" => {
+            let checked = match value {
+                Value::Null => false,
+                Value::String(s) => {
+                    matches!(s.trim().to_lowercase().as_str(), "true" | "yes" | "1")
                 }
-            }
-            other => {
-                if checked_from_current(other) {
-                    "Yes".to_string()
-                } else {
-                    "No".to_string()
-                }
-            }
-        }),
+                other => checked_from_current(other),
+            };
+            word(if checked { "controls.yes" } else { "controls.no" })
+        }
         "date" | "datepicker" => {
             if value_is_unset(value) {
-                return Ok(read_only_unset_label(
+                return read_only_unset_label(
                     var_def.placeholder.as_deref(),
-                    UNSET_DATE_LABEL,
-                ));
+                    "controls.any_date",
+                );
             }
             format_date_label(&py_str(value))
         }
@@ -1160,7 +1186,7 @@ pub fn resolve_controls(
         }
         let label = match &var_def.label {
             Some(l) => l.clone(),
-            None => apply_case(&display_text::slug_to_text(name), label_font_case)?,
+            None => apply_case(&display_text::slug_to_text(name)?, label_font_case)?,
         };
         let display_value = format_variable_display_value(var_def, &current, &refined.input_type)?;
         // `variables_resolve.py::resolve_controls`'s own `placeholder=`: the
@@ -1589,12 +1615,12 @@ mod resolve_tests {
 
     #[test]
     fn slug_to_text_expands_abbreviations_and_unit_suffixes() {
-        assert_eq!(display_text::slug_to_text("revenue_usd"), "revenue ($)");
-        assert_eq!(display_text::slug_to_text("yoy_growth_pct"), "YoY growth (%)");
-        assert_eq!(display_text::slug_to_text("avg_deal_size"), "Avg deal size");
+        assert_eq!(display_text::slug_to_text("revenue_usd").unwrap(), "revenue ($)");
+        assert_eq!(display_text::slug_to_text("yoy_growth_pct").unwrap(), "YoY growth (%)");
+        assert_eq!(display_text::slug_to_text("avg_deal_size").unwrap(), "Avg deal size");
     }
 
-    /// Every pair here is `(slug_to_text(name), apply_case(..., "title"))`
+    /// Every pair here is `(slug_to_text(name).unwrap(), apply_case(..., "title"))`
     /// from the real `titlecase` library — captured live, not hand-derived.
     #[test]
     fn slug_to_text_output_matches_the_real_titlecase_library_under_apply_case() {
@@ -1626,11 +1652,11 @@ mod resolve_tests {
         }
     }
 
-    /// A variable's default label is `apply_case(slug_to_text(name), ...)`
+    /// A variable's default label is `apply_case(slug_to_text(name).unwrap(), ...)`
     /// (the one call site above) — `apply_case` must be `case::apply_case`,
     /// the same law production uses for chart titles, not a second,
     /// restricted copy. Expected values captured live from
-    /// `dbt_charts.core.utils.slug_to_text` + `dbt_charts.core.text.case.apply_case`.
+    /// `dbt_charts.core.text.humanize.slug_to_text` + `dbt_charts.core.text.case.apply_case`.
     #[test]
     fn label_case_matches_production_case_law_for_inline_period_and_name_prefix_tokens() {
         let cases: &[(&str, &str)] = &[
@@ -1640,7 +1666,7 @@ mod resolve_tests {
             ("cpu/memory", "Cpu/Memory"),
         ];
         for (name, expected) in cases {
-            let actual = apply_case(&display_text::slug_to_text(name), "title").unwrap();
+            let actual = apply_case(&display_text::slug_to_text(name).unwrap(), "title").unwrap();
             assert_eq!(&actual, expected, "label for {name:?}");
         }
     }
@@ -2080,13 +2106,13 @@ fn draw_control(
     };
 
     let mut parts = vec![format!(
-        r#"<text{label_kind} x="{}" y="{}" font-size="{}" font-weight="{weight}" font-family="{}" fill="{}">{}:</text>"#,
+        r#"<text{label_kind} x="{}" y="{}" font-size="{}" font-weight="{weight}" font-family="{}" fill="{}">{}</text>"#,
         pxi(x),
         pxi(baseline),
         pxi(fs),
         xml_escape_attr(family),
         xml_escape_attr(label_font.color.as_deref().unwrap_or_default()),
-        xml_escape(&box_.label), weight = xml_escape_attr(&weight)
+        xml_escape(&field_label(&box_.label)?), weight = xml_escape_attr(&weight)
     )];
     parts.extend(draw_field(
         control,
@@ -2155,16 +2181,16 @@ fn draw_control(
     let mut unset = String::new();
     if unset_style != "none" {
         let default_label = match unset_style {
-            "chooser" => UNSET_SELECT_LABEL,
-            "date" => UNSET_DATE_LABEL,
-            _ => UNSET_DATERANGE_LABEL,
+            "chooser" => "controls.all",
+            "date" => "controls.any_date",
+            _ => "controls.all_dates",
         };
         unset = format!(
             r#" data-dbt-can-unset="{}""#,
             if control.can_unset { "true" } else { "false" }
         );
         if control.can_unset {
-            let label = read_only_unset_label(control.placeholder.as_deref(), default_label);
+            let label = read_only_unset_label(control.placeholder.as_deref(), default_label)?;
             unset.push_str(&format!(
                 r#" data-dbt-unset-label="{}""#,
                 xml_escape_attr(&label)

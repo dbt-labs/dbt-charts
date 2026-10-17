@@ -352,8 +352,7 @@ class _RadialChartStyle(
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    inner_radius: float | None = Field(
-        default=None,
+    inner_radius: float = Field(
         ge=0,
         le=1,
         description="Hole-to-disk ratio 0–1 (inner radius / outer radius). 0 is a solid pie. A `type: donut` chart reads `charts.donut` over this.",

@@ -402,7 +402,7 @@ impl ColumnBlock {
         plot_h: f64,
         origin_x: f64,
         origin_y: f64,
-    ) {
+    ) -> Result<(), String> {
         let font_size = self.font_size;
         let cell_ink = self.cell_ink.as_str();
         let cell_weight = style.font.weight_str();
@@ -425,7 +425,7 @@ impl ColumnBlock {
                 xml_escape_attr(label_ink),
                 xml_escape(&col.header),
             );
-            crate::contract::mark_group_open(out, "text", "strip");
+            crate::contract::mark_group_open(out, "text", "strip")?;
             for (k, cell) in col.cells.iter().enumerate() {
                 let ink = col.cell_series.get(k).and_then(|(_, ink, _)| ink.as_deref()).or(col.ink.as_deref()).unwrap_or(cell_ink);
                 let cell_x = origin_x + col.cell_x(edge, cell);
@@ -434,7 +434,7 @@ impl ColumnBlock {
                     out,
                     "<text{} x=\"{cell_x:.2}\" y=\"{y:.2}\" text-anchor=\"end\" font-family=\"{}\" \
                      font-size=\"{font_size}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
-                    crate::contract::cell_label_attr(&cell.aria),
+                    crate::contract::cell_label_attr(&cell.aria)?,
                     vega_escape_attr(paint),
                     xml_escape_attr(&cell_weight),
                     xml_escape_attr(ink),
@@ -450,6 +450,7 @@ impl ColumnBlock {
                 out.push_str(&divider_line(rule_x, origin_y, rule_x, origin_y + plot_h, &style.row.divider));
             }
         }
+        Ok(())
     }
 }
 
@@ -622,7 +623,7 @@ mod tests {
         assert_eq!(col.hung_w, pct_w);
 
         let mut out = String::new();
-        block.render(&mut out, &style(), 400.0, 300.0, 100.0, 50.0);
+        block.render(&mut out, &style(), 400.0, 300.0, 100.0, 50.0).unwrap();
         let edge = 100.0 + block.right_edges(400.0)[0];
         assert!((text_x(&out, "500%") - edge).abs() < 0.005, "anchor at the header edge");
         assert!((text_x(&out, "6000") - (edge - pct_w)).abs() < 0.005, "bare digits one suffix in");
@@ -830,7 +831,7 @@ mod tests {
         )
         .unwrap();
         let mut out = String::new();
-        block.render(&mut out, style, 400.0, 300.0, 100.0, 50.0);
+        block.render(&mut out, style, 400.0, 300.0, 100.0, 50.0).unwrap();
         out
     }
 

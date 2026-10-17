@@ -20,6 +20,7 @@ from dbt_charts.core.compile.models.factories import (
 from dbt_charts.core.compile.models.markers import (
     AUTO,
     Absent,
+    AutoUnset,
     Color,
     FontFamily,
     FontWeightValue,
@@ -30,6 +31,7 @@ from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
     DividerStyle,
     FontStyle,
+    TextBaseline,
     one_error,
 )
 
@@ -150,7 +152,7 @@ class TextColumnStyle(BaseModel):
     divider: DividerStyle = Field(
         description="Vertical line drawn between columns.",
     )
-    max_chars: int | None = Field(
+    max_chars: Annotated[int | None, Absent("the shipped measure")] = Field(
         default=None,
         gt=0,
         description=(
@@ -233,7 +235,7 @@ class FrameStyle(BaseModel):
     # None is the default state, not a fallback: no theme supplies a width —
     # authoring one anywhere in the cascade opts the board into an exact
     # width, and unset boards size themselves from max_width and content.
-    width: float | None = Field(
+    width: Annotated[float | None, Absent("sized to its content")] = Field(
         default=None,
         gt=0,
         description=(
@@ -295,20 +297,17 @@ class TitlePositionStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     anchor: str = Field(description="Title anchor position; theme always sets this.")
-    # Only set in themes that override angle; None lets Vega-Lite choose.
-    angle: float | None = Field(
+    angle: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Title rotation angle in degrees; None lets Vega-Lite choose.",
+        description="Title rotation angle in degrees; 'auto' lets Vega-Lite choose.",
     )
-    # Default theme supplies 10; None means inherit Vega-Lite's built-in default.
     offset: float | None = Field(
         default=None,
         description="Title offset from its anchor in pixels; None uses Vega-Lite's default.",
     )
-    # Only set in themes that override baseline; None lets Vega-Lite choose.
-    baseline: str | None = Field(
+    baseline: Annotated[TextBaseline | None, AutoUnset()] = Field(
         default=None,
-        description="Title text baseline alignment; None uses Vega-Lite's default.",
+        description="Title text baseline alignment; 'auto' uses Vega-Lite's default.",
     )
 
 
@@ -557,7 +556,10 @@ class TextStyle(BaseModel):
 class PlaceholderOverlay(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    text: str = Field(description="Placeholder overlay text shown on empty charts.")
+    text: str = Field(
+        description="Placeholder overlay text shown on empty charts; `auto` takes the "
+        "board language's wording."
+    )
     background: Annotated[str, Color()] = Field(description="Overlay background color.")
     font: Annotated[FontStyle, InheritSlot(from_path="Style.font")] = Field(
         default_factory=FontStyle, description="Overlay font style overrides."

@@ -41,6 +41,7 @@ from dbt_charts.core.compile.models.primitives import (
     ColumnFontStyle,
     FormatConfig,
     GlyphText,
+    Link,
     ScaleTargetConfig,
 )
 from dbt_charts.core.compile.models.schema_names import FormatAlias, ScalePaletteName
@@ -320,12 +321,19 @@ class TableColumnConfig(ConstrainedModel):
         default=None,
         description="What happens to header text too wide for its column (clip, truncate, wrap-two, wrap).",
     )
-    header_link: Annotated[str | None, Url()] = Field(
-        default=None, description="URL template that makes the column header clickable."
-    )
-    link: Annotated[str | None, Url()] = Field(
+    header_link: Annotated[str | Link | None, Url()] = Field(
         default=None,
-        description="URL template for cell values (Jinja template with row fields available).",
+        description=(
+            "URL template that makes the column header clickable, or {url, open} "
+            "to choose how a click opens the target."
+        ),
+    )
+    link: Annotated[str | Link | None, Url()] = Field(
+        default=None,
+        description=(
+            "URL template for cell values (Jinja template with row fields "
+            "available), or {url, open} to choose how a click opens the target."
+        ),
     )
     background: Annotated[str | None, Color(column_ref=True)] = Field(
         default=None,

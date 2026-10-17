@@ -155,7 +155,7 @@ class DeviceLoginStarted(ContractModel):
 
 
 class ProjectConnectStarted(ContractModel):
-    """What `dct cloud project connect --start` reports: the install/pick
+    """What `dct cloud project connect github --start` reports: the install/pick
     URL, never a project -- the browser pick hasn't landed yet."""
 
     org: str = Field(description="The org this connect is against.")
@@ -370,6 +370,22 @@ class ProjectSummary(ContractModel):
             "config_error is set, because the count is then unknown. This "
             "listing carries no stage, so the field itself has to say so."
         )
+    )
+    git_host: str | None = Field(
+        default=None,
+        description=(
+            "Where the repo lives: github, gitlab, bitbucket, or other for any "
+            "plain git URL. ``None`` means this Cloud predates the deploy that "
+            "added this field and does not report it yet."
+        ),
+    )
+    git_auth: str | None = Field(
+        default=None,
+        description=(
+            "How Cloud authenticates to the repo: app (the GitHub App) or "
+            "token. ``None`` means this Cloud predates the deploy that added "
+            "this field and does not report it yet."
+        ),
     )
     config_error: str | None = Field(
         default=None,

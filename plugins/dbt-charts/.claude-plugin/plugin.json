@@ -1,0 +1,19 @@
+{
+  "name": "dbt-charts",
+  "displayName": "dbt Charts",
+  "description": "Build, review, and query dbt Charts boards from Claude: the dbtcharts.com connector plus the board authoring skills.",
+  "author": {
+    "name": "dbt Labs",
+    "url": "https://dbtcharts.com"
+  },
+  "homepage": "https://docs.dbtcharts.com/cloud/claude-chatgpt-connector/",
+  "repository": "https://github.com/dbt-labs/dbt-charts",
+  "license": "Apache-2.0",
+  "keywords": ["dbt", "dbt-charts", "boards", "charts", "analytics"],
+  "mcpServers": {
+    "dbt-charts": {
+      "type": "http",
+      "url": "https://dbtcharts.com/mcp"
+    }
+  }
+}

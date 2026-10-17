@@ -1102,7 +1102,9 @@ class TestAnchoredNegativeTickParity:
         fmt = ResolvedFormat(spec="$.3~s")
         ticks = (-500_000.0, -300_000.0, -100_000.0, 0.0)
         with regional_scope(
-            regional.format_locale, regional.time_locale, regional.week_start
+            regional.format_locale,
+            regional.time_locale,
+            regional.week_start,
         ):
             expr = inject_axis_numeral_expr({}, ruler, None, fmt)["labelExpr"]
             measured = quantitative_tick_labels(ticks, fmt, ruler)

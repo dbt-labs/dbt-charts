@@ -219,6 +219,10 @@ class SizingRenderCtx:
     # the render-first pass measures this and stores the shrunk spec.width here so
     # _align_cols_heights can reuse it instead of item.width (which would re-overflow).
     support_table_corrected_widths: dict[str, float] = field(default_factory=dict)
+    # Maps chart_id → the chart as first resolved at its slot width, for every
+    # chart the width correction above re-resolved at the shrunk width. Read by
+    # the chart-svg board sweep, which replays the correction in Rust.
+    slot_resolved: dict[str, ResolvedChart] = field(default_factory=dict)
     # Maps (chart_id, slot_width) → natural rendered height.
     # Populated during the sizing pass; used to deduplicate renders of the same
     # chart at the same width and to drive the close-enough skip in _align_cols_heights.
@@ -262,6 +266,7 @@ def _nested_render_ctx(
         variables=render_ctx.variables,
         variable_values=render_ctx.variable_values,
         support_table_corrected_widths=render_ctx.support_table_corrected_widths,
+        slot_resolved=render_ctx.slot_resolved,
     )
 
 
@@ -1108,6 +1113,9 @@ def _make_data_aware_height_provider(
                                     render_ctx.support_table_corrected_widths[
                                         item.chart.id
                                     ] = shrunk_width
+                                    render_ctx.slot_resolved[item.chart.id] = (
+                                        resolved_chart
+                                    )
 
                         render_ctx.render_cache[
                             (
@@ -1783,6 +1791,7 @@ def calculate_data_aware_layout(
     resolved_variants: ResolvedChartVariants | EllipsisType = ...,
     resolve_errors: dict[str, ChartResolveFailure] | EllipsisType = ...,
     authored_slot_heights: dict[str, float] | EllipsisType = ...,
+    slot_resolved: dict[str, ResolvedChart] | EllipsisType = ...,
 ) -> tuple[Board, RenderCache]:
     """Calculate layout dimensions using actual query data for table sizing.
 
@@ -1808,6 +1817,10 @@ def calculate_data_aware_layout(
             chart_id -> the real px slot height assigned to every chart under
             an authored ancestor, captured before cols-alignment can overwrite
             it. See ``_snapshot_authored_slot_heights``.
+        slot_resolved: When given, populated in place with chart_id -> the
+            chart as first resolved at its slot width, for every chart whose
+            support_table width correction re-resolved it at the shrunk width
+            (``SizingRenderCtx.slot_resolved``).
 
     Returns:
         (Board with calculated dimensions, render_cache mapping chart_id
@@ -1841,6 +1854,7 @@ def calculate_data_aware_layout(
         pre_resolved=pre_resolved,
         resolved_variants=(resolved_variants if resolved_variants is not ... else {}),
         resolve_errors=(resolve_errors if resolve_errors is not ... else {}),
+        slot_resolved=(slot_resolved if slot_resolved is not ... else {}),
     )
     container_width = board_container_width(
         board,

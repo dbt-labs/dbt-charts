@@ -81,7 +81,9 @@ class TestTableTransposeRender:
 
     def test_transpose_renders_label_column_from_column_config(self, make_chart):
         """Columns with style.columns.<col>.label use the label, not the column key."""
-        from dbt_charts.core.compile.models.chart.authored import TableColumnConfig
+        from dbt_charts.core.compile.models.style.resolved import (
+            ResolvedTableColumnConfig,
+        )
 
         from ._engine_render import render_table_svg
 
@@ -89,8 +91,8 @@ class TestTableTransposeRender:
         chart = self._make_transposed_chart(make_chart, data)
         # Patch in column configs with labels
         column_configs = {
-            "dollars_used": TableColumnConfig(label="Dollars Used"),
-            "dollars_balance": TableColumnConfig(label="Dollars Balance"),
+            "dollars_used": ResolvedTableColumnConfig(label="Dollars Used"),
+            "dollars_balance": ResolvedTableColumnConfig(label="Dollars Balance"),
         }
         chart = chart.model_copy(update={"columns": column_configs})
         svg = render_table_svg(

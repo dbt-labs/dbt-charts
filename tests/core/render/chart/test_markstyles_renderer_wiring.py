@@ -20,7 +20,10 @@ from dbt_charts.core.compile.config import (
     reset_config,
 )
 from dbt_charts.core.compile.models.style.theme import PointMarkStyle
-from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
+from dbt_charts.core.compile.resolve.style.board import (
+    resolve_chart_style_context,
+    resolve_style_and_context,
+)
 from dbt_charts.core.constants.marks import STROKE_FALLBACK_WIDTH
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 from dbt_charts.core.render.chart.vl_field_maps import (
@@ -48,8 +51,8 @@ MULTI_SERIES_DATA = [
 
 
 def _base_line_mark():
-    """Return the compiled global LineMarkStyle from the default theme."""
-    return get_theme_style("clarity").charts.marks.line
+    """Return the resolved global LineMarkStyle of the default theme."""
+    return resolve_chart_style_context(get_theme_style("clarity")).marks.line
 
 
 def _base_area_mark():
@@ -58,8 +61,8 @@ def _base_area_mark():
 
 
 def _base_bar_mark():
-    """Return the compiled global BarMarkStyle from the default theme."""
-    return get_theme_style("clarity").charts.marks.bar
+    """Return the resolved global BarMarkStyle of the default theme."""
+    return resolve_chart_style_context(get_theme_style("clarity")).marks.bar
 
 
 # ---------------------------------------------------------------------------
@@ -499,7 +502,9 @@ class TestPointMarkMapper:
         # The global slot is deliberately empty (like marks.point.size):
         # bake_point_companions reads "no tier authored a ring" off the
         # cascaded value, so a literal here would shadow a board-tier pin.
-        assert get_theme_style("clarity").charts.marks.point.stroke_width is None
+        theme = get_theme_style("clarity")
+        assert theme.charts.marks.point.stroke_width == "auto"
+        assert resolve_chart_style_context(theme).marks.point.stroke_width is None
 
 
 class TestLineHaloPointPath:

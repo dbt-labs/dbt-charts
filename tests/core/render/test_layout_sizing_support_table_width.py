@@ -710,3 +710,69 @@ def test_support_table_width_floor_does_not_fire_on_a_row_strip(
     # vertical-category-axis gate is deleted and the strip trips the floor.
     failed_ids = {diag.fields.get("chart_id") for diag in render_result.chart_errors}
     assert not failed_ids, f"the row strip's floor misfired: {failed_ids}"
+
+
+def test_width_correction_across_a_tier_keeps_the_slot_widths_resolve(
+    tmp_path, local_project: Callable[..., Project]
+):
+    """The correction re-resolves a chart at the shrunk width and the board keeps
+    only that resolve; the one the measuring render wore (tiers differ in the
+    legend edge) is handed back through ``slot_resolved``.
+    """
+    import pytest
+
+    pytest.importorskip("vl_convert")
+
+    from dbt_charts.core.compile import compile
+    from dbt_charts.core.compile.models.board.resolved import ResolvedChart
+    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.render.board_resolve import build_resolved_board
+
+    result = compile(
+        """\
+style:
+  frame:
+    width: 440
+queries:
+  q:
+    type: values
+    columns: [region, channel, revenue]
+    values:
+      - [North, store, 100]
+      - [North, web, 80]
+      - [South, store, 90]
+      - [South, web, 60]
+charts:
+  c:
+    query: q
+    type: bar
+    x: region
+    y: revenue
+    color: channel
+    support_table:
+      - source: revenue
+        aggregate: sum
+    style:
+      orientation: horizontal
+      stack: zero
+rows:
+  - c
+"""
+    )
+    assert result.success and result.board is not None, result.errors
+
+    executor = Executor(
+        result.board,
+        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        query_registry=result.query_registry,
+    )
+    slot_resolved: dict[str, ResolvedChart] = {}
+    resolved_board, _ = build_resolved_board(
+        result.board, executor, {}, render_first=True, slot_resolved=slot_resolved
+    )
+
+    assert set(slot_resolved) == {"c"}
+    assert (
+        slot_resolved["c"].legend.position.edge
+        != resolved_board.charts["c"].legend.position.edge
+    )

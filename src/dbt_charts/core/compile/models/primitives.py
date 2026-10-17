@@ -10,7 +10,7 @@ from __future__ import annotations
 import dataclasses
 import re
 from functools import cached_property
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeGuard, TypeVar, get_args
 
 from pydantic import (
     BaseModel,
@@ -32,6 +32,7 @@ from pydantic import (
 from pydantic_core import core_schema
 
 from d3_format import LocaleDefinition
+from dbt_charts import _engine
 from dbt_charts.core.colors import CSS_COLOR_NAMES
 from dbt_charts.core.compile.models.factories import (
     FontAlias,
@@ -43,7 +44,9 @@ from dbt_charts.core.compile.models.factories import (
     register_shorthand,
 )
 from dbt_charts.core.compile.models.markers import (
+    AUTO,
     Absent,
+    AutoUnset,
     Color,
     FontFamily,
     FontWeightValue,
@@ -125,6 +128,54 @@ HtmlPolicy = Literal["none", "safe-subset", "trusted-raw"]
 # SVG/Vega-Lite stroke-linecap vocabulary. One home: border dash caps, the
 # shared StrokeStyle, and the resolved stroke all name the same three values.
 LineCap = Literal["butt", "round", "square"]
+
+SymbolShape = Literal[
+    "circle",
+    "square",
+    "cross",
+    "diamond",
+    "triangle-up",
+    "triangle-down",
+    "triangle-right",
+    "triangle-left",
+    "stroke",
+    "arrow",
+    "wedge",
+    "triangle",
+]
+"""The named symbols Vega draws for a mark or a legend glyph."""
+
+TextBaseline = Literal[
+    "top", "middle", "bottom", "alphabetic", "line-top", "line-bottom"
+]
+
+
+LinkOpen = Literal["page", "modal", "preview", "new_tab"]
+
+
+class Link(BaseModel):
+    """Object form of a ``link:``; a bare string is the page-mode shorthand."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # Unfaceted: the owning `link:` slot carries `Url`, so a link stays one key.
+    url: str = Field(description="Click-through URL template.")
+    open: LinkOpen = Field(
+        default="page",
+        description=(
+            "How a click opens the target: page navigates the board away; "
+            "modal opens the target board in a dialog over this one; preview "
+            "shows it small, beside the clicked mark; new_tab opens it in a new "
+            "browser tab."
+        ),
+    )
+
+
+def split_link(link: str | Link | None) -> tuple[str | None, LinkOpen]:
+    """The URL template and open mode of an authored link."""
+    if isinstance(link, Link):
+        return link.url, link.open
+    return link, "page"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -402,6 +453,16 @@ class TimeLocale(BaseModel):
     week_start: WeekdayName = Field(description="The first day of the calendar week.")
 
 
+LanguageCode = Literal[
+    "en", "de", "fr", "es", "it", "pt", "nl", "sv", "da", "nb",
+    "fi", "pl", "cs", "ru", "uk", "tr", "ja", "zh", "ko",
+]  # fmt: skip
+
+
+def _is_language_code(value: str) -> TypeGuard[LanguageCode]:
+    return value in get_args(LanguageCode)
+
+
 class RegionalLocale(BaseModel):
     """The d3 locales a board writes numbers and dates in."""
 
@@ -433,6 +494,28 @@ class Regional(BaseModel):
             "template, at the locale's placement. Unset prints the locale's own."
         ),
     )
+    language: LanguageCode | None = Field(
+        default=None,
+        description=(
+            "The language words the board generates (tab names, series counts) "
+            "print in. Unset takes the language of `locale.time`, or `en` when "
+            "that locale has no catalog or is a definition."
+        ),
+    )
+
+    @cached_property
+    def resolved_language(self) -> LanguageCode:
+        """The authored language, else the one `locale.time` names (`en` for a
+        custom definition or a locale with no catalog)."""
+        if self.language is not None:
+            return self.language
+        locale = self.locale.time
+        language = _engine.language_for_time_locale(
+            locale if isinstance(locale, str) else None
+        )
+        if not _is_language_code(language):
+            raise ValueError(f"the engine named an unknown language {language!r}")
+        return language
 
     @model_validator(mode="after")
     def _currency_has_a_place(self) -> Regional:
@@ -929,11 +1012,11 @@ class BorderStyle(BaseModel):
             "None means a solid border."
         ),
     )
-    line_cap: LineCap | None = Field(
+    line_cap: Annotated[LineCap | None, Absent("butt ends")] = Field(
         default=None,
         description="How each dash's ends are finished on a dashed border. None uses the renderer default (butt).",
     )
-    dash_offset: float | None = Field(
+    dash_offset: Annotated[float | None, Absent("the pattern starts at 0")] = Field(
         default=None,
         description="How far into the dash pattern the line starts, in pixels. None means 0.",
     )
@@ -1034,11 +1117,11 @@ class BorderStylePatch(BaseModel):
             "None means a solid border."
         ),
     )
-    line_cap: LineCap | None = Field(
+    line_cap: Annotated[LineCap | None, Absent("butt ends")] = Field(
         default=None,
         description="How each dash's ends are finished on a dashed border. None uses the renderer default (butt).",
     )
-    dash_offset: float | None = Field(
+    dash_offset: Annotated[float | None, Absent("the pattern starts at 0")] = Field(
         default=None,
         description="How far into the dash pattern the line starts, in pixels. None means 0.",
     )
@@ -1113,15 +1196,17 @@ class StrokeStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
-    color: Annotated[str | None, Color()] = Field(
+    color: Annotated[str | None, Color(keywords=(AUTO,)), AutoUnset()] = Field(
         default=None, description="Stroke color as a CSS color string."
     )
-    width: float | None = Field(default=None, description="Stroke width in pixels.")
-    cap: LineCap | None = Field(
+    width: Annotated[float | None, AutoUnset()] = Field(
+        default=None, description="Stroke width in pixels."
+    )
+    cap: Annotated[LineCap | None, AutoUnset()] = Field(
         default=None,
         description="How the stroke's ends are finished (butt, round, or square).",
     )
-    join: Literal["miter", "round", "bevel"] | None = Field(
+    join: Annotated[Literal["miter", "round", "bevel"] | None, AutoUnset()] = Field(
         default=None,
         description="How two stroke segments are joined (miter, round, or bevel).",
     )
@@ -1437,7 +1522,9 @@ class CategoricalColorStyle(BaseModel):
         default=None,
         description="Ordered list of single-series mark inks (must be non-empty when set), or a palette name.",
     )
-    requested_alias_palette: Annotated[str | None, Merge(Strategy.OVERRIDE)] = Field(
+    requested_alias_palette: Annotated[
+        str | None, Merge(Strategy.OVERRIDE), Absent("no flagged palette alias")
+    ] = Field(
         default=None,
         exclude=True,
         json_schema_extra={"internal": True},
@@ -1505,11 +1592,11 @@ class StaticGradientColorStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    static: Annotated[str | None, Color()] = Field(
+    static: Annotated[str | None, Color(), Absent("no explicit color")] = Field(
         default=None,
         description="One explicit color: the marks on most families when no color column is encoded, the cell text on a table.",
     )
-    gradient: ScaleTargetConfig | None = Field(
+    gradient: Annotated[ScaleTargetConfig | None, Absent("no gradient")] = Field(
         default=None,
         description="Continuous gradient scale for the color encoding.",
     )

@@ -102,11 +102,11 @@ impl HoverBand {
 
     /// Paint the layer. `vertical` bars grow up from the baseline; `extent` is
     /// the plot's pixel size along the measure axis.
-    pub(crate) fn emit(&self, out: &mut String, vertical: bool, scale: &LinearScale, extent: f64) {
+    pub(crate) fn emit(&self, out: &mut String, vertical: bool, scale: &LinearScale, extent: f64) -> Result<(), String> {
         let baseline = scale.position(0.0);
         let band = extent * HOVER_BAND_EXTEND_FRACTION;
         let trigger = extent * HOVER_BAND_TRIGGER_FRACTION;
-        mark_group_open(out, "rect", "hover_band_marks");
+        mark_group_open(out, "rect", "hover_band_marks")?;
         for row in &self.rows {
             let grows = match (&self.gate, row.value) {
                 (Gate::Each, Some(v)) => (scale.position(v) - baseline).abs() < trigger,
@@ -117,7 +117,7 @@ impl HoverBand {
             // Up (vertical) and right (horizontal) are the positive directions.
             let reach = if !grows { 0.0 } else if vertical { -sign * band } else { sign * band };
             let (lo, len) = (baseline.min(baseline + reach), reach.abs());
-            let label = aria_attr(row.aria.as_deref(), ItemRole::Bar);
+            let label = aria_attr(row.aria.as_deref(), ItemRole::Bar)?;
             let d = if vertical {
                 format!("M{:.2},{lo:.2}h{:.2}v{len:.2}h-{:.2}Z", row.start, row.size, row.size)
             } else {
@@ -126,5 +126,6 @@ impl HoverBand {
             let _ = write!(out, "<path d=\"{d}\" fill=\"{FILL}\" opacity=\"0\"{label}/>");
         }
         mark_group_close(out);
+        Ok(())
     }
 }

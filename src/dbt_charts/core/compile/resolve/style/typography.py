@@ -59,6 +59,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from dbt_charts.core.compile.models.markers import AUTO
 from dbt_charts.core.compile.models.style.theme.board import TitleStyle
+from dbt_charts.core.compile.resolve.style.inherit_resolver import settled
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
@@ -222,21 +223,18 @@ def chart_title_spec(
         effective_level = max(1, min(_OBJECT_TITLE_ANCHOR_LEVEL + offset, len(sizes)))
         font_size = int(sizes[effective_level - 1])
     else:
-        assert font.size is not None, "title.font.size must be populated by cascade"
-        font_size = int(font.size)
+        font_size = int(settled(font.size))
 
     if font.weight == AUTO:
-        board_weight = board_font.weight
-        assert board_weight is not None, "title.font.weight must be populated"
         weight = _coerce_weight(
-            chart_style_context.title.compact_weight if tier == "tiny" else board_weight
+            chart_style_context.title.compact_weight
+            if tier == "tiny"
+            else settled(board_font.weight)
         )
     else:
-        assert font.weight is not None, "title.font.weight must be populated"
-        weight = _coerce_weight(font.weight)
+        weight = _coerce_weight(settled(font.weight))
 
-    body = chart_style_context.font_family
-    assert body is not None, "resolved_chart_style.font_family must be populated"
+    body = settled(chart_style_context.font_family)
     if font.family == AUTO:
         pick_title = (
             (tier in ("medium", "wide"))
@@ -245,8 +243,7 @@ def chart_title_spec(
         )
         family = (board_font.family or body) if pick_title else body
     else:
-        assert font.family is not None, "title.font.family must be populated"
-        family = font.family
+        family = settled(font.family)
     return font_size, weight, family
 
 
@@ -284,24 +281,15 @@ def resolve_title_font(
         width, chart_style_context=chart_style_context
     )
     tf = chart_style_context.title.font
-    assert tf.color is not None, "charts.title.font.color must be populated by cascade"
-    assert tf.style is not None, "charts.title.font.style must be populated by cascade"
-    assert tf.decoration is not None, (
-        "charts.title.font.decoration must be populated by cascade"
-    )
-    assert tf.case is not None, "charts.title.font.case must be populated by cascade"
-    assert tf.line_height is not None, (
-        "charts.title.font.line_height must be populated by cascade"
-    )
     return ResolvedFontStyle(
         family=family,
-        color=tf.color,
+        color=settled(tf.color),
         size=font_size,
         weight=weight,
-        style=tf.style,
-        decoration=tf.decoration,
-        case=tf.case,
-        line_height=tf.line_height,
+        style=settled(tf.style),
+        decoration=settled(tf.decoration),
+        case=settled(tf.case),
+        line_height=settled(tf.line_height),
         tabular_figures=font_is_tabular(family),
     )
 
@@ -337,11 +325,7 @@ def board_title_spec(
     effective_level = max(1, min(level, len(sizes)))
     font_size = int(sizes[effective_level - 1])
 
-    # TitleStyle.font is FontStyle (all Optional) — InheritSlot fills from parent;
-    # None post-cascade is a cascade bug, not a valid state.
-    _title_weight = title_style.font.weight
-    assert _title_weight is not None, "title.font.weight must be populated by cascade"
-    weight = _coerce_weight(_title_weight)
+    weight = _coerce_weight(settled(title_style.font.weight))
     return font_size, weight
 
 

@@ -1,53 +1,68 @@
-//! Display text derived from a column name: `core/utils.py::slug_to_text`,
-//! `core/text/case.py::field_title`, and `_wide_fields.py::
-//! resolve_wide_measure_labels`. No letter-case transform lives here; callers
-//! that owe a slot's `font.case` apply it to the derived text only.
+//! Display text derived from a column name (`core/text/humanize.py::
+//! slug_to_text`, `core/text/case.py::field_title`, `_wide_fields.py::
+//! resolve_wide_measure_labels`), the language catalogs, and the letter-case
+//! transform (`case`) both engines apply to a slot's `font.case`.
+
+pub mod case;
+pub mod language;
+pub mod titlecase_first_char;
 
 use std::collections::HashMap;
 
-const UNIT_SUFFIXES: &[(&str, &str)] = &[
-    ("usd", "($)"),
-    ("eur", "(€)"),
-    ("gbp", "(£)"),
-    ("pct", "(%)"),
-    ("percent", "(%)"),
-    ("ratio", "(ratio)"),
-    ("cnt", "(Count)"),
-    ("num", "(#)"),
-    ("qty", "(Qty)"),
-];
-
-const ABBREVIATIONS: &[(&str, &str)] = &[
-    ("yoy", "YoY"),
-    ("mom", "MoM"),
-    ("qoq", "QoQ"),
-    ("avg", "Avg"),
-    ("arr", "ARR"),
-    ("mrr", "MRR"),
-    ("nrr", "NRR"),
-    ("ltv", "LTV"),
-    ("cac", "CAC"),
-    ("roi", "ROI"),
-    ("roas", "ROAS"),
-    ("csat", "CSAT"),
-    ("nps", "NPS"),
-    ("enps", "eNPS"),
-    ("api", "API"),
-    ("id", "ID"),
-    ("url", "URL"),
-    ("sql", "SQL"),
-    ("hr", "HR"),
-    ("ip", "IP"),
-];
-
-fn lookup(table: &[(&str, &'static str)], key: &str) -> Option<&'static str> {
-    table.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
+/// A unit suffix or abbreviation: a symbol that reads the same in every
+/// language, or a catalog message id the board language spells.
+enum Display {
+    Symbol(&'static str),
+    Word(&'static str),
 }
 
-/// `core/utils.py::slug_to_text`: split on `_`, `-` and space, expand a unit
+const UNIT_SUFFIXES: &[(&str, Display)] = &[
+    ("usd", Display::Symbol("($)")),
+    ("eur", Display::Symbol("(€)")),
+    ("gbp", Display::Symbol("(£)")),
+    ("pct", Display::Symbol("(%)")),
+    ("percent", Display::Symbol("(%)")),
+    ("ratio", Display::Word("humanize.ratio")),
+    ("cnt", Display::Word("humanize.count")),
+    ("num", Display::Symbol("(#)")),
+    ("qty", Display::Word("humanize.qty")),
+];
+
+const ABBREVIATIONS: &[(&str, Display)] = &[
+    ("yoy", Display::Word("humanize.yoy")),
+    ("mom", Display::Word("humanize.mom")),
+    ("qoq", Display::Word("humanize.qoq")),
+    ("avg", Display::Word("humanize.avg")),
+    ("arr", Display::Symbol("ARR")),
+    ("mrr", Display::Symbol("MRR")),
+    ("nrr", Display::Symbol("NRR")),
+    ("ltv", Display::Symbol("LTV")),
+    ("cac", Display::Symbol("CAC")),
+    ("roi", Display::Symbol("ROI")),
+    ("roas", Display::Symbol("ROAS")),
+    ("csat", Display::Symbol("CSAT")),
+    ("nps", Display::Symbol("NPS")),
+    ("enps", Display::Symbol("eNPS")),
+    ("api", Display::Symbol("API")),
+    ("id", Display::Symbol("ID")),
+    ("url", Display::Symbol("URL")),
+    ("sql", Display::Symbol("SQL")),
+    ("hr", Display::Symbol("HR")),
+    ("ip", Display::Symbol("IP")),
+];
+
+fn lookup(table: &[(&str, Display)], key: &str) -> Result<Option<String>, String> {
+    match table.iter().find(|(k, _)| *k == key) {
+        None => Ok(None),
+        Some((_, Display::Symbol(text))) => Ok(Some((*text).to_string())),
+        Some((_, Display::Word(id))) => language::tr(id, None, &[]).map(Some),
+    }
+}
+
+/// `core/text/humanize.py::slug_to_text`: split on `_`, `-` and space, expand a unit
 /// suffix and abbreviations, lowercase single-case tokens, keep mixed-case
 /// tokens (`MTok`, `pgSQL`) as spelled.
-pub fn slug_to_text(slug: &str) -> String {
+pub fn slug_to_text(slug: &str) -> Result<String, String> {
     let mut tokens: Vec<&str> = slug
         .split(['_', '-', ' '])
         .filter(|t| !t.is_empty())
@@ -55,38 +70,45 @@ pub fn slug_to_text(slug: &str) -> String {
 
     let mut suffix = None;
     if tokens.len() > 1 {
-        suffix = lookup(UNIT_SUFFIXES, &tokens[tokens.len() - 1].to_lowercase());
+        suffix = lookup(UNIT_SUFFIXES, &tokens[tokens.len() - 1].to_lowercase())?;
         if suffix.is_some() {
             tokens.pop();
         }
     }
 
-    let words: Vec<String> = tokens
-        .iter()
-        .map(|t| {
-            let lower = t.to_lowercase();
-            match lookup(ABBREVIATIONS, &lower) {
-                Some(abbr) => abbr.to_string(),
-                None if *t != lower && *t != t.to_uppercase() => t.to_string(),
-                None => lower,
-            }
-        })
-        .collect();
+    let mut words = Vec::with_capacity(tokens.len());
+    for t in &tokens {
+        let lower = t.to_lowercase();
+        words.push(match lookup(ABBREVIATIONS, &lower)? {
+            Some(abbr) => abbr,
+            None if *t != lower && *t != t.to_uppercase() => t.to_string(),
+            None => lower,
+        });
+    }
 
     let text = words.join(" ");
-    match suffix {
+    Ok(match suffix {
         Some(s) => format!("{text} {s}").trim().to_string(),
         None => text,
-    }
+    })
+}
+
+/// `core/text/case.py::inferred_display_name(name, case="title")`: the name's
+/// humanized text, title-cased in the board language.
+pub fn inferred_display_name_title(name: &str) -> Result<String, String> {
+    case::apply_case(&slug_to_text(name)?, "title")
 }
 
 /// `core/text/case.py::field_title`: the chart's authored `field_labels`
 /// entry verbatim, else `slug_to_text(field)`.
-pub fn field_title(field: &str, field_labels: &HashMap<String, String>) -> String {
-    field_labels
-        .get(field)
-        .cloned()
-        .unwrap_or_else(|| slug_to_text(field))
+pub fn field_title(
+    field: &str,
+    field_labels: &HashMap<String, String>,
+) -> Result<String, String> {
+    match field_labels.get(field) {
+        Some(label) => Ok(label.clone()),
+        None => slug_to_text(field),
+    }
 }
 
 /// `_wide_fields.py::resolve_wide_measure_labels`'s label half: each
@@ -96,11 +118,11 @@ pub fn field_title(field: &str, field_labels: &HashMap<String, String>) -> Strin
 pub fn wide_measure_labels_for(
     measures: &[String],
     field_labels: &HashMap<String, String>,
-) -> HashMap<String, String> {
-    let mut labels: HashMap<String, String> = measures
-        .iter()
-        .map(|m| (m.clone(), field_title(m, field_labels)))
-        .collect();
+) -> Result<HashMap<String, String>, String> {
+    let mut labels = HashMap::new();
+    for m in measures {
+        labels.insert(m.clone(), field_title(m, field_labels)?);
+    }
     loop {
         let mut by_label: HashMap<&str, Vec<&String>> = HashMap::new();
         for m in measures {
@@ -117,7 +139,7 @@ pub fn wide_measure_labels_for(
             .map(|m| (*m).clone())
             .collect();
         if fallback.is_empty() {
-            return labels;
+            return Ok(labels);
         }
         for m in fallback {
             labels.insert(m.clone(), m);
@@ -147,7 +169,7 @@ mod tests {
             ("usd", "usd"),
             ("", ""),
         ] {
-            assert_eq!(slug_to_text(slug), expected, "{slug}");
+            assert_eq!(slug_to_text(slug).unwrap(), expected, "{slug}");
         }
     }
 
@@ -159,7 +181,7 @@ mod tests {
             ("pgSQL_hackers", "pgSQL hackers"),
             ("Order_Month", "Order Month"),
         ] {
-            assert_eq!(slug_to_text(slug), expected, "{slug}");
+            assert_eq!(slug_to_text(slug).unwrap(), expected, "{slug}");
         }
     }
 
@@ -170,21 +192,21 @@ mod tests {
             ("YOY_GROWTH_PCT", "YoY growth (%)"),
             ("Api_Id", "API ID"),
         ] {
-            assert_eq!(slug_to_text(slug), expected, "{slug}");
+            assert_eq!(slug_to_text(slug).unwrap(), expected, "{slug}");
         }
     }
 
     #[test]
     fn field_title_prefers_the_authored_label_verbatim() {
         let l = labels(&[("fix-linked", "fix-linked")]);
-        assert_eq!(field_title("fix-linked", &l), "fix-linked");
-        assert_eq!(field_title("order_month", &l), "order month");
+        assert_eq!(field_title("fix-linked", &l).unwrap(), "fix-linked");
+        assert_eq!(field_title("order_month", &l).unwrap(), "order month");
     }
 
     #[test]
     fn wide_labels_terminate_on_a_duplicate_measure() {
         let measures = vec!["revenue".to_string(), "revenue".to_string()];
-        let out = wide_measure_labels_for(&measures, &HashMap::new());
+        let out = wide_measure_labels_for(&measures, &HashMap::new()).unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(out["revenue"], "revenue");
     }
@@ -192,13 +214,42 @@ mod tests {
     #[test]
     fn wide_labels_fall_back_only_for_derived_collisions() {
         let measures = vec!["all".to_string(), "fix-linked".to_string()];
-        let out = wide_measure_labels_for(&measures, &labels(&[("all", "fix linked")]));
+        let out = wide_measure_labels_for(&measures, &labels(&[("all", "fix linked")])).unwrap();
         assert_eq!(out["all"], "fix linked");
         assert_eq!(out["fix-linked"], "fix-linked");
 
         let derived = vec!["orders_cnt".to_string(), "orders (Count)".to_string()];
-        let out = wide_measure_labels_for(&derived, &HashMap::new());
+        let out = wide_measure_labels_for(&derived, &HashMap::new()).unwrap();
         assert_eq!(out["orders_cnt"], "orders_cnt");
         assert_eq!(out["orders (Count)"], "orders (Count)");
+    }
+
+    #[test]
+    fn humanizer_words_follow_the_board_language() {
+        let de = language::Language::new("de").unwrap();
+        let out = language::with_language(de, || slug_to_text("avg_orders_cnt")).unwrap();
+        assert_eq!(out, "Ø orders (Anzahl)");
+    }
+
+    #[test]
+    fn inferred_display_name_title_matches_production() {
+        let cases = [
+            ("category", "Category"),
+            ("as_of", "As Of"),
+            ("order_month", "Order Month"),
+            ("yoy_growth_pct", "YoY Growth (%)"),
+            ("revenue_usd", "Revenue ($)"),
+            ("avg_deal_size", "Avg Deal Size"),
+            ("arr", "ARR"),
+            ("top_n", "Top N"),
+            ("customer_id", "Customer ID"),
+            ("logo_churn_pct", "Logo Churn (%)"),
+            ("q", "Q"),
+            ("api_key", "API Key"),
+            ("revenue_per_region", "Revenue per Region"),
+        ];
+        for (name, expected) in cases {
+            assert_eq!(inferred_display_name_title(name).unwrap(), expected, "{name}");
+        }
     }
 }

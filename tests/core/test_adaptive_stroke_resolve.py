@@ -1075,19 +1075,8 @@ class TestAuthoredNullStrokeRejected:
         family-scoped ``style.charts.line.marks.line.stroke``) genuinely
         nulls the cascade -- unlike the family tier, it has no parent object
         to inherit from instead."""
-        board_style = _board_style_with_patch({"marks": {"line": {"stroke": None}}})
-        chart_dict: dict[str, Any] = {
-            "id": "t",
-            "type": "line",
-            "x": "x",
-            "y": "y",
-            "query": _QUERY,
-            "query_name": "q",
-        }
-        chart = TypeAdapter(Chart).validate_python(chart_dict)
-        data = [{"x": i, "y": float(i)} for i in range(20)]
-        with pytest.raises(ValueError, match="stroke is None after cascade"):
-            resolve(chart, data, chart_style_context=board_style, width=600.0)
+        with pytest.raises(ValueError, match=r"Style\.charts\.marks\.line\.stroke"):
+            _board_style_with_patch({"marks": {"line": {"stroke": None}}})
 
 
 class TestStreamgraphStrokeCap:

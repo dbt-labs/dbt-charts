@@ -3,6 +3,8 @@
 
 use crate::diagnostic::Code;
 
+pub const ERR_ANNOTATION_MARGIN_UNSUPPORTED: Code = Code { id: "ERR-ANNOTATION-MARGIN-UNSUPPORTED", params: &["chart_id", "index"] };
+pub const ERR_ANNOTATION_PAYLOAD: Code = Code { id: "ERR-ANNOTATION-PAYLOAD", params: &["chart_id", "index", "reason"] };
 pub const ERR_BAND_STEP_MULTI_METRIC: Code = Code { id: "ERR-BAND-STEP-MULTI-METRIC", params: &["chart_id", "chart_type"] };
 pub const ERR_BAR_DUPLICATE_ROWS: Code = Code { id: "ERR-BAR-DUPLICATE-ROWS", params: &["chart_id", "chart_type", "duplicate_preview", "field_list"] };
 pub const ERR_BAR_MULTI_METRIC_NO_X: Code = Code { id: "ERR-BAR-MULTI-METRIC-NO-X", params: &["chart_id"] };
@@ -114,6 +116,7 @@ pub const ERR_TICKS_TIME_UNIT_NO_CADENCE: Code = Code { id: "ERR-TICKS-TIME-UNIT
 pub const ERR_TIME_FORMAT_NOT_TEMPORAL: Code = Code { id: "ERR-TIME-FORMAT-NOT-TEMPORAL", params: &["field", "fmt", "found", "remedy", "setting"] };
 pub const ERR_URL_VALUE_NOT_ABSOLUTE: Code = Code { id: "ERR-URL-VALUE-NOT-ABSOLUTE", params: &["value", "where"] };
 pub const ERR_VEGA_LITE_UNSUPPORTED_TYPE: Code = Code { id: "ERR-VEGA-LITE-UNSUPPORTED-TYPE", params: &["chart_type"] };
+pub const WARN_ANNOTATION_NOTHING_DRAWN: Code = Code { id: "WARN-ANNOTATION-NOTHING-DRAWN", params: &["chart_id", "index", "reason"] };
 pub const WARN_AREA_UNSTACKED_READS_AS_STACKED: Code = Code { id: "WARN-AREA-UNSTACKED-READS-AS-STACKED", params: &["chart_id", "count", "field"] };
 pub const WARN_AXIS_LABEL_COLLISION: Code = Code { id: "WARN-AXIS-LABEL-COLLISION", params: &["chart_id", "field", "label_count"] };
 pub const WARN_AXIS_TITLE_TRUNCATED: Code = Code { id: "WARN-AXIS-TITLE-TRUNCATED", params: &["authored_field", "authored_text", "chart_id"] };

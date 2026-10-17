@@ -941,11 +941,18 @@ def _build_schema_field(
 ) -> SchemaField:
     """Convert one Pydantic field into a SchemaField."""
     annotation = _drop_schema_skipped_arms(annotation)
-    from dbt_charts.core.compile.models.markers import Absent, Inherit, InheritSlot
+    from dbt_charts.core.compile.models.markers import (
+        Absent,
+        AutoUnset,
+        Inherit,
+        InheritSlot,
+    )
 
     required = field_info.is_required()
     default = field_info.default if not required else dataclasses.MISSING
     metadata = field_info.metadata or []
+    if any(isinstance(m, AutoUnset) for m in metadata):
+        annotation = Union[annotation, Literal["auto"]]  # noqa: UP007 — built at runtime
     inherit = next((m for m in metadata if isinstance(m, Inherit)), None)
     inherit_slot = next((m for m in metadata if isinstance(m, InheritSlot)), None)
     extra_union_types = _extra_union_types(annotation)

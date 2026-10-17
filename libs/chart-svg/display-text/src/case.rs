@@ -1,39 +1,26 @@
-//! Letter-case transform — Rust port of
-//! `dbt_charts.core.text.case.apply_case`, the one function production uses
-//! for both a chart title's `FontStyle.case` and a board variable's label
-//! `FontStyle.case`, so all seven values it supports ("none", "upper",
-//! "lower", "sentence", "title", "slug", "camel") are ported here too.
+//! Letter-case transform: the one implementation, read by the renderer, the
+//! compile stages and (through `_engine.apply_case`) Python, for both a
+//! chart title's `FontStyle.case` and a board variable's label
+//! `FontStyle.case`. All seven values ("none", "upper", "lower", "sentence",
+//! "title", "slug", "camel") live here; what `title` means is the board
+//! language's `case.title_style` (see [`apply_case_in`]).
 //!
-//! `title` mirrors the `titlecase` PyPI library (v2.4.1) plus the
-//! project's callback/post-process (small-words extension, `dbt`
-//! brand-token lowering via `_FORCE_LOWERCASE`, standalone-acronym guard).
-//! A path-like word (2+ slashes, or a slash with `-`, `_` or `.`: repo slugs,
-//! paths, URLs) keeps its authored case: `_acronym_callback` returns it
-//! verbatim, ahead of the library's own `/` split. Prose pairs
-//! (`pie/donut` → `Pie/Donut`) take the `/` branch: each side is
-//! title-cased. Inline periods (`rev.usd`), apostrophe-second
-//! words (`o'brien` → `O'Brien`), and Mc-prefixed surnames (`mcdonald` →
-//! `McDonald`) are also ported — a board variable's inferred label runs
-//! slug text through this same `title` branch (`variables.rs`), so these
-//! are load-bearing, not title-only edge cases. `Mr`/`Mrs`/`Ms`/`Dr` prefix
-//! capitalization (`MR_MRS_MS_DR`) and `UC_INITIALS` (an ALL-CAPS line's
-//! own `"U.S"`/`"V."`-style exemption) are ported too — both reach real
-//! title/label shapes (`"mrs smith"`, an ALL-CAPS line of initials) that
-//! silently diverged before an independent differential battery caught
-//! them (round 2 review; `SUBPHRASE`'s own case-SENSITIVITY — compiled
-//! without `regex.I`, unlike its `SMALL_FIRST`/`SMALL_LAST` siblings — was
-//! a real bug in `apply_subphrase_fix` at the same time, fixed alongside).
+//! The `en_small_words` style is the `titlecase` PyPI library's (v2.4.1)
+//! algorithm plus the project's small-word extension, `dbt` brand-token
+//! lowering and standalone-acronym guard. A path-like word
+//! (2+ slashes, or a slash with `-`, `_` or `.`: repo slugs, paths, URLs)
+//! keeps its authored case; prose pairs (`pie/donut` -> `Pie/Donut`) title-case
+//! each side. Inline periods (`rev.usd`), apostrophe-second words
+//! (`o'brien` -> `O'Brien`), Mc-prefixed surnames, `Mr`/`Mrs`/`Ms`/`Dr`
+//! prefixes and ALL-CAPS initials (`U.S`) are handled because a board
+//! variable's inferred label runs slug text through this same `title` branch.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
 
 use crate::titlecase_first_char::titlecase_first_char;
-
-/// New York Times style small words the library lowercases mid-title
-/// (`titlecase/__init__.py:28`), embedded verbatim in the patterns below.
-const SMALL: &str = r"a|an|and|as|at|but|by|en|for|if|in|of|on|or|the|to|v\.?|via|vs\.?";
 
 /// Python's `\w` for a `str` pattern (`isalnum()` or `_`). The `regex`
 /// crate's own `\w` also counts combining marks, so each `\b` and `\w` of
@@ -50,36 +37,71 @@ fn punct_class() -> String {
     format!("[{}]", regex::escape(PUNCT))
 }
 
-/// `SMALL_WORDS = ^(SMALL)$`, `regex.I` (`titlecase/__init__.py:31`). The
-/// `I` flag is scoped to the letters of `SMALL` in every pattern below: Python
-/// applies it to `\w`/`\b` too, but a case-insensitive `[\p{L}\p{N}_]` in the
-/// `regex` crate also admits U+0345 (combining ypogegrammeni), which Python's
-/// word class does not.
-static SMALL_WORDS: LazyLock<Regex> = LazyLock::new(|| compile(&format!("^(?i:{SMALL})$")));
+/// The small-word patterns of one language's `en_small_words` title style,
+/// built from its catalog lists: `case.small_words` (the library's NYT list,
+/// where `v` and `vs` are abbreviations that may carry a period) lowercased
+/// mid-title, and `case.extra_small_words` (the editorial extension) lowercased
+/// mid-title only, never as the first or last word.
+struct Small {
+    /// `SMALL_WORDS = ^(SMALL)$`, `regex.I` (`titlecase/__init__.py:31`). The
+    /// `I` flag is scoped to the letters of `SMALL` in every pattern: Python
+    /// applies it to `\w`/`\b` too, but a case-insensitive `[\p{L}\p{N}_]` in
+    /// the `regex` crate also admits U+0345, which Python's word class does not.
+    words: Regex,
+    /// `SMALL_FIRST = ^([PUNCT]*)(SMALL)\b`, `regex.I` (`:33`; applied at `:181`).
+    first: Regex,
+    /// `SMALL_LAST = \b(SMALL)[PUNCT]?$`, `regex.I` (`:34`; applied at `:187`).
+    last: Regex,
+    /// `SUBPHRASE = ([:.;?!\-–‒—―][ ])(SMALL)`, case-SENSITIVE and with no `\b`
+    /// (`:35`; applied at `:193`): the alternation's first matching prefix
+    /// wins, so `: about` matches `a`, not a whole token.
+    subphrase: Regex,
+    extra: HashSet<String>,
+}
 
-/// `SMALL_FIRST = ^([PUNCT]*)(SMALL)\b`, `regex.I`
-/// (`titlecase/__init__.py:33`; applied at `:181`).
-static SMALL_FIRST: LazyLock<Regex> = LazyLock::new(|| {
-    compile(&format!(
-        "^{}*((?i:{SMALL}))(?:$|[^{WORD_CHARS}])",
-        punct_class()
-    ))
-});
+impl Small {
+    fn build(lang: &str) -> Result<Self, String> {
+        let alternation = crate::language::text(lang, "case.small_words")?
+            .split(',')
+            .map(|word| match word {
+                "v" | "vs" => format!(r"{word}\.?"),
+                other => regex::escape(other),
+            })
+            .collect::<Vec<_>>()
+            .join("|");
+        let extra = crate::language::text(lang, "case.extra_small_words")?
+            .split(',')
+            .map(str::to_string)
+            .collect();
+        if alternation.is_empty() {
+            return Err(format!(
+                "language '{lang}': title style en_small_words needs case.small_words"
+            ));
+        }
+        let small = alternation.as_str();
+        Ok(Self {
+            words: compile(&format!("^(?i:{small})$")),
+            first: compile(&format!("^{}*((?i:{small}))(?:$|[^{WORD_CHARS}])", punct_class())),
+            last: compile(&format!("(?:^|[^{WORD_CHARS}])((?i:{small})){}?$", punct_class())),
+            subphrase: compile(&format!(r"([:.;?!\-–‒—―][ ])({small})")),
+            extra,
+        })
+    }
 
-/// `SMALL_LAST = \b(SMALL)[PUNCT]?$`, `regex.I`
-/// (`titlecase/__init__.py:34`; applied at `:187`).
-static SMALL_LAST: LazyLock<Regex> = LazyLock::new(|| {
-    compile(&format!(
-        "(?:^|[^{WORD_CHARS}])((?i:{SMALL})){}?$",
-        punct_class()
-    ))
-});
-
-/// `SUBPHRASE = ([:.;?!\-–‒—―][ ])(SMALL)`, case-SENSITIVE and with no `\b`
-/// (`titlecase/__init__.py:35`; applied at `:193`): the alternation's first
-/// matching prefix wins, so `: about` matches `a`, not a whole token.
-static SUBPHRASE: LazyLock<Regex> =
-    LazyLock::new(|| compile(&format!(r"([:.;?!\-–‒—―][ ])({SMALL})")));
+    /// The patterns of `lang`, built once; a language whose title style is not
+    /// `en_small_words` has none.
+    fn of(lang: &str) -> Result<&'static Small, String> {
+        static SMALLS: LazyLock<BTreeMap<&'static str, Small>> = LazyLock::new(|| {
+            crate::language::LANGUAGES
+                .iter()
+                .copied()
+                .filter(|lang| crate::language::text(lang, "case.title_style") == Ok("en_small_words"))
+                .map(|lang| (lang, Small::build(lang).unwrap_or_else(|e| panic!("{e}"))))
+                .collect()
+        });
+        SMALLS.get(lang).ok_or_else(|| format!("language '{lang}': title style en_small_words needs case.small_words"))
+    }
+}
 
 /// `[\r\n]+` (`titlecase/__init__.py:99`): the library cases each line on its
 /// own and rejoins them with `\n` (`:200`).
@@ -115,18 +137,8 @@ static APOS_SECOND: LazyLock<Regex> = LazyLock::new(|| {
     ))
 });
 
-/// Editorial small words the NYT list misses (`_EXTRA_SMALL_WORDS` in the
-/// Python module) — lowercased mid-title only, never as the first/last word.
-static EXTRA_SMALL_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    [
-        "per", "with", "from", "into", "onto", "upon", "out", "off", "down", "up",
-    ]
-    .into_iter()
-    .collect()
-});
-
 /// Tokens forced lowercase regardless of the library's acronym heuristic
-/// (`_FORCE_LOWERCASE` — "dbt" is a stylized-lowercase brand name, not an
+/// ("dbt" is a stylized-lowercase brand name, not an
 /// acronym, but its three consonants would otherwise trip the
 /// all-consonant uppercase rule).
 fn force_lowercase(word_lower: &str) -> bool {
@@ -146,7 +158,7 @@ fn is_all_consonants(word: &str) -> bool {
 /// A slug or path (`dbt-labs/dbt-charts`, `src/core/case.py`, a URL), as
 /// opposed to a prose pair like `pie/donut` or `x/y-axis`. Trailing sentence
 /// punctuation is ignored; one slash needs `_`, an inner `.`, or `-` in every
-/// segment. Mirrors `_is_path_like` in `core/text/case.py`.
+/// segment. Keeps its authored case.
 fn is_path_like(word: &str) -> bool {
     let token = word.trim_end_matches(['.', ',', ';', ':', '!', '?']);
     let segments: Vec<&str> = token.split('/').collect();
@@ -218,10 +230,8 @@ fn capfirst(word: &str) -> String {
 /// `char::to_uppercase()` is the Unicode UPPERCASE mapping, which
 /// disagrees with Python's own titlecase mapping for a small, generated
 /// exception set (`titlecase_first_char.rs` — `ß` -> `"Ss"` not `"SS"`,
-/// a few ligatures, Georgian Mkhedruli left unchanged) — round 3 review
-/// MEDIUM 4, reachable from `camel` case (`words[1:].capitalize()`,
-/// `text/case.py`) and every small-word capitalization the `titlecase`
-/// library itself performs via `.capitalize()`.
+/// a few ligatures, Georgian Mkhedruli left unchanged). Reached from `camel`
+/// case and every small-word capitalization.
 fn capitalize(word: &str) -> String {
     let mut chars = word.chars();
     match chars.next() {
@@ -248,8 +258,8 @@ fn splice_capitalized(s: &str, start: usize, end: usize) -> String {
 /// `SMALL_FIRST.sub(lambda m: group(1) + group(2).capitalize(), s)`
 /// (`titlecase/__init__.py:181`): a BOUNDARY match, not a whole-token one, so
 /// a slash/hyphen-joined token like "a/b" capitalizes only its leading "a".
-fn capitalize_leading_small_word(s: &str) -> String {
-    match SMALL_FIRST.captures(s) {
+fn capitalize_leading_small_word(small: &Small, s: &str) -> String {
+    match small.first.captures(s) {
         Some(caps) => {
             let word = caps.get(1).expect("group 1 always participates");
             splice_capitalized(s, word.start(), word.end())
@@ -261,8 +271,8 @@ fn capitalize_leading_small_word(s: &str) -> String {
 /// `SMALL_LAST.sub(lambda m: m.group(0).capitalize(), s)`
 /// (`titlecase/__init__.py:187`): the match is the small word plus its one
 /// optional trailing PUNCT character, so the capitalized span includes it.
-fn capitalize_trailing_small_word(s: &str) -> String {
-    match SMALL_LAST.captures(s) {
+fn capitalize_trailing_small_word(small: &Small, s: &str) -> String {
+    match small.last.captures(s) {
         Some(caps) => {
             let word = caps.get(1).expect("group 1 always participates");
             let whole = caps.get(0).expect("group 0 always participates");
@@ -274,8 +284,9 @@ fn capitalize_trailing_small_word(s: &str) -> String {
 
 /// `SUBPHRASE.sub(lambda m: group(1) + group(2).capitalize(), result)`
 /// (`titlecase/__init__.py:193`), anywhere in the line.
-fn apply_subphrase_fix(text: &str) -> String {
-    SUBPHRASE
+fn apply_subphrase_fix(small: &Small, text: &str) -> String {
+    small
+        .subphrase
         .replace_all(text, |caps: &Captures| {
             format!("{}{}", &caps[1], capitalize(&caps[2]))
         })
@@ -335,7 +346,7 @@ fn apply_mr_mrs_ms_dr(word: &str) -> String {
 /// Title-cases one line (or one hyphen-split sub-word, recursively).
 /// `small_first_last` mirrors the Python parameter: true for the top-level
 /// call, false when recursing into a hyphenated word's parts.
-fn process_line(line: &str, small_first_last: bool) -> String {
+fn process_line(small: &Small, line: &str, small_first_last: bool) -> String {
     let all_caps = line.to_uppercase() == line;
     let words: Vec<&str> = line.split([' ', '\t']).collect();
 
@@ -363,7 +374,7 @@ fn process_line(line: &str, small_first_last: bool) -> String {
             continue;
         }
         if let Some(rest) = mac_mc_rest(word) {
-            tc.push((format!("Mc{}", process_line(rest, true)), false));
+            tc.push((format!("Mc{}", process_line(small, rest, true)), false));
             continue;
         }
         if is_mr_mrs_ms_dr(word) {
@@ -387,7 +398,7 @@ fn process_line(line: &str, small_first_last: bool) -> String {
             tc.push((word.to_string(), false));
             continue;
         }
-        if SMALL_WORDS.is_match(word) {
+        if small.words.is_match(word) {
             tc.push((word.to_lowercase(), false));
             continue;
         }
@@ -398,7 +409,7 @@ fn process_line(line: &str, small_first_last: bool) -> String {
         if word.contains('/') {
             let joined = word
                 .split('/')
-                .map(|part| process_line(part, false))
+                .map(|part| process_line(small, part, false))
                 .collect::<Vec<_>>()
                 .join("/");
             tc.push((joined, false));
@@ -407,7 +418,7 @@ fn process_line(line: &str, small_first_last: bool) -> String {
         if word.contains('-') {
             let joined = word
                 .split('-')
-                .map(|part| process_line(part, false))
+                .map(|part| process_line(small, part, false))
                 .collect::<Vec<_>>()
                 .join("-");
             tc.push((joined, false));
@@ -427,22 +438,22 @@ fn process_line(line: &str, small_first_last: bool) -> String {
     if small_first_last && !tc.is_empty() {
         let last = tc.len() - 1;
         if !tc[0].1 {
-            tc[0].0 = capitalize_leading_small_word(&tc[0].0);
+            tc[0].0 = capitalize_leading_small_word(small, &tc[0].0);
         }
         if !tc[last].1 {
-            tc[last].0 = capitalize_trailing_small_word(&tc[last].0);
+            tc[last].0 = capitalize_trailing_small_word(small, &tc[last].0);
         }
     }
 
     let joined = tc.into_iter().map(|(w, _)| w).collect::<Vec<_>>().join(" ");
-    apply_subphrase_fix(&joined)
+    apply_subphrase_fix(small, &joined)
 }
 
 /// Post-process pass (`_lowercase_extra_small_words`): lowercase the
 /// editorial small-word set when it is NOT the first or last
 /// whitespace-separated token, skipping tokens the callback already
 /// preserved as a standalone all-caps acronym.
-fn lowercase_extra_small_words(text: &str) -> String {
+fn lowercase_extra_small_words(small: &Small, text: &str) -> String {
     let mut words: Vec<String> = text.split(' ').map(str::to_string).collect();
     if words.len() <= 2 {
         return text.to_string();
@@ -453,7 +464,7 @@ fn lowercase_extra_small_words(text: &str) -> String {
         let is_preserved_acronym = !w.is_empty()
             && w.chars().all(char::is_alphabetic)
             && w.chars().all(|c| !c.is_lowercase());
-        if EXTRA_SMALL_WORDS.contains(lower.as_str()) && !is_preserved_acronym {
+        if small.extra.contains(lower.as_str()) && !is_preserved_acronym {
             *w = lower;
         }
     }
@@ -462,7 +473,7 @@ fn lowercase_extra_small_words(text: &str) -> String {
 
 /// Apply the standalone-all-caps guard, then title-case, then the
 /// small-words post-process — mirrors `apply_case(text, "title")` exactly.
-fn title_case(text: &str) -> String {
+fn title_case(small: &Small, text: &str) -> String {
     let is_alpha = !text.is_empty() && text.chars().all(char::is_alphabetic);
     let is_upper =
         is_alpha && text.chars().all(|c| !c.is_lowercase()) && text.chars().any(char::is_uppercase);
@@ -471,32 +482,34 @@ fn title_case(text: &str) -> String {
     }
     let titled = LINE_BREAKS
         .split(text)
-        .map(|line| process_line(line, true))
+        .map(|line| process_line(small, line, true))
         .collect::<Vec<_>>()
         .join("\n");
-    lowercase_extra_small_words(&titled)
+    lowercase_extra_small_words(small, &titled)
 }
 
-/// Apply a letter-case transform to text. See module docs for the
-/// supported set; unsupported values return `Err` so a surprise usage
-/// fails loudly instead of rendering wrong.
+/// [`apply_case_in`] in the active board language.
 pub fn apply_case(text: &str, case: &str) -> Result<String, String> {
+    apply_case_in(crate::language::active_language(), text, case)
+}
+
+/// Apply a letter-case transform to text in the word rules of `lang`: its
+/// catalog's `case.title_style` decides what `title` means (`en_small_words`
+/// is the library algorithm above; `first_word` only capitalizes the first
+/// word; `none` leaves the text as authored). Unsupported values return `Err`
+/// so a surprise usage fails loudly instead of rendering wrong.
+pub fn apply_case_in(lang: &str, text: &str, case: &str) -> Result<String, String> {
     match case {
         "none" => Ok(text.to_string()),
         "upper" => Ok(text.to_uppercase()),
         "lower" => Ok(text.to_lowercase()),
-        "sentence" => {
-            let first_word = text.split(' ').next().unwrap_or("");
-            if force_lowercase(&first_word.to_lowercase()) {
-                return Ok(first_word.to_lowercase() + &text[first_word.len()..]);
-            }
-            let mut chars = text.chars();
-            match chars.next() {
-                None => Ok(String::new()),
-                Some(first) => Ok(first.to_uppercase().collect::<String>() + chars.as_str()),
-            }
-        }
-        "title" => Ok(title_case(text)),
+        "sentence" => Ok(sentence_case(text)),
+        "title" => match crate::language::text(lang, "case.title_style")? {
+            "en_small_words" => Ok(title_case(Small::of(lang)?, text)),
+            "first_word" => Ok(sentence_case(text)),
+            "none" => Ok(text.to_string()),
+            other => Err(format!("language '{lang}': unknown case.title_style '{other}'")),
+        },
         "slug" => Ok(text.replace([' ', '-'], "_").to_lowercase()),
         "camel" => {
             let normalized = text.replace(['-', '_'], " ");
@@ -509,6 +522,20 @@ pub fn apply_case(text: &str, case: &str) -> Result<String, String> {
             })
         }
         other => Err(format!("unknown case: {other:?}")),
+    }
+}
+
+/// Uppercase the first character only, except a leading `dbt`, which stays
+/// lowercase.
+fn sentence_case(text: &str) -> String {
+    let first_word = text.split(' ').next().unwrap_or("");
+    if force_lowercase(&first_word.to_lowercase()) {
+        return first_word.to_lowercase() + &text[first_word.len()..];
+    }
+    let mut chars = text.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
     }
 }
 
@@ -541,6 +568,10 @@ pub fn apply_case_to_runs(runs: &[&str], case: &str) -> Result<Vec<String>, Stri
 #[cfg(test)]
 mod inline_period_tests {
     use super::*;
+
+    fn apply_case(text: &str, case: &str) -> Result<String, String> {
+        apply_case_in("en", text, case)
+    }
 
     // Expected strings from production:
     //   uv run python -c "from dbt_charts.core.text.case import apply_case; ..."
@@ -695,5 +726,30 @@ mod inline_period_tests {
             "COST.OF.GOODS OF V. N.Y."
         );
         assert_eq!(apply_case("V. VS", "title").unwrap(), "V. VS");
+    }
+
+    #[test]
+    fn an_all_caps_line_keeps_its_possessives() {
+        for line in [
+            "O'BRIEN'S VIA VS O'BRIEN ARR/MRR",
+            "MCDONALD O'BRIEN'S",
+            "REVENUE O'BRIEN'S 52",
+        ] {
+            assert_eq!(apply_case_in("en", line, "title").unwrap(), line);
+        }
+    }
+
+    #[test]
+    fn an_empty_small_word_list_is_an_error() {
+        let err = Small::build("de").err().expect("de lists no small words");
+        assert!(err.contains("needs case.small_words"), "{err}");
+    }
+
+    #[test]
+    fn the_title_style_is_the_languages_own() {
+        assert_eq!(apply_case_in("en", "revenue per region", "title").unwrap(), "Revenue per Region");
+        assert_eq!(apply_case_in("de", "umsatz pro Region", "title").unwrap(), "Umsatz pro Region");
+        assert_eq!(apply_case_in("ja", "売上 by region", "title").unwrap(), "売上 by region");
+        assert_eq!(apply_case_in("ja", "abc", "upper").unwrap(), "ABC");
     }
 }

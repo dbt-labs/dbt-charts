@@ -63,7 +63,7 @@ pub(crate) fn layout_title(
     let font_size = eff_title_ref.and_then(|ts| ts.font.size).unwrap_or(18.0);
     let Some(raw_title) = src.title else { return Ok(TitleLayout::Untitled) };
     let case = eff_title_ref.and_then(|ts| ts.font.case.as_deref()).unwrap_or("none");
-    let text = crate::case::apply_case(raw_title, case)?;
+    let text = display_text::case::apply_case(raw_title, case)?;
     let subtitle = src.subtitle;
     let family = eff_title_ref.and_then(|ts| ts.font.family.as_deref()).unwrap_or("serif");
     let offset = eff_title_ref.and_then(|ts| ts.position.as_ref()).and_then(|pos| pos.offset).unwrap_or(10.0);

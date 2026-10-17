@@ -698,7 +698,7 @@ class TestBoardContextExtensions:
                 "--validate",
             ],
         )
-        assert "Unknown query" in result.output, (
+        assert "ERR-BOARD-QUERY-NOT-FOUND" in result.output, (
             f"{suffix} did not dispatch to board mode: {result.output}"
         )
         assert "revenue" in result.output, result.output

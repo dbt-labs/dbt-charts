@@ -8,10 +8,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.markers import (
     Absent,
+    AutoUnset,
     InheritSlot,
 )
 from dbt_charts.core.compile.models.primitives import (
     FontStyle,
+    SymbolShape,
 )
 
 # Where a legend sits relative to the plot. `edge` is the side it hugs,
@@ -123,10 +125,10 @@ class _LegendStyleBase(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    direction: LegendDirection | None = Field(
+    direction: Annotated[LegendDirection | None, AutoUnset()] = Field(
         default=None,
         description=(
-            "Legend layout direction. Omit to infer it from the edge: "
+            "Legend layout direction. 'auto' infers it from the edge: "
             "horizontal on top/bottom, vertical on left/right."
         ),
     )
@@ -166,11 +168,10 @@ class _LegendStyleBase(BaseModel):
             "Set to a positive integer to prevent legend overflow on high-cardinality series."
         ),
     )
-    # Cascade tier sentinel: None means "not specified at this tier"; the render
-    # layer infers entry order from the color scale domain (data + layer order).
     # Authored as a list to pin/reorder legend entries explicitly (maps to VL
-    # legend.values). No theme default — ordering is an author decision.
-    values: list[str] | None = Field(
+    # legend.values); the render layer infers the order from the color scale
+    # domain (data + layer order) otherwise.
+    values: Annotated[list[str] | None, Absent("order from the data")] = Field(
         default=None,
         description=(
             "Explicit legend entry order/filter; each entry resolves against "
@@ -179,25 +180,22 @@ class _LegendStyleBase(BaseModel):
             "order from the data."
         ),
     )
-    # Author override for the legend glyph shape (VL symbolType). None means
-    # "let the renderer pick the mark-aware glyph"; a string (e.g. 'stroke',
-    # 'square', 'diamond') emits a constant symbolType that wins over the
-    # mark-derived Vega expression. No theme default.
-    symbol_shape: str | None = Field(
+    # A named shape emits a constant symbolType that wins over the mark-derived
+    # Vega expression.
+    symbol_shape: Annotated[SymbolShape | None, AutoUnset()] = Field(
         default=None,
         description=(
             "Override the legend glyph shape; maps to VL legend.symbolType. "
-            "None uses the mark-aware glyph derived from the chart's mark type."
+            "'auto' uses the mark-aware glyph derived from the chart's mark type."
         ),
     )
-    # Author override for symbol fill. False → symbolFillColor='transparent'
-    # in the emitted VL legend, which makes hollow (stroke-only) glyphs. None
-    # means "use Vega-Lite's default" (filled). No theme default.
-    symbol_fill: bool | None = Field(
+    # False → symbolFillColor='transparent' in the emitted VL legend, which
+    # makes hollow (stroke-only) glyphs.
+    symbol_fill: Annotated[bool | None, AutoUnset()] = Field(
         default=None,
         description=(
             "When False, emits symbolFillColor='transparent' to produce a hollow "
-            "legend glyph. None uses Vega-Lite's default (filled symbol)."
+            "legend glyph. 'auto' uses Vega-Lite's default (filled symbol)."
         ),
     )
 

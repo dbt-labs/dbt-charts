@@ -437,6 +437,7 @@ def render(
         board.regional.format_locale,
         board.regional.time_locale,
         board.regional.week_start,
+        language=board.regional.resolved_language,
     ):
         return _render(
             board,

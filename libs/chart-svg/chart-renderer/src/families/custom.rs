@@ -103,6 +103,7 @@ struct Resolved {
     subtitle: Option<String>,
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
     link: Option<String>,
+    link_open: href::LinkOpen,
     template_name: String,
     template_source: String,
     channels: Map<String, Json>,
@@ -373,6 +374,7 @@ fn unknown_placeholder(site: &str, template: &str) -> String {
 /// The chart-root `link` wrapped around the whole body when it names no
 /// channel: a per-row link is the template's to draw with `href(row)`, and a
 /// `{{ ... }}` that names no channel refuses rather than shipping as text.
+/// A per-row link opens only as a page.
 fn chart_anchor(r: &Resolved, payload: &Payload) -> Result<Option<String>, Diagnostic> {
     let Some(link) = r.link.as_deref() else {
         return Ok(None);
@@ -388,6 +390,16 @@ fn chart_anchor(r: &Resolved, payload: &Payload) -> Result<Option<String>, Diagn
                 &codes::ERR_CUSTOM_RENDER,
                 &r.id,
                 unknown_placeholder("link", link),
+            ));
+        }
+        if let Some(open) = r.link_open.open_attr() {
+            return Err(diagnostic(
+                &codes::ERR_CUSTOM_RENDER,
+                &r.id,
+                format!(
+                    "link.open: {open} needs a link that names no channel; a per-row \
+                     link is the template's own <a>, which always navigates the page"
+                ),
             ));
         }
         return Ok(None);
@@ -923,13 +935,13 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     title.paint(&mut svg, m.title_pos, origin);
     svg.push_str(&format!(
         "{}<g transform=\"translate({}, {})\" clip-path=\"url(#{clip_id})\" font-family=\"{}\" font-size=\"{}\" fill=\"{}\">{content}</g>{}</svg>",
-        href::anchor_open(anchor.as_deref()),
+        href::anchor_open(r.link_open.anchor(anchor.as_deref())),
         num(origin.0),
         num(origin.1),
         vega_escape_attr(body_family),
         num(body_size),
         xml_escape_attr(body_color),
-        href::anchor_close(anchor.as_deref()),
+        href::anchor_close(r.link_open.anchor(anchor.as_deref())),
     ));
     Ok(svg)
 }
@@ -952,6 +964,7 @@ mod tests {
 
     fn payload(svg: &str, patch: impl FnOnce(&mut Json)) -> Payload {
         let mut resolved = json!({
+            "link_open": "page",
             "id": "c",
             "title": "Quota",
             "subtitle": null,
@@ -1350,6 +1363,42 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err.code, "ERR-LINK-SCHEME-UNSAFE-AT-RENDER");
+    }
+
+    #[test]
+    fn a_link_mode_stamps_only_a_modal_whole_chart_anchor() {
+        let render_with = |mode: &str| {
+            render(
+                &payload("<rect/>", |r| {
+                    r["link"] = json!("https://x.test/all");
+                    r["link_open"] = json!(mode);
+                }),
+                &test_fonts(),
+            )
+        };
+        let page = render_with("page").unwrap();
+        assert!(page.contains("<a href=\"https://x.test/all\"><g"), "{page}");
+        assert!(!page.contains("data-dbt-link-open"), "{page}");
+        let modal = render_with("modal").unwrap();
+        assert!(modal.contains("<a href=\"https://x.test/all\" data-dbt-link-open=\"modal\"><g"), "{modal}");
+        assert!(render_with("popup").is_err());
+    }
+
+    /// A per-row link is the template's own `<a>`, which carries no mode: a
+    /// non-page mode on it is refused rather than silently navigating.
+    #[test]
+    fn a_row_link_with_a_non_page_mode_is_refused() {
+        let template = "{% for r in rows %}<a href=\"{{ href(r) }}\"><rect/></a>{% endfor %}";
+        let err = render(
+            &payload(template, |r| {
+                r["link"] = json!("/reps/{{ x }}");
+                r["link_open"] = json!("modal");
+            }),
+            &test_fonts(),
+        )
+        .unwrap_err();
+        let reason = err.params["reason"].as_str().unwrap();
+        assert!(reason.contains("link.open: modal"), "{reason}");
     }
 
     #[test]

@@ -217,11 +217,8 @@ def test_chart_style_patch_support_table_rejects_unknown_keys():
 
 
 def test_compiled_support_table_style_has_position_field():
-    # position is a cascade-managed sentinel: None (unauthored, the shipped
-    # theme default) or one of the four accepted placements.
     s = get_theme_style().charts.support_table
-    assert hasattr(s, "position")
-    assert s.position in (None, "top", "bottom", "left", "right")
+    assert s.position == "auto"
 
 
 def test_support_table_style_rejects_invalid_position():

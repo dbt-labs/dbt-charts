@@ -19,8 +19,8 @@ metadata:
 Walk a user from nothing to a live, rendered board on dbtcharts.com, running
 `dct cloud` verbs and asking the user for only what your own credentials
 cannot supply. One browser sitting stays human: approving `dct cloud login`
-(Step 1) and, right after it, installing the GitHub App on the repository
-(Step 3). Everything else you do yourself, showing the boards locally as you
+(Step 1) and, right after it, for a GitHub repository connected through the
+App, installing the GitHub App on it (Step 3). Everything else you do yourself, showing the boards locally as you
 go.
 
 > This skill is **CLI-only** (`surfaces: [cli]`) — `dct cloud` has no MCP
@@ -33,7 +33,7 @@ go.
 ## Get consent up front
 
 This run needs the user in the browser to approve `dct cloud login` (Step 1)
-and, for a private repository, to pick it for the GitHub App (Step 3);
+and, for a private GitHub repository, to pick it for the GitHub App (Step 3);
 `dct cloud status` lists the human steps still ahead. Two things are
 decisions, not clicks: a read-only warehouse credential is minted and handed
 to Cloud (Step 5), and dbt charts files are committed and pushed to this
@@ -56,11 +56,12 @@ ahead` lists what still needs the user.
 Confirm what it can't tell you:
 
 - `dct --version` — dbt charts is installed. If not: `uv tool install dbt-charts`.
-- `gh auth status` — Cloud deploys from a **GitHub** repository, public or
-  private, connected through the dbt charts GitHub App; other git hosts are not
-  supported. `gh` is optional: it lets you pre-check admin rights on the repo
-  (Step 3) and is how a repo that isn't on GitHub yet gets there (`gh repo
-  create`). Offer `gh auth login` if it is installed but signed out.
+- `gh auth status` — Cloud deploys from a git repository on GitHub, GitLab,
+  Bitbucket, or any host that serves plain HTTPS git; a GitHub repository is
+  connected through the dbt charts GitHub App or a token (Step 3). `gh` is
+  optional: it lets you pre-check admin rights on a GitHub repo (Step 3) and
+  is how a repo that isn't on GitHub yet gets there (`gh repo create`). Offer
+  `gh auth login` if it is installed but signed out.
 - Warehouse CLI auth, so you know which credential-minting path applies
   later — `status` reports a source's declared type, not whether your local
   credential for it works. For BigQuery run `gcloud auth print-access-token`,
@@ -101,7 +102,7 @@ authenticate — don't silently scaffold one:
 - **Not in a git repo** — offer to initialize one (`git init`, or point them at
   a fresh repo). Cloud has nothing to connect without it.
 
-Whichever it is, the repo must be on GitHub with at least one commit pushed
+Whichever it is, the repo must be on a git host with at least one commit pushed
 before Step 3; boards can follow, every push syncs.
 
 ## Sandbox note
@@ -185,46 +186,65 @@ a non-admin lands on a refusal page with no way forward. If the check fails,
 tell the user up front whose account needs admin rights rather than sending
 them into a dead end.
 
-Decide by the repository's **visibility**, not by `gh`, which looks signed
-out under a sandboxed agent. GitHub's public API answers 200 only for a public repository, and reads none
-of git's credentials:
+`project connect` takes the git host as a subcommand, and each host takes the
+credentials it supports (`dct cloud project connect <host> --help` is the
+contract). Pick the subcommand from the host in the `origin` remote; `dct
+cloud status` prints the matching line. Every path names the org from Step 2
+with `--org <org>`:
 
-```bash
-curl -q -fsS -o /dev/null https://api.github.com/repos/<owner>/<repo>
-```
-
-A DNS failure means "couldn't check," not "private": retry with network
-access first.
-
-Two paths, both naming the org from Step 2 with `--org <org>`:
-
-- **Succeeds (public repo)**: connect headlessly with `dct cloud project
-  connect --org <org> --git-url https://github.com/<owner>/<repo>`. No
-  browser hop. A `--git-url` connection can never use `dct cloud project
-  scaffold` later — that verb needs a GitHub-connected project — and Cloud
-  can never push a board edited in its own UI back to it either: a
-  `--git-url` connection has no writable remote, so that edit stays in
-  Cloud's own copy of the repo. If `--git-url` is refused with `Couldn't
-  authenticate to the repository`, the repository is private: take the App
-  flow below.
-- **Fails, including a network failure that couldn't confirm public**:
-  connect without a URL, through the App flow. `--start` prints an
-  install/pick URL and returns immediately, no backgrounding needed.
-  `--start` and `--wait` are one inseparable unit, not two steps split
-  across other work: hand over the URL, then immediately run `--wait` in
-  the same turn, before Step 4 and before any board authoring. The project
-  does not exist in Cloud until `--wait` completes — running `--start` and
-  moving on leaves the connect silently unfinished, and `dct cloud status`
-  stays `missing_project` until someone notices and re-runs `--wait`.
+- **`gitlab` (gitlab.com) and `bitbucket` (bitbucket.org)**: with the token
+  exported as `DCT_GIT_TOKEN`, run `dct cloud project connect gitlab --org
+  <org> --git-url https://gitlab.com/<group>/<repo>`, or `dct cloud project
+  connect bitbucket --org <org> --git-url
+  https://bitbucket.org/<workspace>/<repo>`. Ask the user for the token
+  (their getting-started guide lists the permissions it needs); never guess
+  or mint one. Pass it through `DCT_GIT_TOKEN` rather than `--token` so it
+  stays out of the process list. Cloud checks the host and the token's
+  permissions and refuses a mismatch.
+- **`git` (any other host, such as self-managed GitLab)**: `dct cloud project
+  connect git --org <org> --git-url <https-url>`, with `--git-username` and
+  `--git-password` (`DCT_GIT_PASSWORD`) for a private repository.
+- **`github` (github.com)**: decide by the repository's **visibility**, not by
+  `gh`, which looks signed out under a sandboxed agent. GitHub's public API
+  answers 200 only for a public repository, and reads none of git's
+  credentials:
 
   ```bash
-  URL=$(dct cloud project connect --org <org> --start)
+  curl -q -fsS -o /dev/null https://api.github.com/repos/<owner>/<repo>
+  ```
+
+  A DNS failure means "couldn't check," not "private": retry with network
+  access first.
+
+  - **Succeeds (public repo)** and the user has no token: `dct cloud project
+    connect git --org <org> --git-url https://github.com/<owner>/<repo>`. No
+    browser hop, but a `git` connection has no writable remote: `dct cloud
+    project scaffold` cannot open a PR for it, and a board edited in Cloud's
+    own UI stays in Cloud's copy of the repo. If it is refused with `Couldn't
+    authenticate to the repository`, the repository is private: take the App
+    flow below.
+  - **Fails, including a network failure that couldn't confirm public**, or
+    the user wants Cloud to push and open PRs: the App flow, `dct cloud
+    project connect github` with no URL. `--start` prints an install/pick URL
+    and returns immediately, no backgrounding needed. `--start` and `--wait`
+    are one inseparable unit, not two steps split across other work: hand
+    over the URL, then immediately run `--wait` in the same turn, before Step
+    4 and before any board authoring. The project does not exist in Cloud
+    until `--wait` completes — running `--start` and moving on leaves the
+    connect silently unfinished, and `dct cloud status` stays
+    `missing_project` until someone notices and re-runs `--wait`.
+  - A user who cannot install the App can instead supply a fine-grained
+    personal access token: `dct cloud project connect github --org <org>
+    --git-url https://github.com/<owner>/<repo>` with `DCT_GIT_TOKEN` set.
+
+  ```bash
+  URL=$(dct cloud project connect github --org <org> --start)
   ```
 
   Hand `$URL` to the user, then right away, still in this turn:
 
   ```bash
-  dct cloud project connect --wait
+  dct cloud project connect github --wait
   ```
 
   This blocks until the pick lands (it prints `Connected`), then returns,

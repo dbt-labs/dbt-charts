@@ -113,6 +113,8 @@ style:
     position:
       anchor: start
       offset: 10
+      angle: auto
+      baseline: auto
     overflow: truncate
     # Compute heading level from count of titled ancestors (not structural depth).
     # Set to an integer to lock all board titles to a specific H-level (useful for
@@ -178,6 +180,7 @@ style:
         visible: false
         length: 6  # default tick length cascades to all axes; matches VL's geometric idiom
         width: 1.5
+        offset: auto
       grid:
         visible: true
         opacity: 1
@@ -201,7 +204,13 @@ style:
           tilt: true
           skip: true
         min_gap: 16       # 16px minimum gap between adjacent labels
-        # bound, flush, offset intentionally absent — VL per-axis defaults apply.
+        align: auto
+        angle: auto
+        bound: auto
+        flush: auto
+        max_width: auto
+        offset: auto
+        visible: auto
       title:
         # Hidden unless the chart authors an `x_label`/`y_label`. An axis whose
         # own labels name the dimension — temporal (Jan 2025, Apr) or nominal
@@ -219,6 +228,8 @@ style:
           weight: &weight_bold 600
           case: title
         padding: 10
+        align: auto
+        angle: auto
 
     axis_x:
       # Only intentional differences from `axis` — everything else cascades.
@@ -327,6 +338,9 @@ style:
         edge: auto
         align: auto
         overlay: auto
+      direction: auto
+      symbol_shape: auto
+      symbol_fill: auto
       columns: 0
       compact_columns: 2
       symbol_limit: 20
@@ -511,23 +525,21 @@ style:
         # scale gutter (padding) stays at 0 so the two layers don't compound.
         padding: 0
         band_width: 0.8
-        # size is unset here on purpose: it is the author's fixed-width
-        # override (see its Field description), so it must stay None until
-        # a board/chart actually authors it. A continuous (quantitative) x/y
-        # scale sizes itself from gap/min_size below, and from max_size, which
-        # is also unset here on purpose: authored, it caps band-scale bars too,
-        # so a theme default would cap every category chart. Unauthored, the
-        # continuous ladder's ceiling is constants/bar.py.
         gap: 3.0
         min_size: 4.0
+        opacity: auto
+        labels:
+          dx: auto
+          dy: auto
+          stacked: auto
+        total_label:
+          dx: auto
+          dy: auto
+          visible: auto
       line:
         stroke:
-          # No width here: the resolve layer bakes a density-adaptive width
-          # for normal line/area charts, or falls back to
-          # STROKE_FALLBACK_WIDTH (constants/marks.py) when
-          # it can't (no data, no x field, non-cartesian). Leaving width
-          # unset at every theme tier lets that fallback apply; a theme that
-          # wants a fixed, non-adaptive width can set it here instead.
+          color: auto
+          width: auto
           cap: "round"
           join: "round"
         # A disconnected band-step (curve: step + connect: false) draws one flat
@@ -538,7 +550,11 @@ style:
         disconnected_cap: "butt"
         disconnected_width: 0.9
         curve: "linear"
+        connect: auto
         halo_multiplier: 2.0
+        labels:
+          dx: auto
+          dy: auto
       area:
         # Soft tinted fill on a cream-knockout undercoat -- the overlap recipe
         # for 2+ unstacked series. A single series has nothing to overlap and
@@ -550,6 +566,7 @@ style:
         # (width/cap/join/halo) lives on marks.line above, shared with the
         # standalone line-chart family, not duplicated here.
         opacity: 0.16
+        curve: auto
         # Opaque background-color backdrop behind the fill, independent of
         # marks.line.halo_multiplier (which only sizes the edge line's own
         # halo) — a fill has no "width" to scale, so this is a plain on/off.
@@ -577,28 +594,22 @@ style:
             join: "round"
           halo_multiplier: 0.0
       point:
-        # No size default here (model default is None/unset) — a line chart's
-        # point markers are density-driven (bake_point_companions), not a
-        # themed literal. A literal 0 here would be indistinguishable from
-        # "no tier authored a size", silently discarding a board- or
-        # theme-tier size (including an explicit 0 to turn points off).
-        # scatter/point_map set their own family-tier size (non-zero,
-        # visible dots by default) below.
+        size: auto
+        color: auto
+        shape: auto
+        stroke_width: auto
         opacity: 1
         filled: true
         fill: theme.background
-        # No stroke_width default here, for the same reason size has none
-        # above: a line's point ring tracks its stroke (bake_point_companions),
-        # and a literal here would be indistinguishable from "no tier authored
-        # a ring", silently discarding a board- or theme-tier pin. The
-        # families that render points with no line to track — scatter,
-        # point_map, and area (whose marks.point is pass-through, see
-        # resolve/chart/area.py) — carry their own below.
+        labels:
+          dx: auto
+          dy: auto
       slice:
         # gap 0 lets the stroke (canvas-color knockout) be the only
         # visible separator between slices.
         gap: 0
         corner_radius: 3
+        opacity: auto
         # Canvas-coupling: ``theme.background`` is a self-reference token
         # resolved against the board's canvas after the layers merge (see
         # ``_resolve_self_tokens`` in compile/resolve/style/tokens.py).
@@ -608,6 +619,7 @@ style:
           # Round the inner-vertex spike on pies (acute miter at center where
           # many radial edges converge).
           join: "round"
+          cap: auto
         # Per-slice labels: typography here; default templates below under
         # ``default_template`` fire when the chart author omits ``labels:``.
         # Reserved vertical space scales by ``line_height × <rendered lines>``
@@ -636,9 +648,13 @@ style:
         font: label
         align: center
       rule:
+        opacity: auto
         stroke:
           width: 1
+          cap: auto
+          join: auto
       rect:
+        opacity: auto
         stroke: null
       circle:
         opacity: 1
@@ -648,6 +664,8 @@ style:
         stroke:
           color: theme.background
           width: 0.5
+          cap: auto
+          join: auto
 
     bar:
       # Authors who want a stacked bar chart opt in via ``chart.style.stack: "zero"``.
@@ -796,6 +814,7 @@ style:
     # Universal tier-1 defaults. Per-chart-type tier-2 lives nested under
     # bar/line/area as support_table: {...}.
     support_table:
+      position: auto
       font:
         extends: numeral
         size: 11
@@ -1126,7 +1145,7 @@ style:
   placeholder:
     opacity: 0.4
     overlay:
-      text: 'add data'
+      text: auto
       font:
         extends: label
         size: 16
@@ -1134,7 +1153,7 @@ style:
 
   footer:
     visible: true
-    text: "made with dbt Charts"
+    text: auto
     link: "https://dbtcharts.com"
     font: caption
     y_offset: 14
@@ -1149,7 +1168,7 @@ style:
     visible: true
     position: footer
     align: left
-    format: "Data as of %H:%M %Z on %-d %b %Y"
+    format: auto
     y: 14
     gap: 12
     font: caption

@@ -28,6 +28,7 @@ from dbt_charts.core.project import (
     ProjectDirectory,
     ProjectFileQueries,
     ProjectPath,
+    ascii_lower,
     assert_relpath,
     glob_literal_prefix,
     glob_to_regex,
@@ -66,21 +67,26 @@ class FilesystemFileQueries(ProjectFileQueries):
             if regex.match(relpath):
                 yield ProjectPath(self._project, relpath)
 
-    def grep(self, term: str, glob: str = ALL_FILES_GLOB) -> Iterator[GrepHit]:
+    def grep(
+        self, term: str, glob: str = ALL_FILES_GLOB, ignore_case: bool = False
+    ) -> Iterator[GrepHit]:
+        if ignore_case:
+            term = ascii_lower(term)
         needle = term.encode("utf-8")
         for pf in self.glob(glob):
             try:
                 data = self._project.read_bytes(pf.relpath)
             except OSError:
                 continue
-            if needle not in data:
+            # bytes.lower() folds ASCII only, the same fold as ascii_lower.
+            if needle not in (data.lower() if ignore_case else data):
                 continue  # one C-speed scan; no decode for the common no-match file
             try:
                 text = data.decode("utf-8")
             except UnicodeDecodeError:
                 continue  # not valid text -> whole file skipped, never raised
             for i, line in enumerate(text.splitlines(), start=1):
-                if term in line:
+                if term in (ascii_lower(line) if ignore_case else line):
                     yield GrepHit(pf.relpath, i, line)
 
 

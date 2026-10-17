@@ -286,7 +286,7 @@ pub fn derive_title_shifts(
 ) -> Result<Vec<RowShift>, String> {
     let board: BoardDoc = serde_json::from_value(payload.resolved.clone())
         .map_err(|e| format!("board payload deserialize: {e}"))?;
-    derive(&board, payload, fonts, items)
+    payload.board_style.scoped(|| derive(&board, payload, fonts, items))
 }
 
 fn derive(

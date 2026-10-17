@@ -8,7 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from dbt_charts.core.compile.format import column_format
-from dbt_charts.core.compile.merge import merge_onto_base, to_padding_style
+from dbt_charts.core.compile.merge import to_padding_style
 from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
 from dbt_charts.core.compile.models.chart.normalized import (
     Chart,
@@ -50,6 +50,7 @@ from dbt_charts.core.compile.resolve.style.category_colors import (
     categorical_channel_fields,
 )
 from dbt_charts.core.compile.resolve.style.chart_context import declared_column_format
+from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.legend_position import (
     decide_legend_direction,
     decide_legend_position,
@@ -161,8 +162,8 @@ def _base_kwargs(
     ChartStyleContext bag is NOT passed through — only palette, channels,
     and the pre-merged legend are projected.
 
-    legend: caller passes merge_onto_base(chart_style_context.legend, family.legend)
-    where family is already the result of merge_onto_base(chart_style_context.<type>, primary).
+    legend: caller passes merge_unset(chart_style_context.legend, family.legend)
+    where family is already the result of merge_unset(chart_style_context.<type>, primary).
     The merge layer handles family→chart-local legend cascade declaratively;
     _base_kwargs receives the final resolved value.
     palette: when a chart-local palette override is in effect, pass it here;
@@ -205,12 +206,12 @@ def _base_kwargs(
         overridden = _LegendPositionOverridePatch(
             position_overridden_by_width=legend_position_overridden_by_width
         )
-        legend = merge_onto_base(legend, overridden)
+        legend = merge_unset(legend, overridden)
     if top_legend != "off":
         top = LegendStylePatch.model_validate(
             {"columns": legend.compact_columns if top_legend == "compact" else 0}
         )
-        legend = merge_onto_base(legend, top)
+        legend = merge_unset(legend, top)
     if not legendless:
         authored_position = merge_authored_position(
             chart_style_context.cascaded.charts.legend.position, legend_patch
@@ -244,7 +245,7 @@ def _base_kwargs(
             and authored_direction is None
             and legend.columns == 0
         )
-        legend = merge_onto_base(
+        legend = merge_unset(
             legend,
             LegendStylePatch.model_validate(
                 {
@@ -268,7 +269,7 @@ def _base_kwargs(
             "title": {"visible": title_visible is not False},
         }
     )
-    legend = merge_onto_base(legend, decided_visibility)
+    legend = merge_unset(legend, decided_visibility)
     # link: false = authored auto_link opt-out — resolves to no link at all.
     link = None if normalized.link is False else normalized.link
     if normalized.link is None:
@@ -303,6 +304,7 @@ def _base_kwargs(
         "variable_dependencies": normalized.variable_dependencies,
         "notes": normalized.notes,
         "link": link,
+        "link_open": normalized.link_open,
         "conditional_formatting": conditional_formatting,
         "palette": tuple(effective_palette),
         "requested_alias_palette": requested_alias_palette,
@@ -426,7 +428,7 @@ def donut_over_pie(chart_style_context: ChartStyleContext) -> PieChartStyle:
     """The board-wide style of a donut: the donut slot over the pie slot."""
     pie = chart_style_context.pie
     donut = chart_style_context.donut
-    return pie if donut is None else merge_onto_base(pie, donut)
+    return pie if donut is None else merge_unset(pie, donut)
 
 
 def preferred_chart_width(
@@ -447,7 +449,7 @@ def preferred_chart_width(
     family_base = getattr(chart_style_context, _FAMILY_SLOT[normalized.type])
     if isinstance(normalized, PieChart) and normalized.is_donut:
         family_base = donut_over_pie(chart_style_context)
-    family = merge_onto_base(family_base, normalized.style)
+    family = merge_unset(family_base, normalized.style)
     return float(family.preferred_width)
 
 

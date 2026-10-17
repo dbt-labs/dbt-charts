@@ -58,7 +58,7 @@ TAB_BOARD = "title:\tMy Board\nrows: []\n"
 
 
 def test_authoring_warnings_parse_the_same_dialect_as_the_model() -> None:
-    assert detect_authoring_warnings(TAB_BOARD) == []
+    assert detect_authoring_warnings(TAB_BOARD, "en") == []
 
 
 def test_a_tab_never_escapes_compile_as_a_scanner_error() -> None:

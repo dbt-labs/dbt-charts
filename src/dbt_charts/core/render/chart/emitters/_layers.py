@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 from typing import Literal
 
+from dbt_charts.core.compile.models.style.resolved import ResolvedPointMarkStyle
 from dbt_charts.core.compile.models.style.resolved._marks import (
     ResolvedAreaLineStyle,
     ResolvedAreaMarkStyle,
     ResolvedLineMarkStyle,
 )
-from dbt_charts.core.compile.models.style.theme import PointMarkStyle
 from dbt_charts.core.compile.models.style.theme.marks import BarMarkStyle
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.spec import ChartSpec
@@ -270,7 +270,7 @@ def _line_fg_sublayers(
     fg_props: VLDict,
     has_color_encoding: bool,
     single_series_color: str,
-    point_mark: PointMarkStyle,
+    point_mark: ResolvedPointMarkStyle,
     point_size: float | None,
     tooltip: list[VLDict],
     pin_child_colors: bool,
@@ -346,7 +346,7 @@ def _line_fg_sublayers(
 
 def emit_line_layer(
     line_mark: ResolvedLineMarkStyle,
-    point_mark: PointMarkStyle,
+    point_mark: ResolvedPointMarkStyle,
     halo_color: str,
     single_series_color: str,
     has_color_encoding: bool,
@@ -698,7 +698,7 @@ def _area_halo_layers(
 
 
 def _area_point_sublayers(
-    point_mark: PointMarkStyle,
+    point_mark: ResolvedPointMarkStyle,
     has_color_encoding: bool,
     single_series_color: str,
     tooltip: list[VLDict],
@@ -939,7 +939,7 @@ def sparse_band_transforms(
 def emit_area_layer(
     area_mark: ResolvedAreaMarkStyle,
     line_mark: ResolvedAreaLineStyle,
-    point_mark: PointMarkStyle,
+    point_mark: ResolvedPointMarkStyle,
     background: str,
     single_series_fill: str,
     has_color_encoding: bool,
@@ -1080,7 +1080,7 @@ def emit_area_layer(
 
 
 def emit_scatter_layer(
-    point_mark: PointMarkStyle,
+    point_mark: ResolvedPointMarkStyle,
     has_color_encoding: bool,
     single_series_fill: str,
 ) -> VLDict:

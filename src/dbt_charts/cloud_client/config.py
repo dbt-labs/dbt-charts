@@ -89,7 +89,7 @@ class PendingLogin(BaseModel):
 
 
 class PendingConnect(BaseModel):
-    """A GitHub repo pick ``dct cloud project connect --start`` began but has
+    """A GitHub repo pick ``dct cloud project connect github --start`` began but has
     not finished.
 
     Persisted next to the token so ``--wait`` can resume it from a separate

@@ -62,14 +62,14 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("core/compile/config.py", 649): (
         "resolve_cache_boot(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/execute/adapters/adapter_registry.py", 236): (
+    ("core/execute/adapters/adapter_registry.py", 237): (
         "isinstance(project, FilesystemProject)-guarded data_dir computation"
     ),
-    ("core/execute/adapters/adapter_registry.py", 124): (
+    ("core/execute/adapters/adapter_registry.py", 125): (
         "isinstance(project, FilesystemProject)-guarded linked_dbt_path computation "
         "(project.dbt_root, linked-dbt-project sibling/external rule)"
     ),
-    ("core/execute/adapters/adapter_registry.py", 126): (
+    ("core/execute/adapters/adapter_registry.py", 127): (
         "isinstance(project, FilesystemProject)-guarded linked_dbt_path computation "
         "(project.dbt_project.exists, same narrow as the line above)"
     ),
@@ -114,7 +114,7 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("core/serve/server.py", 1351): (
         "profile_table: inspect_project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1543): (
+    ("core/serve/server.py", 1545): (
         "get_board: project explicitly typed FilesystemProject just above"
     ),
     (

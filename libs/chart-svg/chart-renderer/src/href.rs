@@ -221,15 +221,66 @@ pub(crate) fn checked_href_diagnostic(href: &str) -> Result<&str, crate::diagnos
     })
 }
 
+/// Whether a link navigates the page, opens its target in a modal or preview,
+/// or opens it in a new tab (`ResolvedChart.link_open`, a table column's
+/// `link_open` / `header_link_open`).
+/// An unknown value is a deserialization error.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LinkOpen {
+    #[default]
+    Page,
+    Modal,
+    Preview,
+    NewTab,
+}
+
+/// A link target plus how it opens.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Anchor<'a> {
+    pub url: &'a str,
+    pub open: LinkOpen,
+}
+
+impl LinkOpen {
+    pub(crate) fn anchor(self, href: Option<&str>) -> Option<Anchor<'_>> {
+        href.map(|url| Anchor { url, open: self })
+    }
+
+    /// The `data-dbt-link-open` value a link's `<a>` carries; a page link
+    /// emits no attribute.
+    pub(crate) fn open_attr(self) -> Option<&'static str> {
+        match self {
+            Self::Page => None,
+            Self::Modal => Some("modal"),
+            Self::Preview => Some("preview"),
+            Self::NewTab => Some("new_tab"),
+        }
+    }
+
+    /// The `target` a link's `<a>` carries: a new-tab link opens one even
+    /// where no script runs (an exported file).
+    pub(crate) fn target(self) -> Option<&'static str> {
+        match self {
+            Self::NewTab => Some("_blank"),
+            Self::Page | Self::Modal | Self::Preview => None,
+        }
+    }
+}
+
 /// Vega's href mark structure: the `<a>` sits inside the `.role-mark` group and
 /// wraps only the datum's first drawn element — a stroke-only antialiasing
 /// overlay that follows is the same datum, never a second linked mark.
-pub(crate) fn anchor_open(href: Option<&str>) -> String {
-    href.map_or_else(String::new, |h| format!("<a href=\"{}\">", crate::svg::xml_escape_attr(h)))
+pub(crate) fn anchor_open(anchor: Option<Anchor<'_>>) -> String {
+    anchor.map_or_else(String::new, |a| {
+        let open = a.open.open_attr().map_or_else(String::new, |v| format!(" data-dbt-link-open=\"{v}\""));
+        let target = a.open.target().map_or_else(String::new, |v| format!(" target=\"{v}\""));
+        format!("<a href=\"{}\"{open}{target}>", crate::svg::xml_escape_attr(a.url))
+    })
 }
 
-pub(crate) fn anchor_close(href: Option<&str>) -> &'static str {
-    if href.is_some() { "</a>" } else { "" }
+pub(crate) fn anchor_close(anchor: Option<Anchor<'_>>) -> &'static str {
+    if anchor.is_some() { "</a>" } else { "" }
 }
 
 #[cfg(test)]

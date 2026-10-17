@@ -36,6 +36,9 @@ pub struct MeasurePayload {
     pub format_locale: crate::number_locale::NumberLocale,
     /// The board's time locale: a date cell's month and day names.
     pub time_locale: crate::time_locale::TimeLocale,
+    /// The board's language: a column header derived from its name speaks it.
+    #[serde(default)]
+    pub language: display_text::language::Language,
     /// The board's `style.formats` alias table.
     #[serde(default)]
     pub formats: Option<serde_json::Map<String, Value>>,
@@ -220,7 +223,9 @@ pub fn measure_natural_width(
 ) -> Result<Option<f64>, String> {
     crate::number_locale::with_number_locale(&payload.format_locale, || {
         crate::time_locale::with_time_locale(&payload.time_locale, || {
-            natural_width_in_scope(payload, fonts)
+            display_text::language::with_language(payload.language, || {
+                natural_width_in_scope(payload, fonts)
+            })
         })
     })
 }
@@ -237,6 +242,7 @@ fn natural_width_in_scope(payload: &MeasurePayload, fonts: &FontBook) -> Result<
             fonts_dir: payload.fonts_dir.clone(),
             format_locale: payload.format_locale.clone(),
             time_locale: payload.time_locale.clone(),
+            language: payload.language,
             formats: payload.formats.clone(),
             sub_unit_specs: payload.sub_unit_specs.clone(),
             cell_text: payload.cell_text.clone(),
@@ -256,6 +262,7 @@ fn natural_width_in_scope(payload: &MeasurePayload, fonts: &FontBook) -> Result<
             fonts_dir: payload.fonts_dir.clone(),
             format_locale: payload.format_locale.clone(),
             time_locale: payload.time_locale.clone(),
+            language: payload.language,
             formats: payload.formats.clone(),
             sub_unit_specs: payload.sub_unit_specs.clone(),
             cell_text: Vec::new(),

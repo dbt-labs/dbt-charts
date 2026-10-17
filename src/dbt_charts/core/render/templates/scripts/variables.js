@@ -371,6 +371,9 @@
             if (event.key !== 'Escape') return;
             var open = _popoverInstances.filter(function(inst) { return inst.isOpen(); });
             if (!open.length) return;
+            /*{# Spent on the popover: a host must not also act on it (the link #}*/
+            /*{# modal would close). #}*/
+            event.preventDefault();
             /*{# Focus goes back to the control that opened it — Esc in a combobox #}*/
             /*{# returns you where you were, it does not drop you at the page top. #}*/
             open.forEach(function(inst) { inst.close(); });
@@ -386,6 +389,49 @@
         var button = event.target.closest('[data-dbt-page-var]');
         if (!button) return;
         updateVariable(button.getAttribute('data-dbt-page-var'), button.getAttribute('data-dbt-page-target'));
+    });
+
+    /*{# A modal link opens the target board chrome-less (?_embed) in the #}*/
+    /*{# shared link modal (link_modal.js), created on first use. #}*/
+    var _inLinkModal = window.parent !== window
+        && window.name === 'dbt-link-modal'; /*{# link_modal.js FRAME_NAME #}*/
+    var _linkModal = null;
+
+    function _openLinkModal(path, from, how) {
+        if (!_linkModal) {
+            _linkModal = window.dbtLinkModal.create(function(href) {
+                var url = new URL(window.location.origin + href);
+                url.searchParams.set('_embed', '');
+                return url.href;
+            }, function(href) {
+                return window.location.origin + href;
+            });
+        }
+        _linkModal.open(path, from, how);
+    }
+
+    /*{# The root-relative path a link names on this origin, or null: an #}*/
+    /*{# in-page anchor, another origin, or a `//` path a URL parser reads as #}*/
+    /*{# another host. A blob URL has no hierarchy to resolve against. #}*/
+    function _boardPath(href) {
+        if (/^\/(?!\/)/.test(href)) return href;
+        if (href.charAt(0) === '#') return null;
+        var base = window.location.protocol === 'blob:'
+            ? window.location.origin + '/' : window.location.href;
+        var target;
+        try { target = new URL(href, base); } catch (e) { return null; }
+        if (!/^https?:$/.test(target.protocol) || target.origin !== window.location.origin
+            || target.pathname.indexOf('//') === 0) {
+            return null;
+        }
+        return target.pathname + target.search + target.hash;
+    }
+
+    /*{# Escape inside the modal's board never reaches the host's dialog. #}*/
+    if (!_documentWired && _inLinkModal) document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape' && !event.defaultPrevented) {
+            window.parent.postMessage({ type: 'dbt-modal-escape' }, '*');
+        }
     });
 
     /*{# ── Intercept clicks on SVG <a href="?..."> links ──────────────────────── #}*/
@@ -405,6 +451,10 @@
             /*{# `.target` on an SVGAElement is an SVGAnimatedString, not a #}*/
             /*{# plain string -- the attribute is the only portable read. #}*/
             var linkTarget = link.getAttribute('target');
+            var openIn = link.getAttribute('data-dbt-link-open');
+            /*{# A framed board's own tab would resolve the board path against #}*/
+            /*{# the frame (a blob URL in the playground): its host opens it. #}*/
+            var framedTab = openIn === 'new_tab' && window.parent !== window;
             if (
                 event.defaultPrevented ||
                 event.button !== 0 ||
@@ -412,18 +462,49 @@
                 event.ctrlKey ||
                 event.shiftKey ||
                 event.altKey ||
-                (linkTarget && linkTarget !== '_self') ||
+                (linkTarget && linkTarget !== '_self' && !framedTab) ||
                 link.hasAttribute('download')
             ) {
                 return;
             }
-            /*{# A relative link can't navigate an iframed document at all #}*/
-            /*{# (the browser refuses, regardless of the destination), and a #}*/
-            /*{# function reference on window here is this frame's own -- #}*/
-            /*{# only postMessage reaches a listening host. #}*/
-            if (href.charAt(0) === '/' && window.parent !== window) {
+            /*{# A modal link keeps its real href, so a modified click above still #}*/
+            /*{# opens a tab and a host without this script still navigates. #}*/
+            var isModalLink = openIn === 'modal' || openIn === 'preview';
+            if (window.parent !== window) {
+                /*{# A framed board never loads a board itself (a blob frame can't #}*/
+                /*{# resolve a relative URL; the host owns the modal). Inside the #}*/
+                /*{# modal, another site opens a tab: most refuse to be framed. #}*/
+                var framedPath = _boardPath(href);
+                if (framedPath !== null) {
+                    event.preventDefault();
+                    /*{# The mark's box, in this frame's viewport: the host grows #}*/
+                    /*{# the modal out of it. #}*/
+                    var mark = link.getBoundingClientRect();
+                    window.parent.postMessage({
+                        type: framedTab ? 'dbt-board-open-tab'
+                            : isModalLink ? 'dbt-board-open-modal' : 'dbt-board-navigate',
+                        href: framedPath,
+                        open: openIn,
+                        rect: { left: mark.left, top: mark.top, width: mark.width, height: mark.height }
+                    }, '*');
+                    return;
+                }
+                /*{# Another site: the browser opens the tab itself. #}*/
+                if (framedTab) return;
+                if (_inLinkModal && /^https?:\/\//i.test(href)) {
+                    event.preventDefault();
+                    window.open(href, '_blank', 'noopener,noreferrer');
+                    return;
+                }
+            } else if (isModalLink) {
+                /*{# Another origin can't be framed; it gets a tab instead. #}*/
+                var modalPath = _boardPath(href);
                 event.preventDefault();
-                window.parent.postMessage({ type: 'dbt-board-navigate', href: href }, '*');
+                if (modalPath !== null) {
+                    _openLinkModal(modalPath, link.getBoundingClientRect(), openIn);
+                } else {
+                    window.open(new URL(href, window.location.href).href, '_blank', 'noopener,noreferrer');
+                }
                 return;
             }
             /*{# `board_links.py`'s passthrough prefixes (mailto:, #, an editor #}*/
@@ -1123,17 +1204,32 @@
 
     /*{# 8 non-divider presets + 2 dividers = 10 entries total. #}*/
     var PRESETS = [
-        { id: 'today',          label: 'Today' },
-        { id: 'last_7_days',    label: 'Last 7 days' },
-        { id: 'last_28_days',   label: 'Last 28 days' },
-        { id: 'last_90_days',   label: 'Last 90 days' },
-        { id: 'last_12_months', label: 'Last 12 months' },
+        { id: 'today',          word: 'today' },
+        { id: 'last_7_days',    word: 'last_7_days' },
+        { id: 'last_28_days',   word: 'last_28_days' },
+        { id: 'last_90_days',   word: 'last_90_days' },
+        { id: 'last_12_months', word: 'last_12_months' },
         { id: 'divider' },
-        { id: 'mtd',            label: 'Month to date' },
-        { id: 'ytd',            label: 'Year to date' },
+        { id: 'mtd',            word: 'month_to_date' },
+        { id: 'ytd',            word: 'year_to_date' },
         { id: 'divider' },
-        { id: 'custom',         label: 'Custom' },
+        { id: 'custom',         word: 'custom' },
     ];
+
+    /*{# The words this runtime prints come from the board's language, which the #}*/
+    /*{# strip carries as `data-dbt-language` (a JSON object keyed by word); the #}*/
+    /*{# page cannot fetch the catalog. Stored renders without the attribute are English: #}*/
+    /*{# they get the English slice controls_english.js ships. #}*/
+    function _words(node) {
+        var strip = node.closest('[data-dbt-variables]');
+        var raw = strip && strip.getAttribute('data-dbt-language');
+        return raw ? JSON.parse(raw) : window.dbtControlsEnglish;
+    }
+
+    /*{# Fills a word's `{name}` placeholders with the date's parts. #}*/
+    function _fill(template, values) {
+        return template.replace(/\{(\w+)\}/g, function(_, name) { return values[name]; });
+    }
 
     /*{# All date math relative to local midnight so tests stay deterministic. #}*/
     function resolvePreset(id) {
@@ -1182,7 +1278,7 @@
         return d;
     }
 
-    function buildRail(railEl, onPick) {
+    function buildRail(railEl, words, onPick) {
         railEl.innerHTML = '';
         PRESETS.forEach(function(p) {
             if (p.id === 'divider') {
@@ -1192,7 +1288,7 @@
             } else {
                 var btn = document.createElement('button');
                 btn.type = 'button';
-                btn.textContent = p.label;
+                btn.textContent = words[p.word];
                 btn.dataset.preset = p.id;
                 btn.addEventListener('click', function() { onPick(p); });
                 railEl.appendChild(btn);
@@ -1229,13 +1325,13 @@
     /*{# too and would be wiped by that rebuild -- so nav hands the new month #}*/
     /*{# back to `onNav` rather than redrawing itself, and the caller's own #}*/
     /*{# rebuild (which also repaints the footer) runs instead. #}*/
-    function _buildCalendarGrid(calEl, viewMonth, onPickDay, onNav, onHoverDay) {
+    function _buildCalendarGrid(calEl, words, viewMonth, onPickDay, onNav, onHoverDay) {
         var names     = JSON.parse(calEl.getAttribute('data-dbt-time-locale'));
         var year      = viewMonth.getFullYear();
         var month     = viewMonth.getMonth();
         var firstDay  = new Date(year, month, 1);
         var startWeek = (firstDay.getDay() - names.weekStart + 7) % 7;
-        var monthName = names.months[month] + ' ' + year;
+        var monthName = _fill(words.calendar_header, { month: names.months[month], year: year });
         /*{# Per rebuild, not per bind: a popover opened after midnight in a #}*/
         /*{# long-lived tab must bold the actual today. #}*/
         var today = _startOfToday();
@@ -1248,7 +1344,7 @@
         var prevBtn = document.createElement('button');
         prevBtn.type = 'button';
         prevBtn.className = 'dbt-cal-nav';
-        prevBtn.setAttribute('aria-label', 'Previous month');
+        prevBtn.setAttribute('aria-label', words.previous_month);
         prevBtn.textContent = '‹';
         prevBtn.addEventListener('click', function() {
             onNav(new Date(year, month - 1, 1));
@@ -1261,7 +1357,7 @@
         var nextBtn = document.createElement('button');
         nextBtn.type = 'button';
         nextBtn.className = 'dbt-cal-nav';
-        nextBtn.setAttribute('aria-label', 'Next month');
+        nextBtn.setAttribute('aria-label', words.next_month);
         nextBtn.textContent = '›';
         nextBtn.addEventListener('click', function() {
             onNav(new Date(year, month + 1, 1));
@@ -1294,8 +1390,12 @@
             if (isToday) cell.classList.add('dbt-today');
             cell.textContent = dt.getDate();
             cell.dataset.day = String(dt.getTime());
-            cell.setAttribute('aria-label', names.days[dt.getDay()] + ', ' +
-                dt.getDate() + ' ' + names.months[dt.getMonth()] + ' ' + dt.getFullYear());
+            cell.setAttribute('aria-label', _fill(words.calendar_day, {
+                weekday: names.days[dt.getDay()],
+                day: dt.getDate(),
+                month: names.months[dt.getMonth()],
+                year: dt.getFullYear(),
+            }));
             (function(cellEl, cellDate) {
                 cellEl.addEventListener('click', function() { onPickDay(cellDate); });
                 if (onHoverDay) {
@@ -1312,6 +1412,7 @@
     /*{# Follows _buildSelectPopover: page-level, never inside the board. #}*/
     /*{# Returns the popover element; the calendar state lives in the closure. #}*/
     function _bindDateRange(el, name) {
+        var words = _words(el);
         var canUnset = el.getAttribute('data-dbt-can-unset') === 'true';
 
         var range     = [null, null];
@@ -1376,7 +1477,7 @@
         popover.addEventListener('click', function(e) { e.stopPropagation(); });
 
         function rebuildCalendar() {
-            _buildCalendarGrid(calEl, viewMonth,
+            _buildCalendarGrid(calEl, words, viewMonth,
                 function(dt) { pickDay(dt.getTime()); },
                 function(newMonth) { viewMonth = newMonth; rebuildCalendar(); },
                 function(dt) {
@@ -1397,14 +1498,14 @@
                 clearAction.type = 'button';
                 clearAction.className = 'dbt-cal-action';
                 clearAction.setAttribute('data-action', 'clear');
-                clearAction.textContent = 'Clear';
+                clearAction.textContent = words.clear;
                 footer.appendChild(clearAction);
             }
             var applyAction = document.createElement('button');
             applyAction.type = 'button';
             applyAction.className = 'dbt-cal-action dbt-cal-action-primary';
             applyAction.setAttribute('data-action', 'apply');
-            applyAction.textContent = 'Apply';
+            applyAction.textContent = words.apply;
             footer.appendChild(applyAction);
             footer.addEventListener('click', function(e) {
                 var btn = e.target.closest('[data-action]');
@@ -1482,7 +1583,7 @@
             rebuildCalendar();
         }
 
-        buildRail(rail, function(p) {
+        buildRail(rail, words, function(p) {
             var r = resolvePreset(p.id);
             if (r) {
                 range = r;
@@ -1508,6 +1609,7 @@
     /*{# no Apply — there is only one endpoint to pick, so a click commits and #}*/
     /*{# closes immediately rather than waiting for a second gesture. #}*/
     function _bindDate(el, name) {
+        var words = _words(el);
         var canUnset = el.getAttribute('data-dbt-can-unset') === 'true';
 
         var selected  = null;
@@ -1556,7 +1658,7 @@
         popover.addEventListener('click', function(e) { e.stopPropagation(); });
 
         function rebuildCalendar() {
-            _buildCalendarGrid(calEl, viewMonth,
+            _buildCalendarGrid(calEl, words, viewMonth,
                 function(dt) { pickDay(dt.getTime()); },
                 function(newMonth) { viewMonth = newMonth; rebuildCalendar(); }
             );
@@ -1577,14 +1679,14 @@
                 clearAction.type = 'button';
                 clearAction.className = 'dbt-cal-action';
                 clearAction.setAttribute('data-action', 'clear');
-                clearAction.textContent = 'Clear';
+                clearAction.textContent = words.clear;
                 footer.appendChild(clearAction);
             }
             var todayAction = document.createElement('button');
             todayAction.type = 'button';
             todayAction.className = 'dbt-cal-action';
             todayAction.setAttribute('data-action', 'today');
-            todayAction.textContent = 'Today';
+            todayAction.textContent = words.today;
             footer.appendChild(todayAction);
             footer.addEventListener('click', function(e) {
                 var action = e.target.closest('[data-action]');

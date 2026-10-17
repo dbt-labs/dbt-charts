@@ -24,6 +24,7 @@ from dbt_charts.core.render.terminal_text import (
     truncate_visible,
     visible_len,
 )
+from dbt_charts.core.text.format_d3 import board_word
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
@@ -312,7 +313,7 @@ def render_tabs_layout_terminal(
         tab_title = (
             tab_titles[idx]
             if tab_titles and idx < len(tab_titles)
-            else f"Tab {idx + 1}"
+            else board_word("tab.title", n=str(idx + 1))
         )
 
         # Create header line

@@ -126,20 +126,25 @@ def _footer_attribution_svg(
             f"{html.escape(content)}</text>"
         )
 
-    match = FOOTER_BRAND_WORD_RE.search(footer.text)
+    text = footer.text
+    match = FOOTER_BRAND_WORD_RE.search(text)
     if match is None:
-        return run(x, footer.text), footer_text_width(footer, font_family)
+        return run(x, text), footer_text_width(footer, font_family)
 
-    prefix = footer.text[: match.start()].rstrip()
+    prefix = text[: match.start()].rstrip()
     brand_word = match.group(0)
-    suffix = footer.text[match.end() :].lstrip()
-    gap = measure(" ", size)
+    suffix = text[match.end() :].lstrip()
+    # A space separates the brand from a neighbor only where the text has one
+    # (CJK runs the brand straight into its words).
+    space = measure(" ", size)
+    prefix_gap = space if prefix != text[: match.start()] else 0.0
+    suffix_gap = space if suffix != text[match.end() :] else 0.0
 
     parts: list[str] = []
     right = x
     if suffix:
         parts.append(run(right, suffix))
-        right -= measure(suffix, size) + gap
+        right -= measure(suffix, size) + suffix_gap
 
     brand_run = run(right, brand_word, brand=True)
     if footer.link:
@@ -151,8 +156,8 @@ def _footer_attribution_svg(
     right -= brand_measure(brand_word, size)
 
     if prefix:
-        parts.insert(0, run(right - gap, prefix))
-        right -= gap + measure(prefix, size)
+        parts.insert(0, run(right - prefix_gap, prefix))
+        right -= prefix_gap + measure(prefix, size)
     return "".join(parts), footer_text_width(footer, font_family)
 
 
@@ -1011,6 +1016,7 @@ def render_board_svg(
         board.regional.format_locale,
         board.regional.time_locale,
         board.regional.week_start,
+        language=board.regional.resolved_language,
     ):
         return _render_board_svg(
             board,

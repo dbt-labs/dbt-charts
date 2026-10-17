@@ -431,7 +431,6 @@ def test_compiled_view_style_has_discrete_dimensions():
 def test_style_to_vega_lite_maps_title_subtitle_fields():
     """style_to_vega_lite maps subtitle.font.{color,family,size,weight} + subtitle_padding to VL."""
     from dbt_charts.core.compile.models.primitives import FontStyle
-    from dbt_charts.core.compile.models.style.theme import TitleSubtitleStyle
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
     from dbt_charts.core.compile.vega_lite.mapping import style_to_vega_lite
 
@@ -440,10 +439,12 @@ def test_style_to_vega_lite_maps_title_subtitle_fields():
         update={
             "title": base.title.model_copy(
                 update={
-                    "subtitle": TitleSubtitleStyle(
-                        font=FontStyle(
-                            color="#626366", family="Inter", size=14.0, weight=400
-                        )
+                    "subtitle": base.title.subtitle.model_copy(
+                        update={
+                            "font": FontStyle(
+                                color="#626366", family="Inter", size=14.0, weight=400
+                            )
+                        }
                     )
                 }
             )

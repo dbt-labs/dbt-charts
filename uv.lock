@@ -773,7 +773,6 @@ dependencies = [
     { name = "pyyaml" },
     { name = "rich" },
     { name = "sqlglot" },
-    { name = "titlecase" },
     { name = "tomli-w" },
     { name = "typer" },
     { name = "uvicorn" },
@@ -914,7 +913,6 @@ requires-dist = [
     { name = "rich", specifier = ">=13.0.0" },
     { name = "sqlglot", specifier = ">=30.0.0" },
     { name = "streamlit", marker = "extra == 'streamlit'", specifier = ">=1.51.0" },
-    { name = "titlecase", specifier = ">=2.4" },
     { name = "tomli-w", specifier = ">=1.0.0" },
     { name = "trino", marker = "extra == 'trino'", specifier = ">=0.334" },
     { name = "typer", specifier = ">=0.27,<0.28" },
@@ -4181,12 +4179,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d6/67/80f3aeced7a38d17a281d1b9904ab9e93ab493f5c75e144b3180c278041c/thrift-0.24.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:28e034658d724aaa66007babb258ef12f0294036812fc449d7ce6fd15b07100f", size = 1537515, upload-time = "2026-07-11T16:53:39.316Z" },
     { url = "https://files.pythonhosted.org/packages/37/1f/169f93d531a0d9546b6f18dacf37752c27cccfa719bf231162d1fcf8d0e0/thrift-0.24.0-cp313-cp313-win_amd64.whl", hash = "sha256:f4a44391ae1e32817553639b2991b0753d84487259fe87f8111c956c6bdebf43", size = 409450, upload-time = "2026-07-11T16:53:40.711Z" },
 ]
-
-[[package]]
-name = "titlecase"
-version = "2.4.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/63/17/04d2d3e30e2bc5a3eefa1060b08e3fb628510440f938eaecabbe08976a26/titlecase-2.4.1.tar.gz", hash = "sha256:7d83a277ccbbda11a2944e78a63e5ccaf3d32f828c594312e4862f9a07f635f5", size = 14434, upload-time = "2023-09-23T05:03:46.389Z" }
 
 [[package]]
 name = "toml"

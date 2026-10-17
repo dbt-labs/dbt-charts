@@ -71,7 +71,7 @@ def is_integer_key_value(value: Any) -> bool:
     return False
 
 
-from dbt_charts.core.utils import slug_to_text as slug_to_text  # re-exported
+from dbt_charts.core.text.humanize import slug_to_text as slug_to_text  # re-exported
 
 
 def normalize_scalar_for_json(value: Any) -> Any:

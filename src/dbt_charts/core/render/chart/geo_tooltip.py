@@ -15,6 +15,7 @@ from dbt_charts.core.render.chart.spec_builders import tooltip_entry
 from dbt_charts.core.render.chart.type_inference import infer_vega_type_from_data
 from dbt_charts.core.render.utils import is_integer_key_value
 from dbt_charts.core.text.case import field_title
+from dbt_charts.core.text.format_d3 import board_word
 
 
 def _sample_lookup_values(
@@ -113,7 +114,7 @@ def build_point_tooltip_fields(
                 lat_field,
                 "quantitative",
                 title=field_labels.get(
-                    lat_field, "Latitude"
+                    lat_field, board_word("tooltip.latitude")
                 ),  # type-state: silent_fallback — default title
             ),
         )
@@ -123,7 +124,7 @@ def build_point_tooltip_fields(
                 lng_field,
                 "quantitative",
                 title=field_labels.get(
-                    lng_field, "Longitude"
+                    lng_field, board_word("tooltip.longitude")
                 ),  # type-state: silent_fallback — default title
             ),
         )

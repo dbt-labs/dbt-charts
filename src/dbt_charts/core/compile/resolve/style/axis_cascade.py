@@ -12,7 +12,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 from types import EllipsisType
-from typing import Any, Literal, TypeVar, overload
+from typing import Literal, TypeVar, overload
 
 from pydantic import BaseModel
 
@@ -61,6 +61,7 @@ from dbt_charts.core.compile.models.style.theme import (
     XScaleStyle,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_cascaded_font
+from dbt_charts.core.compile.resolve.style.inherit_resolver import settled, unset_autos
 from dbt_charts.core.compile.resolve.style.scale import (
     _build_ruler,
     build_resolved_scale,
@@ -242,23 +243,11 @@ def _label_align_fallback_fires(
 
 def _resolve_overlap_config(
     overlap: AxisLabelOverlapConfig | None,
-) -> ResolvedAxisLabelOverlapConfig | None:
-    """Convert authored AxisLabelOverlapConfig to the resolved dataclass.
-
-    Returns None when the cascade did not populate overlap (resolver will skip).
-    Raises if the cascade yielded a partial struct with any None fields — the
-    theme must supply both bools via _base.yaml so this never fires in normal
-    operation; it fires only when overlap is present but incomplete, which signals
-    a broken theme.
-    """
-    if overlap is None:
-        return None
-    if overlap.tilt is None or overlap.skip is None:
-        raise ValueError(
-            f"axis.labels.overlap has None fields after cascade: {overlap!r}; "
-            "theme must supply both bools (tilt, skip) via _base.yaml"
-        )
-    return ResolvedAxisLabelOverlapConfig(tilt=overlap.tilt, skip=overlap.skip)
+) -> ResolvedAxisLabelOverlapConfig:
+    overlap = settled(overlap)
+    return ResolvedAxisLabelOverlapConfig(
+        tilt=settled(overlap.tilt), skip=settled(overlap.skip)
+    )
 
 
 def _anchors_affix(fmt: ResolvedFormat) -> bool:
@@ -425,24 +414,15 @@ def build_resolved_axis(
     ladder says which end an anchored affix belongs on; empty when unknown.
     """
 
-    def _require(value: Any, path: str) -> Any:
-        if value is None:
-            raise ValueError(
-                f"{path} must be authored by the theme or cascade from axis"
-            )
-        return value
-
     # threshold lives on every axis's grid.threshold now — a threshold rule is
     # a property of a quantitative axis, on either channel, not of the
     # measure (y) axis specifically. Built unconditionally; it is simply
-    # inert wherever the axis never ticks at the threshold. The field itself
-    # stays Optional on the model (a SkipInheritSlots cascade sentinel — see
-    # AxisGridThresholdStyle), so _require it here same as its sub-fields.
-    _threshold = _require(axis.grid.threshold, "charts.axis.grid.threshold")
+    # inert wherever the axis never ticks at the threshold.
+    _threshold = settled(axis.grid.threshold)
     grid_threshold = ResolvedAxisGridThresholdStyle(
-        color=_require(_threshold.color, "charts.axis.grid.threshold.color"),
-        width=_require(_threshold.width, "charts.axis.grid.threshold.width"),
-        visible=_require(_threshold.visible, "charts.axis.grid.threshold.visible"),
+        color=settled(_threshold.color),
+        width=settled(_threshold.width),
+        visible=settled(_threshold.visible),
     )
 
     # label passthrough: x-axis adds tilt_increments/values/time_unit/clock from DimensionLabelStyle.
@@ -463,7 +443,7 @@ def build_resolved_axis(
     # to avoid ERR-AXIS-COLUMN-REQUIRES-TABULAR-FONT on previously-working
     # configs.  non-column-forming axes (horizontal bar measure) are exempt:
     # their reserve is always False regardless of start_anchored.
-    _resolved_font = resolve_cascaded_font(axis.labels.font, "charts.axis.labels.font")
+    _resolved_font = resolve_cascaded_font(axis.labels.font)
     format_is_house = format is not None and format.is_house
     _quantitative_for_alignment = (
         is_quantitative
@@ -745,10 +725,8 @@ def build_resolved_axis(
         tick_step = tick_min_step_for_format(format.spec)
 
     ticks_visible = axis.ticks.visible
-    # "auto" is only ever declared on DimensionTicksStyle (axis_x's own tick
-    # slot) -- the isinstance guard is what lets pyright see that arm at all;
-    # AxisYStyle's ticks.visible is bool | None and can never compare equal.
-    if isinstance(axis, AxisXStyle) and axis.ticks.visible == "auto":
+    # "auto" is only declared on axis_x's own tick slot (DimensionTicksStyle).
+    if ticks_visible == "auto":
         if axis.grid.visible is not True:
             ticks_visible = True  # no gridlines at all -- nothing else marks position
         elif y_gridline_caps_bottom is None:
@@ -764,7 +742,7 @@ def build_resolved_axis(
         check_anchored_sign(format, f"charts.{chart_id}.style.{axis_key}.labels.format")
     label = ResolvedAxisElementStyle(
         font=_resolved_font,
-        padding=_require(axis.labels.padding, "charts.axis.labels.padding"),
+        padding=settled(axis.labels.padding),
         align=resolved_label_align,
         overlap=_resolve_overlap_config(axis.labels.overlap),
         format=format,
@@ -772,21 +750,21 @@ def build_resolved_axis(
     )
     return ResolvedAxisStyle(
         grid=ResolvedAxisGridStyle(
-            visible=_require(axis.grid.visible, "charts.axis.grid.visible"),
-            opacity=_require(axis.grid.opacity, "charts.axis.grid.opacity"),
-            width=_require(axis.grid.width, "charts.axis.grid.width"),
-            color=_require(axis.grid.color, "charts.axis.grid.color"),
+            visible=settled(axis.grid.visible),
+            opacity=settled(axis.grid.opacity),
+            width=settled(axis.grid.width),
+            color=settled(axis.grid.color),
             dash=axis.grid.dash,
             threshold=grid_threshold,
         ),
         line=ResolvedAxisLineStyle(
-            visible=_require(axis.line.visible, "charts.axis.line.visible"),
-            width=_require(axis.line.width, "charts.axis.line.width"),
-            color=_require(axis.line.color, "charts.axis.line.color"),
+            visible=settled(axis.line.visible),
+            width=settled(axis.line.width),
+            color=settled(axis.line.color),
         ),
         ticks=ResolvedAxisTicksStyle(
-            visible=_require(ticks_visible, "charts.axis.ticks.visible"),
-            color=_require(axis.ticks.color, "charts.axis.ticks.color"),
+            visible=settled(ticks_visible),
+            color=settled(axis.ticks.color),
             width=axis.ticks.width,
             length=axis.ticks.length,
             offset=axis.ticks.offset,
@@ -800,7 +778,7 @@ def build_resolved_axis(
         ),
         labels=label,
         title=ResolvedAxisElementStyle(
-            font=resolve_cascaded_font(axis.title.font, "charts.axis.title.font"),
+            font=resolve_cascaded_font(axis.title.font),
             align=_resolve_own_side_align(axis.title.align, edge),
             **{f: getattr(axis.title, f) for f in _TITLE_PASSTHROUGH},
         ),
@@ -1079,7 +1057,7 @@ def _merge_axis_cascade(
             ):
                 band_position = band_patch.band_position
                 break
-    return base, band_position
+    return unset_autos(base), band_position
 
 
 def resolved_axis_style(

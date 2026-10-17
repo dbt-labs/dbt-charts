@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Literal
 
 from dbt_charts.core.compile.models.variable.authored import VariableInputType
 from dbt_charts.core.font_measure import get_font_measurer
+from dbt_charts.core.text.format_d3 import board_word
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -165,7 +166,9 @@ def lay_out_variables(
     font_size = variables_style.font.size
     assert font_size is not None, "style.variables.font.size must be configured"
     for spec in specs:
-        label_width = _text_width(f"{spec.label}:", float(font_size))
+        label_width = _text_width(
+            board_word("controls.field_label", label=spec.label), float(font_size)
+        )
         # The ornament is added here, not inside `_input_width`, so a
         # theme-sized field reserves room for its glyph exactly like a measured
         # one — `daterange` is theme-sized and still draws a calendar.

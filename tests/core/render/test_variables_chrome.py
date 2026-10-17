@@ -21,7 +21,6 @@ from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.render.controls import controls_stylesheet, interactive_controls
 from dbt_charts.core.render.variables_layout import lay_out_variables
 from dbt_charts.core.render.variables_resolve import (
-    UNSET_DATE_LABEL,
     format_date_label,
     resolve_controls,
 )
@@ -1060,7 +1059,7 @@ def test_a_non_required_date_publishes_the_date_unset_label(input_type: str) -> 
 
     group = _groups(svg)[0]
     assert group.get("data-dbt-can-unset") == "true"
-    assert group.get("data-dbt-unset-label") == UNSET_DATE_LABEL
+    assert group.get("data-dbt-unset-label") == "Any date"
 
 
 @pytest.mark.parametrize("input_type", ["text", "number", "checkbox", "slider"])
@@ -1191,7 +1190,9 @@ def test_a_date_control_publishes_the_boards_time_locale(input_type: str) -> Non
     with (
         interactive_controls(True),
         regional_scope(
-            regional.format_locale, regional.time_locale, regional.week_start
+            regional.format_locale,
+            regional.time_locale,
+            regional.week_start,
         ),
     ):
         svg, _ = _strip({"when": Variable(input=input_type)})

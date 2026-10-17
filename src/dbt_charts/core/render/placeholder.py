@@ -25,6 +25,10 @@ from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.compile.models.chart.normalized import _CartesianChartFields
 from dbt_charts.core.render.svg_utils import escape_attr
+from dbt_charts.core.text.format_d3 import (
+    active_time_locale,
+    board_word,
+)
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.chart.normalized import Chart
@@ -162,14 +166,15 @@ def _expand_for_multiples(
     return [{**row, **combo} for combo in combos for row in base]
 
 
+def _category(letter: str) -> str:
+    return board_word("placeholder.category", letter=letter)
+
+
 def _generate_bar_placeholder(x_field: str, y_field: str) -> list[dict[str, Any]]:
     """Generate placeholder data for bar charts."""
     return [
-        {x_field: "Category A", y_field: 100},
-        {x_field: "Category B", y_field: 75},
-        {x_field: "Category C", y_field: 50},
-        {x_field: "Category D", y_field: 85},
-        {x_field: "Category E", y_field: 60},
+        {x_field: _category(letter), y_field: value}
+        for letter, value in zip("ABCDE", (100, 75, 50, 85, 60), strict=True)
     ]
 
 
@@ -177,14 +182,10 @@ def _generate_line_placeholder(x_field: str, y_field: str) -> list[dict[str, Any
     """Generate placeholder data for line/area charts."""
     # Use month names for time-like x axis
     time_field = x_field if x_field != "category" else "month"
+    months = active_time_locale()["shortMonths"]
     return [
-        {time_field: "Jan", y_field: 10},
-        {time_field: "Feb", y_field: 25},
-        {time_field: "Mar", y_field: 40},
-        {time_field: "Apr", y_field: 35},
-        {time_field: "May", y_field: 50},
-        {time_field: "Jun", y_field: 45},
-        {time_field: "Jul", y_field: 60},
+        {time_field: months[month], y_field: value}
+        for month, value in enumerate((10, 25, 40, 35, 50, 45, 60))
     ]
 
 
@@ -212,21 +213,30 @@ def _generate_pie_placeholder(x_field: str, y_field: str) -> list[dict[str, Any]
     """Generate placeholder data for pie charts."""
     cat_field = x_field if x_field != "category" else "category"
     return [
-        {cat_field: "Segment A", y_field: 40},
-        {cat_field: "Segment B", y_field: 30},
-        {cat_field: "Segment C", y_field: 20},
-        {cat_field: "Segment D", y_field: 10},
+        {cat_field: board_word("placeholder.segment", letter=letter), y_field: value}
+        for letter, value in zip("ABCD", (40, 30, 20, 10), strict=True)
     ]
 
 
 def _generate_table_placeholder() -> list[dict[str, Any]]:
     """Generate placeholder data for tables."""
+    active = board_word("placeholder.status_active")
+    statuses = (
+        active,
+        board_word("placeholder.status_pending"),
+        active,
+        board_word("placeholder.status_inactive"),
+        active,
+    )
     return [
-        {"name": "Sample Item 1", "value": 123, "status": "Active"},
-        {"name": "Sample Item 2", "value": 456, "status": "Pending"},
-        {"name": "Sample Item 3", "value": 789, "status": "Active"},
-        {"name": "Sample Item 4", "value": 234, "status": "Inactive"},
-        {"name": "Sample Item 5", "value": 567, "status": "Active"},
+        {
+            "name": board_word("placeholder.item", n=str(number)),
+            "value": value,
+            "status": status,
+        }
+        for number, value, status in zip(
+            range(1, 6), (123, 456, 789, 234, 567), statuses, strict=True
+        )
     ]
 
 
@@ -253,7 +263,8 @@ def _generate_boxplot_placeholder(x_field: str, y_field: str) -> list[dict[str, 
     cat_field = x_field if x_field != "category" else "category"
     data = []
     # Generate data for 3 categories with different distributions
-    for cat, base in [("Group A", 50), ("Group B", 70), ("Group C", 40)]:
+    for letter, base in (("A", 50), ("B", 70), ("C", 40)):
+        cat = board_word("placeholder.group", letter=letter)
         for offset in [-20, -10, -5, 0, 5, 10, 20, 25, -15, 15]:
             data.append({cat_field: cat, y_field: base + offset})
     return data
@@ -262,8 +273,8 @@ def _generate_boxplot_placeholder(x_field: str, y_field: str) -> list[dict[str, 
 def _generate_heatmap_placeholder() -> list[dict[str, Any]]:
     """Generate placeholder data for heatmaps."""
     data = []
-    rows = ["Row A", "Row B", "Row C", "Row D"]
-    cols = ["Col 1", "Col 2", "Col 3", "Col 4"]
+    rows = [board_word("placeholder.row", letter=letter) for letter in "ABCD"]
+    cols = [board_word("placeholder.col", n=str(number)) for number in range(1, 5)]
     # Generate a pattern of values
     values = [
         [80, 60, 40, 20],
@@ -283,11 +294,8 @@ def _generate_spark_bar_placeholder(x_field: str, y_field: str) -> list[dict[str
     cat_field = y_field if y_field != "value" else "value"
     freq_field = x_field if x_field != "category" else "frequency"
     return [
-        {cat_field: "Category A", freq_field: 100},
-        {cat_field: "Category B", freq_field: 75},
-        {cat_field: "Category C", freq_field: 50},
-        {cat_field: "Category D", freq_field: 35},
-        {cat_field: "Category E", freq_field: 20},
+        {cat_field: _category(letter), freq_field: value}
+        for letter, value in zip("ABCDE", (100, 75, 50, 35, 20), strict=True)
     ]
 
 

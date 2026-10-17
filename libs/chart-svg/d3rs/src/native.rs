@@ -10,8 +10,8 @@ pub const NULL_DISPLAY: &str = "\u{2014}";
 /// replaces every `-`.
 pub fn predefined_native(name: &str, value: f64) -> Result<Option<(String, String)>, String> {
     let unit = match name {
-        "percent_number" | "percent_number_delta" => "%",
-        "percentage_points_delta" => " pts",
+        "percent_number" | "percent_number_delta" => "%".to_string(),
+        "percentage_points_delta" => format!(" {}", word("unit.points")?),
         "duration" => return duration(value).map(Some),
         "bytes" => {
             return bytes(value, |spec, v| crate::format::format(&crate::format::Locale::en_us(), spec, v)).map(Some)
@@ -23,11 +23,17 @@ pub fn predefined_native(name: &str, value: f64) -> Result<Option<(String, Strin
     } else {
         format!("{value:+.1}")
     };
-    Ok(Some((number.replace('-', "\u{2212}"), unit.to_string())))
+    Ok(Some((number.replace('-', "\u{2212}"), unit)))
 }
 
-/// `_DURATION_UNITS`: seconds in a unit, largest first.
-const DURATION_UNITS: [(u128, &str); 4] = [(86400, "d"), (3600, "h"), (60, "m"), (1, "s")];
+/// `_DURATION_UNITS`: seconds in a unit, largest first, with the catalog id of
+/// its letter.
+const DURATION_UNITS: [(u128, &str); 4] =
+    [(86400, "unit.day"), (3600, "unit.hour"), (60, "unit.minute"), (1, "unit.second")];
+
+fn word(id: &str) -> Result<String, String> {
+    display_text::language::tr(id, None, &[])
+}
 
 /// `_duration` (`predefined_formats.py`): the two largest units of a span in
 /// seconds, a zero lower unit dropped (`1h 23m`, `45s`); the fraction rounds
@@ -47,11 +53,11 @@ fn duration(value: f64) -> Result<(String, String), String> {
         let ((size, unit), (lower_size, lower_unit)) = (pair[0], pair[1]);
         if seconds >= size {
             let lower = seconds % size / lower_size;
-            let tail = if lower > 0 { format!(" {lower}{lower_unit}") } else { String::new() };
-            return Ok((format!("{sign}{}{unit}{tail}", seconds / size), String::new()));
+            let tail = if lower > 0 { format!(" {lower}{}", word(lower_unit)?) } else { String::new() };
+            return Ok((format!("{sign}{}{}{tail}", seconds / size, word(unit)?), String::new()));
         }
     }
-    Ok((format!("{sign}{seconds}s"), String::new()))
+    Ok((format!("{sign}{seconds}{}", word(DURATION_UNITS[3].1)?), String::new()))
 }
 
 /// `_bytes` (`predefined_formats.py`): decimal SI (1 kB = 1000 B) to three
@@ -65,8 +71,24 @@ pub fn bytes(value: f64, format: impl Fn(&str, f64) -> Result<String, String>) -
     }
     let spec = if value.abs() < 1.0 { ".3~r" } else { ".3~s" };
     let text = format(spec, value)?;
+    let byte = word("unit.byte")?;
     Ok(match text.chars().next_back().filter(|c| "kMGTPEZY".contains(*c)) {
-        Some(prefix) => (text[..text.len() - 1].to_string(), format!(" {prefix}B")),
-        None => (text, " B".to_string()),
+        Some(prefix) => (text[..text.len() - 1].to_string(), format!(" {prefix}{byte}")),
+        None => (text, format!(" {byte}")),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn point_deltas_print_the_board_languages_unit() {
+        let de = display_text::language::Language::new("de").unwrap();
+        let out = display_text::language::with_language(de, || {
+            predefined_native("percentage_points_delta", 1.5)
+        });
+        assert_eq!(out.unwrap().unwrap(), ("+1.5".to_string(), " Pkt.".to_string()));
+        assert_eq!(predefined_native("percentage_points_delta", 1.5).unwrap().unwrap().1, " pts");
+    }
 }

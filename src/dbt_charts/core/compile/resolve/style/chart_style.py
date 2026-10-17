@@ -20,7 +20,10 @@ from dbt_charts.core.compile.resolve.style.board import _seed_spark_colors
 from dbt_charts.core.compile.resolve.style.inherit_graph import get_inherit_graph
 from dbt_charts.core.compile.resolve.style.inherit_resolver import (
     apply_inherit,
+    assert_style_total,
     defer_base_none_children,
+    merge_unset,
+    unset_autos,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import without_engine_decided
 from dbt_charts.core.compile.resolve.style.palette import ink_canvas
@@ -242,9 +245,7 @@ def merge_chart_style(
                 charts_family_patch[_key] = _fam_patch
             else:
                 # Synthesized resolved-only family (spark): merge onto the base.
-                overrides[_key] = merge_onto_base(
-                    getattr(base_charts, _key), _fam_patch
-                )
+                overrides[_key] = merge_unset(getattr(base_charts, _key), _fam_patch)
         if primary is not None:
             _dt_patch = getattr(
                 primary, "support_table", None
@@ -294,6 +295,8 @@ def merge_chart_style(
                         )
                     }
                 )
+        assert_style_total(cascaded_pre)
+        cascaded_pre = unset_autos(cascaded_pre)
         emoji_family = _EMOJI_MODE_TO_FAMILY.get(cascaded_pre.font.emoji)
         # Extract every family that had a style patch — needed for font
         # propagation (a family-root font patch reaches its descendant leaves
@@ -402,7 +405,7 @@ def merge_chart_style(
             # Placement, direction and visibility are decided per chart (`_base_kwargs`).
             _family_patch = without_engine_decided(_family_patch)
         if _family_patch is not None:
-            _effective = merge_onto_base(_effective, _family_patch)
+            _effective = merge_unset(_effective, _family_patch)
         _local = None
         if primary is not None:
             _local = getattr(
@@ -411,7 +414,7 @@ def merge_chart_style(
         if _field == "legend":
             _local = without_engine_decided(_local)
         if _local is not None:
-            _effective = merge_onto_base(_effective, _local)
+            _effective = merge_unset(_effective, _local)
         if _effective is not _global:
             overrides[_field] = _effective
 

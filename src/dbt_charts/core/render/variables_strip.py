@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Literal
 
 from dbt_charts.core.compile.models.style.theme import font_weight_as_css
 from dbt_charts.core.font_measure import centered_baseline_offset
-from dbt_charts.core.render.controls import controls_are_interactive
+from dbt_charts.core.render.controls import controls_are_interactive, controls_language
 from dbt_charts.core.render.svg_utils import (
     attr_name,
     authored_attrs,
@@ -45,12 +45,16 @@ from dbt_charts.core.render.variables_layout import (
 )
 from dbt_charts.core.render.variables_resolve import (
     FREE_ENTRY_INPUTS,
-    UNSET_DATE_LABEL,
-    UNSET_DATERANGE_LABEL,
-    UNSET_SELECT_LABEL,
+    UNSET_DATE_MESSAGE,
+    UNSET_DATERANGE_MESSAGE,
+    UNSET_SELECT_MESSAGE,
     read_only_unset_label,
 )
-from dbt_charts.core.text.format_d3 import active_time_locale, active_week_start
+from dbt_charts.core.text.format_d3 import (
+    active_time_locale,
+    active_week_start,
+    board_word,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -124,8 +128,13 @@ def render_variables_strip_svg(
     # The border color rides on the group as a custom property: the board's
     # stylesheet names the property, the render supplies the theme's value, and
     # the two stay independent.
+    language = (
+        f' data-dbt-language="{escape_attr(json.dumps(controls_language()))}"'
+        if controls_are_interactive()
+        else ""
+    )
     return (
-        f'<g data-dbt-variables="true" '
+        f'<g data-dbt-variables="true"{language} '
         f'style="--dbt-variable-field-border: '
         f'{escape_attr(css_color(variables_style.border.color))}">'
         f'{anchor}<g data-dbt-variables-static="true">{"".join(drawn)}</g></g>',
@@ -204,7 +213,7 @@ def _draw_control(
         f'<text{label_kind} x="{px(x)}" y="{px(baseline)}" '
         f'font-size="{px(font_size)}" '
         f'font-weight="{escape_attr(weight)}" font-family="{escape_attr(family)}" '
-        f'fill="{escape_attr(variables_style.label.font.color)}">{html.escape(box.label)}:</text>'
+        f'fill="{escape_attr(variables_style.label.font.color)}">{html.escape(board_word("controls.field_label", label=box.label))}</text>'
     ]
     parts.extend(
         _draw_field(
@@ -271,11 +280,11 @@ def _draw_control(
     unset_style = traits_of(box.input).unset
     if unset_style != "none":
         default_label = (
-            UNSET_SELECT_LABEL
+            UNSET_SELECT_MESSAGE
             if unset_style == "chooser"
-            else UNSET_DATE_LABEL
+            else UNSET_DATE_MESSAGE
             if unset_style == "date"
-            else UNSET_DATERANGE_LABEL
+            else UNSET_DATERANGE_MESSAGE
         )
         unset = f' data-dbt-can-unset="{"true" if control.can_unset else "false"}"'
         if control.can_unset:

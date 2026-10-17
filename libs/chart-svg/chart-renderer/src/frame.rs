@@ -136,7 +136,7 @@ impl FrameTitle {
         let text = title
             .map(|t| {
                 let case = style.as_ref().and_then(|s| s.font.case.as_deref()).unwrap_or("none");
-                crate::case::apply_case(t, case)
+                display_text::case::apply_case(t, case)
             })
             .transpose()?;
         let block = crate::common::wrap_title_block(

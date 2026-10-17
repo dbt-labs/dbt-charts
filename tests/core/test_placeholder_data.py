@@ -9,6 +9,7 @@ from dbt_charts.core.compile.config import (
     get_default_theme_name,
     get_theme_style,
 )
+from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.render.placeholder import generate_placeholder_data
 
 
@@ -174,10 +175,7 @@ class TestPlaceholderOverlayText:
 
     def test_overlay_text_is_user_friendly(self):
         """Overlay text should be user-friendly."""
-        # Should be something like "add data" or similar
-        assert (
-            "data"
-            in get_theme_style(
-                get_default_theme_name()
-            ).placeholder.overlay.text.lower()
-        )
+        # The theme leaves it `auto`; resolving the style words it.
+        theme = get_theme_style(get_default_theme_name())
+        assert theme.placeholder.overlay.text == "auto"
+        assert "data" in resolve_style(theme).placeholder.overlay.text.lower()

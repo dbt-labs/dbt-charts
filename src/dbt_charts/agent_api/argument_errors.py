@@ -12,9 +12,9 @@ import json
 from pydantic import ValidationError
 from pydantic_core import ErrorDetails
 
-#: Pydantic names the failing member of a ``str | int | float | bool`` union in
-#: the error location; these are the tags our tool arguments use.
-_UNION_MEMBER_TAGS = frozenset({"str", "int", "float", "bool"})
+#: Pydantic names the failing member of a ``str | int | float | bool | list[str]``
+#: union in the error location; these are the tags our tool arguments use.
+_UNION_MEMBER_TAGS = frozenset({"str", "int", "float", "bool", "list[str]"})
 
 
 def format_argument_error(tool: str, exc: ValidationError) -> str:

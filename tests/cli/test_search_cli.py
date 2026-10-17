@@ -202,5 +202,5 @@ class TestDftSearchShowsMatchedCharts:
         )
         assert result.exit_code == 0, result.output
         lines = [line.strip() for line in result.output.splitlines()]
-        assert "chart k_revenue (kpi): Revenue" in lines
+        assert "chart k_revenue" in lines
         assert "k_orders" not in result.output

@@ -113,6 +113,35 @@ def test_unsafe_scheme_rejected_on_header_link(link: str) -> None:
     assert result.errors[0].code == "ERR-LINK-SCHEME-UNSAFE"
 
 
+def _board_with_object_column_link(key: str, link: str) -> str:
+    return f"""
+title: T
+queries:
+  q:
+    source: db
+    sql: SELECT 'Jan' AS month, 100 AS revenue
+charts:
+  t:
+    query: q
+    type: table
+    style:
+      columns:
+        month:
+          {key}:
+            url: {_yaml_dquote(link)}
+            open: modal
+rows:
+  - t
+"""
+
+
+@pytest.mark.parametrize("key", ["link", "header_link"])
+def test_unsafe_scheme_rejected_on_object_column_link(key: str) -> None:
+    result = compile_board(_board_with_object_column_link(key, "javascript:alert(1)"))
+    assert not result.success
+    assert result.errors[0].code == "ERR-LINK-SCHEME-UNSAFE"
+
+
 def test_template_prefix_fixes_scheme() -> None:
     """`/x?id={{ id }}` is safe whatever the row holds — the literal prefix
     already fixes a board-path destination."""

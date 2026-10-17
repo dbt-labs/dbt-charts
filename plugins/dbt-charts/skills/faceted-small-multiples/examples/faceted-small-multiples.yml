@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Signups by Channel
+notes: Faceted small multiples pattern — one series per segment via color encoding
+
+queries:
+  signups_by_channel:
+    notes: Monthly signups broken down by acquisition channel
+    columns: [month, channel, signups]
+    values:
+      - ["2026-01-01", Organic,  90]
+      - ["2026-01-01", Paid,     40]
+      - ["2026-01-01", Partner,  18]
+      - ["2026-02-01", Organic, 105]
+      - ["2026-02-01", Paid,     48]
+      - ["2026-02-01", Partner,  22]
+      - ["2026-03-01", Organic, 118]
+      - ["2026-03-01", Paid,     52]
+      - ["2026-03-01", Partner,  29]
+      - ["2026-04-01", Organic, 134]
+      - ["2026-04-01", Paid,     58]
+      - ["2026-04-01", Partner,  34]
+
+charts:
+  signups_trend:
+    notes: Signup trend faceted by channel — one colored series per channel
+    type: area
+    query: signups_by_channel
+    x: month
+    y: signups
+    color: channel
+    title: Monthly Signups by Channel
+
+rows:
+  - signups_trend

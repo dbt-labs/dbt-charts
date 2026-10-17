@@ -11,13 +11,10 @@ use crate::constants::axis::MAX_ORDINAL_BUCKETS;
 
 use super::temporal::{
     days_from_civil, detect_time_unit, floor_to_bucket_start, infer_vega_type, parse_bucket_string,
-    TimeUnit, VegaType,
+    TimePart, TimeUnit, VegaType,
 };
 
 type Row = Map<String, Value>;
-
-/// Cyclic time parts stay temporal (`TIME_PART_UNITS`).
-const TIME_PART_UNITS: [&str; 5] = ["monthofyear", "dayofweek", "dayofmonth", "dayofyear", "hourofday"];
 
 /// What the law reads off the resolved x axis.
 pub struct XAxis<'a> {
@@ -70,7 +67,7 @@ pub enum Grain {
     None,
     Calendar(TimeUnit),
     /// A cyclic time part (`monthofyear`, ...): always temporal.
-    Part,
+    Part(TimePart),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,8 +320,7 @@ pub fn resolve_cartesian_x_type(
         },
         Some(name) => match super::temporal::parse_authored_time_unit(name) {
             Some(unit) => Grain::Calendar(unit),
-            None if TIME_PART_UNITS.contains(&name) => Grain::Part,
-            None => Grain::None,
+            None => TimePart::parse(name).map_or(Grain::None, Grain::Part),
         },
     };
     if mark == "heatmap" {
@@ -346,7 +342,7 @@ pub fn resolve_cartesian_x_type(
         }
         _ => true,
     };
-    let mut vl_type = if axis.authored_type == Some("temporal") || authored_none || grain == Grain::Part {
+    let mut vl_type = if axis.authored_type == Some("temporal") || authored_none || matches!(grain, Grain::Part(_)) {
         VegaType::Temporal
     } else if axis.authored_type == Some("ordinal") {
         VegaType::Ordinal
@@ -470,7 +466,7 @@ mod tests {
                 Grain::None if axis.time_unit == Some("none") => Value::from("none"),
                 Grain::None => Value::Null,
                 Grain::Calendar(tu) => Value::from(format!("{tu:?}").to_lowercase()),
-                Grain::Part => want["time_unit"].clone(),
+                Grain::Part(_) => want["time_unit"].clone(),
             };
             assert_eq!(grain, want["time_unit"], "{label}");
         }

@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from dbt_charts.core.compile.models.primitives import FontStyle, ResolvedFontStyle
-from dbt_charts.core.utils import slug_to_text
+from dbt_charts.core.text.humanize import slug_to_text
 
 # ---------------------------------------------------------------------------
 # slug_to_text: tokenization and suffix/abbreviation expansion only — no casing

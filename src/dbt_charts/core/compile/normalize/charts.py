@@ -45,7 +45,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     TableChart,
 )
 from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import FormatConfig, split_link
 from dbt_charts.core.compile.models.query.authored import _BaseQueryFields
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.refs import QueryRef
@@ -316,6 +316,9 @@ def normalize_chart(
     # narrowed off the authored model), same rationale as title/subtitle above.
     conditional_formatting = getattr(authored, "conditional_formatting", None)
 
+    link, link_open = (
+        (False, "page") if authored.link is False else split_link(authored.link)
+    )
     # --- Common base fields ---
     base: dict[str, Any] = {
         "id": chart_id,
@@ -328,7 +331,8 @@ def normalize_chart(
         "query_is_inline": query_is_inline,
         "notes": authored.notes
         or "",  # type-state: silent_fallback — as title/subtitle
-        "link": authored.link,
+        "link": link,
+        "link_open": link_open,
         "conditional_formatting": conditional_formatting,
         "warnings_ignore": list(authored.warnings_ignore or []),
     }

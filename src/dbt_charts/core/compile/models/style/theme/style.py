@@ -188,15 +188,19 @@ class Style(BaseModel):
     )
     # padding/margin are per-board and never theme-populated; NotInherited
     # keeps an ancestor's value from crossing into a nested board.
-    padding: Annotated[SpacingValues | None, NotInherited()] = Field(
+    padding: Annotated[
+        SpacingValues | None, NotInherited(), Absent("no per-board override")
+    ] = Field(
         default=None,
         description="Per-board padding override (CSS shorthand or structured).",
     )
-    margin: Annotated[SpacingValues | None, NotInherited()] = Field(
+    margin: Annotated[
+        SpacingValues | None, NotInherited(), Absent("no per-board override")
+    ] = Field(
         default=None,
         description="Per-board margin override (CSS shorthand or structured).",
     )
-    gap: float | None = Field(
+    gap: Annotated[float | None, Absent("the layout type's own gap")] = Field(
         default=None, description="Gap between layout items in pixels."
     )
 

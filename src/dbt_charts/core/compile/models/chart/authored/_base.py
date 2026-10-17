@@ -34,7 +34,7 @@ from dbt_charts.core.compile.models.constraints import (
     ValueIn,
 )
 from dbt_charts.core.compile.models.markers import Channel, Color, DisplayText, Url
-from dbt_charts.core.compile.models.primitives import CHANNEL_COLUMN, ErrorHint
+from dbt_charts.core.compile.models.primitives import CHANNEL_COLUMN, ErrorHint, Link
 from dbt_charts.core.compile.models.query.authored import AuthoredQuery
 from dbt_charts.core.compile.models.refs import (
     QueryRef,
@@ -240,13 +240,14 @@ class _BaseChartFields(ConstrainedModel):
         ),
     ]
     link: Annotated[
-        str | Literal[False] | None,
+        str | Link | Literal[False] | None,
         BeforeValidator(_reject_numeric_link),
         Url(),
         Field(
             default=None,
             description=(
-                "Click-through URL template for drill-down links. Set to false "
+                "Click-through URL template for drill-down links, or {url, open} "
+                "to choose how a click opens the target. Set to false "
                 "to suppress this chart's automatic link on a board with "
                 "auto_link: true; table column links are unaffected."
             ),

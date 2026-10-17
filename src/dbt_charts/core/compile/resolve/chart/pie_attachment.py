@@ -28,6 +28,7 @@ from dbt_charts.core.compile.resolve.chart.label_data import (
     prepare_pie_label_data,
     project_pie_table_rows,
 )
+from dbt_charts.core.compile.resolve.style.inherit_resolver import settled
 from dbt_charts.core.constants.pie import (
     ATTACHED_TABLE_GAP_PX,
     INVISIBLE_SLICE_SHARE,
@@ -307,10 +308,8 @@ def build_attached_table_columns(
     value_format: ResolvedFormat | None,
     table_style: TableChartStyle,
 ) -> tuple[dict[str, TableColumnConfig], float]:
-    font_family = table_style.font.family
-    font_size = table_style.font.size
-    if font_family is None or font_size is None:
-        raise ValueError("attached table font is incomplete after cascade")
+    font_family = settled(table_style.font.family)
+    font_size = settled(table_style.font.size)
     measurer = get_font_measurer(font_family)
     cell_pad = table_style.column_layout.cell_padding
 

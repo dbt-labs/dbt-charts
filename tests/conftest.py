@@ -45,6 +45,7 @@ from dbt_charts.core.project import (
     ProjectDirectory,
     ProjectFileQueries,
     ProjectPath,
+    ascii_lower,
     assert_relpath,
     glob_literal_prefix,
     glob_to_regex,
@@ -426,14 +427,18 @@ class InMemoryFileQueries(ProjectFileQueries):
             if regex.match(relpath):
                 yield ProjectPath(self._project, relpath)
 
-    def grep(self, term: str, glob: str = ALL_FILES_GLOB) -> Iterator[GrepHit]:
+    def grep(
+        self, term: str, glob: str = ALL_FILES_GLOB, ignore_case: bool = False
+    ) -> Iterator[GrepHit]:
+        if ignore_case:
+            term = ascii_lower(term)
         for pf in self.glob(glob):
             try:
                 text = pf.read_text()
             except (ExecutionError, OSError, UnicodeDecodeError):
                 continue  # skip binary / unreadable / vanished / oversized files
             for i, line in enumerate(text.splitlines(), start=1):
-                if term in line:
+                if term in (ascii_lower(line) if ignore_case else line):
                     yield GrepHit(pf.relpath, i, line)
 
 

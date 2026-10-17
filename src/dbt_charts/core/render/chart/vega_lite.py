@@ -271,6 +271,9 @@ def _render_vl_artifact(
         # this cannot share that guard — a horizontal bar's per-series
         # column strip needs this stamp too.
         vl["$df_stacked_series_order"] = chart_spec.stacked_series_order
+    if resolved.link_open != "page":
+        # vl_convert writes the anchors; _fix_chart_click_hrefs stamps them.
+        vl["$df_link_open"] = resolved.link_open
     if "facet" in vl:
         # Small multiples: per-panel width/height go on the inner unit spec, while
         # padding and title frame the whole set at the facet root. Facet is mutually

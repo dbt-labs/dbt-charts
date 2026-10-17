@@ -44,6 +44,8 @@ def _project(slug: str, repo_label: str) -> dict[str, object]:
         "work_branch": f"dbt-charts/{slug}",
         "git_subdirectory": "",
         "unmapped_source_count": 0,
+        "git_host": "github",
+        "git_auth": "app",
     }
 
 
@@ -190,7 +192,7 @@ class TestResolveProject:
                 start=tmp_path,
             )
 
-        assert "dct cloud project connect --org acme-data" in str(caught.value)
+        assert "dct cloud project connect <host> --org acme-data" in str(caught.value)
 
     def test_no_project_anywhere_with_two_orgs_leaves_the_org_to_the_caller(
         self,
@@ -215,7 +217,7 @@ class TestResolveProject:
             )
 
         message = str(caught.value)
-        assert "dct cloud project connect --org <org>" in message
+        assert "dct cloud project connect <host> --org <org>" in message
         assert "--org acme-data" not in message
 
     def test_a_refusing_verb_with_nothing_to_delete_still_says_why(

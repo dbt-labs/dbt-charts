@@ -399,7 +399,7 @@ def test_svg_postprocess_strips_sentinel_and_fixes_href_attribute():
         '<path d="M2,0"/></a>'
         "</g>"
     )
-    result = _fix_chart_click_hrefs(svg_input)
+    result = _fix_chart_click_hrefs(svg_input, "page")
 
     assert '<a href="?region_var=January">' in result
     assert '<a href="/detail?month=February">' in result
@@ -413,24 +413,27 @@ def test_svg_postprocess_does_not_double_escape_multi_param_link():
     from dbt_charts.core.render.converters.chart import _fix_chart_click_hrefs
 
     svg_input = '<a xlink:href="http://dct.invalid/detail?x=1&amp;y=2"><path/></a>'
-    result = _fix_chart_click_hrefs(svg_input)
+    result = _fix_chart_click_hrefs(svg_input, "page")
 
     assert '<a href="/detail?x=1&amp;y=2">' in result
     assert "&amp;amp;" not in result
 
 
-def test_svg_postprocess_leaves_external_hrefs_untouched():
-    """Non-sentinel xlink:href values (external navigation) are left as-is."""
+def test_svg_postprocess_keeps_external_url_as_plain_href():
+    """A non-sentinel (external) link keeps its URL, as the same plain `href`
+    every chart anchor carries, so one click handler reads them all."""
     from dbt_charts.core.render.converters.chart import _fix_chart_click_hrefs
 
     svg_input = (
         '<a xlink:href="https://example.com/detail?name=O\'Brien&amp;month=January">'
         "<path/></a>"
     )
-    result = _fix_chart_click_hrefs(svg_input)
+    result = _fix_chart_click_hrefs(svg_input, "page")
 
-    # External URL must remain unchanged
-    assert result == svg_input
+    assert result == (
+        '<a href="https://example.com/detail?name=O&#x27;Brien&amp;month=January">'
+        "<path/></a>"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -503,7 +506,7 @@ def test_svg_postprocess_applies_board_resolver_for_serve():
     set_link_context(ctx)
     try:
         svg_input = '<a xlink:href="http://dct.invalid/zendesk/tickets/detail?id=42"><path/></a>'
-        result = _fix_chart_click_hrefs(svg_input)
+        result = _fix_chart_click_hrefs(svg_input, "page")
     finally:
         set_link_context(None)
 
@@ -520,7 +523,7 @@ def test_svg_postprocess_query_string_link_unchanged_by_board_resolver():
     set_link_context(ctx)
     try:
         svg_input = '<a xlink:href="http://dct.invalid?region_var=North"><path/></a>'
-        result = _fix_chart_click_hrefs(svg_input)
+        result = _fix_chart_click_hrefs(svg_input, "page")
     finally:
         set_link_context(None)
 
@@ -678,7 +681,9 @@ rows:
     assert '<g class="dbt-table-link"' not in svg
     assert 'class="dbt-table-link-text"' not in svg
     # Row-hover selection background CSS is present and distinct from link text.
-    assert re.search(rf"\.{_ROW_LINK_CLASS}:hover", controls_stylesheet()) is not None
+    assert re.search(
+        rf"\.dbt-table-row:hover \.{_ROW_LINK_CLASS}\b", controls_stylesheet()
+    )
     assert (
         re.search(rf'class="{_ROW_LINK_CLASS}"[^>]*style="--dbt-link: ', svg)
         is not None
@@ -833,6 +838,7 @@ rows:
     assert "a:focus-visible .dbt-table-link-text" in css
     assert "text-decoration-thickness: 1px" in css
     assert "text-underline-offset: 1px" in css
+    assert re.search(r"\.dbt-chart a text\s*\{\s*cursor: pointer;", css)
     assert ".dbt-table-link:hover" not in svg
     assert f'fill="{board_style.font.color}"' in svg
     assert 'font-weight="500"' in svg

@@ -237,13 +237,13 @@ class NoPendingLogin(CloudError):
 
 
 class NoPendingConnect(CloudError):
-    """`dct cloud project connect --wait` found no connect `--start` began."""
+    """`dct cloud project connect github --wait` found no connect `--start` began."""
 
     code: ClassVar[ErrorCode] = ErrorCode.INVALID_REQUEST
 
     def __init__(self) -> None:
         super().__init__(
-            "No pending connect. Run `dct cloud project connect --start` first."
+            "No pending connect. Run `dct cloud project connect github --start` first."
         )
 
 

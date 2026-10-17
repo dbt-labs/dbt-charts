@@ -2,6 +2,9 @@
 name = "display-text"
 version = "0.0.1"
 edition = "2021"
-description = "Display text derived from column names: core/utils.py::slug_to_text and core/text/case.py::field_title, shared by compile and chart-renderer."
+description = "Display text shared by compile, resolve and chart-renderer: names derived from columns (core/text/humanize.py::slug_to_text, core/text/case.py::field_title) and the board language's word catalogs (language/<lang>.json)."
 
 [dependencies]
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }

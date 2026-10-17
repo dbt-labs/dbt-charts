@@ -73,7 +73,7 @@ from dbt_charts.core.diagnostics import (
 )
 from dbt_charts.core.render.warnings.base import WarningContext
 from dbt_charts.core.text.numeral_scale import UNCOMPACTED_COLUMN_SPEC
-from dbt_charts.core.utils import UNIT_SUFFIXES, Rows, coerce_numeric_cell
+from dbt_charts.core.utils import Rows, coerce_numeric_cell
 
 # Cartesian chart types whose y-axis renders and may need a format. Overlay
 # layers ride on one of these base types, so they need no entry of their own.
@@ -123,8 +123,8 @@ _PERCENT_BARE_NAMES: frozenset[str] = frozenset(
 )
 
 # Trailing "_<code>" tokens whose symbol the fix suggestion names (from
-# core/utils.py's UNIT_SUFFIXES). "usd" is excluded: the dollar spec fits.
-_CURRENCY_CODE_TOKENS = ("eur", "gbp")
+# core/text/humanize.py's unit suffixes). "usd" is excluded: the dollar spec fits.
+_CURRENCY_SYMBOLS = {"eur": "€", "gbp": "£"}
 
 
 def _classify(field_name: str) -> str | None:
@@ -169,9 +169,9 @@ def _currency_format_hint(field: str) -> str:
     currency (``revenue_eur`` -> "€"), else the dollar spec."""
     tokens = field.lower().split("_")
     code = tokens[-1] if len(tokens) > 1 else ""
-    if code not in _CURRENCY_CODE_TOKENS:
+    if code not in _CURRENCY_SYMBOLS:
         return "a currency format (e.g. `$,.2f`)"
-    symbol = UNIT_SUFFIXES[code].strip("()")
+    symbol = _CURRENCY_SYMBOLS[code]
     return f"a `,.2f` format with `prefix: {symbol!r}`"
 
 

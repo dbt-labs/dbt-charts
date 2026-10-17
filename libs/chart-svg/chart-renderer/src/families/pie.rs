@@ -106,6 +106,8 @@ struct Resolved {
     /// production's `if not chart.link`.
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
     link: Option<String>,
+    /// How `link` opens (`ResolvedChart.link_open`).
+    link_open: crate::href::LinkOpen,
 }
 
 // ── Attached table ────────────────────────────────────────────────────────────
@@ -202,6 +204,7 @@ fn render_attached_table_svg(
         fonts_dir: payload.fonts_dir.clone(),
         padding: None,
         board_style: payload.board_style.clone(),
+        language: None,
         variables: payload.variables.clone(),
         filter_variables: payload.filter_variables.clone(),
         interactive_controls: payload.interactive_controls,
@@ -855,18 +858,18 @@ fn draw_pie_fit(
             )?),
             None => None,
         };
-        let label_attr = crate::contract::aria_attr(aria.as_deref(), crate::contract::ItemRole::ArcMark);
+        let label_attr = crate::contract::aria_attr(aria.as_deref(), crate::contract::ItemRole::ArcMark)?;
         let href = row_href(r, payload_rows, slice.index)?;
         if aria.is_some() {
-            crate::contract::mark_group_open(&mut svg, "arc", "layer_0_marks");
+            crate::contract::mark_group_open(&mut svg, "arc", "layer_0_marks")?;
         }
-        svg.push_str(&crate::href::anchor_open(href.as_deref()));
+        svg.push_str(&crate::href::anchor_open(r.link_open.anchor(href.as_deref())));
         let _ = write!(
             svg,
             "<path d=\"{path}\" fill=\"{fill}\"{stroke_attrs}{label_attr}/>",
             fill = xml_escape_attr(&fill)
         );
-        svg.push_str(crate::href::anchor_close(href.as_deref()));
+        svg.push_str(crate::href::anchor_close(r.link_open.anchor(href.as_deref())));
         if aria.is_some() {
             crate::contract::mark_group_close(&mut svg);
         }
@@ -887,7 +890,7 @@ fn draw_pie_fit(
             let value_color = value_font.color.as_deref().unwrap_or("#000");
             let value_y = cy + vega_fit::baseline_shift("bottom", value_size);
             crate::contract::hidden_mark_group_open(&mut svg, "text", "layer_1_marks");
-            svg.push_str(&crate::href::anchor_open(total_href.as_deref()));
+            svg.push_str(&crate::href::anchor_open(r.link_open.anchor(total_href.as_deref())));
             let _ = write!(
                 svg,
                 "<text x=\"{cx:.2}\" y=\"{value_y:.2}\" text-anchor=\"middle\" \
@@ -896,7 +899,7 @@ fn draw_pie_fit(
                 value_font.style_attr(),
                 xml_escape(formatted), value_family = vega_escape_attr(value_family), value_weight = xml_escape_attr(&value_weight), value_color = xml_escape_attr(value_color)
             );
-            svg.push_str(crate::href::anchor_close(total_href.as_deref()));
+            svg.push_str(crate::href::anchor_close(r.link_open.anchor(total_href.as_deref())));
             crate::contract::mark_group_close(&mut svg);
             if let Some(label_text) = &total_cfg.label {
                 let label_font = &r.style.total_style.label.font;
@@ -906,7 +909,7 @@ fn draw_pie_fit(
                 let label_color = label_font.color.as_deref().unwrap_or("#000");
                 let label_y = cy + vega_fit::baseline_shift("top", label_size);
                 crate::contract::hidden_mark_group_open(&mut svg, "text", "layer_2_marks");
-                svg.push_str(&crate::href::anchor_open(total_href.as_deref()));
+                svg.push_str(&crate::href::anchor_open(r.link_open.anchor(total_href.as_deref())));
                 let _ = write!(
                     svg,
                     "<text x=\"{cx:.2}\" y=\"{label_y:.2}\" text-anchor=\"middle\" \
@@ -915,7 +918,7 @@ fn draw_pie_fit(
                     label_font.style_attr(),
                     xml_escape(label_text), label_family = vega_escape_attr(label_family), label_weight = xml_escape_attr(&label_weight), label_color = xml_escape_attr(label_color)
                 );
-                svg.push_str(crate::href::anchor_close(total_href.as_deref()));
+                svg.push_str(crate::href::anchor_close(r.link_open.anchor(total_href.as_deref())));
                 crate::contract::mark_group_close(&mut svg);
             }
         }
@@ -941,12 +944,12 @@ fn draw_pie_fit(
                 }
                 None => None,
             };
-            let label_attr = crate::contract::aria_attr(label_aria.as_deref(), crate::contract::ItemRole::TextMark);
+            let label_attr = crate::contract::aria_attr(label_aria.as_deref(), crate::contract::ItemRole::TextMark)?;
             let label_href = row_href(r, payload_rows, sl.idx)?;
             if label_aria.is_some() {
-                crate::contract::mark_group_open(&mut svg, "text", "layer_3_marks");
+                crate::contract::mark_group_open(&mut svg, "text", "layer_3_marks")?;
             }
-            svg.push_str(&crate::href::anchor_open(label_href.as_deref()));
+            svg.push_str(&crate::href::anchor_open(r.link_open.anchor(label_href.as_deref())));
             let _ = write!(
                 svg,
                 "<text x=\"{x}\" y=\"{}\" text-anchor=\"{anchor}\" \
@@ -965,7 +968,7 @@ fn draw_pie_fit(
                 );
             }
             let _ = write!(svg, "</text>");
-            svg.push_str(crate::href::anchor_close(label_href.as_deref()));
+            svg.push_str(crate::href::anchor_close(r.link_open.anchor(label_href.as_deref())));
             if label_aria.is_some() {
                 crate::contract::mark_group_close(&mut svg);
             }
@@ -1324,6 +1327,7 @@ mod tests {
     fn make_pie_payload(total: Value) -> Value {
         json!({
             "resolved": {
+                "link_open": "page",
                 "id": "pie",
                 "chart_type": "pie",
                 "theta": "revenue",
@@ -1546,7 +1550,7 @@ mod tests {
         assert!(labeled.contains(">Department<") && !labeled.contains(">Category<"), "{labeled}");
     }
 
-    /// `chart_interactivity.js`'s `RECEDE_ROLES` matches `arc mark`
+    /// `chart_interactivity.js`'s `RECEDE_ROLES` matches `arc`
     /// literally: only an arc stamped so recedes on hover. The center total's
     /// text carries a description too but a different role, so it never
     /// enters the recede set.
@@ -1973,11 +1977,12 @@ mod tests {
         theme["outer_padding"] = json!(0.0);
         theme["pagination"] = json!({"enabled": false});
         json!({
+            "link_open": "page",
             "columns": {
-                "swatch": {"width": 24, "swatch": true},
-                "share": {"width": 44, "align": "right"},
-                "name": {"width": 83},
-                "value": {"width": 61, "align": "right"}
+                "swatch": {"width": 24, "swatch": true, "link_open": "page", "header_link_open": "page"},
+                "share": {"width": 44, "align": "right", "link_open": "page", "header_link_open": "page"},
+                "name": {"width": 83, "link_open": "page", "header_link_open": "page"},
+                "value": {"width": 61, "align": "right", "link_open": "page", "header_link_open": "page"}
             },
             "title_style": crate::families::table::tests::resolved_title_style(),
             "style": {
@@ -2685,6 +2690,25 @@ mod tests {
         }
     }
 
+    /// A modal link stamps every wedge anchor; page and missing stamp nothing.
+    #[test]
+    fn a_link_mode_stamps_only_modal_wedge_anchors() {
+        let render_with = |mode: Option<&str>| {
+            let mut p = linked_pie_payload("/c/");
+            if let Some(mode) = mode {
+                p["resolved"]["link_open"] = json!(mode);
+            }
+            render(&make_payload(p), &test_fonts())
+        };
+        let page = render_with(None).unwrap();
+        assert_eq!(render_with(Some("page")).unwrap(), page);
+        assert!(!page.contains("data-dbt-link-open"), "{page}");
+        let modal = render_with(Some("modal")).unwrap();
+        assert_eq!(modal.matches("<a href=\"/c/\" data-dbt-link-open=\"modal\">").count(), 3, "{modal}");
+        let err = render_with(Some("popup")).unwrap_err();
+        assert!(err.contains("popup"), "{err}");
+    }
+
     /// A pie with no `tooltip_format` draws no `.role-mark` group; its link
     /// still wraps each wedge path.
     #[test]
@@ -2715,6 +2739,23 @@ mod tests {
             ],
             "{svg}"
         );
+    }
+
+    /// The center-total value and caption texts and each slice label carry the
+    /// chart's link mode like the wedges: 3 wedges + 2 total texts + 3 labels.
+    #[test]
+    fn a_modal_link_stamps_the_total_and_slice_label_anchors() {
+        let mut p = make_pie_payload_with_labels("{{ category }}");
+        p["resolved"]["total"] = json!({"visible": true, "label": "Total Revenue"});
+        p["resolved"]["style"]["tooltip_format"] = json!(",.2~f");
+        p["resolved"]["link"] = json!("/c/");
+        let page = render(&make_payload(p.clone()), &test_fonts()).expect("renders");
+        assert_eq!(page.matches("<a href=\"/c/\">").count(), 8, "{page}");
+        assert!(!page.contains("data-dbt-link-open"), "{page}");
+        p["resolved"]["link_open"] = json!("modal");
+        let modal = render(&make_payload(p), &test_fonts()).expect("renders");
+        assert_eq!(modal.matches("<a href=\"/c/\" data-dbt-link-open=\"modal\">").count(), 8, "{modal}");
+        assert_eq!(modal.matches("data-dbt-link-open").count(), 8, "{modal}");
     }
 
     /// A pie has no `x`/`y` encoding: production raises at spec build

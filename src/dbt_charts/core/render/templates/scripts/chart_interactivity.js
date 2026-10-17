@@ -533,10 +533,16 @@
     /*{# color encodes identity or magnitude -- is the isMagnitudeColored() #}*/
     /*{# check further down, and the two are independent: a heatmap cell is #}*/
     /*{# geometry-eligible here regardless of which palette it uses. #}*/
-    const RECEDE_ROLES = ['bar', 'arc mark', 'rect mark'];
+    const RECEDE_ROLES = ['bar', 'arc', 'rect'];
+    /*{# Stored renders without data-dct-role are English. #}*/
+    const LEGACY_RECEDE_ROLES = ['bar', 'arc mark', 'rect mark'];
 
     function isRecedableMark(el) {
-        return RECEDE_ROLES.indexOf(el.getAttribute('aria-roledescription')) !== -1;
+        const role = el.getAttribute('data-dct-role');
+        if (role === null) {
+            return LEGACY_RECEDE_ROLES.indexOf(el.getAttribute('aria-roledescription')) !== -1;
+        }
+        return RECEDE_ROLES.indexOf(role) !== -1;
     }
 
     /*{# A mark translucent at rest keeps its paint: its color on screen #}*/
@@ -825,7 +831,8 @@
     /*{# split into rows", and a band's foot is that plot's floor. #}*/
     function yAxisBands(chartEl) {
         const bands = [];
-        chartEl.querySelectorAll('.role-axis[aria-label^="Y-axis"]').forEach(function (axis) {
+        /*{# Stored renders without data-dct-role are English. #}*/
+        chartEl.querySelectorAll('.role-axis[data-dct-role="y-axis"], .role-axis:not([data-dct-role])[aria-label^="Y-axis"]').forEach(function (axis) {
             const r = axis.getBoundingClientRect();
             if (r.height <= 0) return;
             for (let i = 0; i < bands.length; i++) {
@@ -873,7 +880,8 @@
     /*{# a chart with just one column, or a row facet (already routed through #}*/
     /*{# yAxisBands' `bands.length > 1` branch below before this is reached). #}*/
     function panelXAxis(mark, chartEl) {
-        const axes = chartEl.querySelectorAll('.role-axis[aria-label^="X-axis"] > g');
+        /*{# Stored renders without data-dct-role are English. #}*/
+        const axes = chartEl.querySelectorAll('.role-axis[data-dct-role="x-axis"] > g, .role-axis:not([data-dct-role])[aria-label^="X-axis"] > g');
         if (axes.length < 2) return axes[0] || null;
         const cell = mark.closest('.role-scope.cell');
         if (!cell) return axes[0];
@@ -1048,8 +1056,9 @@
     function isStrokedMark(mark) {
         const fill = mark.getAttribute('fill');
         if ((!fill || fill === 'none') && markSeriesColor(mark)) return true;
-        return mark.getAttribute('aria-roledescription') === 'point' &&
-            mark.getAttribute('opacity') === '0';
+        /*{# Stored renders without data-dct-role are English. #}*/
+        const role = mark.getAttribute('data-dct-role') ?? mark.getAttribute('aria-roledescription');
+        return role === 'point' && mark.getAttribute('opacity') === '0';
     }
 
     /*{# A mark's paint value is authored markup; only a color-shaped one may #}*/

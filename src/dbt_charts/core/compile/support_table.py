@@ -23,7 +23,6 @@ from dbt_charts.core.compile.format import (
     reject_native,
     resolve_format_parts,
 )
-from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.authored import (
     ChartSupportTable,
     ChartSupportTableAggregate,
@@ -50,6 +49,7 @@ from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.theme import SupportTableStyle
 from dbt_charts.core.compile.resolve.chart._channels import _column_numeric_values
 from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
+from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset, settled
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_SUPPORT_TABLE_LABEL_IGNORED,
     ERR_SUPPORT_TABLE_POSITION_INVALID,
@@ -139,7 +139,7 @@ def resolve_effective_support_table_style(
     per_type = getattr(chart_style_context, chart_type, None)
     if per_type is None or not hasattr(per_type, "support_table"):
         return chart_style_context.support_table
-    return merge_onto_base(chart_style_context.support_table, per_type.support_table)
+    return merge_unset(chart_style_context.support_table, per_type.support_table)
 
 
 def bake_neutral_ink(style: SupportTableStyle) -> tuple[SupportTableStyle, bool]:
@@ -149,9 +149,7 @@ def bake_neutral_ink(style: SupportTableStyle) -> tuple[SupportTableStyle, bool]
     cell paints its series' own dark ink instead (``font.color: auto``).
     """
     series_ink = style.font.color == AUTO
-    neutral = style.neutral_color
-    if neutral is None:
-        raise ValueError("support_table.neutral_color is unset after the cascade")
+    neutral = settled(style.neutral_color)
     font = style.font
     if series_ink:
         font = font.model_copy(update={"color": neutral})

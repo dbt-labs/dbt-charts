@@ -11,7 +11,6 @@ from dbt_charts.core.compile.format import (
     column_format,
     resolve_label_format,
 )
-from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.authored._layer import (
     AreaLayer,
     BarLayer,
@@ -57,6 +56,7 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import (
     affix_tick_label,
     ladderless_tick_label,
 )
+from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.constants.marks import STROKE_FALLBACK_WIDTH
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
@@ -203,8 +203,8 @@ def _resolve_one_layer(
             base_family_style if base_type == "line" else chart_style_context.line
         )
         _layer_line_patch = line_marks.line if line_marks is not None else None
-        line_merged = merge_onto_base(line_parent.marks.line, _layer_line_patch)
-        pre_fallback_point_mark = merge_onto_base(
+        line_merged = merge_unset(line_parent.marks.line, _layer_line_patch)
+        pre_fallback_point_mark = merge_unset(
             line_parent.marks.point,
             line_marks.point if line_marks is not None else None,
         )
@@ -268,7 +268,7 @@ def _resolve_one_layer(
             base_family_style if base_type == "area" else chart_style_context.area
         )
         _layer_area_patch = area_marks.line if area_marks is not None else None
-        area_line_merged = merge_onto_base(area_parent.marks.line, _layer_area_patch)
+        area_line_merged = merge_unset(area_parent.marks.line, _layer_area_patch)
         area_fmt, area_label_is_house = resolve_label_format(
             area_line_merged.labels.format, chart_style_context.formats, _layer_values()
         )
@@ -283,14 +283,14 @@ def _resolve_one_layer(
         return ResolvedAreaLayer(
             type="area",
             area_mark=_build_resolved_area_mark(
-                merge_onto_base(
+                merge_unset(
                     area_parent.marks.area,
                     area_marks.area if area_marks is not None else None,
                 )
             ),
             line_mark=_build_resolved_area_line(area_line_merged, area_line_labels),
             point_mark=_resolved_point_mark(
-                merge_onto_base(
+                merge_unset(
                     area_parent.marks.point,
                     area_marks.point if area_marks is not None else None,
                 ),
@@ -310,7 +310,7 @@ def _resolve_one_layer(
         bar_parent = (
             base_family_style if base_type == "bar" else chart_style_context.bar
         )
-        pre_fallback_bar_mark = merge_onto_base(
+        pre_fallback_bar_mark = merge_unset(
             bar_parent.marks.bar,
             bar_marks.bar if bar_marks is not None else None,
         )
@@ -348,7 +348,7 @@ def _resolve_one_layer(
     scatter_parent = (
         base_family_style if base_type == "scatter" else chart_style_context.scatter
     )
-    pre_fallback_scatter_point = merge_onto_base(
+    pre_fallback_scatter_point = merge_unset(
         scatter_parent.marks.point,
         scatter_marks.point if scatter_marks is not None else None,
     )

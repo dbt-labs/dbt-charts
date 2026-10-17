@@ -18,6 +18,7 @@ from dbt_charts.core.compile.models.style.resolved import (
 from dbt_charts.core.compile.models.style.theme import (
     font_weight_as_css,
 )
+from dbt_charts.core.compile.resolve.style.inherit_resolver import settled
 from dbt_charts.core.compile.resolve.style.palette import mark_ink
 from dbt_charts.core.compile.resolve.style.tokens import _resolve_color_tokens
 from dbt_charts.core.compile.resolve.style.typography import width_tier
@@ -184,23 +185,16 @@ def _resolved_series_label(
     are required post-cascade.
     """
     font = chart_style_context.series_label.font
-    if (
-        font.family is None
-        or font.size is None
-        or font.weight is None
-        or font.style is None
-    ):
-        raise ValueError(
-            "series_label.font.{family,size,weight,style} must be non-None after cascade"
-        )
     eff_palette = _effective_palette(chart_style_context, primary)
     compact = width_tier(width) in ("tiny", "narrow")
-    font_size = font.compact_size if compact else font.size
+    font_size = font.compact_size if compact else settled(font.size)
     return ResolvedSeriesLabelStyle(
-        font_family=font.family,
+        font_family=settled(font.family),
         font_size=font_size,
-        font_weight=font_weight_as_css(font.compact_weight if compact else font.weight),
-        font_style=font.style,
+        font_weight=font_weight_as_css(
+            font.compact_weight if compact else settled(font.weight)
+        ),
+        font_style=settled(font.style),
         dark_companion_palette=tuple(mark_ink(c, canvas) for c in eff_palette),
         pin_companions=_pin_companions(chart_style_context, canvas),
         gap_px=font_size * ENDPOINT_LABEL_LINE_HEIGHT_MULTIPLIER,

@@ -10,8 +10,7 @@ use serde_json::Value;
 use crate::common::FormatSlot;
 use crate::contract::{self, SpanRow};
 use crate::families::temporal::{
-    civil_from_days, date_text_day, days_from_civil, parse_iso_date, utc_ticks_exact, AuthoredTimeFormat, TimeUnit,
-    MONTH_ABBR,
+    civil_from_days, date_text_day, utc_ticks_exact, AuthoredTimeFormat, TimeUnit, MONTH_ABBR,
 };
 use crate::Payload;
 
@@ -30,11 +29,11 @@ pub(crate) enum DurationUnit {
 impl DurationUnit {
     const ALL: [DurationUnit; 3] = [Self::Day, Self::Week, Self::Month];
 
-    fn name(self) -> &'static str {
+    fn message_id(self) -> &'static str {
         match self {
-            Self::Day => "day",
-            Self::Week => "week",
-            Self::Month => "month",
+            Self::Day => "duration.day",
+            Self::Week => "duration.week",
+            Self::Month => "duration.month",
         }
     }
 
@@ -62,13 +61,15 @@ impl DurationUnit {
         }
     }
 
-    /// `_unit_text_expr`: the length in this unit, singular by the PRINTED
-    /// number (1.04 weeks prints "1 week").
+    /// `_unit_text_expr`: the length in this unit, its word in the board
+    /// language chosen by the PRINTED number (1.04 weeks prints "1 week").
     fn text(self, days: f64) -> Result<String, String> {
-        let number = crate::number_locale::d3_format(self.format(), days / self.days())
+        let scaled = days / self.days();
+        let number = crate::number_locale::d3_format(self.format(), scaled)
             .map_err(|e| format!("bar: duration format {:?}: {e}", self.format()))?;
-        let name = if number == "1" { self.name().to_string() } else { format!("{}s", self.name()) };
-        Ok(format!("{number} {name}"))
+        // The word follows the number as printed (0.95 prints "0.9").
+        let printed = crate::number_locale::parse_printed(&number)?;
+        display_text::language::tr_value(self.message_id(), printed, &[("n", &number)])
     }
 
     /// One unit for every duration on a chart, picked from the median length
@@ -114,17 +115,17 @@ impl RangedBars {
         starts: HashMap<(String, String), f64>,
         ends: &HashMap<(String, String), f64>,
         temporal: bool,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let rises_only = span_rises_only(ends.iter().map(|(key, end)| (Some(*end), starts.get(key).copied())));
         let duration = temporal.then(|| {
             DurationUnit::of_median(ends.iter().filter_map(|(key, end)| starts.get(key).map(|s| end - s)).collect())
         });
-        Self {
-            start_title: display_text::field_title(start_field, field_labels),
+        Ok(Self {
+            start_title: display_text::field_title(start_field, field_labels)?,
             starts,
             rises_only,
             duration,
-        }
+        })
     }
 
     /// The datum's tooltip label: its start, end and difference rows, or the
@@ -156,7 +157,7 @@ impl RangedBars {
                 vec![
                     row(&self.start_title, tooltip_date(start), false),
                     row(value_title, tooltip_date(end), false),
-                    row("Duration", unit.text(days)?, false),
+                    row(&display_text::language::tr("tooltip.duration", None, &[])?, unit.text(days)?, false),
                     row("", unit.native_text(days)?, true),
                 ]
             }
@@ -172,9 +173,13 @@ impl RangedBars {
         Ok(Some(contract::span_aria_label(&header, series, order, &rows)))
     }
 
+    pub(crate) fn is_date(&self) -> bool {
+        self.duration.is_some()
+    }
+
     /// A date bar's value label: its length in the chart's one unit
     /// (`span_duration_expr`). Only a date measure prints one; a numeric
-    /// span's signed-change label is unported (`validate_span` refuses it).
+    /// span prints its signed change instead.
     pub(crate) fn duration_text(&self, start: f64, end: f64) -> Result<String, String> {
         self.duration
             .expect("only a date measure prints a duration label")
@@ -361,13 +366,8 @@ pub(crate) fn with_day_numbers(payload: &Payload, fields: [&str; 2]) -> Result<P
                 Some(Value::String(text)) => text.clone(),
                 other => return Err(format!("bar: row {i}: date column {field:?} holds {other:?}, not a date")),
             };
-            let day = date_text_day(&text).ok_or_else(|| {
-                if text.len() > 10 && text.get(..10).and_then(parse_iso_date).is_some() {
-                    format!("bar: row {i}: date column {field:?} value {text:?} has a time of day that is not modeled (only HH:MM[:SS])")
-                } else {
-                    format!("bar: row {i}: date column {field:?} value {text:?} is not a date")
-                }
-            })?;
+            let day = date_text_day(&text)
+                .ok_or_else(|| format!("bar: row {i}: date column {field:?} value {text:?} is not a date"))?;
             row.insert(field.to_string(), Value::from(day));
         }
     }
@@ -377,6 +377,7 @@ pub(crate) fn with_day_numbers(payload: &Payload, fields: [&str; 2]) -> Result<P
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::families::temporal::{days_from_civil, parse_iso_date};
 
     #[test]
     fn the_median_length_picks_the_charts_one_unit() {
@@ -390,10 +391,42 @@ mod tests {
     }
 
     #[test]
+    fn a_duration_reads_arabic_digits_back_to_pick_its_word() {
+        let mut wire = crate::number_locale::en_us_wire();
+        wire["decimal"] = serde_json::json!("\u{66b}");
+        wire["numerals"] = serde_json::json!(
+            ["\u{660}", "\u{661}", "\u{662}", "\u{663}", "\u{664}", "\u{665}", "\u{666}", "\u{667}", "\u{668}", "\u{669}"]
+        );
+        let arabic: crate::number_locale::NumberLocale = serde_json::from_value(wire).unwrap();
+        crate::number_locale::with_number_locale(&arabic, || {
+            {
+                assert_eq!(DurationUnit::Week.text(18.0).unwrap(), "\u{662}\u{66b}\u{666} weeks");
+                assert_eq!(DurationUnit::Week.text(7.3).unwrap(), "\u{661} week");
+            }
+        });
+    }
+
+    #[test]
     fn a_duration_is_singular_by_its_printed_number() {
         assert_eq!(DurationUnit::Week.text(18.0).unwrap(), "2.6 weeks");
+        // The word follows the board language and the PRINTED number's CLDR
+        // plural category: Russian "5 недель" / "2 недели" / "1 неделя".
+        let ru = |days: f64| {
+            display_text::language::with_language(display_text::language::Language::new("ru").unwrap(), || {
+                DurationUnit::Week.text(days)
+            })
+            .unwrap()
+        };
+        assert_eq!(ru(35.0), "5 недель");
+        assert_eq!(ru(14.0), "2 недели");
+        assert_eq!(ru(7.0), "1 неделя");
         // 7.3 days is 1.04 weeks, which prints "1".
         assert_eq!(DurationUnit::Week.text(7.3).unwrap(), "1 week");
+        // 0.25 weeks prints "0.3": the word reads the printed number.
+        assert_eq!(DurationUnit::Week.text(1.75).unwrap(), "0.3 weeks");
+        assert_eq!(DurationUnit::Week.text(7.04).unwrap(), "1 week");
+        // A span ending before it starts counts by magnitude.
+        assert_eq!(DurationUnit::Week.text(-7.0).unwrap(), "−1 week");
         assert_eq!(DurationUnit::Day.text(1.0).unwrap(), "1 day");
         assert_eq!(DurationUnit::Month.text(60.0).unwrap(), "2 months");
     }
@@ -443,7 +476,7 @@ mod tests {
         let key = |i: usize| (format!("c{i}"), String::new());
         let ends = pairs.iter().enumerate().map(|(i, p)| (key(i), p.1)).collect();
         let starts = pairs.iter().enumerate().map(|(i, p)| (key(i), p.0)).collect();
-        RangedBars::new("start", &crate::common::FieldLabels::new(), starts, &ends, temporal)
+        RangedBars::new("start", &crate::common::FieldLabels::new(), starts, &ends, temporal).unwrap()
     }
 
     fn label(rb: &RangedBars, start: f64, end: f64) -> String {
@@ -465,7 +498,7 @@ mod tests {
             [("start".to_string(), "Opened on".to_string())].into();
         let starts = [(("c0".to_string(), String::new()), 71.6)].into();
         let ends = [(("c0".to_string(), String::new()), 90.8)].into();
-        let rb = RangedBars::new("start", &labels, starts, &ends, false);
+        let rb = RangedBars::new("start", &labels, starts, &ends, false).unwrap();
         assert!(label(&rb, 71.6, 90.8).contains("Opened on: 71.6"));
         assert!(label(&bars(&[(71.6, 90.8)], false), 71.6, 90.8).contains("start: 71.6"));
     }

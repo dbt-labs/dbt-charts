@@ -14,6 +14,7 @@ from dbt_charts.core.compile.models.constraints import (
     ValueIn,
 )
 from dbt_charts.core.compile.models.markers import (
+    AUTO,
     Absent,
     Color,
     Inherit,
@@ -105,7 +106,10 @@ class FooterStyle(ConstrainedModel):
     )
 
     visible: bool = Field(description="Show the footer attribution line.")
-    text: str = Field(description="Attribution text shown in the footer.")
+    text: str = Field(
+        description="Attribution text shown in the footer; `auto` takes the board "
+        "language's wording around the dbt Charts brand."
+    )
     # Cascade sentinel: None (theme sets link: null) or absent = no link, the
     # brand phrase renders unlinked (still set heavier — that is brand styling,
     # not a link affordance). When set, the *first* occurrence of the brand
@@ -144,7 +148,8 @@ class TimestampStyle(ConstrainedModel):
         description="Timestamp horizontal alignment within its row."
     )
     format: str = Field(
-        description="strftime format for the data-freshness line, including any "
+        description="`auto` takes the board language's wording around the time and "
+        "date; else a strftime format for the data-freshness line, including any "
         "literal label text (e.g. '%H:%M %Z on %-d %b %Y'). The value is always "
         "UTC; a format that prints a clock must disclose the zone (%Z or a literal "
         "'UTC'), else compile rejects it: an unlabeled clock reads as local."
@@ -166,6 +171,8 @@ class TimestampStyle(ConstrainedModel):
         detected behaviorally (the output shifts when the instant moves an hour),
         which catches %T/%R/%X/%-H that a directive scan would miss.
         """
+        if self.format == AUTO:
+            return self
         probe = datetime(2001, 1, 1, 9, 30, tzinfo=UTC)
         shown = portable_strftime(probe, self.format)
         prints_clock = shown != portable_strftime(

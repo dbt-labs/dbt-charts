@@ -7,16 +7,19 @@ Covers:
 - Relevance against a small fixture corpus (golden-query ranking + cache).
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from dbt_charts.agent_api.search import (
+    DEFAULT_SEARCH_LIMIT,
+    MAX_PARSED_CANDIDATES,
     MAX_SEARCH_LIMIT,
-    BoardSearchHit,
-    ChartSearchEntry,
+    MAX_SUMMARY_CHARS,
+    BoardListing,
+    BoardMatch,
     SearchBoardsArgs,
     SearchResult,
     paginate,
@@ -159,6 +162,13 @@ tags:
 """
 
 
+def _matches(hits: Sequence[BoardMatch | BoardListing]) -> list[BoardMatch]:
+    """The hits of a keyword search, each a ranked match rather than a listing entry."""
+    matches = [hit for hit in hits if isinstance(hit, BoardMatch)]
+    assert len(matches) == len(hits)
+    return matches
+
+
 @pytest.fixture
 def corpus_dir(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -264,29 +274,17 @@ class TestSearchDashboardsContract:
         assert isinstance(result, SearchResult)
         assert result.success is True
         assert isinstance(result.errors, list)
-        assert isinstance(result.results, list)
-        assert 0 < len(result.results) <= 10  # default limit cap
+        assert 0 < len(result.results) <= DEFAULT_SEARCH_LIMIT
 
-        for hit in result.results:
-            assert isinstance(hit, BoardSearchHit)
+        for hit in _matches(result.results):
             assert isinstance(hit.title, str) and hit.title
             assert isinstance(hit.summary, str)
             assert isinstance(hit.board_path, str) and hit.board_path
             assert isinstance(hit.file_path, str) and hit.file_path
-            assert isinstance(hit.match_score, float) and hit.match_score >= 0
-            assert isinstance(hit.match_reasons, list)
-            for reason in hit.match_reasons:
-                assert isinstance(reason, str)
-            assert isinstance(hit.query_names, list)
-            assert isinstance(hit.charts, list)
-            for chart in hit.charts:
-                assert isinstance(chart, ChartSearchEntry)
-                assert isinstance(chart.id, str) and chart.id
-                assert isinstance(chart.title, str) and chart.title
-                assert isinstance(chart.type, str)
-                assert chart.query is None or isinstance(chart.query, str)
-            assert hit.sample_sql is None or isinstance(hit.sample_sql, str)
-            assert isinstance(hit.referenced_data_paths, list)
+            assert isinstance(hit.match_score, float) and hit.match_score > 0
+            assert hit.match_reasons
+            assert all(isinstance(reason, str) for reason in hit.match_reasons)
+            assert all(isinstance(chart_id, str) for chart_id in hit.matched_charts)
 
     def test_empty_query_returns_typed_model(self, corpus_dir: Project) -> None:
         """An empty query is a listing: the same typed result, every board."""
@@ -295,62 +293,34 @@ class TestSearchDashboardsContract:
         assert result.success
         assert len(result.results) == 5
 
-    def test_model_dump_produces_wire_shape(self, corpus_dir: Project) -> None:
-        """model_dump is a distinct operation; assert the wire keys."""
-        wire = search_boards(query="revenue", project=corpus_dir).model_dump()
-        assert {"success", "errors", "results"} <= set(wire)
-        assert isinstance(wire["results"], list)
-        if wire["results"]:
-            hit = wire["results"][0]
-            for key in (
-                "title",
-                "summary",
-                "match_score",
-                "match_reasons",
-                "board_path",
-                "file_path",
-                "query_names",
-                "charts",
-                "matched_charts",
-                "sample_sql",
-                "referenced_data_paths",
-            ):
-                assert key in hit
-            if hit["charts"]:
-                for key in ("id", "title", "type", "query"):
-                    assert key in hit["charts"][0]
-
-    def test_extracts_literal_file_paths_from_sql(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    def test_listing_hit_wire_shape_is_title_notes_and_paths(
+        self, corpus_dir: Project
     ) -> None:
-        boards = tmp_path / "charts"
-        boards.mkdir()
-        dashboard = boards / "revenue.yml"
-        dashboard.write_text(
-            """
-title: Revenue
-queries:
-  won_revenue:
-    sql: |
-      SELECT *
-      FROM read_csv('fixtures/data/pied_piper/opportunities.csv')
-charts:
-  revenue:
-    query: won_revenue
-    type: table
-rows:
-  - revenue
-"""
-        )
+        wire = search_boards(query="", project=corpus_dir).model_dump()
 
-        result = search_boards(query="revenue", project=local_project(tmp_path))
+        assert {frozenset(hit) for hit in wire["results"]} == {
+            frozenset({"title", "summary", "board_path", "file_path"})
+        }
 
-        assert result.results[0].referenced_data_paths == [
-            "fixtures/data/pied_piper/opportunities.csv"
-        ]
-        assert "read_csv('fixtures/data/pied_piper/opportunities.csv')" in (
-            result.results[0].sample_sql or ""
-        )
+    def test_keyword_hit_wire_shape_adds_score_reasons_and_matched_charts(
+        self, corpus_dir: Project
+    ) -> None:
+        wire = search_boards(query="revenue", project=corpus_dir).model_dump()
+
+        assert wire["results"]
+        assert {frozenset(hit) for hit in wire["results"]} == {
+            frozenset(
+                {
+                    "title",
+                    "summary",
+                    "board_path",
+                    "file_path",
+                    "match_score",
+                    "match_reasons",
+                    "matched_charts",
+                }
+            )
+        }
 
     def test_custom_limit(self, corpus_dir: Project) -> None:
         """Custom limit is respected."""
@@ -358,18 +328,312 @@ rows:
         result = search_boards(query="revenue", project=corpus_dir, limit=2)
         assert len(result.results) <= 2
 
-    def test_max_limit_guard(self, corpus_dir: Project) -> None:
+    def test_max_limit_guard(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
         """Limit is capped at a maximum value."""
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        for i in range(MAX_SEARCH_LIMIT + 5):
+            (boards / f"board_{i}.yml").write_text(f"title: Board {i}\nrows: []\n")
 
-        result = search_boards(query="revenue", project=corpus_dir, limit=9999)
-        assert len(result.results) <= 50
+        result = search_boards(
+            query="", project=local_project(tmp_path), limit=MAX_SEARCH_LIMIT * 10
+        )
+
+        assert len(result.results) == MAX_SEARCH_LIMIT
+        assert result.next == str(MAX_SEARCH_LIMIT)
 
     def test_results_sorted_by_score_descending(self, corpus_dir: Project) -> None:
         """Results are sorted by match_score descending."""
 
         result = search_boards(query="revenue", project=corpus_dir)
-        scores = [h.match_score for h in result.results]
+        scores = [h.match_score for h in _matches(result.results)]
         assert scores == sorted(scores, reverse=True)
+
+    def test_search_is_case_insensitive_per_query_word(
+        self, corpus_dir: Project
+    ) -> None:
+        """The candidate pass matches text however the board spells it."""
+        lower = search_boards_hits("sales performance", corpus_dir)
+        mixed = search_boards_hits("SaLeS pErFoRmAnCe", corpus_dir)
+
+        assert [h.file_path for h in mixed] == [h.file_path for h in lower]
+        assert lower
+
+    def test_long_notes_are_cut_to_a_short_summary(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "wordy.yml").write_text(
+            f"title: Wordy\nnotes: {'word ' * 200}\nrows: []\n"
+        )
+
+        (hit,) = search_boards_hits("", local_project(tmp_path))
+
+        assert len(hit.summary) == MAX_SUMMARY_CHARS
+        assert hit.summary.endswith("…")
+
+
+class TestSearchFindsEveryFieldItScores:
+    """Candidates come from a text pass, so a field is findable only if its
+    text reaches the pass: tags, chart ids, query names and SQL all do."""
+
+    @pytest.mark.parametrize(
+        ("query", "reason"),
+        [
+            ("zebratag", "tag_match"),
+            ("giraffe_chart", "chart_match"),
+            ("okapi_query", "metric_overlap"),
+            ("warthog_table", "sql_match"),
+        ],
+    )
+    def test_a_board_is_found_by_a_word_only_that_field_holds(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        query: str,
+        reason: str,
+    ) -> None:
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "plain.yml").write_text(
+            "title: Plain\n"
+            "tags: [zebratag]\n"
+            "queries:\n"
+            "  okapi_query:\n"
+            "    sql: SELECT n FROM warthog_table\n"
+            "charts:\n"
+            "  giraffe_chart:\n"
+            "    query: okapi_query\n"
+            "    type: kpi\n"
+            "    value: n\n"
+            "rows:\n"
+            "  - giraffe_chart\n"
+        )
+        (boards / "other.yml").write_text("title: Other\nrows: []\n")
+
+        (hit,) = _matches(search_boards_hits(query, local_project(tmp_path)))
+
+        assert hit.title == "Plain"
+        assert reason in hit.match_reasons
+
+    def test_a_board_is_found_by_a_word_only_its_filename_holds(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "quarterly_pipeline.yml").write_text("rows: []\n")
+
+        hits = search_boards_hits("pipeline", local_project(tmp_path))
+
+        # Found as a candidate; an untitled board's title is its slug, which
+        # is what scores.
+        assert [h.file_path for h in hits] == ["charts/quarterly_pipeline.yml"]
+
+
+class TestSearchParsesOnlyCandidates:
+    def test_a_query_names_no_more_boards_than_the_candidate_cap(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        for i in range(MAX_PARSED_CANDIDATES + 5):
+            (boards / f"revenue_{i:03d}.yml").write_text(
+                f"title: Revenue {i}\nnotes: revenue metrics\nrows: []\n"
+            )
+
+        hits = search_boards_hits("revenue", local_project(tmp_path))
+
+        assert len(hits) == MAX_PARSED_CANDIDATES
+
+    def test_boards_that_mention_more_query_words_are_kept_over_the_cap(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        for i in range(MAX_PARSED_CANDIDATES + 5):
+            (boards / f"a_{i:03d}.yml").write_text(
+                f"title: Alpha {i}\nnotes: alpha only\nrows: []\n"
+            )
+        (boards / "z_both.yml").write_text(
+            "title: Alpha Beta\nnotes: alpha beta\nrows: []\n"
+        )
+
+        hits = search_boards_hits("alpha beta", local_project(tmp_path))
+
+        assert "charts/z_both.yml" in [h.file_path for h in hits]
+
+    def test_a_board_that_cannot_be_read_as_text_is_skipped(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "binary_revenue.yml").write_bytes(b"\xff\xfe\x00 revenue")
+        (boards / "good.yml").write_text("title: Revenue\nnotes: revenue\nrows: []\n")
+
+        hits = search_boards_hits("revenue", local_project(tmp_path))
+
+        assert [h.title for h in hits] == ["Revenue"]
+
+    def test_visibility_narrows_candidates_before_the_cap(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A caller who may see only a few boards still finds them when
+        hidden boards would otherwise fill the candidate cap."""
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        for i in range(MAX_PARSED_CANDIDATES + 5):
+            (boards / f"hidden_{i:03d}.yml").write_text(
+                f"title: Revenue Revenue {i}\nnotes: revenue revenue\nrows: []\n"
+            )
+        (boards / "shown.yml").write_text("title: Shown\nnotes: revenue\nrows: []\n")
+
+        hits = search_boards_hits(
+            "revenue",
+            local_project(tmp_path),
+            visible=lambda paths: [p for p in paths if p == "charts/shown.yml"],
+        )
+
+        assert [h.file_path for h in hits] == ["charts/shown.yml"]
+
+    def test_visibility_narrows_a_listing(self, corpus_dir: Project) -> None:
+        hits = search_boards_hits(
+            "", corpus_dir, visible=lambda paths: [p for p in paths if "hr/" in p]
+        )
+
+        assert [h.file_path for h in hits] == ["charts/hr/headcount.yml"]
+
+
+class TestCandidateCapKeepsWhatMatters:
+    def test_a_titled_board_outranks_boards_that_only_repeat_the_word_in_sql(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        for i in range(MAX_PARSED_CANDIDATES + 10):
+            (boards / f"sales_{i:03d}.yml").write_text(
+                f"title: Sales {i}\n"
+                "queries:\n"
+                "  q:\n"
+                "    sql: |\n"
+                "      SELECT revenue FROM a\n"
+                "      UNION ALL SELECT revenue FROM b\n"
+                "      UNION ALL SELECT revenue FROM c\n"
+                "rows: []\n"
+            )
+        (boards / "z_overview.yml").write_text("title: Revenue\nrows: []\n")
+
+        hits = search_boards_hits("revenue", local_project(tmp_path))
+
+        assert hits[0].file_path == "charts/z_overview.yml"
+
+    def test_tags_narrow_keyword_candidates_before_the_cap(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Untagged boards that outrank the tagged one must not fill the cap."""
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        for i in range(MAX_PARSED_CANDIDATES + 10):
+            (boards / f"a_{i:03d}.yml").write_text(
+                f"title: Revenue {i}\nnotes: revenue\nrows: []\n"
+            )
+        (boards / "z_tagged.yml").write_text(
+            "title: Plain\nnotes: revenue\ntags: [finance]\nrows: []\n"
+        )
+
+        hits = search_boards_hits("revenue", local_project(tmp_path), tags=["finance"])
+
+        assert [h.file_path for h in hits] == ["charts/z_tagged.yml"]
+
+    def test_a_tags_only_listing_returns_every_tagged_board(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        count = MAX_PARSED_CANDIDATES + 11
+        for i in range(count):
+            (boards / f"b_{i:03d}.yml").write_text(
+                f"title: Board {i}\ntags: [finance]\nrows: []\n"
+            )
+        project = local_project(tmp_path)
+
+        hits = search_boards_hits("", project, tags=["finance"])
+        first = search_boards("", project, tags=["finance"], limit=50)
+        second = search_boards(
+            "", project, tags=["finance"], limit=50, cursor=first.next
+        )
+
+        assert len(hits) == count
+        assert len(first.results) + len(second.results) == count
+        assert second.next is None
+
+    @pytest.mark.parametrize("requested", ["Ärger", "ärger"])
+    def test_a_tag_with_a_non_ascii_capital_matches_its_own_board(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        requested: str,
+    ) -> None:
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "angry.yml").write_text("title: Angry\ntags: [Ärger]\nrows: []\n")
+        (boards / "calm.yml").write_text("title: Calm\ntags: [calm]\nrows: []\n")
+
+        hits = search_boards_hits("", local_project(tmp_path), tags=[requested])
+
+        assert [h.title for h in hits] == ["Angry"]
+
+
+class TestMarkdownBoardsAreSearchable:
+    def test_a_markdown_board_is_listed_and_found(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "weekly.md").write_text(
+            "---\n"
+            "board:\n"
+            "  title: Weekly Review\n"
+            "  notes: pipeline health\n"
+            "  tags: [ops]\n"
+            "  queries:\n"
+            "    q:\n"
+            "      columns: [n]\n"
+            "      values:\n"
+            "        - [1]\n"
+            "  charts:\n"
+            "    pipe:\n"
+            "      query: q\n"
+            "      type: kpi\n"
+            "      value: n\n"
+            "---\n"
+            "Intro prose.\n\n"
+            "{{ chart pipe }}\n"
+        )
+        project = local_project(tmp_path)
+
+        (listed,) = search_boards_hits("", project)
+        (found,) = _matches(search_boards_hits("pipeline", project))
+
+        assert (listed.title, listed.board_path) == ("Weekly Review", "weekly.md")
+        assert found.file_path == "charts/weekly.md"
+        assert "notes_match" in found.match_reasons
+        assert [h.file_path for h in search_boards_hits("", project, tags=["ops"])] == [
+            "charts/weekly.md"
+        ]
+
+    def test_an_untitled_markdown_board_is_titled_by_its_first_heading(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "notes.md").write_text("# Team Notes\n\nSome prose.\n")
+
+        (listed,) = search_boards_hits("", local_project(tmp_path))
+
+        assert listed.title == "Team Notes"
 
 
 class TestSearchDashboardsHits:
@@ -378,21 +642,17 @@ class TestSearchDashboardsHits:
     callers never touch it: search_boards's contract (this class) is
     unchanged by its existence."""
 
-    def test_unbounded_hits_exceed_the_public_search_cap(
+    def test_unbounded_listing_exceeds_the_public_search_cap(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         boards = tmp_path / "charts"
         boards.mkdir()
         for i in range(MAX_SEARCH_LIMIT + 5):
-            (boards / f"revenue_{i}.yml").write_text(
-                f"title: Revenue {i}\nnotes: revenue metrics\nrows: []\n"
-            )
+            (boards / f"board_{i}.yml").write_text(f"title: Board {i}\nrows: []\n")
         project = local_project(tmp_path)
 
-        hits = search_boards_hits("revenue", project)
-        capped = search_boards(
-            query="revenue", project=project, limit=MAX_SEARCH_LIMIT + 5
-        )
+        hits = search_boards_hits("", project)
+        capped = search_boards(query="", project=project, limit=MAX_SEARCH_LIMIT + 5)
 
         assert len(hits) == MAX_SEARCH_LIMIT + 5
         assert len(capped.results) == MAX_SEARCH_LIMIT
@@ -417,8 +677,7 @@ class TestSearchDashboardsHits:
             "charts/marketing.yml",
             "charts/sales.yml",
         ]
-        assert {h.match_score for h in hits} == {0.0}
-        assert all(h.match_reasons == [] for h in hits)
+        assert all(type(h) is BoardListing for h in hits)
 
     def test_empty_query_listing_honors_tags(self, corpus_dir: Project) -> None:
         hits = search_boards_hits("", corpus_dir, tags=["revenue"])
@@ -483,54 +742,14 @@ class TestSearchPaging:
 
 
 class TestChartGrainSearch:
-    """Hits carry chart-level detail parsed from the same YAML dict."""
-
-    def test_chart_entries_carry_id_title_type_query(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        boards = tmp_path / "charts"
-        boards.mkdir()
-        (boards / "revenue.yml").write_text(
-            "title: Revenue Board\n"
-            "notes: Revenue metrics\n"
-            "queries:\n"
-            "  revenue:\n"
-            "    sql: SELECT date, SUM(amount) as revenue FROM orders\n"
-            "charts:\n"
-            "  monthly_revenue:\n"
-            "    title: Monthly Revenue\n"
-            "    query: revenue\n"
-            "    type: line\n"
-            "  top_deals:\n"
-            "    query: revenue\n"
-            "    type: table\n"
-            "rows:\n"
-            "  - monthly_revenue\n"
-            "  - top_deals\n"
-        )
-
-        result = search_boards(query="revenue", project=local_project(tmp_path))
-        assert len(result.results) == 1
-        charts = {c.id: c for c in result.results[0].charts}
-
-        assert charts["monthly_revenue"].title == "Monthly Revenue"
-        assert charts["monthly_revenue"].type == "line"
-        assert charts["monthly_revenue"].query == "revenue"
-
-        # No explicit title on top_deals -> falls back to the chart id,
-        # mirroring the board-title fallback (filename stem) already in
-        # _build_index.
-        assert charts["top_deals"].title == "top_deals"
-        assert charts["top_deals"].type == "table"
+    """Hits name the charts that matched, by id, from the same YAML dict."""
 
     def test_inline_chart_query_does_not_crash_search(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """Charts routinely define their query inline (`query: {sql: ...}` —
-        the documented quick-start shape). An inline query has no name to
-        reference, so the entry's `query` is None — and search must not crash.
-        Regression: ChartSearchEntry once received the raw dict and blew up
-        the whole search verb with a ValidationError."""
+        the documented quick-start shape). Search reads raw YAML and must not
+        crash on it."""
         boards = tmp_path / "charts"
         boards.mkdir()
         (boards / "quick.yml").write_text(
@@ -549,16 +768,13 @@ class TestChartGrainSearch:
         result = search_boards(query="quick board", project=local_project(tmp_path))
 
         assert result.success
-        assert len(result.results) == 1
-        (chart,) = result.results[0].charts
-        assert chart.id == "rev"
-        assert chart.query is None
+        assert [h.title for h in result.results] == ["Quick Board"]
 
-    def test_non_string_chart_title_and_type_fall_back(
+    def test_non_string_chart_title_falls_back_to_the_id(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """Search reads raw (possibly invalid) YAML — junk-typed title/type
-        must degrade to the id fallback / empty string, never crash."""
+        """Search reads raw (possibly invalid) YAML — a junk-typed chart title
+        degrades to the chart id, never crashes."""
         boards = tmp_path / "charts"
         boards.mkdir()
         (boards / "junk.yml").write_text(
@@ -572,12 +788,12 @@ class TestChartGrainSearch:
             "  - odd\n"
         )
 
-        result = search_boards(query="junk board", project=local_project(tmp_path))
+        result = search_boards(query="odd", project=local_project(tmp_path))
 
         assert result.success
-        (chart,) = result.results[0].charts
-        assert chart.title == "odd"
-        assert chart.type is None
+        (hit,) = result.results
+        assert isinstance(hit, BoardMatch)
+        assert hit.matched_charts == ["odd"]
 
     def test_non_string_chart_key_does_not_crash_search(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -596,12 +812,12 @@ class TestChartGrainSearch:
             "  - 2024\n"
         )
 
-        result = search_boards(query="yearly board", project=local_project(tmp_path))
+        result = search_boards(query="2024", project=local_project(tmp_path))
 
         assert result.success
-        (chart,) = result.results[0].charts
-        assert chart.id == "2024"
-        assert chart.title == "2024"
+        (hit,) = result.results
+        assert isinstance(hit, BoardMatch)
+        assert hit.matched_charts == ["2024"]
 
     def test_matched_charts_lists_every_matching_chart_uncapped(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -624,6 +840,7 @@ class TestChartGrainSearch:
         result = search_boards(query="revenue", project=local_project(tmp_path))
 
         hit = result.results[0]
+        assert isinstance(hit, BoardMatch)
         assert hit.matched_charts == ids
         assert hit.match_reasons.count("chart_match") == 1
 
@@ -645,56 +862,41 @@ class TestChartGrainSearch:
         result = search_boards(query="revenue", project=local_project(tmp_path))
 
         hit = result.results[0]
+        assert isinstance(hit, BoardMatch)
         assert hit.matched_charts == []
         assert "chart_match" not in hit.match_reasons
 
-    def test_zero_charts_board_returns_empty_chart_list(
+    def test_hit_carries_no_chart_list_query_names_or_sql(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        boards = tmp_path / "charts"
-        boards.mkdir()
-        (boards / "text_only.yml").write_text(
-            "title: Text Only Board\n"
-            "notes: Just a queries mapping, no charts\n"
-            "queries:\n"
-            "  q:\n"
-            "    sql: SELECT 1\n"
-            "rows: []\n"
-        )
-
-        result = search_boards(query="text only", project=local_project(tmp_path))
-        assert len(result.results) == 1
-        assert result.results[0].charts == []
-
-    def test_chart_entries_are_compact_not_full_yaml_dumps(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        """Per-chart entries stay id/title/type/query scale — no style/marks/etc."""
+        """A hit is for picking a board; the detail is describe_board's."""
         boards = tmp_path / "charts"
         boards.mkdir()
         (boards / "styled.yml").write_text(
             "title: Styled Board\n"
-            "notes: A board with heavily styled charts\n"
+            "notes: A board with a chart\n"
             "queries:\n"
             "  q:\n"
             "    sql: SELECT 1\n"
             "charts:\n"
             "  fancy:\n"
-            "    title: Fancy Chart\n"
             "    query: q\n"
             "    type: line\n"
-            "    style:\n"
-            "      palette: [red, blue]\n"
-            "      marks:\n"
-            "        point:\n"
-            "          radius: 4\n"
             "rows:\n"
             "  - fancy\n"
         )
 
         result = search_boards(query="styled", project=local_project(tmp_path))
-        assert len(result.results) == 1
-        assert set(ChartSearchEntry.model_fields) == {"id", "title", "type", "query"}
+
+        assert set(result.model_dump()["results"][0]) == {
+            "title",
+            "summary",
+            "board_path",
+            "file_path",
+            "match_score",
+            "match_reasons",
+            "matched_charts",
+        }
 
     def test_chart_title_match_boosts_score_and_reason(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -736,6 +938,7 @@ class TestChartGrainSearch:
         assert titles[0] == "Analytics Board"
 
         top_hit = result.results[0]
+        assert isinstance(top_hit, BoardMatch)
         assert top_hit.matched_charts == ["monthly_revenue"]
         assert "chart_match" in top_hit.match_reasons
 
@@ -762,7 +965,9 @@ class TestChartGrainSearch:
 
         result = search_boards(query="topline", project=local_project(tmp_path))
         assert len(result.results) == 1
-        assert result.results[0].matched_charts == ["topline_kpi"]
+        hit = result.results[0]
+        assert isinstance(hit, BoardMatch)
+        assert hit.matched_charts == ["topline_kpi"]
 
 
 # ---------------------------------------------------------------------------
@@ -870,14 +1075,18 @@ class TestSearchDashboardsRelevance:
         """Exact title term match should produce a 'title_match' reason."""
 
         result = search_boards(query="Sales", project=corpus_dir)
-        sales_hit = next(h for h in result.results if h.title == "Sales Performance")
+        sales_hit = next(
+            h for h in _matches(result.results) if h.title == "Sales Performance"
+        )
         assert "title_match" in sales_hit.match_reasons
 
     def test_tag_match_reason_present(self, corpus_dir: Project) -> None:
         """Exact tag match should produce a 'tag_match' reason."""
 
         result = search_boards(query="inventory", project=corpus_dir)
-        inv_hit = next(h for h in result.results if h.title == "Inventory Status")
+        inv_hit = next(
+            h for h in _matches(result.results) if h.title == "Inventory Status"
+        )
         assert "tag_match" in inv_hit.match_reasons
 
 

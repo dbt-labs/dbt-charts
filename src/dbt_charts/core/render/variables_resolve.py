@@ -36,7 +36,7 @@ from dbt_charts.core.render.variable_input_refinement import (
 )
 from dbt_charts.core.render.variables_layout import ControlSpec
 from dbt_charts.core.text.case import inferred_display_name
-from dbt_charts.core.text.format_d3 import active_time_locale
+from dbt_charts.core.text.format_d3 import active_time_locale, board_word
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import VariableValues
@@ -46,9 +46,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-UNSET_SELECT_LABEL = "All"
-UNSET_DATERANGE_LABEL = "All dates"
-UNSET_DATE_LABEL = "Any date"
+UNSET_SELECT_MESSAGE = "controls.all"
+UNSET_DATERANGE_MESSAGE = "controls.all_dates"
+UNSET_DATE_MESSAGE = "controls.any_date"
 
 
 # The inputs a user types free text into: they show a placeholder while empty,
@@ -131,9 +131,7 @@ def resolve_controls(
     Order is the compiled order: a host binds the i-th control to the i-th box,
     so nothing here may reorder them.
     """
-    label_font = resolve_cascaded_font(
-        variables_style.label.font, "variables.label.font"
-    )
+    label_font = resolve_cascaded_font(variables_style.label.font)
     controls: list[ResolvedControl] = []
     for name, var_def in variable_defs.items():
         if not var_def.visible:
@@ -318,11 +316,12 @@ def resolve_query_options(
         return []
 
 
-def read_only_unset_label(var_def: Variable, default: str) -> str:
-    """Label shown for a variable holding no value — placeholder, else default."""
+def read_only_unset_label(var_def: Variable, default_id: str) -> str:
+    """Label shown for a variable holding no value — placeholder, else the
+    board language's word for ``default_id``."""
     if var_def.placeholder:
         return var_def.placeholder
-    return default
+    return board_word(default_id)
 
 
 def _select_value_is_unset(value: Any) -> bool:
@@ -353,7 +352,7 @@ def format_variable_display_value(
 
     if input_type in ("select", "radio"):
         if _select_value_is_unset(value):
-            return read_only_unset_label(var_def, UNSET_SELECT_LABEL)
+            return read_only_unset_label(var_def, UNSET_SELECT_MESSAGE)
         if isinstance(value, (list, tuple)):
             # Runtime-boundary input: a JSON-array URL param (the shape
             # multiselect/daterange legitimately carry) landing on a scalar
@@ -371,12 +370,12 @@ def format_variable_display_value(
         # no invalid shape left to reject.
         selected = coerce_multiselect(UNSET_MULTISELECT if value is None else value)
         if not selected:
-            return read_only_unset_label(var_def, UNSET_SELECT_LABEL)
-        return ", ".join(str(member) for member in selected)
+            return read_only_unset_label(var_def, UNSET_SELECT_MESSAGE)
+        return board_word("controls.list_join").join(str(member) for member in selected)
 
     if input_type == "daterange":
         if _daterange_is_unset(value):
-            return read_only_unset_label(var_def, UNSET_DATERANGE_LABEL)
+            return read_only_unset_label(var_def, UNSET_DATERANGE_MESSAGE)
         if not isinstance(value, (list, tuple)):
             raise ValueError(
                 f"daterange variable expects a 2-element list, got {type(value).__name__}"
@@ -388,17 +387,17 @@ def format_variable_display_value(
         # One open end filters on the other alone, so the label names that end.
         start, end = value[0], value[1]
         if start in (None, ""):
-            return f"Until {format_date_label(str(end))}"
+            return board_word("controls.until", date=format_date_label(str(end)))
         if end in (None, ""):
-            return f"From {format_date_label(str(start))}"
+            return board_word("controls.from", date=format_date_label(str(start)))
         return format_daterange_label(str(start), str(end))
 
     if input_type == "checkbox":
-        if value is None:
-            return "No"
         if isinstance(value, str):
-            return "Yes" if value.lower().strip() in ("true", "yes", "1") else "No"
-        return "Yes" if value else "No"
+            checked = value.lower().strip() in ("true", "yes", "1")
+        else:
+            checked = bool(value)
+        return board_word("controls.yes" if checked else "controls.no")
 
     if input_type in ("date", "datepicker"):
         # Captioned like select and daterange rather than left blank. A date has
@@ -407,7 +406,7 @@ def format_variable_display_value(
         # nothing else, and a reader could not tell it from a control that
         # failed to render.
         if value is None or value == "":
-            return read_only_unset_label(var_def, UNSET_DATE_LABEL)
+            return read_only_unset_label(var_def, UNSET_DATE_MESSAGE)
         return format_date_label(str(value))
 
     if input_type in (
@@ -431,7 +430,9 @@ def _month(d: datetime.date) -> str:
 
 
 def _format_date(d: datetime.date) -> str:
-    return f"{d.day} {_month(d)} {d.year}"
+    return board_word(
+        "controls.date", day=str(d.day), month=_month(d), year=str(d.year)
+    )
 
 
 def format_date_label(iso: str) -> str:
@@ -455,15 +456,21 @@ def format_daterange_label(start_iso: str, end_iso: str) -> str:
         s = datetime.date.fromisoformat(start_iso)
         e = datetime.date.fromisoformat(end_iso)
     except ValueError:
-        return f"{start_iso} – {end_iso}"
+        return board_word("controls.range", start=start_iso, end=end_iso)
 
     def fmt_no_yr(d: datetime.date) -> str:
-        return f"{d.day} {_month(d)}"
+        return board_word("controls.date_no_year", day=str(d.day), month=_month(d))
 
     if s == e:
         return _format_date(s)
     if s.year == e.year and s.month == e.month:
-        return f"{s.day}–{e.day} {_month(s)} {s.year}"
+        return board_word(
+            "controls.range_same_month",
+            start_day=str(s.day),
+            end_day=str(e.day),
+            month=_month(s),
+            year=str(s.year),
+        )
     if s.year == e.year:
-        return f"{fmt_no_yr(s)} – {_format_date(e)}"
-    return f"{_format_date(s)} – {_format_date(e)}"
+        return board_word("controls.range", start=fmt_no_yr(s), end=_format_date(e))
+    return board_word("controls.range", start=_format_date(s), end=_format_date(e))

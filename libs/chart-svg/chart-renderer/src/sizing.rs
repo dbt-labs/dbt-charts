@@ -501,6 +501,7 @@ fn rendered_vega_height(
         fonts_dir: ctx.fonts_dir.clone(),
         padding: Some(padding),
         board_style: Some(ctx.board_style.clone()),
+        language: None,
         datasets: Some(datasets.clone()),
         // This IS production's own "static estimate, before any layout
         // decision" measurement (`layout_sizing.py`'s `item.height == 0`
@@ -577,6 +578,7 @@ fn spark_bar_natural_height(
         fonts_dir: ctx.fonts_dir.clone(),
         padding: None,
         board_style: Some(ctx.board_style.clone()),
+        language: None,
         datasets: None,
         // spark_bar has no rail-concat law `measuring` gates — inert here.
         variables: Default::default(),
@@ -697,6 +699,7 @@ fn get_table_height_from_data(
         fonts_dir: ctx.fonts_dir.clone(),
         padding: None,
         board_style: Some(ctx.board_style.clone()),
+        language: None,
         datasets: None,
         // table has no rail-concat law `measuring` gates — inert here.
         variables: Default::default(),
@@ -782,6 +785,7 @@ pub fn resolve_chart_item_height(
             fonts_dir: ctx.fonts_dir.clone(),
             padding: None,
             board_style: Some(ctx.board_style.clone()),
+            language: None,
             datasets: None,
             // callout has no rail-concat law `measuring` gates — inert here.
             variables: Default::default(),
@@ -988,7 +992,7 @@ fn railconcat_eligible_json(chart: &Value) -> bool {
             .and_then(|e| e.get("visible"))
             .and_then(Value::as_bool)
             .unwrap_or(false);
-    crate::families::line::shape(y_on_right, show_rail, false, false, false)
+    crate::families::line::shape(y_on_right, show_rail, false, false)
         == crate::families::line::Shape::RailConcat
 }
 

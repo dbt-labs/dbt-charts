@@ -12,18 +12,10 @@ Supported values (matching FontStyle.case):
                Preserves acronyms and proper nouns that the author
                already capitalized.  Does NOT lowercase the rest of the
                string — that would corrupt ARR, iOS, etc.
-  title      — Chicago/Gruber algorithm via the `titlecase` library, with
-               a callback that extends the small-words list (per, with,
-               from, into, onto, upon, out, off, down, up) and a
-               standalone-all-caps guard so single acronym slugs
-               (``ARR``, ``YOY``, ``USD``, ``KPI``) survive the
-               library's whole-line ``all_caps`` detection. Lowercases
-               stopwords (a, an, and, as, at, but, by, en, for, if, in,
-               of, on, or, the, to, v[.], vs[.], via — plus the
-               extended set above). Always capitalizes first and last
-               words, except a path-like token (slug, path, URL), which
-               keeps its authored case. Preserves any token with internal capitals
-               (iPhone, YoY).
+  title      — the board language's title rule (`case.title_style` in its word
+               catalog, applied by the engine): English keeps its small words
+               lowercase mid-title, other cased languages capitalize the first
+               word only, and CJK languages leave the text as authored.
   slug       — Machine identifier form: spaces/hyphens → underscore, lower.
                "Order Status" → "order_status".
   camel      — camelCase: first word lower, subsequent words capitalized.
@@ -35,95 +27,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Literal
 
-from titlecase import titlecase as _titlecase  # pyright: ignore[reportMissingTypeStubs]
-
-from dbt_charts.core.utils import slug_to_text
+from dbt_charts import _engine
+from dbt_charts.core.text.format_d3 import active_language
+from dbt_charts.core.text.humanize import slug_to_text
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
 
 CaseValue = Literal["none", "sentence", "title", "upper", "lower", "slug", "camel"]
 
-# Editorial-style small words the NYT default list misses. Without this set
-# the titlecase library's default would capitalize ``per``, ``with``,
-# ``from``, etc. as ordinary words — wrong for editorial title
-# case ("Revenue Per Region" should be "Revenue per Region").
-_EXTRA_SMALL_WORDS: frozenset[str] = frozenset(
-    {"per", "with", "from", "into", "onto", "upon", "out", "off", "down", "up"}
-)
-
-
-# Tokens that must never be uppercased by the library's all-consonant
-# acronym heuristic. "dbt" is stylized lowercase always (dbt Labs' own
-# convention) — never an acronym, but its three consonants otherwise
-# trip the same rule that promotes "mrr"/"sql".
+# "dbt" is stylized lowercase always (dbt Labs' own convention).
 _FORCE_LOWERCASE: frozenset[str] = frozenset({"dbt"})
-
-
-def _is_path_like(word: str) -> bool:
-    """A slug, path, or URL, as opposed to a prose pair like ``pie/donut``."""
-    token = word.rstrip(".,;:!?")
-    segments = token.split("/")
-    if len(segments) > 2:
-        return True
-    return len(segments) == 2 and (
-        any("_" in seg or "." in seg[:-1] for seg in segments)
-        or all("-" in seg for seg in segments)
-    )
-
-
-def _acronym_callback(word: str, **_kwargs: object) -> str | None:
-    """Callback for the `titlecase` library — preserves embedded all-caps
-    acronyms the library's built-in detection doesn't cover, and forces
-    known non-acronym tokens (``_FORCE_LOWERCASE``) to stay lowercase.
-    Path-like words (see ``_is_path_like``: repo slugs, paths, URLs) keep
-    their authored case; prose pairs such as ``pie/donut`` or ``x/y-axis``
-    fall through to the library's per-side ``/`` handling.
-
-    The library has a special-case for all-consonant tokens of length > 2
-    (uppercases them — that's how ``MRR``, ``SQL`` survive). It misses
-    acronyms with vowels (``ARR``, ``YOY``, ``USD``, ``KPI``, ``CEO``,
-    ``ETF``) and any all-caps token of length ≤ 2 (``HR``, ``IT``,
-    ``OS``). This callback returns the original casing for any all-caps
-    token of length > 1; ``None`` defers to the library default.
-
-    Extended small-words (``per``, ``with``, ``from``, etc.) are handled
-    by a POST-process in ``apply_case`` rather than this callback,
-    because callback return values are marked Immutable and bypass the
-    library's first/last-word capitalization pass (so returning
-    ``"per"`` for a first-word ``Per`` would wrongly leave it
-    lowercase).
-    """
-    if _is_path_like(word):
-        return word
-    if word.lower() in _FORCE_LOWERCASE:
-        return word.lower()
-    if word.isupper() and len(word) > 1 and word.isalpha():
-        return word
-    return None
-
-
-def _lowercase_extra_small_words(text: str) -> str:
-    """Post-process ``text`` (already in title case) to lowercase the
-    editorial-style small words in ``_EXTRA_SMALL_WORDS`` when they are
-    NOT the first or last whitespace-separated token. Mirrors the
-    titlecase library's ``small_first_last=True`` contract for the
-    extended set.
-
-    Skips tokens that are already all-caps and alphabetic: an author
-    who wrote ``"Scale UP Now"`` (or whose data carries ``UP``/``OUT``
-    as an acronym) gets that intent preserved by the callback at the
-    library stage; the post-process must not clobber it.
-    """
-    words = text.split(" ")
-    if len(words) <= 2:
-        # All positions are first-or-last — nothing to lowercase.
-        return text
-    for i in range(1, len(words) - 1):
-        w = words[i]
-        if w.lower() in _EXTRA_SMALL_WORDS and not (w.isupper() and w.isalpha()):
-            words[i] = w.lower()
-    return " ".join(words)
 
 
 def apply_case(text: str, case: CaseValue) -> str:
@@ -151,20 +65,7 @@ def apply_case(text: str, case: CaseValue) -> str:
             return first.lower() + sep + rest
         return text[:1].upper() + text[1:]
     if case == "title":
-        # The titlecase library detects a whole-string ``all_caps`` shape
-        # at line scope (titlecase/__init__.py:102) and lowercases it
-        # BEFORE per-word logic runs, so a callback alone can't preserve
-        # a standalone acronym slug (``ARR`` → ``Arr``). Guard that case
-        # explicitly (#172).
-        if text and text.isupper() and " " not in text and text.isalpha():
-            return text
-        # Library handles built-in small words + first/last capitalization.
-        # Callback covers embedded-acronym preservation (#172). Post-process
-        # extends the small-words list with the editorial set the NYT
-        # default list misses (#7d).
-        return _lowercase_extra_small_words(
-            _titlecase(text, callback=_acronym_callback)
-        )
+        return _engine.apply_case(active_language(), text, "title")
     if case == "slug":
         # Machine form: spaces/hyphens → underscore, all lowercase.
         return text.replace(" ", "_").replace("-", "_").lower()

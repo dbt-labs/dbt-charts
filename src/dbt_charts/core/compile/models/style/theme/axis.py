@@ -27,6 +27,7 @@ from dbt_charts.core.compile.models.constraints import (
 )
 from dbt_charts.core.compile.models.markers import (
     Absent,
+    AutoUnset,
     Color,
     Format,
     InheritSlot,
@@ -230,9 +231,9 @@ class AxisTicksStyle(BaseModel):
         default=None,
         description="Tick stroke width in pixels; None uses Vega-Lite's default.",
     )
-    offset: float | None = Field(
+    offset: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Pixel offset of ticks from their default position; None means no offset.",
+        description="Pixel offset of ticks from their default position; 'auto' means no offset.",
     )
     # SkipInheritSlots: count is not inherited — axis family variants each set their own count.
     count: Annotated[
@@ -254,18 +255,20 @@ class AxisTicksStyle(BaseModel):
         ),
     )
     # SkipInheritSlots: step is not inherited — axis family variants each set their own.
-    step: Annotated[int | None, SkipInheritSlots()] = Field(
-        default=None,
-        description=(
-            "Tick interval on axis_x. Alongside ticks.time_unit it is a "
-            "multiple of that calendar grain (time_unit: year, step: 5 -> a "
-            "tick every 5 years). On its own it is a numeric interval for a "
-            "quantitative axis (step: 1000 -> a tick every 1000), and acts as "
-            "a floor rather than a fixed ladder, so the axis keeps covering "
-            "the data as its range grows. A bare step on an axis that is not "
-            "quantitative is an error, not a no-op; axis_y rejects step "
-            "entirely (set ticks.count there instead)."
-        ),
+    step: Annotated[int | None, SkipInheritSlots(), Absent("no interval pinned")] = (
+        Field(
+            default=None,
+            description=(
+                "Tick interval on axis_x. Alongside ticks.time_unit it is a "
+                "multiple of that calendar grain (time_unit: year, step: 5 -> a "
+                "tick every 5 years). On its own it is a numeric interval for a "
+                "quantitative axis (step: 1000 -> a tick every 1000), and acts as "
+                "a floor rather than a fixed ladder, so the axis keeps covering "
+                "the data as its range grows. A bare step on an axis that is not "
+                "quantitative is an error, not a no-op; axis_y rejects step "
+                "entirely (set ticks.count there instead)."
+            ),
+        )
     )
 
 
@@ -330,19 +333,22 @@ class AxisTitleStyle(BaseModel):
         default=None,
         description="Padding between axis title and labels in pixels; None uses Vega-Lite's default.",
     )
-    angle: float | None = Field(
+    angle: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Title rotation angle in degrees; None uses Vega-Lite's default.",
+        description="Title rotation angle in degrees; 'auto' uses Vega-Lite's default.",
     )
     # Same left/right/center/inward/outward vocabulary as AxisLabelStyle.align
     # — resolved through the identical _resolve_own_side_align machinery.
-    align: Literal["left", "right", "center", "inward", "outward"] | None = Field(
+    align: Annotated[
+        Literal["left", "right", "center", "inward", "outward"] | None,
+        AutoUnset(),
+    ] = Field(
         default=None,
         description=(
             "Horizontal text alignment of the title. 'left'/'right'/'center' "
             "are absolute. 'inward'/'outward' resolve against the axis's own "
             "left/right edge, same as label.align; a no-op on an axis with no "
-            "left/right edge. None uses Vega-Lite's default."
+            "left/right edge. 'auto' uses Vega-Lite's default."
         ),
     )
     visible: bool | Literal["auto"] | None = Field(
@@ -374,13 +380,13 @@ class AxisLabelStyle(BaseModel):
         default=None,
         description="Padding between axis labels and ticks in pixels; None inherits from parent axis.",
     )
-    max_width: float | None = Field(
+    max_width: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Maximum label width in pixels; None uses Vega-Lite's default (180px).",
+        description="Maximum label width in pixels; 'auto' uses Vega-Lite's default (180px).",
     )
-    angle: float | None = Field(
+    angle: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Label rotation angle in degrees; None uses Vega-Lite's default.",
+        description="Label rotation angle in degrees; 'auto' uses Vega-Lite's default.",
     )
     # left/right/center are absolute (edge-independent) — passed through as
     # authored. inward/outward are relative to the axis's own final
@@ -388,14 +394,17 @@ class AxisLabelStyle(BaseModel):
     # build_resolved_axis's edge parameter and _resolve_own_side_align); on a
     # bottom/top axis (no left/right edge) they collapse to None (the
     # default alignment), not an error.
-    align: Literal["left", "right", "center", "inward", "outward"] | None = Field(
+    align: Annotated[
+        Literal["left", "right", "center", "inward", "outward"] | None,
+        AutoUnset(),
+    ] = Field(
         default=None,
         description=(
             "Horizontal text alignment of labels. 'left'/'right'/'center' are "
             "absolute. 'inward' hugs the plot (own-side: left on a left axis, "
             "right on a right axis); 'outward' hugs away from the plot "
             "(Vega-Lite's default growth direction). inward/outward are a "
-            "no-op on an axis with no left/right edge. None uses Vega-Lite's "
+            "no-op on an axis with no left/right edge. 'auto' uses Vega-Lite's "
             "default."
         ),
     )
@@ -421,30 +430,29 @@ class AxisLabelStyle(BaseModel):
         default=None,
         description="Minimum pixel gap between labels; None uses Vega-Lite's default (0px).",
     )
-    visible: bool | None = Field(
+    visible: Annotated[bool | None, AutoUnset()] = Field(
         default=None,
-        description="Show axis labels; None uses Vega-Lite's default (labels shown).",
+        description="Show axis labels; 'auto' uses Vega-Lite's default (labels shown).",
     )
-    # When None and the parent axis has a temporal time_unit, the render layer
-    # fills in a smart conditional labelExpr — see render/chart/time_unit_detect.py.
+    # Left unset on a temporal axis, the render layer fills in a smart conditional
+    # labelExpr — see render/chart/time_unit_detect.py.
     # Kept on the base (not just DimensionLabelStyle) — both axes may use custom
     # label expressions, e.g. for axis_y mirror overrides via AxisMirrorStyle.expr.
-    expr: str | None = Field(
+    expr: Annotated[str | None, Absent("smart temporal defaults")] = Field(
         default=None,
         description="Custom Vega expression for label text; None uses smart temporal defaults when applicable.",
     )
-    # Positioning knobs — all None means VL per-axis defaults apply.
-    bound: bool | float | None = Field(
+    bound: Annotated[bool | float | None, AutoUnset()] = Field(
         default=None,
-        description="Hide labels that overflow the axis range; None uses Vega-Lite's default.",
+        description="Hide labels that overflow the axis range; 'auto' uses Vega-Lite's default.",
     )
-    flush: bool | float | None = Field(
+    flush: Annotated[bool | float | None, AutoUnset()] = Field(
         default=None,
-        description="Align first/last label flush with the scale range; None uses Vega-Lite's default.",
+        description="Align first/last label flush with the scale range; 'auto' uses Vega-Lite's default.",
     )
-    offset: float | None = Field(
+    offset: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Pixel offset of the label from its tick anchor; None uses Vega-Lite's default.",
+        description="Pixel offset of the label from its tick anchor; 'auto' uses Vega-Lite's default.",
     )
     format: Annotated[
         FormatAlias | str | FormatConfig | None,
@@ -1021,7 +1029,9 @@ class BaseAxisStyle(BaseModel):
         description="Axis title style.",
     )
     # SkipInheritSlots: scale is not inherited — axis family variants each own their scale config.
-    scale: Annotated[BaseScaleStyle | None, SkipInheritSlots()] = Field(
+    scale: Annotated[
+        BaseScaleStyle | None, SkipInheritSlots(), Absent("no scale override")
+    ] = Field(
         default=None, description="Per-axis scale overrides; None means no override."
     )
 

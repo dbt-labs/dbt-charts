@@ -240,6 +240,27 @@ pub fn d3_format(spec: &str, value: f64) -> Result<String, String> {
     d3rs::format::format(&active_number_locale().locale, spec, value)
 }
 
+/// The value a [`d3_format`] result (`".0f"`, `".1~f"`: no grouping) reads as,
+/// under the active locale's numerals, decimal mark and minus sign.
+pub fn parse_printed(text: &str) -> Result<f64, String> {
+    let locale = &active_number_locale().locale;
+    let digits: String = text
+        .chars()
+        .map(|c| match &locale.numerals {
+            Some(numerals) => numerals
+                .iter()
+                .position(|n| n.chars().eq([c]))
+                .map_or(c, |digit| char::from(b'0' + digit as u8)),
+            None => c,
+        })
+        .collect();
+    digits
+        .replace(&locale.minus, "-")
+        .replace(&locale.decimal, ".")
+        .parse()
+        .map_err(|e| format!("number {text:?} is not a printed decimal: {e}"))
+}
+
 /// The en-US definition as a payload carries it, for a `board_style` a test
 /// hand-builds.
 pub fn en_us_wire() -> serde_json::Value {

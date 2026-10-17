@@ -470,7 +470,7 @@ def _resolve_single_item(
                 f"Named chart dict must have exactly one key, got: {list(item.keys())}"
             )
         _chart_name, chart_def = next(iter(item.items()))
-        chart_dict = chart_def.model_dump(exclude_none=True, exclude={"visible"})
+        chart_dict = chart_def.model_dump(exclude_unset=True, exclude={"visible"})
         if used_chart_ids is None:
             used_chart_ids = set(charts.keys())
         inline_id = generate_inline_chart_id(chart_dict, item_id, used_chart_ids)
@@ -557,9 +557,9 @@ def _resolve_single_item(
     if isinstance(item, _BaseChartFields):
         if used_chart_ids is None:
             used_chart_ids = set(charts.keys())
-        # exclude_none=True: None-defaulted fields must be absent so omitted
-        # display text remains omitted after chart normalization.
-        chart_dict = item.model_dump(exclude_none=True, exclude={"visible"})
+        # exclude_unset: only what the author wrote, so an omitted field stays
+        # omitted and an authored null on an absence field survives.
+        chart_dict = item.model_dump(exclude_unset=True, exclude={"visible"})
         inline_id = generate_inline_chart_id(chart_dict, item_id, used_chart_ids)
         source_path = _layout_source_path(path_prefix, item_id)
         chart = normalize_chart(

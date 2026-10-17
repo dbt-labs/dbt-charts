@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel
 
+from dbt_charts import _engine
 from dbt_charts.core.colors import BY_TONE
 from dbt_charts.core.compile.merge import merge_onto_base, merge_patches
 from dbt_charts.core.compile.models.markers import AUTO
@@ -30,6 +31,7 @@ from dbt_charts.core.compile.models.primitives import (
     DEFAULT_REGIONAL,
     FontStyle,
     FormatTable,
+    LanguageCode,
     ResolvedFontStyle,
     ToneLiteral,
     parse_box_shadow,
@@ -65,7 +67,6 @@ from dbt_charts.core.compile.models.style.theme import (
     LineChartStyle,
     PieChartStyle,
     ScatterChartStyle,
-    SliceLabelsStyle,
     SparkStyle,
     Style,
     SupportTableStyle,
@@ -81,7 +82,11 @@ from dbt_charts.core.compile.resolve.style.inherit_graph import (
 )
 from dbt_charts.core.compile.resolve.style.inherit_resolver import (
     apply_inherit,
+    assert_style_total,
     defer_base_none_children,
+    settled,
+    unset_autos,
+    unset_fields_error,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import (
     decide_legend_direction,
@@ -108,46 +113,18 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.context import ChartStyleContext
 
 
-def resolve_cascaded_font(font: FontStyle, path: str = "") -> ResolvedFontStyle:
-    """Convert FontStyle to ResolvedFontStyle, raising if any required field is None."""
-    if (
-        font.family is None
-        or font.color is None
-        or font.size is None
-        or font.weight is None
-        or font.style is None
-        or font.decoration is None
-        or font.case is None
-        or font.line_height is None
-    ):
-        missing = [
-            f
-            for f, v in [
-                ("family", font.family),
-                ("color", font.color),
-                ("size", font.size),
-                ("weight", font.weight),
-                ("style", font.style),
-                ("decoration", font.decoration),
-                ("case", font.case),
-                ("line_height", font.line_height),
-            ]
-            if v is None
-        ]
-        raise ValueError(
-            f"Cannot resolve font{' at ' + path if path else ''}: "
-            f"missing required fields after cascade: {missing}"
-        )
+def resolve_cascaded_font(font: FontStyle) -> ResolvedFontStyle:
+    family = settled(font.family)
     return ResolvedFontStyle(
-        family=font.family,
-        color=font.color,
-        size=font.size,
-        weight=font.weight,
-        style=font.style,
-        decoration=font.decoration,
-        case=font.case,
-        line_height=font.line_height,
-        tabular_figures=font_is_tabular(font.family),
+        family=family,
+        color=settled(font.color),
+        size=settled(font.size),
+        weight=settled(font.weight),
+        style=settled(font.style),
+        decoration=settled(font.decoration),
+        case=settled(font.case),
+        line_height=settled(font.line_height),
+        tabular_figures=font_is_tabular(family),
     )
 
 
@@ -188,14 +165,12 @@ def _seed_spark_colors(style: Style) -> Style:
     carrying any style patch would otherwise extract an unseeded family with
     ``spark.bar.color is None``, which render's own assert turns into a crash.
     """
-    _categorical = style.charts.color.categorical
-    assert (
-        _categorical is not None and _categorical.single_series_palette is not None
-    ), (
-        "style.charts.color.categorical.single_series_palette must be populated before "
-        "_seed_spark_colors is called — check that the theme YAML sets this field"
-    )
-    spark_color = _categorical.single_series_palette[0]
+    categorical = style.charts.color.categorical
+    if categorical is None or categorical.single_series_palette is None:
+        raise unset_fields_error(
+            ["Style.charts.color.categorical.single_series_palette"]
+        )
+    spark_color = categorical.single_series_palette[0]
     spark = style.charts.table.spark
     new_spark = _fill_none(spark, color=spark_color).model_copy(
         update={"bar": _fill_none(spark.bar, color=spark_color)}
@@ -226,13 +201,13 @@ def _build_resolved_legend(legend: LegendStyle) -> ResolvedLegendStyle:
         symbol_shape=legend.symbol_shape,
         symbol_fill=legend.symbol_fill,
         label=ResolvedLegendElementStyle(
-            font=resolve_cascaded_font(legend.label.font, "charts.legend.label.font"),
+            font=resolve_cascaded_font(legend.label.font),
             padding=legend.label.padding,
             max_width=legend.label.max_width,
             visible=True,
         ),
         title=ResolvedLegendElementStyle(
-            font=resolve_cascaded_font(legend.title.font, "charts.legend.title.font"),
+            font=resolve_cascaded_font(legend.title.font),
             padding=legend.title.padding,
             visible=None if legend.title.visible == "auto" else legend.title.visible,
         ),
@@ -252,10 +227,10 @@ def _build_resolved_callout_chart(
     def tone_color(value: str, role: str) -> str:
         return color(f"{tone}.{role}") if value == BY_TONE else value
 
-    def tone_font(font: FontStyle, role: str, path: str) -> ResolvedFontStyle:
+    def tone_font(font: FontStyle, role: str) -> ResolvedFontStyle:
         if font.color is not None:
             font = font.model_copy(update={"color": tone_color(font.color, role)})
-        return resolve_cascaded_font(font, path)
+        return resolve_cascaded_font(font)
 
     return ResolvedCalloutStyle(
         preferred_width=callout.preferred_width,
@@ -268,11 +243,11 @@ def _build_resolved_callout_chart(
         section_gap=callout.section_gap,
         bold_font_weight=bold_font_weight,
         title=ResolvedCalloutElementStyle(
-            font=tone_font(callout.title.font, "solid", "charts.callout.title.font"),
+            font=tone_font(callout.title.font, "solid"),
             y_offset=callout.title.y_offset,
         ),
         message=ResolvedCalloutElementStyle(
-            font=tone_font(callout.message.font, "text", "charts.callout.message.font"),
+            font=tone_font(callout.message.font, "text"),
             y_offset=callout.message.y_offset,
         ),
     )
@@ -372,29 +347,11 @@ def _build_chart_style_context(
         and name not in _CHART_LOCAL_ONLY
     }
     # palette and single_series_palette derive from charts.color.categorical (theme-required).
-    _color = charts.color
-    _categorical_obj = _color.categorical
-    assert _categorical_obj is not None, (
-        "ChartsStyle.color.categorical must be populated by the theme; got None — "
-        "check that the theme YAML sets charts.color.categorical"
-    )
-    _palette = _categorical_obj.palette
-    assert _palette is not None, (
-        "ChartsStyle.color.categorical.palette must be populated by the theme; got None — "
-        "check that the theme YAML sets charts.color.categorical.palette"
-    )
+    _categorical_obj = settled(charts.color.categorical)
+    _palette = settled(_categorical_obj.palette)
     resolved_palette = _palette if isinstance(_palette, list) else [_palette]
-    _ssp = _categorical_obj.single_series_palette
-    assert _ssp is not None, (
-        "ChartsStyle.color.categorical.single_series_palette must be populated by the theme; "
-        "got None — check that the theme YAML sets charts.color.categorical.single_series_palette"
-    )
+    _ssp = settled(_categorical_obj.single_series_palette)
     resolved_single_series_palette = _ssp if isinstance(_ssp, list) else [_ssp]
-    # apply_inherit fills charts.background from Style.background before we get here.
-    assert charts.background is not None, (
-        "charts.background must be filled by apply_inherit(Inherit(from_path='Style.background')); "
-        "got None — missing Inherit marker or apply_inherit not called"
-    )
     # Two canvases, per the model: the BOARD canvas is this board's own fill
     # (style.background -- non-inherited, transparent by default on a
     # nested board that didn't author one) composited over its parent's
@@ -419,7 +376,7 @@ def _build_chart_style_context(
     )
     # A translucent echo is not repainted as the card fill: the board already
     # paints it. An opaque echo covers identical pixels, so it stays.
-    card_fill = charts.background
+    card_fill = settled(charts.background)
     if not card_authored and is_translucent(card_fill):
         card_fill = "transparent"
     return ChartStyleContext(
@@ -463,7 +420,8 @@ def _build_chart_style_context(
 
 
 _RESOLVED_STYLE_CACHE: dict[
-    tuple[int, CurrencyCode | None], tuple[Style, ResolvedStyle, ChartStyleContext]
+    tuple[int, CurrencyCode | None, LanguageCode],
+    tuple[Style, ResolvedStyle, ChartStyleContext],
 ] = {}
 
 
@@ -590,40 +548,26 @@ def _finalize_chart_style_context(
 
     ``cascaded`` must already be the output of apply_inherit(...).
     """
-    resolved_root_font = resolve_cascaded_font(cascaded.font, "font")
-    if cascaded.palettes is None or cascaded.roles is None:
-        raise ValueError(
-            "style.palettes / style.roles are unset after the theme cascade; "
-            "the _base theme seeds both for every built-in theme."
-        )
-    if cascaded.charts.title is None:
-        raise ValueError("style.charts.title is unset after the cascade.")
+    resolved_root_font = resolve_cascaded_font(cascaded.font)
     return _build_chart_style_context(
         cascaded.charts,
         base_background,
         cascaded.background,
         font_family=resolved_root_font.family,
-        title=ChartTitleStyle.model_validate(cascaded.charts.title.model_dump()),
+        title=ChartTitleStyle.model_validate(
+            settled(cascaded.charts.title).model_dump()
+        ),
         spark=cascaded.charts.table.spark,
         pagination=cascaded.charts.table.pagination,
         bold_font_weight=font_weight_as_css(cascaded.text.bold.weight),
-        palettes=cascaded.palettes,
-        roles=cascaded.roles,
+        palettes=settled(cascaded.palettes),
+        roles=settled(cascaded.roles),
         tones=cascaded.tones,
         pre_style=pre_style,
         cascaded=cascaded,
         formats=_format_table(cascaded, currency),
         card_padding=cascaded.frame.card_padding,
         heading_sizes=pre_style.heading_ramp(),
-    )
-
-
-def slice_ink_decided(labels: SliceLabelsStyle) -> SliceLabelsStyle:
-    """An `auto` slice label ink is each wedge's own: no ink is set."""
-    if labels.font.color != AUTO:
-        return labels
-    return labels.model_copy(
-        update={"font": labels.font.model_copy(update={"color": None})}
     )
 
 
@@ -697,47 +641,17 @@ def concrete_family_defaults(
     heatmap, histogram = chart_context.heatmap, chart_context.histogram
     scatter = chart_context.scatter
 
-    def slice_mark(marks: GlobalMarksStyle) -> GlobalMarksStyle:
-        labels = marks.slice.labels
-        return (
-            marks
-            if labels is None
-            else marks.model_copy(
-                update={
-                    "slice": marks.slice.model_copy(
-                        update={"labels": slice_ink_decided(labels)}
-                    )
-                }
-            )
-        )
-
     pie = chart_context.pie
-    pie_labels = pie.marks.slice.labels
-    concrete_pie = (
-        pie
-        if pie_labels is None
-        else pie.model_copy(
-            update={
-                "marks": pie.marks.model_copy(
-                    update={
-                        "slice": pie.marks.slice.model_copy(
-                            update={"labels": slice_ink_decided(pie_labels)}
-                        )
-                    }
-                )
-            }
-        )
-    )
     return ConcreteFamilyDefaults(
-        marks=slice_mark(chart_context.marks),
+        marks=chart_context.marks,
         kpi=bake_kpi_support_ink(
             chart_context.kpi, chart_context.tones, chart_context.cascaded.muted
         ),
-        pie=concrete_pie,
+        pie=pie,
         donut=(
-            concrete_pie
+            pie
             if chart_context.donut is None
-            else merge_onto_base(concrete_pie, chart_context.donut)
+            else merge_onto_base(pie, chart_context.donut)
         ),
         support_table=table(chart_context.support_table),
         bar=bar.model_copy(
@@ -770,10 +684,46 @@ def concrete_family_defaults(
     )
 
 
+# The theme's footer text, timestamp format and placeholder overlay text are
+# `auto` until an author writes their own; the board's language supplies the
+# words once, here, so nothing downstream reads the sentinel. The brand stays
+# untranslated inside them, and the timestamp becomes a strftime string around
+# the time and date.
+_BRAND = "dbt Charts"
+
+
+def _bake_theme_words(cascaded: Style, language: LanguageCode) -> Style:
+    def word(message_id: str, **args: str) -> str:
+        return _engine.message(language, message_id, None, args)
+
+    footer, stamp = cascaded.footer, cascaded.timestamp
+    overlay = cascaded.placeholder.overlay
+    if footer.text == AUTO:
+        footer = footer.model_copy(
+            update={"text": word("footer.made_with", brand=_BRAND)}
+        )
+    if stamp.format == AUTO:
+        stamp = stamp.model_copy(
+            update={
+                "format": word("footer.data_as_of", time="%H:%M %Z", date="%-d %b %Y")
+            }
+        )
+    if overlay.text == AUTO:
+        overlay = overlay.model_copy(update={"text": word("placeholder.add_data")})
+    return cascaded.model_copy(
+        update={
+            "footer": footer,
+            "timestamp": stamp,
+            "placeholder": cascaded.placeholder.model_copy(update={"overlay": overlay}),
+        }
+    )
+
+
 def _finalize_style(
     merged: Style,
     base_background: str,
     currency: CurrencyCode | None,
+    language: LanguageCode,
 ) -> tuple[ResolvedStyle, ChartStyleContext]:
     """Apply a single inherit cascade to a merged Style; return final style + context.
 
@@ -790,9 +740,12 @@ def _finalize_style(
     )
     cascaded = apply_inherit(pre_style, get_inherit_graph())
     cascaded = _seed_spark_colors(cascaded)
+    cascaded = _bake_theme_words(cascaded, language)
     emoji_family = _EMOJI_MODE_TO_FAMILY.get(cascaded.font.emoji)
     if emoji_family is not None:
         cascaded = _append_emoji_family(cascaded, emoji_family)
+    assert_style_total(cascaded)
+    cascaded = unset_autos(cascaded)
     chart_context = _finalize_chart_style_context(
         cascaded,
         pre_style,
@@ -830,7 +783,7 @@ def _finalize_style(
         for name in (f.name for f in dataclasses.fields(ResolvedStyle))
         if name not in _TRANSFORMED
     }
-    resolved_root_font = resolve_cascaded_font(cascaded.font, "font")
+    resolved_root_font = resolve_cascaded_font(cascaded.font)
     resolved = ResolvedStyle(
         **passthrough,
         font=resolved_root_font,
@@ -846,20 +799,28 @@ def _finalize_style(
     return resolved, chart_context
 
 
-def resolve_style(base: Style, patch: StylePatch | None = None) -> ResolvedStyle:
+def resolve_style(
+    base: Style,
+    patch: StylePatch | None = None,
+    *,
+    language: LanguageCode = DEFAULT_REGIONAL.resolved_language,
+) -> ResolvedStyle:
     """Merge compiled base with a patch, apply cascade, return the final board style."""
-    return resolve_style_and_context(base, patch)[0]
+    return resolve_style_and_context(base, patch, language=language)[0]
 
 
 def resolve_chart_style_context(
-    base: Style, patch: StylePatch | None = None
+    base: Style,
+    patch: StylePatch | None = None,
+    *,
+    language: LanguageCode = DEFAULT_REGIONAL.resolved_language,
 ) -> ChartStyleContext:
     """Merge compiled base with a patch, apply cascade, return the chart cascade context.
 
     Consumed only by runtime chart resolution (``compile/resolve/chart/``,
     ``compile/resolve/style/chart_context.py``, ``compile/support_table.py``) — never by render.
     """
-    return resolve_style_and_context(base, patch)[1]
+    return resolve_style_and_context(base, patch, language=language)[1]
 
 
 def resolve_style_and_context(
@@ -868,6 +829,7 @@ def resolve_style_and_context(
     *,
     base_background: str | None = None,
     currency: CurrencyCode | None = DEFAULT_REGIONAL.currency,
+    language: LanguageCode = DEFAULT_REGIONAL.resolved_language,
 ) -> tuple[ResolvedStyle, ChartStyleContext]:
     """Shared cascade entry point behind resolve_style()/resolve_chart_style_context().
 
@@ -897,11 +859,12 @@ def resolve_style_and_context(
             _resolve_canvas_tokens(base, merge_style(base, patch), background),
             background,
             currency,
+            language,
         )
 
     # Reached only with base_background unset (a nested board with a cascade
-    # always has own_patch), so id(base) and currency are the whole key.
-    cache_key = (id(base), currency)
+    # always has own_patch), so id(base), currency and language are the whole key.
+    cache_key = (id(base), currency, language)
     cached = _RESOLVED_STYLE_CACHE.get(cache_key)
     if cached is not None and cached[0] is base:
         return cached[1], cached[2]
@@ -910,6 +873,7 @@ def resolve_style_and_context(
         _resolve_canvas_tokens(base, merge_style(base), background),
         background,
         currency,
+        language,
     )
     _RESOLVED_STYLE_CACHE[cache_key] = (base, resolved, chart_context)
     return resolved, chart_context

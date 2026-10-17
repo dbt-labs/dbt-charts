@@ -134,36 +134,6 @@ class ConnectionError(ExecutionError):
         super().__init__(f"Connection failed: {message}")
 
 
-class QueryTimeoutError(ExecutionError):
-    """A query exceeded the per-query wall-clock timeout.
-
-    Raised when a warehouse query does not complete within the configured
-    timeout (``execution.max_query_duration_seconds`` in ``dbt_charts.yml``,
-    per-source override ``sources.<name>.max_query_duration_seconds``).
-    The warehouse job is cancelled before this is raised.
-
-    Attributes:
-        elapsed: Elapsed wall-clock seconds at the point of timeout.
-        sql_preview: First 200 characters of the SQL that timed out.
-    """
-
-    elapsed: float | None = None
-    sql_preview: str | None = None
-
-    def __init__(
-        self,
-        elapsed: float,
-        sql_preview: str,
-        query_name: str | None = None,
-    ) -> None:
-        self.elapsed = elapsed
-        self.sql_preview = sql_preview
-        super().__init__(
-            f"Query timed out after {elapsed:.1f}s: {sql_preview!r}",
-            query_name=query_name,
-        )
-
-
 class MutatingSqlError(ExecutionError):
     """SQL contains a statement type outside the validator's allowlist.
 

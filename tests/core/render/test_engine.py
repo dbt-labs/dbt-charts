@@ -301,7 +301,9 @@ def test_payload_carries_the_active_time_locale() -> None:
     chart = _resolved(_KPI, _REVENUE)
     regional = Regional(locale=RegionalLocale(number="de-DE", time="de-DE"))
     with regional_scope(
-        regional.format_locale, regional.time_locale, regional.week_start
+        regional.format_locale,
+        regional.time_locale,
+        regional.week_start,
     ):
         payload = build_chart_payload(
             chart,
@@ -374,7 +376,11 @@ def test_kpi_and_spark_bar_numbers_print_under_the_active_number_locale() -> Non
     assert texts(kpi)[:2] == ["4.8", "mn"]
     assert "1,234,567" in texts(spark)
     german = Regional(locale=RegionalLocale(number="de-DE"))
-    with regional_scope(german.format_locale, german.time_locale, german.week_start):
+    with regional_scope(
+        german.format_locale,
+        german.time_locale,
+        german.week_start,
+    ):
         assert texts(kpi)[:2] == ["4,8", "Mio."]
         assert "1.234.567" in texts(spark)
 
@@ -1248,7 +1254,11 @@ def test_the_width_measure_carries_the_active_time_locale(
     table = {"type": "table", "query": "q"}
     rows = [{"d": "2024-03-05"}]
     german = Regional(locale=RegionalLocale(time="de-DE"))
-    with regional_scope(german.format_locale, german.time_locale, german.week_start):
+    with regional_scope(
+        german.format_locale,
+        german.time_locale,
+        german.week_start,
+    ):
         engine.measure_table_natural_width(_resolved(table, rows), rows, _BOARD_RS)
     assert sent[0]["time_locale"] == german.time_locale
 

@@ -219,6 +219,8 @@ def test_a_field_this_dct_has_never_heard_of_is_ignored() -> None:
                         "work_branch": "dct",
                         "git_subdirectory": "",
                         "unmapped_source_count": 0,
+                        "git_host": "github",
+                        "git_auth": "app",
                         "added_in_a_later_release": True,
                     }
                 ],

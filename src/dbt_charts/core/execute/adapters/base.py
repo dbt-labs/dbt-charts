@@ -31,6 +31,7 @@ from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.connections import classify_connection_error
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_ADAPTER_UNAVAILABLE,
     ERR_BINDER_TYPE_MISMATCH,
     ERR_BINDER_UNKNOWN_COLUMN,
     ERR_BINDER_UNKNOWN_RELATION,
@@ -38,6 +39,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_RESULT_DUPLICATE_COLUMN,
     ERR_WAREHOUSE_CONNECTION,
     ERR_WAREHOUSE_RUNTIME,
+    UNKNOWN_RELATION_DIALECT_NOTES,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
 from dbt_charts.core.diagnostics.registry import ErrorCode
@@ -209,11 +211,18 @@ def plain_error(message: str) -> QueryResult:
     """A failed QueryResult with no finer classification — ERR-INTERNAL by default.
 
     For adapter-local validation/shape failures with no registered code (wrong
-    query type, missing required config, no claiming adapter). Failures with a
+    query type, missing required config). Failures with a
     real code go through handle_adapter_error/connection_failure/
     classify_warehouse_error instead.
     """
     return QueryResult(data=[], error=QueryError(message))
+
+
+def adapter_unavailable(reason: str) -> QueryResult:
+    return QueryResult(
+        data=[],
+        error=QueryError.from_code(ERR_ADAPTER_UNAVAILABLE, reason=reason),
+    )
 
 
 def interrupted() -> QueryResult:
@@ -371,8 +380,8 @@ def classify_warehouse_error(
     instead of being overwritten by the dialect-based fallback below.
 
     Args:
-        operation: Description of the failed operation, used as the error
-            message prefix (e.g. "dbt SQL execution", "bigquery SQL execution").
+        operation: Description of the failed operation, the message prefix of
+            a wrapped DbtChartsError (e.g. "dbt SQL execution").
         error: The exception raised during warehouse execution.
         dialect: The resolved warehouse dialect name (e.g. "bigquery").
 
@@ -398,9 +407,13 @@ def classify_warehouse_error(
         code = ERR_BINDER_UNKNOWN_COLUMN
     else:
         code = ERR_WAREHOUSE_RUNTIME
-    return QueryResult(
-        data=[], error=QueryError(f"{operation} failed: {str(error)}", code=code)
-    )
+    classified = QueryError.from_code(code, detail=str(error))
+    note = UNKNOWN_RELATION_DIALECT_NOTES.get(dialect)
+    if code is ERR_BINDER_UNKNOWN_RELATION and note is not None:
+        noted = QueryError(f"{classified} {note}", code=code)
+        noted.detail = classified.detail
+        return QueryResult(data=[], error=noted)
+    return QueryResult(data=[], error=classified)
 
 
 class BaseAdapter(ABC):

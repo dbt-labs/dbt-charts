@@ -571,14 +571,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         bin.counts.iter().enumerate().any(|(i, &n)| n > 0 && stack_color.as_ref().is_none_or(|c| c.series[i].drawn))
     });
     if !paints_a_mark {
-        return Err(Diagnostic::new(
-            &crate::codes::ERR_CHART_PAINTED_NO_MARKS,
-            [
-                ("card_width", serde_json::json!(d3rs::py_float::format_g(payload.width))),
-                ("chart_id", serde_json::json!(r.id)),
-                ("row_count", serde_json::json!(payload.rows.len())),
-            ],
-        ));
+        return Err(payload.painted_no_marks());
     }
     let max_count = bins.iter().map(Bin::count).max().unwrap_or(0) as f64;
     if max_count <= 0.0 {
@@ -712,31 +705,14 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     let y_labels_flipped = measured_label_pad.is_some();
     let y_labels_start = val_on_right != y_labels_flipped;
     let y_angle = ax_y.labels.angle.unwrap_or(0.0);
-    // Vega-Lite's default label anchor for a rotated y axis (`defaultLabelAlign`
-    // /`defaultLabelBaseline`): straight up or down centers the label, a tilt
-    // past the vertical flips its side, and a steep one hangs from the top or
-    // bottom. A measured own-side `labelAlign` is authored, so only the
-    // baseline follows the angle.
+    // Vega-Lite's default label anchor for a rotated y axis; a measured own-side
+    // `labelAlign` is authored, so only the baseline follows the angle.
     let y_angle_norm = vega_fit::normalize_angle(y_angle);
+    let (vl_align, y_baseline) = vega_fit::vl_y_label_anchor(y_angle_norm, !val_on_right);
     let y_align = if y_labels_flipped || y_angle == 0.0 {
         if y_labels_start { "left" } else { "right" }
-    } else if y_angle_norm == 90.0 || y_angle_norm == 270.0 {
-        "center"
-    } else if y_angle_norm > 90.0 && y_angle_norm < 270.0 {
-        if y_labels_start { "right" } else { "left" }
-    } else if y_labels_start {
-        "left"
     } else {
-        "right"
-    };
-    // Vega-Lite mirrors the baseline on a right axis: a steep tilt hangs from
-    // the bottom there where a left axis hangs from the top.
-    let y_baseline = if y_angle_norm > 45.0 && y_angle_norm < 135.0 {
-        if val_on_right { "bottom" } else { "top" }
-    } else if y_angle_norm > 225.0 && y_angle_norm < 315.0 {
-        if val_on_right { "top" } else { "bottom" }
-    } else {
-        "middle"
+        vl_align
     };
     // How far the labels' ink reaches past their anchor, away from the plot
     // (`s = -bounds.x1` for a left axis): the widest label, or the widest
@@ -759,7 +735,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             .fold(0.0_f64, f64::max)
     };
 
-    let x_title_text = axis_title_text(&r.x, r.x_label.as_deref(), &r.field_labels);
+    let x_title_text = axis_title_text(&r.x, r.x_label.as_deref(), &r.field_labels)?;
     // `emitters/bar.py`: `chart.y_label or COUNT_TITLE` — an authored
     // `y_label` (or an empty-string one, Python's `or` is falsy-checked)
     // overrides the literal "#" fallback every histogram's y aggregate
@@ -968,7 +944,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     // `title: value`, the bin as its formatted range, both through the axes'
     // own label formats.
     let y_fmt_spec = ax_y.labels.spec();
-    crate::contract::mark_group_open(&mut svg, "rect", "marks");
+    crate::contract::mark_group_open(&mut svg, "rect", "marks")?;
     for bin in bins.iter().filter(|b| b.count() > 0) {
         let (left, right) = bar_edges(x_scale.position(bin.start), x_scale.position(bin.end), band_width);
         let fmt = |spec: &str, v: f64| {
@@ -999,7 +975,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                 rows.push((color.title.as_str(), series.text.clone()));
             }
             let label = crate::contract::native_label(&rows);
-            let aria = crate::contract::aria_attr(Some(&label), crate::contract::ItemRole::Bar);
+            let aria = crate::contract::aria_attr(Some(&label), crate::contract::ItemRole::Bar)?;
             let fill = match series {
                 Some(series) => series.fill.as_deref(),
                 None => Some(r.style.single_series_fill.as_str()),
@@ -1023,7 +999,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
 
     // X ticks + labels.
     let x_axis_drop = x_axis_offset + 0.5;
-    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::X, (0.5, plot_h + x_axis_drop));
+    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::X, (0.5, plot_h + x_axis_drop))?;
     if x_ticks_visible {
         let tc = crate::common::required_ink(ax_x.ticks.color.as_deref(), "histogram", "axis_x.ticks.color")?;
         let tw = ax_x.ticks.width.unwrap_or(1.0);
@@ -1082,7 +1058,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
 
     // Y ticks + labels — left or right, per `val_on_right` (module doc: a
     // right-side value axis mirrors the left one exactly, no breathing room).
-    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (if val_on_right { plot_w + 0.5 } else { 0.5 }, 0.0));
+    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (if val_on_right { plot_w + 0.5 } else { 0.5 }, 0.0))?;
     if y_tick_eff > 0.0 {
         let tc = crate::common::required_ink(ax_y.ticks.color.as_deref(), "histogram", "axis_y.ticks.color")?;
         let tw = ax_y.ticks.width.unwrap_or(1.0);
@@ -1165,7 +1141,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             &mut svg,
             crate::contract::AxisChannel::Y,
             (if val_on_right { 0.5 } else { plot_w + 0.5 }, 0.0),
-        );
+        )?;
         if y_tick_eff > 0.0 {
             let tc = crate::common::required_ink(ax_y.ticks.color.as_deref(), "histogram", "axis_y.ticks.color")?;
             let tw = ax_y.ticks.width.unwrap_or(1.0);

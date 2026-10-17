@@ -109,6 +109,7 @@ from dbt_charts.core.text.format_d3 import (
     HouseLocale,
     TimeLocaleDefinition,
     active_format_locale,
+    active_language,
     active_time_locale,
     locale_definition,
 )
@@ -261,6 +262,7 @@ def board_style_envelope(
     board_width: float | None,
     format_locale: HouseLocale,
     time_locale: TimeLocaleDefinition,
+    language: str = "en",
 ) -> JsonDict:
     """The board-level style tokens every chart payload carries beyond its own
     style slice (KPI support-row tones, the pie attached-table view height, the
@@ -307,6 +309,7 @@ def board_style_envelope(
         "formats": board_formats(board_style),
         "format_locale": format_locale_wire(format_locale),
         "time_locale": time_locale,
+        "language": language,
     }
 
 
@@ -416,7 +419,11 @@ def build_chart_payload(
         "fonts_dir": str(get_fonts_dir()),
         "padding": padding,
         "board_style": board_style_envelope(
-            board_style, board_width, active_format_locale(), active_time_locale()
+            board_style,
+            board_width,
+            active_format_locale(),
+            active_time_locale(),
+            active_language(),
         ),
         "is_placeholder": is_placeholder,
         # A custom chart's template draws on the board's one output budget:
@@ -451,6 +458,7 @@ def measure_table_natural_width(
         "fonts_dir": str(get_fonts_dir()),
         "format_locale": format_locale_wire(active_format_locale()),
         "time_locale": active_time_locale(),
+        "language": active_language(),
         "sub_unit_specs": board_sub_unit_specs(board_style),
         "formats": board_formats(board_style),
     }
@@ -471,6 +479,7 @@ def table_title_geometry(
         "resolved": chart.model_dump(mode="json"),
         "width": slot_width,
         "fonts_dir": str(get_fonts_dir()),
+        "language": active_language(),
     }
     try:
         return _engine.table_title_geometry(dumps_payload(payload))
@@ -721,6 +730,7 @@ def render_callout_card(
             "background": None,
             "fonts_dir": str(get_fonts_dir()),
             "padding": None,
+            "language": active_language(),
         }
     )
     return svg

@@ -11,7 +11,6 @@ from dbt_charts.core.compile.format import (
     column_format,
     reject_native,
 )
-from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     GeoshapeChart,
     PointMapChart,
@@ -56,6 +55,7 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
+from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
@@ -332,7 +332,7 @@ def _resolve_geoshape(
         chart_style_context, normalized
     )
     primary = _with_color_tokens(normalized.style, chart_style_context)
-    geoshape = merge_onto_base(chart_style_context.geoshape, primary)
+    geoshape = merge_unset(chart_style_context.geoshape, primary)
     channels = _channels_for(normalized, data)
     _tf = resolve_title_font(chart_local_style_context, width)
     # The tooltip formats chart.value_field (emitters/geo.py:357-364), which
@@ -396,7 +396,7 @@ def _resolve_point_map(
         chart_style_context, normalized
     )
     primary = _with_color_tokens(normalized.style, chart_style_context)
-    point_map = merge_onto_base(chart_style_context.point_map, primary)
+    point_map = merge_unset(chart_style_context.point_map, primary)
     channels = _channels_for(normalized, data)
     # geo_tooltip.py formats only size_field with tooltip_format -- the
     # color entry gets no format at all, so voting on color would drag an

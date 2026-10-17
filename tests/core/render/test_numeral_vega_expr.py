@@ -98,7 +98,9 @@ _LETTER_WORDS = NumberLocale.model_validate(
 def test_locale_words_match_format_d3(value: float, notation: Notation) -> None:
     regional = Regional(locale=RegionalLocale(number=_LETTER_WORDS))
     with regional_scope(
-        regional.format_locale, regional.time_locale, regional.week_start
+        regional.format_locale,
+        regional.time_locale,
+        regional.week_start,
     ):
         expr = numeral_vega_expr("datum.value", _SI_SPEC, notation=notation)
         expected = format_d3(value, _SI_SPEC, notation=notation)

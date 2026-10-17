@@ -40,7 +40,7 @@ class PieChartStyle(_RadialChartStyle):
     """Pie/donut chart style: geometry + total (flat) + marks sub-block.
 
     ``total`` stays flat at this level (compositional slot, not a VL mark).
-    ``inner_radius`` is on _RadialChartStyle (cascade sentinel: None = solid pie).
+    ``inner_radius`` is on _RadialChartStyle (0 is a solid pie).
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

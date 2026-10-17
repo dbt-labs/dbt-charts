@@ -147,7 +147,9 @@ def test_portable_strftime_names_match_vega(
 ) -> None:
     regional = Regional(locale=RegionalLocale(time=locale))
     with regional_scope(
-        regional.format_locale, regional.time_locale, regional.week_start
+        regional.format_locale,
+        regional.time_locale,
+        regional.week_start,
     ):
         actual = portable_strftime(instant, f"%{directive}")
     assert actual == _vega_utc_format(instant, f"%{directive}", locale)
@@ -171,7 +173,9 @@ def test_a_percent_in_a_locale_word_prints_literally() -> None:
     )
     regional = Regional(locale=RegionalLocale(time=custom))
     with regional_scope(
-        regional.format_locale, regional.time_locale, regional.week_start
+        regional.format_locale,
+        regional.time_locale,
+        regional.week_start,
     ):
         assert portable_strftime(datetime(2023, 1, 5), "%b") == "100%"
 
@@ -179,7 +183,9 @@ def test_a_percent_in_a_locale_word_prints_literally() -> None:
 def test_a_padding_modifier_on_a_name_directive_still_names_it() -> None:
     regional = Regional(locale=RegionalLocale(time="de-DE"))
     with regional_scope(
-        regional.format_locale, regional.time_locale, regional.week_start
+        regional.format_locale,
+        regional.time_locale,
+        regional.week_start,
     ):
         assert portable_strftime(datetime(2023, 3, 5), "%-b") == "Mrz"
 
@@ -268,7 +274,9 @@ def test_a_nested_composite_expands_through_the_locale() -> None:
     )
     regional = Regional(locale=RegionalLocale(time=custom))
     with regional_scope(
-        regional.format_locale, regional.time_locale, regional.week_start
+        regional.format_locale,
+        regional.time_locale,
+        regional.week_start,
     ):
         assert (
             portable_strftime(datetime(2023, 3, 5, 14, 7), "%c") == "05.03.2023 14:07"
@@ -316,17 +324,22 @@ def test_a_nested_mismatch_names_only_what_the_nested_board_authored() -> None:
 def test_date_variable_labels_use_the_time_locale() -> None:
     regional = Regional(locale=RegionalLocale(time="de-DE"))
     with regional_scope(
-        regional.format_locale, regional.time_locale, regional.week_start
+        regional.format_locale,
+        regional.time_locale,
+        regional.week_start,
+        language=regional.resolved_language,
     ):
-        assert format_date_label("2023-03-05") == "5 Mrz 2023"
-        assert format_daterange_label("2023-03-05", "2023-10-09").startswith("5 Mrz")
+        assert format_date_label("2023-03-05") == "5. Mrz 2023"
+        assert format_daterange_label("2023-03-05", "2023-10-09").startswith("5. Mrz")
     assert format_date_label("2023-03-05") == "5 Mar 2023"
 
 
 def test_the_chart_config_owns_its_time_locale() -> None:
     regional = Regional(locale=RegionalLocale(time="de-DE"))
     with regional_scope(
-        regional.format_locale, regional.time_locale, regional.week_start
+        regional.format_locale,
+        regional.time_locale,
+        regional.week_start,
     ):
         spec = apply_presentation_defaults({}, "#fff", {})
     assert spec["config"]["locale"]["time"] == regional.time_locale

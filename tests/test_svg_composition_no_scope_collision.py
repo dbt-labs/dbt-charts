@@ -5,7 +5,7 @@ stacking more than one board — review diffs, merge conflicts, chat embeds).
 Inline SVG in an HTML page has no style scope: every CSS rule a board's SVG
 emits is document-global, so the last rule for a selector wins for every board
 on the page. That is the general form of the bug fixed here one emitter at a
-time — ``.md-heading`` in mdsvg, ``.dbt-table-row-link:hover`` in the table engine.
+time — ``.md-heading`` in mdsvg, ``.dbt-table-row:hover .dbt-table-row-link`` in the table engine.
 Identical duplicates (constant rules, ``@font-face``) are fine; two byte-equal
 rules cannot conflict.
 

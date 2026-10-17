@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Revenue by Region
+notes: >
+  Drill-down link pattern — source board. Each bar links to a per-region detail
+  board via link. The {{ x }} placeholder is replaced with the clicked region.
+
+queries:
+  by_region:
+    notes: Revenue totals by region, pre-ranked
+    columns: [region, revenue, orders]
+    values:
+      - [North, 85000, 320]
+      - [East,  71000, 268]
+      - [South, 62000, 241]
+      - [West,  54000, 198]
+
+charts:
+  region_bars:
+    notes: Clickable bar chart — each bar links to the region detail board
+    type: bar
+    query: by_region
+    x: region
+    y: revenue
+    title: Revenue by Region — click to drill
+    link: "/region-detail?region={{ x }}"
+
+rows:
+  - region_bars

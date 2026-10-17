@@ -107,7 +107,7 @@ def test_non_sentinel_xlink_href_is_scheme_checked_too() -> None:
     scheme-checked rather than passed through as-is."""
     svg_input = '<a xlink:href="javascript:alert(1)"><path d="M1,0"/></a>'
     with pytest.raises(RenderError) as exc_info:
-        _fix_chart_click_hrefs(svg_input)
+        _fix_chart_click_hrefs(svg_input, "page")
     assert exc_info.value.code.code == "ERR-LINK-SCHEME-UNSAFE-AT-RENDER"
 
 

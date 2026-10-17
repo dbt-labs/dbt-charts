@@ -1498,6 +1498,8 @@ def create_server(
 
         raw_params = variables_from_query_pairs(request.query_params.multi_items())
         download_format = raw_params.pop("format", None)
+        # ?_embed renders the board without nav chrome, for a host's modal iframe.
+        embed = raw_params.pop("_embed", None) is not None
         variables = raw_params
 
         # Alias resolution: before any board lookup, check whether this URL is an
@@ -1536,7 +1538,7 @@ def create_server(
                 clock=clock,
                 result_cache=app.state.result_cache,
                 download_format=download_format,
-                include_nav=app.state.server_nav,
+                include_nav=app.state.server_nav and not embed,
             )
         if resolved is not None:
             return _render_directory_listing(
@@ -1613,7 +1615,7 @@ def create_server(
             clock=clock,
             result_cache=app.state.result_cache,
             download_format=download_format,
-            include_nav=app.state.server_nav,
+            include_nav=app.state.server_nav and not embed,
         )
 
     return app

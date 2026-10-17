@@ -534,8 +534,7 @@ pub struct SizeCell {
 /// (`direction: horizontal`): each entry's cell is its own symbol size, the
 /// columns `gridLayout`'s `columnPadding` (10) past the last column's ceiled
 /// right bound and any negative left bound of their own, and every entry
-/// vertically centered in the row (whose height is the tallest entry's ceiled
-/// bound) — a probe of Vega's `gridLayout` on production's size legend.
+/// vertically centered in the row (whose height is its lowest entry bottom, ceiled) — a probe of Vega's `gridLayout` on production's size legend.
 pub fn size_legend_row(
     sizes: &[f64],
     label_ws: &[f64],
@@ -552,7 +551,6 @@ pub fn size_legend_row(
     let x1: Vec<f64> = (0..n).map(|i| c[i] - half_x[i] - VEGA_SYMBOL_STROKE_WIDTH).collect();
     let label_x: Vec<f64> = (0..n).map(|i| 2.0 * c[i] + label_offset).collect();
     let x2: Vec<f64> = (0..n).map(|i| (c[i] + half_x[i] + VEGA_SYMBOL_STROKE_WIDTH).max(label_x[i] + label_ws[i])).collect();
-    let y1: Vec<f64> = (0..n).map(|i| (c[i] - half_y[i] - VEGA_SYMBOL_STROKE_WIDTH).min(text_y1(c[i]))).collect();
     let y2: Vec<f64> = (0..n)
         .map(|i| (c[i] + half_y[i] + VEGA_SYMBOL_STROKE_WIDTH).max(text_y1(c[i]) + font_size))
         .collect();
@@ -561,8 +559,9 @@ pub fn size_legend_row(
     for i in 1..n {
         col_x[i] = col_x[i - 1] + VEGA_COLUMN_PADDING + neg(x1[i]) + x2[i - 1].ceil();
     }
-    // The row is as tall as its tallest entry's own bounds.
-    let box_h = (0..n).map(|i| y2[i] - y1[i]).fold(0.0, f64::max).ceil();
+    // The row is as tall as its lowest entry's bottom: an entry group's top
+    // edge is its own origin, so ink above it adds no height.
+    let box_h = y2.iter().copied().fold(0.0, f64::max).ceil();
     let cells = (0..n)
         .map(|i| SizeCell { y: (box_h - y2[i]) / 2.0, c: c[i], symbol_x: col_x[i] + c[i], label_x: col_x[i] + label_x[i] })
         .collect();
@@ -1061,6 +1060,10 @@ pub enum LegendSymbol<'a> {
     /// Vega's `symbolStrokeWidth` 1.5 (`symbols` in Vega-Lite's
     /// `legend/encode.ts` forwards the mark `stroke` value, not its width).
     StrokedCircle(&'a str),
+    /// A default circle ringed in a constant `stroke`, as a bar's own squares
+    /// are: a point layer's entries beside bars. Unlike [`LegendSymbol::StrokedCircle`]
+    /// it keeps the legend's uniform cell, as a square and circle always do.
+    BorderedCircle(&'a str),
     FilledCircle,
     /// Vega's default 10px stroke symbol (`M-5,0L5,0`), the legend of a line
     /// mark outside a mixed stroke legend.
@@ -1222,7 +1225,7 @@ pub fn emit_vega_legend(
                     y + c, fill = xml_escape_attr(fill)
                 );
             }
-            LegendSymbol::StrokedCircle(stroke) => {
+            LegendSymbol::StrokedCircle(stroke) | LegendSymbol::BorderedCircle(stroke) => {
                 let _ = write!(
                     out,
                     "<path transform=\"translate({:.2},{:.2})\" \
@@ -1776,6 +1779,17 @@ mod tests {
         assert_eq!(g.size, 12.0, "{}", g.size);
     }
 
+    /// A circle ringed in the bars' border is a point layer's legend glyph beside
+    /// a bar's square: unlike an arc's stroked circle it keeps the uniform cell.
+    #[test]
+    fn a_square_and_a_bordered_circle_keep_the_uniform_cell_a_stroked_circle_collapses() {
+        let size = |circle| {
+            legend_grid(&[70.0, 90.0], &[Some(LegendSymbol::Square("#fff")), Some(circle)], 11.0, 0, 8.0).size
+        };
+        assert_eq!(size(LegendSymbol::BorderedCircle("#fff")), 12.0);
+        assert_eq!(size(LegendSymbol::StrokedCircle("#fff")), 11.0);
+    }
+
     #[test]
     fn the_short_stroke_glyph_stays_one_stroke_tall_in_a_vertical_legend() {
         let box_h = |symbol| legend_grid(&[70.0, 90.0], &[Some(symbol), Some(symbol)], 11.0, 1, 8.0).box_h;
@@ -1839,20 +1853,29 @@ mod tests {
         assert!(size_legend_grid(&[], &[], 11.0, 8.0, (1.0, 1.0)).row_y.is_empty());
     }
 
+    /// An entry group's top edge is its own origin, so a symbol's ink above it
+    /// adds no height: the 338.7-size entry (r 9.202) of production's size
+    /// legend is `ceil(10 + 9.202 + 1.5) = 21` tall, probed on
+    /// `fixtures/boards/multiples-legend-layers/06`.
+    #[test]
+    fn a_size_legend_row_is_as_tall_as_its_lowest_entry_bottom() {
+        let (_, box_h, _) = size_legend_row(&[3.14, 338.7], &[4.0, 4.0], 11.0, 8.0, (1.0, 1.0));
+        assert_eq!(box_h, 21.0);
+    }
+
     /// Hand-derived from `gridLayout`'s column law for two entries at an 11px
     /// font, 8px label offset, 4px labels: sizes 4 and 324.38 give cells 11
     /// and 20 (centers 5.5 and 10); the first entry's right bound is
     /// `max(8, 19 + 4) = 23`, the second's left bound is -0.505, so the second
-    /// column starts at `23 + 10 + 1 = 34`; the tallest entry's bounds
-    /// `[-0.505, 20.505]` span 21.01, so the row is 22 tall, each entry
-    /// centered in it.
+    /// column starts at `23 + 10 + 1 = 34`; the tallest entry's bottom is
+    /// `10 + 9.0 + 1.5 = 20.51`, so the row is 21 tall, each entry centered in it.
     #[test]
     fn size_legend_row_lays_entries_out_as_columns() {
         let (cells, box_h, width) = size_legend_row(&[4.0, 324.3846153846154], &[4.0, 4.0], 11.0, 8.0, (1.0, 1.0));
-        assert_eq!((box_h, width), (22.0, 66.0));
+        assert_eq!((box_h, width), (21.0, 66.0));
         assert_eq!((cells[0].symbol_x, cells[0].label_x, cells[0].c), (5.5, 19.0, 5.5));
         assert_eq!((cells[1].symbol_x, cells[1].label_x, cells[1].c), (44.0, 62.0, 10.0));
-        assert!((cells[0].y - 5.75).abs() < 1e-9 && (cells[1].y - 0.7475).abs() < 1e-3, "{:?}", (cells[0].y, cells[1].y));
+        assert!((cells[0].y - 5.25).abs() < 1e-9 && (cells[1].y - 0.2465).abs() < 1e-3, "{:?}", (cells[0].y, cells[1].y));
     }
 
     /// `clamp(unit width, 100, 200)`: the floor holds below 100, the unit width

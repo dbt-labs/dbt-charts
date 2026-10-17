@@ -1020,7 +1020,7 @@ ERR_FILE_NOT_FOUND = REGISTRY.register(
         code="ERR-FILE-NOT-FOUND",
         domain="compile",
         title="File not found",
-        message_template="File not found: {path}",
+        message_template=("File not found: {path}. Check the path for typos."),
         doc=(
             "Fired when a file path given to a dbt charts verb does not exist on "
             "the filesystem. Check for typos in the path and ensure the file exists."

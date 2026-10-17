@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import string
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from functools import cached_property
@@ -396,6 +397,17 @@ def board_root_for_relpath(
 # The whole-project glob: matches every file at any depth. grep's default scope.
 ALL_FILES_GLOB = "**/*"
 
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+
+
+def ascii_lower(text: str) -> str:
+    """*text* with ASCII letters lowercased and every other character untouched.
+
+    The one case fold ``grep(..., ignore_case=True)`` means on every host, so a
+    store that matches in SQL over bytes agrees with one that matches in Python.
+    """
+    return text.translate(_ASCII_LOWER)
+
 
 def glob_to_regex(pattern: str) -> re.Pattern[str]:
     """Translate a shell glob to a regex over project-relative POSIX paths.
@@ -460,6 +472,18 @@ class GrepHit(NamedTuple):
     line: str
 
 
+class BoardLabel(NamedTuple):
+    """What a listing prints for one board file."""
+
+    file_path: str
+    #: Slug plus suffix — what ``render_board(path=...)`` takes back.
+    board_path: str
+    title: str
+    notes: str
+    #: Lowercased ``tags:`` of the board.
+    tags: tuple[str, ...]
+
+
 class ProjectFileQueries(ABC):
     """Multi-file queries over a project — the host-optimized search seam.
 
@@ -477,9 +501,10 @@ class ProjectFileQueries(ABC):
       invisible here — in particular it is never subject to skip filtering.
     - A pattern whose literal prefix (``glob_literal_prefix``) enters a
       ``SKIP_SCAN_DIRS`` directory yields nothing.
-    - ``grep`` is a case-sensitive substring match per line; files that cannot
-      be read as text (binary, vanished, over a host size cap) are skipped,
-      never raised.
+    - ``grep`` is a substring match per line, case-sensitive unless
+      ``ignore_case`` (which folds ASCII letters only, ``ascii_lower``); files
+      that cannot be read as text (binary, vanished, over a host size cap) are
+      skipped, never raised.
     - Symlink and skip-dir enumeration policy is the host's ``iter_files``
       policy; implementations do not add private per-method rules.
 
@@ -494,7 +519,9 @@ class ProjectFileQueries(ABC):
         """Yield handles for files matching *pattern*, sorted by relpath."""
 
     @abstractmethod
-    def grep(self, term: str, glob: str = ALL_FILES_GLOB) -> Iterator[GrepHit]:
+    def grep(
+        self, term: str, glob: str = ALL_FILES_GLOB, ignore_case: bool = False
+    ) -> Iterator[GrepHit]:
         """Yield lines containing *term*, in relpath order, scoped by *glob*."""
 
 
@@ -879,6 +906,38 @@ class Project(ABC):
                 if not is_board_candidate(relpath):
                     continue
                 yield ProjectPath(self, relpath)
+
+    def board_labels(self) -> list[BoardLabel]:
+        """Title and notes of every board file under every board root, by path.
+
+        Parses each board. A host that can answer from stored metadata
+        overrides this so a listing costs no per-board read; it must keep this
+        contract: every ``iter_boards`` file except ``meta.yml`` fragments,
+        markdown boards included, an unparseable or unreadable board named by its slug.
+        """
+        from dbt_charts.core.compile.parse.board_text import parse_board_text
+        from dbt_charts.core.diagnostics.execution import ExecutionError
+
+        labels: list[BoardLabel] = []
+        for pf in sorted(self.iter_boards(), key=lambda p: p.relpath):
+            if pf.is_meta:
+                continue
+            slug = board_slug(pf.relpath)
+            try:
+                content = pf.read_text()
+            except (OSError, UnicodeDecodeError, ExecutionError):
+                content = ""  # not readable as text: listed by its slug, as Cloud does
+            text = parse_board_text(slug, content, is_markdown=pf.is_markdown)
+            labels.append(
+                BoardLabel(
+                    pf.relpath,
+                    f"{slug}{PurePosixPath(pf.relpath).suffix}",
+                    text.title,
+                    text.notes,
+                    text.tags,
+                )
+            )
+        return labels
 
     def path(self, relpath: str) -> ProjectPath:
         """Return a ProjectPath handle for a project-relative path."""

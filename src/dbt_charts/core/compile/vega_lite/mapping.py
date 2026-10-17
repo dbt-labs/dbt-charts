@@ -17,6 +17,11 @@ from dbt_charts.core.compile.resolve.style.typography import concrete_title_styl
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.context import ChartStyleContext
+    from dbt_charts.core.compile.models.style.theme.marks import (
+        CircleMarkStyle,
+        RectMarkStyle,
+        RuleMarkStyle,
+    )
 
 
 def effective_vega_config(chart_style_context: ChartStyleContext) -> _VLConfig:
@@ -75,11 +80,13 @@ def style_to_vega_lite(
 
     # Generic mark types: map opacity/stroke/strokeWidth where set.
     # These live under charts.marks.* instead of charts.*.
-    def _mark_config(m: Any) -> dict[str, Any]:
-        d: dict[str, Any] = {}
-        if getattr(m, "opacity", None) is not None:
+    def _mark_config(
+        m: CircleMarkStyle | RuleMarkStyle | RectMarkStyle,
+    ) -> dict[str, float | str]:
+        d: dict[str, float | str] = {}
+        if m.opacity is not None:
             d["opacity"] = m.opacity
-        stroke = getattr(m, "stroke", None)
+        stroke = m.stroke
         if stroke is not None:
             if stroke.color is not None:
                 d["stroke"] = stroke.color

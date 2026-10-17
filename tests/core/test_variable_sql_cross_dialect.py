@@ -22,8 +22,8 @@ the same comparison shape; Layer 2 runs their real path.
 Layer 2 — execution, with row-level expectations. DuckDB and SQLite (bound
 parameters, the adapters' own path) and Postgres (a throwaway cluster on the
 machine's own binaries, `pg_cluster` in tests/conftest.py) run everywhere,
-locally and on every PR. BigQuery (a dry run through WIF), Databricks and
-Snowflake run nightly in warehouse-nightly.yml; locally they skip until their
+locally and on every PR. BigQuery (a dry run through WIF), Databricks, Redshift
+and Snowflake run nightly in warehouse-nightly.yml; locally they skip until their
 variables are set. BigQuery uses Application Default Credentials:
 
     DCT_TEST_BIGQUERY_PROJECT=<gcp project> \
@@ -32,9 +32,10 @@ variables are set. BigQuery uses Application Default Credentials:
 Postgres executes the inlined literals; BigQuery dry-runs them, which scans
 nothing and is the one engine here that rejects a mistyped comparison.
 Databricks executes them against the test SQL warehouse once
-DCT_TEST_DATABRICKS_HOST, _HTTP_PATH and _TOKEN are set; Snowflake does once
-DCT_TEST_SNOWFLAKE_ACCOUNT, _USER, _PRIVATE_KEY, _WAREHOUSE and _DATABASE are
-set.
+DCT_TEST_DATABRICKS_HOST, _HTTP_PATH and _TOKEN are set; Redshift does once
+DCT_TEST_REDSHIFT_HOST, _DATABASE, _USER and _PASSWORD are set; Snowflake does
+once DCT_TEST_SNOWFLAKE_ACCOUNT, _USER, _PRIVATE_KEY, _WAREHOUSE and _DATABASE
+are set.
 
 Each case starts from the value's runtime shape (the string a URL parameter
 carries, or the typed value a YAML default carries) and goes through the same
@@ -433,12 +434,12 @@ _DDL = (
 )
 
 
-def _insert_rows(execute: Callable[[str], object]) -> None:
+def _insert_rows(execute: Callable[[str], object], dialect_name: str) -> None:
+    dialect = get_dialect(dialect_name)
     for id_, d, ts, n, f, s, b in ROWS:
-        quoted = s.replace("'", "''")
         execute(
             f"INSERT INTO t VALUES ({id_}, DATE '{d}', TIMESTAMP '{ts}', {n}, {f}, "
-            f"'{quoted}', {'TRUE' if b else 'FALSE'})"
+            f"{sql_string_literal(s, dialect)}, {'TRUE' if b else 'FALSE'})"
         )
 
 
@@ -446,7 +447,7 @@ def _insert_rows(execute: Callable[[str], object]) -> None:
 def duck() -> Iterator[duckdb.DuckDBPyConnection]:
     con = duckdb.connect()
     con.execute(_DDL.format(kind=""))
-    _insert_rows(con.execute)
+    _insert_rows(con.execute, "duckdb")
     yield con
     con.close()
 
@@ -511,7 +512,7 @@ def postgres(pg_cluster: PostgreSQLExecutor) -> Iterator[Any]:
     )
     cur = con.cursor()
     cur.execute(_DDL.format(kind="TEMP"))
-    _insert_rows(cur.execute)
+    _insert_rows(cur.execute, "postgres")
     yield cur
     con.close()
 
@@ -594,6 +595,38 @@ class TestDatabricks:
             + _render_inlined(case, column, get_dialect("databricks"))
         )
         assert {r[0] for r in databricks.fetchall()} == case.expect
+
+
+@pytest.fixture(scope="module")
+def redshift() -> Iterator[Any]:
+    host = os.environ.get("DCT_TEST_REDSHIFT_HOST")
+    if not host:
+        pytest.skip("DCT_TEST_REDSHIFT_HOST not set")
+    redshift_connector = pytest.importorskip("redshift_connector")
+    con = redshift_connector.connect(
+        host=host,
+        port=5439,
+        database=os.environ["DCT_TEST_REDSHIFT_DATABASE"],
+        user=os.environ["DCT_TEST_REDSHIFT_USER"],
+        password=os.environ["DCT_TEST_REDSHIFT_PASSWORD"],
+        ssl=True,
+        timeout=15,
+    )
+    con.autocommit = True
+    cur = con.cursor()
+    cur.execute(_DDL.format(kind="TEMP"))
+    _insert_rows(cur.execute, "redshift")
+    yield cur
+    con.close()
+
+
+class TestRedshift:
+    """Inlined literals against a temp table: Redshift has no VALUES row source."""
+
+    @pytest.mark.parametrize(("case", "column"), _case_params())
+    def test_rows(self, redshift: Any, case: Case, column: str) -> None:
+        redshift.execute(_render_inlined(case, column, get_dialect("redshift")))
+        assert {r[0] for r in redshift.fetchall()} == case.expect
 
 
 @pytest.fixture(scope="module")

@@ -1,0 +1,3 @@
+kind: Performance
+body: Listing boards by tag on Cloud no longer reads each tagged board.
+time: 2026-10-15T21:54:05.278384-07:00

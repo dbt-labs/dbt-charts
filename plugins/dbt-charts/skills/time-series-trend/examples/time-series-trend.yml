@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Monthly Revenue Trend
+notes: Time-series trend pattern — line chart with date on x, metric on y
+
+queries:
+  monthly_revenue:
+    notes: Monthly revenue totals, ordered chronologically
+    columns: [month, revenue]
+    values:
+      - ["2025-07-01", 182000]
+      - ["2025-08-01", 194000]
+      - ["2025-09-01", 208000]
+      - ["2025-10-01", 221000]
+      - ["2025-11-01", 237000]
+      - ["2025-12-01", 248500]
+
+charts:
+  revenue_trend:
+    notes: Monthly revenue trajectory over the last six months
+    type: line
+    query: monthly_revenue
+    x: month
+    y: revenue
+    title: Monthly Revenue
+
+rows:
+  - revenue_trend

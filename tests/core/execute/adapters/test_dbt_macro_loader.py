@@ -63,6 +63,12 @@ def test_macro_manifest_cached_per_adapter_type() -> None:
     assert "macro.dbt_duckdb.duckdb__list_schemas" in first.macros
 
 
+def test_macro_manifest_includes_dependency_adapter_macros() -> None:
+    manifest = load_macro_manifest("redshift")
+    assert "macro.dbt_redshift.redshift__list_schemas" in manifest.macros
+    assert "macro.dbt_postgres.postgres__list_schemas" in manifest.macros
+
+
 def test_pragma_database_list_resolves_file_attach_name(tmp_path: Path) -> None:
     """PRAGMA database_list resolves the attach name for a file-backed DuckDB.
 

@@ -212,7 +212,10 @@ def _cartesian_roles(
                 format=style.tooltip_format,
             )
         ]
-        series: tuple[TooltipField, ...] = (TooltipField(WIDE_LABEL_FIELD, "Series"),)
+        series: tuple[TooltipField, ...] = (
+            # A series row is bare (value only): its title never prints.
+            TooltipField(WIDE_LABEL_FIELD, WIDE_LABEL_FIELD),
+        )
         order = _series_order_role(base_spec, WIDE_LABEL_FIELD)
         return header, series, values, order
 

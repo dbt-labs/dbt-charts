@@ -7,7 +7,6 @@ from typing import Any, Literal
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import column_format, resolve_format_parts
-from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.authored import ChartTotal
 from dbt_charts.core.compile.models.chart.normalized import (
     PieChart,
@@ -69,10 +68,13 @@ from dbt_charts.core.compile.resolve.chart.pie_attachment import (
     resolve_hybrid_heading_font,
     validate_theta_values,
 )
-from dbt_charts.core.compile.resolve.style.board import slice_ink_decided
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
     declared_column_format,
+)
+from dbt_charts.core.compile.resolve.style.inherit_resolver import (
+    merge_unset,
+    settled,
 )
 from dbt_charts.core.compile.resolve.style.legend_position import (
     merge_authored_position,
@@ -91,6 +93,7 @@ from dbt_charts.core.constants.pie import (
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import ERR_PIE_TOTAL_WITHOUT_HOLE
 from dbt_charts.core.text.case import apply_case, inferred_display_name
+from dbt_charts.core.text.format_d3 import board_word
 from dbt_charts.core.text.predefined_formats import PredefinedNumberFormat
 
 __all__ = [
@@ -105,7 +108,9 @@ def _auto_total_label(normalized: PieChart) -> str:
         label = (
             slug if slug.isupper() and " " not in slug else apply_case(slug, "title")
         )
-    return label if "total" in label.lower() else f"Total {label}"
+    if board_word("pie.total_word").lower() in label.lower():
+        return label
+    return board_word("pie.total", label=label)
 
 
 def _resolve_pie(
@@ -127,7 +132,7 @@ def _resolve_pie(
         if normalized.is_donut
         else chart_style_context.pie
     )
-    pie = merge_onto_base(board_pie, primary)
+    pie = merge_unset(board_pie, primary)
     # The center total and every slice tooltip vote on one set (theta values
     # plus their sum) so they never disagree about the same sub-$1 value --
     # see resolve_format_parts_for_values's per-set contract.
@@ -195,13 +200,7 @@ def _resolve_pie(
     # (author omitted it). Bake the effective template into the slice_mark
     # actually used to build ResolvedPieStyle below — no separate chart-level
     # labels model.
-    _slice_labels = pie.marks.slice.labels
-    if _slice_labels is not None:
-        _slice_labels = slice_ink_decided(_slice_labels)
-    if _slice_labels is None:
-        raise ValueError(
-            "pie.marks.slice.labels is None after cascade — check theme defaults"
-        )
+    _slice_labels = settled(pie.marks.slice.labels)
     tooltip_format = column_format(
         "number",
         chart_style_context.formats,
@@ -228,7 +227,7 @@ def _resolve_pie(
     )
 
     # Voted against the slice tooltip's set so the two never disagree.
-    is_donut_shape = pie.inner_radius is not None and pie.inner_radius > 0
+    is_donut_shape = pie.inner_radius > 0
     total = normalized.total
     # Resolved here, not at normalize: the hole can come from the board or theme
     # cascade, which normalize never sees.
@@ -238,7 +237,7 @@ def _resolve_pie(
             normalized.is_donut
             or (
                 normalized.style is not None
-                and normalized.style.inner_radius is not None
+                and "inner_radius" in normalized.style.model_fields_set
             )
         )
         and (total is None or total.label is None)
@@ -280,10 +279,8 @@ def _resolve_pie(
         value=resolved_as(ResolvedTotalValueSlot, pie.total.value, format=total_format),
     )
 
-    label_font_family = resolved_labels.font.family
-    label_font_size = resolved_labels.font.size
-    if label_font_family is None or label_font_size is None:
-        raise ValueError("pie slice label font is incomplete after cascade")
+    label_font_family = settled(resolved_labels.font.family)
+    label_font_size = settled(resolved_labels.font.size)
     shares = compute_shares(normalized.theta, data)
     slice_label_lines = finalize_pie_label_lines(
         normalized.theta,
@@ -418,7 +415,7 @@ def _resolve_pie(
             allow_shared_scale=False,
             filter_variables=frozenset(),
         )
-        heading = "Too small to label" if mode == "hybrid" else ""
+        heading = board_word("pie.too_small_to_label") if mode == "hybrid" else ""
         heading_font = resolve_hybrid_heading_font(attached_table.style.table)
 
     _tf = (
@@ -459,7 +456,7 @@ def _resolve_pie(
         total=total,
         format=slice_format,
         style=ResolvedPieStyle(
-            inner_radius=pie.inner_radius if pie.inner_radius is not None else 0.0,
+            inner_radius=pie.inner_radius,
             slice_mark=effective_slice_mark,
             tooltip_format=tooltip_format,
             total_style=total_style,

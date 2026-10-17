@@ -40,6 +40,7 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
+from dbt_charts import _engine
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved._base import ResolvedAxisStyle
 from dbt_charts.core.render.chart._types import VLDict
@@ -57,7 +58,12 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     sign_affixed_expr,
 )
 from dbt_charts.core.render.numeral_expr import numeral_vega_expr
-from dbt_charts.core.text.predefined_formats import VEGA_ARMS
+from dbt_charts.core.text.format_d3 import (
+    active_format_locale,
+    active_language,
+    board_word,
+)
+from dbt_charts.core.text.predefined_formats import VEGA_ARMS, template_expr
 from dbt_charts.core.utils import coerce_numeric_cell
 
 # Zero-width Unicode "format" characters (general category Cf — the same
@@ -351,12 +357,37 @@ def _days_expr(end_field: str, start_field: str) -> str:
 
 
 def _unit_text_expr(days: str, unit: str) -> str:
+    """The length in ``unit`` as text, its word in the board language chosen by
+    the PRINTED number (1.04 weeks prints "1 week"): the plural category is an
+    expression the engine generates from its CLDR rule table."""
     name, size, _, fmt = next(u for u in _DURATION_UNITS if u[0] == unit)
-    text = f"format({days} / {size}, {json.dumps(fmt)})"
-    # Singular by the printed number, not the raw one: 1.04 weeks prints "1".
+    scaled = f"{days} / {size}"
+    number = f"format({scaled}, {json.dumps(fmt)})"
+    # The word follows the number as printed (0.95 prints "0.9"): read the
+    # formatted text back through the board's own numerals, decimal mark and
+    # minus.
+    locale = active_format_locale()
+    ascii_text = number
+    if locale.numerals is not None:
+        for digit, numeral in enumerate(locale.numerals):
+            ascii_text = f"replace({ascii_text}, /{numeral}/g, '{digit}')"
+    printed = (
+        f"toNumber(replace(replace({ascii_text}, {json.dumps(locale.minus)}, '-'), "
+        f"{json.dumps(locale.decimal)}, '.'))"
+    )
+    language = active_language()
+    forms = _engine.message_forms(language, f"duration.{name}")
+    category = _engine.plural_expr(language, printed)
+
+    def form(template: str) -> str:
+        return template_expr(template, {"n": number})
+
+    keys = list(forms)
+    if len(keys) == 1:
+        return form(forms[keys[0]])
     return (
-        f"{text} + ' ' + "
-        f"({text} == '1' ? {json.dumps(name)} : {json.dumps(name + 's')})"
+        f"[{', '.join(form(forms[key]) for key in keys)}]"
+        f"[indexof({json.dumps(keys)}, {category})]"
     )
 
 
@@ -427,7 +458,7 @@ def span_tooltip_rows(
         last = _DURATION_UNITS[-1][0]
         natural += " : " + ("''" if last == unit else _unit_text_expr(days, last))
         fields = [
-            TooltipField(_SPAN_DIFFERENCE_FIELD, "Duration"),
+            TooltipField(_SPAN_DIFFERENCE_FIELD, board_word("tooltip.duration")),
             TooltipField(_SPAN_NATIVE_DURATION_FIELD, "", muted=True),
         ]
         transforms: list[VLDict] = [

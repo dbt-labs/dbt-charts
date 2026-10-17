@@ -22,6 +22,8 @@ from dbt_charts.core.render.board_resolve import (
 from dbt_charts.core.render.board_to_dict import board_to_dict
 from dbt_charts.core.render.render_result import RenderResult
 
+from .._svg_render import pinned_clock
+
 _QUERIES = """
 queries:
   summary:
@@ -77,6 +79,7 @@ def _executor(
         result.board,
         adapter_registry=build_adapter_registry(local_project(Path.cwd())),
         query_registry=result.query_registry,
+        clock=pinned_clock,
     )
 
 

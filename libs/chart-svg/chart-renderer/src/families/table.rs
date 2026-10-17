@@ -105,6 +105,7 @@ struct Resolved {
     // truthiness gate — an authored empty string is no link.
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
     link: Option<String>,
+    link_open: crate::href::LinkOpen,
     /// `None` when resolve had nothing to materialize (`_materialize_table_columns`):
     /// the same as no column config, so the query's own columns.
     #[serde(deserialize_with = "columns_or_none")]
@@ -611,9 +612,12 @@ struct ColConfig {
     // `{{ col }}` / `{{ col | urlencode }}` template substitutes the
     // named column(s) — see `resolve_cell_link`, called per row at paint.
     link: Option<String>,
+    /// How `link` opens (`TableColumnConfig.link_open`).
+    link_open: crate::href::LinkOpen,
     /// `TableColumnConfig.header_link`: the anchor around the column's header.
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
     header_link: Option<String>,
+    header_link_open: crate::href::LinkOpen,
     spark: Option<SparkConfig>,
     // Continuous background color mapping (`style.columns.<col>.scale`,
     // `ResolvedColumnScaleConfig`) — `background` and `color` targets.
@@ -3089,7 +3093,7 @@ fn check_transpose_input(
 
 /// A transposed table: its one row becomes N `(label, value)` rows, each value
 /// formatted as its source column would print it, drawn as a two-column table
-/// headed "Metric" and "Value" (`_transpose_data_for_render`).
+/// headed by the board language's "Metric" and "Value" words (`_transpose_data_for_render`).
 fn transposed_inputs(
     resolved: &Value,
     rows: &[serde_json::Map<String, Value>],
@@ -3106,17 +3110,17 @@ fn transposed_inputs(
         .iter()
         .zip(&cell_data)
         .map(|(col, cells)| {
-            let label = col.cfg.label.clone().unwrap_or_else(|| display_text::slug_to_text(col.name));
+            let label = match col.cfg.label.clone() { Some(label) => label, None => display_text::slug_to_text(col.name)? };
             let text = unpadded_cell_text(&cells[0]);
             let mut row = serde_json::Map::new();
             row.insert("__metric__".into(), json!(label));
             row.insert("__value__".into(), json!(text));
-            row
+            Ok(row)
         })
-        .collect();
+        .collect::<Result<Vec<_>, String>>()?;
     flat["columns"] = json!({
-        "__metric__": {"label": "Metric", "width": "40%"},
-        "__value__": {"label": "Value", "align": "right"},
+        "__metric__": {"label": display_text::language::tr("table.metric", None, &[])?, "width": "40%", "link_open": "page", "header_link_open": "page"},
+        "__value__": {"label": display_text::language::tr("table.value", None, &[])?, "align": "right", "link_open": "page", "header_link_open": "page"},
     });
     flat["conditional_formatting"] = Value::Null;
     flat["spanners"] = Value::Null;
@@ -4662,6 +4666,7 @@ struct TableBody<'a> {
     // when `auto_link`/FK-drill synthesized one; drives the whole-row band
     // below.
     link: Option<&'a str>,
+    link_open: crate::href::LinkOpen,
     /// Declared board variable names: a linkless cell in such a column links
     /// to `?col=value` (`resolve_filter_cell_link`).
     filter_variables: &'a [String],
@@ -4759,6 +4764,7 @@ impl TableBody<'_> {
             signed_columns,
             tones,
             link,
+            link_open,
             filter_variables,
             link_context,
             ..
@@ -4975,7 +4981,16 @@ impl TableBody<'_> {
                         .map(py_str)
                         .filter(|s| !s.is_empty())
                         .unwrap_or_else(|| row_href.clone());
-                    xml.open("a", Attrs::new().set("href", row_href_checked).set("aria-label", row_label));
+                    // The row's hover scope: the band tints while the pointer
+                    // is anywhere in the row, a cell's own link included.
+                    xml.open("g", Attrs::new().set("class", "dbt-table-row"));
+                    xml.open(
+                        "a",
+                        Attrs::new()
+                            .set("href", row_href_checked)
+                            .set("aria-label", row_label)
+                            .set_some("data-dbt-link-open", link_open.open_attr()).set_some("target", link_open.target()),
+                    );
                     xml.empty(
                         "rect",
                         Attrs::new()
@@ -5227,7 +5242,14 @@ impl TableBody<'_> {
                 // production stamps on it.
                 let link_href = cell_link.as_deref().map(crate::href::checked_href_diagnostic).transpose()?;
                 if let Some(href) = link_href {
-                    xml.open("a", Attrs::new().set("href", href));
+                    // Only the column's own `link:` follows its mode; the
+                    // `?col=value` filter link is implied, so it is page.
+                    let open = if col.cfg.link.as_deref().is_some_and(|l| !l.is_empty()) {
+                        col.cfg.link_open
+                    } else {
+                        crate::href::LinkOpen::Page
+                    };
+                    xml.open("a", Attrs::new().set("href", href).set_some("data-dbt-link-open", open.open_attr()).set_some("target", open.target()));
                     xml.open(
                         "g",
                         Attrs::new()
@@ -5434,6 +5456,9 @@ impl TableBody<'_> {
                     xml.close("a");
                 }
             }
+            if row_has_band {
+                xml.close("g");
+            }
 
             if will_draw_row_rule {
                 // `rule_y = row_y + per_row_height - rule_reserve_px`
@@ -5554,7 +5579,7 @@ fn title_band(
     let cased_title: Option<String> = match title {
         Some(t) => {
             match title_style.font.case.as_deref() {
-                Some(c) if c != "none" => Some(crate::case::apply_case(t, c)?),
+                Some(c) if c != "none" => Some(display_text::case::apply_case(t, c)?),
                 _ => Some(t.to_string()),
             }
         }
@@ -6106,9 +6131,9 @@ fn visible_columns<'a>(
             // label is not exempt from the header font case.
             let raw_label = match cfg.label.clone().filter(|s| !s.is_empty()) {
                 Some(l) => l,
-                None => display_text::slug_to_text(config_key),
+                None => display_text::slug_to_text(config_key)?,
             };
-            let header = crate::case::apply_case(&raw_label, header_font_case)?;
+            let header = display_text::case::apply_case(&raw_label, header_font_case)?;
 
             Ok(ColMeta { name, header, cfg, is_numeric, is_date, when_rules })
         })
@@ -7481,7 +7506,12 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                 .set("font-family", header_family.as_str())
         };
         if let Some(link) = &col.cfg.header_link {
-            xml.open("a", Attrs::new().set("href", crate::href::checked_href_diagnostic(link)?));
+            xml.open(
+                "a",
+                Attrs::new()
+                    .set("href", crate::href::checked_href_diagnostic(link)?)
+                    .set_some("data-dbt-link-open", col.cfg.header_link_open.open_attr()).set_some("target", col.cfg.header_link_open.target()),
+            );
         }
         if header.lines.len() > 1 {
             xml.open("text", Attrs::new().set("x", x_s.as_str()).extend(header_attrs()));
@@ -7550,6 +7580,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         signed_columns: &signed_columns,
         tones,
         link: r.link.as_deref(),
+        link_open: r.link_open,
         filter_variables: &payload.filter_variables,
         link_context: payload.link_context.as_ref(),
         fonts,
@@ -7749,6 +7780,13 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
 
 #[cfg(test)]
 pub(crate) mod tests {
+    /// A resolved column as the Python seam sends it: every column carries its link modes.
+    pub(crate) fn col_config(mut column: Value) -> serde_json::Result<ColConfig> {
+        let fields = column.as_object_mut().expect("a column is an object");
+        fields.entry("link_open").or_insert(json!("page"));
+        fields.entry("header_link_open").or_insert(json!("page"));
+        serde_json::from_value(column)
+    }
 
     /// Renders and returns the SVG plus the codes of the warnings it emitted.
     pub(crate) fn render_with_warnings(payload: &Payload) -> (String, Vec<&'static str>) {
@@ -7863,6 +7901,7 @@ pub(crate) mod tests {
     fn plain_payload(theme: Value, columns: Value, rows: Vec<Value>, width: f64, height: f64) -> Payload {
         crate::test_payload(json!({
             "resolved": {
+                "link_open": "page",
                 "title": "Test Table",
                 "title_style": resolved_title_style(),
                 "columns": columns,
@@ -7914,6 +7953,7 @@ pub(crate) mod tests {
         theme["pagination"]["page_rows"] = json!(page_rows);
         theme["symbol_mode"] = json!(symbol_mode);
         let resolved = json!({
+            "link_open": "page",
             "id": "t1",
             "title": "Test Table",
             "title_style": resolved_title_style(),
@@ -8067,6 +8107,7 @@ pub(crate) mod tests {
         theme["pagination"]["page_rows"] = json!(20);
         theme["paginator"]["font"]["family"] = json!("PaginatorOnlySans");
         let resolved = json!({
+            "link_open": "page",
             "id": "t1",
             "title": "Test Table",
             "title_style": resolved_title_style(),
@@ -8102,6 +8143,7 @@ pub(crate) mod tests {
     ) -> Payload {
         let theme = base_table_theme();
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Pivot",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -8228,6 +8270,7 @@ pub(crate) mod tests {
         });
         let theme = base_table_theme();
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Pivot",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -8296,6 +8339,7 @@ pub(crate) mod tests {
         });
         let theme = base_table_theme();
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Pivot",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -8631,6 +8675,7 @@ pub(crate) mod tests {
         theme["pagination"]["page_rows"] = json!(20);
         let payload_json = json!({
             "resolved": {
+                "link_open": "page",
                 "title": "Test Table",
                 "title_style": resolved_title_style(),
                 "columns": columns,
@@ -8672,6 +8717,7 @@ pub(crate) mod tests {
         theme["row"]["role"] = json!(null);
         let payload_json = json!({
             "resolved": {
+                "link_open": "page",
                 "title": "Test Table",
                 "title_style": resolved_title_style(),
                 "columns": columns,
@@ -8786,7 +8832,7 @@ pub(crate) mod tests {
         );
     }
 
-    // ── table_pagination.js embedding (script_embedding.py port) ──────────
+    // ── table_pagination.js embedding ──────────────────────────────────────
 
     #[test]
     fn strip_js_comments_removes_the_fenced_engineering_note() {
@@ -8835,6 +8881,7 @@ pub(crate) mod tests {
         let mut theme = base_table_theme();
         theme["pagination"]["page_rows"] = json!(page_rows);
         let resolved = json!({
+            "link_open": "page",
             "id": id,
             "title": "Test Table",
             "title_style": resolved_title_style(),
@@ -8961,6 +9008,7 @@ pub(crate) mod tests {
         theme["row"]["role"] = json!("row_role");
         theme["pagination"]["page_rows"] = json!(3);
         let resolved = json!({
+            "link_open": "page",
             "id": "t2",
             "title": "Test Table",
             "title_style": resolved_title_style(),
@@ -9025,6 +9073,7 @@ pub(crate) mod tests {
         theme["pagination"]["page_rows"] = json!(3);
         theme["symbol_mode"] = json!("anchors");
         let resolved = json!({
+            "link_open": "page",
             "id": "t3",
             "title": "Test Table",
             "title_style": resolved_title_style(),
@@ -9362,6 +9411,7 @@ pub(crate) mod tests {
         theme["title_row"] = json!({"height": 20.0});
         theme["title_subtitle_gap"] = json!(3.3);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "subtitle": "A subtitle line",
             "title_style": {
@@ -9423,6 +9473,7 @@ pub(crate) mod tests {
         let payload = |title_overflow: &str| -> Payload {
             crate::test_payload(json!({
                 "resolved": {
+                    "link_open": "page",
                     "title": long_title,
                     "subtitle": long_sub,
                     "title_style": {
@@ -9496,6 +9547,7 @@ pub(crate) mod tests {
             "void": {},
         });
         let resolved = json!({
+            "link_open": "page",
             "title": null,
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -9552,6 +9604,7 @@ pub(crate) mod tests {
             "when": {"align": "right"},
         });
         let resolved = json!({
+            "link_open": "page",
             "title": null,
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -9595,6 +9648,7 @@ pub(crate) mod tests {
             "growth": {},
         });
         let resolved = json!({
+            "link_open": "page",
             "title": null,
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -9639,6 +9693,7 @@ pub(crate) mod tests {
             "nps": {},
         });
         let resolved = json!({
+            "link_open": "page",
             "title": null,
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -9678,6 +9733,7 @@ pub(crate) mod tests {
             "a": {"label": "days to close"},
         });
         let resolved = json!({
+            "link_open": "page",
             "title": null,
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -9716,6 +9772,7 @@ pub(crate) mod tests {
             "revenue": {"label": "Revenue"},
         });
         let resolved = json!({
+            "link_open": "page",
             "title": "revenue by region",
             "title_style": {
                 "font": {"family": "serif", "size": 18.0, "color": "#494A4C", "weight": "500", "case": "title"},
@@ -9762,6 +9819,7 @@ pub(crate) mod tests {
             "revenue": {"label": "Revenue"},
         });
         let resolved = json!({
+            "link_open": "page",
             "title": "revenue by region",
             "subtitle": "a lowercase subtitle line",
             "title_style": {
@@ -9809,6 +9867,7 @@ pub(crate) mod tests {
         theme["text_baseline_offset"] = json!(6.0);
         theme["header"]["height"] = json!(50.0);
         let resolved = json!({
+            "link_open": "page",
             "title": null,
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -9878,6 +9937,7 @@ pub(crate) mod tests {
         let mut theme = base_table_theme();
         theme["outer_padding"] = json!(0.0);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "subtitle": null,
             "title_style": resolved_title_style(),
@@ -9934,6 +9994,7 @@ pub(crate) mod tests {
         let mut theme = base_table_theme();
         theme["outer_padding"] = json!(12.0);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "subtitle": null,
             "title_style": resolved_title_style(),
@@ -10101,6 +10162,7 @@ pub(crate) mod tests {
         let columns = json!({"value": {"label": "Value", "format": ",.2f", "width": 50}});
         let theme = base_table_theme();
         let resolved = json!({
+            "link_open": "page",
             "title": null,
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -10159,6 +10221,7 @@ pub(crate) mod tests {
         });
         let theme = base_table_theme();
         let resolved = json!({
+            "link_open": "page",
             "id": "t1",
             "title": "Test Table",
             "title_style": resolved_title_style(),
@@ -10197,6 +10260,7 @@ pub(crate) mod tests {
         theme["row"]["role"] = json!(null);
         theme["pagination"]["page_rows"] = json!(20);
         let resolved = json!({
+            "link_open": "page",
             "id": "t1",
             "title": null,
             "title_style": resolved_title_style(),
@@ -10251,6 +10315,7 @@ pub(crate) mod tests {
         let width = 12.0 + inter_w + pager_w + 1.0;
         let payload_json = json!({
             "resolved": {
+                "link_open": "page",
                 "id": "t1",
                 "title": null,
             "title_style": resolved_title_style(),
@@ -10289,6 +10354,7 @@ pub(crate) mod tests {
         // set it to a value distinct from title_style.font.size (18.0) so a
         // read of the wrong source is visible in the rendered baseline.
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "subtitle": null,
             "title_style": {
@@ -10342,6 +10408,7 @@ pub(crate) mod tests {
         theme["title_row"] = json!({"height": 100.0});
         theme["title_subtitle_gap"] = json!(3.3);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "subtitle": "A subtitle line",
             "title_style": {
@@ -10596,6 +10663,7 @@ pub(crate) mod tests {
         let mut theme = base_table_theme();
         theme["row"]["role"] = json!(null);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -10646,6 +10714,7 @@ pub(crate) mod tests {
         let mut theme = base_table_theme();
         theme["row"]["role"] = json!(null);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -10692,6 +10761,7 @@ pub(crate) mod tests {
         let mut theme = base_table_theme();
         theme["row"]["role"] = json!(null);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -10727,6 +10797,7 @@ pub(crate) mod tests {
         let mut theme = base_table_theme();
         theme["row"]["role"] = json!(null);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -10765,6 +10836,7 @@ pub(crate) mod tests {
         let mut theme = base_table_theme();
         theme["row"]["role"] = json!(null);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -10804,6 +10876,7 @@ pub(crate) mod tests {
         let mut theme = base_table_theme();
         theme["row"]["role"] = json!(null);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -10858,6 +10931,7 @@ pub(crate) mod tests {
         let mut theme = base_table_theme();
         theme["row"]["role"] = json!(null);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -10913,6 +10987,7 @@ pub(crate) mod tests {
         theme["header"]["font"]["size"] = json!(header_size);
         theme["row"]["role"] = json!(null);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -10981,6 +11056,7 @@ pub(crate) mod tests {
         let mut theme = base_table_theme();
         theme["row"]["role"] = json!(null);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -11018,6 +11094,7 @@ pub(crate) mod tests {
         theme["row"]["stripe"] = json!({"color": "#eeeeee"});
         theme["header"]["divider"] = table_divider(false, "#222222", 1.0);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -11070,6 +11147,7 @@ pub(crate) mod tests {
             let mut theme = base_table_theme();
             theme["row"]["stripe"] = stripe;
             let resolved = json!({
+                "link_open": "page",
                 "title": "Test Table",
                 "title_style": resolved_title_style(),
                 "columns": columns,
@@ -11111,6 +11189,7 @@ pub(crate) mod tests {
             theme["row"]["stripe"] = stripe;
             let payload: Payload = crate::test_payload(json!({
                 "resolved": {
+                    "link_open": "page",
                     "title": "T", "title_style": resolved_title_style(),
                     "columns": {"a": {"label": "A"}},
                     "style": {"table": theme, "title_font": resolved_title_font()},
@@ -11142,6 +11221,7 @@ pub(crate) mod tests {
         theme["row"]["divider"] = table_divider(true, "#222222", 1.0);
         theme["header"]["divider"] = table_divider(false, "#222222", 1.0);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -11200,6 +11280,7 @@ pub(crate) mod tests {
         theme["row"]["divider"] = table_divider(true, "#222222", 1.0);
         theme["header"]["divider"] = table_divider(false, "#222222", 1.0);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -11250,6 +11331,7 @@ pub(crate) mod tests {
         theme["row"]["role"] = json!(null);
         theme["row"]["divider"] = table_divider(true, "#222222", 1.0);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -11318,6 +11400,7 @@ pub(crate) mod tests {
         theme["row"]["stripe"] = json!({"color": "#eeeeee"});
         theme["row"]["roles"]["summary"]["background"] = json!("#dddddd");
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -11367,6 +11450,7 @@ pub(crate) mod tests {
         theme["row"]["divider"] = table_divider(true, "#222222", 2.5);
         theme["header"]["divider"] = table_divider(false, "#222222", 1.0);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -11907,6 +11991,7 @@ pub(crate) mod tests {
         theme["header"]["font"]["color"] = json!("#0055aa");
         theme["header"]["divider"] = table_divider(visible, "#cc0000", width);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Pivot",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -11961,6 +12046,7 @@ pub(crate) mod tests {
                       "background": "#f0f0f0", "font": {"weight": "700"}},
         });
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -12014,6 +12100,7 @@ pub(crate) mod tests {
             let mut theme = base_table_theme();
             theme["wrap"] = json!(wrap);
             let resolved = json!({
+                "link_open": "page",
                 "title": null,
                 "title_style": resolved_title_style(),
                 "columns": columns,
@@ -12075,6 +12162,7 @@ pub(crate) mod tests {
         let mut theme = base_table_theme();
         theme["font"]["size"] = json!(12.0);
         let resolved = json!({
+            "link_open": "page",
             "title": null,
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -13192,6 +13280,7 @@ mod conditional_formatting_tests {
     fn cf_payload(columns: Value, rows: Vec<Value>, conditional_formatting: Value) -> Payload {
         let theme = cf_theme();
         let resolved = json!({
+            "link_open": "page",
             "title": "CF Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -13371,6 +13460,7 @@ mod conditional_formatting_tests {
         let mut theme = cf_theme();
         theme["pagination"] = json!({"enabled": true, "page_rows": 3});
         let resolved = json!({
+            "link_open": "page",
             "id": "t1",
             "title": "T",
             "title_style": resolved_title_style(),
@@ -13420,6 +13510,7 @@ mod conditional_formatting_tests {
         let mut theme = cf_theme();
         theme["row"]["role"] = json!("role");
         let resolved = json!({
+            "link_open": "page",
             "title": "CF Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -13468,6 +13559,7 @@ mod conditional_formatting_tests {
         let mut theme = cf_theme();
         theme["row"]["role"] = json!("role");
         let resolved = json!({
+            "link_open": "page",
             "title": "T",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -13659,6 +13751,7 @@ mod conditional_formatting_tests {
         let cf = json!({"days": {"when": [{"gt": 90, "glyph": "\u{25d0}", "tone": "warning"}]}});
         let theme = cf_theme();
         let resolved = json!({
+            "link_open": "page",
             "title": "CF Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -13706,6 +13799,7 @@ mod conditional_formatting_tests {
         let mut theme = cf_theme();
         theme["symbol_mode"] = json!("anchors");
         let resolved = json!({
+            "link_open": "page",
             "title": "CF Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -13794,7 +13888,7 @@ mod conditional_formatting_tests {
         fn col_b_x(has_glyph: bool) -> f64 {
             let mut rows = vec![json!({"a": "x", "b": "y"})];
             rows.extend((0..49).map(|_| json!({"a": "z", "b": "y"})));
-            let columns = json!({"a": {"label": "A"}, "b": {"label": "B"}});
+            let columns = json!({"a": {"label": "A", "link_open": "page", "header_link_open": "page"}, "b": {"label": "B", "link_open": "page", "header_link_open": "page"}});
             let cf = if has_glyph {
                 json!({"a": {"when": [{"eq": "x", "glyph": "MMMMMMMMMMMMMMMMMMMM"}]}})
             } else {
@@ -13805,6 +13899,7 @@ mod conditional_formatting_tests {
             theme["column_layout"]["cell_padding"] = json!(2.0);
             theme["pagination"]["page_rows"] = json!(50);
             let resolved = json!({
+                "link_open": "page",
                 "title": "T",
                 "title_style": resolved_title_style(),
                 "columns": columns,
@@ -13862,6 +13957,7 @@ mod conditional_formatting_tests {
         theme["outer_padding"] = json!(0.0);
         theme["column_layout"]["cell_padding"] = json!(2.0);
         let resolved = json!({
+            "link_open": "page",
             "title": "T",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -13928,6 +14024,7 @@ mod all_pinned_overflow_growth_tests {
         let mut theme = super::tests::base_table_theme();
         theme["outer_padding"] = json!(10.0);
         let resolved = json!({
+            "link_open": "page",
             "title": "T",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -13962,6 +14059,7 @@ mod all_pinned_overflow_growth_tests {
         });
         let theme = super::tests::base_table_theme();
         let resolved = json!({
+            "link_open": "page",
             "title": "T",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -13986,6 +14084,7 @@ mod all_pinned_overflow_growth_tests {
     }
     fn pinned_payload(width: f64, pin: f64) -> Payload {
         let resolved = json!({
+            "link_open": "page",
             "id": "same_id",
             "title": "T",
             "title_style": resolved_title_style(),
@@ -14217,8 +14316,8 @@ mod floor_source_tests {
             json!({"name": "Apex", "revenue": 24730000.0}),
             json!({"name": "Bright", "revenue": 8460000.0}),
         ];
-        let name_col = json!({"name": {"label": "Name"}});
-        let revenue_col = json!({"revenue": {"label": "Rev", "format": "currency"}});
+        let name_col = json!({"name": {"label": "Name", "link_open": "page", "header_link_open": "page"}});
+        let revenue_col = json!({"revenue": {"label": "Rev", "format": "currency", "link_open": "page", "header_link_open": "page"}});
         let mut theme = base_table_theme();
         theme["row"]["role"] = json!(null);
         // The columns' natural widths alone, through the measure the board hug
@@ -14226,6 +14325,7 @@ mod floor_source_tests {
         let natural_of = |columns: Value| -> f64 {
             let payload = width::MeasurePayload {
                 resolved: json!({
+                    "link_open": "page",
                     "title": null,
                     "title_style": resolved_title_style(),
                     "columns": columns,
@@ -14237,6 +14337,7 @@ mod floor_source_tests {
                 fonts_dir: None,
                 format_locale: crate::number_locale::NumberLocale::en_us(),
                 time_locale: crate::time_locale::en_us(),
+                language: Default::default(),
                 formats: None,
                 sub_unit_specs: Some(super::tests::en_us_siblings()),
                 cell_text: Vec::new(),
@@ -14254,6 +14355,7 @@ mod floor_source_tests {
         columns.extend(json!({"revenue": {"label": "Rev", "format": "currency"}}).as_object().unwrap().clone());
         let payload_json = json!({
             "resolved": {
+                "link_open": "page",
                 "title": null,
                 "title_style": resolved_title_style(),
                 "columns": columns,
@@ -14304,6 +14406,7 @@ mod cascade_and_lane_tests {
         let mut theme = base_table_theme();
         theme["row"]["role"] = json!(null);
         let resolved = json!({
+            "link_open": "page",
             "title": null,
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -14585,6 +14688,7 @@ mod date_like_tests {
         let mut theme = base_table_theme();
         theme["row"]["role"] = json!(null);
         let resolved = json!({
+            "link_open": "page",
             "title": null,
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -14894,6 +14998,7 @@ mod demand_affix_tests {
         let mut theme = base_table_theme();
         theme["row"]["role"] = json!(null);
         let resolved = json!({
+            "link_open": "page",
             "title": null,
             "title_style": resolved_title_style(),
             "columns": {"name": {"label": "Name"}, "rate": {"label": "Rate"}},
@@ -14935,7 +15040,7 @@ mod demand_affix_tests {
     /// apart from the signed digits.
     #[test]
     fn a_column_format_reads_every_key_through_the_slot_parser() {
-        let cfg: ColConfig = serde_json::from_value(json!({"format": {
+        let cfg: ColConfig = crate::families::table::tests::col_config(json!({"format": {
             "spec": ",.0f", "prefix": "US$", "repeat": "every", "raw": "integer"
         }}))
         .expect("parses");
@@ -14946,8 +15051,8 @@ mod demand_affix_tests {
         let placed =
             err(json!({"spec": ",.0f", "prefix": "US$", "sign_placement": "after_prefix"}));
         assert!(placed.contains("sign_placement") && placed.contains("not painted"), "{placed}");
-        let notated: ColConfig =
-            serde_json::from_value(json!({"format": {"spec": ",.0f", "notation": "narrative"}})).expect("parses");
+        let notated = crate::families::table::tests::col_config(json!({"format": {"spec": ",.0f", "notation": "narrative"}}))
+            .expect("parses");
         assert_eq!(notated.format.expect("a format").notation.as_deref(), Some("narrative"));
     }
 
@@ -14978,7 +15083,7 @@ mod demand_affix_tests {
         ColMeta {
             name,
             header: name.to_string(),
-            cfg: serde_json::from_value(config).expect("a column config"),
+            cfg: crate::families::table::tests::col_config(config).expect("a column config"),
             is_numeric: true,
             is_date: false,
             when_rules: Vec::new(),
@@ -15107,6 +15212,7 @@ mod link_paint_tests {
         theme["font"]["color"] = json!("#123456");
         theme["row"]["role"] = json!(row_role);
         let resolved = json!({
+            "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
             "columns": columns,
@@ -15310,6 +15416,7 @@ mod row_link_tests {
     fn row_link_payload(link: Option<&str>, rows: Vec<Value>) -> Payload {
         let theme = super::tests::base_table_theme();
         let resolved = json!({
+            "link_open": "page",
             "title": "Orders",
             "title_style": resolved_title_style(),
             "link": link,
@@ -15373,6 +15480,112 @@ mod row_link_tests {
         );
     }
 
+    fn link_open_payload() -> Payload {
+        let rows = vec![json!({"id": 1, "status": "open"}), json!({"id": 2, "status": "closed"})];
+        row_link_payload(Some("/d/?id={{ id }}"), rows)
+    }
+
+    fn stamped(svg: &str) -> usize {
+        svg.matches("data-dbt-link-open=\"modal\"").count()
+    }
+
+    /// A page-mode (or unauthored) link adds nothing: the SVG is byte-identical.
+    #[test]
+    fn a_page_mode_link_renders_byte_identical_to_an_unmoded_one() {
+        let unmoded = render(&link_open_payload(), &test_fonts()).unwrap();
+        let mut page = link_open_payload();
+        page.resolved["link_open"] = json!("page");
+        page.resolved["columns"]["status"]["link"] = json!("/s/{{ status }}");
+        page.resolved["columns"]["status"]["link_open"] = json!("page");
+        page.resolved["columns"]["status"]["header_link"] = json!("/h");
+        page.resolved["columns"]["status"]["header_link_open"] = json!("page");
+        let mut bare = link_open_payload();
+        bare.resolved["columns"]["status"]["link"] = json!("/s/{{ status }}");
+        bare.resolved["columns"]["status"]["header_link"] = json!("/h");
+        assert_eq!(render(&page, &test_fonts()).unwrap(), render(&bare, &test_fonts()).unwrap());
+        assert_eq!(stamped(&unmoded), 0);
+    }
+
+    /// A modal chart link stamps each row band anchor; the column's own
+    /// page-mode link and header link stay unstamped.
+    #[test]
+    fn a_modal_row_link_stamps_only_the_row_bands() {
+        let mut payload = link_open_payload();
+        payload.resolved["link_open"] = json!("modal");
+        payload.resolved["columns"]["status"]["link"] = json!("/s/{{ status }}");
+        payload.resolved["columns"]["status"]["header_link"] = json!("/h");
+        let svg = render(&payload, &test_fonts()).unwrap();
+        assert_eq!(stamped(&svg), 2, "{svg}");
+        assert!(svg.contains("<a href=\"/d/?id=1\" aria-label=\"1\" data-dbt-link-open=\"modal\">"), "{svg}");
+        assert!(svg.contains("<a href=\"/s/open\"><g class=\"dbt-table-link\""), "{svg}");
+        assert!(svg.contains("<a href=\"/h\"><text"), "{svg}");
+    }
+
+    /// A column's `link_open` and `header_link_open` each govern only their own anchor.
+    #[test]
+    fn column_modes_are_independent_of_the_chart_and_each_other() {
+        let mut payload = link_open_payload();
+        payload.resolved["columns"]["status"]["link"] = json!("/s/{{ status }}");
+        payload.resolved["columns"]["status"]["link_open"] = json!("modal");
+        payload.resolved["columns"]["status"]["header_link"] = json!("/h");
+        let svg = render(&payload, &test_fonts()).unwrap();
+        assert_eq!(stamped(&svg), 2, "{svg}");
+        assert!(svg.contains("<a href=\"/s/open\" data-dbt-link-open=\"modal\"><g class=\"dbt-table-link\""), "{svg}");
+        assert!(svg.contains("<a href=\"/d/?id=1\" aria-label=\"1\">"), "{svg}");
+        assert!(svg.contains("<a href=\"/h\"><text"), "{svg}");
+
+        let mut header = link_open_payload();
+        header.resolved["columns"]["status"]["header_link"] = json!("/h");
+        header.resolved["columns"]["status"]["header_link_open"] = json!("modal");
+        let svg = render(&header, &test_fonts()).unwrap();
+        assert_eq!(stamped(&svg), 1, "{svg}");
+        assert!(svg.contains("<a href=\"/h\" data-dbt-link-open=\"modal\"><text"), "{svg}");
+    }
+
+    /// A new-tab row, cell or header link targets a new tab on its own anchor.
+    #[test]
+    fn a_new_tab_link_targets_a_new_tab() {
+        let mut payload = link_open_payload();
+        payload.resolved["link_open"] = json!("new_tab");
+        payload.resolved["columns"]["status"]["link"] = json!("/s/{{ status }}");
+        payload.resolved["columns"]["status"]["link_open"] = json!("new_tab");
+        payload.resolved["columns"]["status"]["header_link"] = json!("/h");
+        payload.resolved["columns"]["status"]["header_link_open"] = json!("new_tab");
+        let svg = render(&payload, &test_fonts()).unwrap();
+        let tab = "data-dbt-link-open=\"new_tab\" target=\"_blank\"";
+        assert!(svg.contains(&format!("<a href=\"/d/?id=1\" aria-label=\"1\" {tab}>")), "{svg}");
+        assert!(svg.contains(&format!("<a href=\"/s/open\" {tab}><g class=\"dbt-table-link\"")), "{svg}");
+        assert!(svg.contains(&format!("<a href=\"/h\" {tab}><text")), "{svg}");
+    }
+
+    /// The implied `?col=value` filter link is always page, whatever the column says.
+    #[test]
+    fn a_filter_variable_cell_link_is_never_modal() {
+        let mut payload = link_open_payload();
+        payload.resolved["link"] = Value::Null;
+        payload.resolved["link_open"] = json!("modal");
+        payload.resolved["columns"]["status"]["link_open"] = json!("modal");
+        payload.filter_variables = vec!["status".to_string()];
+        let svg = render(&payload, &test_fonts()).unwrap();
+        assert!(svg.contains("<a href=\"?status=open\">"), "{svg}");
+        assert_eq!(stamped(&svg), 0, "{svg}");
+    }
+
+    /// An unknown mode is a deserialization error, never a silent page.
+    #[test]
+    fn an_unknown_link_mode_is_refused() {
+        for path in ["chart", "column", "header"] {
+            let mut payload = link_open_payload();
+            match path {
+                "chart" => payload.resolved["link_open"] = json!("popup"),
+                "column" => payload.resolved["columns"]["status"]["link_open"] = json!("popup"),
+                _ => payload.resolved["columns"]["status"]["header_link_open"] = json!("popup"),
+            }
+            let err = render(&payload, &test_fonts()).unwrap_err().to_string();
+            assert!(err.contains("popup") || err.contains("link_open"), "{path}: {err}");
+        }
+    }
+
     /// A pivot reshapes rows into leaf columns, so the row-detail template's
     /// base columns are gone — refuse rather than silently drop every link.
     #[test]
@@ -15420,6 +15633,7 @@ mod row_link_tests {
             column
         };
         let resolved = json!({
+            "link_open": "page",
             "title": "People",
             "title_style": resolved_title_style(),
             "link": null,
@@ -15536,6 +15750,7 @@ mod background_and_font_family_tests {
             }
         }
         let resolved = json!({
+            "link_open": "page",
             "title": null,
             "title_style": resolved_title_style(),
             "columns": {"a": {"label": "A"}},
@@ -15660,7 +15875,7 @@ mod background_and_font_family_tests {
     fn a_serif_table_paints_cells_and_numerals_in_the_serif_family() {
         let mut payload = payload_with(json!({}));
         payload.rows = vec![json!({"a": "x", "b": 95}).as_object().unwrap().clone()];
-        payload.resolved["columns"] = json!({"a": {"label": "A"}, "b": {"label": "B"}});
+        payload.resolved["columns"] = json!({"a": {"label": "A", "link_open": "page", "header_link_open": "page"}, "b": {"label": "B", "link_open": "page", "header_link_open": "page"}});
         let table = &mut payload.resolved["style"]["table"];
         table["font"]["family"] = json!("'Source Serif 4', Georgia, serif");
         table["header"]["font"]["family"] = json!("'Inter Variable', Inter, sans-serif");
@@ -15789,7 +16004,7 @@ mod background_and_font_family_tests {
         let mut payload = payload_with(json!({}));
         payload.height = 400.0;
         payload.resolved["style"]["table"]["transpose"] = json!(true);
-        payload.resolved["columns"] = json!({"col_a": {"label": "Alpha"}, "col_b": {}});
+        payload.resolved["columns"] = json!({"col_a": {"label": "Alpha", "link_open": "page", "header_link_open": "page"}, "col_b": {"link_open": "page", "header_link_open": "page"}});
         payload.rows = vec![json!({"col_a": 10, "col_b": 20}).as_object().unwrap().clone()];
         let svg = render(&payload, &test_fonts()).unwrap();
         for text in [">Metric</text>", ">Value</text>", ">Alpha</text>", ">col b</text>"] {
@@ -15806,7 +16021,7 @@ mod background_and_font_family_tests {
     fn a_text_sentinel_among_numbers_does_not_demote_the_column() {
         let mut payload = payload_with(json!({}));
         payload.height = 400.0;
-        payload.resolved["columns"] = json!({"a": {"label": "A"}});
+        payload.resolved["columns"] = json!({"a": {"label": "A", "link_open": "page", "header_link_open": "page"}});
         payload.rows = vec![
             json!({"a": 10}).as_object().unwrap().clone(),
             json!({"a": "N/A"}).as_object().unwrap().clone(),
@@ -15847,6 +16062,7 @@ mod background_and_font_family_tests {
         let mut payload = payload_with(json!({}));
         payload.height = 400.0;
         payload.resolved["columns"] = json!({"a": {
+            "link_open": "page", "header_link_open": "page",
             "format": {"spec": ",.1~f"},
             "decimal_pad_table": ["", "\u{2007}\u{200b}", "\u{2007}\u{200b}\u{2008}\u{200b}"],
         }});
@@ -16330,6 +16546,7 @@ mod board_format_tests {
 
     fn board_payload(rows: Vec<Value>, columns: Value, board_style: Value) -> Payload {
         let resolved = json!({
+            "link_open": "page",
             "title": null, "title_style": super::tests::resolved_title_style(), "columns": columns,
             "style": {"table": super::tests::base_table_theme(), "title_font": super::tests::resolved_title_font()},
             "pivot_columns": null, "conditional_formatting": null,
@@ -16487,7 +16704,7 @@ mod shared_scale_register_tests {
         symbol_mode: &str,
         values: &[f64],
     ) -> Result<Vec<Option<String>>, String> {
-        let cfg: ColConfig = serde_json::from_value(json!({
+        let cfg: ColConfig = crate::families::table::tests::col_config(json!({
             "shared_scale": {"exponent": exponent, "mode": mode, "digit_spec": ",.2~f"},
         }))
         .map_err(|e| e.to_string())?;
@@ -16577,7 +16794,7 @@ mod shared_scale_register_tests {
     type Lanes = (Option<String>, String, Option<String>);
 
     fn lanes_of(format: Value, symbol_mode: &str, values: &[f64]) -> Vec<Lanes> {
-        let cfg: ColConfig = serde_json::from_value(json!({"format": format})).expect("column config parses");
+        let cfg: ColConfig = crate::families::table::tests::col_config(json!({"format": format})).expect("column config parses");
         let col = ColMeta {
             name: "amount",
             header: "Amount".to_string(),
@@ -16645,8 +16862,8 @@ mod shared_scale_register_tests {
     fn a_percent_column_refuses_a_value_shaped_0_to_100() {
         crate::number_locale::with_number_locale(&crate::number_locale::fr_fr(), || {
             let refusal = |format: &str, value: Value| {
-                let cfg: ColConfig =
-                    serde_json::from_value(json!({"format": format})).expect("column config parses");
+                let cfg: ColConfig = crate::families::table::tests::col_config(json!({"format": format}))
+                    .expect("column config parses");
                 let col = ColMeta {
                     name: "amount",
                     header: "Amount".to_string(),
@@ -16696,7 +16913,7 @@ mod shared_scale_register_tests {
     // the fit cascade, ('€', '24,73', 'M').
     #[test]
     fn a_shared_scale_cell_is_measured_in_each_sites_own_currency_placement() {
-        let cfg: ColConfig = serde_json::from_value(json!({
+        let cfg: ColConfig = crate::families::table::tests::col_config(json!({
             "format": "currency",
             "shared_scale": {"exponent": 6, "mode": "anchor", "digit_spec": ",.2~f"},
         }))
@@ -16728,7 +16945,7 @@ mod shared_scale_register_tests {
     ) -> Vec<Cell> {
         let mut format = json!({"spec": "$,.2~s"});
         format.as_object_mut().unwrap().extend(affix.as_object().unwrap().clone());
-        let cfg: ColConfig = serde_json::from_value(json!({
+        let cfg: ColConfig = crate::families::table::tests::col_config(json!({
             "format": format,
             "shared_scale": {"exponent": 6, "mode": mode, "digit_spec": ",.2~f"},
         }))
@@ -16806,7 +17023,7 @@ mod shared_scale_register_tests {
     // demand measures, is '4,82\xa0M\xa0€': the word carries its own gap.
     #[test]
     fn a_magnitude_word_before_a_suffix_currency_measures_as_production_does() {
-        let cfg: ColConfig = serde_json::from_value(json!({"format": "currency"})).expect("column config parses");
+        let cfg: ColConfig = crate::families::table::tests::col_config(json!({"format": "currency"})).expect("column config parses");
         let col = ColMeta {
             name: "amount",
             header: "Amount".to_string(),
@@ -16876,7 +17093,7 @@ mod notation_and_shared_scale_lane_tests {
     type Lanes = (String, String, String, String);
 
     fn lanes_of(column: Value, value: f64, symbol_mode: &str) -> Lanes {
-        let cfg: ColConfig = serde_json::from_value(column).expect("column config parses");
+        let cfg: ColConfig = crate::families::table::tests::col_config(column).expect("column config parses");
         let col = ColMeta {
             name: "v",
             header: "V".to_string(),

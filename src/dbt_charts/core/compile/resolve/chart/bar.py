@@ -11,7 +11,6 @@ from dbt_charts.core.compile.format import (
     column_format,
     resolve_format,
 )
-from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.authored._support_table import (
     ChartSupportTablePerSeries,
 )
@@ -129,6 +128,7 @@ from dbt_charts.core.compile.resolve.chart.tick_values import (
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
+from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset, settled
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
@@ -397,12 +397,10 @@ def _categorical_axis_gutter_px(
         spec = None if ax.labels.format is None else resolve_format(ax.labels.format)
         labels = [category_label_text(label, spec, None) for label in labels]
     padding = measured_label_padding(labels, font.family, font.size)
-    label_limit = (
-        ax.labels.max_width
-        if ax.labels.max_width is not None
-        else DEFAULT_VL_LABEL_LIMIT
+    label_limit = ax.labels.max_width
+    return cap_padding_to_label_limit(
+        padding, DEFAULT_VL_LABEL_LIMIT if label_limit is None else label_limit
     )
-    return cap_padding_to_label_limit(padding, label_limit)
 
 
 def _horizontal_rail_labels_would_collide(
@@ -800,9 +798,9 @@ def _resolve_bar(
     # labelLimit truncation bounds it (see estimate_left_axis_reserve_px).
     unmeasurable_label_limit_px = (
         (
-            ax_merged.labels.max_width
-            if ax_merged.labels.max_width is not None
-            else DEFAULT_VL_LABEL_LIMIT
+            DEFAULT_VL_LABEL_LIMIT
+            if (max_width := ax_merged.labels.max_width) is None
+            else max_width
         )
         if orientation == "horizontal"
         and ax_merged.labels.expr is not None
@@ -1281,10 +1279,7 @@ def _effective_label_font_size(
     """
     if labels.font is not None and labels.font.size is not None:
         return labels.font.size
-    size = chart_style_context.marks.text.font.size
-    if size is None:
-        raise ValueError("marks.text.font.size must be non-None after cascade")
-    return size
+    return settled(chart_style_context.marks.text.font.size)
 
 
 def _resolve_histogram(
@@ -1318,7 +1313,7 @@ def _resolve_histogram(
         has_quantitative_axis=True,
     )
     primary = plan.primary
-    hist = merge_onto_base(chart_style_context.histogram, primary)
+    hist = merge_unset(chart_style_context.histogram, primary)
     channels = plan.channels
     ay_merged = plan.axes.y.style
     ay_merged = _bake_ay_position_left(ay_merged)

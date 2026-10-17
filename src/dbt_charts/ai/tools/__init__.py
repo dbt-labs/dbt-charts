@@ -25,12 +25,19 @@ from dbt_charts.agent_api._paths import resolve_board_or_error
 from dbt_charts.agent_api.argument_errors import format_argument_error
 from dbt_charts.agent_api.query import (
     ExecuteQueryArgs as _ExecuteQueryArgs,
+    error_code_of,
     variables_to_dict as _vars_to_dict,
 )
-from dbt_charts.agent_api.query_csv import BOARD_QUERY_HINT, SQL_QUERY_HINT, with_csv
+from dbt_charts.agent_api.query_csv import (
+    BOARD_QUERY_HINT,
+    SQL_QUERY_HINT,
+    fit_failure,
+    with_csv,
+)
 from dbt_charts.ai.context import DbtChartsAIContext
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.diagnostics import Diagnostic
+from dbt_charts.core.diagnostics.codes_execute import ERR_TOOL_ARGUMENTS_INVALID
 from dbt_charts.core.project import InMemoryBoard
 
 ToolHandler = Callable[[dict[str, Any], DbtChartsAIContext], dict[str, Any]]
@@ -112,7 +119,7 @@ def _handle_query(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, An
             adapter_registry=ctx.project_session.adapter_registry,
         ).model_dump(mode="json", exclude_none=True)
         hint = SQL_QUERY_HINT
-    return with_csv(result, hint=hint) if result["success"] else result
+    return with_csv(result, hint=hint) if result["success"] else fit_failure(result)
 
 
 def _handle_search(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, Any]:
@@ -241,8 +248,7 @@ def _handle_edit_file(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str
     parsed = _files.EditFileArgs.model_validate(args)
     # Deliberately does NOT license a later whole-file overwrite: edit_file
     # reads the file internally but returns no content, so the agent has been
-    # shown nothing. A search_boards hit carries enough chart text to build a
-    # unique old_string for a board never opened. read_file is the only tool
+    # shown nothing. read_file is the only tool
     # that puts the content in front of the model.
     return _files.edit_file(
         parsed.path,
@@ -371,6 +377,14 @@ def dispatch_tool_call(
         with attribute({"tool": function_name}, {}):
             return handler(dict(function_args), context)
     except ValidationError as exc:
-        return {"success": False, "errors": [format_argument_error(function_name, exc)]}
+        return {
+            "success": False,
+            "errors": [format_argument_error(function_name, exc)],
+            "error_code": ERR_TOOL_ARGUMENTS_INVALID.code,
+        }
     except Exception as exc:  # noqa: BLE001 — last-resort catch at dispatch boundary
-        return {"success": False, "errors": [str(exc)]}
+        return {
+            "success": False,
+            "errors": [str(exc)],
+            "error_code": error_code_of(exc),
+        }

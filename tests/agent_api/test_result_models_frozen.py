@@ -60,7 +60,7 @@ from dbt_charts.agent_api.query import (
     QueryBoardResult,
 )
 from dbt_charts.agent_api.schema_hints import ChartTypeDisplay, SchemaHints
-from dbt_charts.agent_api.search import BoardSearchHit, SearchResult
+from dbt_charts.agent_api.search import BoardMatch, SearchResult
 from dbt_charts.agent_api.skill_install import InstallSkillsResult
 from dbt_charts.agent_api.skills import (
     Skill,
@@ -126,17 +126,14 @@ FROZEN_RESULT_INSTANCES: list[tuple[BaseModel, str]] = [
     (DocsResult(mode="index"), "mode"),
     (GrepMatch(path="x", line_number=1, line="l"), "path"),
     (
-        BoardSearchHit(
+        BoardMatch(
             title="t",
             summary="s",
             match_score=1.0,
             match_reasons=[],
             board_path="x",
             file_path="charts/x",
-            query_names=[],
-            charts=[],
             matched_charts=[],
-            referenced_data_paths=[],
         ),
         "title",
     ),

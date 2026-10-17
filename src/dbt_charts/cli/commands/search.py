@@ -40,6 +40,8 @@ def search_command(
 
 
 def _print_rich(result: SearchResult) -> None:
+    from dbt_charts.agent_api.search import BoardMatch
+
     if not result.success:
         print_diagnostics(result.errors)
         return
@@ -49,11 +51,10 @@ def _print_rich(result: SearchResult) -> None:
         return
 
     for hit in result.results:
-        typer.echo(f"  [{hit.match_score:.2f}] {hit.title}  {hit.file_path}")
+        score = f"[{hit.match_score:.2f}] " if isinstance(hit, BoardMatch) else ""
+        typer.echo(f"  {score}{hit.title}  {hit.file_path}")
         if hit.summary:
             typer.echo(f"           {hit.summary}")
-        charts = {c.id: c for c in hit.charts}
-        for chart_id in hit.matched_charts:
-            chart = charts[chart_id]
-            kind = f" ({chart.type})" if chart.type else ""
-            typer.echo(f"           chart {chart_id}{kind}: {chart.title}")
+        if isinstance(hit, BoardMatch):
+            for chart_id in hit.matched_charts:
+                typer.echo(f"           chart {chart_id}")

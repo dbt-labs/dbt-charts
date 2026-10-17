@@ -1851,16 +1851,18 @@ def test_a_board_target_terminates_despite_the_cyclic_model_graph() -> None:
     assert "rows" not in root.children and "charts" not in root.children
 
 
-def test_a_union_of_non_string_scalars_projects_to_no_control() -> None:
-    """`style.axis.labels.bound` is `bool | float | None` — text is not its widget.
+def test_a_bool_or_number_field_with_an_auto_keyword_projects_to_a_combo() -> None:
+    """`style.axis.labels.bound` is `bool | float` beside the `auto` keyword.
 
-    Text was the fallback for anything that was not all-numeric and not all-bool,
-    which put a free-text box on a field where neither arm accepts free text.
-    The parse gate found it the moment full recursion made it reachable.
+    Text alone was no widget for it: neither scalar arm takes free text. The
+    keyword is the one string it accepts, so the control is the combo whose
+    suggestions are exactly the closed values.
     """
     board = "rows:\n  - title: R\n    type: area\n    query: q\n    x: m\n    y: v\n"
     labels = build_design_target(board, "rows.0").children["style"].children["axis"]
-    assert "bound" not in labels.children["labels"].properties
+    bound = labels.children["labels"].properties["bound"]
+    assert bound.widget == "combo"
+    assert bound.enum_values == (True, False, "auto")
 
 
 def test_a_group_that_cannot_be_created_one_control_at_a_time_is_not_offered() -> None:

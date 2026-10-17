@@ -10,6 +10,7 @@ import re
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
+from dbt_charts.core.compile.models.primitives import LinkOpen
 from dbt_charts.core.compile.models.style.theme import TitleStyle
 from dbt_charts.core.render.board_links import get_link_context, resolve_href
 from dbt_charts.core.render.chart._types import VLDict
@@ -65,13 +66,15 @@ _XLINK_HREF_RE = re.compile(r'<a xlink:href="([^"]*)"')
 _SENTINEL_PREFIX = "http://dct.invalid"
 
 
-def _fix_chart_click_hrefs(svg: str) -> str:
-    """Convert sentinel xlink:href to plain href in SVG <a> elements, and
-    scheme-check every xlink:href (sentinel or not).
+def _fix_chart_click_hrefs(svg: str, link_open: LinkOpen) -> str:
+    """Convert every chart-link xlink:href to a plain, scheme-checked href,
+    stamping ``data-dbt-link-open`` on a non-page link's anchors and
+    ``target="_blank"`` on a new-tab link's.
 
     Converts ``<a xlink:href="http://dct.invalid/path?q=v">``
     to ``<a href="/path?q=v">`` so variables.js can intercept variable-update
-    clicks and the browser can follow navigation clicks directly.
+    clicks and the browser can follow navigation clicks directly; an absolute
+    link (no sentinel) keeps its URL and gets the same plain ``href``.
 
     When a link context is active (board resolver), board-root paths are
     rewritten for the current runtime (serve vs Cloud). Query-string-only
@@ -79,20 +82,23 @@ def _fix_chart_click_hrefs(svg: str) -> str:
     updates intercepted by variables.js, not cross-board navigation.
     """
     ctx = get_link_context()
+    open_attr = (
+        f' data-dbt-link-open="{escape_attr(link_open)}"' if link_open != "page" else ""
+    )
+    if link_open == "new_tab":
+        open_attr += ' target="_blank"'
 
     def _replace(m: re.Match[str]) -> str:
         # vl_convert's own SVG serialization already XML-escaped this
         # attribute value (e.g. "&" -> "&amp;" between query params) --
         # unescape before resolve_href (which expects a raw URL) and before
         # escape_attr re-escapes it, or a two-param link doubles to &amp;amp;.
-        raw = html.unescape(m.group(1))
-        if not raw.startswith(_SENTINEL_PREFIX):
-            checked_href(raw)
-            return m.group(0)
-        url = raw[len(_SENTINEL_PREFIX) :]
-        if ctx is not None:
-            url = resolve_href(url, ctx)
-        return f'<a href="{escape_attr(checked_href(url))}"'
+        url = html.unescape(m.group(1))
+        if url.startswith(_SENTINEL_PREFIX):
+            url = url[len(_SENTINEL_PREFIX) :]
+            if ctx is not None:
+                url = resolve_href(url, ctx)
+        return f'<a href="{escape_attr(checked_href(url))}"{open_attr}'
 
     return _XLINK_HREF_RE.sub(_replace, svg)
 
@@ -230,6 +236,45 @@ def _stamp_chart_title_kind(svg: str) -> str:
     return _SUBTITLE_KIND_RE.sub(lambda m: f"{m.group(1)}{subtitle_attr}", svg)
 
 
+# `data-dct-role` is the machine key the hover runtime selects axes and marks
+# by (`chart_interactivity.js`); the aria text beside it is a translatable label.
+_AXIS_GROUP_RE = re.compile(
+    r'(class="mark-group role-axis") (role="graphics-symbol" '
+    r'aria-roledescription="axis" aria-label="([XY])-axis[^"]*")'
+)
+_MARK_ROLES = {
+    "bar": "bar",
+    "arc mark": "arc",
+    "rect mark": "rect",
+    "point": "point",
+    "rule mark": "rule",
+    "text mark": "text",
+    "path mark": "path",
+}
+_MARK_ROLE_RE = re.compile(
+    r'(aria-label="[^"]*" role="graphics-symbol" '
+    f'aria-roledescription="({"|".join(map(re.escape, _MARK_ROLES))})")'
+)
+
+
+def _stamp_roles(svg: str) -> str:
+    """Stamp ``data-dct-role`` on every axis group and described mark item,
+    ahead of the aria text it stands in for."""
+    svg = _AXIS_GROUP_RE.sub(
+        lambda m: (
+            f'{m.group(1)} data-dct-role="{escape_attr(m.group(3).lower())}-axis" '
+            f"{m.group(2)}"
+        ),
+        svg,
+    )
+    return _MARK_ROLE_RE.sub(
+        lambda m: (
+            f'data-dct-role="{escape_attr(_MARK_ROLES[m.group(2)])}" {m.group(1)}'
+        ),
+        svg,
+    )
+
+
 _AXIS_TITLE_GROUP = '<g class="mark-text role-axis-title" pointer-events="none">'
 
 
@@ -237,10 +282,10 @@ def _stamp_axis_title_kinds(svg: str, kind_by_axis: dict[str, str] | None) -> st
     """Tag the first X- and Y-axis title runs with the authored label key
     each axis actually carries.
 
-    ``kind_by_axis`` maps vl_convert's aria axis name ("X"/"Y") to the
+    ``kind_by_axis`` maps vl_convert's axis role ("X"/"Y") to the
     authored key ("x_label"/"y_label") and is decided where the resolved
-    chart is in hand (`$df_axis_label_kinds` in vega_lite.py) — the aria
-    text names the Vega layout channel, which a horizontal orientation or a
+    chart is in hand (`$df_axis_label_kinds` in vega_lite.py) — the axis
+    role names the Vega layout channel, which a horizontal orientation or a
     facet decouples from the authored key. No mapping, no stamping: an axis
     title that is not editable beats one that edits the wrong key. First
     per axis only, so a dual-scale layer's secondary title never points an
@@ -254,8 +299,8 @@ def _stamp_axis_title_kinds(svg: str, kind_by_axis: dict[str, str] | None) -> st
     pos = 0
     done: set[str] = set()
     while (hit := svg.find(_AXIS_TITLE_GROUP, pos)) != -1:
-        x_at = svg.rfind('aria-label="X-axis', 0, hit)
-        y_at = svg.rfind('aria-label="Y-axis', 0, hit)
+        x_at = svg.rfind('data-dct-role="x-axis"', 0, hit)
+        y_at = svg.rfind('data-dct-role="y-axis"', 0, hit)
         axis = "X" if x_at > y_at else "Y" if y_at != -1 else None
         end = hit + len(_AXIS_TITLE_GROUP)
         kind = kind_by_axis.get(axis) if axis is not None else None
@@ -878,6 +923,7 @@ def render_vega_spec(
     endpoint_label_cascade = spec.pop("$df_endpoint_label_cascade", None)
     title_style_dict = spec.pop("$df_title_style", None)
     axis_label_kinds = spec.pop("$df_axis_label_kinds", None)
+    link_open = spec.pop("$df_link_open", "page")
     value_label_layers = spec.pop("$df_value_label_layers", [])
     legend_align_sentinel = spec.pop("$df_legend_align", None)
     title_style = (
@@ -981,8 +1027,9 @@ def render_vega_spec(
             chart_id,
         )
     svg_result = _namespace_svg_ids(svg_result, chart_id)
-    svg_result = _fix_chart_click_hrefs(svg_result)
+    svg_result = _fix_chart_click_hrefs(svg_result, link_open)
     svg_result = _stamp_chart_title_kind(svg_result)
+    svg_result = _stamp_roles(svg_result)
     svg_result = _stamp_axis_title_kinds(svg_result, axis_label_kinds)
     svg_result = _stamp_value_label_layers(svg_result, value_label_layers, chart_id)
     svg_result = _stamp_series_keys(svg_result, spec, vlc, chart_id)

@@ -84,6 +84,8 @@ def _project(
         "work_branch": f"dbt-charts/{slug}",
         "git_subdirectory": "",
         "unmapped_source_count": 1,
+        "git_host": "github",
+        "git_auth": "app",
     }
 
 
@@ -144,8 +146,8 @@ class FakeApi:
 GIT_URL = "https://github.com/acme/analytics"
 
 
-def _connect(*extra: str) -> list[str]:
-    return ["cloud", "project", "connect", "--org", "acme-data", *extra]
+def _connect(host: str, *extra: str) -> list[str]:
+    return ["cloud", "project", "connect", host, "--org", "acme-data", *extra]
 
 
 def _checkout(
@@ -827,7 +829,7 @@ class TestOrgs:
         )
         result = runner.invoke(app, ["cloud", "org", "create", "Acme Data"])
         assert result.exit_code == 0, out(result)
-        assert "dct cloud project connect --org acme-data" in out(result)
+        assert "dct cloud project connect <host> --org acme-data" in out(result)
         assert "dct cloud use" not in out(result)
 
     def test_a_field_error_is_reported_and_exits_non_zero(self, api: FakeApi) -> None:
@@ -1024,7 +1026,7 @@ class TestStatus:
 
         assert result.exit_code == 0, out(result)
         assert "not tied to any of acme-data's projects" in out(result)
-        assert "dct cloud project connect --org acme-data" in out(result)
+        assert "dct cloud project connect <host> --org acme-data" in out(result)
 
     def test_checkout_connected_to_the_org_names_the_tie(
         self, api: FakeApi, monkeypatch: pytest.MonkeyPatch
@@ -1081,7 +1083,7 @@ class TestStatus:
         )
         result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
         assert result.exit_code == 0, out(result)
-        assert "dct cloud project connect --org acme-data" in out(result)
+        assert "dct cloud project connect <host> --org acme-data" in out(result)
         assert "not tied to" not in out(result)
 
     def test_published_to_this_org_counts_as_connected(
@@ -1986,7 +1988,9 @@ class TestStatusHumanStepsAhead:
         assert result.exit_code == 0, out(result)
         assert "Human steps ahead" in out(result)
         assert "connect this repository" in out(result)
-        assert "--git-url https://github.com/x/y.git" in out(result)
+        assert "project connect github --git-url https://github.com/x/y.git" in out(
+            result
+        )
 
     def test_names_the_warehouse_credential_when_a_declared_source_is_untested(
         self, api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2205,21 +2209,21 @@ class TestStatusHumanStepsAhead:
         result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
 
         assert result.exit_code == 0, out(result)
-        assert "--git-url https://github.com/acme/analytics.git" in out(result)
+        assert (
+            "project connect github --git-url"
+            " https://github.com/acme/analytics.git" in out(result)
+        )
         assert "browser" in out(result)
 
-    def test_pick_line_states_the_fact_for_a_non_github_origin(
-        self, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        ("host", "domain"), [("gitlab", "gitlab.com"), ("bitbucket", "bitbucket.org")]
+    )
+    def test_pick_line_names_the_matching_connect_subcommand(
+        self, api: FakeApi, monkeypatch: pytest.MonkeyPatch, host: str, domain: str
     ) -> None:
-        """`dct cloud` only ever connects a GitHub repository -- naming
-        "pick the GitHub repository" for a GitLab/Bitbucket/self-hosted
-        origin would be an impossible action. It names the observable host
-        rather than flatly asserting "not on GitHub": this probe cannot
-        resolve SSH aliases (see the alias test below), so it hedges."""
+        url = f"https://{domain}/acme/analytics"
         monkeypatch.setattr(
-            cloud_cmd,
-            "git_checkout_facts",
-            _git_facts(origin="https://gitlab.com/acme/analytics.git"),
+            cloud_cmd, "git_checkout_facts", _git_facts(origin=f"{url}.git")
         )
         monkeypatch.setattr(cloud_cmd, "git_remotes", _remotes())
         api.add(
@@ -2231,7 +2235,33 @@ class TestStatusHumanStepsAhead:
         result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
 
         assert result.exit_code == 0, out(result)
-        assert "resolves to host gitlab.com, not github.com" in out(result)
+        assert f"project connect {host} --git-url {url}.git" in out(result)
+        assert "only connects GitHub" not in out(result)
+
+    def test_pick_line_offers_plain_git_for_an_unrecognized_host(
+        self, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            cloud_cmd,
+            "git_checkout_facts",
+            _git_facts(origin="https://git.example.com/acme/analytics.git"),
+        )
+        monkeypatch.setattr(cloud_cmd, "git_remotes", _remotes())
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/status",
+            _status_body("unmapped_sources", "Map source `db` to a connection."),
+        )
+
+        result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
+
+        assert result.exit_code == 0, out(result)
+        assert "resolves to host git.example.com" in out(result)
+        assert (
+            "project connect git --git-url"
+            " https://git.example.com/acme/analytics.git" in out(result)
+        )
+        assert "only connects GitHub" not in out(result)
 
     def test_pick_line_hedges_rather_than_asserts_for_an_ssh_host_alias(
         self, api: FakeApi, monkeypatch: pytest.MonkeyPatch
@@ -2258,8 +2288,8 @@ class TestStatusHumanStepsAhead:
 
         assert result.exit_code == 0, out(result)
         assert "not on GitHub" not in out(result)
-        assert "resolves to host github-work, not github.com" in out(result)
-        assert "--git-url https://github.com/acme/analytics.git" in out(result)
+        assert "resolves to host github-work" in out(result)
+        assert "SSH alias" in out(result)
 
     def test_pick_line_says_origin_unreadable_for_the_unparseable_placeholder(
         self, api: FakeApi, monkeypatch: pytest.MonkeyPatch
@@ -2448,6 +2478,24 @@ class TestProjects:
         assert result.exit_code == 0, out(result)
         assert "analytics" in result.output
         assert "acme/analytics" in result.output
+        lines = result.output.splitlines()
+        header = next(line for line in lines if "SLUG" in line)
+        row = next(line for line in lines if "acme/analytics" in line)
+        assert "HOST" in header
+        assert "AUTH" in header
+        assert row.split()[-4:-2] == ["github", "app"]
+
+    def test_a_cloud_that_predates_host_and_auth_prints_unknown(
+        self, api: FakeApi
+    ) -> None:
+        legacy = _project()
+        del legacy["git_host"], legacy["git_auth"]
+        api.add("GET", "/api/orgs/acme-data/projects", {"projects": [legacy]})
+
+        result = runner.invoke(app, ["cloud", "projects", "--org", "acme-data"])
+
+        assert result.exit_code == 0, out(result)
+        assert result.output.count("unknown") >= 2
 
     def test_an_unreadable_config_is_named_beside_its_project(
         self, api: FakeApi
@@ -2492,6 +2540,7 @@ class TestProjects:
                 "cloud",
                 "project",
                 "connect",
+                "git",
                 "--org",
                 "acme-data",
                 "--git-url",
@@ -2514,6 +2563,7 @@ class TestProjects:
                 "cloud",
                 "project",
                 "connect",
+                "git",
                 "--org",
                 "acme-data",
                 "--git-url",
@@ -2540,6 +2590,7 @@ class TestProjects:
                 "cloud",
                 "project",
                 "connect",
+                "git",
                 "--org",
                 "acme-data",
                 "--git-url",
@@ -2553,76 +2604,115 @@ class TestProjects:
         body = api.body("POST", "/api/orgs/acme-data/projects")
         assert body["git_password"] == "env-token"
 
-    def test_an_exported_password_does_not_block_the_browser_connect(
-        self, api: FakeApi
-    ) -> None:
-        result = runner.invoke(
-            app,
-            ["cloud", "project", "connect", "--org", "acme-data", "--start"],
-            env={"DCT_GIT_PASSWORD": "env-token"},
-        )
-        assert result.exit_code != 2, out(result)
-        assert "applies only to --git-url" not in out(result)
+    def test_connect_git_posts_the_other_host(self, api: FakeApi) -> None:
+        api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
+        result = runner.invoke(app, _connect("git", "--git-url", GIT_URL))
+        assert result.exit_code == 0, out(result)
+        assert api.body("POST", "/api/orgs/acme-data/projects")["git_host"] == "other"
 
-    def test_connect_credentials_without_a_git_url_are_refused(
-        self, api: FakeApi
+    @pytest.mark.parametrize("host", ["github", "gitlab", "bitbucket"])
+    def test_connect_a_token_host_sends_its_host_and_the_token(
+        self, api: FakeApi, host: str
     ) -> None:
-        result = runner.invoke(
-            app,
-            [
-                "cloud",
-                "project",
-                "connect",
-                "--org",
-                "acme-data",
-                "--git-username",
-                "a",
-            ],
-        )
-        assert result.exit_code == 2
-        assert "--git-url" in out(result)
-
-    def test_connect_with_a_github_git_url_hints_the_app_flow_for_scaffold(
-        self, api: FakeApi
-    ) -> None:
-        """`--git-url` on a github.com URL succeeds, but `project
-        scaffold` later refuses it server-side ("Scaffold PRs need a
-        GitHub-connected project; this one uses a plain git URL."). Warn at
-        connect time, before the agent commits to the URL path."""
         api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
         result = runner.invoke(
             app,
-            [
-                "cloud",
-                "project",
-                "connect",
-                "--org",
-                "acme-data",
-                "--git-url",
-                "https://github.com/acme/analytics",
-            ],
+            _connect(host, "--git-url", GIT_URL, "--token", "s3cret-token"),
         )
         assert result.exit_code == 0, out(result)
-        assert "scaffold" in result.output.lower()
-        assert "private" in result.output.lower()
-        assert "dct cloud project connect --org acme-data --start" in result.output
+        body = api.body("POST", "/api/orgs/acme-data/projects")
+        assert body["git_host"] == host
+        assert body["git_remote_url"] == GIT_URL
+        assert body["git_password"] == "s3cret-token"
+        assert body["git_username"] == ""
+        assert "s3cret-token" not in out(result)
 
-    def test_connect_with_a_non_github_git_url_gets_no_app_hint(
+    def test_connect_a_token_host_reads_the_token_from_the_environment(
         self, api: FakeApi
     ) -> None:
         api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
         result = runner.invoke(
             app,
-            [
-                "cloud",
-                "project",
-                "connect",
-                "--org",
-                "acme-data",
-                "--git-url",
-                "https://gitlab.com/acme/analytics",
-            ],
+            _connect("gitlab", "--git-url", GIT_URL),
+            env={"DCT_GIT_TOKEN": "env-token"},
         )
+        assert result.exit_code == 0, out(result)
+        body = api.body("POST", "/api/orgs/acme-data/projects")
+        assert body["git_password"] == "env-token"
+
+    @pytest.mark.parametrize("host", ["gitlab", "bitbucket"])
+    def test_connect_a_token_only_host_requires_the_token(
+        self, api: FakeApi, host: str
+    ) -> None:
+        result = runner.invoke(app, _connect(host, "--git-url", GIT_URL))
+        assert result.exit_code == 2
+        assert "--token" in out(result)
+        assert api.calls == []
+
+    def test_connect_github_with_a_url_needs_no_browser(self, api: FakeApi) -> None:
+        api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
+        result = runner.invoke(
+            app, _connect("github", "--git-url", GIT_URL, "--token", "t")
+        )
+        assert result.exit_code == 0, out(result)
+        assert ("GET", "/api/orgs/acme-data/github/pick") not in [
+            (method, path) for method, path, _payload in api.calls
+        ]
+
+    def test_connect_git_has_no_token_option(self, api: FakeApi) -> None:
+        result = runner.invoke(
+            app, _connect("git", "--git-url", GIT_URL, "--token", "t")
+        )
+        assert result.exit_code == 2
+        assert api.calls == []
+
+    def test_connect_a_token_host_has_no_username_option(self, api: FakeApi) -> None:
+        result = runner.invoke(
+            app,
+            _connect(
+                "gitlab", "--git-url", GIT_URL, "--token", "t", "--git-username", "a"
+            ),
+        )
+        assert result.exit_code == 2
+        assert api.calls == []
+
+    def test_connect_without_a_host_subcommand_lists_the_hosts(
+        self, api: FakeApi
+    ) -> None:
+        result = runner.invoke(
+            app, ["cloud", "project", "connect", "--git-url", GIT_URL]
+        )
+        assert result.exit_code == 2
+        assert api.calls == []
+
+    def test_an_exported_token_does_not_block_the_browser_connect(
+        self, api: FakeApi
+    ) -> None:
+        result = runner.invoke(
+            app,
+            _connect("github", "--start"),
+            env={"DCT_GIT_TOKEN": "env-token"},
+        )
+        assert result.exit_code == 0, out(result)
+        assert api.calls == []
+
+    def test_git_url_without_a_token_fails_locally(self, api: FakeApi) -> None:
+        result = runner.invoke(app, _connect("github", "--git-url", GIT_URL))
+        assert result.exit_code == 2
+        assert "--token is required with --git-url" in out(result)
+        assert api.calls == []
+
+    def test_a_token_flag_without_git_url_is_refused(self, api: FakeApi) -> None:
+        result = runner.invoke(app, _connect("github", "--token", "tok", "--start"))
+        assert result.exit_code == 2
+        assert "--token applies only to --git-url" in out(result)
+        assert api.calls == []
+
+    def test_connect_names_no_github_app_note_after_a_url_connect(
+        self, api: FakeApi
+    ) -> None:
+        api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
+        result = runner.invoke(app, _connect("git", "--git-url", GIT_URL))
         assert result.exit_code == 0, out(result)
         assert "GitHub App" not in result.output
 
@@ -2634,6 +2724,7 @@ class TestProjects:
                 "cloud",
                 "project",
                 "connect",
+                "git",
                 "--org",
                 "acme-data",
                 "--git-url",
@@ -2653,6 +2744,7 @@ class TestProjects:
                 "cloud",
                 "project",
                 "connect",
+                "git",
                 "--org",
                 "acme-data",
                 "--git-url",
@@ -2720,6 +2812,7 @@ class TestProjects:
                 "cloud",
                 "project",
                 "connect",
+                "git",
                 "--git-url",
                 "https://github.com/acme/analytics",
             ],
@@ -2761,6 +2854,7 @@ class TestProjects:
                 "cloud",
                 "project",
                 "connect",
+                "git",
                 "--git-url",
                 "https://github.com/acme/analytics",
                 "--slug",
@@ -2779,7 +2873,7 @@ class TestProjects:
         api.add("GET", "/api/orgs/acme-data/projects", {"projects": []})
         result = runner.invoke(app, ["cloud", "projects", "--org", "acme-data"])
         assert result.exit_code == 0, out(result)
-        assert "dct cloud project connect --org acme-data" in out(result)
+        assert "dct cloud project connect <host> --org acme-data" in out(result)
 
     def test_sync_reports_what_happened(self, api: FakeApi) -> None:
         api.add(
@@ -2978,7 +3072,7 @@ class TestProjectConnectPublishedTo:
         monkeypatch.chdir(tmp_path)
         api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
 
-        result = runner.invoke(app, _connect("--git-url", GIT_URL))
+        result = runner.invoke(app, _connect("git", "--git-url", GIT_URL))
 
         assert result.exit_code == 0, out(result)
         assert f"Recorded published_to: {self.URL}" in out(result)
@@ -3004,7 +3098,7 @@ class TestProjectConnectPublishedTo:
             "POST", "/api/orgs/acme-data/projects/from-pick", _project(), status=201
         )
 
-        result = runner.invoke(app, _connect("--poll-interval", "1"))
+        result = runner.invoke(app, _connect("github", "--poll-interval", "1"))
 
         assert result.exit_code == 0, out(result)
         assert f"Recorded published_to: {self.URL}" in out(result)
@@ -3022,7 +3116,7 @@ class TestProjectConnectPublishedTo:
         monkeypatch.chdir(tmp_path)
         api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
 
-        result = runner.invoke(app, _connect("--git-url", GIT_URL))
+        result = runner.invoke(app, _connect("git", "--git-url", GIT_URL))
 
         assert result.exit_code == 0, out(result)
         assert "published_to" not in yml.read_text()
@@ -3036,7 +3130,7 @@ class TestProjectConnectPublishedTo:
         monkeypatch.chdir(tmp_path)
         api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
 
-        result = runner.invoke(app, _connect("--git-url", GIT_URL))
+        result = runner.invoke(app, _connect("git", "--git-url", GIT_URL))
 
         assert result.exit_code == 0, out(result)
         assert f'published_to: "{self.URL}"' in out(result)
@@ -3052,7 +3146,7 @@ class TestProjectConnectPublishedTo:
         monkeypatch.chdir(tmp_path)
         api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
 
-        result = runner.invoke(app, _connect("--git-url", GIT_URL))
+        result = runner.invoke(app, _connect("git", "--git-url", GIT_URL))
 
         assert result.exit_code == 0, out(result)
         assert f'published_to: "{self.URL}"' in out(result)
@@ -3069,7 +3163,7 @@ class TestProjectConnectPublishedTo:
         monkeypatch.chdir(tmp_path)
         api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
 
-        result = runner.invoke(app, _connect("--git-url", GIT_URL))
+        result = runner.invoke(app, _connect("git", "--git-url", GIT_URL))
 
         assert result.exit_code == 0, out(result)
         assert "Connected analytics" in out(result)
@@ -3086,7 +3180,7 @@ class TestProjectConnectPublishedTo:
         monkeypatch.chdir(tmp_path)
         api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
 
-        result = runner.invoke(app, _connect("--git-url", GIT_URL, "--json"))
+        result = runner.invoke(app, _connect("git", "--git-url", GIT_URL, "--json"))
 
         assert result.exit_code == 0, out(result)
         assert ProjectSummary.model_validate_json(result.stdout).slug == "analytics"
@@ -3104,7 +3198,10 @@ class TestProjectConnectPublishedTo:
         api.add("POST", "/dct/api/orgs/acme-data/projects", _project(), status=201)
 
         result = runner.invoke(
-            app, _connect("--git-url", GIT_URL, "--host", "https://cloud.example/dct")
+            app,
+            _connect(
+                "git", "--git-url", GIT_URL, "--host", "https://cloud.example/dct"
+            ),
         )
 
         assert result.exit_code == 0, out(result)
@@ -3186,6 +3283,7 @@ class TestProjectConnectGithub:
                 "cloud",
                 "project",
                 "connect",
+                "github",
                 "--org",
                 "acme-data",
                 "--poll-interval",
@@ -3213,6 +3311,7 @@ class TestProjectConnectGithub:
                 "cloud",
                 "project",
                 "connect",
+                "github",
                 "--org",
                 "acme-data",
                 "--poll-interval",
@@ -3239,6 +3338,7 @@ class TestProjectConnectGithub:
                 "cloud",
                 "project",
                 "connect",
+                "github",
                 "--org",
                 "acme-data",
                 "--poll-interval",
@@ -3255,6 +3355,7 @@ class TestProjectConnectGithub:
                 "cloud",
                 "project",
                 "connect",
+                "github",
                 "--org",
                 "acme-data",
                 "--poll-interval",
@@ -3283,6 +3384,7 @@ class TestProjectConnectGithub:
                 "cloud",
                 "project",
                 "connect",
+                "github",
                 "--org",
                 "acme-data",
                 "--poll-interval",
@@ -3318,6 +3420,7 @@ class TestProjectConnectGithub:
                 "cloud",
                 "project",
                 "connect",
+                "github",
                 "--org",
                 "acme-data",
                 "--poll-interval",
@@ -3346,6 +3449,7 @@ class TestProjectConnectGithub:
                 "cloud",
                 "project",
                 "connect",
+                "github",
                 "--org",
                 "acme-data",
                 "--poll-interval",
@@ -3371,6 +3475,7 @@ class TestProjectConnectGithub:
                 "cloud",
                 "project",
                 "connect",
+                "github",
                 "--org",
                 "acme-data",
                 "--poll-interval",
@@ -3401,7 +3506,7 @@ class TestProjectConnectStartWait:
         return PendingConnect(org="acme-data", host="https://cloud.example")
 
     def test_start_prints_the_url_and_does_not_poll(self, api: FakeApi) -> None:
-        result = runner.invoke(app, _connect("--start"))
+        result = runner.invoke(app, _connect("github", "--start"))
 
         assert result.exit_code == 0, out(result)
         assert result.stdout.strip() == (
@@ -3418,11 +3523,11 @@ class TestProjectConnectStartWait:
         boards for a while can forget the second step -- the project never
         gets created and `status` sits at missing_project (FR-87). The hint
         goes to stderr so it never pollutes a
-        `URL=$(dct cloud project connect --start)` capture."""
-        result = runner.invoke(app, _connect("--start"))
+        `URL=$(dct cloud project connect github --start)` capture."""
+        result = runner.invoke(app, _connect("github", "--start"))
 
         assert result.exit_code == 0, out(result)
-        assert "dct cloud project connect --wait" in result.stderr
+        assert "dct cloud project connect github --wait" in result.stderr
         assert "--wait" not in result.stdout
 
     def test_start_persists_the_project_fields_wait_will_need(
@@ -3431,7 +3536,14 @@ class TestProjectConnectStartWait:
         result = runner.invoke(
             app,
             _connect(
-                "--start", "--name", "Analytics", "--slug", "an", "--trunk", "trunk"
+                "github",
+                "--start",
+                "--name",
+                "Analytics",
+                "--slug",
+                "an",
+                "--trunk",
+                "trunk",
             ),
         )
 
@@ -3445,7 +3557,7 @@ class TestProjectConnectStartWait:
     def test_start_json_emits_the_project_connect_started_shape(
         self, api: FakeApi
     ) -> None:
-        result = runner.invoke(app, _connect("--start", "--json"))
+        result = runner.invoke(app, _connect("github", "--start", "--json"))
 
         assert result.exit_code == 0, out(result)
         parsed = ProjectConnectStarted.model_validate_json(result.stdout)
@@ -3463,7 +3575,7 @@ class TestProjectConnectStartWait:
             "POST", "/api/orgs/acme-data/projects/from-pick", _project(), status=201
         )
 
-        result = runner.invoke(app, ["cloud", "project", "connect", "--wait"])
+        result = runner.invoke(app, ["cloud", "project", "connect", "github", "--wait"])
 
         assert result.exit_code == 0, out(result)
         body = api.body("POST", "/api/orgs/acme-data/projects/from-pick")
@@ -3477,13 +3589,15 @@ class TestProjectConnectStartWait:
             "POST", "/api/orgs/acme-data/projects/from-pick", _project(), status=201
         )
 
-        result = runner.invoke(app, ["cloud", "project", "connect", "--wait", "--json"])
+        result = runner.invoke(
+            app, ["cloud", "project", "connect", "github", "--wait", "--json"]
+        )
 
         assert result.exit_code == 0, out(result)
         assert ProjectSummary.model_validate_json(result.stdout).slug == "analytics"
 
     def test_wait_with_no_pending_connect_is_a_clear_error(self, api: FakeApi) -> None:
-        result = runner.invoke(app, ["cloud", "project", "connect", "--wait"])
+        result = runner.invoke(app, ["cloud", "project", "connect", "github", "--wait"])
 
         assert result.exit_code != 0
         assert "--start" in out(result)
@@ -3507,6 +3621,7 @@ class TestProjectConnectStartWait:
                 "cloud",
                 "project",
                 "connect",
+                "github",
                 "--wait",
                 "--org",
                 "some-other-org",
@@ -3535,14 +3650,14 @@ class TestProjectConnectStartWait:
 
         result = runner.invoke(
             app,
-            ["cloud", "project", "connect", "--wait", "--timeout", "0"],
+            ["cloud", "project", "connect", "github", "--wait", "--timeout", "0"],
         )
 
         assert result.exit_code != 0
         assert read_pending_connect() is not None
 
     def test_start_and_wait_together_are_rejected(self, api: FakeApi) -> None:
-        result = runner.invoke(app, _connect("--start", "--wait"))
+        result = runner.invoke(app, _connect("github", "--start", "--wait"))
 
         assert result.exit_code != 0
         assert api.calls == []
@@ -3550,7 +3665,7 @@ class TestProjectConnectStartWait:
     def test_start_with_a_git_url_is_rejected(self, api: FakeApi) -> None:
         """`--git-url` is already headless -- there is no browser pick to
         start or wait for."""
-        result = runner.invoke(app, _connect("--start", "--git-url", GIT_URL))
+        result = runner.invoke(app, _connect("github", "--start", "--git-url", GIT_URL))
 
         assert result.exit_code != 0
         assert api.calls == []

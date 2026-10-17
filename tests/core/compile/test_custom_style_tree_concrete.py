@@ -40,6 +40,8 @@ def test_style_tree_carries_no_engine_decided_literal(theme: str) -> None:
             or path[-3:-1] == ("title", "font")
             or path[-2:] == ("title", "visible")
             or path[-2:] == ("font", "color")
+            or path[-2:] in {("footer", "text"), ("timestamp", "format")}
+            or path[-3:] == ("placeholder", "overlay", "text")
         )
     ]
     assert not leaked, leaked

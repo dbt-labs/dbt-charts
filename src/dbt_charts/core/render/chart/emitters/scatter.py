@@ -63,7 +63,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
 from dbt_charts.core.render.numeral_expr import numeral_vega_expr, vl_format_key
 from dbt_charts.core.render.utils import normalize_data_types
 from dbt_charts.core.text.case import field_display_text
-from dbt_charts.core.text.format_d3 import is_time_format
+from dbt_charts.core.text.format_d3 import board_word, is_time_format
 from dbt_charts.core.text.predefined_formats import VEGA_ARMS
 
 _VALUE_TEXT_FIELD = "__value_text"
@@ -180,7 +180,13 @@ def _emit_wide_scatter(
     elif fmt.spec:
         value_tooltip["format"] = fmt.spec
     tooltip.append(value_tooltip)
-    tooltip.append({"field": wide.label_field, "type": "nominal", "title": "Series"})
+    tooltip.append(
+        {
+            "field": wide.label_field,
+            "type": "nominal",
+            "title": board_word("tooltip.series"),
+        }
+    )
 
     return y_enc, wide.color, tooltip, transforms
 

@@ -9,6 +9,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validat
 from dbt_charts.core.compile.models.markers import (
     AUTO,
     Absent,
+    AutoUnset,
     Color,
     Format,
     InheritSlot,
@@ -22,6 +23,7 @@ from dbt_charts.core.compile.models.primitives import (
     FormatConfig,
     LineCap,
     StrokeStyle,
+    SymbolShape,
 )
 from dbt_charts.core.compile.models.schema_names import FormatAlias
 from dbt_charts.core.compile.template.labels_env import (
@@ -156,7 +158,7 @@ class LabelsDefaultTemplate(BaseModel):
 class SliceLabelFontStyle(FontStyle):
     """The pie slice label font. ``color`` also takes ``auto``."""
 
-    color: Annotated[str | None, Color(keywords=(AUTO,))] = Field(
+    color: Annotated[str | None, Color(keywords=(AUTO,)), AutoUnset()] = Field(
         default=None,
         description=(
             "Text color. 'auto' paints each label in the dark ink of its wedge's color."
@@ -207,7 +209,11 @@ class SliceLabelsStyle(BaseModel):
     # Cascade-managed sentinels: None = not authored at this tier; resolver falls
     # back to default_template. When set at any cascade tier (board, chart-style),
     # the authored value wins.
-    template: Annotated[str | None, AfterValidator(validate_label_template)] = Field(
+    template: Annotated[
+        str | None,
+        AfterValidator(validate_label_template),
+        Absent("the default template"),
+    ] = Field(
         default=None,
         description="Jinja2 label template. Overrides default_template when authored.",
     )
@@ -249,8 +255,8 @@ class BasemapStyle(BaseModel):
 class MarkLabelsStyle(BaseModel):
     """Shared value-label config for bar/line/point marks.
 
-    All fields are None-defaulted cascade-tier sentinels: None means
-    "not specified at this tier; inherit from global labels slot or leave unset".
+    Fields are None-defaulted cascade-tier sentinels: a family or chart tier that
+    leaves one None inherits it. The base theme gives every general leaf a value.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -264,7 +270,7 @@ class MarkLabelsStyle(BaseModel):
     # label text from instead of the chart's y-field. Lets the axis keep the true y
     # unit (e.g. "200M") while the label shows a pre-computed column from the query
     # (e.g. a value already scaled to millions → bare "190"). None = label the y-field.
-    field: str | None = Field(
+    field: Annotated[str | None, Absent("the chart's y-field")] = Field(
         default=None,
         description="Column to source label text from; None uses the chart's y-field.",
     )
@@ -282,15 +288,13 @@ class MarkLabelsStyle(BaseModel):
         default=None,
         description="Number format string for value labels.",
     )
-    # Cascade tier sentinel: None means "use position-derived default".
-    dx: int | None = Field(
+    dx: Annotated[int | None, AutoUnset()] = Field(
         default=None,
-        description="Horizontal pixel offset for value labels; overrides the position default.",
+        description="Horizontal pixel offset for value labels; 'auto' uses the position default.",
     )
-    # Cascade tier sentinel: None means "use position-derived default".
-    dy: int | None = Field(
+    dy: Annotated[int | None, AutoUnset()] = Field(
         default=None,
-        description="Vertical pixel offset for value labels; overrides the position default.",
+        description="Vertical pixel offset for value labels; 'auto' uses the position default.",
     )
     # SkipInheritSlots(cascade=True): apply_inherit copies the entire font object
     # from the parent slot when font is None.
@@ -316,10 +320,10 @@ class BarTotalLabelStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # Cascade tier sentinel: None means "not specified at this tier".
-    visible: bool | None = Field(
+    visible: Annotated[bool | None, AutoUnset()] = Field(
         default=None,
         description=(
-            "Show stack total labels above each bar stack. "
+            "Show stack total labels above each bar stack; 'auto' hides them. "
             "Only takes effect on stacked bar charts; ignored otherwise."
         ),
     )
@@ -333,15 +337,13 @@ class BarTotalLabelStyle(BaseModel):
         default=None,
         description="Number format string for stack total labels.",
     )
-    # Cascade tier sentinel: None means "use the default offset for this orientation".
-    dx: int | None = Field(
+    dx: Annotated[int | None, AutoUnset()] = Field(
         default=None,
-        description="Horizontal pixel offset for stack total labels.",
+        description="Horizontal pixel offset for stack total labels; 'auto' uses the default offset for the orientation.",
     )
-    # Cascade tier sentinel: None means "use the default offset for this orientation".
-    dy: int | None = Field(
+    dy: Annotated[int | None, AutoUnset()] = Field(
         default=None,
-        description="Vertical pixel offset for stack total labels.",
+        description="Vertical pixel offset for stack total labels; 'auto' uses the default offset for the orientation.",
     )
     # InheritSlot: total_label.font fills from charts.font.
     font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.font")] = Field(
@@ -367,12 +369,10 @@ class BarLabelsStyle(MarkLabelsStyle):
             ),
         )
     )
-    # Cascade tier sentinel: None means "not specified at this tier" and labels
-    # segments, same as True.
-    stacked: bool | None = Field(
+    stacked: Annotated[bool | None, AutoUnset()] = Field(
         default=None,
         description=(
-            "Label each segment of a stacked bar. False leaves stacked segments "
+            "Label each segment of a stacked bar; 'auto' labels them. False leaves stacked segments "
             "unlabeled, so a stack shows a label only if total_label is visible; "
             "plain bars keep their labels either way."
         ),
@@ -416,11 +416,10 @@ class BarMarkStyle(BaseModel):
     padding: float | None = Field(
         default=None, description="Padding around bar marks in pixels."
     )
-    # Cascade tier sentinel: None means "not specified at this tier". Fixed-width
-    # override: when set, this exact pixel width is used for every bar on any
+    # Fixed-width override: when set, this exact pixel width is used for every bar on any
     # scale, replacing band_width on a band scale and the gap/min_size/max_size
     # ladder on a continuous scale.
-    size: float | None = Field(
+    size: Annotated[float | None, Absent("sized by the band or gap ladder")] = Field(
         default=None, description="Bar width in pixels; overrides all other sizing."
     )
     # Bar width as a fraction of the band step (0..1). Maps to VL
@@ -448,7 +447,7 @@ class BarMarkStyle(BaseModel):
         description="Narrowest a computed bar width may shrink to on a continuous scale.",
     )
     # Cascade tier sentinel: None means "not specified at this tier".
-    max_size: float | None = Field(
+    max_size: Annotated[float | None, Absent("uncapped")] = Field(
         default=None,
         description=(
             "Thickest a bar may be, in pixels: caps a band-scale bar's band "
@@ -459,8 +458,8 @@ class BarMarkStyle(BaseModel):
         ),
     )
     # Cascade tier sentinel: None means "not specified at this tier".
-    opacity: float | None = Field(
-        default=None, description="Bar fill opacity (0–1); None uses VL default."
+    opacity: Annotated[float | None, AutoUnset()] = Field(
+        default=None, description="Bar fill opacity (0 to 1); 'auto' uses VL default."
     )
     # SkipInheritSlots(cascade=True): leaf fields inside labels inherit individually
     # from the parent slot (no container-copy since labels is never None).
@@ -506,11 +505,9 @@ class LineMarkStyle(BaseModel):
             "through to VL's native step."
         ),
     )
-    # Cascade tier sentinel: None means "not specified at this tier"; emission
-    # treats None as True. Only meaningful for curve='step' on a categorical
-    # (band) x-axis: False suppresses the vertical bridges between adjacent
-    # band plateaus.
-    connect: bool | None = Field(
+    # Only meaningful for curve='step' on a categorical (band) x-axis: False
+    # suppresses the vertical bridges between adjacent band plateaus.
+    connect: Annotated[bool | None, AutoUnset()] = Field(
         default=None,
         description=(
             "For curve='step' on a categorical (band) x-axis, whether adjacent "
@@ -627,7 +624,7 @@ class AreaMarkStyle(BaseModel):
     # Cascade tier sentinel: None means "not specified at this tier".
     opacity: float | None = Field(default=None, description="Area fill opacity (0–1).")
     # Cascade tier sentinel: None means "not specified at this tier".
-    curve: Curve | None = Field(
+    curve: Annotated[Curve | None, AutoUnset()] = Field(
         default=None,
         description=(
             "Area interpolation curve, one of a fixed set: 'linear', 'monotone', "
@@ -682,34 +679,30 @@ class PointMarkStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    size: float | None = Field(
+    size: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Point size in square pixels; 0 disables points on line charts.",
+        description="Point size in square pixels; 0 disables points on line charts; 'auto' sizes by data density.",
     )
-    color: Annotated[str | None, Color()] = Field(
+    color: Annotated[str | None, Color(keywords=(AUTO,)), AutoUnset()] = Field(
         default=None,
         description=(
             "Point color. On a single-series scatter it recolors the dots, over "
-            "color.static and the palette; None inherits the series color."
+            "color.static and the palette; 'auto' inherits the series color."
         ),
     )
-    shape: str | None = Field(
+    shape: Annotated[SymbolShape | None, AutoUnset()] = Field(
         default=None,
-        description="Point shape (e.g. 'circle', 'square'); None uses VL default.",
+        description="Point shape (e.g. 'circle', 'square'); 'auto' uses VL default.",
     )
-    opacity: float | None = Field(
-        default=None, description="Point opacity 0–1; None uses VL default."
-    )
-    filled: bool | None = Field(
-        default=None, description="Whether points are filled; None uses VL default."
-    )
+    opacity: float | None = Field(default=None, description="Point opacity, 0 to 1.")
+    filled: bool | None = Field(default=None, description="Whether points are filled.")
     fill: Annotated[str | None, Color()] = Field(
         default=None,
         description="Point interior fill color; only applied when filled=false.",
     )
-    stroke_width: float | None = Field(
+    stroke_width: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Stroke width in pixels for hollow point rings; None uses VL default.",
+        description="Stroke width in pixels for hollow point rings; 'auto' uses VL default.",
     )
     # SkipInheritSlots(cascade=True): leaf fields inside labels inherit individually
     # from the parent slot (no container-copy since labels is never None).
@@ -732,9 +725,9 @@ class SliceMarkStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # Cascade tier sentinel: None means "not specified at this tier".
-    opacity: float | None = Field(
+    opacity: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Arc slice opacity (0–1); None means not overridden at this level.",
+        description="Arc slice opacity (0 to 1); 'auto' uses the board opacity.",
     )
     # Cascade tier sentinel: None means "not specified at this tier".
     gap: float | None = Field(
@@ -764,9 +757,9 @@ class RuleMarkStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    opacity: float | None = Field(
+    opacity: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Mark opacity (0–1); None means not overridden at this level.",
+        description="Mark opacity (0 to 1); 'auto' uses the board opacity.",
     )
     stroke: FontColorStrokeStyle = Field(
         default_factory=FontColorStrokeStyle,
@@ -779,9 +772,9 @@ class RectMarkStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    opacity: float | None = Field(
+    opacity: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Mark opacity (0–1); None means not overridden at this level.",
+        description="Mark opacity (0 to 1); 'auto' uses the board opacity.",
     )
     # SkipInheritSlots(cascade=True): apply_inherit copies the entire stroke object
     # from the parent slot when stroke is None (heatmap.marks.rect slot).
@@ -798,9 +791,9 @@ class CircleMarkStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    opacity: float | None = Field(
+    opacity: Annotated[float | None, AutoUnset()] = Field(
         default=None,
-        description="Mark opacity (0–1); None means not overridden at this level.",
+        description="Mark opacity (0 to 1); 'auto' uses the board opacity.",
     )
     # SkipInheritSlots: nullable container; apply_inherit can't navigate through None parent.
     stroke: Annotated[StrokeStyle | None, SkipInheritSlots(), Absent("no stroke")] = (

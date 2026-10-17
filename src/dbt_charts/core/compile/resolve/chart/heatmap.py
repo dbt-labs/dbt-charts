@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import replace
 
 from dbt_charts.core.compile.format import reject_native
-from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     HeatmapChart,
 )
@@ -51,6 +50,7 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
+from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
@@ -85,7 +85,7 @@ def _resolve_heatmap(
         has_quantitative_axis=False,
     )
     primary = plan.primary
-    heatmap = merge_onto_base(chart_style_context.heatmap, primary)
+    heatmap = merge_unset(chart_style_context.heatmap, primary)
     channels = plan.channels
     ay_merged = plan.axes.y.style
     # Heatmap's color channel is always a gradient (a continuous scale over

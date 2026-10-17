@@ -132,6 +132,7 @@ class TestSqliteAdapterExecutes:
         assert result.error is not None
         error = str(result.error)
         assert "nonexistent_table_xyz" in error or "no such table" in error
+        assert error.startswith("Warehouse rejected the query:")
 
     def test_sqlite_nonexistent_path_surfaces_error(self, tmp_path: Path) -> None:
         """A path pointing to a nonexistent file surfaces a connection fault.

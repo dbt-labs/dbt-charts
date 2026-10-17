@@ -295,8 +295,7 @@ def test_base_axis_with_null_grid_color_raises():
 
     The editorial theme provides grid.color at both the shared axis and the
     per-channel axis_y layers. Nulling all sources leaves the resolved axis
-    without a grid.color, which build_resolved_axis (called by resolved_axis_style)
-    rejects at emit time.
+    without a grid.color, which the style total check rejects, naming the path.
     """
     base = get_theme_style("clarity")
 
@@ -317,11 +316,8 @@ def test_base_axis_with_null_grid_color_raises():
             )
         }
     )
-    resolved = resolve_chart_style_context(patched)
-    with pytest.raises(ValueError, match="grid.color"):
-        resolved_axis_style(
-            resolved, "axis_y", "quantitative", chart_type="", labeled=False
-        )
+    with pytest.raises(ValueError, match=r"Style\.charts\.axis\.grid\.color"):
+        resolve_chart_style_context(patched)
 
 
 def test_paper_resolves_without_error():

@@ -25,6 +25,7 @@ from dbt_charts.core.compile.models.constraints import (
 from dbt_charts.core.compile.models.markers import (
     AUTO,
     Absent,
+    AutoUnset,
     Color,
     Inherit,
     InheritSlot,
@@ -675,14 +676,12 @@ class SupportTableStyle(BaseModel):
             "Typically 1 or 2."
         )
     )
-    # Cascade-managed sentinel: None means "not authored" — the effective
-    # placement then depends on the chart's category-axis orientation, a fact
-    # only known once the chart resolves (vertical bar vs. vertical/line/area),
-    # so no theme YAML supplies a literal default here. An explicit author
-    # value is validated against that orientation at render time and always
-    # wins over the orientation-derived default; see
-    # render/chart/support_table_attachment.py's position resolution.
-    position: Literal["top", "bottom", "left", "right"] | None = Field(
+    # 'auto': the effective placement depends on the chart's category-axis
+    # orientation, a fact only known once the chart resolves, so the theme
+    # cannot name one.
+    position: Annotated[
+        Literal["top", "bottom", "left", "right"] | None, AutoUnset()
+    ] = Field(
         default=None,
         description=(
             "Strip placement relative to the chart plot. 'top'/'bottom' apply "
@@ -691,7 +690,7 @@ class SupportTableStyle(BaseModel):
             "below with the x-axis between plot and strip. 'left'/'right' apply "
             "when the category axis is vertical (a horizontal bar): the strip "
             "renders as value columns beside the plot instead of rows above or "
-            "below it. Left unset, 'top' is used on a horizontal category axis "
+            "below it. 'auto' uses 'top' on a horizontal category axis "
             "and the side the category labels are on is used on a vertical one."
         ),
     )

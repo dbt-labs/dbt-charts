@@ -3906,3 +3906,64 @@ ERR_SUPPORT_TABLE_NO_Y_ENCODING = REGISTRY.register(
         docs_topic="charts",
     )
 )
+
+ERR_ANNOTATION_PAYLOAD = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ANNOTATION-PAYLOAD",
+        domain="render",
+        title="Annotation payload the render engine cannot draw",
+        message_template="Chart {chart_id!r}: annotation {index}: {reason}.",
+        doc=(
+            "Fired by the render engine when a resolved annotation breaks the "
+            "payload contract: an anchor shape its type does not take, a value of "
+            "the wrong type for its axis, a trend with fewer than two samples, or "
+            "text with a line break. These are checked before render, so this "
+            "error is a dbt Charts bug: please report it with the board."
+        ),
+        summary="Fired when the render engine refuses a resolved annotation's payload.",
+        docs_topic="charts",
+    )
+)
+
+ERR_ANNOTATION_MARGIN_UNSUPPORTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ANNOTATION-MARGIN-UNSUPPORTED",
+        domain="render",
+        title="Annotation text needs margin a fixed-margin layout cannot reserve",
+        message_template=(
+            "Chart {chart_id!r}: annotation {index}'s text falls outside the plot, "
+            "and this chart's layout cannot grow its margins to make room."
+        ),
+        fix_template=(
+            "Set `style.marks.text.position.overlay: true` or move the text inside "
+            "the plot."
+        ),
+        doc=(
+            "Fired when an annotation's text would sit outside the plot on a chart "
+            "whose layout keeps fixed margins, so the margin cannot grow to hold "
+            "it. Annotations whose text stays inside the plot render normally."
+        ),
+        summary="Fired when annotation text falls outside the plot on a fixed-margin chart.",
+        docs_topic="charts",
+    )
+)
+
+WARN_ANNOTATION_NOTHING_DRAWN = REGISTRY.register(
+    WarningCode(
+        code="WARN-ANNOTATION-NOTHING-DRAWN",
+        domain="render",
+        title="Annotation draws nothing",
+        message_template="Chart {chart_id!r}: annotation {index} draws nothing: {reason}.",
+        fix_template=(
+            "Anchor the annotation inside the plotted domain, name a category the "
+            "chart shows, or remove it."
+        ),
+        doc=(
+            "Fired when an annotation resolves but has nothing to draw: its "
+            "category or date names no slot on the axis, or its rule or band "
+            "falls outside the plot once clipped. The rest of the chart renders."
+        ),
+        summary="Fired when an annotation has nothing to draw on the plot.",
+        docs_topic="charts",
+    )
+)

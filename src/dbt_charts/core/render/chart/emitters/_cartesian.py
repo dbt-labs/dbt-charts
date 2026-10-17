@@ -94,6 +94,7 @@ from dbt_charts.core.render.numeral_expr import vl_format_key
 from dbt_charts.core.render.utils import normalize_scalar_for_json
 from dbt_charts.core.text.case import field_title
 from dbt_charts.core.text.category_label import category_label_text
+from dbt_charts.core.text.format_d3 import board_word
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_SPECS,
     PredefinedNumberFormat,
@@ -697,7 +698,9 @@ def wide_measures_title(
     Joins each measure's label (``_wide_fields.wide_measure_labels_for``).
     """
     wide_measure_labels = wide_measure_labels_for(measures, field_labels)
-    return ", ".join(wide_measure_labels[m] for m in measures)
+    return board_word("controls.list_join").join(
+        wide_measure_labels[m] for m in measures
+    )
 
 
 def resolve_xy_titles(

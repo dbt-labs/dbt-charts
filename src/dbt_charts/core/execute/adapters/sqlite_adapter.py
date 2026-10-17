@@ -196,9 +196,7 @@ class SqliteAdapter(BaseAdapter):
         except sqlite3.OperationalError as e:
             return QueryResult(
                 data=[],
-                error=QueryError(
-                    f"SQLite SQL execution failed: {e}", code=ERR_WAREHOUSE_RUNTIME
-                ),
+                error=QueryError.from_code(ERR_WAREHOUSE_RUNTIME, detail=str(e)),
             )
         except Exception as e:  # noqa: BLE001 — sqlite adapter error boundary
             return handle_adapter_error("sqlite SQL execution", e)

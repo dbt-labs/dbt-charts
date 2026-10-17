@@ -43,7 +43,8 @@ def board_slug(relpath: str) -> str | None:
 
 def _link_field_pattern(slug: str) -> re.Pattern[str]:
     escaped = re.escape(slug)
-    return re.compile(rf'(link:\s*["\']?/?){escaped}(?=[\s"\'/?]|$)')
+    # `url:` is the object form's line: `link: {url: /slug, open: modal}`.
+    return re.compile(rf'((?:link|url):\s*["\']?/?){escaped}(?=[\s"\'/?,}}]|$)')
 
 
 def _markdown_link_pattern(slug: str) -> re.Pattern[str]:

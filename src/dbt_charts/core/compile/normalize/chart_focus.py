@@ -136,6 +136,7 @@ def focus_on_chart(board: Board, chart_id: str) -> Board:
         None,
         theme_name=board.theme,
         currency=board.regional.currency,
+        language=board.regional.resolved_language,
     )
     focused_board = board.model_copy(
         update={

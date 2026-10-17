@@ -662,7 +662,8 @@ pub(crate) fn px(v: f64) -> f64 {
     }
 }
 
-/// Byte-exact, case-insensitive `\bdbt charts\b` search — a hand-rolled
+/// Byte-exact, case-insensitive `dbt charts` search bounded by non-ASCII-word
+/// neighbors (a translated footer may run the brand into non-Latin text) — a hand-rolled
 /// substitute for a regex crate this one fixed literal doesn't justify
 /// adding. Operates on bytes so a multi-byte UTF-8 char elsewhere in `text`
 /// can never misalign the returned offsets (the needle and its boundary
@@ -674,10 +675,9 @@ fn find_brand_phrase(text: &str) -> Option<(usize, usize)> {
     if bytes.len() < needle.len() {
         return None;
     }
-    // Python's `\b` is Unicode-aware, so the neighbor test is on characters,
-    // not bytes: reading the trailing byte of a multi-byte letter as
-    // "non-word" would match where production's regex refuses.
-    let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+    // The neighbor test is on characters, not bytes, and ASCII-only: the
+    // production regex (`FOOTER_BRAND_WORD_RE`) lookarounds on `[A-Za-z0-9_]`.
+    let is_word_char = |c: char| c.is_ascii_alphanumeric() || c == '_';
     for start in 0..=(bytes.len() - needle.len()) {
         if bytes[start..start + needle.len()].eq_ignore_ascii_case(needle) {
             let end = start + needle.len();
@@ -1341,7 +1341,7 @@ fn wrap_chart_svg(
         // `rendering.py:713-716`: `group`, not `img` (an `img` role makes
         // every per-mark `aria-label` presentational).
         r#"role="group""#.to_string(),
-        r#"aria-roledescription="chart""#.to_string(),
+        format!(r#"aria-roledescription="{}""#, xml_escape_attr(&display_text::language::tr("aria.chart", None, &[])?)),
         format!(r#"aria-label="{}""#, xml_escape_attr(&title_text)),
     ];
     if !source_path.is_empty() && !defined_in_other_file {
@@ -2028,6 +2028,7 @@ fn render_error_card_svg(
         fonts_dir: fonts_dir.map(str::to_string),
         padding: None,
         board_style: None,
+        language: None,
         datasets: None,
         variables: Default::default(),
         filter_variables: Default::default(),
@@ -2082,7 +2083,7 @@ fn wrap_error_card_svg(
         // `rendering.py:713-716`: `group`, not `img` (an `img` role makes
         // every per-mark `aria-label` presentational).
         r#"role="group""#.to_string(),
-        r#"aria-roledescription="chart""#.to_string(),
+        format!(r#"aria-roledescription="{}""#, xml_escape_attr(&display_text::language::tr("aria.chart", None, &[])?)),
         format!(r#"aria-label="{}""#, xml_escape_attr(chart_id)),
     ];
     if !source_path.is_empty() && !defined_in_other_file {
@@ -2313,6 +2314,7 @@ fn render_chart_item(
         // reads this field to bake the SAME padding into its own spec.
         padding: Some(spec_padding),
         board_style: Some(payload.board_style.clone()),
+        language: None,
         datasets: datasets.cloned(),
         // The real paint: `slot_h` is the already-decided box height, not
         // a static estimate to grow from — see `Payload::measuring`. The
@@ -2330,13 +2332,17 @@ fn render_chart_item(
         authored_height: item.authored_height,
         measuring: fresh_render.contains(chart_id),
     };
-    // Production keeps a support_table chart's sizing-time render while its
-    // box still holds that height, and corrects it only against an
-    // overshoot (`_correct_support_table_height`). The render cache is keyed
-    // by title shift too, so a shifted chart renders fresh.
+    // Production keeps a chart's sizing-time render while its box still holds
+    // that height (a support_table chart is also corrected against an
+    // overshoot, `_correct_support_table_height`). The render cache is keyed
+    // by title shift too, so a shifted chart renders fresh. Non-aspect-ratio
+    // types size by their own law and are not reused.
+    let chart_type = chart_json.get("chart_type").and_then(Value::as_str).ok_or("chart missing chart_type")?;
     let natural_payload = if !fresh_render.contains(chart_id)
         && item.title_shift == crate::TitleShift::default()
-        && crate::is_support_table_arm(&chart_payload)?
+        && (crate::is_support_table_arm(&chart_payload)?
+            || !sizing::is_non_aspect_ratio_type(chart_type)
+            || !chart_json["multiples"].is_null())
     {
         let mut natural = chart_payload.clone();
         natural.height = sizing::static_slot_estimate(
@@ -2713,7 +2719,9 @@ fn render_tabs_layout(
     let titles: Vec<String> = if layout.tab_titles.len() == n {
         layout.tab_titles.clone()
     } else {
-        (1..=n).map(|idx| format!("Tab {idx}")).collect()
+        (1..=n)
+            .map(|idx| display_text::language::tr("tab.title", None, &[("n", &idx.to_string())]))
+            .collect::<Result<_, _>>()?
     };
     let slugs: Vec<String> = if !layout.tab_slugs.is_empty() {
         layout.tab_slugs.clone()
@@ -2810,23 +2818,28 @@ fn footer_attribution_svg(
         )
     };
 
-    let Some((match_start, match_end)) = find_brand_phrase(&footer.text) else {
-        let w = fonts.measure(&footer.text, font_family, size)?;
-        return Ok((run(x, &footer.text, false), w));
+    let text = footer.text.clone();
+    let Some((match_start, match_end)) = find_brand_phrase(&text) else {
+        let w = fonts.measure(&text, font_family, size)?;
+        return Ok((run(x, &text, false), w));
     };
 
     // Measured at 600 because that is the weight it is painted at; the
     // regular instance is 1.41px narrower and the prefix would land on it.
-    let prefix = footer.text[..match_start].trim_end().to_string();
-    let brand_word = footer.text[match_start..match_end].to_string();
-    let suffix = footer.text[match_end..].trim_start().to_string();
-    let gap = fonts.measure(" ", font_family, size)?;
+    let prefix = text[..match_start].trim_end().to_string();
+    let brand_word = text[match_start..match_end].to_string();
+    let suffix = text[match_end..].trim_start().to_string();
+    // A space separates the brand from a neighbor only where the text has one
+    // (CJK runs the brand straight into its words).
+    let space = fonts.measure(" ", font_family, size)?;
+    let prefix_gap = if prefix.len() != match_start { space } else { 0.0 };
+    let suffix_gap = if suffix.len() != text.len() - match_end { space } else { 0.0 };
 
     let mut right = x;
     let mut parts: Vec<String> = Vec::new();
     if !suffix.is_empty() {
         parts.push(run(x, &suffix, false));
-        right -= fonts.measure(&suffix, font_family, size)? + gap;
+        right -= fonts.measure(&suffix, font_family, size)? + suffix_gap;
     }
 
     let brand_inner = run(right, &brand_word, true);
@@ -2841,8 +2854,8 @@ fn footer_attribution_svg(
     right -= fonts.measure_at_weight(&brand_word, font_family, size, Some(brand_weight as f32))?;
 
     if !prefix.is_empty() {
-        parts.insert(0, run(right - gap, &prefix, false));
-        right -= gap + fonts.measure(&prefix, font_family, size)?;
+        parts.insert(0, run(right - prefix_gap, &prefix, false));
+        right -= prefix_gap + fonts.measure(&prefix, font_family, size)?;
     }
     Ok((parts.concat(), x - right))
 }
@@ -5270,11 +5283,11 @@ mod tests {
 
     #[test]
     fn the_brand_phrase_needs_a_word_boundary_like_pythons_regex() {
-        // Python's `\b` is Unicode-aware, so `é` is a word character and the
-        // phrase glued to it is not a match. Classifying neighbors by byte
-        // read é's trailing continuation byte as a non-word byte and matched,
-        // splitting the footer into three runs where production emits one.
-        assert_eq!(find_brand_phrase("cafédbt charts"), None);
+        // Only ASCII letters, digits and `_` glue: a translated footer may run
+        // the brand into non-Latin text. Neighbors are classified as
+        // characters, not bytes, so a multi-byte letter is one neighbor.
+        assert_eq!(find_brand_phrase("cafédbt charts"), Some((5, 15)));
+        assert_eq!(find_brand_phrase("dbt Chartsで作成"), Some((0, 10)));
         assert_eq!(find_brand_phrase("made with dbt charts"), Some((10, 20)));
         assert_eq!(find_brand_phrase("made with dbt Charts"), Some((10, 20)));
         assert_eq!(find_brand_phrase("made with dbt chartsX"), None);

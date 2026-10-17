@@ -24,6 +24,7 @@ from dbt_charts.core.compile.file_refs import (
 )
 from dbt_charts.core.compile.markdown_blocks import SpanRun, image_urls, map_span_runs
 from dbt_charts.core.diagnostics.codes_render import ERR_IMAGE_REF_UNRESOLVED
+from dbt_charts.core.text.format_d3 import board_word
 from dbt_charts.core.utils import IMAGE_SUFFIXES
 from mdsvg import MarkdownParser, parse as parse_markdown
 from mdsvg.images import get_image_size
@@ -188,4 +189,6 @@ def rewrite_board_markdown_images(
     except CompilationError as exc:
         if error_collector is not None:
             error_collector.append(exc.to_diagnostic())
-        return list(parse_markdown(f"Image error: {exc.message}"))
+        return list(
+            parse_markdown(board_word("placard.image_error", message=exc.message))
+        )

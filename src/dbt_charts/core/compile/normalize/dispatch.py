@@ -72,7 +72,11 @@ from dbt_charts.core.compile.models.chart.normalized import (
     LineChart,
     ScatterChart,
 )
-from dbt_charts.core.compile.models.primitives import DEFAULT_REGIONAL, Regional
+from dbt_charts.core.compile.models.primitives import (
+    DEFAULT_REGIONAL,
+    LanguageCode,
+    Regional,
+)
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.refs import ChartRef
 from dbt_charts.core.compile.models.style.authored import StylePatch
@@ -161,7 +165,7 @@ def _theme_from_extends(extends: str | list[str] | None) -> str | None:
 # `repr` of the dumped fields, not `model_dump_json`: JSON writes inf and nan as
 # null, so `gap: .inf` would key the same as `gap: null` and silently take the
 # wrong style off the memo. A repr the other way round can only miss.
-_BoardCascadeKey = tuple[str, str, str | None, CurrencyCode | None]
+_BoardCascadeKey = tuple[str, str, str | None, CurrencyCode | None, LanguageCode]
 _CascadeProducts = tuple[ResolvedStyle, ChartStyleContext]
 
 # Board style cascades already resolved, innermost compile last. Every cascade
@@ -300,6 +304,7 @@ def compile_board_resolved_style(
     parent_theme_name: str | None = None,
     *,
     currency: CurrencyCode | None = DEFAULT_REGIONAL.currency,
+    language: LanguageCode = DEFAULT_REGIONAL.resolved_language,
     layout_type: LayoutType | None = None,
 ) -> tuple[ResolvedStyle, ChartStyleContext, StylePatch | None]:
     """Build the authoritative ResolvedStyle + ChartStyleContext for this board scope.
@@ -395,7 +400,11 @@ def compile_board_resolved_style(
             merged_patch = _with_nested_layout_gap(merged_patch, layout_type)
         return (
             *resolve_style_and_context(
-                base, merged_patch, base_background=bottom_layer, currency=currency
+                base,
+                merged_patch,
+                base_background=bottom_layer,
+                currency=currency,
+                language=language,
             ),
             inherited_patch,
         )
@@ -417,6 +426,7 @@ def compile_board_resolved_style(
         repr(resolve_patch.model_dump(exclude_unset=True)),
         bottom_layer,
         currency,
+        language,
     )
     cached = cache.get(key)
     if cached is not None:
@@ -430,7 +440,11 @@ def compile_board_resolved_style(
         return copy.copy(cached[0]), cached[1], own_patch
 
     resolved = resolve_style_and_context(
-        base, resolve_patch, base_background=bottom_layer, currency=currency
+        base,
+        resolve_patch,
+        base_background=bottom_layer,
+        currency=currency,
+        language=language,
     )
     cache[key] = resolved
     return (*resolved, own_patch)
@@ -470,7 +484,8 @@ def _board_regional(board: AuthoredBoard, parent: Regional | None) -> Regional:
     differing = sorted(
         field
         for field in authored_fields
-        if attrgetter(field)(authored) != attrgetter(field)(parent)
+        if attrgetter(_compared(field))(authored)
+        != attrgetter(_compared(field))(parent)
     )
     if differing:
         raise CompilationError.from_code(
@@ -484,9 +499,14 @@ def _board_regional(board: AuthoredBoard, parent: Regional | None) -> Regional:
     return parent
 
 
+def _compared(field: str) -> str:
+    """A nested board's `language` is the one its root's time locale may name."""
+    return "resolved_language" if field == "language" else field
+
+
 def _regional_text(regional: Regional, fields: list[str]) -> str:
     def _shown(field: str) -> str:
-        value = attrgetter(field)(regional)
+        value = attrgetter(_compared(field))(regional)
         if value is None:
             return "the locale's own currency"
         return value if isinstance(value, str) else "a custom locale"
@@ -574,6 +594,7 @@ def sync_board_resolved_style(
             parent_patch,
             theme_name=board.theme,
             currency=board.regional.currency,
+            language=board.regional.resolved_language,
             layout_type=board.layout.type,
         )
     )
@@ -614,6 +635,7 @@ def _propagate_resolved_style(
                 theme_name=item.board.theme,
                 parent_theme_name=parent_theme_name,
                 currency=item.board.regional.currency,
+                language=item.board.regional.resolved_language,
                 layout_type=item.board.layout.type,
             )
             _propagate_resolved_style(
@@ -1033,6 +1055,7 @@ def normalize_board(
         theme_name=theme,
         parent_theme_name=parent_context.get("theme"),
         currency=regional.currency,
+        language=regional.resolved_language,
     )
 
     # ════════════════════════════════════════════════════════════════════

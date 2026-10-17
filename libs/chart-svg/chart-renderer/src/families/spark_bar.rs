@@ -397,7 +397,7 @@ pub fn render(payload: &Payload, _fonts: &FontBook) -> Result<String, Diagnostic
                 .and_then(|b| b.title_case.as_deref())
                 .ok_or("spark_bar: board_style.title.font.case absent (theme required)")?;
             Some(if case != "none" {
-                crate::case::apply_case(title_text, case)?
+                display_text::case::apply_case(title_text, case)?
             } else {
                 title_text.to_string()
             })
@@ -485,7 +485,7 @@ pub fn render(payload: &Payload, _fonts: &FontBook) -> Result<String, Diagnostic
             // Python str(bool) capitalizes — production paints "True"/"False".
             (Some(Value::Bool(b)), _) => if *b { "True".into() } else { "False".into() },
             (None, _) => {
-                if y_field.is_some() { String::new() } else { format!("Item {}", i + 1) }
+                if y_field.is_some() { String::new() } else { display_text::language::tr("spark.item", None, &[("n", &(i + 1).to_string())])? }
             }
             (Some(other), _) => other.to_string(),
         };

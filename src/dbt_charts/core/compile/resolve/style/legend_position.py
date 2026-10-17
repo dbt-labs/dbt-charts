@@ -28,6 +28,7 @@ from dbt_charts.core.compile.models.style.theme import (
     LegendTitleStyle,
     PieLegendStyle,
 )
+from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset, settled
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_LEGEND_POSITION_UNSUPPORTED
 
@@ -53,9 +54,9 @@ def merge_authored_position(
 def merge_authored_direction(
     board: LegendStyle, patch: LegendStyle | PieLegendStyle | None
 ) -> LegendDirection | None:
-    return (
-        board.direction if patch is None or patch.direction is None else patch.direction
-    )
+    if patch is not None and "direction" in patch.model_fields_set:
+        return patch.direction
+    return board.direction
 
 
 def merge_authored_visible(
@@ -66,10 +67,9 @@ def merge_authored_visible(
     ``auto`` survives here: the baked ``ResolvedLegendStyle`` holds a bool, so the
     cascade's own answer is read from the sparse styles.
     """
-    visible = board.visible if patch is None or patch.visible is None else patch.visible
-    if visible is None:
-        raise ValueError("style.charts.legend.visible is unset after the theme cascade")
-    return visible
+    return settled(
+        board.visible if patch is None or patch.visible is None else patch.visible
+    )
 
 
 def merge_authored_title_visible(
@@ -136,7 +136,7 @@ def merge_legend(
     base: ResolvedLegendStyle, patch: LegendStyle | PieLegendStyle | None
 ) -> ResolvedLegendStyle:
     """*patch* folded onto the resolved legend, decided leaves left to the engine."""
-    return merge_onto_base(base, without_engine_decided(patch))
+    return merge_unset(base, without_engine_decided(patch))
 
 
 def placed_edge(leaf: LegendEdge | Literal["auto"] | None) -> LegendEdge | None:

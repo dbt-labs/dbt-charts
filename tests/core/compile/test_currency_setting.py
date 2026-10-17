@@ -38,7 +38,9 @@ def _regional(
     """The board's locale in scope, and its format table."""
     regional = Regional(locale=RegionalLocale(number=locale), currency=currency)
     with regional_scope(
-        regional.format_locale, regional.time_locale, regional.week_start
+        regional.format_locale,
+        regional.time_locale,
+        regional.week_start,
     ):
         yield FormatTable(aliases={}, currency=currency)
 
@@ -87,6 +89,7 @@ def test_meta_and_board_regional_merge_field_by_field() -> None:
     assert merged.regional.model_dump() == {
         "locale": {"number": "fr-FR", "time": None},
         "currency": "EUR",
+        "language": None,
     }
 
 

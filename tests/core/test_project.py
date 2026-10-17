@@ -704,6 +704,16 @@ class TestProjectFileQueriesContract:
     def test_grep_is_case_sensitive_substring(self, project: Project) -> None:
         assert list(project.files.grep("REVENUE")) == []
 
+    def test_grep_ignore_case_folds_ascii_letters_only(
+        self, in_memory_project: type, tmp_path: Path
+    ) -> None:
+        corpus = dict(_QUERY_CORPUS, **{"charts/accent.yml": "title: Éclair\n"})
+        project = in_memory_project(tmp_path, corpus)
+        assert list(project.files.grep("REVENUE", ignore_case=True)) == [
+            GrepHit("charts/notes.md", 1, "# revenue notes")
+        ]
+        assert list(project.files.grep("title: éclair", ignore_case=True)) == []
+
     def test_grep_glob_narrows_the_search(self, project: Project) -> None:
         assert list(project.files.grep("SELECT", glob="charts/**/*")) == []
         hits = list(project.files.grep("SELECT", glob="models/*.sql"))
@@ -842,6 +852,12 @@ class TestFilesystemProjectQueries:
     def test_grep_skips_undecodable_files(self, project: FilesystemProject) -> None:
         hits = list(project.files.grep("title"))
         assert [h.relpath for h in hits] == ["charts/sub/deep.yml"]
+
+    def test_grep_ignore_case_matches_the_line_as_authored(
+        self, project: FilesystemProject
+    ) -> None:
+        hits = list(project.files.grep("TITLE: DEEP", ignore_case=True))
+        assert hits == [GrepHit("charts/sub/deep.yml", 1, "title: deep")]
 
     def test_queries_are_the_native_filesystem_implementation(
         self, project: FilesystemProject

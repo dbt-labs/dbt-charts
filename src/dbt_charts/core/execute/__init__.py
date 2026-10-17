@@ -35,7 +35,6 @@ if TYPE_CHECKING:
         AdapterError,
         ExecutionError,
         QueryError,
-        QueryTimeoutError,
     )
     from dbt_charts.core.execute.cache_backend import (
         CachedQueryFailure,
@@ -64,7 +63,6 @@ __all__ = [
     # Errors
     "ExecutionError",
     "QueryError",
-    "QueryTimeoutError",
     "AdapterError",
 ]
 
@@ -75,7 +73,6 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "AdapterError": ("dbt_charts.core.diagnostics.execution", "AdapterError"),
     "ExecutionError": ("dbt_charts.core.diagnostics.execution", "ExecutionError"),
     "QueryError": ("dbt_charts.core.diagnostics.execution", "QueryError"),
-    "QueryTimeoutError": ("dbt_charts.core.diagnostics.execution", "QueryTimeoutError"),
     "CachedQueryFailure": (
         "dbt_charts.core.execute.cache_backend",
         "CachedQueryFailure",

@@ -1,0 +1,3 @@
+kind: Features
+body: Style values the renderer decides accept auto, which resets a value set in a theme or parent board to the renderer's default. Legend symbol shape, point shape and title baseline accept only their named values or auto.
+time: 2026-10-15T14:18:49.35152-07:00

@@ -19,20 +19,12 @@
 //!   anchoring (`strip_numerals_for_values`/`StripNumerals` ported below —
 //!   trimmed and composed-SI rows both) and, off a band scale only, the
 //!   centering cell dx. Cells and stubs anchor from the value axis's orient.
-//! * **Legacy splice** (`build_rows`/`render_rows`/`wrap_with_strip`): the
-//!   pre-composed approximation kept for every sub-shape the composed arm
-//!   does not model (left-axis line/area, the rail concat) —
-//!   cells paint their full format spec per cell (production's own fallback
-//!   for an unanchored row), and the canvas grows by `strip_height` only,
-//!   without the autosize-pad chrome overshoot. Documented in `AGENTS.md`.
 //!
 //! Row-y convention: `_row_y_pixel` (`support_table_attachment.py`) measures
 //! every row/divider/inter-row-rule pixel from the plot edge (`y=0` for
 //! `position: top`) — row 0 always closest to the plot. `row_y_base`/`divider_y_base` below reproduce those
 //! same formulas with the plot edge pinned at local origin 0 (i.e.
-//! `spec_height` fixed to 0.0); `to_local` then re-anchors that local origin
-//! into the strip's own drawn box (`[0, strip_h]`, translated by the caller
-//! to sit directly below the title).
+//! `spec_height` fixed to 0.0).
 
 use crate::constants::layout::SUPPORT_TABLE_MAX_X_TICKS;
 use serde::Deserialize;
@@ -284,13 +276,6 @@ fn inter_row_y_base(index: usize, style: &SupportTableStyle, axis_offset_value: 
     } else {
         row_y - half_gap
     }
-}
-
-/// Re-anchor a plot-top-relative pixel (`row_y_base`/`divider_y_base`) into
-/// the legacy splice's strip box `[0, strip_h]`, which the caller translates
-/// to sit directly above the plot.
-fn to_local(base: f64, strip_h: f64) -> f64 {
-    strip_h + base
 }
 
 /// A resolved cell value before formatting — a bare source column can hold
@@ -965,19 +950,6 @@ pub(crate) fn format_cell(v: Option<&CellValue>, spec: Option<&str>) -> Result<S
     }
 }
 
-/// One row's worth of positioned, formatted text cells plus its label,
-/// painted in `label_color` when set (a `per_series:` row's series ink) —
-/// see `ComposedRow`'s matching doc comment.
-#[derive(Debug)]
-pub struct StripRow {
-    pub label: String,
-    /// (x pixel center, formatted text, aria label)
-    pub cells: Vec<(f64, String, String)>,
-    pub label_color: Option<String>,
-    /// The series a `per_series:` row prints; `None` on every other row.
-    pub series: Option<String>,
-}
-
 /// What production's description of a strip cell is built from: the cell's x
 /// as the parent chart's own mark would describe it (`week: 2024-01-01`), one
 /// per domain entry, and the color field's title for a `per_series:` row's
@@ -992,19 +964,6 @@ impl CellAria {
         match (series, &self.color_title) {
             (Some(s), Some(title)) => format!("{}; {title}: {s}", self.x[i]),
             _ => self.x[i].clone(),
-        }
-    }
-}
-
-impl StripRow {
-    #[cfg(test)]
-    fn painted(&self) -> Vec<(f64, String)> {
-        self.cells.iter().map(|(x, text, _)| (*x, text.clone())).collect()
-    }
-
-    pub fn describe(&mut self, aria: &CellAria) {
-        for (i, cell) in self.cells.iter_mut().enumerate() {
-            cell.2 = aria.label(i, self.series.as_deref());
         }
     }
 }
@@ -1049,6 +1008,9 @@ pub struct ComposedRow {
     pub cells: Vec<ComposedCell>,
     pub dx: f64,
     pub label_color: Option<String>,
+    /// How far the stub sits from its own axis-side anchor: a grouped bar's
+    /// `xOffset` channel moves it by the sub-band its series-less row opens.
+    pub stub_dx: f64,
     /// The series a `per_series:` row prints; `None` on every other row.
     pub series: Option<String>,
     /// Width the row's anchor cell WOULD measure if it landed on this
@@ -1349,6 +1311,7 @@ pub fn build_rows_composed(
                     cells,
                     dx,
                     label_color: Some(series_ink[i].clone()),
+                    stub_dx: 0.0,
                     series: Some(series_order[i].clone()),
                     anchor_worst_case_w,
                 });
@@ -1374,6 +1337,7 @@ pub fn build_rows_composed(
             cells,
             dx,
             label_color: None,
+            stub_dx: 0.0,
             series: None,
             anchor_worst_case_w,
         });
@@ -1417,15 +1381,6 @@ fn cell_font(style: &SupportTableStyle) -> Result<(&str, f64), String> {
 /// padding on both sides (`min_band_px`).
 fn min_band_px(max_cell_w: f64, row_padding_horizontal: f64) -> f64 {
     max_cell_w + 2.0 * row_padding_horizontal
-}
-
-/// The widest cell any legacy-splice row paints, measured as the composed
-/// arm's `build_cells` measures a cell.
-pub fn widest_strip_cell(rows: &[StripRow], fonts: &FontBook, style: &SupportTableStyle) -> Result<f64, String> {
-    let (family, size) = cell_font(style)?;
-    rows.iter()
-        .flat_map(|row| &row.cells)
-        .try_fold(0.0_f64, |widest, (_, text, _)| Ok(widest.max(fonts.measure_shaped(text, family, size)?)))
 }
 
 /// `WARN-SUPPORT-TABLE-CELL-OVERFLOW`: the widest strip cell needs more than
@@ -1562,32 +1517,22 @@ pub fn composed_ink_extent(style: &SupportTableStyle, n_rows: usize) -> f64 {
     -row_y_base(n_rows - 1, style, 0.0) + rise
 }
 
-/// How far a bottom strip's axis gap grows to clear x labels drawn at `angle`
-/// (`_tilted_label_axis_offset`, `support_table_attachment.py:4549`): the
-/// compile-baked gap reserves `label_max_lines` flat lines, and a label
-/// rotated toward vertical is as tall as it is long (`_label_block_height`).
-/// `widest` is the widest label as the tilt resolution measured it. Hidden
-/// labels reserve nothing. A raw quantitative x is a documented production gap:
-/// `_pinned_angle_block_height` returns the font size there, so the block is one
-/// flat row whatever the angle.
+/// How far a bottom strip's axis gap grows to clear x labels whose block is
+/// `block_height` tall (`_tilted_label_axis_offset`,
+/// `support_table_attachment.py:4549`): the compile-baked gap reserves
+/// `label_max_lines` flat lines, and a label rotated toward vertical is as tall
+/// as it is long (`AxisLabelLayout.label_block_height`). Hidden labels reserve
+/// nothing.
 pub(crate) fn tilted_axis_gap_growth(
     style: &SupportTableStyle,
     labels: &crate::common::AxisLabels,
     font_size: f64,
-    angle: f64,
-    widest: f64,
-    quantitative: bool,
+    block_height: f64,
 ) -> f64 {
     if labels.visible == Some(false) || font_size <= 0.0 {
         return 0.0;
     }
-    let block = if quantitative {
-        font_size
-    } else {
-        let (sin, cos) = angle.abs().to_radians().sin_cos();
-        widest * sin + font_size * cos
-    };
-    (block - font_size * style.label_max_lines).max(0.0)
+    (block_height - font_size * style.label_max_lines).max(0.0)
 }
 
 /// Round-half-to-even, matching Python's `round()` — production's own
@@ -1665,7 +1610,7 @@ pub fn composed_ink(
             ));
         }
         b.union(&crate::vega_fit::text_ink(
-            stub_x,
+            stub_x + row.stub_dx,
             y,
             row.label_w,
             label_size,
@@ -1712,7 +1657,7 @@ pub fn render_rows_composed(
     origin_y: f64,
     axis_on_right: bool,
     axis_offset: f64,
-) {
+) -> Result<(), String> {
     let font_family = style.font.family_or("sans-serif");
     let font_size = style.font.size_or(11.0);
     let font_color = style.font.color.as_deref().unwrap_or("#333");
@@ -1736,14 +1681,14 @@ pub fn render_rows_composed(
     for (i, row) in rows.iter().enumerate() {
         let row_y = origin_y + row_y_base(i, style, axis_offset) + baseline;
         let dx = if axis_on_right { row.dx } else { -row.dx };
-        crate::contract::mark_group_open(out, "text", "strip");
+        crate::contract::mark_group_open(out, "text", "strip")?;
         for cell in &row.cells {
             let _ = write!(
                 out,
                 "<text{} x=\"{:.2}\" y=\"{row_y:.2}\" text-anchor=\"{cell_anchor}\" \
                  font-family=\"{}\" font-size=\"{font_size}\" font-weight=\"{font_weight}\" \
                  fill=\"{font_color}\">{}</text>",
-                crate::contract::cell_label_attr(&cell.aria),
+                crate::contract::cell_label_attr(&cell.aria)?,
                 origin_x + cell.x + dx,
                 vega_escape_attr(font_family),
                 xml_escape(&cell.text), cell_anchor = xml_escape_attr(cell_anchor), font_weight = xml_escape_attr(&font_weight), font_color = xml_escape_attr(font_color)
@@ -1753,9 +1698,10 @@ pub fn render_rows_composed(
         let row_label_color = row.label_color.as_deref().unwrap_or(label_color);
         let _ = write!(
             out,
-            "<text x=\"{stub_x:.2}\" y=\"{row_y:.2}\" text-anchor=\"{stub_anchor}\" \
+            "<text x=\"{:.2}\" y=\"{row_y:.2}\" text-anchor=\"{stub_anchor}\" \
              font-family=\"{}\" font-size=\"{label_size}\" font-weight=\"{label_weight}\" \
              fill=\"{row_label_color}\">{}</text>",
+            stub_x + row.stub_dx,
             vega_escape_attr(label_family),
             xml_escape(&row.label), stub_anchor = xml_escape_attr(stub_anchor), label_weight = xml_escape_attr(&label_weight), row_label_color = xml_escape_attr(row_label_color)
         );
@@ -1764,6 +1710,7 @@ pub fn render_rows_composed(
             out.push_str(&divider_line(origin_x, y, origin_x + plot_w, y, &style.row.divider));
         }
     }
+    Ok(())
 }
 
 /// Data-aware guards this config must pass before any entry is resolved —
@@ -1849,107 +1796,6 @@ pub(crate) fn label_font_resolved(style: &SupportTableStyle) -> (&str, f64) {
     (family, size)
 }
 
-/// Build every row's cells for the strip. `x_positions` gives, for each
-/// domain entry (same order/length as `domain`), the pixel x to center that
-/// column's text on — the caller computes this from its own band/point
-/// scale so the strip aligns with the plot's own x-ticks. `fonts`/`style`'s
-/// row-label font (`label_font_resolved`) measure each row's label against
-/// `LABEL_STUB_LIMIT_PX`, truncating with an ellipsis the same way
-/// production's `labelLimit` would.
-/// Build the legacy splice strip's rows — every cell formats its full spec
-/// (no declare-once `StripNumerals` affix; that anchoring never runs on this
-/// path, see the module doc). `color_field`/`series_order`/`series_ink` are
-/// the caller's own resolved color domain for a `per_series:` entry — see
-/// `build_rows_composed`'s matching doc comment.
-#[allow(clippy::too_many_arguments)]
-pub fn build_rows(
-    config: &SupportTableConfig,
-    rows: &[serde_json::Map<String, Value>],
-    x_field: &str,
-    domain: &[String],
-    x_positions: &[f64],
-    fonts: &FontBook,
-    style: &SupportTableStyle,
-    color_field: Option<&str>,
-    series_order: &[String],
-    series_ink: &[String],
-) -> Result<Vec<StripRow>, String> {
-    if domain.len() != x_positions.len() {
-        return Err("support_table: domain/x_positions length mismatch".into());
-    }
-    validate_against_data(config, rows, x_field, domain)?;
-    let (label_family, label_size) = label_font_resolved(style);
-    let mut out: Vec<StripRow> = Vec::new();
-    for entry in &config.entries {
-        if let Some(key) = entry.format.as_ref().and_then(|f| f.carried().next()) {
-            return Err(format!(
-                "support_table: format {key:?} is not painted on the legacy strip arm — only the composed \
-                 arm anchors an authored affix"
-            ));
-        }
-        let spec = entry.format.as_ref().map(|f| f.spec.as_str());
-        if let Some(per_series_field) = &entry.per_series {
-            let Some(cfield) = color_field else {
-                return Err(
-                    "support_table: a `per_series:` entry requires the chart to carry a \
-                     color encoding"
-                        .to_string(),
-                );
-            };
-            if series_order.is_empty() {
-                return Err(
-                    "support_table: a `per_series:` entry requires series_order — the \
-                     parent chart's color-domain series list"
-                        .to_string(),
-                );
-            }
-            if series_ink.len() != series_order.len() {
-                return Err(
-                    "support_table: internal error — series_ink/series_order length \
-                     mismatch"
-                        .to_string(),
-                );
-            }
-            for (i, series_value) in series_order.iter().enumerate() {
-                let values = per_series_values(per_series_field, rows, x_field, domain, cfield, series_value)?;
-                let cells = values
-                    .iter()
-                    .zip(x_positions.iter())
-                    .map(|(v, &x)| Ok((x, format_cell(v.as_ref(), spec)?, String::new())))
-                    .collect::<Result<Vec<_>, String>>()?;
-                let label = truncate_label(fonts, label_family, label_size, series_value, false)?;
-                out.push(StripRow {
-                    label,
-                    cells,
-                    label_color: Some(series_ink[i].clone()),
-                    series: Some(series_value.clone()),
-                });
-            }
-            continue;
-        }
-        let values = entry_values(entry, rows, x_field, domain)?;
-        let cells = values
-            .iter()
-            .zip(x_positions.iter())
-            .map(|(v, &x)| Ok((x, format_cell(v.as_ref(), spec)?, String::new())))
-            .collect::<Result<Vec<_>, String>>()?;
-        // Production: `entry.label or inferred_display_name(entry.source,
-        // case="title")` (`support_table_attachment.py:855`). `entry_values`
-        // above already errored on a source-less entry, so `entry.source` is
-        // guaranteed `Some` here.
-        let label = match entry.label.clone() {
-            Some(l) => l,
-            None => slug_to_display(
-                entry.source.as_deref().expect("entry_values already required a source"),
-                "title",
-            )?,
-        };
-        let label = truncate_label(fonts, label_family, label_size, &label, false)?;
-        out.push(StripRow { label, cells, label_color: None, series: None });
-    }
-    Ok(out)
-}
-
 /// Truncate `text` with a trailing ellipsis so it fits `LABEL_STUB_LIMIT_PX`
 /// — port of Vega-Lite's `labelLimit` truncation on the row-label stub
 /// (`_LABEL_STUB_LIMIT_PX`, `support_table_attachment.py:127`). `shaped`
@@ -1977,126 +1823,6 @@ fn truncate_label(
         }
     }
     Ok("…".to_string())
-}
-
-/// Render the strip's SVG content (no `<svg>` wrapper). `strip_h` is this
-/// entry's own `strip_height()` (needed to re-anchor `position: top` rows
-/// into local coordinates — see `to_local`). `label_x`/`label_anchor` place the row label at the
-/// y-axis tick label's own gutter (caller derives both from the chart's
-/// resolved `axis_y.position`); `plot_left`/`plot_right` bound the
-/// divider/inter-row rule lines.
-#[allow(clippy::too_many_arguments)]
-pub fn render_rows(
-    rows: &[StripRow],
-    style: &SupportTableStyle,
-    strip_h: f64,
-    label_x: f64,
-    label_anchor: &str,
-    plot_left: f64,
-    plot_right: f64,
-) -> String {
-    let font_family = style.font.family_or("sans-serif");
-    let font_size = style.font.size_or(11.0);
-    let font_color = style.font.color.as_deref().unwrap_or("#333");
-    let font_weight = style.font.weight_str();
-    let (label_family, label_size) = label_font_resolved(style);
-    let label_color = style.label.font.color.as_deref().unwrap_or(font_color);
-    let label_weight = style.label.font.weight_str();
-
-    let mut svg = String::new();
-
-    if style.divider.line.visible {
-        let y = to_local(divider_y_base(style, 0.0), strip_h);
-        svg.push_str(&divider_line(plot_left, y, plot_right, y, &style.divider.line));
-    }
-
-    for (i, row) in rows.iter().enumerate() {
-        let row_y = to_local(row_y_base(i, style, 0.0), strip_h);
-        let row_label_color = row.label_color.as_deref().unwrap_or(label_color);
-        let _ = write!(
-            svg,
-            "<text x=\"{label_x:.2}\" y=\"{row_y:.2}\" font-family=\"{}\" font-size=\"{}\" \
-             font-weight=\"{label_weight}\" fill=\"{}\" text-anchor=\"{label_anchor}\" \
-             dominant-baseline=\"middle\">{}</text>",
-            vega_escape_attr(label_family),
-            label_size,
-            xml_escape_attr(row_label_color),
-            xml_escape(&row.label), label_weight = xml_escape_attr(&label_weight), label_anchor = xml_escape_attr(label_anchor)
-        );
-        crate::contract::mark_group_open(&mut svg, "text", "strip");
-        for (x, text, aria) in &row.cells {
-            let _ = write!(
-                svg,
-                "<text{} x=\"{:.2}\" y=\"{row_y:.2}\" font-family=\"{}\" font-size=\"{font_size}\" \
-                 font-weight=\"{font_weight}\" fill=\"{}\" text-anchor=\"middle\" \
-                 dominant-baseline=\"middle\">{}</text>",
-                crate::contract::cell_label_attr(aria),
-                x,
-                vega_escape_attr(font_family),
-                xml_escape_attr(font_color),
-                xml_escape(text), font_weight = xml_escape_attr(&font_weight)
-            );
-        }
-        crate::contract::mark_group_close(&mut svg);
-        if style.row.divider.visible && i + 1 < rows.len() {
-            let y = to_local(inter_row_y_base(i, style, 0.0), strip_h);
-            svg.push_str(&divider_line(plot_left, y, plot_right, y, &style.row.divider));
-        }
-    }
-    svg
-}
-
-/// Wrap an already-rendered `w`×`h` SVG string with an attached strip band.
-/// Locates the end of the opening `<svg ...>` tag and the final `</svg>` by
-/// their literal markers rather than reproducing the caller's exact
-/// attribute formatting, so this stays decoupled from bar.rs's/line.rs's own
-/// tag-emission code.
-///
-/// `position: "top"`: production opens the gap *between* the title and the
-/// plot, not above the title (`support_table_attachment.py`'s module doc,
-/// `:20-33`: the strip's own ink grows the top margin, so the title keeps
-/// its absolute position).
-/// `title_split` is the byte offset within `base_svg`'s body where the
-/// title's own markup ends (0 when there is no title); the title (and
-/// anything before it, e.g. the background rect) stays at its original
-/// absolute position, the strip is drawn in the gap at `title_bottom_px`,
-/// and everything after the title shifts down by `strip_h`.
-///
-/// Splice the finished strip above the plot, below the title: the canvas grows
-/// by `strip_h`, the strip is drawn at `title_bottom_px`, and everything after
-/// `title_split` (the plot and its axes) shifts down by `strip_h`.
-#[allow(clippy::too_many_arguments)]
-pub fn wrap_with_strip(
-    base_svg: &str,
-    w: f64,
-    h: f64,
-    strip_h: f64,
-    strip_svg: &str,
-    bg: &str,
-    title_split: usize,
-    title_bottom_px: f64,
-) -> Result<String, String> {
-    let open_end = base_svg.find('>').ok_or("support_table: base SVG has no opening tag")? + 1;
-    let close_start = base_svg.rfind("</svg>").ok_or("support_table: base SVG has no closing tag")?;
-    let body = &base_svg[open_end..close_start];
-    let new_h = h + strip_h;
-    let (before, after) = body.split_at(title_split.min(body.len()));
-    let mut out = String::with_capacity(base_svg.len() + strip_svg.len() + 256);
-    let _ = write!(
-        out,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{new_h}\" \
-         viewBox=\"0 0 {w} {new_h}\">"
-    );
-    let _ = write!(out, "<rect width=\"{w}\" height=\"{new_h:.2}\" fill=\"{bg}\"/>", bg = xml_escape_attr(bg));
-    out.push_str(before);
-    let _ = write!(out, "<g transform=\"translate(0, {title_bottom_px:.2})\">");
-    out.push_str(strip_svg);
-    out.push_str("</g>");
-    let _ = write!(out, "<g transform=\"translate(0, {strip_h:.2})\">");
-    out.push_str(after);
-    out.push_str("</g>");
-    out.push_str("</svg>");
-    Ok(out)
 }
 
 #[cfg(test)]
@@ -2475,13 +2201,49 @@ mod tests {
         .unwrap()
     }
 
-    fn row(label: &str, cells: Vec<(f64, &str)>) -> StripRow {
-        StripRow {
-            label: label.to_string(),
-            cells: cells.into_iter().map(|(x, t)| (x, t.to_string(), String::new())).collect(),
-            label_color: None,
-            series: None,
+    /// A composed row read the way these tests assert it: `(x, text, aria)` cells.
+    #[derive(Debug)]
+    struct TestRow {
+        label: String,
+        cells: Vec<(f64, String, String)>,
+        label_color: Option<String>,
+        series: Option<String>,
+    }
+
+    impl TestRow {
+        fn painted(&self) -> Vec<(f64, String)> {
+            self.cells.iter().map(|(x, text, _)| (*x, text.clone())).collect()
         }
+    }
+
+    /// The composed builder with every cell spelling its own full spec.
+    #[allow(clippy::too_many_arguments)]
+    fn build_rows(
+        config: &SupportTableConfig,
+        rows: &[serde_json::Map<String, Value>],
+        x_field: &str,
+        domain: &[String],
+        x_positions: &[f64],
+        fonts: &FontBook,
+        style: &SupportTableStyle,
+        color_field: Option<&str>,
+        series_order: &[String],
+        series_ink: &[String],
+    ) -> Result<Vec<TestRow>, Diagnostic> {
+        build_rows_composed(
+            "test", config, rows, x_field, domain, x_positions, fonts, style, false, false, false, color_field,
+            series_order, series_ink,
+        )
+        .map(|rows| {
+            rows.into_iter()
+                .map(|r| TestRow {
+                    label: r.label,
+                    cells: r.cells.into_iter().map(|c| (c.x, c.text, c.aria)).collect(),
+                    label_color: r.label_color,
+                    series: r.series,
+                })
+                .collect()
+        })
     }
 
     /// Load the shipped fonts so `build_rows`'s label-truncation measurement
@@ -2802,32 +2564,6 @@ mod tests {
         assert_eq!(strip_rows[0].painted(), vec![(10.0, "150".to_string())]);
     }
 
-    /// The legacy splice anchors nothing, so it would paint the bare spec and
-    /// drop an authored affix: it refuses instead.
-    #[test]
-    fn the_legacy_strip_refuses_an_authored_affix() {
-        let config = SupportTableConfig {
-            entries: vec![SupportTableEntry {
-                source: Some("units".into()),
-                aggregate: None,
-                format: Some(FormatSlot {
-                    prefix: "US$".into(),
-                    repeat: Some("every".into()),
-                    ..FormatSlot::from(",.0f")
-                }),
-                label: None,
-                per_series: None,
-            }],
-        };
-        let rows: Vec<serde_json::Map<String, Value>> =
-            vec![serde_json::json!({"week": "2024-01-01", "units": 150.0}).as_object().unwrap().clone()];
-        let domain = vec!["2024-01-01".to_string()];
-        let err = build_rows(&config, &rows, "week", &domain, &[10.0], &test_fonts(), &label_style(), None, &[], &[])
-            .err()
-            .unwrap();
-        assert!(err.contains("legacy strip arm"), "{err}");
-    }
-
     #[test]
     fn value_to_key_matches_row_str_for_null() {
         // A NULL x-bucket must key identically to `row_str`'s own `""` for
@@ -3121,47 +2857,6 @@ mod tests {
         );
     }
 
-    /// Row order: production's `_row_y_pixel` places row 0 closest to the
-    /// plot for `position: top` — index increasing moves *away* from the
-    /// plot (more negative local-to-strip-top y). Three single-cell rows,
-    /// no divider/inter-row rule, so `row_y_base` is easy to hand-verify.
-    #[test]
-    fn render_rows_orders_rows_closest_to_plot_first_on_top() {
-        let s = style(8.0, 4.0, 2.0, 0.0, 0.0); // row_h = 18, strip_h = 8+18*3+4 = 66
-        let strip_h = strip_height(&s, 3);
-        let rows =
-            vec![row("Revenue", vec![(50.0, "$1")]), row("Units", vec![(50.0, "2")]), row("Orders", vec![(50.0, "3")])];
-        let svg = render_rows(&rows, &s, strip_h, 0.0, "end", 0.0, 100.0);
-
-        let pos = |label: &str| svg.find(&format!(">{label}<")).unwrap_or_else(|| panic!("{label} missing: {svg}"));
-        let revenue_idx = pos("Revenue");
-        let units_idx = pos("Units");
-        let orders_idx = pos("Orders");
-        assert!(
-            revenue_idx < units_idx && units_idx < orders_idx,
-            "rows painted in entry order top-to-bottom in the SVG text: {svg}"
-        );
-
-        // Revenue (index 0) must render at a larger local y (closer to the
-        // plot, i.e. closer to strip_h) than Units (index 1), which in turn
-        // must be larger than Orders (index 2).
-        let y_of = |label: &str| -> f64 {
-            let idx = pos(label);
-            let tag_start = svg[..idx].rfind("<text").unwrap();
-            let tag = &svg[tag_start..idx];
-            tag.split("y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
-        };
-        let revenue_y = y_of("Revenue");
-        let units_y = y_of("Units");
-        let orders_y = y_of("Orders");
-        assert!(
-            revenue_y > units_y && units_y > orders_y,
-            "row 0 (Revenue) closest to the plot: revenue_y={revenue_y} units_y={units_y} orders_y={orders_y}"
-        );
-        // Row 0 sits exactly row_h/2 inside the strip's own bottom edge.
-        assert!((revenue_y - (strip_h - 4.0 - 9.0)).abs() < 0.01, "revenue_y={revenue_y} strip_h={strip_h}");
-    }
-
     fn tilt_labels(visible: bool) -> crate::common::AxisLabels {
         serde_json::from_value(serde_json::json!({
             "font": {"family": "Inter", "size": 11.0, "weight": "400"},
@@ -3176,47 +2871,12 @@ mod tests {
     fn the_axis_gap_grows_by_the_tilted_block_beyond_the_reserved_rows() {
         let style = style_positioned(8.0, 4.0, 2.0, 0.0, 0.0, "bottom");
         let reserved = 11.0 * style.label_max_lines;
-        let block = |w: f64| w * 45f64.to_radians().sin() + 11.0 * 45f64.to_radians().cos();
-        let growth = tilted_axis_gap_growth(&style, &tilt_labels(true), 11.0, 45.0, 60.0, false);
-        assert!((growth - (block(60.0) - reserved)).abs() < 1e-9, "{growth}");
-        assert_eq!(tilted_axis_gap_growth(&style, &tilt_labels(true), 11.0, 45.0, 5.0, false), 0.0, "a short label fits the rows");
-        assert_eq!(tilted_axis_gap_growth(&style, &tilt_labels(true), 11.0, 0.0, 60.0, false), 0.0, "flat labels fit");
-        assert_eq!(tilted_axis_gap_growth(&style, &tilt_labels(false), 11.0, 45.0, 60.0, false), 0.0, "hidden labels reserve nothing");
-        let raw = tilted_axis_gap_growth(&style, &tilt_labels(true), 11.0, 315.0, 60.0, false);
-        let expected = (60.0 * 315f64.to_radians().sin() + 11.0 * 315f64.to_radians().cos() - reserved).max(0.0);
-        assert!((raw - expected).abs() < 1e-9, "an authored 315 takes sin of 315 as given");
-    }
-
-    #[test]
-    fn wrap_with_strip_top_places_strip_between_title_and_plot() {
-        let base_svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"200\" height=\"100\" \
-                         viewBox=\"0 0 200 100\"><rect width=\"200\" height=\"100\" fill=\"#fff\"/>\
-                         <text x=\"10\" y=\"20\">My Title</text><g transform=\"translate(10,30)\">\
-                         <rect x=\"0\" y=\"0\" width=\"10\" height=\"10\"/></g></svg>";
-        // title_split = length of `<rect .../><text ...>My Title</text>` within the body.
-        let open_end = base_svg.find('>').unwrap() + 1;
-        let body = &base_svg[open_end..];
-        let title_split = body.find("</text>").unwrap() + "</text>".len();
-        let out = wrap_with_strip(
-            base_svg,
-            200.0,
-            100.0,
-            20.0,
-            "<text>STRIP</text>",
-            "#fff",
-            title_split,
-            20.0,
-        )
-        .unwrap();
-
-        let title_pos = out.find("My Title").unwrap();
-        let strip_pos = out.find("STRIP").unwrap();
-        let plot_pos = out.find("translate(10,30)").unwrap();
-        assert!(
-            title_pos < strip_pos && strip_pos < plot_pos,
-            "reading order is title -> strip -> plot: {out}"
-        );
-        assert!(out.contains("height=\"120\""), "canvas grows by strip_h: {out}");
+        let block = |w: f64, angle: f64| crate::vega_fit::label_block_height(w, 11.0, angle);
+        let growth = tilted_axis_gap_growth(&style, &tilt_labels(true), 11.0, block(60.0, 45.0));
+        assert!((growth - (block(60.0, 45.0) - reserved)).abs() < 1e-9, "{growth}");
+        assert_eq!(tilted_axis_gap_growth(&style, &tilt_labels(true), 11.0, block(5.0, 45.0)), 0.0, "a short label fits the rows");
+        assert_eq!(tilted_axis_gap_growth(&style, &tilt_labels(true), 11.0, block(60.0, 0.0)), 0.0, "flat labels fit");
+        assert_eq!(tilted_axis_gap_growth(&style, &tilt_labels(false), 11.0, block(60.0, 45.0)), 0.0, "hidden labels reserve nothing");
     }
 
     /// S4: the composed strip's anchoring follows the value axis's orient —
@@ -3234,6 +2894,7 @@ mod tests {
             cells: vec![ComposedCell { x: 50.0, text: "$1".into(), w: 12.0, hang: 0.0, aria: String::new() }],
             dx: 7.0,
             label_color: None,
+            stub_dx: 0.0,
             series: None,
             anchor_worst_case_w: 0.0,
         }];
@@ -3244,14 +2905,14 @@ mod tests {
         };
 
         let mut right = String::new();
-        render_rows_composed(&mut right, &rows, &s, 6.0, 100.0, 200.0, 300.0, true, 0.0);
+        render_rows_composed(&mut right, &rows, &s, 6.0, 100.0, 200.0, 300.0, true, 0.0).unwrap();
         assert_eq!(attr(&right, "$1", "text-anchor"), "end");
         assert_eq!(attr(&right, "$1", "x"), "257.00", "cell right-aligned at center + dx");
         assert_eq!(attr(&right, "Revenue", "text-anchor"), "start");
         assert_eq!(attr(&right, "Revenue", "x"), "306.00", "stub past plot_w + padding");
 
         let mut left = String::new();
-        render_rows_composed(&mut left, &rows, &s, 6.0, 100.0, 200.0, 300.0, false, 0.0);
+        render_rows_composed(&mut left, &rows, &s, 6.0, 100.0, 200.0, 300.0, false, 0.0).unwrap();
         assert_eq!(attr(&left, "$1", "text-anchor"), "start");
         assert_eq!(attr(&left, "$1", "x"), "243.00", "cell left-aligned at center - dx");
         assert_eq!(attr(&left, "Revenue", "text-anchor"), "end");
@@ -3423,7 +3084,7 @@ mod tests {
         .unwrap();
         assert_eq!(out.len(), 4, "3 series rows + 1 aggregate row");
         let mut svg = String::new();
-        render_rows_composed(&mut svg, &out, &s, 6.0, 100.0, 0.0, 0.0, false, 0.0);
+        render_rows_composed(&mut svg, &out, &s, 6.0, 100.0, 0.0, 0.0, false, 0.0).unwrap();
         assert_eq!(
             svg.matches("<line").count(),
             3,

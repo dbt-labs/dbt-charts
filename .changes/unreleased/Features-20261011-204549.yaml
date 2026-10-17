@@ -1,0 +1,3 @@
+kind: Features
+body: Failed execute_query results now include an error_code (an added field in --json output), and failure messages name a next step.
+time: 2026-10-11T20:45:49.756083-07:00

@@ -19,7 +19,6 @@ from dbt_charts.core.compile.format_value import (
     raise_if_format_cannot_print_number,
     text_format_link,
 )
-from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     TableChart,
 )
@@ -30,6 +29,7 @@ from dbt_charts.core.compile.models.primitives import (
     AuthoredFormat,
     FormatTable,
     ResolvedFormat,
+    split_link,
 )
 from dbt_charts.core.compile.models.style.authored import (
     TableColumnConfig,
@@ -61,6 +61,7 @@ from dbt_charts.core.compile.resolve.chart.link_keys import plan_link_keys
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
+from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.palette import (
     palette as resolve_named_palette,
 )
@@ -547,6 +548,7 @@ def _with_resolved_scale_stops(
             result[name] = ResolvedTableColumnConfig.model_validate(
                 {
                     **col.model_dump(exclude_none=True),
+                    **_split_column_links(col),
                     **({"format": _col_parts} if _col_parts is not None else {}),
                     **text_link,
                     "decimal_pad_table": pad_table,
@@ -593,6 +595,7 @@ def _with_resolved_scale_stops(
         )
         resolved_scale = ResolvedColumnScaleConfig.model_validate(scale_base)
         col_base = col.model_dump(exclude_none=True)
+        col_base.update(_split_column_links(col))
         col_base["scale"] = resolved_scale.model_dump(exclude_unset=True)
         if _col_parts is not None:
             col_base["format"] = _col_parts
@@ -601,6 +604,18 @@ def _with_resolved_scale_stops(
         col_base["shared_scale"] = shared_scale
         result[name] = ResolvedTableColumnConfig.model_validate(col_base)
     return result
+
+
+def _split_column_links(col: TableColumnConfig) -> dict[str, str | None]:
+    """A column's authored links as the resolved URL strings plus open modes."""
+    link, link_open = split_link(col.link)
+    header_link, header_link_open = split_link(col.header_link)
+    return {
+        "link": link,
+        "link_open": link_open,
+        "header_link": header_link,
+        "header_link_open": header_link_open,
+    }
 
 
 def _coerced_column_values(
@@ -638,7 +653,7 @@ def _resolve_table(
         chart_style_context, normalized
     )
     primary = _with_color_tokens(normalized.style, chart_style_context)
-    table = merge_onto_base(chart_style_context.table, primary)
+    table = merge_unset(chart_style_context.table, primary)
     channels = _channels_for(normalized, data)
     column_defaults_val = table.column_defaults
     # Table-specific promoted field, lifted to the top level here so the

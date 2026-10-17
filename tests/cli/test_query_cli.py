@@ -505,6 +505,98 @@ class TestQueryCommonErrors:
         parsed = ExecuteQueryResult.model_validate_json(result.output)
         assert parsed.success is False
         assert len(parsed.errors) > 0
+        assert parsed.error_code == "ERR-SOURCE-NOT-FOUND"
+
+    def test_a_two_defect_board_prints_the_code_once(self, board_dir: Path) -> None:
+        (board_dir / "broken.yaml").write_text(
+            "source: db\nqueries:\n  q:\n    sql: select 1\n"
+            "charts:\n  a:\n    query: missing_one\n    type: table\n"
+            "  b:\n    query: missing_two\n    type: table\nrows:\n  - a\n  - b\n"
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "query",
+                str(board_dir / "broken.yaml"),
+                "q",
+                "--project-dir",
+                str(board_dir),
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert result.output.count("Error:") >= 2
+        assert result.output.count("[ERR-") == 1
+
+    def test_board_form_json_failure_carries_error_code(self, board_dir: Path) -> None:
+        from dbt_charts.agent_api.query import QueryBoardResult
+
+        result = runner.invoke(
+            app,
+            [
+                "query",
+                str(board_dir / "test.yaml"),
+                "zzz",
+                "--project-dir",
+                str(board_dir),
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 1
+        parsed = QueryBoardResult.model_validate_json(result.output)
+        assert parsed.error_code == "ERR-BOARD-QUERY-NOT-FOUND"
+
+    def test_validate_on_an_unknown_query_prints_the_code(
+        self, board_dir: Path
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "query",
+                str(board_dir / "test.yaml"),
+                "zzz",
+                "--validate",
+                "--project-dir",
+                str(board_dir),
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "[ERR-BOARD-QUERY-NOT-FOUND]" in result.output
+
+    def test_unknown_query_lists_the_available_ones_once(self, board_dir: Path) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "query",
+                str(board_dir / "test.yaml"),
+                "zzz",
+                "--project-dir",
+                str(board_dir),
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert result.output.count("revenue") == 1
+
+    def test_a_failure_prints_its_code_beside_the_message(
+        self, board_dir: Path
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "query",
+                "db",
+                "SELECT * FROM no_such_table",
+                "--project-dir",
+                str(board_dir),
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "[ERR-BINDER-UNKNOWN-RELATION]" in result.output
 
     def test_var_without_equals_raises_bad_parameter(self, board_dir: Path) -> None:
         """--var key (no '=') must error with a clear key=value message."""

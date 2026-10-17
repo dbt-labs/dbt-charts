@@ -49,6 +49,7 @@ from dbt_charts.core.render.svg_utils import (
     px,
     translate_group,
 )
+from dbt_charts.core.text.format_d3 import board_word
 
 __all__ = [
     "is_details_expanded",
@@ -385,7 +386,7 @@ def render_tabs_layout(
     titles = (
         tab_titles
         if tab_titles and len(tab_titles) == len(items)
-        else [f"Tab {idx + 1}" for idx in range(len(items))]
+        else [board_word("tab.title", n=str(idx + 1)) for idx in range(len(items))]
     )
     slugs = tab_slugs or [f"tab_{idx}" for idx in range(len(items))]
 

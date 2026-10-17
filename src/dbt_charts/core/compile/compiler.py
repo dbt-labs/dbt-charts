@@ -72,7 +72,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
 )
 from dbt_charts.core.compile.models.config import ProjectCacheConfig
 from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
-from dbt_charts.core.compile.models.primitives import IncrementalValue
+from dbt_charts.core.compile.models.primitives import DEFAULT_REGIONAL, IncrementalValue
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, is_sql_query
 from dbt_charts.core.compile.models.refs import (
     ChartRef,
@@ -778,7 +778,10 @@ def _compile_with_text(
     authoring-warning analysis (not available to ``compile_authored_board``,
     which may receive a programmatically-built or meta-merged board).
     """
-    authoring_warnings = detect_authoring_warnings(yaml_content)
+    regional = DEFAULT_REGIONAL if board.regional is None else board.regional
+    authoring_warnings = detect_authoring_warnings(
+        yaml_content, regional.resolved_language
+    )
     result = compile_authored_board(
         board,
         base_dir=base_dir,

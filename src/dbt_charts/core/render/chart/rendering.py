@@ -60,6 +60,7 @@ from dbt_charts.core.render.svg_utils import (
     selection_boxes,
     shadow_rect,
 )
+from dbt_charts.core.text.format_d3 import board_word
 
 _ZERO_PADDING: dict[str, float] = {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
 
@@ -722,7 +723,7 @@ def _wrap_rendered_chart_svg(
         # `group`, not `img`: img makes descendants presentational and would
         # hide every per-mark aria-label; a role-less <g>'s name is ignored.
         'role="group"',
-        'aria-roledescription="chart"',
+        f'aria-roledescription="{escape_attr(board_word("aria.chart"))}"',
         f'aria-label="{escape_attr(chart_title)}"',
     ]
     # No <title>: browsers paint it as a native hover tooltip over the whole

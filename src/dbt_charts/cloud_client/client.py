@@ -392,12 +392,13 @@ class CloudClient:
         git_remote_url: str,
         trunk_branch: str,
         git_subdirectory: str,
+        git_host: str,
         *,
         git_username: str = "",
         git_password: str = "",
     ) -> ProjectSummary:
-        """Connect a git URL. Blank ``git_username``/``git_password`` mean an
-        anonymous (public) repository, which is the server's contract too."""
+        """Token hosts pass their token as ``git_password``; for ``other``,
+        blank username/password means an anonymous repo."""
         return self._request(
             "POST",
             f"/orgs/{_seg(org)}/projects",
@@ -406,6 +407,7 @@ class CloudClient:
                 "name": name,
                 "slug": slug,
                 "git_remote_url": git_remote_url,
+                "git_host": git_host,
                 "trunk_branch": trunk_branch,
                 "git_subdirectory": git_subdirectory,
                 "git_username": git_username,

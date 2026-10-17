@@ -1159,10 +1159,16 @@ pub fn sub_unit_guarded_format(
     format_spec: &str,
     si_format: &str,
     scientific_format: Option<&str>,
+    labels_format: Option<&FormatSlot>,
 ) -> Result<String, String> {
     if value.abs() >= 1.0 {
-        return crate::number_locale::d3_format(si_format, value)
-            .map_err(|e| format!("tick_label si_format {si_format:?}: {e}"));
+        // Only the SI arm takes the format's notation (`numeral_vega_expr(..,
+        // tick_label.si_format, fmt.notation)`).
+        return match labels_format {
+            Some(slot) => slot.bare_digits(si_format, value, &[]),
+            None => crate::number_locale::d3_format(si_format, value),
+        }
+        .map_err(|e| format!("tick_label si_format {si_format:?}: {e}"));
     }
     if let Some(sci) = scientific_format {
         if value != 0.0 && value.abs() < d3rs::format::SUB_UNIT_SCIENTIFIC_FLOOR {
@@ -1271,7 +1277,7 @@ pub fn estimated_tick_label_gutter(
     for &v in &candidates {
         let lbl = match (tick_label, labels_format) {
             (Some(tl), _) => match tl.si_format.as_deref() {
-                Some(si) => sub_unit_guarded_format(v, &tl.format, si, tl.scientific_format.as_deref())?,
+                Some(si) => sub_unit_guarded_format(v, &tl.format, si, tl.scientific_format.as_deref(), labels_format)?,
                 None => crate::number_locale::d3_format(&tl.format, v)
                     .map_err(|e| format!("estimated tick label {:?}: {e}", tl.format))?,
             },
@@ -1334,6 +1340,7 @@ pub fn format_y_label(
                     &tl.format,
                     si,
                     tl.scientific_format.as_deref(),
+                    labels_format,
                 );
             }
             // The ladder's affix — the baked currency symbol (`tl.prefix`,
@@ -1510,13 +1517,10 @@ pub enum SortAggregate {
 /// non-numeric value refuses by name here — a deliberate divergence, since
 /// `coerce_numeric_cell` instead reads it as no value (drops that row, the
 /// same as an absent one) — the same refusal bar.rs's own `CatOrder::Field`
-/// doc comment documents. Under
-/// `Min`, a non-numeric sort value ALSO refuses by name: production's real
-/// `min` is d3's own comparator (`utils.py::_js_min`), which compares a
-/// JSON value's own type (a numeric STRING sorts lexicographically, never
-/// parsed) — this port models the `Value::Number` case only, so a string
-/// refuses rather than silently parse-and-rank it as if it were `_js_min`'s
-/// own comparator.
+/// doc comment documents. Under `Min` the sort value is compared as itself
+/// (`utils.py::_js_min`): numbers numerically, strings by code point, a value
+/// of the other kind passed over; keys of both kinds make Python's sort raise,
+/// which `x_domain_order` answers with row order.
 pub fn dimension_sort_domain(
     rows: &[serde_json::Map<String, Value>],
     field: &str,
@@ -1528,47 +1532,56 @@ pub fn dimension_sort_domain(
     let Some(sort) = sort else {
         return Ok(base_order);
     };
-    let op_name = if agg == SortAggregate::Min { "min" } else { "sum" };
-    let mut acc: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    let mut mins: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    let mut sums: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
     for row in rows {
-        if matches!(row.get(&sort.by), None | Some(Value::Null)) {
-            continue;
-        }
-        let val = match agg {
-            SortAggregate::Min => match row.get(&sort.by) {
-                Some(Value::Number(n)) => n.as_f64().ok_or_else(|| {
-                    format!("{family}: sort by {:?} is not a finite number", sort.by)
-                })?,
-                _ => {
-                    return Err(format!(
-                        "{family}: sort by {:?} is not supported — Vega's `{op_name}` over \
-                         non-numeric values is not ported",
-                        sort.by
-                    ))
-                }
-            },
-            SortAggregate::Sum => row_num(row, &sort.by).ok_or_else(|| {
-                format!(
-                    "{family}: sort by {:?} is not supported — Vega's `{op_name}` over \
-                     non-numeric values is not ported",
-                    sort.by
-                )
-            })?,
-        };
+        let Some(raw) = row.get(&sort.by).filter(|v| !v.is_null()) else { continue };
         let cat = row_str(row, field);
         match agg {
-            SortAggregate::Min => {
-                acc.entry(cat).and_modify(|m| { if val < *m { *m = val; } }).or_insert(val);
-            }
+            SortAggregate::Min => match mins.get_mut(&cat) {
+                // `_js_min`: a value Python cannot compare against the min is passed over.
+                Some(min) => {
+                    if raw_x_order(raw, min).is_ok_and(std::cmp::Ordering::is_lt) {
+                        *min = raw.clone();
+                    }
+                }
+                None => {
+                    mins.insert(cat, raw.clone());
+                }
+            },
             SortAggregate::Sum => {
-                *acc.entry(cat).or_insert(0.0) += val;
+                let val = row_num(row, &sort.by).filter(|v| v.is_finite()).ok_or_else(|| {
+                    format!(
+                        "{family}: sort by {:?} is not supported — Vega's `sum` over \
+                         non-numeric values is not ported",
+                        sort.by
+                    )
+                })?;
+                *sums.entry(cat).or_insert(0.0) += val;
             }
         }
     }
+    let keys: std::collections::HashMap<String, Value> = match agg {
+        SortAggregate::Min => mins,
+        SortAggregate::Sum => sums
+            .into_iter()
+            .map(|(cat, total)| {
+                let total = serde_json::Number::from_f64(total)
+                    .ok_or_else(|| format!("{family}: the sum of {:?} over {cat:?} is not finite", sort.by))?;
+                Ok((cat, Value::Number(total)))
+            })
+            .collect::<Result<_, String>>()?,
+    };
     let (mut ranked, unranked): (Vec<String>, Vec<String>) =
-        base_order.into_iter().partition(|c| acc.contains_key(c));
+        base_order.iter().cloned().partition(|c| keys.contains_key(c));
+    // A column of both kinds makes Python's sort raise: `x_domain_order` keeps row order.
+    let numeric = ranked.iter().all(|c| matches!(keys[c], Value::Number(_) | Value::Bool(_)));
+    let textual = ranked.iter().all(|c| keys[c].is_string());
+    if !numeric && !textual {
+        return Ok(base_order);
+    }
     ranked.sort_by(|a, b| {
-        let ord = acc[a].partial_cmp(&acc[b]).unwrap_or(std::cmp::Ordering::Equal);
+        let ord = raw_x_order(&keys[a], &keys[b]).expect("one kind of key is ordered");
         if sort.order == SortDir::Desc { ord.reverse() } else { ord }
     });
     ranked.extend(unranked);
@@ -2491,8 +2504,7 @@ where
 #[derive(Deserialize, Clone)]
 pub struct MarkLabels {
     pub visible: bool,
-    /// Label a different column than the measure — not ported; a non-null
-    /// value refuses loudly rather than silently printing the measure.
+    /// Label a different column than the measure.
     #[serde(default)]
     pub field: Option<String>,
     #[serde(default)]
@@ -2509,6 +2521,41 @@ pub struct MarkLabels {
     /// refuses it by name (`families/bar.rs::refuse_unmodeled_bar_marks`).
     #[serde(default)]
     pub stacked: Option<bool>,
+}
+
+impl MarkLabels {
+    /// `labels_draw_text`: whether `labels.field` names a column holding a
+    /// non-number, so every value prints verbatim. An unset field labels the
+    /// numeric measure; a column with no value anywhere stays on the number path.
+    pub fn field_is_text(&self, rows: &[serde_json::Map<String, Value>]) -> bool {
+        self.field.as_deref().is_some_and(|field| {
+            !rows.iter().filter_map(|row| row.get(field)).filter(|v| !v.is_null()).all(Value::is_number)
+        })
+    }
+
+    /// `(text, blank)` of one row's label. `labels.field` prints that column,
+    /// formatted when every value is a number, verbatim when any is text, blank
+    /// where it is null (`_house_register_text_encoding`'s `condition`); an unset
+    /// field prints the formatted measure `value`. The error carries no family prefix.
+    pub fn field_text(
+        &self,
+        is_house: bool,
+        field_is_text: bool,
+        row: Option<&serde_json::Map<String, Value>>,
+        value: f64,
+    ) -> Result<(String, bool), String> {
+        let Some(field) = self.field.as_deref() else {
+            return Ok((format_mark_label(self.format.as_ref(), value, is_house)?, false));
+        };
+        match row.and_then(|row| row.get(field)).filter(|v| !v.is_null()) {
+            None => Ok((String::new(), true)),
+            Some(v) if field_is_text => Ok((crate::href::js_string(Some(v))?, false)),
+            Some(v) => {
+                let number = v.as_f64().ok_or_else(|| format!("labels.field {field:?} is not a number"))?;
+                Ok((format_mark_label(self.format.as_ref(), number, is_house)?, false))
+            }
+        }
+    }
 }
 
 /// The text a value label paints for one point — shared by each family's
@@ -3054,7 +3101,7 @@ pub fn emit_title(
     // one) — an unsupported case value (slug/camel; never emitted for a
     // title by production themes) is a payload bug, so it fails loudly
     // here rather than silently falling back to the raw title.
-    let cased_title = crate::case::apply_case(title, font_case)
+    let cased_title = display_text::case::apply_case(title, font_case)
         .unwrap_or_else(|e| panic!("emit_title: {e}"));
     let _ = write!(
         out,
@@ -3147,13 +3194,18 @@ pub fn row_num(row: &serde_json::Map<String, Value>, field: &str) -> Option<f64>
     }
 }
 
-/// Python's comparison of two raw x values: numbers with numbers, strings with
-/// strings, any other pair has no order (`TypeError`).
+/// Python's comparison of two raw values: numbers (bools included) with numbers,
+/// strings with strings, any other pair has no order (`TypeError`).
 pub fn raw_x_order(a: &Value, b: &Value) -> Result<std::cmp::Ordering, String> {
-    let order = match (a, b) {
-        (Value::Number(a), Value::Number(b)) => a.as_f64().zip(b.as_f64()).and_then(|(a, b)| a.partial_cmp(&b)),
-        (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
+    // A bool is an int to Python.
+    let number = |v: &Value| match v {
+        Value::Number(n) => n.as_f64(),
+        Value::Bool(b) => Some(f64::from(u8::from(*b))),
         _ => None,
+    };
+    let order = match (a, b) {
+        (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
+        _ => number(a).zip(number(b)).and_then(|(a, b)| a.partial_cmp(&b)),
     };
     order.ok_or_else(|| format!("x values {a} and {b} have no order"))
 }
@@ -3188,6 +3240,29 @@ pub fn last_nonnull_value_per_series(
         }
     }
     Ok(latest.into_iter().map(|(series, (_, y))| (series, y)).collect())
+}
+
+/// Production's `_wide_endpoint_positions`: a column's value at its greatest
+/// raw x, the first of equal xs winning. A row with a null x or y is skipped.
+pub fn last_nonnull_value(
+    rows: &[serde_json::Map<String, Value>],
+    x_field: &str,
+    y_field: &str,
+) -> Result<Option<f64>, String> {
+    let mut latest: Option<(&Value, f64)> = None;
+    for row in rows {
+        let (Some(x), Some(y)) = (row.get(x_field).filter(|v| !v.is_null()), row_num(row, y_field)) else {
+            continue;
+        };
+        let replaces = match latest {
+            None => true,
+            Some((held, _)) => raw_x_order(x, held)?.is_gt(),
+        };
+        if replaces {
+            latest = Some((x, y));
+        }
+    }
+    Ok(latest.map(|(_, y)| y))
 }
 
 /// Port of production's `utils.py::is_year_shaped` — value-only, no
@@ -3287,7 +3362,7 @@ mod is_year_shaped_tests {
 /// `apply_case` per the resolved `font.case` (`title` keeps minor words
 /// lowercase: "Avg Days to Complete").
 pub fn slug_to_display(field: &str, font_case: &str) -> Result<String, String> {
-    crate::case::apply_case(&display_text::slug_to_text(field), font_case)
+    display_text::case::apply_case(&display_text::slug_to_text(field)?, font_case)
 }
 
 /// A chart's authored `field_labels`: column -> display text, painted verbatim.
@@ -3316,10 +3391,15 @@ pub fn collapse_title_newlines(text: &str) -> String {
 /// case-transforms it either, see `resolve_xy_titles`), else `field_title`
 /// (the `field_labels` entry, else `slug_to_text`). A newline in authored text
 /// reads as a space: only [`wrapped_axis_title`] puts line breaks in a title.
-pub fn axis_title_text(field: &str, label: Option<&str>, field_labels: &FieldLabels) -> String {
-    label
-        .map(collapse_title_newlines)
-        .unwrap_or_else(|| display_text::field_title(field, field_labels))
+pub fn axis_title_text(
+    field: &str,
+    label: Option<&str>,
+    field_labels: &FieldLabels,
+) -> Result<String, String> {
+    match label {
+        Some(label) => Ok(collapse_title_newlines(label)),
+        None => display_text::field_title(field, field_labels),
+    }
 }
 
 /// `wrap_axis_title` (`emitters/_cartesian.py`): an axis title wraps to at most
@@ -3661,77 +3741,95 @@ pub fn row_str(row: &serde_json::Map<String, Value>, field: &str) -> String {
     }
 }
 
+/// JS `Number(v)` of a JSON scalar; `None` where it is `NaN`.
+fn js_to_number(v: &Value) -> Option<f64> {
+    match v {
+        Value::Number(n) => n.as_f64(),
+        Value::Bool(b) => Some(f64::from(u8::from(*b))),
+        Value::String(s) => {
+            let t = s.trim();
+            if t.is_empty() { Some(0.0) } else { t.parse().ok() }
+        }
+        _ => None,
+    }
+}
+
+/// JS `a < b` on two non-null JSON scalars: two strings compare by UTF-16
+/// code unit, anything else as numbers (a numeric string coerces, a
+/// non-numeric one is `NaN` and compares false both ways).
+pub fn js_less(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::String(x), Value::String(y)) => x.encode_utf16().lt(y.encode_utf16()),
+        _ => matches!((js_to_number(a), js_to_number(b)), (Some(x), Some(y)) if x < y),
+    }
+}
+
 /// Vega's `ascending` comparator on two JSON scalars with JS `<`/`>`
 /// coercion: numbers compare numerically (a numeric string coerces), strings
 /// lexicographically, and a number against a non-numeric string is "equal".
 fn js_ascending(a: &Value, b: &Value) -> i32 {
-    fn num(v: &Value) -> Option<f64> {
-        match v {
-            Value::Number(n) => n.as_f64(),
-            Value::String(s) => {
-                let t = s.trim();
-                if t.is_empty() { Some(0.0) } else { t.parse().ok() }
-            }
-            _ => None,
-        }
-    }
     match (a, b) {
-        (Value::String(x), Value::String(y)) => match x.cmp(y) {
-            std::cmp::Ordering::Less => -1,
-            std::cmp::Ordering::Greater => 1,
-            std::cmp::Ordering::Equal => 0,
-        },
-        _ => match (num(a), num(b)) {
-            (Some(x), Some(y)) if x < y => -1,
-            (Some(x), Some(y)) if x > y => 1,
-            _ => 0,
-        },
+        // `ascending` ranks a null before any other value.
+        (Value::Null, Value::Null) => 0,
+        (Value::Null, _) => -1,
+        (_, Value::Null) => 1,
+        _ if js_less(a, b) => -1,
+        _ if js_less(b, a) => 1,
+        _ => 0,
     }
 }
 
+/// An ordinal scale's `domain` (first-appearance order) sorted the way Vega
+/// compiles `sort: {op: "min", field: sort.by, order}`: each category's key is
+/// the JS `min` of the sort field over the `rows` it names (nulls skipped, the
+/// first value kept unless a later one is less), and a category with no value
+/// ranks below every other, first ascending and last descending.
+pub fn min_ranked_domain(
+    domain: Vec<String>,
+    rows: &[&serde_json::Map<String, Value>],
+    category_of: impl Fn(&serde_json::Map<String, Value>) -> String,
+    sort: &ChartSort,
+) -> Result<Vec<String>, String> {
+    let keyed: Vec<(String, Value)> = domain
+        .into_iter()
+        .map(|category| {
+            let key = rows
+                .iter()
+                .filter(|row| category_of(row) == category)
+                .filter_map(|row| row.get(&sort.by).filter(|v| !v.is_null()))
+                .fold(None::<&Value>, |min, v| min.filter(|m| !js_less(v, m)).or(Some(v)));
+            (category, key.cloned().unwrap_or(Value::Null))
+        })
+        .collect();
+    js_rank(&keyed, sort.order)
+}
+
+/// `items` ordered by their `key` the way Vega sorts a domain by an
+/// aggregate: `Array.prototype.sort` with `ascending` (a null key first) or
+/// its reverse. A key column of one type is a total order, so any stable
+/// sort agrees; a mix of numbers and strings makes the comparator
+/// non-transitive and the order is whatever V8's insertion sort produces.
+pub fn js_rank<T: Clone>(items: &[(T, Value)], order: SortDir) -> Result<Vec<T>, String> {
+    let sign = if order == SortDir::Desc { -1 } else { 1 };
+    let cmp = |a: &(T, Value), b: &(T, Value)| sign * js_ascending(&a.1, &b.1);
+    let numeric = items.iter().all(|(_, k)| matches!(k, Value::Null | Value::Number(_) | Value::Bool(_)));
+    let textual = items.iter().all(|(_, k)| k.is_null() || k.is_string());
+    let mut ranked: Vec<usize> = (0..items.len()).collect();
+    if numeric || textual {
+        ranked.sort_by(|&a, &b| cmp(&items[a], &items[b]).cmp(&0));
+    } else {
+        d3rs::js_sort::js_sort(&mut ranked, |a, b| f64::from(cmp(&items[a], &items[b])))?;
+    }
+    Ok(ranked.into_iter().map(|i| items[i].0.clone()).collect())
+}
+
 /// The order Vega's ordinal-scale `sort: true` produces for a domain of JSON
-/// scalars: JavaScript `Array.prototype.sort` with `ascending`, which V8 runs
-/// as a run-detecting binary insertion sort below 64 elements. A column that
-/// mixes numbers and strings makes the comparator non-transitive, so the
-/// result depends on that algorithm and is reproduced step for step.
-pub fn vega_ascending_sort(mut values: Vec<Value>) -> Result<Vec<Value>, String> {
-    let n = values.len();
-    if n >= 64 {
-        let kinds = values.iter().filter(|v| v.is_number()).count();
-        if kinds != 0 && kinds != n {
-            return Err("a mixed numeric/categorical column with 64 or more distinct values is not supported".into());
-        }
-        values.sort_by(|a, b| js_ascending(a, b).cmp(&0));
-        return Ok(values);
-    }
-    if n < 2 {
-        return Ok(values);
-    }
-    let mut run = 2;
-    let descending = js_ascending(&values[1], &values[0]) < 0;
-    while run < n {
-        let order = js_ascending(&values[run], &values[run - 1]);
-        if (descending && order >= 0) || (!descending && order < 0) {
-            break;
-        }
-        run += 1;
-    }
-    if descending {
-        values[..run].reverse();
-    }
-    for start in run..n {
-        let (mut left, mut right) = (0, start);
-        while left < right {
-            let mid = left + ((right - left) >> 1);
-            if js_ascending(&values[start], &values[mid]) < 0 {
-                right = mid;
-            } else {
-                left = mid + 1;
-            }
-        }
-        values[left..=start].rotate_right(1);
-    }
-    Ok(values)
+/// scalars: JavaScript `Array.prototype.sort` with `ascending`. A column that
+/// mixes numbers and strings makes the comparator non-transitive, so the result
+/// is whatever V8's insertion sort gives ([`js_rank`]).
+pub fn vega_ascending_sort(values: Vec<Value>) -> Result<Vec<Value>, String> {
+    let items: Vec<(Value, Value)> = values.into_iter().map(|v| (v.clone(), v)).collect();
+    js_rank(&items, SortDir::Asc)
 }
 
 /// `_LINE_POS_MAP` and `_POINT_POS_MAP` (`features/value_labels.py`, identical but
@@ -3745,6 +3843,51 @@ pub fn value_label_anchor(position: &str) -> Option<(&'static str, &'static str,
         "middle" => ("center", "middle", 0.0, 0.0),
         _ => return None,
     })
+}
+
+/// Where one value-label caption sits: `edge` is the fraction across its band
+/// the caption anchors at (`None`: the datum's own position), then the text's
+/// alignment, baseline and offset.
+#[derive(Clone, Copy)]
+pub struct CaptionSpot {
+    pub edge: Option<f64>,
+    pub align: &'static str,
+    pub baseline: &'static str,
+    pub dx: f64,
+    pub dy: f64,
+}
+
+impl CaptionSpot {
+    /// `top`'s anchor and offsets.
+    pub fn top() -> CaptionSpot {
+        let (align, baseline, dx, dy) = value_label_anchor("top").expect("top is a value-label position");
+        CaptionSpot { edge: None, align, baseline, dx, dy }
+    }
+
+    /// The spot of `ml`'s captions: the authored position's anchor
+    /// (`_POINT_POS_MAP`/`_LINE_POS_MAP`), an authored `dx`/`dy` replacing the
+    /// anchor's own offset. On a band-width mark `band` says whether the
+    /// caption's band is the domain's `(leading, trailing)` one: `left`/`right`
+    /// anchor at their band's edge, and a caption whose band has no room on
+    /// that side falls back to `top` at the band's center with `top`'s own
+    /// offsets (`build_line_text_layers`, `_BAND_EDGE_FALLBACK`).
+    pub fn of(ml: &MarkLabels, band: Option<(bool, bool)>) -> Result<CaptionSpot, String> {
+        let position = ml.position.as_deref().unwrap_or("top");
+        let (align, baseline, dx, dy) = value_label_anchor(position).ok_or_else(|| {
+            format!("value labels position {position:?} is none of top, bottom, left, right or middle")
+        })?;
+        let anchored = CaptionSpot { edge: None, align, baseline, dx: ml.dx.unwrap_or(dx), dy: ml.dy.unwrap_or(dy) };
+        let Some((leading, trailing)) = band else { return Ok(anchored) };
+        let (blocked, edge) = match position {
+            "left" => (leading, 0.0),
+            "right" => (trailing, 1.0),
+            _ => return Ok(anchored),
+        };
+        if blocked {
+            return Ok(CaptionSpot::top());
+        }
+        Ok(CaptionSpot { edge: Some(edge), ..anchored })
+    }
 }
 
 /// One point value label's `<text>`: `baseline_y` already carries the anchor's
@@ -3805,6 +3948,56 @@ mod vega_ascending_tests {
 }
 
 #[cfg(test)]
+mod min_ranked_domain_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn rows(cells: &[(&str, Value)]) -> Vec<serde_json::Map<String, Value>> {
+        cells
+            .iter()
+            .map(|(cat, by)| json!({"cat": cat, "by": by}).as_object().unwrap().clone())
+            .collect()
+    }
+
+    fn ranked(cells: &[(&str, Value)], order: SortDir) -> Vec<String> {
+        let rows = rows(cells);
+        let refs: Vec<_> = rows.iter().collect();
+        let domain = ["a", "b", "c", "d"].map(String::from).to_vec();
+        let sort = ChartSort { by: "by".into(), order };
+        min_ranked_domain(domain, &refs, |row| row_str(row, "cat"), &sort).unwrap()
+    }
+
+    /// JS `<` compares two strings by code unit, so a text sort key ranks
+    /// lexicographically and its `min` is the first in that order.
+    #[test]
+    fn a_text_sort_key_ranks_by_its_lexicographic_min() {
+        let cells = [("a", json!("z")), ("a", json!("m")), ("b", json!("b")), ("c", json!("a")), ("d", json!("B"))];
+        assert_eq!(ranked(&cells, SortDir::Asc), ["d", "c", "b", "a"]);
+        assert_eq!(ranked(&cells, SortDir::Desc), ["a", "b", "c", "d"]);
+    }
+
+    /// A category with no sort value ranks below every other: first ascending,
+    /// last descending, ties keeping first-appearance order.
+    #[test]
+    fn a_category_with_no_value_leads_ascending_and_trails_descending() {
+        let cells = [("a", json!(2)), ("b", Value::Null), ("c", json!(1)), ("c", json!(1)), ("d", json!(2))];
+        assert_eq!(ranked(&cells, SortDir::Asc), ["b", "c", "a", "d"]);
+        assert_eq!(ranked(&cells, SortDir::Desc), ["a", "d", "c", "b"]);
+    }
+
+    /// Numbers and bools coerce to numbers, a number against a non-numeric
+    /// string compares false both ways, so the first value stays the `min`.
+    #[test]
+    fn a_value_js_cannot_order_against_the_min_leaves_it_in_place() {
+        assert!(js_less(&json!(1), &json!("10")));
+        assert!(js_less(&json!(false), &json!(true)));
+        assert!(!js_less(&json!(1), &json!("x")) && !js_less(&json!("x"), &json!(1)));
+        let cells = [("a", json!(5)), ("a", json!("x")), ("b", json!(7))];
+        assert_eq!(ranked(&cells, SortDir::Asc), ["c", "d", "a", "b"]);
+    }
+}
+
+#[cfg(test)]
 mod axis_title_text_tests {
     use super::*;
 
@@ -3825,7 +4018,7 @@ mod axis_title_text_tests {
     #[test]
     fn an_authored_newline_reads_as_a_space() {
         let labels = FieldLabels::new();
-        assert_eq!(axis_title_text("revenue", Some("Net\nrevenue"), &labels), "Net revenue");
+        assert_eq!(axis_title_text("revenue", Some("Net\nrevenue"), &labels).unwrap(), "Net revenue");
     }
 }
 
@@ -3959,10 +4152,17 @@ pub fn wide_series_names(
     names
 }
 
-/// Vega's `center` stack offset: a category whose stack totals `total` floats
-/// to the middle of the tallest one, `max_total`.
+/// Vega's `center` stack offset: a category whose stack piles `total` of
+/// magnitude floats to the middle of the tallest one, `max_total`.
 pub fn center_offset(max_total: f64, total: f64) -> f64 {
     (max_total - total) / 2.0
+}
+
+/// Vega's `center` and `normalize` offsets pile `|v|` (`stackCenter`,
+/// `stackNormalize` in `vega-transforms/Stack.js`): a negative value draws its
+/// magnitude upward, never below the baseline as `zero` stacks it.
+pub fn abs_total(values: impl IntoIterator<Item = f64>) -> f64 {
+    values.into_iter().map(f64::abs).sum()
 }
 
 /// Vega's `stackZero` running sums for one category (`vega-transforms/Stack.js`):
@@ -4052,13 +4252,16 @@ pub fn sorted_series_by_stack_order(
 /// Y-axis title fallback for a folded multi-measure chart — mirrors
 /// `wide_measures_title`: each measure's label (`wide_measure_labels_for`),
 /// joined with ", ". An authored `y_label` always overrides this.
-pub fn wide_measures_title(measures: &[String], field_labels: &FieldLabels) -> String {
-    let labels = display_text::wide_measure_labels_for(measures, field_labels);
-    measures
+pub fn wide_measures_title(
+    measures: &[String],
+    field_labels: &FieldLabels,
+) -> Result<String, String> {
+    let labels = display_text::wide_measure_labels_for(measures, field_labels)?;
+    Ok(measures
         .iter()
         .map(|m| labels[m].as_str())
         .collect::<Vec<_>>()
-        .join(", ")
+        .join(&display_text::language::tr("controls.list_join", None, &[])?))
 }
 
 /// `_wide_fields.py::humanize_wide_series_name`: a wide series' painted
@@ -4164,9 +4367,9 @@ mod wide_fields_tests {
     #[test]
     fn wide_measures_title_joins_measure_labels() {
         let measures = vec!["revenue".to_string(), "fix-linked".to_string()];
-        assert_eq!(wide_measures_title(&measures, &FieldLabels::new()), "revenue, fix linked");
+        assert_eq!(wide_measures_title(&measures, &FieldLabels::new()).unwrap(), "revenue, fix linked");
         let labels = FieldLabels::from([("fix-linked".to_string(), "fix-linked".to_string())]);
-        assert_eq!(wide_measures_title(&measures, &labels), "revenue, fix-linked");
+        assert_eq!(wide_measures_title(&measures, &labels).unwrap(), "revenue, fix-linked");
     }
 
     #[test]
@@ -4526,9 +4729,9 @@ mod axis_title_tests {
     #[test]
     fn axis_title_text_prefers_axis_label_then_field_label() {
         let labels = FieldLabels::from([("category".to_string(), "Product line".to_string())]);
-        assert_eq!(axis_title_text("category", Some("Category Label"), &labels), "Category Label");
-        assert_eq!(axis_title_text("category", None, &labels), "Product line");
-        assert_eq!(axis_title_text("order_month", None, &FieldLabels::new()), "order month");
+        assert_eq!(axis_title_text("category", Some("Category Label"), &labels).unwrap(), "Category Label");
+        assert_eq!(axis_title_text("category", None, &labels).unwrap(), "Product line");
+        assert_eq!(axis_title_text("order_month", None, &FieldLabels::new()).unwrap(), "order month");
     }
 
     #[test]
@@ -5304,6 +5507,16 @@ pub fn series_ink(
     }
 }
 
+/// `companion_color_for_fill`: the companion ink occupying `fill`'s palette
+/// slot, else the fill itself.
+pub fn companion_for_fill(fill: &str, palette: &[String], companions: &[String]) -> String {
+    palette
+        .iter()
+        .position(|c| c == fill)
+        .and_then(|idx| companions.get(idx))
+        .map_or_else(|| fill.to_string(), Clone::clone)
+}
+
 /// A non-stacked per_series cell's ink: the companion at the series' rank in
 /// the sorted series list, wrapping past the list's end
 /// (`support_table_attachment.py`'s `alpha_index`). No board scale is read.
@@ -5485,6 +5698,24 @@ mod format_slot_tests {
         let named = slot(json!({"spec": ".3~s", "raw": "number"}));
         assert_eq!((named.spec.as_str(), named.raw.as_deref()), (".3~s", Some("number")));
         assert!(!named.has_affix());
+    }
+
+    /// A ladder-less axis's SI arm takes the format's notation
+    /// (`numeral_vega_expr(datum.value, tick_label.si_format, fmt.notation)`):
+    /// the SI letter is respelled, a sub-unit tick and the no-slot case are not.
+    #[test]
+    fn the_si_arm_of_a_baked_tick_label_takes_the_slots_notation() {
+        let tick_label: TickLabelConfig = serde_json::from_value(json!({
+            "format": "$.2~r", "si_format": "$.2~s", "scientific_format": "$.2~e",
+        }))
+        .unwrap();
+        let notated = slot(json!({"spec": "$.2~s", "notation": "analytic", "raw": "currency_compact"}));
+        let paint = |value: f64, format: Option<&FormatSlot>| {
+            format_y_label(value, None, Some(&tick_label), format, 0, 1).unwrap()
+        };
+        assert_eq!(paint(2000.0, None), "$2k");
+        assert_eq!(paint(2000.0, Some(&notated)), "$2K");
+        assert_eq!(paint(0.5, Some(&notated)), paint(0.5, None), "below 1 the notation never applies");
     }
 
     #[test]

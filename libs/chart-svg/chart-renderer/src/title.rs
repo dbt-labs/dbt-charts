@@ -327,7 +327,7 @@ fn case_words(spans: &mut [Span], case: &str) -> Result<(), String> {
         .iter_mut()
         .filter(|s| !matches!(s.span_type, SpanType::Code | SpanType::Image))
         .collect();
-    let cased = crate::case::apply_case_to_runs(
+    let cased = display_text::case::apply_case_to_runs(
         &words.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(),
         case,
     )?;

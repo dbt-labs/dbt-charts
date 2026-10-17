@@ -36,10 +36,12 @@ from typing import Any, Literal
 from dbt_charts.core.constants.axis import MAX_ORDINAL_BUCKETS, SPARSE_CEILING_PX
 from dbt_charts.core.font_measure import FontMeasurer
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
-from dbt_charts.core.text.format_d3 import portable_strftime
+from dbt_charts.core.text.format_d3 import board_word, portable_strftime
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_TIME_SPECS,
     PredefinedTimeFormat,
+    js_str,
+    template_expr,
 )
 from dbt_charts.core.utils import is_year_shaped
 
@@ -107,6 +109,14 @@ _BUCKET_FAMILIES: list[tuple[str, re.Pattern[str]]] = [
     ("mon_dd_yyyy", _MON_DD_YYYY_RE),
     ("week_spelled", _WEEK_SPELLED_RE),
 ]
+
+
+def _message_expr(message_id: str, **slots: str) -> str:
+    """A Vega expression that builds catalog message ``message_id``, each
+    ``{name}`` filled by the Vega expression ``slots[name]``."""
+    return template_expr(
+        board_word(message_id, None, **{name: f"{{{name}}}" for name in slots}), slots
+    )
 
 
 def _classify_bucket(v: str) -> str | None:
@@ -289,7 +299,7 @@ def cadence_label_text(
     if format_tu == "year":
         return str(d.year)
     if format_tu == "yearquarter":
-        return f"Q{(d.month - 1) // 3 + 1}"
+        return board_word("time.quarter", n=str((d.month - 1) // 3 + 1))
     if format_tu == "yearmonth":
         return portable_strftime(d, "%b")
     if format_tu == "yearweek":
@@ -1819,17 +1829,6 @@ def _year_context_row(main_label: str, year_context: str, inline: bool) -> str:
     return f"[{main_label}, {year_context}]"
 
 
-def vega_quoted_format(fmt: str) -> str:
-    """A d3-time-format spec as a single-quoted Vega expression literal.
-
-    Escapes backslash and apostrophe, so a format that legitimately carries
-    one (``%b '%y`` — the shape this module's own ``day_week_context`` uses)
-    survives into the expression instead of closing the string early.
-    """
-    escaped = fmt.replace("\\", "\\\\").replace("'", "\\'")
-    return f"'{escaped}'"
-
-
 # (value_expr, format_fn, month_fn, date_fn, fiscal_year_start_month, anchor_expr,
 # steep_tilt) -> a Vega expression for one tick's text.
 _LabelProducer = Callable[[str, str, str, str, int, str, bool], str]
@@ -1854,7 +1853,7 @@ def _authored_format_label(authored_format: str) -> _LabelProducer:
         _anchor: str,
         _inline: bool,
     ) -> str:
-        return f"{fmt}({v}, {vega_quoted_format(authored_format)})"
+        return f"{fmt}({v}, {js_str(authored_format)})"
 
     return label
 
@@ -1896,7 +1895,7 @@ def _quarter_label(
     inline: bool,
 ) -> str:
     fiscal_month = _fiscal_month_expr(month, v, fiscal_year_start_month)
-    quarter_label = f"'Q' + (floor({fiscal_month}/3) + 1)"
+    quarter_label = _message_expr("time.quarter", n=f"(floor({fiscal_month}/3) + 1)")
     with_year = _year_context_row(quarter_label, f"{fmt}({v}, '%Y')", inline)
     return f"({anchor} || {fiscal_month} === 0) ? ({with_year}) : {quarter_label}"
 
@@ -2636,8 +2635,8 @@ def default_subday_label_expr_for(
             f"lower({fmt}(datum.value, '%-I%p'))"
             if narrow
             else (
-                f"({hours_fn}(datum.value) === 0 ? 'Midnight' : "
-                f"{hours_fn}(datum.value) === 12 ? 'Noon' : "
+                f"({hours_fn}(datum.value) === 0 ? {js_str(board_word('axis.midnight'))} : "
+                f"{hours_fn}(datum.value) === 12 ? {js_str(board_word('axis.noon'))} : "
                 f"lower({fmt}(datum.value, '%-I%p')))"
             )
         )
@@ -2739,7 +2738,11 @@ def tooltip_header_date_expr(value_ref: str, time_unit: str) -> str:
     if time_unit == "year":
         return f"utcFormat({v}, '%Y')"
     if time_unit == "yearquarter":
-        return f"'Q' + (floor(utcmonth({v}) / 3) + 1) + ' ' + utcFormat({v}, '%Y')"
+        return _message_expr(
+            "time.quarter_year",
+            n=f"(floor(utcmonth({v}) / 3) + 1)",
+            year=f"utcFormat({v}, '%Y')",
+        )
     if time_unit == "yearmonth":
         return f"utcFormat({v}, '%b %Y')"
     if time_unit == "yearweek":

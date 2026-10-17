@@ -308,6 +308,14 @@ uv tool install "dbt-charts[mcp]"   # or: pip install "dbt-charts[mcp]"
 dct init mcp      # wire the MCP server into Cursor, VS Code, Claude Desktop, Codex, and others
 ```
 
+This repository is also a Claude plugin marketplace. The `dbt-charts` plugin bundles the
+hosted [dbtcharts.com](https://dbtcharts.com) connector with the board authoring skills:
+
+```text
+/plugin marketplace add dbt-labs/dbt-charts
+/plugin install dbt-charts@dbt-charts-plugins
+```
+
 ---
 
 ## VS Code extension

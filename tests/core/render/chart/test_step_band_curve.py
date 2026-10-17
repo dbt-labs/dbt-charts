@@ -43,7 +43,10 @@ from dbt_charts.core.compile.models.chart.normalized import (
 )
 from dbt_charts.core.compile.models.primitives import StrokeStyle
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.compile.models.style.authored import AreaChartStylePatch
+from dbt_charts.core.compile.models.style.authored import (
+    AreaChartStylePatch,
+    StylePatch,
+)
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
@@ -691,25 +694,12 @@ def test_stacked_stroke_without_cap_or_join_raises():
     """The guard for the wholesale replace. A stacked recipe that omits cap or
     join would silently drop the SVG attributes; this must fail loudly at
     resolve rather than render a spiked perimeter."""
-    # The theme declares the stacked recipe on the GLOBAL marks slot; the area
-    # family's own copy is a cascade sentinel (None) until resolve fills it, so
-    # crippling the family copy would just be refilled from here.
-    compiled = get_theme_style("clarity")
-    marks = compiled.charts.marks
-    stacked = marks.area.stacked
-    assert stacked is not None and stacked.stroke is not None
-    crippled = stacked.model_copy(
-        update={"stroke": stacked.stroke.model_copy(update={"cap": None})}
-    )
-    new_area_mark = marks.area.model_copy(update={"stacked": crippled})
+    # `cap: auto` leaves the stacked recipe without a cap, the state the guard names.
     board_rs, board_ctx = resolve_style_and_context(
-        compiled.model_copy(
-            update={
-                "charts": compiled.charts.model_copy(
-                    update={"marks": marks.model_copy(update={"area": new_area_mark})}
-                )
-            }
-        )
+        get_theme_style("clarity"),
+        StylePatch.model_validate(
+            {"charts": {"marks": {"area": {"stacked": {"stroke": {"cap": "auto"}}}}}}
+        ),
     )
     chart = AreaChart(
         id="stacked-missing-cap",
@@ -731,27 +721,27 @@ def test_stacked_stroke_without_cap_or_join_raises():
 def test_non_stacked_area_tolerates_an_authored_null_cap():
     """The guard must NOT fire on the non-stacked path: marks.line.stroke
     survives intact there, and ResolvedStrokeStyle documents None as the legal
-    "use the VL default" state. A board authoring `cap: null` renders, and the
+    "use the VL default" state. A board authoring `cap: auto` renders, and the
     emitter leaves strokeCap/strokeJoin out rather than writing null, which is
     not in Vega-Lite's enum.
 
     Two measures keep the chart on the overlap recipe. A single-series area
-    would take the stacked recipe's stroke instead, so the authored null cap
+    would take the stacked recipe's stroke instead, so the authored `cap: auto`
     would never reach the emitter and this test would pass vacuously.
     """
-    compiled = get_theme_style("clarity")
-    marks = compiled.charts.marks
-    line = marks.line.model_copy(
-        update={"stroke": StrokeStyle(cap=None, join=None, width=2.5)}
-    )
     board_rs, board_ctx = resolve_style_and_context(
-        compiled.model_copy(
-            update={
-                "charts": compiled.charts.model_copy(
-                    update={"marks": marks.model_copy(update={"line": line})}
-                )
+        get_theme_style("clarity"),
+        StylePatch.model_validate(
+            {
+                "charts": {
+                    "marks": {
+                        "line": {
+                            "stroke": {"cap": "auto", "join": "auto", "width": 2.5}
+                        }
+                    }
+                }
             }
-        )
+        ),
     )
     chart = AreaChart(
         id="null-cap",
@@ -770,29 +760,29 @@ def test_non_stacked_area_tolerates_an_authored_null_cap():
         chart, BARS, board_style=board_rs, chart_style_context=board_ctx
     )
     marks = _stroked_marks(spec)
-    assert marks, "a null cap must still render an area"
+    assert marks, "an auto cap must still render an area"
     assert all(m.get("strokeCap", "unset") is not None for m in marks), marks
     assert all(m.get("strokeJoin", "unset") is not None for m in marks), marks
 
 
 def test_line_halo_omits_an_authored_null_cap():
     """A line's halo takes its fg line's cap and join, so an authored
-    ``cap: null`` must be omitted from the halo too, not written as ``null``,
+    ``cap: auto`` must be omitted from the halo too, not written as ``null``,
     which is not in Vega-Lite's enum. Keeps the theme's default halo, unlike
     ``_board_with_mark``, which zeroes it."""
-    compiled = get_theme_style("clarity")
-    marks = compiled.charts.marks
-    line = marks.line.model_copy(
-        update={"stroke": StrokeStyle(cap=None, join=None, width=2.5)}
-    )
     board_rs, board_ctx = resolve_style_and_context(
-        compiled.model_copy(
-            update={
-                "charts": compiled.charts.model_copy(
-                    update={"marks": marks.model_copy(update={"line": line})}
-                )
+        get_theme_style("clarity"),
+        StylePatch.model_validate(
+            {
+                "charts": {
+                    "marks": {
+                        "line": {
+                            "stroke": {"cap": "auto", "join": "auto", "width": 2.5}
+                        }
+                    }
+                }
             }
-        )
+        ),
     )
     chart = LineChart(
         id="null-cap-line",

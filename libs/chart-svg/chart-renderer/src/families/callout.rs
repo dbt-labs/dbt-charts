@@ -561,7 +561,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<(String, f64), Stri
                 .set("font-weight", "normal")
                 .set("font-family", message_family)
                 .set("fill", &title_color),
-            "See the docs",
+            &display_text::language::tr("placard.see_the_docs", None, &[])?,
         );
         xml.close("a");
     }
@@ -809,6 +809,32 @@ mod tests {
             "doc_url": doc_url,
         });
         json
+    }
+
+    #[test]
+    fn the_placard_doc_link_speaks_the_board_language() {
+        let mut json = placard_payload(None, Some("https://docs.example.com/reference/errors/"));
+        json["board_style"] = serde_json::json!({
+            "font": "Inter", "text_mark_font": {"family": "Inter", "size": 11.0}, "muted": null, "tones": null,
+            "title_case": null, "continuous_height": null,
+            "format_locale": crate::number_locale::en_us_wire(), "language": "de", "time_locale": crate::time_locale::en_us_wire()
+        });
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        let (svg, _) = display_text::language::with_language(display_text::language::Language::new("de").unwrap(), || {
+            render(&payload, &test_fonts())
+        })
+        .expect("placard renders");
+        assert!(svg.contains(">Zur Dokumentation</text></a>"), "{svg}");
+        assert!(!svg.contains("See the docs"), "{svg}");
+    }
+
+    #[test]
+    fn a_card_with_no_board_names_its_language_on_the_payload() {
+        let mut json = placard_payload(None, Some("https://docs.example.com/reference/errors/"));
+        json["language"] = serde_json::json!("de");
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        let (svg, _) = crate::render_sized(&payload, &test_fonts()).expect("placard renders");
+        assert!(svg.contains(">Zur Dokumentation</text></a>"), "{svg}");
     }
 
     #[test]

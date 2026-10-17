@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Business Overview
+notes: Two-by-two grid overview pattern — four equal-weight summary charts
+
+queries:
+  monthly:
+    notes: Monthly revenue and cost trend
+    columns: [month, revenue, cost]
+    values:
+      - ["2025-09-01", 208000, 134000]
+      - ["2025-10-01", 221000, 141000]
+      - ["2025-11-01", 237000, 149000]
+      - ["2025-12-01", 248500, 155000]
+
+  by_region:
+    notes: Revenue totals by region
+    columns: [region, revenue]
+    values:
+      - [North, 85000]
+      - [East,  71000]
+      - [South, 62000]
+      - [West,  54000]
+
+charts:
+  revenue_trend:
+    notes: Revenue trajectory — is it growing?
+    type: line
+    query: monthly
+    x: month
+    y: revenue
+    title: Revenue Trend
+
+  cost_trend:
+    notes: Cost trajectory — are costs tracking revenue?
+    type: line
+    query: monthly
+    x: month
+    y: cost
+    title: Cost Trend
+
+  revenue_by_region:
+    notes: Which regions drive the most revenue?
+    type: bar
+    query: by_region
+    x: region
+    y: revenue
+    title: Revenue by Region
+
+  cost_by_month:
+    notes: Monthly cost as a bar for easy comparison
+    type: bar
+    query: monthly
+    x: month
+    y: cost
+    title: Monthly Cost
+
+rows:
+  - title: Trends
+    cols:
+      - revenue_trend
+      - cost_trend
+  - title: Breakdown
+    cols:
+      - revenue_by_region
+      - cost_by_month

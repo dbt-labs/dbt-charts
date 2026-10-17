@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Incident Queue
+notes: Table-heavy ops dashboard pattern — formatted table with per-column labels and types
+
+queries:
+  open_incidents:
+    notes: Open and in-progress incidents with severity and impact
+    columns: [ticket_id, priority, status, assignee, revenue_impact]
+    values:
+      - ["T-001", "P1", "Open",        "Alice", 15000]
+      - ["T-002", "P2", "In Progress", "Bob",    4500]
+      - ["T-003", "P1", "Open",        "Carol", 22000]
+      - ["T-004", "P3", "Resolved",    "Dave",    800]
+      - ["T-005", "P2", "In Progress", "Alice",  7200]
+
+charts:
+  incidents_table:
+    notes: Triageable incident list with priority, owner, and revenue impact
+    type: table
+    query: open_incidents
+    title: Open Incidents
+    style:
+      columns:
+        ticket_id:
+          label: Ticket
+        priority:
+          label: Priority
+        status:
+          label: Status
+        assignee:
+          label: Owner
+        revenue_impact:
+          label: Revenue Impact
+          format: currency_whole
+    conditional_formatting:
+      priority:
+        when:
+          - eq: P1
+            background: negative.bg
+            font:
+              color: negative.text
+              weight: "600"
+          - eq: P2
+            background: warning.bg
+            font:
+              color: warning.text
+
+rows:
+  - incidents_table

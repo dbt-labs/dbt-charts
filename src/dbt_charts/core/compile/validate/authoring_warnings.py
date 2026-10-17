@@ -7,6 +7,7 @@ from typing import Any, TypeAlias
 import yaml
 from pydantic_core import PydanticUndefinedType
 
+from dbt_charts.core.compile.models.primitives import LanguageCode
 from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.diagnostics import (
     WARN_FLAT_COLS_UNSIZED_OVERFLOW,
@@ -15,6 +16,7 @@ from dbt_charts.core.diagnostics import (
     Diagnostic,
 )
 from dbt_charts.core.text.case import inferred_display_name
+from dbt_charts.core.text.format_d3 import language_scope
 from dbt_charts.core.utils import YAML_LOADER
 
 # Beyond this many unsized *growable* cells, a flat `cols:` row loses layout
@@ -45,8 +47,15 @@ _VARIABLE_DEFAULTS: dict[str, object] = {
 }
 
 
-def detect_authoring_warnings(yaml_content: str) -> list[Diagnostic]:
-    """Return non-fatal warnings for redundant authored YAML."""
+def detect_authoring_warnings(
+    yaml_content: str, language: LanguageCode
+) -> list[Diagnostic]:
+    """Return non-fatal warnings for redundant authored YAML.
+
+    ``language`` is the merged board's (meta.yml cascade included): the label a
+    variable would print is humanized in it, and the redundancy check reads it
+    there.
+    """
     raw = yaml.load(yaml_content, Loader=YAML_LOADER)
     if not isinstance(raw, dict):
         return []
@@ -54,7 +63,8 @@ def detect_authoring_warnings(yaml_content: str) -> list[Diagnostic]:
     chart_types: dict[str, str] = {}
     _collect_chart_types(raw, chart_types)
     warnings: list[Diagnostic] = []
-    _walk_board_like_mapping(raw, chart_types, [], warnings)
+    with language_scope(language):
+        _walk_board_like_mapping(raw, chart_types, [], warnings)
     return warnings
 
 

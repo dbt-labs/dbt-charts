@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from dbt_charts.core.compile import compile
+from collections.abc import Callable
+from pathlib import Path
+
+from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.compile import compile, compile_file
+from dbt_charts.core.compile.config import reset_config
 from dbt_charts.core.text.case import inferred_display_name
 
 
@@ -183,3 +188,28 @@ rows:
     assert not result.success
     assert result.errors
     assert "allow_null" in result.errors[0].message
+
+
+def test_redundant_label_check_reads_the_language_inherited_from_meta(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """`Ø days` is what `avg_days` infers in German only."""
+    reset_config()
+    (tmp_path / "charts").mkdir()
+    (tmp_path / "charts/meta.yml").write_text(
+        "regional:\n  language: de\n", encoding="utf-8"
+    )
+    (tmp_path / "charts/board.yaml").write_text(
+        "variables:\n  avg_days:\n    label: Ø days\n    options:\n"
+        "      static: [a, b]\nrows:\n  - text: hi\n",
+        encoding="utf-8",
+    )
+    project = local_project(tmp_path)
+    result = compile_file(
+        project.path("charts/board.yaml").read_board(), apply_meta=True
+    )
+    assert result.success, result.errors
+    assert [
+        w.path for w in result.warnings if w.code == "WARN-REDUNDANT-AUTHORED-LABEL"
+    ] == ["variables.avg_days.label"]
+    reset_config()

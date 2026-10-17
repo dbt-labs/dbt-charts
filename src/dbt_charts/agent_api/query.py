@@ -1,25 +1,65 @@
 """Typed query verbs for the agent API."""
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from dbt_charts.agent_api._paths import resolve_board_path
+from dbt_charts.agent_api._paths import PathOutsideProjectError, resolve_board_path
 from dbt_charts.core.compile import compile_file
+from dbt_charts.core.compile.compiler import CompileResult
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, SqlQuery
 from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.normalize.queries import is_file_source_ref
 from dbt_charts.core.compile.sql_guard import source_dialect
 from dbt_charts.core.compile.template.jinja import extract_sql_variable_dependencies
+from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_FILE_NOT_FOUND,
+    ERR_PATH_OUTSIDE_PROJECT,
+)
+from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_BOARD_FILE_UNREADABLE,
+    ERR_BOARD_QUERY_NOT_FOUND,
+    ERR_TOOL_ARGUMENTS_INVALID,
+    ERR_VARIABLE_UNBOUND,
+)
+from dbt_charts.core.diagnostics.codes_unknown import ERR_INTERNAL
 from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.inspect.query_validator import QueryDiagnostic, validate_query
 from dbt_charts.core.project import InMemoryBoard, Project
 from dbt_charts.core.validate import normalize_data_for_json
 
 MAX_QUERY_LIMIT = 1000
+
+
+def error_code_of(error: BaseException) -> str:
+    """The registered code of *error*, or ``ERR-INTERNAL`` if nothing classified it.
+
+    ``ERR-INTERNAL`` here means a defect: every failure a caller can cause
+    carries its own code by the time it is raised.
+    """
+    code = error.code if isinstance(error, DbtChartsError) else None
+    return (code or ERR_INTERNAL).code
+
+
+def _file_missing(path: PurePosixPath) -> str:
+    return str(DbtChartsError.from_code(ERR_FILE_NOT_FOUND, path=path))
+
+
+def _board_unreadable(path: PurePosixPath) -> str:
+    return str(DbtChartsError.from_code(ERR_BOARD_FILE_UNREADABLE, path=path))
+
+
+def _query_not_found(path: PurePosixPath, name: str, available: list[str]) -> str:
+    return str(
+        DbtChartsError.from_code(
+            ERR_BOARD_QUERY_NOT_FOUND, path=path, query_name=name, available=available
+        )
+    )
 
 
 class VariableBinding(BaseModel):
@@ -33,21 +73,98 @@ class VariableBinding(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     name: str = Field(..., description="Variable name, e.g. 'region'")
-    value: str | int | float | bool = Field(
-        ..., description="Scalar value for the variable"
+    value: str | int | float | bool | list[str] = Field(
+        ...,
+        description=(
+            "Value for the variable: a scalar, or a list of strings for a "
+            "multiselect ([] selects none)"
+        ),
     )
 
 
 def variables_to_dict(
     bindings: list[VariableBinding],
-) -> dict[str, str | int | float | bool]:
+) -> dict[str, str | int | float | bool | list[str]]:
     """Convert a VariableBinding list to a dict, raising on duplicate names."""
-    result: dict[str, str | int | float | bool] = {}
+    result: dict[str, str | int | float | bool | list[str]] = {}
     for binding in bindings:
         if binding.name in result:
             raise ValueError(f"Duplicate variable name: {binding.name!r}")
         result[binding.name] = binding.value
     return result
+
+
+@dataclass(frozen=True)
+class _BoardFailure:
+    path: PurePosixPath
+    errors: list[str]
+    error_code: str
+    available: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _LoadedQuery:
+    path: PurePosixPath
+    board: Board
+    compile_result: CompileResult
+
+
+def _load_board_query(
+    name: str, path: Path, project: Project
+) -> _LoadedQuery | _BoardFailure:
+    """Resolve, read and compile the board at *path* and find its query *name*.
+
+    The one prelude of ``query_board`` and ``lookup_board_query_sql``. Only the
+    board's own text is read under the unreadable-file arm: a sibling the
+    compile reads (``meta.yml``, an ``extends:`` base) fails as it always has.
+    """
+    try:
+        file_path = resolve_board_path(path, project)
+    except PathOutsideProjectError as exc:
+        return _BoardFailure(
+            PurePosixPath(path), [str(exc)], ERR_PATH_OUTSIDE_PROJECT.code
+        )
+    except ValueError:
+        # A path the project cannot take (absolute or '..' with no local root, an
+        # empty path, a backslash): the caller's argument, not an engine fault.
+        rejected = DbtChartsError.from_code(
+            ERR_TOOL_ARGUMENTS_INVALID,
+            message=(
+                f"Board path {path} cannot be used here: pass a project-relative "
+                "path such as charts/orders.yml."
+            ),
+        )
+        return _BoardFailure(
+            PurePosixPath(path), [str(rejected)], ERR_TOOL_ARGUMENTS_INVALID.code
+        )
+    display = PurePosixPath(file_path.relpath)
+    if not file_path.exists():
+        return _BoardFailure(display, [_file_missing(display)], ERR_FILE_NOT_FOUND.code)
+    board_file = file_path.read_board()
+    try:
+        board_file.content  # noqa: B018 — force the read of the board's own file
+    except (UnicodeDecodeError, OSError):
+        return _BoardFailure(
+            display, [_board_unreadable(display)], ERR_BOARD_FILE_UNREADABLE.code
+        )
+    compile_result = compile_file(board_file)
+    if not compile_result.success:
+        return _BoardFailure(
+            display,
+            [e.message for e in compile_result.errors],
+            compile_result.errors[0].code,
+        )
+    board = compile_result.board
+    assert board is not None  # compile_result.success guarantees this
+    if name not in board.queries:
+        available = sorted(board.queries.keys())
+        return _BoardFailure(
+            display,
+            [_query_not_found(display, name, available)],
+            ERR_BOARD_QUERY_NOT_FOUND.code,
+            available,
+        )
+    return _LoadedQuery(display, board, compile_result)
 
 
 class BoardQueryLookupResult(BaseModel):
@@ -59,6 +176,7 @@ class BoardQueryLookupResult(BaseModel):
     sql: str = ""
     source: str | None = None
     errors: list[str] = []
+    error_code: str | None = None
     available_queries: list[str] = []
 
 
@@ -82,36 +200,19 @@ def lookup_board_query_sql(
         render_parameterized_with_queries,
     )
     from dbt_charts.core.dbt_ref_check import named_source_target_path
-    from dbt_charts.core.diagnostics.base import DbtChartsError
     from dbt_charts.core.execute.adapters.adapter_registry import linked_dbt_path
     from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
     from dbt_charts.core.execute.executor import resolve_query_references
 
-    try:
-        file_path = resolve_board_path(path, project)
-    except ValueError as e:
-        return BoardQueryLookupResult(success=False, errors=[str(e)])
-
-    if not file_path.exists():
-        return BoardQueryLookupResult(
-            success=False, errors=[f"File not found: {file_path.relpath}"]
-        )
-
-    compile_result = compile_file(file_path.read_board())
-    if not compile_result.success:
-        return BoardQueryLookupResult(
-            success=False, errors=[e.message for e in compile_result.errors]
-        )
-
-    board = compile_result.board
-    assert board is not None  # compile_result.success guarantees this
-
-    if name not in board.queries:
+    loaded = _load_board_query(name, path, project)
+    if isinstance(loaded, _BoardFailure):
         return BoardQueryLookupResult(
             success=False,
-            errors=[f"Unknown query: '{name}'"],
-            available_queries=sorted(board.queries.keys()),
+            errors=loaded.errors,
+            error_code=loaded.error_code,
+            available_queries=loaded.available,
         )
+    board, compile_result = loaded.board, loaded.compile_result
 
     query = board.queries[name]
     if not isinstance(query, SqlQuery):
@@ -227,7 +328,9 @@ def lookup_board_query_sql(
         # Do not remove this as redundant with the first resolve above.
         composed_sql, _inlined_relations = dbt_refs.resolve(rendered.sql, target_path)
     except (JinjaError, DbtChartsError) as exc:
-        return BoardQueryLookupResult(success=False, errors=[str(exc)])
+        return BoardQueryLookupResult(
+            success=False, errors=[str(exc)], error_code=error_code_of(exc)
+        )
 
     return BoardQueryLookupResult(success=True, sql=composed_sql, source=query.source)
 
@@ -304,6 +407,13 @@ class ExecuteQueryResult(BaseModel):
     columns: list[str]
     data: list[dict[str, Any]]
     errors: list[str]
+    error_code: str | None = Field(
+        default=None,
+        description=(
+            "Registered ERR-* code of the failure, readable with "
+            "get_diagnostic_code. Absent on success."
+        ),
+    )
     row_count: int
     truncated: bool
     diagnostics: list[QueryDiagnostic] = Field(
@@ -401,6 +511,7 @@ def execute_query(
                 data=[],
                 columns=[],
                 errors=[str(result.error)],
+                error_code=error_code_of(result.error),
                 row_count=0,
                 truncated=False,
                 diagnostics=diagnostics,
@@ -427,6 +538,7 @@ def execute_query(
             data=[],
             columns=[],
             errors=[str(e)],
+            error_code=error_code_of(e),
             row_count=0,
             truncated=False,
             diagnostics=diagnostics,
@@ -449,6 +561,7 @@ class QueryBoardResult(BaseModel):
     row_count: int = 0
     truncated: bool = False
     errors: list[str] = []
+    error_code: str | None = None
     available_queries: list[str] = []
 
 
@@ -456,6 +569,7 @@ def _fail(
     name: str,
     path: PurePosixPath,
     errors: list[str],
+    error_code: str,
     available: list[str] | None = None,
     sql: str | None = None,
     notes: str | None = None,
@@ -471,11 +585,15 @@ def _fail(
         sql=sql,
         notes=notes,
         errors=errors,
+        error_code=error_code,
         available_queries=available or [],
     )
 
 
-_VALUE_HINTS = {"daterange": 'a JSON string like \'["2024-01-01", "2024-01-31"]\''}
+_VALUE_HINTS = {
+    "daterange": 'a JSON string like \'["2024-01-01", "2024-01-31"]\'',
+    "multiselect": 'a list of strings like ["COMMERCIAL"], or [] to select none',
+}
 
 
 def _unbound_variable_errors(
@@ -488,11 +606,15 @@ def _unbound_variable_errors(
         return []
     needed = extract_sql_variable_dependencies(query.sql, query.setup_sql)
     return [
-        f"Query '{query_name}' uses variable '{var}' (input: {registry[var].input}), "
-        "which the board declares without a default. Pass a binding for it, "
-        f'{{"name": "{var}", "value": ...}}, where the value is '
-        + _VALUE_HINTS.get(registry[var].input, "a plain value")
-        + "."
+        str(
+            DbtChartsError.from_code(
+                ERR_VARIABLE_UNBOUND,
+                query_name=query_name,
+                variable=var,
+                input=registry[var].input,
+                value_hint=_VALUE_HINTS.get(registry[var].input, "a plain value"),
+            )
+        )
         for var in sorted(needed & registry.keys() - bound)
     ]
 
@@ -511,30 +633,20 @@ def query_board(
 
     limit = min(limit, MAX_QUERY_LIMIT)
 
-    try:
-        file_path = resolve_board_path(path, project)
-    except ValueError as e:
-        # Raw-input echo — resolution failed, so this is the caller's rejected
-        # path, not a validated project-relative identity.
-        return _fail(name, PurePosixPath(path), [str(e)])
-
-    resolved_display = PurePosixPath(file_path.relpath)
-    if not file_path.exists():
-        return _fail(name, resolved_display, [f"File not found: {resolved_display}"])
-
-    compile_result = compile_file(file_path.read_board())
-    if not compile_result.success:
-        return _fail(name, resolved_display, [e.message for e in compile_result.errors])
-
-    board = compile_result.board
-    assert board is not None  # compile_result.success guarantees this
-    if name not in board.queries:
+    loaded = _load_board_query(name, path, project)
+    if isinstance(loaded, _BoardFailure):
         return _fail(
             name,
-            resolved_display,
-            [f"Unknown query: '{name}'"],
-            sorted(board.queries.keys()),
+            loaded.path,
+            loaded.errors,
+            loaded.error_code,
+            loaded.available,
         )
+    board, compile_result, resolved_display = (
+        loaded.board,
+        loaded.compile_result,
+        loaded.path,
+    )
 
     merged_vars = {**board.variable_defaults, **(vars or {})}
     query = board.queries[name].model_copy(update={"limit": limit + 1})
@@ -561,18 +673,33 @@ def query_board(
             if unbound := _unbound_variable_errors(
                 query, board.variable_registry or {}, set(merged_vars), name
             ):
-                return _fail(name, resolved_display, unbound, sql=sql, notes=noted)
+                return _fail(
+                    name,
+                    resolved_display,
+                    unbound,
+                    ERR_VARIABLE_UNBOUND.code,
+                    sql=sql,
+                    notes=noted,
+                )
         exec_result = adapter_registry.execute(
             query, variables=merged_vars or None, board=board, query_name=name
         )
     except Exception as e:  # noqa: BLE001
-        return _fail(name, resolved_display, [str(e)], sql=sql, notes=noted)
+        return _fail(
+            name,
+            resolved_display,
+            [str(e)],
+            error_code_of(e),
+            sql=sql,
+            notes=noted,
+        )
 
     if exec_result.error:
         return _fail(
             name,
             resolved_display,
             [str(exec_result.error)],
+            error_code_of(exec_result.error),
             sql=sql,
             notes=noted,
         )

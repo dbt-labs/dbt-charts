@@ -7,7 +7,7 @@ use chart_renderer::families::table::width::{measure_natural_width, MeasurePaylo
 use chart_renderer::{render_measured, text::FontBook, Payload};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -98,12 +98,14 @@ fn measure_table_natural_width(py: Python<'_>, payload_json: &str) -> PyResult<O
 }
 
 /// What `table_title_geometry` reads: the table's resolved chart, the width its
-/// title wraps in, and `fonts_dir`.
+/// title wraps in, `fonts_dir`, and the board's `language` (its casing rule).
 #[derive(serde::Deserialize)]
 struct TitleGeometryPayload {
     resolved: serde_json::Value,
     width: f64,
     fonts_dir: Option<String>,
+    #[serde(default)]
+    language: display_text::language::Language,
 }
 
 /// A table's title band as the engine lays it out (`title_geometry`): the
@@ -116,8 +118,10 @@ fn table_title_geometry(py: Python<'_>, payload_json: &str) -> PyResult<(f64, f6
         let payload: TitleGeometryPayload = serde_json::from_str(payload_json)
             .map_err(|e| Diagnostic::from(format!("parse payload: {e}")))?;
         let fonts = fonts_for(payload.fonts_dir.as_deref())?;
-        chart_renderer::families::table::title_geometry(&payload.resolved, payload.width, &fonts)
-            .map_err(Diagnostic::from)
+        display_text::language::with_language(payload.language, || {
+            chart_renderer::families::table::title_geometry(&payload.resolved, payload.width, &fonts)
+        })
+        .map_err(Diagnostic::from)
     });
     geometry.map_err(|diagnostic| coded_error(py, &diagnostic))
 }
@@ -136,6 +140,57 @@ fn font_loads() -> usize {
     FONT_LOADS.load(Ordering::SeqCst)
 }
 
+#[pyfunction]
+fn languages() -> Vec<&'static str> {
+    display_text::language::LANGUAGES.to_vec()
+}
+
+/// The language a d3 time locale name implies (`de-DE` -> `de`); `None` (a
+/// custom definition) or a locale with no catalog is `en`.
+#[pyfunction]
+fn language_for_time_locale(name: Option<&str>) -> &'static str {
+    display_text::language::language_of_time_locale(name)
+}
+
+/// Message `id` in `lang`: `n` picks a plural form and fills `{n}`, `args`
+/// fill the other placeholders. An unknown language or id, a missing or unused
+/// arg, or a plural message with no `n` raises `ValueError`.
+#[pyfunction]
+#[pyo3(signature = (lang, id, n=None, args=None))]
+fn message(
+    lang: &str,
+    id: &str,
+    n: Option<u64>,
+    args: Option<HashMap<String, String>>,
+) -> PyResult<String> {
+    let args = args.unwrap_or_default();
+    let pairs: Vec<(&str, &str)> = args.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    display_text::language::message(lang, id, n, &pairs).map_err(PyValueError::new_err)
+}
+
+/// A Vega expression over the numeric expression `x` evaluating to the CLDR
+/// plural category `lang` gives that (possibly fractional) count.
+#[pyfunction]
+fn plural_expr(lang: &str, x: &str) -> PyResult<String> {
+    display_text::language::plural_expr(lang, x).map_err(PyValueError::new_err)
+}
+
+/// The forms of plural message `id` in `lang`, by CLDR category, in category
+/// order so the specs built from them are stable across processes.
+#[pyfunction]
+fn message_forms(lang: &str, id: &str) -> PyResult<BTreeMap<String, String>> {
+    display_text::language::forms(lang, id)
+        .cloned()
+        .map_err(PyValueError::new_err)
+}
+
+/// Letter-case `text` per `case` in `lang`'s title rules (`title` follows the
+/// catalog's `case.title_style`).
+#[pyfunction]
+fn apply_case(lang: &str, text: &str, case: &str) -> PyResult<String> {
+    display_text::case::apply_case_in(lang, text, case).map_err(PyValueError::new_err)
+}
+
 #[pymodule]
 fn _engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(render_chart, m)?)?;
@@ -143,6 +198,12 @@ fn _engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(table_title_geometry, m)?)?;
     m.add_function(wrap_pyfunction!(font_loads, m)?)?;
     m.add_function(wrap_pyfunction!(check_template, m)?)?;
+    m.add_function(wrap_pyfunction!(languages, m)?)?;
+    m.add_function(wrap_pyfunction!(language_for_time_locale, m)?)?;
+    m.add_function(wrap_pyfunction!(message, m)?)?;
+    m.add_function(wrap_pyfunction!(plural_expr, m)?)?;
+    m.add_function(wrap_pyfunction!(message_forms, m)?)?;
+    m.add_function(wrap_pyfunction!(apply_case, m)?)?;
     m.add("RenderDiagnosticError", m.py().get_type::<RenderDiagnosticError>())?;
     Ok(())
 }

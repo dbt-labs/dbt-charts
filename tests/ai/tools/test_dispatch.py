@@ -119,7 +119,7 @@ class TestDispatchToolCall:
                 "execute_query",
                 {"sql": "select 1", "variables": [{"name": "r", "value": None}]},
                 "execute_query: variables.0.value: got null, expected one of "
-                "str, int, float, bool",
+                "str, int, float, bool, list[str]",
             ),
         ],
     )
@@ -132,7 +132,77 @@ class TestDispatchToolCall:
     ) -> None:
         result = dispatch_tool_call(tool, args, context=context)
 
-        assert result == {"success": False, "errors": [expected]}
+        assert result == {
+            "success": False,
+            "errors": [expected],
+            "error_code": "ERR-TOOL-ARGUMENTS-INVALID",
+        }
+
+    def test_execute_query_failure_is_cut_to_the_model_budget(
+        self, context: DbtChartsAIContext, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dbt_charts.agent_api import query as query_module
+        from dbt_charts.agent_api.query_csv import MODEL_RESULT_BYTE_BUDGET, model_json
+
+        def fails_loudly(*args: Any, **kwargs: Any) -> query_module.ExecuteQueryResult:
+            return query_module.ExecuteQueryResult(
+                success=False,
+                columns=[],
+                data=[],
+                errors=["Warehouse rejected the query: " + "w" * 60_000],
+                error_code="ERR-WAREHOUSE-RUNTIME",
+                row_count=0,
+                truncated=False,
+            )
+
+        monkeypatch.setattr(query_module, "execute_query", fails_loudly)
+
+        result = dispatch_tool_call(
+            "execute_query", {"sql": "select 1"}, context=context
+        )
+
+        assert result["error_code"] == "ERR-WAREHOUSE-RUNTIME"
+        assert result["errors"][0].endswith("(truncated)")
+        assert len(model_json(result).encode("utf-8")) <= MODEL_RESULT_BYTE_BUDGET
+
+    def test_dispatch_labels_an_unclassified_exception_internal(
+        self, context: DbtChartsAIContext
+    ) -> None:
+        def raises_unclassified(
+            args: dict[str, Any], ctx: DbtChartsAIContext
+        ) -> dict[str, Any]:
+            raise RuntimeError("bug")
+
+        result = dispatch_tool_call(
+            "boom", {}, context=context, extra_handlers={"boom": raises_unclassified}
+        )
+
+        assert result == {
+            "success": False,
+            "errors": ["bug"],
+            "error_code": "ERR-INTERNAL",
+        }
+
+    def test_dispatch_names_the_code_of_a_registered_error_a_handler_raises(
+        self, context: DbtChartsAIContext
+    ) -> None:
+        from dbt_charts.core.diagnostics.base import DbtChartsError
+        from dbt_charts.core.diagnostics.codes_compile import ERR_FILE_NOT_FOUND
+
+        def raises_registered(
+            args: dict[str, Any], ctx: DbtChartsAIContext
+        ) -> dict[str, Any]:
+            raise DbtChartsError.from_code(ERR_FILE_NOT_FOUND, path="x.yml")
+
+        result = dispatch_tool_call(
+            "boom",
+            {},
+            context=context,
+            extra_handlers={"boom": raises_registered},
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == "ERR-FILE-NOT-FOUND"
 
     def test_dispatch_search_boards_subdir_returns_results(
         self,
@@ -743,7 +813,11 @@ class TestToolErrorEnvelopes:
         leaking through handle_call_tool as an MCP transport error.
         """
         result = dispatch_tool_call("execute_query", args, context=context)
-        assert result == {"success": False, "errors": [message]}
+        assert result == {
+            "success": False,
+            "errors": [message],
+            "error_code": "ERR-TOOL-ARGUMENTS-INVALID",
+        }
 
     def test_get_skill_missing_required_args_returns_structured_envelope(
         self, context: DbtChartsAIContext

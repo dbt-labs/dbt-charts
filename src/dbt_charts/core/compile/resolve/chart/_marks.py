@@ -14,6 +14,7 @@ from dbt_charts.core.compile.format import (
 from dbt_charts.core.compile.models.primitives import (
     FormatTable,
     ResolvedFormat,
+    StrokeStyle,
     resolved_as,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -39,6 +40,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     CartesianFamilyChart,
     declared_column_format,
 )
+from dbt_charts.core.compile.resolve.style.inherit_resolver import settled
 
 __all__ = [
     "_apply_line_width",
@@ -64,11 +66,6 @@ def _apply_line_width(
     sentinel. Otherwise the density-adaptive ``adaptive`` applies, or
     ``fallback`` when it is ``0.0`` (no data, no x field, or a base chart that
     measures no density).
-
-    An authored ``stroke: null`` is left alone: filling one in would
-    manufacture a default stroke out of nothing (no cap/join/color) instead of
-    letting the downstream ``_build_resolved_*`` guard raise its "stroke is
-    None after cascade" error.
     """
     if mark.stroke is None or mark.stroke.width is not None:
         return mark
@@ -180,37 +177,30 @@ def _resolved_point_mark(
     )
 
 
+def _resolved_stroke(stroke: StrokeStyle | None) -> ResolvedStrokeStyle:
+    """The baked stroke; ``_apply_line_width`` has already pinned its width."""
+    if stroke is None:
+        raise ValueError(
+            "marks stroke is None after cascade: an authored `stroke: null` is "
+            "not valid on a line or area edge"
+        )
+    return ResolvedStrokeStyle(
+        width=settled(stroke.width),
+        color=stroke.color,
+        cap=stroke.cap,
+        join=stroke.join,
+        dasharray=stroke.dasharray,
+    )
+
+
 def _build_resolved_line_mark(
     merged: LineMarkStyle, labels: ResolvedPointLabels
 ) -> ResolvedLineMarkStyle:
     """Build a ResolvedLineMarkStyle from an already-merged LineMarkStyle."""
-    # merged.stroke.width can't be None here: _apply_line_width
-    # already ran and fills width whenever a stroke object exists. Only
-    # merged.stroke itself being None (an authored `stroke: null`) can
-    # still reach this guard -- the `or merged.stroke.width is None` half is
-    # unreachable at runtime but kept so the type checker narrows
-    # `merged.stroke.width` from `float | None` to `float` below.
-    if merged.stroke is None or merged.stroke.width is None:
-        raise ValueError(
-            "line.marks.line.stroke is None after cascade — an authored "
-            "`stroke: null` is not valid on a line mark"
-        )
-    if merged.halo_multiplier is None:
-        raise ValueError(
-            "line.marks.line.halo_multiplier is None after cascade — check theme defaults"
-        )
-    if merged.disconnected_width is None:
-        raise ValueError(
-            "line.marks.line.disconnected_width is None after cascade — check theme defaults"
-        )
+    assert merged.halo_multiplier is not None
+    assert merged.disconnected_width is not None
     return ResolvedLineMarkStyle(
-        stroke=ResolvedStrokeStyle(
-            width=merged.stroke.width,
-            color=merged.stroke.color,
-            cap=merged.stroke.cap,
-            join=merged.stroke.join,
-            dasharray=merged.stroke.dasharray,
-        ),
+        stroke=_resolved_stroke(merged.stroke),
         halo_multiplier=merged.halo_multiplier,
         curve=merged.curve,
         connect=merged.connect,
@@ -222,14 +212,8 @@ def _build_resolved_line_mark(
 
 def _build_resolved_area_mark(merged: AreaMarkStyle) -> ResolvedAreaMarkStyle:
     """Build a ResolvedAreaMarkStyle (fill only) from an already-merged AreaMarkStyle."""
-    if merged.opacity is None:
-        raise ValueError(
-            "area.marks.area.opacity is None after cascade — check theme defaults"
-        )
-    if merged.backdrop is None:
-        raise ValueError(
-            "area.marks.area.backdrop is None after cascade — check theme defaults"
-        )
+    assert merged.opacity is not None
+    assert merged.backdrop is not None
     return ResolvedAreaMarkStyle(
         opacity=merged.opacity, curve=merged.curve, backdrop=merged.backdrop
     )
@@ -244,26 +228,9 @@ def _build_resolved_area_line(
     _build_resolved_line_mark minus curve/connect (owned solely by
     ResolvedAreaMarkStyle.curve — see AreaLineStyle's docstring).
     """
-    if merged.stroke is None:
-        raise ValueError(
-            "area.marks.line.stroke is None after cascade — an authored "
-            "`stroke: null` is not valid on an area's top-edge line"
-        )
-    # Stacked recipes are validated in area.py; the rest get a width from
-    # _apply_line_width.
-    assert merged.stroke.width is not None
-    if merged.halo_multiplier is None:
-        raise ValueError(
-            "area.marks.line.halo_multiplier is None after cascade — check theme defaults"
-        )
+    assert merged.halo_multiplier is not None
     return ResolvedAreaLineStyle(
-        stroke=ResolvedStrokeStyle(
-            width=merged.stroke.width,
-            color=merged.stroke.color,
-            cap=merged.stroke.cap,
-            join=merged.stroke.join,
-            dasharray=merged.stroke.dasharray,
-        ),
+        stroke=_resolved_stroke(merged.stroke),
         halo_multiplier=merged.halo_multiplier,
         labels=labels,
     )

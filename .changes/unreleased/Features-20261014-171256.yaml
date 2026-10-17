@@ -1,0 +1,5 @@
+kind: Features
+body: 'A chart, table column, or header link can open its target board in a modal with `link: {url, open: modal}`.'
+time: 2026-10-14T17:12:56.722424-07:00
+custom:
+    DbtChartsIssue: "5"

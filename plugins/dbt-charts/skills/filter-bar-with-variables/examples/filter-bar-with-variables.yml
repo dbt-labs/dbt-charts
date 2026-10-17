@@ -1,0 +1,50 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Sales Dashboard with Filters
+notes: |
+  Filter-bar pattern — region dropdown and date controls wired to queries. Inline data used here; in production, replace with sql: + WHERE {{ filter(...) }}.
+
+variables:
+  region:
+    label: Region
+    notes: Filter to a single region, or leave blank for all
+    options:
+      static:
+        - North
+        - South
+        - East
+        - West
+  start_date:
+    label: Start Date
+    input: date
+    default: "2025-07-01"
+  end_date:
+    label: End Date
+    input: date
+    default: "2025-12-31"
+queries:
+  monthly_revenue:
+    notes: Monthly revenue — replace with sql and {{ filter }} for a live source
+    columns:
+      - month
+      - region
+      - revenue
+    values:
+      - ['2025-07-01', 'North', 32000]
+      - ['2025-08-01', 'North', 35000]
+      - ['2025-09-01', 'North', 38000]
+      - ['2025-07-01', 'South', 21000]
+      - ['2025-08-01', 'South', 23000]
+      - ['2025-09-01', 'South', 26000]
+charts:
+  revenue_by_month:
+    notes: Monthly revenue trend by region
+    type: bar
+    query: monthly_revenue
+    x: month
+    y: revenue
+    color: region
+    title: Monthly Revenue by Region
+    style:
+      stack: zero
+rows:
+  - revenue_by_month

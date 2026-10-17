@@ -20,15 +20,12 @@
 //!   models (each other shape refuses by name)
 //! - non-empty layers
 //! - a shape channel with wide measures
-//! - a log axis with an authored domain, non-positive data, or outside the fit
-//!   arm; a size channel outside the fit arm, on a non-right legend, or with a
-//!   non-numeric value
+//! - a log axis over non-positive data; a size channel on the legacy arm or
+//!   with a non-numeric value
 //! - a mixed numeric/categorical y column
 //! - a nominal x channel together with a nominal y channel (no continuous
 //!   axis left to fit against)
-//! - a categorical x or y outside the fit shape — the legacy arm draws no
-//!   categorical marks
-//! - a non-numeric `sort.by`, or a time `labels.format` on a categorical y
+//! - a non-numeric `sort.by`
 //! - `wide_measures` (`y: [a, b]`) together with an authored `color:`
 //!   dimension, or with a `size` channel — neither combination reaches the
 //!   corpus, unlike bar's/line's own wide-measure ports
@@ -44,7 +41,7 @@ use serde_json::Value;
 use crate::common::color_domain_of;
 use crate::common::{
     format_y_label, row_num, row_str, symbol_radius, AxisStyle, ChartSort, Font,
-    FormatSlot, SortDir, StyleChannel, TitleStyle,
+    FormatSlot, StyleChannel, TitleStyle,
 };
 use crate::families::cartesian::LinearScale;
 use crate::families::facet_compose::{self, GhostStyle, PanelGeometry, PanelXAxis};
@@ -53,7 +50,6 @@ use crate::families::color_scale::{tick_precision, ContinuousColor, GradientAt};
 use crate::families::legend;
 use crate::families::facet_title::{layout_title, TitleLayout, TitleSource};
 use crate::families::multiples;
-use crate::families::scatter_axis::TemporalXAxis;
 use crate::families::legend::{size_legend_grid, stack_legends, VEGA_LEGEND_OFFSET, VEGA_LEGEND_TITLE_PADDING};
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::svg::{py_float_str, xml_escape, xml_escape_attr, vega_escape_attr};
@@ -67,6 +63,73 @@ use crate::Payload;
 /// x and y each collapse to the same one representation before a point is
 /// built, so nothing downstream re-derives a scale.
 type PointDatum<'a> = (f64, f64, String, f64, &'a serde_json::Map<String, Value>);
+
+/// The x scale's ticks and per-kept-row points, as fractions of a plot
+/// `pw` wide.
+struct XFrame {
+    ticks: Vec<f64>,
+    labels: Vec<String>,
+    points: Vec<f64>,
+    /// The x threshold rules (`datum: 0`, `datum: 1`) that fired, where they land.
+    rules: [Option<f64>; 2],
+}
+
+/// A linear quantitative x scale. Vega pads the raw domain by `pad` pixels
+/// (`padDomain`), rounds the result out when `nice`, and ticks it.
+#[derive(Clone)]
+struct LinearX {
+    /// The authored pair verbatim, else the data extent joined to zero.
+    raw: (f64, f64),
+    nice: bool,
+    pad: f64,
+    tick_count: usize,
+    /// The authored label format; unset, d3's default tick format.
+    format: Option<String>,
+    /// The `datum` of each threshold rule that fires.
+    rule_datums: [Option<f64>; 2],
+}
+
+impl LinearX {
+    /// The scale's domain on a plot `pw` wide.
+    fn domain_at(&self, pw: f64) -> (f64, f64) {
+        let (lo, hi) = vega_fit::pad_domain(self.raw, pw, self.pad);
+        if !self.nice {
+            (lo, hi)
+        } else if lo > hi {
+            let (nice_hi, nice_lo) = d3rs::ticks::d3_nice(hi, lo, 10);
+            (nice_lo, nice_hi)
+        } else {
+            d3rs::ticks::d3_nice(lo, hi, 10)
+        }
+    }
+
+    fn frac(domain: (f64, f64), v: f64) -> f64 {
+        (v - domain.0) / (domain.1 - domain.0)
+    }
+
+    /// Ticks, labels and rules at plot width `pw`.
+    fn at(&self, pw: f64) -> Result<(Vec<f64>, Vec<String>, [Option<f64>; 2], (f64, f64)), String> {
+        let domain = self.domain_at(pw);
+        let values = d3rs::ticks::d3_ticks(domain.0, domain.1, self.tick_count);
+        let default_spec;
+        let spec = match &self.format {
+            Some(spec) => spec.as_str(),
+            // d3's `tickFormat` default: comma-grouped fixed point at the
+            // precision the tick step implies.
+            None => {
+                let step = d3rs::ticks::d3_tick_step(domain.0, domain.1, self.tick_count);
+                default_spec = format!(",.{}f", tick_precision(step));
+                &default_spec
+            }
+        };
+        let labels = values
+            .iter()
+            .map(|&tv| crate::number_locale::d3_format(spec, tv).map_err(|e| format!("scatter x label format: {e}")))
+            .collect::<Result<_, _>>()?;
+        let ticks = values.iter().map(|&tv| Self::frac(domain, tv)).collect();
+        Ok((ticks, labels, self.rule_datums.map(|d| d.map(|datum| Self::frac(domain, datum))), domain))
+    }
+}
 
 #[derive(Deserialize)]
 struct ScatterResolved {
@@ -236,7 +299,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     let payload_wide;
     let mut wide_series: Vec<String> = Vec::new();
     let payload: &Payload = if !r.wide_measures.is_empty() {
-        let wide_labels = display_text::wide_measure_labels_for(&r.wide_measures, &r.field_labels);
+        let wide_labels = display_text::wide_measure_labels_for(&r.wide_measures, &r.field_labels)?;
         let mut fold_order = r.wide_measures.clone();
         fold_order.sort();
         let dimension = r.color.clone();
@@ -280,11 +343,9 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     // The fit path models production's compiled shape: a single unit spec
     // under `autosize: fit` with a right y axis — the measure ladder, or a
     // point scale when y is categorical (production's dot plot).
-    // Everything else — a left y axis, a non-right legend, authored point
-    // value labels, an x axis without an authored label format, an
-    // authored x scale transform (a non-linear scale type, an authored
-    // domain, nice:false, padding) or an unbaked measure ladder — keeps the
-    // legacy heuristic margins.
+    // A numeric x against a numeric y that the legacy arm also draws keeps the
+    // legacy heuristic margins beside a left y axis, a non-right legend, an x
+    // axis without an authored label format or an authored x scale.
     //
     // A column types the way production's `infer_vega_type_from_data` reads
     // it: its first ten cells decide, so a quantitative column drops a later
@@ -324,9 +385,6 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     if !wide_series.is_empty() && !x_nominal {
         return Err("scatter: wide_measures with a quantitative or date x is not supported".into());
     }
-    if labels_on && !wide_series.is_empty() {
-        return Err("scatter: point value labels with wide_measures are not supported".into());
-    }
     let any_legend_shown = (r.color.is_some() || r.size.is_some()) && r.legend.visible;
     let ax_x = &r.style.axis_x;
     let x_cont = ax_x.scale.get("continuous");
@@ -340,57 +398,76 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         && x_scale_plain;
     let x_log = ax_x.is_quantitative && ax_x.is_log_scale();
     let y_nominal = !y_numeric;
-    for (axis, field, nominal) in [("x", &r.x, x_nominal), ("y", &r.y, y_nominal)] {
-        let kept_null_category = payload.rows.iter().any(|row| {
-            row.get(field).is_none_or(Value::is_null)
-                && kept_reading(row, &r, x_nominal, x_dates, y_nominal).is_some()
-        });
-        if nominal && kept_null_category {
-            return Err(format!(
-                "scatter: a null category {axis} is not supported — Vega-Lite's invalid filter \
-                 reads quantitative and temporal fields only, so the row stays under a `null` band"
-            ).into());
-        }
-    }
-    if y_nominal && r.style.axis_y.labels.spec().is_some_and(crate::families::temporal::is_time_format) {
-        // Production routes a time format on a categorical axis to a UTC
-        // labelExpr that relabels every band (`emitters/scatter.py`); every
-        // other format it simply drops, which is what rendering the raw
-        // category strings already does.
-        return Err("scatter: a time `labels.format` on a categorical y is not \
-                    supported — production relabels every band through a UTC \
-                    labelExpr"
-            .into());
+    // A time spec on a categorical y paints through a UTC labelExpr over date
+    // bands (`emitters/scatter.py`); over any other value `gate_label_format`
+    // raises instead of painting "Invalid Date".
+    if let Some(spec) = r.style.axis_y.labels.spec().filter(|s| y_nominal && crate::families::temporal::is_time_format(s)) {
+        crate::families::cartesian_x_errors::time_format(spec, "axis_y.labels.format", &r.y, &payload.rows, None)?;
     }
     let y_log = r.style.axis_y.is_log_scale();
     // A log axis is never baked (`_resolve_cartesian_ticks` returns no
     // ladder for it): its ticks come from the scale itself.
+    // An independent facet scale is never baked: each panel draws Vega's own ticks.
+    let independent_facet = r.multiples.as_ref().is_some_and(|m| m.scale == "independent");
     let y_measure =
-        y_numeric && (!r.style.axis_y.tick_values.is_empty() || y_log);
-    if (y_log || x_log) && r.multiples.is_some() {
-        return Err("scatter: multiples with a log axis not supported".into());
+        y_numeric && (!r.style.axis_y.tick_values.is_empty() || y_log || independent_facet);
+    let ax_y_position = r.style.axis_y.position.as_deref();
+    // The fit arm places a linear x (domain, nice and padding included) and a
+    // log one (domain and nice; its format is the author's).
+    let x_scale_linear = x_cont.and_then(|c| c.get("type")).and_then(Value::as_str).is_none_or(|t| t == "linear");
+    let x_scale_drawn = x_scale_linear
+        || x_log && ax_x.labels.format.is_some() && ax_x.scale.get("padding").and_then(Value::as_f64).unwrap_or(0.0) == 0.0;
+    // The legacy arm draws a numeric x against a numeric y with a color or
+    // shape channel; everything else needs the fit arm.
+    let legacy_draws = !(x_nominal || x_dates || y_nominal)
+        && r.multiples.is_none()
+        && wide_series.is_empty()
+        && !labels_on
+        && r.style.point_mark.filled != Some(false)
+        && r.style.point_mark.shape.is_none()
+        && !x_log
+        && !y_log;
+    // The fit arm places an x left to right, unrounded.
+    if !legacy_draws {
+        for key in ["x_reverse", "round"] {
+            if ax_x.scale.get(key).and_then(Value::as_bool) == Some(true) {
+                return Err(format!("scatter: scale.{key} on the placed x axis is not supported").into());
+            }
+        }
     }
-    if r.multiples.is_some() {
+    // A facet draws its x through `PlainXAxis`, which places a linear or log x
+    // the single chart's fit arm places; any other scale refuses below.
+    if r.multiples.is_some() && (!x_numeric || x_scale_drawn) {
         return render_facet(
             payload,
             fonts,
             &r,
             FacetShape {
                 x_dates,
-                x_scale_untouched,
                 x_nominal,
                 y_nominal,
                 y_measure,
-                labels_on,
             },
         );
     }
-    let use_vega_fit = (x_numeric || x_nominal || x_dates)
-        && (y_nominal || y_measure)
-        && r.style.axis_y.position.as_deref() == Some("right")
-        && (x_nominal
-            || x_dates && x_scale_untouched
-            || (ax_x.labels.format.is_some() && (x_scale_untouched || x_log && x_scale_plain)));
+    // The fit arm takes what the legacy arm also draws only beside an authored
+    // x label format and an untouched x scale; every other shape it places
+    // itself.
+    let x_placed = if legacy_draws {
+        ax_x.labels.format.is_some() && x_scale_untouched
+    } else {
+        x_nominal || x_dates || x_scale_drawn
+    };
+    // A ladder production leaves unbaked is Vega's own ticks, which the fit
+    // arm draws for the shapes only it draws.
+    let fit_shape = (x_numeric || x_nominal || x_dates)
+        && (y_nominal || y_measure || y_numeric && !legacy_draws)
+        && x_placed;
+    // A mirrored left axis puts its ghost on the right, which only the legacy
+    // arm's own refusal names.
+    let mirror_left = ax_y_position == Some("left") && r.style.axis_y.mirror_requested("scatter")?;
+    let use_vega_fit = fit_shape
+        && (ax_y_position == Some("right") || ax_y_position == Some("left") && !legacy_draws && !mirror_left);
 
     // The legacy arm's `has_legend` reads the right edge alone and draws one
     // measured column: any other placement, a floating one, a slid one, and a
@@ -407,66 +484,21 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     if any_legend_shown && !use_vega_fit {
         legend::refuse_legacy_columns("scatter", &r.legend)?;
     }
-    if labels_on {
-        let ml = r.style.point_mark.labels.as_ref().expect("labels_on implies labels");
-        if ml.field.is_some() {
-            return Err("scatter: point value labels over another field are not supported".into());
-        }
-        if ml.position.as_deref().is_some_and(|p| p != "top") {
-            return Err("scatter: point value labels at a position other than top are not supported".into());
-        }
-        if y_nominal {
-            return Err("scatter: point value labels on a categorical y are not supported".into());
-        }
-        if r.color.is_some() || r.size.is_some() || r.shape.is_some() {
-            return Err("scatter: point value labels beside a color, size or shape channel are not supported".into());
-        }
-    }
-    // The legacy arm would leak the synthetic `WIDE_VALUE_FIELD`/
-    // `WIDE_LABEL_FIELD` names as titles.
-    if r.style.point_mark.filled == Some(false) && !use_vega_fit {
-        return Err("scatter: unfilled point marks outside production's fit shape (a right y axis, an \
-                    untouched x scale) are not supported"
-            .into());
-    }
-    if r.style.point_mark.shape.is_some() && !use_vega_fit {
-        return Err("scatter: an authored point shape outside production's fit shape (a right y axis, an \
-                    untouched x scale) is not supported"
-            .into());
-    }
-    if !wide_series.is_empty() && !use_vega_fit {
-        return Err("scatter: wide_measures outside production's fit shape (a right y axis, an \
-                    untouched x scale) are not supported"
-            .into());
-    }
-    if labels_on && !use_vega_fit {
-        return Err("scatter: point value labels outside production's fit shape (a right y axis, \
-                    an untouched x scale) are not supported"
-            .into());
-    }
-    if (y_log || x_log) && !use_vega_fit {
-        return Err("scatter: a log axis outside production's fit shape (a right y axis, a \
-                    right legend, an authored x label format, an untouched x scale) is not \
-                    supported"
-            .into());
-    }
     if use_vega_fit {
-        Ok(render_fit(payload, fonts, &r, y_nominal, x_nominal, x_dates, &wide_series, None).map(|(svg, _)| svg)?)
-    } else if x_dates {
-        // The legacy arm's point loop reads a numeric x, so a date x would
-        // draw no marks at all.
-        Err("scatter: a date x outside production's fit shape (a right y axis, a right \
-             legend, an untouched x scale) is not supported"
-            .into())
-    } else if y_nominal || x_nominal {
-        // The legacy arm's point loop reads a numeric x and y, so it would
-        // draw no marks and no category labels at all.
-        Err("scatter: a dot/band plot outside production's fit shape (a right y axis, a \
-             right legend, an authored x label format, an untouched x scale) is not \
-             supported"
-            .into())
-    } else {
+        Ok(render_fit(payload, fonts, &r, y_nominal, x_nominal, x_dates, &wide_series, None, None).map(|(svg, _)| svg)?)
+    } else if (legacy_draws || mirror_left) && r.multiples.is_none() {
         Ok(render_legacy(payload, fonts, &r)?)
+    } else {
+        // A shape only the fit arm draws, over an x scale it does not place.
+        if x_log {
+            return Err(format!(
+                "scatter: a log x axis {:?} with no authored label format or with scale.padding is not supported",
+                r.x
+            )
+            .into());
+        }
+        refuse_reshaped_scale(&r.style.axis_x, &r.x, "fit")?;
+        unreachable!("resolve bakes axis_y.position as left or right, got {ax_y_position:?}")
     }
 }
 
@@ -683,12 +715,12 @@ fn paint_rule_point(
     at: (f64, f64),
     (shape_field, aria, layer): (&str, Option<&String>, usize),
     (color, width): (&str, f64),
-) {
+) -> Result<(), String> {
     let rr = crate::common::symbol_radius(RULE_POINT_SIZE);
     let point_aria = aria.map(|a| format!("{a}; {shape_field}: undefined"));
-    let point_label = crate::contract::aria_attr(point_aria.as_deref(), crate::contract::ItemRole::Point);
+    let point_label = crate::contract::aria_attr(point_aria.as_deref(), crate::contract::ItemRole::Point)?;
     if point_aria.is_some() {
-        crate::contract::mark_group_open(svg, "symbol", &format!("layer_{layer}_layer_1_marks"));
+        crate::contract::mark_group_open(svg, "symbol", &format!("layer_{layer}_layer_1_marks"))?;
     }
     let _ = write!(
         svg,
@@ -702,6 +734,7 @@ fn paint_rule_point(
     if point_aria.is_some() {
         crate::contract::mark_group_close(svg);
     }
+    Ok(())
 }
 
 /// One mark's glyph at radius `radius`: its shape category's symbol, else the
@@ -754,6 +787,7 @@ struct LegendStack {
 /// default `tickCount` (`:304`), so `count` is the axis's own `tickCount`
 /// (the x axis's baked 6) or d3's unset-count default of 10 (a log y axis
 /// carries no baked ladder).
+#[derive(Clone)]
 struct LogAxis {
     lo: f64,
     hi: f64,
@@ -766,42 +800,56 @@ impl LogAxis {
         if data_min <= 0.0 {
             return Err("scatter: a log axis needs strictly positive data".into());
         }
+        // The authored pair reaches Vega verbatim, so a descending one keeps its
+        // order and inverts the axis; resolve rejects a non-positive bound. Only
+        // an authored `nice` rounds it out to powers of ten.
         let (lo, hi) = match ax.authored_continuous_domain() {
-            // The pair reaches Vega verbatim; only an authored `nice` rounds it
-            // out to powers of ten.
             Some((lo, hi)) => {
-                if lo <= 0.0 || hi <= lo {
-                    return Err(format!(
-                        "scatter: the authored domain [{lo}, {hi}] on a log axis must be positive and ascending; anything else is not supported"
-                    ));
-                }
-                if data_min < lo || data_max > hi {
+                let (floor, ceil) = (lo.min(hi), lo.max(hi));
+                if data_min < floor || data_max > ceil {
                     return Err(format!(
                         "scatter: data [{data_min}, {data_max}] lies outside the authored log domain \
                          [{lo}, {hi}], which this arm does not model"
                     ));
                 }
-                if ax.scale.get("nice").and_then(Value::as_bool) == Some(true) {
-                    crate::families::cartesian::log_nice_domain(lo, hi)
+                let (floor, ceil) = if ax.scale.get("nice").and_then(Value::as_bool) == Some(true) {
+                    crate::families::cartesian::log_nice_domain(floor, ceil)
                 } else {
-                    (lo, hi)
-                }
+                    (floor, ceil)
+                };
+                if lo <= hi { (floor, ceil) } else { (ceil, floor) }
             }
+            None if ax.scale.get("nice").and_then(Value::as_bool) == Some(false) => (data_min, data_max),
             None => crate::families::cartesian::log_nice_domain(data_min, data_max),
         };
-        let ticks = crate::families::cartesian::log_ticks(lo, hi, count);
-        let mantissa_visible = crate::families::cartesian::log_tick_mantissa_visible(&ticks, count);
+        // d3 hands a descending domain's ticks back reversed, and labelOverlap
+        // walks them in that order.
+        let mut ticks = crate::families::cartesian::log_ticks(lo.min(hi), lo.max(hi), count);
+        let mut mantissa_visible = crate::families::cartesian::log_tick_mantissa_visible(&ticks, count);
+        if hi < lo {
+            ticks.reverse();
+            mantissa_visible.reverse();
+        }
         Ok(Self { lo, hi, ticks, mantissa_visible })
     }
 
     /// The value's fraction of the plot height from the top.
     fn frac_from_top(&self, v: f64) -> f64 {
-        (self.hi.ln() - v.ln()) / (self.hi.ln() - self.lo.ln())
+        self.span_frac(self.hi.ln() - v.ln())
     }
 
     /// The value's fraction of the plot width from the left.
     fn frac_from_left(&self, v: f64) -> f64 {
-        (v.ln() - self.lo.ln()) / (self.hi.ln() - self.lo.ln())
+        self.span_frac(v.ln() - self.lo.ln())
+    }
+
+    /// `offset` as a fraction of the domain's log span; d3 centers every value
+    /// of a degenerate domain.
+    fn span_frac(&self, offset: f64) -> f64 {
+        if self.lo == self.hi {
+            return 0.5;
+        }
+        offset / (self.hi.ln() - self.lo.ln())
     }
 }
 
@@ -822,6 +870,15 @@ fn log_label_visible(
     visible
 }
 
+/// A category's text on an axis or tooltip: Vega stringifies a null category
+/// as `null`.
+fn category_text(row: &serde_json::Map<String, Value>, field: &str) -> String {
+    match row.get(field) {
+        None | Some(Value::Null) => "null".to_string(),
+        Some(_) => row_str(row, field),
+    }
+}
+
 /// Vega's point-scale domain for a categorical channel: the distinct values
 /// in the order the compiled scale builds them. An authored `sort` compiles
 /// to `{op: "min", field, order}` over the UNFILTERED rows (`source_0`) and
@@ -839,7 +896,7 @@ fn point_scale_domain(
     };
     let mut domain: Vec<String> = Vec::new();
     for row in &source {
-        let value = row_str(row, field);
+        let value = category_text(row, field);
         if !domain.contains(&value) {
             domain.push(value);
         }
@@ -847,51 +904,20 @@ fn point_scale_domain(
     let Some(sort) = sort else {
         let mut by_label: Vec<Value> = Vec::with_capacity(domain.len());
         for category in &domain {
-            let row = source.iter().find(|row| row_str(row, field) == *category).expect("domain built from source");
-            by_label.push(row.get(field).filter(|v| !v.is_null()).cloned().unwrap_or_else(|| Value::String(String::new())));
+            let row = source.iter().find(|row| category_text(row, field) == *category).expect("domain built from source");
+            by_label.push(row.get(field).cloned().unwrap_or(Value::Null));
         }
         let ordered = crate::common::vega_ascending_sort(by_label).map_err(|e| format!("scatter: {e}"))?;
         return Ok(ordered
             .iter()
             .map(|v| match v {
                 Value::String(s) => s.clone(),
+                Value::Null => "null".to_string(),
                 other => other.to_string(),
             })
             .collect());
     };
-    let mut keyed: Vec<(String, f64)> = Vec::with_capacity(domain.len());
-    for category in domain {
-        let mut key: Option<f64> = None;
-        for row in &source {
-            if row_str(row, field) != category {
-                continue;
-            }
-            // `min` skips nulls, as production's bar sort does.
-            if matches!(row.get(&sort.by), None | Some(Value::Null)) {
-                continue;
-            }
-            let Some(value) = row_num(row, &sort.by) else {
-                return Err(format!(
-                    "scatter: sort by {:?} is not supported — Vega's `min` over \
-                     non-numeric values is not ported",
-                    sort.by
-                ));
-            };
-            key = Some(key.map_or(value, |k| k.min(value)));
-        }
-        // A category with no value at all ranks below every number, which
-        // Vega's comparator puts first ascending and last descending.
-        keyed.push((category, key.unwrap_or(f64::NEG_INFINITY)));
-    }
-    keyed.sort_by(|a, b| {
-        let ord = a.1.total_cmp(&b.1);
-        if sort.order == SortDir::Desc {
-            ord.reverse()
-        } else {
-            ord
-        }
-    });
-    Ok(keyed.into_iter().map(|(category, _)| category).collect())
+    crate::common::min_ranked_domain(domain, &source, |row| category_text(row, field), sort).map_err(|e| format!("scatter: {e}"))
 }
 
 /// The point mark's size scale range — Vega-Lite's own fixed default for a
@@ -973,31 +999,480 @@ fn drawn_rows<'a>(
         .collect()
 }
 
-/// The distinct dates of the drawn rows, ascending. Production labels a date
-/// axis from a ladder over every row's dates but scales it to the kept rows,
-/// so a date only a dropped row carries would make the two differ; that is
-/// refused rather than drawn from the kept rows alone. Production's ladder
-/// reads every row's dates (`emitters/_cartesian.py:416-418`,
-/// `emitters/_channels.py:1030-1031`); the Vega-Lite filter that drops a row
-/// (`filterinvalid.ts:36-55`) runs after it.
+/// The linear x scale over the data extent `[x_min, x_max]`. An authored pair
+/// reaches Vega verbatim and only an explicit `nice: true` rounds it;
+/// otherwise the scale spans the data joined to zero (unless authored off) and
+/// rounds out unless `nice: false`.
+fn linear_x_scale(r: &ScatterResolved, x_min: f64, x_max: f64, rules: (bool, bool)) -> Result<LinearX, String> {
+    let ax_x = &r.style.axis_x;
+    let authored = ax_x.authored_continuous_domain();
+    let nice = ax_x.scale.get("nice").and_then(Value::as_bool);
+    let (raw, nice) = match authored {
+        Some(pair) => (pair, nice == Some(true)),
+        None => {
+            let raw = if ax_x.is_zero_false() { (x_min, x_max) } else { (x_min.min(0.0), x_max.max(0.0)) };
+            if raw.1 <= raw.0 {
+                return Err("scatter: x domain is degenerate (max ≤ min)".into());
+            }
+            (raw, nice != Some(false))
+        }
+    };
+    Ok(LinearX {
+        raw,
+        nice,
+        pad: ax_x.scale.get("padding").and_then(Value::as_f64).unwrap_or(0.0),
+        tick_count: ax_x.ticks.count.unwrap_or(6.0) as usize,
+        format: ax_x.labels.spec().map(str::to_string),
+        rule_datums: [(0.0, rules.0), (1.0, rules.1)].map(|(datum, fires)| fires.then_some(datum)),
+    })
+}
+
+/// A log x axis over the data extent, with each tick's label: the authored
+/// format, blank on a rung d3 drops the mantissa of.
+fn log_x_axis(ax_x: &AxisStyle, x_min: f64, x_max: f64) -> Result<(LogAxis, Vec<String>), String> {
+    let x_tick_count = ax_x.ticks.count.unwrap_or(6.0) as usize;
+    let ladder = LogAxis::new(ax_x, x_min, x_max, x_tick_count)?;
+    let x_fmt = ax_x.labels.spec().expect("gated: fit path requires an authored x label format");
+    let labels = ladder
+        .ticks
+        .iter()
+        .enumerate()
+        .map(|(i, &tv)| {
+            if ladder.mantissa_visible[i] {
+                crate::number_locale::d3_format(x_fmt, tv).map_err(|e| format!("scatter x label format: {e}"))
+            } else {
+                Ok(String::new())
+            }
+        })
+        .collect::<Result<_, String>>()?;
+    Ok((ladder, labels))
+}
+
+/// d3's point-scale positions of `n` categories as fractions of the plot
+/// width: `step = 1 / max(1, n - 1 + 2·padding)` with d3's default
+/// `align: 0.5`. The theme bakes `axis_x.scale.padding: 0`; unlike y's dot
+/// plot, which keeps VL's own raw default of 0.5.
+fn point_x_fracs(ax_x: &AxisStyle, n: usize) -> Vec<f64> {
+    let n = n as f64;
+    let padding = point_x_padding(ax_x);
+    let step = 1.0 / (n - 1.0 + 2.0 * padding).max(1.0);
+    let start_adj = (1.0 - step * (n - 1.0)) * 0.5;
+    (0..n as usize).map(|i| start_adj + step * i as f64).collect()
+}
+
+fn point_x_padding(ax_x: &AxisStyle) -> f64 {
+    ax_x.scale.get("padding").and_then(Value::as_f64).unwrap_or(0.5)
+}
+
+/// What `paint_plain_x_axis` draws: the ticks (plot-width fractions) and labels
+/// of a categorical or numeric x axis against a plot at `plot_left` whose
+/// bottom edge is `plot_bottom`.
+struct PlainXPaint<'a> {
+    ax_x: &'a AxisStyle,
+    ticks: &'a [f64],
+    labels: &'a [String],
+    plot_left: f64,
+    plot_w: f64,
+    plot_bottom: f64,
+    angle: f64,
+    align: &'a str,
+    baseline: &'a str,
+    /// A continuous scale flushes its end labels; a point scale centers every one.
+    flush: bool,
+    /// Where a point scale's labels sit against the axis group's crisp half
+    /// pixel: a single chart paints them past it, a facet's footer on the band
+    /// center (`scale(d) - 0.5` under it).
+    point_label_crisp: f64,
+    title: &'a str,
+    title_key: Option<crate::contract::LabelKey>,
+}
+
+/// A categorical or numeric x axis: ticks, labels and title, painted in a
+/// single chart's plot group or a facet's footer band.
+fn paint_plain_x_axis(svg: &mut String, p: &PlainXPaint, fonts: &FontBook) -> Result<(), String> {
+    let ax_x = p.ax_x;
+    let x_font_size = ax_x.labels.font.size_or(11.0);
+    let x_family = ax_x.labels.font.family_or("sans-serif");
+    let x_label_pad = ax_x.labels.padding.unwrap_or(6.0);
+    let x_axis_drop = ax_x.ticks.offset.unwrap_or(0.0) + 0.5;
+    let x_ticks_visible = ax_x.ticks.visible.unwrap_or(true);
+    let x_tick_len = ax_x.ticks.length.unwrap_or(6.0);
+    let x_tick_eff = if x_ticks_visible { x_tick_len } else { 0.0 };
+    let x_limit = ax_x.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
+    let (plot_left, plot_w, plot_bottom) = (p.plot_left, p.plot_w, p.plot_bottom);
+    let x_pos = |frac: f64| frac * plot_w;
+    let label_crisp = if p.flush { 0.5 } else { p.point_label_crisp };
+    crate::contract::axis_group_open(svg, crate::contract::AxisChannel::X, (plot_left + 0.5, plot_bottom + x_axis_drop))?;
+    if x_ticks_visible {
+        let tc = crate::common::required_ink(ax_x.ticks.color.as_deref(), "scatter", "axis_x.ticks.color")?;
+        let tw = ax_x.ticks.width.unwrap_or(1.0);
+        for &frac in p.ticks {
+            let gx = plot_left + x_pos(frac).round() + 0.5;
+            let _ = write!(
+                svg,
+                "<line x1=\"{gx:.3}\" y1=\"{:.3}\" x2=\"{gx:.3}\" y2=\"{:.3}\" \
+                 stroke=\"{tc}\" stroke-width=\"{tw}\"/>",
+                plot_bottom + x_axis_drop,
+                plot_bottom + x_axis_drop + x_tick_len, tc = xml_escape_attr(tc)
+            );
+        }
+    }
+    let x_label_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
+    let x_label_weight = ax_x.labels.font.weight_str();
+    if p.angle != 0.0 {
+        // Vega's SVG text transform for a rotated item: translate to the
+        // anchor, rotate, then the baseline shift — bar's own
+        // `BandXAxis::paint` rotated arm (`bar.rs`), reused verbatim.
+        let anchor_y = plot_bottom + x_axis_drop + x_tick_eff + x_label_pad;
+        let dy = vega_fit::baseline_shift(p.baseline, x_font_size);
+        let text_anchor = match p.align {
+            "left" => "start",
+            "right" => "end",
+            _ => "middle",
+        };
+        for (&frac, lbl) in p.ticks.iter().zip(p.labels) {
+            let pos = plot_left + x_pos(frac) + label_crisp;
+            let _ = write!(
+                svg,
+                "<text text-anchor=\"{text_anchor}\" transform=\"translate({pos:.3},{anchor_y:.3}) \
+                 rotate({}) translate(0,{dy:.3})\" \
+                 font-family=\"{}\" font-size=\"{x_font_size}\" \
+                 font-weight=\"{x_label_weight}\" fill=\"{x_label_color}\">{}</text>",
+                p.angle,
+                vega_escape_attr(x_family),
+                xml_escape(lbl), text_anchor = xml_escape_attr(text_anchor), x_label_weight = xml_escape_attr(&x_label_weight), x_label_color = xml_escape_attr(x_label_color)
+            );
+        }
+    } else {
+        let x_label_y = plot_bottom + x_axis_drop + x_tick_eff + x_label_pad + vega_fit::baseline_shift("top", x_font_size);
+        let x_flush_align = |pos: f64, pw: f64| {
+            if !p.flush {
+                "center"
+            } else if pos <= 1.0 {
+                "left"
+            } else if pos >= pw - 1.0 {
+                "right"
+            } else {
+                "center"
+            }
+        };
+        let x_log_visible = (ax_x.is_quantitative && ax_x.is_log_scale()).then(|| {
+            let widths: Result<Vec<f64>, String> =
+                p.labels.iter().map(|lbl| fonts.measure(lbl, x_family, x_font_size)).collect();
+            let widths = widths?;
+            Ok::<Vec<bool>, String>(log_label_visible(p.labels, ax_x.labels.min_gap.unwrap_or(0.0), |i| {
+                let pos = p.ticks[i] * plot_w;
+                vega_fit::text_ink(
+                    pos,
+                    plot_bottom + x_axis_drop + x_tick_eff + x_label_pad,
+                    widths[i].min(x_limit),
+                    x_font_size,
+                    x_flush_align(pos, plot_w),
+                    "top",
+                )
+            }))
+        });
+        let x_log_visible = x_log_visible.transpose()?;
+        for (i, (&frac, lbl)) in p.ticks.iter().zip(p.labels).enumerate() {
+            if x_log_visible.as_ref().is_some_and(|v| !v[i]) {
+                continue;
+            }
+            let pos = plot_left + x_pos(frac) + label_crisp;
+            let anchor = if !p.flush {
+                "middle"
+            } else if pos - plot_left - label_crisp <= 1.0 {
+                "start"
+            } else if pos - plot_left - label_crisp >= plot_w - 1.0 {
+                "end"
+            } else {
+                "middle"
+            };
+            let _ = write!(
+                svg,
+                "<text x=\"{pos:.3}\" y=\"{x_label_y:.3}\" text-anchor=\"{anchor}\" \
+                 font-family=\"{}\" font-size=\"{x_font_size}\" \
+                 font-weight=\"{x_label_weight}\" fill=\"{x_label_color}\">{}</text>",
+                vega_escape_attr(x_family),
+                xml_escape(lbl), anchor = xml_escape_attr(anchor), x_label_weight = xml_escape_attr(&x_label_weight), x_label_color = xml_escape_attr(x_label_color)
+            );
+        }
+    }
+
+    let x_title_band = crate::common::axis_title_band(&ax_x.title, p.title);
+    if p.angle != 0.0 && x_title_band > 0.0 {
+        // Vega's `axisTitleLayout` offsets the title by the label ink's reach past
+        // the pivot plus `titlePadding`, read from `rotated_category_label_ink`.
+        let anchor_y = plot_bottom + x_axis_drop + x_tick_eff + x_label_pad;
+        let reach = p.labels.iter().try_fold(0.0_f64, |acc, lbl| {
+            let w = fonts.measure_shaped(lbl, x_family, x_font_size)?.min(x_limit);
+            let ink = crate::common::rotated_category_label_ink(0.0, 0.0, w, x_font_size, p.align, p.baseline, p.angle, false);
+            Ok::<f64, String>(acc.max(ink.y2))
+        })?;
+        let title_fs = ax_x.title.font.size_or(11.0);
+        let title_padding = ax_x.title.padding.unwrap_or(10.0);
+        let title_y = anchor_y + reach + title_padding + vega_fit::baseline_shift("top", title_fs);
+        crate::common::emit_axis_title_at(svg, p.title, &ax_x.title, plot_left + plot_w / 2.0, title_y, p.title_key);
+    } else {
+        let x_label_baseline = plot_bottom + x_axis_drop + x_tick_eff + x_label_pad + vega_fit::baseline_shift("top", x_font_size);
+        crate::common::emit_axis_title_bottom(svg, p.title, &ax_x.title, plot_left + plot_w / 2.0, x_label_baseline, x_font_size, p.title_key);
+    }
+    crate::contract::axis_group_close(svg);
+    Ok(())
+}
+
+/// A facet's shared categorical or numeric x axis, painted once below the last
+/// row: one axis for the whole chart, laid out against every row's data.
+#[derive(Clone)]
+pub(crate) struct PlainXAxis {
+    scale: PlainXScale,
+    angle: f64,
+    align: &'static str,
+    baseline: &'static str,
+    title: String,
+    /// How far a label's ink reaches left of the plot origin, at the plot
+    /// width `sized_for` measured it against.
+    left_reach: f64,
+    /// How far a rotated label column reaches below the plot bottom.
+    rotated_reach: Option<f64>,
+}
+
+#[derive(Clone)]
+enum PlainXScale {
+    /// A point scale over the sorted distinct categories.
+    Point { domain: Vec<String>, fracs: Vec<f64> },
+    Linear(LinearX),
+    Log { ladder: LogAxis, labels: Vec<String> },
+}
+
+impl PlainXAxis {
+    /// The axis over the rows Vega keeps, its categories' tilt decided against
+    /// `crowd_w`, the width production's crowding pass measures.
+    fn resolve(
+        r: &ScatterResolved,
+        all_rows: &[serde_json::Map<String, Value>],
+        drawn: &[&serde_json::Map<String, Value>],
+        fires: &RuleFires,
+        crowd_w: f64,
+        title: String,
+        mirrored: bool,
+        fonts: &FontBook,
+    ) -> Result<Self, String> {
+        let ax_x = &r.style.axis_x;
+        let mut axis = Self {
+            scale: PlainXScale::Linear(LinearX {
+                raw: (0.0, 1.0),
+                nice: false,
+                pad: 0.0,
+                tick_count: 0,
+                format: None,
+                rule_datums: [None, None],
+            }),
+            angle: 0.0,
+            align: "center",
+            baseline: "top",
+            title,
+            left_reach: 0.0,
+            rotated_reach: None,
+        };
+        if infer_vega_type(all_rows, &r.x) != VegaType::Quantitative {
+            let kept: Vec<(f64, &serde_json::Map<String, Value>)> = drawn.iter().map(|&row| (0.0, row)).collect();
+            let domain = point_scale_domain(all_rows, &kept, &r.x, None)?;
+            // The mirror ghost's invisible rule mark shares the x field and turns
+            // the point scale into a band scale: marks sit at the band centers.
+            let fracs = if mirrored {
+                let padding = point_x_padding(ax_x);
+                let band = crate::families::cartesian::BandGeometry::new(domain.len(), 0.0, 1.0, padding, padding);
+                (0..domain.len()).map(|i| band.edge(i, 0.5)).collect()
+            } else {
+                point_x_fracs(ax_x, domain.len())
+            };
+            // An authored `labels.angle` short-circuits the crowding ladder.
+            let layout = match ax_x.labels.angle {
+                Some(angle) => vega_fit::CategoryLabels { angle, collision: None },
+                None => vega_fit::category_label_layout(
+                    &ax_x.labels,
+                    &domain,
+                    crowd_w,
+                    r.style.label_usable_ratio,
+                    fonts,
+                    ax_x.labels.font.size_or(11.0),
+                )?,
+            };
+            if let Some(label_count) = layout.collision {
+                crate::families::cartesian::warn_axis_label_collision(&r.id, &r.x, label_count);
+            }
+            axis.angle = vega_fit::normalize_angle(layout.angle);
+            (axis.align, axis.baseline) =
+                if axis.angle == 0.0 { ("center", "top") } else { vega_fit::vl_x_label_anchor(axis.angle, true) };
+            axis.scale = PlainXScale::Point { domain, fracs };
+            return Ok(axis);
+        }
+        let (x_min, x_max) = column_extent(drawn.iter().copied(), &r.x);
+        axis.scale = if ax_x.is_quantitative && ax_x.is_log_scale() {
+            let (ladder, labels) = log_x_axis(ax_x, x_min, x_max)?;
+            PlainXScale::Log { ladder, labels }
+        } else {
+            PlainXScale::Linear(linear_x_scale(r, x_min, x_max, (fires.x_zero, fires.x_unity))?)
+        };
+        Ok(axis)
+    }
+
+    /// The ticks (plot-width fractions), their labels and the threshold rules'
+    /// fractions at a plot `pw` wide.
+    pub(crate) fn ticks_at(&self, pw: f64) -> Result<(Vec<f64>, Vec<String>, [Option<f64>; 2]), String> {
+        match &self.scale {
+            PlainXScale::Point { domain, fracs } => Ok((fracs.clone(), domain.clone(), [None, None])),
+            PlainXScale::Linear(lin) => lin.at(pw).map(|(ticks, labels, rules, _)| (ticks, labels, rules)),
+            PlainXScale::Log { ladder, labels } => Ok((
+                ladder.ticks.iter().map(|&tv| ladder.frac_from_left(tv)).collect(),
+                labels.clone(),
+                [None, None],
+            )),
+        }
+    }
+
+    /// The plot-width fraction one kept row lands on, `xv` its numeric x.
+    pub(crate) fn frac(&self, xv: f64, row: &serde_json::Map<String, Value>, field: &str, pw: f64) -> Result<f64, String> {
+        match &self.scale {
+            PlainXScale::Point { domain, fracs } => {
+                let category = category_text(row, field);
+                domain
+                    .iter()
+                    .position(|d| *d == category)
+                    .map(|i| fracs[i])
+                    .ok_or_else(|| format!("scatter: x value {category:?} is outside the point-scale domain"))
+            }
+            PlainXScale::Linear(lin) => Ok(LinearX::frac(lin.domain_at(pw), xv)),
+            PlainXScale::Log { ladder, .. } => Ok(ladder.frac_from_left(xv)),
+        }
+    }
+
+    /// The axis with its label reaches measured for a plot `pw` wide.
+    pub(crate) fn sized_for(&self, ax_x: &AxisStyle, pw: f64, fonts: &FontBook) -> Result<Self, String> {
+        let mut sized = self.clone();
+        let (ticks, labels, _) = self.ticks_at(pw)?;
+        let (size, family) = (ax_x.labels.font.size_or(11.0), ax_x.labels.font.family_or("sans-serif"));
+        let limit = ax_x.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
+        let mut below = 0.0_f64;
+        for (&frac, label) in ticks.iter().zip(&labels) {
+            let w = fonts.measure_shaped(label, family, size)?.min(limit);
+            if self.angle != 0.0 {
+                let ink = crate::common::rotated_category_label_ink(
+                    frac * pw, 0.0, w, size, self.align, self.baseline, self.angle, false,
+                );
+                sized.left_reach = sized.left_reach.max(-ink.x1);
+                below = below.max(ink.y2);
+            } else if matches!(self.scale, PlainXScale::Point { .. }) {
+                sized.left_reach = sized.left_reach.max(w / 2.0 - frac * pw);
+            }
+        }
+        let tick_eff = if ax_x.ticks.visible.unwrap_or(true) { ax_x.ticks.length.unwrap_or(6.0) } else { 0.0 };
+        sized.rotated_reach = (self.angle != 0.0)
+            .then(|| ax_x.ticks.offset.unwrap_or(0.0) + tick_eff + ax_x.labels.padding.unwrap_or(6.0) + below);
+        Ok(sized)
+    }
+
+    pub(crate) fn label_left_reach(&self) -> f64 {
+        self.left_reach
+    }
+
+    pub(crate) fn rotated_footer_reach(&self) -> Option<f64> {
+        self.rotated_reach
+    }
+
+    pub(crate) fn paint(
+        &self,
+        svg: &mut String,
+        ax_x: &AxisStyle,
+        plot_left: f64,
+        plot_w: f64,
+        plot_bottom: f64,
+        fonts: &FontBook,
+    ) -> Result<(), String> {
+        let (ticks, labels, _) = self.ticks_at(plot_w)?;
+        paint_plain_x_axis(
+            svg,
+            &PlainXPaint {
+                ax_x,
+                ticks: &ticks,
+                labels: &labels,
+                plot_left,
+                plot_w,
+                plot_bottom,
+                angle: self.angle,
+                align: self.align,
+                baseline: self.baseline,
+                flush: !matches!(self.scale, PlainXScale::Point { .. }),
+                point_label_crisp: 0.0,
+                title: &self.title,
+                title_key: None,
+            },
+            fonts,
+        )
+    }
+}
+
+/// The shared x axis a scatter facet's panels place their points against.
+#[derive(Clone, Copy)]
+pub(crate) enum FacetX<'a> {
+    Date(&'a crate::families::scatter_axis::TemporalXAxis),
+    Plain(&'a PlainXAxis),
+}
+
+/// The distinct dates of a date x axis, ascending, as `(ladder, scale)`:
+/// production labels the axis from a ladder over every row's dates
+/// (`emitters/_cartesian.py:416-418`, `emitters/_channels.py:1030-1031`) but
+/// scales it to the rows Vega-Lite keeps (`filterinvalid.ts:36-55` runs after
+/// it), so a date only a dropped row carries labels the axis without ever
+/// placing a mark.
 fn axis_dates(
     rows: &[serde_json::Map<String, Value>],
     drawn: &[&serde_json::Map<String, Value>],
     x_field: &str,
-) -> Result<Vec<String>, String> {
-    let mut dates: Vec<String> = drawn.iter().map(|row| row_str(row, x_field)).collect();
-    dates.sort();
-    dates.dedup();
-    let dropped_only = rows
-        .iter()
-        .map(|row| row_str(row, x_field))
-        .any(|date| !date.is_empty() && dates.binary_search(&date).is_err());
-    if dropped_only {
-        return Err("scatter: a date only dropped rows carry is not supported — production \
-                    labels the axis from every row's dates but scales it to the kept rows"
-            .into());
-    }
-    Ok(dates)
+) -> (Vec<String>, Vec<String>) {
+    let distinct = |mut dates: Vec<String>| {
+        dates.sort();
+        dates.dedup();
+        dates
+    };
+    let ladder = distinct(rows.iter().map(|row| row_str(row, x_field)).filter(|date| !date.is_empty()).collect());
+    let scale = distinct(drawn.iter().map(|row| row_str(row, x_field)).collect());
+    (ladder, scale)
+}
+
+/// A date x axis for the chart's rows, laid out against a plot `slot_w`
+/// wide (the width the ladder's crowding pass measures labels against).
+fn date_axis(
+    payload: &Payload,
+    r: &ScatterResolved,
+    drawn: &[&serde_json::Map<String, Value>],
+    slot_w: f64,
+    title_text: String,
+    title_key: Option<crate::contract::LabelKey>,
+    fonts: &FontBook,
+) -> Result<crate::families::scatter_axis::TemporalXAxis, String> {
+    let usable_ratio = r
+        .style
+        .label_usable_ratio
+        .ok_or("scatter: label_usable_ratio absent (theme required for a date x axis)")?;
+    let (ladder, kept) = axis_dates(&payload.rows, drawn, &r.x);
+    let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
+    let law = crate::families::x_type::resolve_cartesian_x_type(
+        &payload.rows,
+        &r.x,
+        &crate::families::x_type::XAxis::of(&r.style.axis_x),
+        "scatter",
+        false,
+        &panel_fields,
+    )?;
+    crate::families::scatter_axis::TemporalXAxis::resolve(
+        &crate::families::scatter_axis::DateColumn { ladder: &ladder, kept: &kept, law },
+        &r.style.axis_x,
+        slot_w * usable_ratio,
+        title_text,
+        title_key,
+        fonts,
+    )
 }
 
 /// The raw `(min, max)` of a numeric column across every payload row —
@@ -1094,6 +1569,10 @@ struct RuleFires {
 }
 
 impl RuleFires {
+    fn none() -> Self {
+        Self { y_zero: false, y_unity: false, x_zero: false, x_unity: false }
+    }
+
     fn of(r: &ScatterResolved, rows: &[serde_json::Map<String, Value>]) -> Self {
         let (ax_x, ax_y) = (&r.style.axis_x, &r.style.axis_y);
         let (y_min, y_max) = column_extent(rows, &r.y);
@@ -1188,54 +1667,43 @@ impl ScatterResolved {
 /// `multiples` chart to `render_facet`.
 struct FacetShape {
     x_dates: bool,
-    x_scale_untouched: bool,
     x_nominal: bool,
     y_nominal: bool,
     y_measure: bool,
-    labels_on: bool,
 }
 
 /// Small multiples: one fit-arm panel per baked partition cell, composed by
-/// the shared facet composer. Scope: a date x against a measure y on a right
-/// axis, `multiples.scale: "shared"`, a fully populated grid. Every other
-/// shape refuses by name.
+/// the shared facet composer. Scope: a date, category or numeric x against a
+/// measure or categorical y on a right axis. Every other shape refuses by name.
 fn render_facet(payload: &Payload, fonts: &FontBook, r: &ScatterResolved, shape: FacetShape) -> Result<String, Diagnostic> {
     let mc = r.multiples.as_ref().expect("render dispatched on multiples");
     let legend_cfg = &r.legend;
-    if shape.x_nominal {
-        return Err("scatter: multiples with a category x not supported".into());
-    }
-    if !shape.x_dates {
-        return Err("scatter: multiples with a numeric x not supported".into());
-    }
-    if shape.y_nominal {
-        return Err("scatter: multiples with a categorical y not supported".into());
-    }
-    if !shape.y_measure {
+    if !shape.y_nominal && !shape.y_measure {
         return Err("scatter: multiples needs a baked measure y ladder".into());
     }
     if r.style.axis_y.position.as_deref() != Some("right") {
         return Err("scatter: multiples needs a right value axis".into());
     }
-    if !shape.x_scale_untouched {
-        return Err("scatter: multiples with an authored x scale is not supported".into());
-    }
-    if shape.labels_on {
-        return Err("scatter: multiples with point value labels not supported".into());
-    }
     let legend_edge = if (r.color.is_some() || r.size.is_some()) && r.legend.visible {
-        facet_compose::facet_legend_edge("scatter", &r.legend.position)?
+        facet_compose::facet_legend_edge(&r.legend.position)
     } else {
         facet_compose::LegendEdge::Top
     };
-    if mc.scale == "independent" {
-        return Err("scatter: multiples.scale independent not supported yet — only shared".into());
-    }
+    let independent = mc.scale == "independent";
     let ax_y = &r.style.axis_y;
-    if ax_y.domain_min.is_none() || ax_y.domain_max.is_none() || ax_y.authored_continuous_domain().is_some() {
+    // A log axis bakes no domain: its panels share the whole chart's extent
+    // unless the scale is independent, which bakes none either.
+    if !independent
+        && !shape.y_nominal
+        && !ax_y.is_log_scale()
+        && (ax_y.domain_min.is_none() || ax_y.domain_max.is_none() || ax_y.authored_continuous_domain().is_some())
+    {
         return Err("scatter: multiples needs the resolver's baked y domain, not an authored one".into());
     }
     let has_mirror = ax_y.mirror_requested("scatter")?;
+    if independent && has_mirror {
+        return Err(multiples::independent_mirror_error(payload.chart_id()?));
+    }
     if r.panel_axes.is_empty() {
         return Err("scatter: multiples with no baked panel_axes — resolve() should always supply at least one".into());
     }
@@ -1243,32 +1711,47 @@ fn render_facet(payload: &Payload, fonts: &FontBook, r: &ScatterResolved, shape:
     let panels = multiples::regroup(axes, &payload.rows).map_err(|e| format!("scatter: {e}"))?;
     let panel_rows_n = multiples::panel_axis_cardinality(axes, mc.rows.as_deref());
     let panel_cols_n = multiples::panel_axis_cardinality(axes, mc.columns.as_deref());
-    if panels.len() != panel_rows_n * panel_cols_n {
-        return Err("scatter: multiples produced a sparse facet grid — not supported yet, only a fully populated rows x columns grid".into());
-    }
+    let missing = multiples::empty_leading_cells(panels.len(), panel_rows_n, panel_cols_n)?;
     let index_of = |field: &Option<String>| field.as_deref().and_then(|f| axes.iter().position(|a| a.field == f));
 
     // The date axis is resolved once, against the naive per-panel width the
     // emitter's own crowding pass measured (`RenderBox.width`), and shared by
     // every panel and by the composite's footer.
     let drawn = drawn_rows(&payload.rows, r, shape.x_nominal, shape.x_dates, shape.y_nominal);
-    let dates = axis_dates(&payload.rows, &drawn, &r.x)?;
-    let usable_ratio = r
-        .style
-        .label_usable_ratio
-        .ok_or("scatter: label_usable_ratio absent (theme required for a date x axis)")?;
     let naive_panel_w = multiples::facet_panel_width(payload.width, panel_cols_n, has_mirror, 0.0);
-    let x_axis = TemporalXAxis::resolve(
-        &dates,
-        &r.style.axis_x,
-        naive_panel_w * usable_ratio,
-        crate::common::axis_title_text(&r.x, r.x_label.as_deref(), &r.field_labels),
-        None,
-        fonts,
-    )?;
-    if let Some(label_count) = x_axis.collision {
+    // A categorical y narrows to each panel's own categories once some panel
+    // holds a proper subset of them (`_domain_subset_narrowing_candidates`),
+    // never beside a mirror and, beside columns, only while the extra axis
+    // each panel then draws still leaves a legible panel.
+    let y_extra_axis_px = if shape.y_nominal && !has_mirror && panel_cols_n > 1 {
+        let every: Vec<(f64, &serde_json::Map<String, Value>)> = drawn.iter().map(|&row| (0.0, row)).collect();
+        let domain = point_scale_domain(&payload.rows, &every, &r.y, r.sort.as_ref())?;
+        crate::families::heatmap_facet::facet_extra_axis_px(&ax_y.labels, &domain, fonts)?
+    } else {
+        0.0
+    };
+    let y_narrowed = shape.y_nominal
+        && !has_mirror
+        && crate::families::heatmap_facet::panel_domain_is_proper_subset(&panels, axes, &r.y)
+        && (panel_cols_n == 1 || naive_panel_w - y_extra_axis_px >= crate::constants::layout::FACET_MIN_PANEL_PX);
+    let extra_axis_px = if y_narrowed { y_extra_axis_px } else { 0.0 };
+    let naive_panel_w = multiples::facet_panel_width(payload.width, panel_cols_n, has_mirror, extra_axis_px);
+    let embedded_y = independent || y_narrowed;
+    let x_title = crate::common::axis_title_text(&r.x, r.x_label.as_deref(), &r.field_labels)?;
+    let date_x = shape.x_dates.then(|| date_axis(payload, r, &drawn, naive_panel_w, x_title.clone(), None, fonts)).transpose()?;
+    if let Some(label_count) = date_x.as_ref().and_then(|axis| axis.collision) {
         crate::families::cartesian::warn_axis_label_collision(&r.id, &r.x, label_count);
     }
+    // `BaselineFeature` skips a chart under an independent facet scale.
+    let fires = if independent { RuleFires::none() } else { RuleFires::of(r, &payload.rows) };
+    let plain_x = (!shape.x_dates)
+        .then(|| PlainXAxis::resolve(r, &payload.rows, &drawn, &fires, naive_panel_w, x_title, has_mirror, fonts))
+        .transpose()?;
+    let facet_x = match (&date_x, &plain_x) {
+        (Some(axis), _) => FacetX::Date(axis),
+        (None, Some(axis)) => FacetX::Plain(axis),
+        (None, None) => unreachable!("an x axis is a date or a plain one"),
+    };
 
     // A partition field the chart also encodes (`color: series` under
     // `rows: series`) stays a column of its own panel's rows in Vega-Lite;
@@ -1300,14 +1783,16 @@ fn render_facet(payload: &Payload, fonts: &FontBook, r: &ScatterResolved, shape:
                     plot_w,
                     plot_h,
                     shared_rows: &payload.rows,
-                    x_axis: &x_axis,
-                    paint_value_axis: i % panel_cols_n == panel_cols_n - 1,
-                    fold_axis_gutter: panel_cols_n == 1,
+                    x_axis: facet_x,
+                    paint_value_axis: embedded_y || (missing + i) % panel_cols_n == panel_cols_n - 1,
+                    fold_axis_gutter: embedded_y || panel_cols_n == 1,
+                    independent_scale: independent,
+                    embedded_y,
                     value_axis_right_overhang,
                     left_overhang,
                     has_mirror,
                 };
-                let (svg, geometry) = render_fit(panel_payload, fonts, r, false, false, true, &[], Some(&opts))?;
+                let (svg, geometry) = render_fit(panel_payload, fonts, r, shape.y_nominal, shape.x_nominal, shape.x_dates, &[], Some(&opts), None)?;
                 Ok((svg, geometry.expect("a panel render carries its geometry")))
             })
             .collect::<Result<Vec<_>, String>>()
@@ -1317,12 +1802,6 @@ fn render_facet(payload: &Payload, fonts: &FontBook, r: &ScatterResolved, shape:
     // any panel measures (a panel whose marks start further right has less).
     let render_pass = |plot_w: f64, plot_h: f64, value_axis_right_overhang: f64| -> Result<_, Diagnostic> {
         let panels = render_panels(plot_w, plot_h, value_axis_right_overhang, 0.0)?;
-        // A sized mark reaching above its panel's plot moves the composite's
-        // ceiled height terms by an amount production's single solve reads at
-        // another panel height: the two can land a pixel apart.
-        if r.size.is_some() && panels.iter().any(|(_, g)| -g.ink.y1 > g.top_axis_overhang + 1e-9) {
-            return Err("scatter: multiples with a size channel whose marks reach past the plot top are not supported".into());
-        }
         let left_overhang = panels.iter().map(|(_, g)| g.left_mark_overhang).fold(0.0_f64, f64::max);
         if panels.iter().all(|(_, g)| g.left_mark_overhang == left_overhang) {
             return Ok(panels);
@@ -1356,7 +1835,6 @@ fn render_facet(payload: &Payload, fonts: &FontBook, r: &ScatterResolved, shape:
     // A shape channel draws its own unconfigured legend on the right, except on
     // the color field, where it merges into the color legend with varying
     // glyphs (a rule layer's point keeps the two apart).
-    let fires = RuleFires::of(r, &payload.rows);
     let rule_shape = fires.shape_layer(r);
     let merged_shape = shape_merges_into_color(r, rule_shape, has_mirror);
     let shape_domain = r
@@ -1484,12 +1962,14 @@ fn render_facet(payload: &Payload, fonts: &FontBook, r: &ScatterResolved, shape:
     let spec = facet_compose::FacetSpec {
         family: "scatter",
         panels: &panels,
+        axes,
         panel_rows_n,
         panel_cols_n,
         row_axis_idx: index_of(&mc.rows),
         col_axis_idx: index_of(&mc.columns),
         has_mirror,
-        extra_axis_px: 0.0,
+        own_value_axes: embedded_y,
+        extra_axis_px,
         cell_x_axis: false,
         axis_x: &r.style.axis_x,
         axis_y: &r.style.axis_y,
@@ -1508,9 +1988,9 @@ pub(crate) struct ScatterPanelOpts<'a> {
     pub(crate) plot_w: f64,
     pub(crate) plot_h: f64,
     pub(crate) shared_rows: &'a [serde_json::Map<String, Value>],
-    /// The date axis, resolved once against the composite's per-panel
-    /// crowding width and shared by every panel.
-    pub(crate) x_axis: &'a crate::families::scatter_axis::TemporalXAxis,
+    /// The x axis, resolved once against the composite's per-panel crowding
+    /// width and shared by every panel.
+    pub(crate) x_axis: FacetX<'a>,
     /// Only the last column of a row draws the shared value axis; every
     /// other panel reserves its gutter and paints nothing into it.
     pub(crate) paint_value_axis: bool,
@@ -1525,6 +2005,13 @@ pub(crate) struct ScatterPanelOpts<'a> {
     /// `axis_y.mirror`: each panel carries the invisible ghost rule layer the
     /// mirrored right-edge axis rides.
     pub(crate) has_mirror: bool,
+    /// `multiples.scale: "independent"`: the panel fits its own y domain and
+    /// ladder, and its value axis sits in its cell at the plot edge.
+    pub(crate) independent_scale: bool,
+    /// The panel fits its own y domain and draws its value axis in its cell,
+    /// anchored at the plot edge: an independent scale, or a categorical y
+    /// narrowed to the panel's own categories.
+    pub(crate) embedded_y: bool,
 }
 
 /// Scatter through Vega's own fit-margin algebra
@@ -1552,6 +2039,7 @@ fn render_fit(
     x_dates: bool,
     wide_series: &[String],
     panel: Option<&ScatterPanelOpts>,
+    y_ladder: Option<(usize, u8)>,
 ) -> Result<(String, Option<PanelGeometry>), String> {
     let svg_w = payload.width;
     let svg_h = payload.height;
@@ -1568,6 +2056,10 @@ fn render_fit(
     let avail_w = svg_w - pad_l - pad_r;
     let ax_x = &r.style.axis_x;
     let ax_y = &r.style.axis_y;
+    // The unbaked y ladder's tick count and which pass of the settling loop
+    // this is; the first pass guesses the card's own height.
+    let y_ladder_pass = y_ladder
+        .unwrap_or_else(|| (crate::families::cartesian::vl_default_tick_count(svg_h - pad_t - pad_b).max(1), 0));
 
     // ── Size channel: value check ─────────────────────────────────────────
     // `apply_color_legend(size_enc, chart.legend)` rides the SAME legend
@@ -1601,7 +2093,10 @@ fn render_fit(
     // over those folded rows (`column_extent`, unconditioned on whether x
     // parsed, matching production's `numeric_column_values` scan), with no
     // separate union step needed.
-    let fires = RuleFires::of(r, domain_rows);
+    // `BaselineFeature` skips a chart under an independent facet scale.
+    let independent_scale = panel.is_some_and(|o| o.independent_scale);
+    let whole_y = column_extent(domain_rows, &r.y);
+    let fires = if independent_scale { RuleFires::none() } else { RuleFires::of(r, domain_rows) };
     let zero_rule_fires = fires.y_zero;
     // ── BaselineFeature's unity rule, scatter's other half ────────────────
     // Production's `_apply_unity`: a percent-formatted measure axis with a
@@ -1638,7 +2133,6 @@ fn render_fit(
     // `baseline_rule_data`), so neither can disagree about which rule is
     // which or draw them out of order.
     let mut baseline_rule_fracs: [Option<f64>; 2] = [None, None];
-    let mut baseline_rule_fracs_x: [Option<f64>; 2] = [None, None];
 
     // ── Rows Vega keeps (`data_0`: every measure a finite number) ────────
     // `kept_reading` is the one predicate; a size channel joins the SAME
@@ -1730,7 +2224,7 @@ fn render_fit(
     let mut x_cat_angle = 0.0_f64;
     let mut x_cat_align = "center";
     let mut x_cat_baseline = "top";
-    let x_title_plain = crate::common::axis_title_text(&r.x, r.x_label.as_deref(), &r.field_labels);
+    let x_title_plain = crate::common::axis_title_text(&r.x, r.x_label.as_deref(), &r.field_labels)?;
     let facet_grid = multiples::grid_counts(r.multiples.as_ref(), &r.panel_axes);
     let x_title_text = if panel.is_some() {
         crate::common::refuse_wrapping_facet_title("scatter", &x_title_plain, &ax_x.title, svg_w, facet_grid.1, fonts)?;
@@ -1740,18 +2234,21 @@ fn render_fit(
     };
     // A date x: one UTC time scale over the distinct dates, the labels and
     // gridlines at the shared temporal ladder's openers.
+    let plain_x: Option<&PlainXAxis> = panel.and_then(|o| match &o.x_axis {
+        FacetX::Plain(axis) => Some(*axis),
+        FacetX::Date(_) => None,
+    });
     let temporal_x: Option<crate::families::scatter_axis::TemporalXAxis> = if let Some(opts) = panel {
-        Some(opts.x_axis.clone())
+        match &opts.x_axis {
+            FacetX::Date(axis) => Some((*axis).clone()),
+            FacetX::Plain(_) => None,
+        }
     } else if x_dates {
-        let dates = axis_dates(&payload.rows, &drawn, &r.x)?;
-        let usable_ratio = r
-            .style
-            .label_usable_ratio
-            .ok_or("scatter: label_usable_ratio absent (theme required for a date x axis)")?;
-        let axis = crate::families::scatter_axis::TemporalXAxis::resolve(
-            &dates,
-            ax_x,
-            svg_w * usable_ratio,
+        let axis = date_axis(
+            payload,
+            r,
+            &drawn,
+            svg_w,
             x_title_text.clone(),
             panel.is_none().then_some(crate::contract::LabelKey::X),
             fonts,
@@ -1763,37 +2260,24 @@ fn render_fit(
     } else {
         None
     };
-    let kept_x_frac: Vec<f64> = if let Some(axis) = &temporal_x {
-        x_ticks = axis.tick_fracs();
-        kept.iter()
-            .map(|&(_, row)| axis.frac(&row_str(row, &r.x)).expect("kept dates parsed above"))
-            .collect()
+    // A date axis places its ticks and points per plot width (`x_frame`).
+    let mut linear_x: Option<LinearX> = None;
+    if !x_nominal
+        && !x_dates
+        && !(ax_x.is_quantitative && ax_x.is_log_scale())
+        && ax_x.authored_continuous_domain().is_none()
+        && ax_x.scale.get("continuous").and_then(|c| c.get("domain")).is_some_and(|d| !d.is_null())
+    {
+        return Err(format!("scatter: the authored domain on the {:?} axis must be a numeric pair, which is not supported otherwise", r.x));
+    }
+    let kept_x_frac: Vec<f64> = if temporal_x.is_some() || plain_x.is_some() {
+        vec![0.0; kept.len()]
     } else if x_nominal {
         // Production orders only a categorical y (a dot plot) by `chart.sort`.
         let domain = point_scale_domain(&payload.rows, &kept, &r.x, None)?;
-        let n = domain.len() as f64;
-        // The theme bakes `axis_x.scale.padding: 0` (band/point padding
-        // around categorical x values) — unlike y's dot plot, which has no
-        // such override and keeps VL's own raw point-scale default of 0.5
-        // (`point_scale_domain`'s caller below). Read from the resolved
-        // axis rather than hardcoded, since an authored override is legal.
-        let padding = ax_x.scale.get("padding").and_then(Value::as_f64).unwrap_or(0.5);
-        // d3's `band()` rescale: `step = 1 / max(1, n - 1 + 2·padding)`
-        // (a point scale is a band scale with `paddingInner(1)`), then
-        // `start += (stop - start - step·(n - 1))·align` with d3's own
-        // default `align: 0.5` — never authorable here, so it's baked in.
-        // `(padding + i) / denom` (denom = n - 1 + 2·padding, unfloored)
-        // is algebraically identical to this whenever the floor never
-        // engages, but for a single category at the theme's own
-        // `padding: 0` the floor DOES engage (`denom.max(1.0)` clamps a
-        // would-be-0 to 1), and that shortcut then gives `band(0) = 0`
-        // (left edge) where d3 centers the lone point at `0.5`.
-        let denom = (n - 1.0 + 2.0 * padding).max(1.0);
-        let step = 1.0 / denom;
-        let start_adj = (1.0 - step * (n - 1.0)) * 0.5;
-        let band = |i: usize| start_adj + step * i as f64;
-        for (i, category) in domain.iter().enumerate() {
-            x_ticks.push(band(i));
+        let fracs = point_x_fracs(ax_x, domain.len());
+        for (category, &frac) in domain.iter().zip(&fracs) {
+            x_ticks.push(frac);
             x_labels.push(category.clone());
         }
         // `resolve_axis_x_overlap` (`emitters/_label_overlap.py:718-731`)
@@ -1823,61 +2307,21 @@ fn render_fit(
         };
         kept.iter()
             .map(|&(_, row)| {
-                let category = row_str(row, &r.x);
-                domain.iter().position(|d| *d == category).map(band).ok_or_else(|| {
+                let category = category_text(row, &r.x);
+                domain.iter().position(|d| *d == category).map(|i| fracs[i]).ok_or_else(|| {
                     format!("scatter: x value {category:?} is outside the point-scale domain")
                 })
             })
             .collect::<Result<_, String>>()?
     } else if ax_x.is_quantitative && ax_x.is_log_scale() {
-        let x_tick_count = ax_x.ticks.count.unwrap_or(6.0) as usize;
-        let ladder = LogAxis::new(ax_x, x_min, x_max, x_tick_count)?;
-        let x_fmt = ax_x
-            .labels
-            .spec()
-            .expect("gated: fit path requires an authored x label format");
-        for (i, &tv) in ladder.ticks.iter().enumerate() {
-            x_labels.push(if ladder.mantissa_visible[i] {
-                crate::number_locale::d3_format(x_fmt, tv).map_err(|e| format!("scatter x label format: {e}"))?
-            } else {
-                String::new()
-            });
-            x_ticks.push(ladder.frac_from_left(tv));
-        }
+        let (ladder, labels) = log_x_axis(ax_x, x_min, x_max)?;
+        x_ticks.extend(ladder.ticks.iter().map(|&tv| ladder.frac_from_left(tv)));
+        x_labels = labels;
         kept.iter().map(|&(xv, _)| ladder.frac_from_left(xv)).collect()
     } else {
-        let (x_lo_raw, x_hi_raw) = if ax_x.is_zero_false() {
-            (x_min, x_max)
-        } else {
-            (x_min.min(0.0), x_max.max(0.0))
-        };
-        if x_hi_raw <= x_lo_raw {
-            return Err("scatter: x domain is degenerate (max ≤ min)".into());
-        }
-        // Production never bakes domain bounds onto axis_x (`build_cartesian_axes`
-        // passes them to the y build only), so the niced extent IS the domain.
-        let (x_lo, x_hi) = d3rs::ticks::d3_nice(x_lo_raw, x_hi_raw, 10);
-        let x_span = x_hi - x_lo;
-        if x_zero_rule_fires {
-            baseline_rule_fracs_x[0] = Some((0.0 - x_lo) / x_span);
-        }
-        if x_unity_rule_fires {
-            baseline_rule_fracs_x[1] = Some((1.0 - x_lo) / x_span);
-        }
-        let x_tick_count = ax_x.ticks.count.unwrap_or(6.0) as usize;
-        let x_tick_values = d3rs::ticks::d3_ticks(x_lo, x_hi, x_tick_count);
-        let x_fmt = ax_x
-            .labels
-            .spec()
-            .expect("gated: fit path requires an authored x label format");
-        for &tv in &x_tick_values {
-            x_labels.push(
-                crate::number_locale::d3_format(x_fmt, tv)
-                    .map_err(|e| format!("scatter x label format: {e}"))?,
-            );
-            x_ticks.push((tv - x_lo) / x_span);
-        }
-        kept.iter().map(|&(xv, _)| (xv - x_lo) / x_span).collect()
+        let lin = linear_x_scale(r, x_min, x_max, (x_zero_rule_fires, x_unity_rule_fires))?;
+        linear_x = Some(lin);
+        vec![0.0; kept.len()]
     };
     // Continuous x's own labelFlush behavior (edges anchor start/end, not
     // centered) only applies to that scale; a nominal x's point-scale bands
@@ -1905,22 +2349,52 @@ fn render_fit(
     let mut y_labels: Vec<String> = Vec::new();
     let mut points_data: Vec<PointDatum> = Vec::new();
     if y_nominal {
-        let domain = point_scale_domain(&payload.rows, &kept, &r.y, r.sort.as_ref())?;
+        // A facet's panels share the whole chart's categories unless each
+        // draws its own.
+        let domain = if panel.is_some_and(|o| !o.embedded_y) {
+            let every: Vec<(f64, &serde_json::Map<String, Value>)> = drawn.iter().map(|&row| (0.0, row)).collect();
+            point_scale_domain(domain_rows, &every, &r.y, r.sort.as_ref())?
+        } else {
+            point_scale_domain(&payload.rows, &kept, &r.y, r.sort.as_ref())?
+        };
         let bands = domain.len() as f64;
         let band = |i: usize| (0.5 + i as f64) / bands;
+        let time_format = r
+            .style
+            .axis_y
+            .labels
+            .spec()
+            .filter(|s| crate::families::temporal::is_time_format(s))
+            .map(|spec| crate::families::temporal::AuthoredTimeFormat::parse("scatter", Some(spec)))
+            .transpose()?
+            .flatten();
         for (i, category) in domain.iter().enumerate() {
             y_ticks.push(band(i));
-            y_labels.push(category.clone());
+            y_labels.push(match (time_format, crate::families::temporal::parse_iso_date(category)) {
+                (Some(format), Some((y, m, d))) => format.text(y, m, d)?,
+                _ => category.clone(),
+            });
         }
         for (idx, &(_, row)) in kept.iter().enumerate() {
-            let category = row_str(row, &r.y);
+            let category = category_text(row, &r.y);
             let i = domain.iter().position(|d| *d == category).ok_or_else(|| {
                 format!("scatter: y value {category:?} is outside the point-scale domain")
             })?;
             points_data.push((kept_x_frac[idx], band(i), series_of(row), mark_radii[idx], row));
         }
     } else if ax_y.is_log_scale() {
-        let ladder = LogAxis::new(ax_y, y_dmin, y_dmax, 10)?;
+        // A shared facet scale spans every panel's rows; an independent one fits
+        // the panel's own.
+        let extent_rows: Vec<&serde_json::Map<String, Value>> = if independent_scale {
+            kept.iter().map(|&(_, row)| row).collect()
+        } else {
+            domain_rows.iter().collect()
+        };
+        let (y_lo, y_hi) = extent_rows
+            .iter()
+            .filter_map(|row| kept_reading(row, r, x_nominal, x_dates, y_nominal)?.1)
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), yv| (lo.min(yv), hi.max(yv)));
+        let ladder = LogAxis::new(ax_y, y_lo, y_hi, 10)?;
         for (i, &tv) in ladder.ticks.iter().enumerate() {
             y_ticks.push(ladder.frac_from_top(tv));
             y_labels.push(if ladder.mantissa_visible[i] {
@@ -1961,12 +2435,19 @@ fn render_fit(
             baseline_rule_fracs[1] = Some((y_max - 1.0) / y_span);
         }
         let y_eps = y_span.abs() * 1e-9;
-        let ladder: Vec<f64> = ax_y
-            .tick_values
-            .iter()
-            .copied()
-            .filter(|&tv| tv >= y_min.min(y_max) - y_eps && tv <= y_min.max(y_max) + y_eps)
-            .collect();
+        // A ladder production bakes is drawn as is; an unbaked one is Vega's
+        // own d3 ticks at `ceil(height / 40)`, which the fitted height decides
+        // (settled below, one pass per change).
+        let ladder: Vec<f64> = if ax_y.tick_values.is_empty() {
+            let (count, _) = y_ladder_pass;
+            crate::families::cartesian::unbaked_ticks(ax_y, y_min, y_max, count)
+        } else {
+            ax_y.tick_values
+                .iter()
+                .copied()
+                .filter(|&tv| tv >= y_min.min(y_max) - y_eps && tv <= y_min.max(y_max) + y_eps)
+                .collect()
+        };
         for (i, &tv) in ladder.iter().enumerate() {
             y_ticks.push((y_max - tv) / y_span);
             y_labels.push(format_y_label(
@@ -2038,14 +2519,24 @@ fn render_fit(
     // the edge.
     // An unset `labels.align` is Vega's own default for a right axis: labels
     // start at `labelPadding` and run outward, as a point scale's do.
-    let (y_label_off, y_label_align, y_label_anchor, y_label_edge) = if y_nominal || ax_y.labels.align.is_none() {
+    // A left axis puts its labels end-anchored `labelPadding` past the tick, so
+    // the gutter is the widest label itself; `labels.align` is a right-axis
+    // control.
+    let y_left = ax_y.position.as_deref() == Some("left");
+    let (y_label_off, y_label_align, y_label_anchor, y_label_edge) = if y_left {
+        let off = y_tick_eff + ax_y.labels.padding.unwrap_or(6.0);
+        let widest = y_label_ws.iter().fold(0.0_f64, |acc, &w| acc.max(w)).min(y_limit);
+        (off, "right", "end", off + widest)
+    } else if y_nominal || ax_y.labels.align.is_none() {
         let off = y_tick_eff + ax_y.labels.padding.unwrap_or(6.0);
         let widest = y_label_ws.iter().fold(0.0_f64, |acc, &w| acc.max(w)).min(y_limit);
         (off, "left", "start", off + widest)
     } else {
         let mf = crate::common::measure_family_stand_in(y_family);
         let mut max_w = 0.0_f64;
-        if ax_y.is_log_scale() {
+        // An axis with no baked ladder reserves the cover estimate instead of
+        // measuring rungs it never bakes.
+        if ax_y.is_log_scale() || ax_y.tick_values.is_empty() {
             max_w = crate::common::estimated_tick_label_gutter(
                 fonts,
                 y_family,
@@ -2054,8 +2545,9 @@ fn render_fit(
                 ax_y.tick_label.as_ref(),
                 ax_y.labels.format.as_ref(),
                 ax_y,
-                y_dmin,
-                y_dmax,
+                // Production sizes the gutter once over the whole dataset.
+                if independent_scale { whole_y.0 } else { y_dmin },
+                if independent_scale { whole_y.1 } else { y_dmax },
             )? - crate::common::VALUE_AXIS_BREATHING_ROOM;
         }
         let drawn = crate::common::drawn_tick_values(ax_y);
@@ -2082,16 +2574,19 @@ fn render_fit(
         return Err("scatter: axis_y.mirror on a categorical axis or a log y axis is not supported".into());
     }
 
-    // A start-aligned log axis's gutter ends at its widest label Vega keeps: a
+    // A start-aligned (or left-axis) log gutter ends at its widest label Vega keeps: a
     // label `labelOverlap: greedy` hides is drawn at opacity 0 and adds no
     // ink, so the edge depends on the plot size.
+    // The ink of rung `i`'s label on a plot `pw` wide and `ph` tall.
+    let y_label_ink = |pw: f64, ph: f64, i: usize| {
+        let anchor_x = if y_left { -y_label_off } else { pw + y_label_off };
+        vega_fit::text_ink(anchor_x, ph * y_ticks[i], y_label_ws[i].min(y_limit), y_font_size, y_label_align, "middle")
+    };
     let y_edge_at = |pw: f64, ph: f64| -> f64 {
-        if y_label_align != "left" || !ax_y.is_log_scale() {
+        if !(y_label_align == "left" || y_left) || !ax_y.is_log_scale() {
             return y_label_edge;
         }
-        let visible = log_label_visible(&y_labels, ax_y.labels.min_gap.unwrap_or(0.0), |i| {
-            vega_fit::text_ink(pw + y_label_off, ph * y_ticks[i], y_label_ws[i].min(y_limit), y_font_size, y_label_align, "middle")
-        });
+        let visible = log_label_visible(&y_labels, ax_y.labels.min_gap.unwrap_or(0.0), |i| y_label_ink(pw, ph, i));
         let widest = y_label_ws.iter().zip(&visible).filter(|(_, &v)| v).fold(0.0_f64, |acc, (&w, _)| acc.max(w.min(y_limit)));
         y_label_off + widest
     };
@@ -2099,15 +2594,12 @@ fn render_fit(
     // `r.y` is the synthetic `WIDE_VALUE_FIELD` on a wide chart — its own
     // default title is production's joined measure-name list
     // (`wide_measures_title`, mirrors `emitters/scatter.py`'s own
-    // `chart.y_label or wide_measures_title(chart.wide_measures)`), never
+    // `chart.y_label or wide_measures_title(chart.wide_measures)?`), never
     // `slug_to_text` on the synthetic field name.
     let y_title_plain = if wide_series.is_empty() {
-        crate::common::axis_title_text(&r.y, r.y_label.as_deref(), &r.field_labels)
+        crate::common::axis_title_text(&r.y, r.y_label.as_deref(), &r.field_labels)?
     } else {
-        r.y_label
-            .as_deref()
-            .map(crate::common::collapse_title_newlines)
-            .unwrap_or_else(|| crate::common::wide_measures_title(&r.wide_measures, &r.field_labels))
+        match r.y_label.as_deref() { Some(l) => crate::common::collapse_title_newlines(l), None => crate::common::wide_measures_title(&r.wide_measures, &r.field_labels)? }
     };
     let y_title_text = if panel.is_some() {
         crate::common::refuse_wrapping_facet_title("scatter", &y_title_plain, &ax_y.title, svg_h, facet_grid.0, fonts)?;
@@ -2115,7 +2607,6 @@ fn render_fit(
     } else {
         crate::common::wrapped_axis_title(&r.id, "y_label", &y_title_plain, &ax_y.title.font, svg_h, fonts)?
     };
-    let x_title_band = crate::common::axis_title_band(&ax_x.title, &x_title_text);
     let y_title_extra = crate::common::y_title_extra(&ax_y.title, &y_title_text);
     let x_title_w = crate::common::widest_title_line(&ax_x.title, &x_title_text, fonts)?;
     let y_title_w = crate::common::widest_title_line(&ax_y.title, &y_title_text, fonts)?;
@@ -2261,10 +2752,9 @@ fn render_fit(
     let color_legend_shown = legend_shown || gradient_title.is_some();
     let edge_stack = color_legend_shown || size_legend_shown;
 
-    // Production's `value_labels` text layer (`_POINT_POS_MAP["top"]`:
-    // `baseline: bottom, dy: -4`) draws one label per kept point at the
-    // board font; its ink joins the fit like any mark's, so text and measured
-    // advance are fixed ahead of the plot rect.
+    // Production's `value_labels` text layer (`_POINT_POS_MAP`) draws one label
+    // per kept point at the board font; its ink joins the fit like any mark's,
+    // so text and measured advance are fixed ahead of the plot rect.
     let value_labels = r.style.point_mark.labels.as_ref().filter(|l| l.visible);
     let value_label_font = value_labels.and_then(|ml| ml.font.as_ref());
     let value_label_family = match (value_labels, value_label_font.and_then(|f| f.family.as_deref())) {
@@ -2277,17 +2767,24 @@ fn render_fit(
             .ok_or("scatter: point value labels need board_style.font")?,
     };
     let value_label_size = value_label_font.and_then(|f| f.size).unwrap_or(11.0);
-    let (value_label_align, value_label_baseline, anchor_dx, anchor_dy) =
-        crate::common::value_label_anchor("top").expect("top is a value-label position");
-    let value_label_dx = value_labels.and_then(|ml| ml.dx).unwrap_or(anchor_dx);
-    let value_label_dy = value_labels.and_then(|ml| ml.dy).unwrap_or(anchor_dy);
+    let spot = value_labels
+        .map(|ml| crate::common::CaptionSpot::of(ml, None))
+        .transpose()
+        .map_err(|e| format!("scatter: {e}"))?;
+    // Unread when no labels are drawn.
+    let (value_label_align, value_label_baseline, value_label_dx, value_label_dy) =
+        spot.map_or(("center", "bottom", 0.0, 0.0), |s| (s.align, s.baseline, s.dx, s.dy));
     // (text, shaped advance) per point, parallel to `points_data`.
+    // A categorical y gives the text layer's quantitative `y` no position, so
+    // Vega draws none of it.
     let mut value_label_texts: Vec<(String, f64)> = Vec::new();
-    if let Some(ml) = value_labels {
+    if let Some(ml) = value_labels.filter(|_| !y_nominal) {
+        let field_is_text = ml.field_is_text(&payload.rows);
         for &(_, _, _, _, row) in &points_data {
             let yv = row_num(row, &r.y)
                 .ok_or_else(|| "scatter: internal error: value label y missing".to_string())?;
-            let text = crate::common::format_mark_label(ml.format.as_ref(), yv, r.style.label_is_house)
+            let (text, _) = ml
+                .field_text(r.style.label_is_house, field_is_text, Some(row), yv)
                 .map_err(|e| format!("scatter: {e}"))?;
             let width = fonts.measure_shaped(&text, value_label_family, value_label_size)?;
             value_label_texts.push((text, width));
@@ -2303,6 +2800,40 @@ fn render_fit(
     let mark_opacity = r.style.point_mark.opacity.unwrap_or(1.0);
     let symbol_stroke_ink = crate::common::symbol_stroke_ink(r.style.point_mark.filled, mark_sw);
 
+    // The x scale's ticks and points at a plot `pw` wide: a date axis moves
+    // with the width (a padded scale, Vega's own bare ticks), every other
+    // axis was placed above.
+    let x_frame = |pw: f64| -> Result<XFrame, String> {
+        if let Some(axis) = &temporal_x {
+            return Ok(XFrame {
+                ticks: axis.tick_fracs(pw, fonts)?,
+                labels: Vec::new(),
+                points: kept.iter().map(|&(_, row)| axis.frac(&row_str(row, &r.x), pw)).collect(),
+                rules: [None, None],
+            });
+        }
+        if let Some(axis) = plain_x {
+            let (ticks, labels, rules) = axis.ticks_at(pw)?;
+            let points = kept.iter().map(|&(xv, row)| axis.frac(xv, row, &r.x, pw)).collect::<Result<_, String>>()?;
+            return Ok(XFrame { ticks, labels, points, rules });
+        }
+        if let Some(lin) = &linear_x {
+            let (ticks, labels, rules, domain) = lin.at(pw)?;
+            return Ok(XFrame {
+                ticks,
+                labels,
+                points: kept.iter().map(|&(xv, _)| LinearX::frac(domain, xv)).collect(),
+                rules,
+            });
+        }
+        Ok(XFrame {
+            ticks: x_ticks.clone(),
+            labels: x_labels.clone(),
+            points: kept_x_frac.clone(),
+            rules: [None, None],
+        })
+    };
+
     // ── Fit ──────────────────────────────────────────────────────────────
     let mut fit_err: Option<String> = None;
     // How far the topmost drawn value label reaches above the plot's y=0
@@ -2317,41 +2848,26 @@ fn render_fit(
                 return;
             }
             let ink = |b: &mut vega_fit::Bounds| -> Result<(), String> {
-                // Right label band + rotated y title.
-                b.union(&vega_fit::Bounds::new(
-                    0.0,
-                    0.0,
-                    pw + y_edge_at(pw, ph) + y_title_extra,
-                    ph,
-                ));
+                let xf = x_frame(pw)?;
+                // Label band + rotated y title, on the axis's own side.
+                let y_reach = y_edge_at(pw, ph) + y_title_extra;
+                b.union(&if y_left {
+                    vega_fit::Bounds::new(-y_reach, 0.0, pw, ph)
+                } else {
+                    vega_fit::Bounds::new(0.0, 0.0, pw + y_reach, ph)
+                });
                 if y_title_extra > 0.0 && panel.is_none() {
-                    let x = pw + y_edge_at(pw, ph) + y_title_extra;
+                    let x = if y_left { -y_reach } else { pw + y_reach };
                     b.union(&vega_fit::Bounds::new(x, ph / 2.0 - y_title_w / 2.0, x, ph / 2.0 + y_title_w / 2.0));
                 }
-                let log_visible = ax_y.is_log_scale().then(|| {
-                    log_label_visible(&y_labels, ax_y.labels.min_gap.unwrap_or(0.0), |i| {
-                        vega_fit::text_ink(
-                            pw + y_label_off,
-                            ph * y_ticks[i],
-                            y_label_ws[i].min(y_limit),
-                            y_font_size,
-                            y_label_align,
-                            "middle",
-                        )
-                    })
-                });
+                let log_visible = ax_y
+                    .is_log_scale()
+                    .then(|| log_label_visible(&y_labels, ax_y.labels.min_gap.unwrap_or(0.0), |i| y_label_ink(pw, ph, i)));
                 for (i, (&frac, &lw)) in y_ticks.iter().zip(y_label_ws.iter()).enumerate() {
                     if log_visible.as_ref().is_some_and(|v| !v[i]) {
                         continue;
                     }
-                    let mut label = vega_fit::text_ink(
-                        pw + y_label_off,
-                        ph * frac,
-                        lw.min(y_limit),
-                        y_font_size,
-                        y_label_align,
-                        "middle",
-                    );
+                    let mut label = y_label_ink(pw, ph, i);
                     // A facet's value axis is the composite's `row_footer`, a
                     // role apart from the cell: a label overhanging its own
                     // row's top or bottom edge never moves the row's marks —
@@ -2379,12 +2895,12 @@ fn render_fit(
                 // no panel reserves ink for it.
                 if panel.is_none() {
                     if let Some(axis) = &temporal_x {
-                        axis.union_label_ink(pw, ph, &mut x_axis);
+                        axis.union_label_ink(pw, ph, &mut x_axis, fonts)?;
                     }
                 }
-                let x_log_visible = (ax_x.is_quantitative && ax_x.is_log_scale()).then(|| {
-                    log_label_visible(&x_labels, ax_x.labels.min_gap.unwrap_or(0.0), |i| {
-                        let pos = x_ticks[i] * pw;
+                let x_log_visible = (ax_x.is_quantitative && ax_x.is_log_scale() && panel.is_none()).then(|| {
+                    log_label_visible(&xf.labels, ax_x.labels.min_gap.unwrap_or(0.0), |i| {
+                        let pos = xf.ticks[i] * pw;
                         vega_fit::text_ink(
                             pos,
                             row_y,
@@ -2396,7 +2912,7 @@ fn render_fit(
                     })
                 });
                 for (i, (&frac, lbl)) in
-                    x_ticks.iter().zip(x_labels.iter()).enumerate().filter(|_| panel.is_none())
+                    xf.ticks.iter().zip(xf.labels.iter()).enumerate().filter(|_| panel.is_none())
                 {
                     if x_log_visible.as_ref().is_some_and(|v| !v[i]) {
                         continue;
@@ -2438,7 +2954,7 @@ fn render_fit(
                 // Outermost drawn tick strokes.
                 if x_ticks_visible && panel.is_none() {
                     let tw = ax_x.ticks.width.unwrap_or(1.0);
-                    if let (Some(&first), Some(&last)) = (x_ticks.first(), x_ticks.last()) {
+                    if let (Some(&first), Some(&last)) = (xf.ticks.first(), xf.ticks.last()) {
                         for frac in [first, last] {
                             let pos = frac * pw;
                             x_axis.union(&vega_fit::Bounds::new(pos, ph, pos, ph).expand(tw));
@@ -2454,12 +2970,12 @@ fn render_fit(
                 // Symbol ink: every point expanded by its own circle radius
                 // and, when unfilled, its stroke (a filled point has no stroke
                 // color, so boundStroke adds none).
-                for &(x_frac, y_frac, _, pr, _) in &points_data {
+                for (&(_, y_frac, _, pr, _), &x_frac) in points_data.iter().zip(&xf.points) {
                     let px = x_frac * pw;
                     let py = ph * y_frac;
                     b.union(&vega_fit::Bounds::new(px, py, px, py).expand(pr + symbol_stroke_ink));
                 }
-                for (&(x_frac, y_frac, _, _, _), (_, w)) in points_data.iter().zip(&value_label_texts) {
+                for ((&(_, y_frac, _, _, _), &x_frac), (_, w)) in points_data.iter().zip(&xf.points).zip(&value_label_texts) {
                     b.union(&vega_fit::text_ink(
                         x_frac * pw + value_label_dx,
                         ph * y_frac + value_label_dy,
@@ -2492,7 +3008,7 @@ fn render_fit(
                     }
                 }
                 if let Some(zx) = ax_x.grid.threshold.as_ref() {
-                    for frac in baseline_rule_fracs_x.into_iter().flatten() {
+                    for frac in xf.rules.into_iter().flatten() {
                         let rx = pw * frac;
                         b.union(
                             &vega_fit::Bounds::new(rx, 0.0, rx, ph).expand(zx.width.unwrap_or(2.0)),
@@ -2509,11 +3025,12 @@ fn render_fit(
                 // stacked under it) at the view ink's right edge + offset;
                 // any other edge through `legendParams`, the y axis sitting
                 // right so `xBounds.x1` is the plot's own 0.
-                let lx = pw + y_edge_at(pw, ph) + y_title_extra + VEGA_LEGEND_OFFSET;
+                let lx = if y_left { pw } else { pw + y_reach } + VEGA_LEGEND_OFFSET;
                 let color_block = if legend_shown { Some((legend_w, legend_h)) } else { gradient_block(pw, ph)? };
                 let stack = legend_stack(color_block);
                 if edge_stack && !right_strip {
-                    let origin = legend::legend_origin(&r.legend.position, (0.0, pw), (0.0, x_axis.y2), (pw, ph), stack.size);
+                    let x_bounds = (if y_left { -y_reach } else { 0.0 }, pw);
+                    let origin = legend::legend_origin(&r.legend.position, x_bounds, (0.0, x_axis.y2), (pw, ph), stack.size);
                     legend_xy.set(origin);
                     if let Some(reach) = legend::legend_fit_bounds(&r.legend.position, origin, stack.size) {
                         b.union(&reach);
@@ -2547,10 +3064,20 @@ fn render_fit(
     if let Some(e) = fit_err {
         return Err(e);
     }
-    if m.plot_w <= 0.0 || m.plot_h <= 0.0 {
+    if (m.plot_w <= 0.0 && !x_dates) || m.plot_h <= 0.0 {
         return Err(format!("scatter: plot box too small ({}×{})", m.plot_w, m.plot_h));
     }
     let (plot_w, plot_h) = (m.plot_w, m.plot_h);
+    // Vega counts the unbaked ladder against the plot it lands in; the labels
+    // move the plot only by their width, so the count settles in a pass or two.
+    if !y_nominal && !ax_y.is_log_scale() && ax_y.tick_values.is_empty() && (panel.is_none() || independent_scale) {
+        let (count, pass) = y_ladder_pass;
+        let settled = crate::families::cartesian::vl_default_tick_count(plot_h).max(1);
+        if settled != count {
+            assert!(pass < 4, "the y ladder of {:?} does not settle on a tick count", r.y);
+            return render_fit(payload, fonts, r, y_nominal, x_nominal, x_dates, wide_series, panel, Some((settled, pass + 1)));
+        }
+    }
     // A facet panel's canvas starts at its plot's top edge: Vega's grid
     // layout works in the cell's own frame, where a mark reaching above the
     // plot has a NEGATIVE bound that the composite (not the panel) turns into
@@ -2587,6 +3114,9 @@ fn render_fit(
     let group_y = pad_t + top_margin;
     let _ = write!(svg, "<g transform=\"translate({group_x:.3},{group_y:.3})\">");
 
+    let xf = x_frame(plot_w)?;
+    let points_data: Vec<PointDatum> =
+        points_data.into_iter().zip(&xf.points).map(|(mut point, &x_frac)| { point.0 = x_frac; point }).collect();
     let x_pos = |frac: f64| frac * plot_w;
     let y_pos = |frac: f64| plot_h * frac;
 
@@ -2597,7 +3127,7 @@ fn render_fit(
         let gc = crate::common::required_ink(ax_x.grid.color.as_deref(), "scatter", "axis_x.grid.color")?;
         let gw = ax_x.grid.width.unwrap_or(1.0);
         let go = ax_x.grid.opacity.unwrap_or(1.0);
-        for &frac in &x_ticks {
+        for &frac in &xf.ticks {
             let gx = x_pos(frac).round() + 0.5;
             let _ = write!(
                 svg,
@@ -2635,7 +3165,7 @@ fn render_fit(
     // header. `xv` here is already the row's raw x reading (not the scaled
     // position) -- reused directly rather than re-reading the row.
     let y_axis_title = y_title_plain.clone();
-    let x_axis_title = crate::common::axis_title_text(&r.x, r.x_label.as_deref(), &r.field_labels);
+    let x_axis_title = crate::common::axis_title_text(&r.x, r.x_label.as_deref(), &r.field_labels)?;
     let color_title = match r.color.as_deref() {
         Some(cf) => legend::color_channel_title(cf, &r.legend, &r.field_labels)?,
         None => String::new(),
@@ -2677,11 +3207,11 @@ fn render_fit(
                     "<line x1=\"0.000\" y1=\"{gy:.3}\" x2=\"{plot_w:.3}\" y2=\"{gy:.3}\" \
                      stroke=\"{zc}\" stroke-width=\"{zw}\"{aria}/>", zc = xml_escape_attr(zc)
                 ),
-            );
+            )?;
             if let Some(shape_field) = r.shape.as_deref().filter(|_| rule_shape) {
                 let rule_value = if i == 0 { 0.0 } else { 1.0 };
                 let aria = rule_aria(tooltip_labels, &r.style.tooltip_format.spec, &y_axis_title, rule_value)?;
-                paint_rule_point(&mut svg, (0.0, gy), (shape_field, aria.as_ref(), fired_rule_count), (zc, zw));
+                paint_rule_point(&mut svg, (0.0, gy), (shape_field, aria.as_ref(), fired_rule_count), (zc, zw))?;
             }
             fired_rule_count += 1;
         }
@@ -2689,7 +3219,7 @@ fn render_fit(
     if let Some(zx) = ax_x.grid.threshold.as_ref() {
         let zc = zx.color.as_deref().unwrap_or("#8A8C8F");
         let zw = zx.width.unwrap_or(2.0);
-        for (i, frac) in baseline_rule_fracs_x.iter().enumerate() {
+        for (i, frac) in xf.rules.iter().enumerate() {
             let Some(frac) = frac else { continue };
             let gx = x_pos(*frac);
             let layer = fired_rule_count;
@@ -2705,11 +3235,11 @@ fn render_fit(
                     "<line x1=\"{gx:.3}\" y1=\"0.000\" x2=\"{gx:.3}\" y2=\"{plot_h:.3}\" \
                      stroke=\"{zc}\" stroke-width=\"{zw}\"{aria}/>", zc = xml_escape_attr(zc)
                 ),
-            );
+            )?;
             if let Some(shape_field) = r.shape.as_deref().filter(|_| rule_shape) {
                 let rule_value = if i == 0 { 0.0 } else { 1.0 };
                 let aria = rule_aria(tooltip_labels, &r.style.tooltip_format.spec, &x_axis_title, rule_value)?;
-                paint_rule_point(&mut svg, (gx, 0.0), (shape_field, aria.as_ref(), layer), (zc, zw));
+                paint_rule_point(&mut svg, (gx, 0.0), (shape_field, aria.as_ref(), layer), (zc, zw))?;
             }
         }
     }
@@ -2731,7 +3261,8 @@ fn render_fit(
         String::new()
     };
     let mut ghost_points: Vec<(String, f64, f64, String)> = Vec::new();
-    let mut value_label_marks: Vec<(f64, f64, Option<String>)> = Vec::new();
+    let value_label_ink = value_label_font.and_then(|f| f.color.as_deref()).unwrap_or("#313233");
+    let mut value_label_marks: Vec<(f64, f64, Option<String>, String)> = Vec::new();
     for (x_frac, y_frac, series, mark_r, row) in &points_data {
         let (cx, cy) = (x_pos(*x_frac), y_pos(*y_frac));
         let channel_ink = match &color_scale {
@@ -2774,15 +3305,17 @@ fn render_fit(
             // structured tooltip does not apply under `multiples`): x, y, then
             // the color channel, each as `title: value`.
             let x_value = match &temporal_x {
-                Some(axis) => axis.tooltip_date(&row_str(row, &r.x)),
+                Some(axis) => axis.tooltip_date(&row_str(row, &r.x))?,
                 None => row_str(row, &r.x),
             };
-            let yv = row_num(row, &r.y)
-                .ok_or_else(|| "scatter: internal error: tooltip y value missing".to_string())?;
-            let mut rows = vec![
-                (x_axis_title.as_str(), x_value),
-                (y_axis_title.as_str(), r.style.tooltip_format.paint(yv).map_err(|e| format!("scatter: tooltip value {e}"))?),
-            ];
+            let y_value = if y_nominal {
+                category_text(row, &r.y)
+            } else {
+                let yv = row_num(row, &r.y)
+                    .ok_or_else(|| "scatter: internal error: tooltip y value missing".to_string())?;
+                r.style.tooltip_format.paint(yv).map_err(|e| format!("scatter: tooltip value {e}"))?
+            };
+            let mut rows = vec![(x_axis_title.as_str(), x_value), (y_axis_title.as_str(), y_value)];
             if let Some(cf) = r.color.as_deref() {
                 rows.push((color_title.as_str(), row_str(row, cf)));
             }
@@ -2791,7 +3324,7 @@ fn render_fit(
             let header = r.color.as_deref().map(|cf| row_str(row, cf));
             let y_nominal_str;
             let y_value = if y_nominal {
-                y_nominal_str = row_str(row, &r.y);
+                y_nominal_str = category_text(row, &r.y);
                 crate::contract::ScatterValue::Nominal(&y_nominal_str)
             } else {
                 let yv = row_num(row, &r.y)
@@ -2800,10 +3333,10 @@ fn render_fit(
             };
             let x_nominal_str;
             let x_value = if let Some(axis) = &temporal_x {
-                x_nominal_str = axis.tooltip_date(&row_str(row, &r.x));
+                x_nominal_str = axis.tooltip_date(&row_str(row, &r.x))?;
                 crate::contract::ScatterValue::Nominal(&x_nominal_str)
             } else if x_nominal {
-                x_nominal_str = row_str(row, &r.x);
+                x_nominal_str = category_text(row, &r.x);
                 crate::contract::ScatterValue::Nominal(&x_nominal_str)
             } else {
                 let xv = row_num(row, &r.x)
@@ -2828,17 +3361,18 @@ fn render_fit(
             // at all, the measure composed like every other affix. The entry
             // gate above refuses `wide_measures` on a quantitative x outright,
             // so x is always nominal here and carries no format.
-            let x_str = row_str(row, &r.x);
+            let x_str = category_text(row, &r.x);
             let yv = row_num(row, &r.y)
                 .ok_or_else(|| "scatter: internal error: tooltip y value missing".to_string())?;
             let ys = r.style.tooltip_format.paint(yv).map_err(|e| format!("scatter: tooltip value {e}"))?;
-            Some(format!("{x_axis_title}: {x_str}; {y_axis_title}: {ys}; Series: {series}"))
+            let series_title = display_text::language::tr("tooltip.series", None, &[])?;
+            Some(format!("{x_axis_title}: {x_str}; {y_axis_title}: {ys}; {series_title}: {series}"))
         } else {
             None
         };
-        let label_attr = crate::contract::aria_attr(aria.as_deref(), crate::contract::ItemRole::Point);
+        let label_attr = crate::contract::aria_attr(aria.as_deref(), crate::contract::ItemRole::Point)?;
         if aria.is_some() {
-            crate::contract::mark_group_open(&mut svg, "symbol", &points_layer_name);
+            crate::contract::mark_group_open(&mut svg, "symbol", &points_layer_name)?;
         }
         let d = point_glyph(r, row, &shape_domain, *mark_r)?;
         let _ = write!(
@@ -2849,8 +3383,10 @@ fn render_fit(
         if aria.is_some() {
             crate::contract::mark_group_close(&mut svg);
         }
-        if value_labels.is_some() {
-            value_label_marks.push((cx, cy, aria.clone()));
+        if value_labels.is_some() && !y_nominal {
+            // The text layer inherits the color channel as its fill.
+            let ink = if r.color.is_some() { channel_ink.clone() } else { value_label_ink.to_string() };
+            value_label_marks.push((cx, cy, aria.clone(), ink));
         }
         if let (true, Some(label)) = (ghosts_on, &aria) {
             let stroke = if r.color.is_some() { channel_ink.clone() } else { ghost_ink.clone() };
@@ -2858,15 +3394,14 @@ fn render_fit(
         }
     }
     if !value_label_marks.is_empty() {
-        let color = value_label_font.and_then(|f| f.color.as_deref()).unwrap_or("#313233");
         let weight = value_label_font.map(|f| f.weight_str()).unwrap_or_else(|| "400".into());
         let font_style = value_label_font.map(crate::common::Font::style_attr).unwrap_or_default();
         let baseline = value_label_dy + vega_fit::baseline_shift(value_label_baseline, value_label_size);
         if tooltip_labels {
-            crate::contract::value_label_group_open(&mut svg, &format!("layer_{}_marks", fired_rule_count + 1));
+            crate::contract::value_label_group_open(&mut svg, &format!("layer_{}_marks", fired_rule_count + 1))?;
         }
-        for ((cx, cy, aria), (text, _)) in value_label_marks.iter().zip(&value_label_texts) {
-            let label_attr = crate::contract::aria_attr(aria.as_deref(), crate::contract::ItemRole::TextMark);
+        for ((cx, cy, aria, color), (text, _)) in value_label_marks.iter().zip(&value_label_texts) {
+            let label_attr = crate::contract::aria_attr(aria.as_deref(), crate::contract::ItemRole::TextMark)?;
             crate::common::write_value_label(
                 &mut svg,
                 cx + value_label_dx,
@@ -2890,141 +3425,44 @@ fn render_fit(
             .iter()
             .map(|(aria, x, y, stroke)| crate::contract::GhostRule { aria: Some(aria), x: *x, y: *y, stroke })
             .collect();
-        crate::contract::mirror_ghost_layer(&mut svg, &rules, plot_h);
+        crate::contract::mirror_ghost_layer(&mut svg, &rules, plot_h)?;
     }
 
     // X ticks + labels.
-    let x_axis_drop = x_axis_offset + 0.5;
     if let Some(axis) = temporal_x.as_ref().filter(|_| panel.is_none()) {
-        axis.paint(&mut svg, ax_x, 0.0, plot_w, plot_h)?;
+        axis.paint(&mut svg, ax_x, 0.0, plot_w, plot_h, fonts)?;
     }
-    if temporal_x.is_none() {
-        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::X, (0.5, plot_h + x_axis_drop));
-    }
-    if x_ticks_visible && temporal_x.is_none() {
-        let tc = crate::common::required_ink(ax_x.ticks.color.as_deref(), "scatter", "axis_x.ticks.color")?;
-        let tw = ax_x.ticks.width.unwrap_or(1.0);
-        for &frac in &x_ticks {
-            let gx = x_pos(frac).round() + 0.5;
-            let _ = write!(
-                svg,
-                "<line x1=\"{gx:.3}\" y1=\"{:.3}\" x2=\"{gx:.3}\" y2=\"{:.3}\" \
-                 stroke=\"{tc}\" stroke-width=\"{tw}\"/>",
-                plot_h + x_axis_drop,
-                plot_h + x_axis_drop + x_tick_len, tc = xml_escape_attr(tc)
-            );
-        }
-    }
-    let x_label_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
-    let x_label_weight = ax_x.labels.font.weight_str();
-    if x_cat_angle != 0.0 {
-        // Vega's SVG text transform for a rotated item: translate to the
-        // anchor, rotate, then the baseline shift — bar's own
-        // `BandXAxis::paint` rotated arm (`bar.rs`), reused verbatim.
-        let anchor_y = plot_h + x_axis_drop + x_tick_eff + x_label_pad;
-        let dy = vega_fit::baseline_shift(x_cat_baseline, x_font_size);
-        let text_anchor = match x_cat_align {
-            "left" => "start",
-            "right" => "end",
-            _ => "middle",
-        };
-        for (&frac, lbl) in x_ticks.iter().zip(x_labels.iter()) {
-            let pos = x_pos(frac) + 0.5;
-            let _ = write!(
-                svg,
-                "<text text-anchor=\"{text_anchor}\" transform=\"translate({pos:.3},{anchor_y:.3}) \
-                 rotate({x_cat_angle}) translate(0,{dy:.3})\" \
-                 font-family=\"{}\" font-size=\"{x_font_size}\" \
-                 font-weight=\"{x_label_weight}\" fill=\"{x_label_color}\">{}</text>",
-                vega_escape_attr(x_family),
-                xml_escape(lbl), text_anchor = xml_escape_attr(text_anchor), x_label_weight = xml_escape_attr(&x_label_weight), x_label_color = xml_escape_attr(x_label_color)
-            );
-        }
-    } else {
-        let x_label_y = plot_h
-            + x_axis_drop
-            + x_tick_eff
-            + x_label_pad
-            + vega_fit::baseline_shift("top", x_font_size);
-        let x_log_visible = (ax_x.is_quantitative && ax_x.is_log_scale()).then(|| {
-            log_label_visible(&x_labels, ax_x.labels.min_gap.unwrap_or(0.0), |i| {
-                let pos = x_ticks[i] * plot_w;
-                vega_fit::text_ink(
-                    pos,
-                    plot_h + x_axis_drop + x_tick_eff + x_label_pad,
-                    x_label_ws[i].min(x_limit),
-                    x_font_size,
-                    x_flush_align(pos, plot_w),
-                    "top",
-                )
-            })
-        });
-        for (i, (&frac, lbl)) in x_ticks.iter().zip(x_labels.iter()).enumerate() {
-            if x_log_visible.as_ref().is_some_and(|v| !v[i]) {
-                continue;
-            }
-            let pos = x_pos(frac) + 0.5;
-            let anchor = if !x_label_flush {
-                "middle"
-            } else if pos - 0.5 <= 1.0 {
-                "start"
-            } else if pos - 0.5 >= plot_w - 1.0 {
-                "end"
-            } else {
-                "middle"
-            };
-            let _ = write!(
-                svg,
-                "<text x=\"{pos:.3}\" y=\"{x_label_y:.3}\" text-anchor=\"{anchor}\" \
-                 font-family=\"{}\" font-size=\"{x_font_size}\" \
-                 font-weight=\"{x_label_weight}\" fill=\"{x_label_color}\">{}</text>",
-                vega_escape_attr(x_family),
-                xml_escape(lbl), anchor = xml_escape_attr(anchor), x_label_weight = xml_escape_attr(&x_label_weight), x_label_color = xml_escape_attr(x_label_color)
-            );
-        }
-    }
-
-    if x_cat_angle != 0.0 && x_title_band > 0.0 {
-        // Vega's `axisTitleLayout` offsets the title by the label ink's reach past
-        // the pivot plus `titlePadding`, read from `rotated_category_label_ink`.
-        let anchor_y = plot_h + x_axis_drop + x_tick_eff + x_label_pad;
-        let reach = x_labels.iter().try_fold(0.0_f64, |acc, lbl| {
-            let w = fonts.measure_shaped(lbl, x_family, x_font_size)?.min(x_limit);
-            let ink = crate::common::rotated_category_label_ink(
-                0.0, 0.0, w, x_font_size, x_cat_align, x_cat_baseline, x_cat_angle, false,
-            );
-            Ok::<f64, String>(acc.max(ink.y2))
-        })?;
-        let title_fs = ax_x.title.font.size_or(11.0);
-        let title_padding = ax_x.title.padding.unwrap_or(10.0);
-        let title_y = anchor_y + reach + title_padding + vega_fit::baseline_shift("top", title_fs);
-        crate::common::emit_axis_title_at(&mut svg, &x_title_text, &ax_x.title, plot_w / 2.0, title_y, panel.is_none().then_some(crate::contract::LabelKey::X));
-    } else if temporal_x.is_none() {
-        let x_label_baseline = plot_h
-            + x_axis_drop
-            + x_tick_eff
-            + x_label_pad
-            + vega_fit::baseline_shift("top", x_font_size);
-        crate::common::emit_axis_title_bottom(
+    if temporal_x.is_none() && plain_x.is_none() {
+        paint_plain_x_axis(
             &mut svg,
-            &x_title_text,
-            &ax_x.title,
-            plot_w / 2.0,
-            x_label_baseline,
-            x_font_size,
-            panel.is_none().then_some(crate::contract::LabelKey::X),
-        );
-    }
-    if temporal_x.is_none() {
-        crate::contract::axis_group_close(&mut svg);
+            &PlainXPaint {
+                ax_x,
+                ticks: &xf.ticks,
+                labels: &xf.labels,
+                plot_left: 0.0,
+                plot_w,
+                plot_bottom: plot_h,
+                angle: x_cat_angle,
+                align: x_cat_align,
+                baseline: x_cat_baseline,
+                flush: x_label_flush,
+                point_label_crisp: 0.5,
+                title: &x_title_text,
+                title_key: panel.is_none().then_some(crate::contract::LabelKey::X),
+            },
+            fonts,
+        )?;
     }
 
     // The value axis: drawn by the panel that owns it (a facet's last
     // column), anchored `value_axis_dx` past the plot edge.
     let paint_value_axis = panel.is_none_or(|o| o.paint_value_axis);
-    let value_axis_dx = panel.map_or(0.0, |o| o.value_axis_right_overhang);
+    let value_axis_dx = panel.filter(|o| !o.embedded_y).map_or(0.0, |o| o.value_axis_right_overhang);
+    // The axis group's origin and the direction its ticks, labels and title run.
+    let (y_axis_x, y_outward) = if y_left { (0.5, -1.0) } else { (plot_w + value_axis_dx + 0.5, 1.0) };
+    let value_axis_start = svg.len();
     if paint_value_axis {
-        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (plot_w + value_axis_dx + 0.5, 0.0));
+        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (y_axis_x, 0.0))?;
     }
     // Y tick marks: 6px lines between the plot edge and the label gutter.
     if y_tick_eff > 0.0 && paint_value_axis {
@@ -3036,8 +3474,8 @@ fn render_fit(
                 svg,
                 "<line x1=\"{:.3}\" y1=\"{gy:.3}\" x2=\"{:.3}\" y2=\"{gy:.3}\" \
                  stroke=\"{tc}\" stroke-width=\"{tw}\"/>",
-                plot_w + value_axis_dx + 0.5,
-                plot_w + value_axis_dx + 0.5 + y_tick_eff, tc = xml_escape_attr(tc)
+                y_axis_x,
+                y_axis_x + y_outward * y_tick_eff, tc = xml_escape_attr(tc)
             );
         }
     }
@@ -3045,18 +3483,9 @@ fn render_fit(
     // Y labels: right-aligned at the gutter's outer edge, middle baseline.
     let y_label_color = ax_y.labels.font.color.as_deref().unwrap_or("#626366");
     let y_label_weight = ax_y.labels.font.weight_str();
-    let y_label_x = plot_w + value_axis_dx + 0.5 + y_label_off;
+    let y_label_x = y_axis_x + y_outward * y_label_off;
     let log_visible = ax_y.is_log_scale().then(|| {
-        log_label_visible(&y_labels, ax_y.labels.min_gap.unwrap_or(0.0), |i| {
-            vega_fit::text_ink(
-                plot_w + value_axis_dx + y_label_off,
-                plot_h * y_ticks[i],
-                y_label_ws[i].min(y_limit),
-                y_font_size,
-                y_label_align,
-                "middle",
-            )
-        })
+        log_label_visible(&y_labels, ax_y.labels.min_gap.unwrap_or(0.0), |i| y_label_ink(plot_w + value_axis_dx, plot_h, i))
     });
     for (i, (&frac, lbl)) in y_ticks.iter().zip(y_labels.iter()).enumerate().filter(|_| paint_value_axis) {
         if log_visible.as_ref().is_some_and(|v| !v[i]) {
@@ -3078,18 +3507,19 @@ fn render_fit(
             &mut svg,
             &y_title_text,
             &ax_y.title,
-            plot_w + value_axis_dx + 0.5 + y_edge_at(plot_w, plot_h),
+            y_axis_x + y_outward * y_edge_at(plot_w, plot_h),
             plot_h / 2.0,
-            1.0,
+            y_outward,
             panel.is_none().then_some(crate::contract::LabelKey::Y),
         );
         crate::contract::axis_group_close(&mut svg);
     }
+    let value_axis_end = svg.len();
     if mirror_active {
         // The ghost is `dict(primary_axis)` but for `orient`/`grid`/`title`, so
         // its ticks and labels repeat the primary's, sign-flipped onto the
         // left edge's own 0.5 crisp anchor.
-        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (0.5, 0.0));
+        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (0.5, 0.0))?;
         if y_tick_eff > 0.0 {
             let tc = crate::common::required_ink(ax_y.ticks.color.as_deref(), "scatter", "axis_y.ticks.color")?;
             let tw = ax_y.ticks.width.unwrap_or(1.0);
@@ -3126,7 +3556,7 @@ fn render_fit(
     // plot rect's own width plus the label gutter and title band, unshifted.
     // Vega ceils this integer AFTER the fit resolves, a separate rounding
     // rule from the exact-float ink union that negotiated the fit itself.
-    let x2 = plot_w + y_edge_at(plot_w, plot_h) + y_title_extra;
+    let x2 = if y_left { plot_w } else { plot_w + y_edge_at(plot_w, plot_h) + y_title_extra };
     let lx = x2.ceil() + VEGA_LEGEND_OFFSET;
     // The stack's origin: at the view ink's right edge on the right, else
     // where `legendParams` anchored it. A centered or end-aligned legend
@@ -3211,6 +3641,19 @@ fn render_fit(
 
     // The panel's ink in its own canvas frame: the plot rect, every mark's
     // reach past it, and — on a single-column facet — the value-axis gutter.
+    // A log axis's labels that Vega's greedy overlap keeps at this plot size.
+    let y_drawn: Vec<bool> = match ax_y.is_log_scale() {
+        true => log_label_visible(&y_labels, ax_y.labels.min_gap.unwrap_or(0.0), |i| y_label_ink(plot_w, plot_h, i)),
+        false => vec![true; y_labels.len()],
+    };
+    let panel_axis: Option<PanelXAxis> = panel
+        .map(|o| -> Result<PanelXAxis, String> {
+            Ok(match &o.x_axis {
+                FacetX::Date(axis) => PanelXAxis::Temporal((*axis).clone()),
+                FacetX::Plain(axis) => PanelXAxis::Plain(axis.sized_for(ax_x, plot_w, fonts)?),
+            })
+        })
+        .transpose()?;
     let geometry = panel.map(|o| {
         let (plot_left, plot_top) = (pad_l + left_margin, pad_t + top_margin);
         let (plot_right, plot_bottom) = (plot_left + plot_w, plot_top + plot_h);
@@ -3219,10 +3662,20 @@ fn render_fit(
             let (px, py) = (plot_left + x_pos(x_frac), plot_top + y_pos(y_frac));
             ink.union(&vega_fit::Bounds::new(px, py, px, py).expand(mark_r + symbol_stroke_ink));
         }
+        for (&(x_frac, y_frac, _, _, _), (_, w)) in points_data.iter().zip(&value_label_texts) {
+            ink.union(&vega_fit::text_ink(
+                plot_left + x_pos(x_frac) + value_label_dx,
+                plot_top + y_pos(y_frac) + value_label_dy,
+                *w,
+                value_label_size,
+                value_label_align,
+                value_label_baseline,
+            ));
+        }
         // The cell's x gridlines run down to `axis.offset` below the plot
         // (`bboxFull` counts a cell's axis-grid child), whatever their stroke.
         if ax_x.grid.visible.unwrap_or(false) {
-            for &frac in &x_ticks {
+            for &frac in &xf.ticks {
                 let gx = plot_left + x_pos(frac);
                 ink.union(&vega_fit::Bounds::new(gx, plot_top, gx, plot_bottom + x_axis_offset));
             }
@@ -3231,9 +3684,27 @@ fn render_fit(
             ink.union(&vega_fit::Bounds::new(
                 pad_l,
                 plot_top,
-                plot_right + o.value_axis_right_overhang + m.right,
+                plot_right + if o.embedded_y { 0.0 } else { o.value_axis_right_overhang } + m.right,
                 plot_bottom,
             ));
+        }
+        if let Some(zx) = ax_x.grid.threshold.as_ref() {
+            for frac in xf.rules.into_iter().flatten() {
+                let rx = plot_left + x_pos(frac);
+                ink.union(&vega_fit::Bounds::new(rx, plot_top, rx, plot_bottom).expand(zx.width.unwrap_or(2.0)));
+            }
+        }
+        // An independent scale embeds the value axis in the cell: a tick label
+        // reaching past the plot is cell ink.
+        if o.embedded_y {
+            for (&frac, _) in y_ticks.iter().zip(&y_drawn).filter(|(_, &drawn)| drawn) {
+                facet_compose::union_embedded_label_ink(
+                    &mut ink,
+                    plot_top + y_pos(frac),
+                    y_font_size,
+                    (plot_left, plot_top, plot_right, plot_bottom),
+                );
+            }
         }
         let label_shift = vega_fit::baseline_shift("middle", y_font_size) + 0.5;
         PanelGeometry {
@@ -3242,6 +3713,7 @@ fn render_fit(
             ink,
             axis_w_overhang: left_margin + m.right,
             left_mark_overhang: left_margin,
+            plot_top,
             // `raw_left` is the left reach, which stands for the right one when
             // every mark is the same size; a size channel puts a differently
             // sized mark at each edge, so the marks' own reaches differ.
@@ -3252,7 +3724,11 @@ fn render_fit(
                 let (left_marks, right_marks) = (reach(|x, r, _| r - x), reach(|x, r, w| x + r - w));
                 (m.raw_left - left_marks + right_marks).max(0.0)
             },
-            widest_val_tick_label_width: y_label_ws.iter().fold(0.0_f64, |acc, &w| acc.max(w.min(y_limit))),
+            widest_val_tick_label_width: y_label_ws
+                .iter()
+                .zip(&y_drawn)
+                .filter(|(_, &drawn)| drawn)
+                .fold(0.0_f64, |acc, (&w, _)| acc.max(w.min(y_limit))),
             val_gutter: y_label_off - y_tick_eff,
             val_tick_size: y_tick_eff,
             val_tick_marks: if y_tick_eff > 0.0 {
@@ -3263,7 +3739,9 @@ fn render_fit(
             val_ticks: y_ticks
                 .iter()
                 .zip(&y_labels)
-                .map(|(&frac, label)| (plot_top + y_pos(frac) + label_shift, label.clone()))
+                .zip(&y_drawn)
+                .filter(|(_, &drawn)| drawn)
+                .map(|((&frac, label), _)| (plot_top + y_pos(frac) + label_shift, label.clone()))
                 .collect(),
             mirror_style: Some(GhostStyle {
                 val_font_size: y_font_size,
@@ -3271,9 +3749,11 @@ fn render_fit(
                 val_color: y_label_color.to_string(),
                 val_family: y_family.to_string(),
             }),
-            axis: PanelXAxis::Temporal(o.x_axis.clone()),
+            axis: panel_axis.expect("a panel render carries its x axis"),
             top_axis_overhang: (-top_overhang.get()).max(0.0),
             legend: None,
+            value_axis: paint_value_axis
+                .then(|| crate::families::facet_compose::ValueAxisInk { range: value_axis_start..value_axis_end, origin: (group_x, group_y) }),
         }
     });
     Ok((svg, geometry))
@@ -3616,8 +4096,8 @@ fn render_legacy(
     // `render_fit` reads its own title text and rotated-title reserve
     // through — never a second `slug_to_display` reading of the field
     // name, and never a second copy of Vega's `axisTitleLayout` term.
-    let x_title_text = crate::common::axis_title_text(&r.x, r.x_label.as_deref(), &r.field_labels);
-    let y_title_text = crate::common::axis_title_text(&r.y, r.y_label.as_deref(), &r.field_labels);
+    let x_title_text = crate::common::axis_title_text(&r.x, r.x_label.as_deref(), &r.field_labels)?;
+    let y_title_text = crate::common::axis_title_text(&r.y, r.y_label.as_deref(), &r.field_labels)?;
     let x_title_paint = crate::common::wrapped_axis_title(&r.id, "x_label", &x_title_text, &ax_x.title.font, w, fonts)?;
     let y_title_paint = crate::common::wrapped_axis_title(&r.id, "y_label", &y_title_text, &ax_y.title.font, h, fonts)?;
     let y_title_extra = crate::common::y_title_extra(&ax_y.title, &y_title_paint);
@@ -3954,11 +4434,11 @@ fn render_legacy(
         crate::contract::paint_item(
             svg, "rule", &name, crate::contract::ItemRole::RuleMark, crate::contract::Reads::Hidden,
             |aria| line(aria),
-        );
+        )?;
         fired_rule_count += 1;
         if let Some(shape_field) = r.shape.as_deref().filter(|_| rule_shape) {
             let aria = rule_aria(tooltip_labels, &r.style.tooltip_format.spec, title, datum)?;
-            paint_rule_point(svg, point_at, (shape_field, aria.as_ref(), layer), (color, width));
+            paint_rule_point(svg, point_at, (shape_field, aria.as_ref(), layer), (color, width))?;
         }
         Ok(())
     };
@@ -4037,9 +4517,9 @@ fn render_legacy(
         } else {
             None
         };
-        let label_attr = crate::contract::aria_attr(aria.as_deref(), crate::contract::ItemRole::Point);
+        let label_attr = crate::contract::aria_attr(aria.as_deref(), crate::contract::ItemRole::Point)?;
         if aria.is_some() {
-            crate::contract::mark_group_open(&mut svg, "symbol", &points_layer_name);
+            crate::contract::mark_group_open(&mut svg, "symbol", &points_layer_name)?;
         }
         let _ = write!(
             svg,
@@ -4074,7 +4554,7 @@ fn render_legacy(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::X, (plot_left, x_axis_y));
+    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::X, (plot_left, x_axis_y))?;
     for (i, (&tv, label)) in x_ticks.iter().zip(x_tick_labels.iter()).enumerate() {
         let abs_x = plot_left + x_scale.position(tv);
         if abs_x < plot_left - 1.0 || abs_x > plot_right + 1.0 {
@@ -4147,7 +4627,7 @@ fn render_legacy(
         plot_left - y_tick_eff - y_label_pad
     };
 
-    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (if y_axis_right { plot_right } else { plot_left }, plot_top));
+    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (if y_axis_right { plot_right } else { plot_left }, plot_top))?;
     // One mark per rung, from the axis edge outward.
     if y_tick_eff > 0.0 {
         let (edge_x, outward) =
@@ -4268,7 +4748,7 @@ fn render_legacy(
 
 #[cfg(test)]
 mod tests {
-    use super::render;
+    use super::{render, LinearX, LogAxis, ScatterResolved};
     use crate::text::FontBook;
     use crate::Payload;
 
@@ -5114,7 +5594,7 @@ mod tests {
             serde_json::from_value(json["resolved"]["style"]["axis_y"]["title"].clone()).unwrap();
         let title_extra = crate::common::y_title_extra(
             &title,
-            &crate::common::axis_title_text("pipeline", None, &crate::common::FieldLabels::new()),
+            &crate::common::axis_title_text("pipeline", None, &crate::common::FieldLabels::new()).unwrap(),
         );
         assert!(title_extra > 0.0, "the visible title must reserve a band: {title_extra}");
         let label_w = ["150", "200", "250"]
@@ -5694,17 +6174,17 @@ mod tests {
 
     /// The filter reads quantitative and temporal fields only
     /// (`filterinvalid.ts:36-55`): a null category survives it and Vega draws
-    /// its own `null` band, which this port does not, so it refuses.
+    /// its own `null` band, sorted ahead of the others, whose label and
+    /// tooltip read `null`.
     #[test]
-    fn a_null_category_refuses_by_name_rather_than_dropping_its_row() {
-        let payload: Payload = serde_json::from_value(probe_payload(serde_json::json!([
+    fn a_null_category_keeps_its_row_under_a_null_band() {
+        let svg = render_json(probe_payload(serde_json::json!([
             {"spend": "Alpha", "pipeline": 100.0, "segment": "A"},
             {"spend": "Bravo", "pipeline": 180.0, "segment": "B"},
             {"spend": null, "pipeline": 300.0, "segment": "Z"},
-        ])))
-        .unwrap();
-        let err = render(&payload, &test_fonts()).expect_err("refuses");
-        assert!(err.contains("a null category x is not supported"), "{err}");
+        ])));
+        let labels = svg.find(">null</text>").expect("a null band label");
+        assert!(labels < svg.find(">Alpha</text>").unwrap(), "null sorts first: {svg}");
     }
 
     /// A row whose category AND measure are null is dropped by the measure's
@@ -6244,6 +6724,17 @@ mod tests {
         json
     }
 
+    /// A categorical y gives the text layer's quantitative `y` no position, so
+    /// Vega draws no value label (and the fit takes no label ink).
+    #[test]
+    fn point_value_labels_on_a_categorical_y_draw_nothing() {
+        let mut json = make_dot_plot_payload(dot_rows("Charlie"));
+        json["resolved"]["style"]["point_mark"]["labels"] =
+            serde_json::json!({"visible": true, "font": {"family": TEST_FONT}});
+        let svg = render_json(json);
+        assert!(!svg.contains("data-dbt-value-label"), "{svg}");
+    }
+
     /// Three categories whose row order (Bravo, Alpha, third), alphabetical
     /// order (Alpha, Bravo, third) and sorted-by-measure order (Bravo,
     /// third, Alpha) all differ — a band-order assertion can only pass for
@@ -6751,21 +7242,18 @@ mod tests {
         assert!(err.contains("size domain is degenerate"), "{err}");
     }
 
-    /// A nominal x swapped onto a dot-plot fixture (whose axis_y still
-    /// carries the dot plot's own empty ladder) lands outside the fit
-    /// shape — `y_measure` needs a baked tick ladder this fixture never
-    /// gives it — so it still refuses, on the same "outside the fit
-    /// shape" message a nominal y gets, not a nominal-x-specific one: a
-    /// nominal x is itself supported now (see
-    /// `nominal_x_places_marks_on_the_point_scale_bands` below), only this
-    /// particular payload isn't shaped for it.
+    /// A nominal x over a measure with no baked ladder (the dot plot
+    /// fixture's own empty one) draws Vega's own ticks, `ceil(height / 40)` of
+    /// them over the plot the labels settle.
     #[test]
-    fn nominal_x_outside_the_fit_shape_refuses() {
+    fn nominal_x_over_an_unbaked_ladder_draws_vegas_own_ticks() {
         let mut json = make_dot_plot_payload(dot_rows("Charlie"));
         json["resolved"]["x"] = serde_json::json!("team");
         json["resolved"]["y"] = serde_json::json!("median_response_hours");
-        let err = render_err(json);
-        assert!(err.contains("dot/band plot"), "{err}");
+        let svg = render_json(json);
+        let (_, plot_h) = plot_size(&svg);
+        let rungs = svg.matches("text-anchor=\"end\"").count();
+        assert_eq!(rungs as f64, d3rs::ticks::d3_ticks(0.0, 3.0, (plot_h / 40.0).ceil() as usize).len() as f64, "{svg}");
     }
 
     /// A nominal x together with a nominal y draws on two point scales
@@ -6778,14 +7266,80 @@ mod tests {
         render(&payload, &test_fonts()).expect("renders");
     }
 
-    /// A dot plot outside the fit shape (here a left y axis) refuses: the
-    /// legacy arm's point loop reads a numeric y and would draw nothing.
+    /// A dot plot on a left y axis end-anchors its category labels at the
+    /// plot's left edge, and the plot starts past their widest.
     #[test]
-    fn a_dot_plot_outside_the_fit_shape_refuses() {
+    fn a_dot_plot_on_a_left_axis_end_anchors_its_labels_left_of_the_plot() {
         let mut json = make_dot_plot_payload(dot_rows("Charlie"));
         json["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("left");
-        let err = render_err(json);
-        assert!(err.contains("dot/band plot"), "{err}");
+        let svg = render_json(json);
+        let label = svg.split("<text ").find(|t| t.contains(">Charlie</text>")).expect("a category label");
+        assert!(label.contains("text-anchor=\"end\""), "{label}");
+        assert!(attr(label, "x") <= 0.5, "left of the axis group's origin: {label}");
+    }
+
+    /// A value axis on the left puts the fit arm's tick labels end-anchored
+    /// `labelPadding` left of the axis, and the plot clears the widest.
+    #[test]
+    fn a_left_value_axis_end_anchors_its_labels_left_of_the_plot() {
+        let mut json = make_scatter_payload(false);
+        json["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("left");
+        json["resolved"]["style"]["point_mark"]["shape"] = serde_json::json!("square");
+        let svg = render_json(json);
+        let label = svg.split("<text ").find(|t| t.contains(">200</text>")).expect("a value label");
+        assert!(label.contains("text-anchor=\"end\""), "{label}");
+        assert!(attr(label, "x") < 0.0, "left of the axis group's origin: {label}");
+        let plot = svg.split("<g transform=\"translate(").nth(1).expect("the plot group");
+        let origin: f64 = plot.split(',').next().unwrap().parse().unwrap();
+        assert!(origin > 16.0 + 20.0, "the plot starts past the label gutter: {origin}");
+    }
+
+    /// An authored log domain keeps its order: a descending pair inverts the
+    /// axis, and d3 hands the ticks back reversed.
+    #[test]
+    fn a_descending_log_domain_inverts_the_axis_and_reverses_its_ticks() {
+        let mut json = make_scatter_payload(false);
+        json["resolved"]["style"]["axis_y"]["scale"] = serde_json::json!({"continuous": {"type": "log", "domain": [1000.0, 10.0]}});
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        let r: ScatterResolved = serde_json::from_value(payload.resolved.clone()).unwrap();
+        let ladder = LogAxis::new(&r.style.axis_y, 140.0, 250.0, 10).unwrap();
+        assert_eq!(ladder.ticks.first(), Some(&1000.0));
+        assert_eq!(ladder.ticks.last(), Some(&10.0));
+        assert_eq!(ladder.frac_from_top(1000.0), 1.0, "the large end sits at the bottom of an inverted axis");
+        assert_eq!(ladder.frac_from_top(10.0), 0.0);
+    }
+
+    /// Vega pads a continuous scale's domain about its center so the data ends
+    /// sit `padding` pixels inside the range; a quantitative x then rounds the
+    /// padded domain out.
+    #[test]
+    fn a_padded_linear_x_domain_widens_with_the_plot_width() {
+        let lin = LinearX {
+            raw: (0.0, 10.0),
+            nice: false,
+            pad: 10.0,
+            tick_count: 5,
+            format: None,
+            rule_datums: [None, None],
+        };
+        let (ticks, labels, _, domain) = lin.at(120.0).unwrap();
+        assert_eq!(domain, (-1.0, 11.0), "10 of 120 px each side widens by 120 / 100");
+        assert_eq!(LinearX::frac(domain, 0.0), 1.0 / 12.0);
+        assert_eq!(labels.first().map(String::as_str), Some("0"), "d3's default tick format: {labels:?} {ticks:?}");
+        let (_, _, _, wider) = lin.at(220.0).unwrap();
+        assert!(wider.0 > domain.0, "a wider plot needs less padding: {wider:?}");
+    }
+
+    /// With no authored label format an x tick reads d3's default: grouped
+    /// fixed point at the precision the tick step implies.
+    #[test]
+    fn an_x_without_a_label_format_reads_d3s_default_tick_format() {
+        let lin = LinearX { raw: (0.0, 3000.0), nice: true, pad: 0.0, tick_count: 3, format: None, rule_datums: [None, None] };
+        let (_, labels, _, _) = lin.at(400.0).unwrap();
+        assert_eq!(labels, ["0", "1,000", "2,000", "3,000"]);
+        let lin = LinearX { raw: (0.0, 1.0), nice: true, pad: 0.0, tick_count: 2, format: None, rule_datums: [None, None] };
+        let (_, labels, _, _) = lin.at(400.0).unwrap();
+        assert_eq!(labels, ["0.0", "0.5", "1.0"]);
     }
 
     /// A nominal x IN the fit shape (right y axis, baked measure ladder —
@@ -7003,6 +7557,22 @@ mod tests {
         assert!(!svg.contains('\u{2064}'), "no ROLE_HEADER_SWATCHED marker: {svg}");
     }
 
+    #[test]
+    fn wide_measures_point_aria_label_names_the_series_in_the_board_language() {
+        let mut json = make_wide_dot_band_payload();
+        json["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.2~f");
+        json["board_style"] = serde_json::json!({
+            "font": TEST_FONT, "text_mark_font": {"family": TEST_FONT, "size": 11.0}, "muted": null, "tones": null,
+            "title_case": null, "continuous_height": null,
+            "format_locale": crate::number_locale::en_us_wire(), "language": "de", "time_locale": crate::time_locale::en_us_wire()
+        });
+        let svg = display_text::language::with_language(display_text::language::Language::new("de").unwrap(), || {
+            render_json(json)
+        });
+        assert!(svg.contains("; Serie: unit price\""), "{svg}");
+        assert!(!svg.contains("Series:"), "{svg}");
+    }
+
     /// `wide_measures` beside an authored `color:` dimension composes the
     /// fold's `<value> - <measure>` series, humanized on the measure part.
     #[test]
@@ -7059,23 +7629,26 @@ mod tests {
         assert!(err.contains("wide_measures with a quantitative or date x"), "{err}");
     }
 
-    /// Point value labels would paint one color over a per-series fold.
+    /// Point value labels beside a per-series fold paint one label per folded point.
     #[test]
-    fn wide_measures_with_point_labels_refuse() {
+    fn wide_measures_with_point_labels_paint_one_label_per_point() {
         let mut json = make_wide_dot_band_payload();
-        json["resolved"]["style"]["point_mark"]["labels"] = serde_json::json!({"visible": true});
-        let err = render_err(json);
-        assert!(err.contains("point value labels with wide_measures"), "{err}");
+        json["resolved"]["style"]["point_mark"]["labels"] = serde_json::json!({"visible": true, "font": {"family": TEST_FONT}});
+        let svg = render_json(json);
+        for value in ["10", "30", "50", "70"] {
+            assert!(svg.contains(&format!(">{value}</text>")), "{value}: {svg}");
+        }
     }
 
-    /// Outside the fit shape the legacy arm would leak the synthetic fold
-    /// field names as titles.
+    /// A wide fold on a left y axis keeps its joined measure title and the
+    /// legend, with the value labels end-anchored left of the plot.
     #[test]
-    fn wide_measures_outside_the_fit_shape_refuse() {
+    fn wide_measures_on_a_left_axis_draw_the_fold() {
         let mut json = make_wide_dot_band_payload();
         json["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("left");
-        let err = render_err(json);
-        assert!(err.contains("wide_measures outside production's fit shape"), "{err}");
+        let svg = render_json(json);
+        assert!(!svg.contains("__wide"), "no synthetic field name leaks: {svg}");
+        assert_eq!(symbol_centers(&svg).len(), 8, "6 points and 2 legend swatches: {svg}");
     }
 
     /// Review round 1 HIGH 4: the title-band fix (`render_fit` reserves NO
@@ -7361,14 +7934,16 @@ mod tests {
         assert!((title_y - expected).abs() < 0.01, "title y: {title_y} vs {expected} in {svg}");
     }
 
-    /// Vega's domain sort is `{op: min}` over the sort field; a non-numeric
-    /// sort key is unported and refuses rather than guessing an order.
+    /// Vega's domain sort is `{op: min}` over the sort field, which JS
+    /// compares as text when the key is text: here the category itself, so
+    /// `desc` reverses the code-unit order.
     #[test]
-    fn a_dot_plot_sorted_by_a_non_numeric_field_refuses() {
+    fn a_dot_plot_sorted_by_a_text_field_ranks_by_its_code_units() {
         let mut json = make_dot_plot_payload(dot_rows("Charlie"));
-        json["resolved"]["sort"] = serde_json::json!({"by": "team", "order": "asc"});
-        let err = render_err(json);
-        assert!(err.contains("sort"), "{err}");
+        json["resolved"]["sort"] = serde_json::json!({"by": "team", "order": "desc"});
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert_eq!(band_labels(&svg), ["Charlie", "Bravo", "Alpha"], "{svg}");
     }
     /// The category texts of the drawn bands, top to bottom.
     fn band_labels(svg: &str) -> Vec<String> {
@@ -7502,20 +8077,34 @@ mod tests {
         );
     }
 
-    /// A time `labels.format` on a categorical y is production's UTC
-    /// labelExpr: it relabels every band. Unported — so it refuses rather
-    /// than drawing the raw category strings under an authored date format.
+    /// A time `labels.format` on a categorical y routes through a UTC labelExpr
+    /// over date bands; over any other value production's `gate_label_format`
+    /// raises `ERR-TIME-FORMAT-NOT-TEMPORAL` instead of painting "Invalid Date".
     #[test]
-    fn a_time_label_format_on_a_categorical_y_refuses() {
+    fn a_time_label_format_on_a_categorical_y_raises_the_gate() {
         let mut json = make_dot_plot_payload(dot_rows("Charlie"));
         json["resolved"]["style"]["axis_y"]["labels"]["format"] = serde_json::json!("%b %Y");
         let err = render_err(json);
-        assert!(err.contains("time"), "{err}");
+        assert!(err.starts_with("ERR-TIME-FORMAT-NOT-TEMPORAL"), "{err}");
+        assert!(err.contains("axis_y.labels.format"), "{err}");
         // A number format is dropped by production, not routed — the
         // category strings render as themselves.
         let mut ok = make_dot_plot_payload(dot_rows("Charlie"));
         ok["resolved"]["style"]["axis_y"]["labels"]["format"] = serde_json::json!(".3~s");
         assert_eq!(band_labels(&render_json(ok)), ["Bravo", "Charlie", "Alpha"]);
+    }
+
+    /// Date bands pass the gate and every band is relabeled through the format.
+    #[test]
+    fn a_time_label_format_on_date_bands_relabels_every_band() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut json = make_dot_plot_payload(serde_json::json!([
+            {"median_response_hours": 3.0, "team": "2024-02"},
+            {"median_response_hours": 1.0, "team": "2024-01"},
+            {"median_response_hours": 2.0, "team": "2024-03-15"},
+        ]));
+        json["resolved"]["style"]["axis_y"]["labels"]["format"] = serde_json::json!("%b %Y");
+        assert_eq!(band_labels(&render_json(json)), ["Feb 2024", "Mar 2024", "Jan 2024"]);
     }
 
     // ── Zero rule (#8241's scatter half) ──────────────────────────────────

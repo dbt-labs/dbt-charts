@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Q4 Budget vs Actual
+notes: Before-after comparison pattern — two series (current and baseline) on the same bar chart
+
+queries:
+  budget_vs_actual:
+    notes: Current quarter spend vs prior-quarter baseline by department
+    columns: [department, current, baseline]
+    values:
+      - [Engineering, 420000, 380000]
+      - [Marketing,   185000, 210000]
+      - [Sales,       340000, 295000]
+      - [Support,      95000, 105000]
+
+charts:
+  comparison_bar:
+    notes: Current vs baseline spend — bars sit side by side per department
+    type: bar
+    query: budget_vs_actual
+    x: department
+    y: [current, baseline]
+    title: Q4 Actual vs Prior Quarter by Department
+
+rows:
+  - comparison_bar

@@ -49,8 +49,8 @@ def _mdsvg_case(case: str | None, scope: str) -> str:
     """Map a FontStyle ``case`` value to what mdsvg paints (upper/lower only).
 
     mdsvg is dependency-light and only does upper/lower string transforms. The
-    richer dct cases (``sentence``/``title``/``slug``/``camel``) rely on the
-    ``titlecase`` dep and would silently no-op in mdsvg, so reject them loudly
+    richer dct cases (``sentence``/``title``/``slug``/``camel``) are the
+    engine's (``text/case.py``) and would silently no-op in mdsvg, so reject them loudly
     rather than ship a dead knob.
     """
     if case is None or case == "none":

@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.markers import Url
+from dbt_charts.core.compile.models.primitives import Link
 from dbt_charts.core.compile.models.style.authored.table import TableColumnConfig
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_LINK_SCHEME_UNANCHORED,
@@ -54,6 +55,8 @@ def _iter_url_slots(
             child = f"{path}.{name}"
             if isinstance(value, str) and _is_url_field(model, name):
                 yield child, value, model
+            elif isinstance(value, Link) and _is_url_field(model, name):
+                yield f"{child}.url", value.url, model
             else:
                 yield from _iter_url_slots(value, child)
     elif isinstance(node, dict):

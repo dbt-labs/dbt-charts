@@ -26,8 +26,7 @@
 //! own single-chart wrapper and `render_facet`'s per-panel calls both go
 //! through it — see `render_facet`'s own doc comment for the composer and
 //! the scope it still refuses outside of (a legend off `top`, layers,
-//! support_table, wide measures,
-//! `multiples.scale: "independent"`, a sparse facet grid, a value-axis
+//! support_table, wide measures, a value-axis
 //! title or `axis_y.position: "left"` or a continuous x on a multi-column
 //! facet, and — combined with `axis_y.mirror` — a `position: "left"` axis
 //! of any shape, a continuous x, or a mirror `format` or `expr`).
@@ -159,6 +158,27 @@ pub fn regroup(
     Ok(panels)
 }
 
+/// One facet dimension's header values in baked axis order: every
+/// `axis.values` entry some panel carries, as that panel's original value.
+/// A value no panel holds (the row-truncated render path) has no header.
+pub fn axis_header_values<'a>(axis: &PartitionAxis, axis_idx: usize, panels: &'a [Panel]) -> Vec<&'a Value> {
+    axis.values
+        .iter()
+        .filter_map(|canon| panels.iter().map(|p| &p.key[axis_idx]).find(|key| canonical_key(key) == *canon))
+        .collect()
+}
+
+/// How many grid cells hold no data in a `rows_n x cols_n` facet whose
+/// `panel_count` populated panels `regroup` returned. Vega's facet `cross`
+/// aggregate emits those cells with undefined sort indices, which sort
+/// before every populated cell: they take the first grid slots and the
+/// populated panels, in `regroup`'s row-major order, fill the rest.
+pub fn empty_leading_cells(panel_count: usize, rows_n: usize, cols_n: usize) -> Result<usize, String> {
+    (rows_n * cols_n)
+        .checked_sub(panel_count)
+        .ok_or_else(|| format!("multiples: {panel_count} panels do not fit a {rows_n} x {cols_n} grid"))
+}
+
 /// `_chart_rows.py::restamp`: put a partition field's value back onto every
 /// row of its panels. `regroup` strips the partition columns (a panel's key
 /// already carries them), but a chart whose `x` or `color` IS a partition
@@ -243,6 +263,16 @@ pub fn facet_panel_width(
     (usable / panel_cols as f64 - extra_axis_px).max(0.0)
 }
 
+/// Production resolve rejects a both-edge mirror under an independent scale
+/// (`_axes.py::_apply_multiples_mirror`): each panel owns its scale, so
+/// mirroring a shared one to both edges is meaningless.
+pub fn independent_mirror_error(chart_id: &str) -> crate::diagnostic::Diagnostic {
+    crate::diagnostic::Diagnostic::new(
+        &crate::codes::ERR_MULTIPLES_INDEPENDENT_SCALE_MIRROR,
+        [("chart_id", Value::from(chart_id))],
+    )
+}
+
 /// `WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM` (`facet_panel_width_below_minimum.py`):
 /// production judges the `facet_panel_width` its spec gives each panel, before
 /// any composite width correction.
@@ -304,6 +334,19 @@ mod tests {
         assert!(!panels[0].rows[0].contains_key("year"));
         assert_eq!(panels[1].key, vec![Value::from(2020)]);
         assert_eq!(panels[1].rows.len(), 1);
+    }
+
+    #[test]
+    fn empty_cells_come_first_and_headers_follow_the_baked_axis_order() {
+        let axes = vec![PartitionAxis { field: "c".into(), values: vec!["\"x\"".into(), "\"y\"".into()] }];
+        let rows = vec![row(&[("c", Value::from("y"))]), row(&[("c", Value::from("x"))])];
+        let panels = regroup(&axes, &rows).unwrap();
+        assert_eq!(empty_leading_cells(panels.len(), 2, 2), Ok(2));
+        assert_eq!(empty_leading_cells(3, 2, 2), Ok(1));
+        assert!(empty_leading_cells(5, 2, 2).is_err());
+        let headers = axis_header_values(&axes[0], 0, &panels);
+        assert_eq!(headers, [&Value::from("x"), &Value::from("y")], "baked order, not first appearance");
+        assert!(axis_header_values(&axes[0], 0, &panels[1..]).len() == 1, "a value with no panel has no header");
     }
 
     #[test]

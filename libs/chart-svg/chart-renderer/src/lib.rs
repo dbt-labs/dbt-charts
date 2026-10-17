@@ -2,8 +2,8 @@
 //! no Vega-Lite, no JS runtime. One module per chart family; families own
 //! their payload structs and deserialize the raw `resolved` JSON themselves.
 
+pub mod annotation;
 pub mod board;
-pub mod case;
 pub mod codes;
 pub mod common;
 pub mod conditions;
@@ -25,7 +25,6 @@ pub mod text;
 pub mod time_locale;
 pub mod title;
 pub mod title_shift;
-pub mod titlecase_first_char;
 pub mod variables;
 pub mod vega_fit;
 pub mod xml;
@@ -163,13 +162,19 @@ pub struct BoardStyle {
     /// names (and the `%c %x %X` patterns) a date prints in. Required, like
     /// `format_locale`.
     pub time_locale: time_locale::TimeLocale,
+    /// The board's resolved `regional.language`: the catalog every generated
+    /// word prints from. Absent is `en`.
+    #[serde(default)]
+    pub language: display_text::language::Language,
 }
 
 impl BoardStyle {
-    /// Run `render` in this board's number and time locales.
+    /// Run `render` in this board's number and time locales and language.
     pub fn scoped<T>(&self, render: impl FnOnce() -> T) -> T {
         number_locale::with_number_locale(&self.format_locale, || {
-            time_locale::with_time_locale(&self.time_locale, render)
+            time_locale::with_time_locale(&self.time_locale, || {
+                display_text::language::with_language(self.language, render)
+            })
         })
     }
 }
@@ -223,7 +228,7 @@ impl PlaceholderStyle {
         use crate::xml::Attrs;
         let overlay = &self.overlay;
         let text = match case {
-            Some(case) if case != "none" => crate::case::apply_case(&overlay.text, case)?,
+            Some(case) if case != "none" => display_text::case::apply_case(&overlay.text, case)?,
             _ => overlay.text.clone(),
         };
         // `escape_attr` prints a keyword as written, an int bare, a float with its `.0`.
@@ -287,12 +292,23 @@ pub(crate) fn test_board_style(style: Value) -> Option<BoardStyle> {
     Some(serde_json::from_value(with_required_board_fields(style)).expect("board style parses"))
 }
 
-/// A unit-test payload as the Python seam would send it.
+/// A unit-test payload as the Python seam would send it: every resolved table
+/// column carries the link modes `ResolvedTableColumnConfig` always emits.
 #[cfg(test)]
 pub(crate) fn test_payload(mut payload: Value) -> Payload {
     let fields = payload.as_object_mut().expect("a payload is an object");
     let style = fields.remove("board_style").unwrap_or_else(|| serde_json::json!({}));
     fields.insert("board_style".into(), with_required_board_fields(style));
+    if let Some(resolved) = fields.get_mut("resolved").and_then(Value::as_object_mut) {
+        resolved.entry("link_open").or_insert(serde_json::json!("page"));
+        let columns = resolved.get_mut("columns").and_then(Value::as_object_mut);
+        for column in columns.into_iter().flat_map(|c| c.values_mut()) {
+            if let Some(column) = column.as_object_mut() {
+                column.entry("link_open").or_insert(serde_json::json!("page"));
+                column.entry("header_link_open").or_insert(serde_json::json!("page"));
+            }
+        }
+    }
     serde_json::from_value(payload).expect("payload deserializes")
 }
 /// The envelope the Python harness dumps: the family's Resolved*Chart
@@ -324,6 +340,11 @@ pub struct Payload {
     pub fonts_dir: Option<String>,
     pub padding: Option<Padding>,
     pub board_style: Option<BoardStyle>,
+    /// The language of a card drawn with no board behind it (an error tile):
+    /// the card's own words print from this catalog. A chart drawn in a board
+    /// takes its language from `board_style`.
+    #[serde(default)]
+    pub language: Option<display_text::language::Language>,
     /// The board's variable values for this render: what a table reads its
     /// `{chart_id}_page` from (`board_variables.current_board_variables()`).
     #[serde(default)]
@@ -411,6 +432,24 @@ impl Payload {
             .and_then(Value::as_str)
             .ok_or_else(|| "payload.resolved.id missing".to_string())
     }
+
+    /// `ERR-CHART-PAINTED-NO-MARKS` for this payload's chart.
+    pub(crate) fn painted_no_marks(&self) -> Diagnostic {
+        painted_no_marks(self.width, self.resolved["id"].clone(), self.rows.len())
+    }
+}
+
+/// `ERR-CHART-PAINTED-NO-MARKS`: production's guard for a chart whose every mark
+/// drew with zero width or height (`rendering.py`).
+pub(crate) fn painted_no_marks(card_width: f64, chart_id: Value, row_count: usize) -> Diagnostic {
+    Diagnostic::new(
+        &codes::ERR_CHART_PAINTED_NO_MARKS,
+        [
+            ("card_width", serde_json::json!(d3rs::py_float::format_g(card_width))),
+            ("chart_id", chart_id),
+            ("row_count", serde_json::json!(row_count)),
+        ],
+    )
 }
 
 /// The one place the wire's cell markers are decoded (`common::decode_cells`):
@@ -441,9 +480,16 @@ pub fn render_sized(
     payload: &Payload,
     fonts: &text::FontBook,
 ) -> Result<(String, Option<f64>), Diagnostic> {
-    match &payload.board_style {
-        Some(style) => style.scoped(|| render_in_scope(payload, fonts)),
-        None => render_in_scope(payload, fonts),
+    in_payload_scope(payload, || render_in_scope(payload, fonts))
+}
+
+/// Run `draw` in the scope the payload names: its board style's locales and
+/// language, else its bare `language`, else the caller's own.
+fn in_payload_scope<T>(payload: &Payload, draw: impl FnOnce() -> T) -> T {
+    match (&payload.board_style, payload.language) {
+        (Some(style), _) => style.scoped(draw),
+        (None, Some(language)) => display_text::language::with_language(language, draw),
+        (None, None) => draw(),
     }
 }
 
@@ -585,7 +631,11 @@ fn render_width_fitted(
     payload: &Payload,
     fonts: &text::FontBook,
 ) -> Result<(String, Option<Payload>), Diagnostic> {
-    let svg = render(payload, fonts)?;
+    // The first render wears the resolve production measured its overhead from;
+    // the payload's own is the shrunk width's, which the second render wears.
+    let slot_resolved = payload.resolved.get("slot_resolved").filter(|v| !v.is_null());
+    let first_pass = slot_resolved.map(|resolved| Payload { resolved: resolved.clone(), ..payload.clone() });
+    let svg = render(first_pass.as_ref().unwrap_or(payload), fonts)?;
     if !is_support_table_arm(payload)? {
         return Ok((svg, None));
     }
@@ -610,6 +660,9 @@ fn render_width_fitted(
         Some(shrunk_width) => {
             let mut corrected_payload = payload.clone();
             corrected_payload.width = shrunk_width;
+            if let Some(resolved) = corrected_payload.resolved.as_object_mut() {
+                resolved.remove("slot_resolved");
+            }
             let svg = render(&corrected_payload, fonts)
                 .map_err(|e| e.in_context(&format!("chart {chart_id} refused during width-correction re-render")))?;
             Ok((svg, Some(corrected_payload)))
@@ -651,6 +704,31 @@ pub fn render_fitted_natural(
     fonts: &text::FontBook,
 ) -> Result<RenderOutput, Diagnostic> {
     if !is_support_table_arm(slot)? {
+        // The cached sizing render stays while the box holds its height. A
+        // small-multiples composite is a step function of its height, so its
+        // estimate-height render stands; any other chart keeps it only once the
+        // canvas overshot the estimate, which a re-render at the overshot box
+        // would not reproduce. A box moved away from it re-renders at the box.
+        if natural.measuring && natural.height != slot.height {
+            let chart_type = natural
+                .resolved
+                .get("chart_type")
+                .and_then(Value::as_str)
+                .ok_or("payload.resolved.chart_type missing")?;
+            // A shape the composer refuses only at the estimate's height is the
+            // box's to render (or refuse) on its own.
+            if let Ok(cached) = render_output(natural, fonts) {
+                let natural_box = sizing::clamp_render_first_height(
+                    chart_type,
+                    board::extract_svg_height(&cached.svg)?,
+                    natural.height,
+                );
+                let multiples = !slot.resolved["multiples"].is_null();
+                if (multiples || natural_box != natural.height) && !sizing::height_moved(natural_box, slot.height) {
+                    return Ok(cached);
+                }
+            }
+        }
         return render_output(slot, fonts);
     }
     let (svg, _, rendered) = render_fitted_with_payload(natural, slot, fonts)?;
@@ -714,10 +792,7 @@ fn render_fitted_with_payload<'a>(
 /// composes its strip after the negotiation, so no rect is known to
 /// describe the written SVG.
 pub fn render_layout(payload: &Payload, fonts: &text::FontBook) -> Result<Value, Diagnostic> {
-    match &payload.board_style {
-        Some(style) => style.scoped(|| layout_in_scope(payload, fonts)),
-        None => layout_in_scope(payload, fonts),
-    }
+    in_payload_scope(payload, || layout_in_scope(payload, fonts))
 }
 
 fn layout_in_scope(payload: &Payload, fonts: &text::FontBook) -> Result<Value, Diagnostic> {

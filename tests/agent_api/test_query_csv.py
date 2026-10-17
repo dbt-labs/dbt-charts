@@ -6,6 +6,7 @@ import pytest
 
 from dbt_charts.agent_api.query_csv import (
     MODEL_RESULT_BYTE_BUDGET,
+    fit_failure,
     model_facing_result,
     model_json,
     with_csv,
@@ -86,6 +87,78 @@ def test_engine_truncation_is_reported_even_when_every_fetched_row_fits() -> Non
 def test_model_facing_result_drops_data_only_when_there_is_a_csv() -> None:
     assert model_facing_result({"csv": "a\n", "data": [1]}) == {"csv": "a\n"}
     assert model_facing_result({"data": "yaml"}) == {"data": "yaml"}
+
+
+def test_a_short_failure_is_returned_as_is() -> None:
+    failed = {
+        "success": False,
+        "errors": ["Warehouse rejected the query: boom."],
+        "error_code": "ERR-WAREHOUSE-RUNTIME",
+    }
+
+    assert fit_failure(failed) == failed
+
+
+def test_a_very_long_warehouse_error_is_cut_to_the_budget_with_a_marker() -> None:
+    failed = {
+        "success": False,
+        "errors": ["Warehouse rejected the query: " + "é\n" * 60_000, "Second."],
+        "error_code": "ERR-WAREHOUSE-RUNTIME",
+    }
+
+    fitted = fit_failure(failed)
+
+    assert _emitted_bytes(fitted) <= MODEL_RESULT_BYTE_BUDGET
+    assert fitted["errors"][0].endswith(" (truncated)")
+    assert fitted["errors"][0].startswith("Warehouse rejected the query: ")
+    assert fitted["errors"][1] == "Second."
+    assert fitted["error_code"] == "ERR-WAREHOUSE-RUNTIME"
+
+
+def test_an_oversized_echoed_sql_is_cut_before_the_error_text() -> None:
+    message = "Query 'q' uses variable 'v' (input: text). Pass a binding for it."
+    failed = {
+        "success": False,
+        "errors": [message],
+        "error_code": "ERR-VARIABLE-UNBOUND",
+        "sql": "select 1 -- " + "x" * 60_000,
+    }
+
+    fitted = fit_failure(failed)
+
+    assert _emitted_bytes(fitted) <= MODEL_RESULT_BYTE_BUDGET
+    assert fitted["errors"] == [message]
+    assert fitted["sql"].endswith(" (truncated)")
+    assert fitted["sql"].startswith("select 1")
+
+
+@pytest.mark.parametrize(
+    "errors",
+    [
+        [f"Compile error number {i}: " + "x" * 90 for i in range(500)],
+        [f"第{i}个错误：" + "界" * 300 for i in range(60)],
+    ],
+)
+def test_many_errors_keep_the_first_and_count_the_rest(errors: list[str]) -> None:
+    failed = {"success": False, "errors": errors, "error_code": "ERR-X"}
+
+    fitted = fit_failure(failed)
+
+    assert _emitted_bytes(fitted) <= MODEL_RESULT_BYTE_BUDGET
+    assert fitted["errors"][0] == errors[0]
+    kept = len(fitted["errors"]) - 1
+    assert fitted["errors"][-1] == f"+{len(errors) - kept} more errors"
+
+
+def test_a_failure_that_cannot_fit_says_so_instead_of_returning_over_budget() -> None:
+    failed = {
+        "success": False,
+        "errors": ["boom"],
+        "diagnostics": [{"message": "y" * 60_000}],
+    }
+
+    with pytest.raises(ValueError, match="cannot be fitted"):
+        fit_failure(failed)
 
 
 def test_model_json_keeps_non_ascii_text_unescaped() -> None:

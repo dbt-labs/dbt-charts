@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.primitives import (
     FormatTable,
+    LinkOpen,
     ResolvedFontStyle,
     ResolvedFormat,
     ResolvedNamedPaletteScaleTargetConfig,
@@ -123,15 +124,26 @@ class ResolvedColumnSharedScale(BaseModel):
 
 
 class ResolvedTableColumnConfig(TableColumnConfig):
-    """TableColumnConfig with a resolved scale field.
+    """TableColumnConfig with resolved links and scale.
 
-    Holds a ResolvedColumnScaleConfig so the gradient resolved_stops survive
+    Links are split into URL strings plus open modes. Holds a
+    ResolvedColumnScaleConfig so the gradient resolved_stops survive
     pydantic serialization. Constructed by _with_resolved_scale_stops and
     fill_table_column_defaults during the table resolve pass.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    link: str | None = Field(default=None, description="Cell link URL template.")
+    link_open: LinkOpen = Field(
+        default="page", description="How a click on a cell link opens its target."
+    )
+    header_link: str | None = Field(
+        default=None, description="Header link URL template."
+    )
+    header_link_open: LinkOpen = Field(
+        default="page", description="How a click on the header link opens its target."
+    )
     format: ResolvedFormat | None = Field(
         default=None,
         description="Resolved value format; None when the column authors none.",

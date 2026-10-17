@@ -57,6 +57,8 @@ struct Resolved {
     // An empty string is no link.
     #[serde(deserialize_with = "crate::common::de_nonempty_string")]
     link: Option<String>,
+    /// How `link` opens; the implied `text_link` always navigates the page.
+    link_open: crate::href::LinkOpen,
     /// The link an `email` / `url` headline implies (`ResolvedKpiChart.text_link`),
     /// below the chart's own `link`.
     #[serde(deserialize_with = "crate::common::de_nonempty_string")]
@@ -263,7 +265,7 @@ impl SlotFont {
 
     /// The text under the slot's case transform.
     fn cased(&self, text: &str) -> Result<String, String> {
-        crate::case::apply_case(text, &self.case)
+        display_text::case::apply_case(text, &self.case)
     }
 
     /// `get_weighted_font_measurer(
@@ -785,7 +787,7 @@ struct Card<'a> {
     id: &'a str,
     /// The chart-root link, already resolved against the link context in Python
     /// and scheme-checked here (`checked_href`), that wraps the card's value in `<a>`.
-    href: Option<&'a str>,
+    link: Option<crate::href::Anchor<'a>>,
     kpi: &'a KpiChartStyle,
     slots: &'a Slots,
     colors: &'a Colors,
@@ -871,16 +873,15 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
 
     let colors = resolve_colors(&r, row, &slots, kpi, payload.background.as_deref(), muted)?;
     let support = resolve_support_row(&r.support, row, kpi, &slots, tones, muted, &r.id, board_formats, sub_unit_specs)?;
-    let href = r
-        .link
-        .as_deref()
-        .or(r.text_link.as_deref())
-        .map(crate::href::checked_href)
-        .transpose()?;
+    let (url, open) = match r.link.as_deref() {
+        Some(url) => (Some(url), r.link_open),
+        None => (r.text_link.as_deref(), crate::href::LinkOpen::Page),
+    };
+    let link = open.anchor(url.map(crate::href::checked_href).transpose()?);
 
     let card = Card {
         id: &r.id,
-        href,
+        link,
         kpi,
         slots: &slots,
         colors: &colors,
@@ -1122,13 +1123,16 @@ fn emit_card_chrome(parts: &mut Parts, c: &Card, w: f64, h: f64) {
 }
 
 fn open_link(parts: &mut Parts, c: &Card) {
-    if let Some(href) = c.href {
-        parts.next().open("a", Attrs::new().set("href", href));
+    if let Some(link) = c.link {
+        parts.next().open(
+            "a",
+            Attrs::new().set("href", link.url).set_some("data-dbt-link-open", link.open.open_attr()).set_some("target", link.open.target()),
+        );
     }
 }
 
 fn close_link(parts: &mut Parts, c: &Card) {
-    if c.href.is_some() {
+    if c.link.is_some() {
         parts.next().close("a");
     }
 }
@@ -1686,13 +1690,13 @@ mod format_tests {
     #[test]
     fn label_case_title_matches_apply_case() {
         // apply_case("tone — negative", "title") -> "Tone — Negative"
-        assert_eq!(crate::case::apply_case("tone — negative", "title").unwrap(), "Tone — Negative");
+        assert_eq!(display_text::case::apply_case("tone — negative", "title").unwrap(), "Tone — Negative");
         // apply_case("quarterly revenue", "title") -> "Quarterly Revenue"
-        assert_eq!(crate::case::apply_case("quarterly revenue", "title").unwrap(), "Quarterly Revenue");
+        assert_eq!(display_text::case::apply_case("quarterly revenue", "title").unwrap(), "Quarterly Revenue");
         // apply_case("up arrow (value-row glyph, no tone)", "title")
         //   -> "Up Arrow (Value-Row Glyph, No Tone)"
         assert_eq!(
-            crate::case::apply_case("up arrow (value-row glyph, no tone)", "title").unwrap(),
+            display_text::case::apply_case("up arrow (value-row glyph, no tone)", "title").unwrap(),
             "Up Arrow (Value-Row Glyph, No Tone)"
         );
     }
@@ -1732,6 +1736,7 @@ mod render_tests {
     /// and sans label/support slots (`_base.yaml` + `clarity.yaml`).
     fn kpi_payload(variant: &str, w: f64) -> Payload {
         let resolved = json!({
+            "link_open": "page",
             "id": "t",
             "chart_type": "kpi",
             "label": "Quarterly Revenue",
@@ -2500,6 +2505,28 @@ mod render_tests {
         let svg = render(&p, &test_fonts()).unwrap();
         assert!(svg.contains("<a href=\"/who\""), "{svg}");
         assert!(!svg.contains("mailto:"), "{svg}");
+    }
+
+    /// The chart's `link_open` governs its own `link`; the implied `text_link` is always page.
+    #[test]
+    fn a_link_mode_stamps_the_chart_link_but_never_the_text_link() {
+        let mut p = text_kpi("email", json!("ann@example.com"));
+        set(&mut p, "/text_link", json!("mailto:ann@example.com"));
+        p.resolved["link_open"] = json!("modal");
+        let svg = render(&p, &test_fonts()).unwrap();
+        assert!(svg.contains("<a href=\"mailto:ann@example.com\">"), "{svg}");
+        assert!(!svg.contains("data-dbt-link-open"), "{svg}");
+        set(&mut p, "/link", json!("/who"));
+        let modal = render(&p, &test_fonts()).unwrap();
+        assert!(modal.contains("<a href=\"/who\" data-dbt-link-open=\"modal\">"), "{modal}");
+        p.resolved["link_open"] = json!("new_tab");
+        let tab = render(&p, &test_fonts()).unwrap();
+        assert!(tab.contains("<a href=\"/who\" data-dbt-link-open=\"new_tab\" target=\"_blank\">"), "{tab}");
+        p.resolved["link_open"] = json!("page");
+        let page = render(&p, &test_fonts()).unwrap();
+        assert!(page.contains("<a href=\"/who\">") && !page.contains("data-dbt-link-open"), "{page}");
+        p.resolved["link_open"] = json!("popup");
+        assert!(render(&p, &test_fonts()).unwrap_err().to_string().contains("popup"));
     }
 
     /// Production always bakes `text_link` (null when the format implies none),

@@ -3,31 +3,46 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from pathlib import PurePosixPath
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from dbt_charts.agent_api.boards import board_declaring_keys
 from dbt_charts.core.diagnostics import Diagnostic
+from dbt_charts.core.diagnostics.execution import ExecutionError
+
+if TYPE_CHECKING:
+    from dbt_charts.core.compile.parse.board_text import BoardText
+
 from dbt_charts.core.project import (
     Project,
-    board_root_for_relpath,
     board_roots,
-    posix_relpath,
+    board_slug,
+    is_package_relpath,
 )
-from dbt_charts.core.utils import YAML_LOADER
 
-MAX_SEARCH_LIMIT = 50
-DEFAULT_SEARCH_LIMIT = 10
+# A typical account lists in one page; a compact listing hit is a few hundred bytes.
+MAX_SEARCH_LIMIT = 200
+DEFAULT_SEARCH_LIMIT = 100
+
+# A keyword search reads and parses at most this many board files per project,
+# however many boards mention the query.
+MAX_PARSED_CANDIDATES = 60
+
+# Longest notes a hit carries. A hit is for picking a board, not reading one.
+MAX_SUMMARY_CHARS = 140
 
 # Maintainer paths that must not appear in agent-facing search summaries.
 _INTERNAL_REF_RE = re.compile(r"\s*;?\s*see\s+ai_notes/\S+", re.IGNORECASE)
 
 
 _T = TypeVar("_T")
+
+# A host's access model: the subset of these project-relative board files its
+# caller may see.
+BoardVisibility = Callable[[list[str]], Collection[str]]
 
 
 def cursor_offset(cursor: str | None) -> int:
@@ -63,8 +78,16 @@ def _agent_safe_summary(notes: str) -> str:
     return _INTERNAL_REF_RE.sub("", notes).strip()
 
 
+def _brief(notes: str) -> str:
+    """Notes as a hit prints them: maintainer references gone, one short run."""
+    notes = _agent_safe_summary(notes)
+    if len(notes) <= MAX_SUMMARY_CHARS:
+        return notes
+    return notes[: MAX_SUMMARY_CHARS - 1].rstrip() + "…"
+
+
 class SearchBoardsArgs(BaseModel):
-    """Search existing dashboards by keyword, or list them all with an empty query. Returns ranked results with match scores and reasons (a listing is unscored, in path order, and pages with `cursor`/`next`). Use to discover relevant dashboards and reuse validated query patterns before creating new ones. Each hit's `charts` list carries per-chart detail (id, title, type, query) parsed from the same board, and `matched_charts` names every chart whose id or title matched the query — (board_path, chart id) is the address of a chart, so pass the pair to render_board(path=board_path, chart=<chart id>) or describe_board(path=file_path, chart=<chart id>) without opening the file. Each hit carries two path forms, named for the coordinate system they resolve in: board_path (relative to charts/; a package board's carries a `<pkg>/` namespace prefix) for render_board(path=board_path, chart=<chart id>, ...), and file_path (relative to the project root) for read_file/write_file/edit_file. Reuse the matching field's value unchanged — do not convert between the two. Results may also include sample SQL and literal file paths from matching queries; reuse those exact paths instead of inventing new file globs."""
+    """Search existing dashboards by keyword, or list them all with an empty query. A keyword search returns ranked hits with a match score, the reasons it matched, and `matched_charts`, the ids of the charts whose id or title matched; a listing is unscored, in path order. Both page with `cursor`/`next`. Each hit is compact: title, notes, and two path forms named for the coordinate system they resolve in: board_path (relative to charts/; a package board's carries a `<pkg>/` namespace prefix) for render_board(path=board_path, chart=<chart id>, ...) and describe_board, and file_path (relative to the project root) for read_file/write_file/edit_file. Reuse the matching field's value unchanged; do not convert between the two. A hit carries no chart list, query names or SQL: call describe_board on the board for those. Use to discover relevant dashboards and reuse validated query patterns before creating new ones."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -80,7 +103,11 @@ class SearchBoardsArgs(BaseModel):
         default=None, description="Filter results to dashboards with ALL of these tags"
     )
     limit: int | None = Field(
-        default=None, description="Maximum results to return (default 10, max 50)"
+        default=None,
+        description=(
+            f"Maximum results to return (default {DEFAULT_SEARCH_LIMIT}, "
+            f"max {MAX_SEARCH_LIMIT})"
+        ),
     )
     cursor: str | None = Field(
         default=None,
@@ -97,24 +124,13 @@ class SearchBoardsArgs(BaseModel):
         return cursor
 
 
-class ChartSearchEntry(BaseModel):
-    """Compact per-chart detail parsed from the same board YAML search already reads."""
+class BoardListing(BaseModel):
+    """What a listing prints for a board: enough to pick one."""
 
-    model_config = ConfigDict(frozen=True)
-
-    id: str
-    title: str
-    type: str | None = None
-    query: str | None = None
-
-
-class BoardSearchHit(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     title: str
     summary: str
-    match_score: float
-    match_reasons: list[str]
     board_path: str = Field(
         description=(
             "Path relative to charts/ for a host board. A package board's "
@@ -130,21 +146,17 @@ class BoardSearchHit(BaseModel):
             "unchanged to read_file/write_file/edit_file."
         )
     )
-    query_names: list[str]
-    charts: list[ChartSearchEntry]
+
+
+class BoardMatch(BoardListing):
+    """A keyword hit: a listing entry plus why it ranked."""
+
+    match_score: float
+    match_reasons: list[str]
     matched_charts: list[str] = Field(
         description=(
-            "Ids of the charts in `charts` whose id or title matched the query, "
-            "in board order. Empty when the board matched on other fields."
-        )
-    )
-    sample_sql: str | None = None
-    referenced_data_paths: list[str] = Field(
-        description=(
-            "Literal data-file paths (CSV/Parquet/JSON) read by this dashboard's "
-            "queries, extracted from read_csv()/read_parquet()/read_json() calls "
-            "in its SQL. Unrelated to board_path/file_path — these point at data "
-            "files, not the dashboard's own YAML."
+            "Ids of the charts whose id or title matched the query, in board "
+            "order. Empty when the board matched on other fields."
         )
     )
 
@@ -154,7 +166,7 @@ class SearchResult(BaseModel):
 
     success: bool
     errors: list[Diagnostic]
-    results: list[BoardSearchHit]
+    results: list[BoardMatch | BoardListing]
     next: str | None = Field(
         default=None,
         description="Cursor for the next page; absent on the last page.",
@@ -172,9 +184,10 @@ def search_boards(
     """Search dashboards by keyword with ranked results, or list them all.
 
     An empty ``query`` lists every board by path instead of ranking. Searches
-    ``charts/`` unconditionally. Pages of ``limit`` (default 10, max 50) resume
-    at ``cursor``. Hosts with a per-principal access model (Cloud) must not
-    truncate before filtering — see ``search_boards_hits``.
+    every board root. Pages of ``limit`` (default ``DEFAULT_SEARCH_LIMIT``, max
+    ``MAX_SEARCH_LIMIT``) resume at ``cursor``. Hosts with a per-principal
+    access model (Cloud) must not truncate before filtering — see
+    ``search_boards_hits``.
     """
     limit = max(0, min(limit, MAX_SEARCH_LIMIT))
     if limit == 0:
@@ -186,71 +199,174 @@ def search_boards(
 
 
 def search_boards_hits(
-    query: str, project: Project, *, tags: list[str] | None = None
-) -> list[BoardSearchHit]:
-    """Score every indexed board against ``query``, sorted best-first, unlimited.
+    query: str,
+    project: Project,
+    *,
+    tags: list[str] | None = None,
+    visible: BoardVisibility | None = None,
+) -> list[BoardMatch | BoardListing]:
+    """Every board matching ``query``, best-first, unlimited.
 
-    An empty ``query`` is a listing, not a search: every board, unscored
-    (``match_score`` 0), in path order.
+    An empty ``query`` is a listing, not a search: every board, unscored, in
+    path order, titled from ``Project.board_labels`` so a host that stores
+    titles and tags pays for no per-board read.
+
+    A keyword search never reads the whole project. Candidates are the board
+    files whose text (``project.files.grep``, case-insensitive, one pass per
+    query word) or path mentions a word; only the ``MAX_PARSED_CANDIDATES``
+    best (boards named for a query word first, then by words mentioned) are
+    read, parsed and scored. A query broad enough to name more boards than
+    that ranks only that slice. A ``tags`` filter narrows the candidates before
+    that cut, reading each board's tags from ``board_labels``.
 
     This layer has no principal concept (agent_api thin-wrapper rule), so it
     cannot itself decide which hits a caller may see. A host with access
-    control (Cloud) calls this directly to get the FULL ranked candidate set,
-    filters it to visible paths, and only THEN truncates to the caller's
-    ``limit`` — filtering an already-truncated ``search_boards()`` result
-    would under-fill: a viewer who cannot see the top hits but can see the
-    next few would get a false empty result.
+    control (Cloud) calls this directly and passes ``visible``, which narrows
+    the board files BEFORE the candidate cap applies, then truncates to the
+    caller's ``limit`` — filtering an already-capped result would under-fill:
+    a viewer who cannot see the top hits but can see the next few would get a
+    false empty result.
     """
     query_stripped = query.strip()
-    query_tokens = list(_tokenize(query_stripped))
+    query_tokens = sorted(_tokenize(query_stripped))
     if query_stripped and not query_tokens:
         return []
+    required_tags = {t.lower() for t in tags or []}
 
-    index = _build_index(project)
+    if not query_stripped:
+        labels = project.board_labels()
+        kept = _keep_visible([label.file_path for label in labels], visible)
+        return [
+            BoardListing(
+                title=label.title,
+                summary=_brief(label.notes),
+                board_path=label.board_path,
+                file_path=label.file_path,
+            )
+            for label in labels
+            if label.file_path in kept and required_tags.issubset(label.tags)
+        ]
 
-    if tags:
-        required_tags = {t.lower() for t in tags}
-        index = [e for e in index if required_tags.issubset(set(e["tags"]))]
+    scored: list[tuple[float, BoardMatch]] = []
+    for entry in _parse_candidates(project, query_tokens, required_tags, visible):
+        if not required_tags.issubset(entry["tags"]):
+            continue
+        score, reasons, matched_charts = _score_entry(entry, query_tokens)
+        if score > 0:
+            scored.append(
+                (
+                    score,
+                    BoardMatch(
+                        title=entry["title"],
+                        summary=_brief(entry["notes"]),
+                        board_path=entry["board_path"],
+                        file_path=entry["file_path"],
+                        match_score=round(score, 2),
+                        match_reasons=reasons,
+                        matched_charts=matched_charts,
+                    ),
+                )
+            )
 
-    scored: list[tuple[float, str, dict[str, Any], list[str], list[str]]] = []
-    for entry in index:
-        score, reasons, matched_charts = (
-            _score_entry(entry, query_tokens) if query_stripped else (0.0, [], [])
+    scored.sort(key=lambda pair: (-pair[0], pair[1].file_path))
+    return [hit for _score, hit in scored]
+
+
+def _keep_visible(paths: list[str], visible: BoardVisibility | None) -> set[str]:
+    return set(paths) if visible is None else set(visible(paths))
+
+
+def _parse_candidates(
+    project: Project,
+    query_tokens: list[str],
+    required_tags: set[str],
+    visible: BoardVisibility | None,
+) -> Iterator[dict[str, Any]]:
+    """Index entries for the best-matching board files.
+
+    The best ``MAX_PARSED_CANDIDATES`` by (words in the title or slug, words
+    mentioned, lines mentioning them) are parsed. Tags narrow the files first,
+    from ``board_labels``, which holds them without a read.
+    """
+    # Deferred: importing the compiler here would load it for every CLI start.
+    from dbt_charts.core.compile.parse.board_text import parse_board_text
+
+    board_files = sorted(
+        _keep_visible(
+            [pf.relpath for pf in project.iter_boards() if not pf.is_meta], visible
         )
-        if score > 0 or not query_stripped:
-            scored.append((score, entry["file_path"], entry, reasons, matched_charts))
+    )
+    roots = board_roots(project)
+    labels = {label.file_path: label for label in project.board_labels()}
 
-    scored.sort(key=lambda x: (-x[0], x[1]))
+    # word -> {board file -> lines mentioning it}; a file named for a word is
+    # present with zero lines.
+    mentions: dict[str, dict[str, int]] = {}
+    for word in query_tokens:
+        lines_by_file = dict.fromkeys(board_files, 0)
+        for root in roots:
+            for hit in project.files.grep(
+                word, glob=f"{root.relpath}/**/*", ignore_case=True
+            ):
+                if hit.relpath in lines_by_file:
+                    lines_by_file[hit.relpath] += 1
+        mentions[word] = {
+            relpath: lines
+            for relpath, lines in lines_by_file.items()
+            if lines or word in relpath.lower()
+        }
 
-    return [
-        BoardSearchHit(
-            title=entry["title"],
-            summary=entry["notes"],
-            match_score=round(score, 2),
-            match_reasons=reasons,
-            board_path=entry["board_path"],
-            file_path=entry["file_path"],
-            query_names=entry["query_names"],
-            charts=[ChartSearchEntry(**c) for c in entry["charts"]],
-            matched_charts=matched_charts,
-            sample_sql=(entry["sql_snippets"][0] if entry["sql_snippets"] else None),
-            referenced_data_paths=_extract_file_paths(entry["sql_snippets"]),
+    # The text pass never enters dbt_packages, so an installed package's boards
+    # cannot be narrowed by it: they are always candidates (a project installs
+    # few), and scoring decides.
+    package_boards = [f for f in board_files if is_package_relpath(f)]
+    eligible = {
+        relpath
+        for relpath in board_files
+        if not is_package_relpath(relpath)
+        and relpath in labels
+        and required_tags.issubset(labels[relpath].tags)
+        and any(relpath in mentions[word] for word in query_tokens)
+    }
+
+    def named_words(relpath: str) -> int:
+        named = _tokenize(f"{labels[relpath].title} {board_slug(relpath)}")
+        return sum(word in named for word in query_tokens)
+
+    candidates = sorted(
+        eligible,
+        key=lambda relpath: (
+            -named_words(relpath),
+            -sum(relpath in mentions[word] for word in query_tokens),
+            -sum(mentions[word].get(relpath, 0) for word in query_tokens),
+            relpath,
+        ),
+    )[:MAX_PARSED_CANDIDATES]
+
+    for relpath in [*candidates, *package_boards]:
+        pf = project.path(relpath)
+        try:
+            content = pf.read_text()
+        except (OSError, UnicodeDecodeError, ExecutionError):
+            continue  # not readable as text: nothing to score
+        slug = board_slug(relpath)
+        text = parse_board_text(slug, content, is_markdown=pf.is_markdown)
+        entry = _index_entry_from_content(
+            board_path=f"{slug}{PurePosixPath(relpath).suffix}",
+            file_path=relpath,
+            text=text,
         )
-        for score, _path, entry, reasons, matched_charts in scored
-    ]
+        if entry is not None:
+            yield entry
 
 
 def _index_entry_from_content(
-    board_path: str,
-    file_path: str,
-    title: str,
-    notes: str,
-    content: dict[str, Any],
+    board_path: str, file_path: str, text: BoardText
 ) -> dict[str, Any] | None:
+    content = text.board
     if not any(key in content for key in board_declaring_keys()):
         return None
 
-    tags = content.get("tags", [])
     queries = content.get("queries", {})
     charts = content.get("charts", {})
 
@@ -262,18 +378,16 @@ def _index_entry_from_content(
             if isinstance(qdef, dict) and qdef.get("sql"):
                 sql_snippets.append(qdef["sql"])
 
-    chart_entries: list[dict[str, Any]] = []
+    chart_entries: list[dict[str, str]] = []
     if isinstance(charts, dict):
         for raw_chart_id, chart_def in charts.items():
             # YAML mapping keys need not be strings (`2024:` parses as int).
             chart_id = str(raw_chart_id)
-            chart_def = chart_def if isinstance(chart_def, dict) else {}
-            # Search reads raw, possibly-invalid YAML: only string values are
-            # usable here. An inline query (`query: {sql: ...}`) has no name
-            # to reference, so it maps to None rather than the raw dict.
-            chart_title = chart_def.get("title")
-            chart_type = chart_def.get("type")
-            chart_query = chart_def.get("query")
+            # Search reads raw, possibly-invalid YAML: only a string title is
+            # usable here.
+            chart_title = (
+                chart_def.get("title") if isinstance(chart_def, dict) else None
+            )
             chart_entries.append(
                 {
                     "id": chart_id,
@@ -282,78 +396,23 @@ def _index_entry_from_content(
                         if isinstance(chart_title, str) and chart_title
                         else chart_id
                     ),
-                    "type": chart_type if isinstance(chart_type, str) else None,
-                    "query": chart_query if isinstance(chart_query, str) else None,
                 }
             )
 
     return {
         "board_path": board_path,
         "file_path": file_path,
-        "title": title,
-        "notes": _agent_safe_summary(notes),
-        "tags": [t.lower() for t in tags] if isinstance(tags, list) else [],
+        "title": text.title,
+        "notes": _agent_safe_summary(text.notes),
+        "tags": set(text.tags),
         "query_names": query_names,
         "charts": chart_entries,
         "sql_snippets": sql_snippets,
     }
 
 
-def _build_index(project: Project) -> list[dict[str, Any]]:
-    entries: list[dict[str, Any]] = []
-    roots = board_roots(project)
-    for pf in sorted(project.iter_boards(), key=lambda p: p.relpath):
-        if not pf.is_yaml or pf.is_meta:
-            continue
-        try:
-            content = yaml.load(pf.read_text(), Loader=YAML_LOADER)
-        except (yaml.YAMLError, OSError):
-            continue
-        if not isinstance(content, dict):
-            continue
-        title = content.get("title", pf.stem)
-        # iter_boards() only ever yields paths under a board root, so the
-        # root lookup here can't miss.
-        root = board_root_for_relpath(pf.relpath, roots)
-        assert root is not None, f"{pf.relpath!r} is not under any board root"
-        root_relative = posix_relpath(
-            PurePosixPath(pf.relpath), PurePosixPath(root.relpath)
-        )
-        # A bare root-relative path only resolves through render_board(path=...)
-        # for the host root: resolve_board_relpath's candidate search matches a
-        # package root exclusively via its namespace-prefixed slug, so a
-        # package board's board_path needs that prefix to round-trip.
-        board_path = (
-            f"{root.namespace}/{root_relative}" if root.namespace else root_relative
-        )
-        entry = _index_entry_from_content(
-            board_path=board_path,
-            file_path=pf.relpath,
-            title=title,
-            notes=content.get("notes", ""),
-            content=content,
-        )
-
-        if entry is not None:
-            entries.append(entry)
-    return entries
-
-
 def _tokenize(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", text.lower()))
-
-
-def _extract_file_paths(sql_snippets: list[str]) -> list[str]:
-    paths: list[str] = []
-    pattern = re.compile(
-        r"""read_(?:csv|csv_auto|parquet|json(?:_auto)?)\(\s*['"]([^'"]+)['"]""",
-        re.IGNORECASE,
-    )
-    for snippet in sql_snippets:
-        for match in pattern.findall(snippet):
-            if match not in paths:
-                paths.append(match)
-    return paths
 
 
 def _score_entry(
@@ -366,7 +425,7 @@ def _score_entry(
 
     title_tokens = _tokenize(entry["title"])
     notes_tokens = _tokenize(entry["notes"])
-    tag_set = set(entry["tags"])
+    tag_set = entry["tags"]
     query_name_tokens = _tokenize(" ".join(entry["query_names"]))
     sql_tokens = _tokenize(" ".join(entry["sql_snippets"]))
     chart_tokens = [

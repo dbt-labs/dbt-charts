@@ -15,7 +15,7 @@ from dbt_charts.core.compile.format_value import (
     raise_if_format_cannot_print_number,
     text_format_link,
 )
-from dbt_charts.core.compile.merge import merge_onto_base, to_padding_style
+from dbt_charts.core.compile.merge import to_padding_style
 from dbt_charts.core.compile.models.chart.normalized import (
     CalloutChart,
     KpiChart,
@@ -55,6 +55,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
     declared_column_format,
 )
+from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.text.predefined_formats import PREDEFINED_TEXT_NAMES
@@ -202,7 +203,7 @@ def _resolve_spark_bar(
         chart_style_context, normalized
     )
     primary = _with_color_tokens(normalized.style, chart_style_context)
-    spark_bar = merge_onto_base(chart_style_context.spark_bar, primary)
+    spark_bar = merge_unset(chart_style_context.spark_bar, primary)
     channels = _channels_for(normalized, data)
     # y is str | list[str] | None on normalized; ResolvedSparkBarChart only takes str | None.
     # Spark bar is single-series — multi-series y is a configuration error.
@@ -249,7 +250,7 @@ def _resolve_callout(
     chart_style_context: ChartStyleContext,
     display_text: ChartDisplayText = None,
 ) -> ResolvedCalloutChart:
-    callout = merge_onto_base(
+    callout = merge_unset(
         chart_style_context.callout,
         _with_color_tokens(normalized.style, chart_style_context),
     )

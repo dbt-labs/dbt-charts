@@ -135,7 +135,6 @@ dependencies = [
     # required at runtime for cache load/store even though the AST audit
     # only sees `import msgpack` deep inside the mashumaro dependency.
     "msgpack>=1.0.0",
-    "titlecase>=2.4",
     # core/serve/server.py's /__livereload SSE endpoint imports watchfiles.awatch
     # to push browser reloads on file changes. Not pulled transitively (uvicorn is
     # declared without the [standard] extra) — load-bearing, not optional.
@@ -303,6 +302,7 @@ cache-keys = [
     { file = "_build_backend.py" },
     { file = "libs/chart-svg/*/src/**/*" },
     { file = "libs/chart-svg/*/assets/**/*" },
+    { file = "libs/chart-svg/display-text/language/*.json" },
     { file = "src/dbt_charts/core/defaults/palettes/tone/*.yml" },
     { file = "libs/chart-svg/*/Cargo.toml" },
     { file = "libs/chart-svg/python/Cargo.lock" },

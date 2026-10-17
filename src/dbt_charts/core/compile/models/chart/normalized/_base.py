@@ -25,7 +25,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     MultiplesConfig,
 )
 from dbt_charts.core.compile.models.markers import Url
-from dbt_charts.core.compile.models.primitives import VariableDependencies
+from dbt_charts.core.compile.models.primitives import LinkOpen, VariableDependencies
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.vega_lite.contracts import Projection
 
@@ -87,6 +87,10 @@ class _BaseChartFields(BaseModel):
     link: Annotated[str | Literal[False] | None, Url()] = Field(
         default=None,
         description="Click-through URL template, or false to stay unlinked.",
+    )
+    link_open: LinkOpen = Field(
+        default="page",
+        description="How a click on the chart link opens its target.",
     )
     conditional_formatting: dict[str, FieldConditionalFormatting] | None = Field(
         default=None,

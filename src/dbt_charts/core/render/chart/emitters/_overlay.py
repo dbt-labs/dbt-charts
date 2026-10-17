@@ -110,6 +110,7 @@ from dbt_charts.core.render.utils import (
     ordered_distinct_values,
 )
 from dbt_charts.core.text.case import field_title
+from dbt_charts.core.text.format_d3 import board_word
 
 # VL scale types where the domain is an ordered list of discrete categories
 # (as opposed to a continuous [min, max] range). Union-domain reconciliation
@@ -2148,7 +2149,7 @@ def render_cartesian_overlay(
     # guide's auto aria-label outright.
     domain_values = list(dict.fromkeys(scale_domain))
     if any("," in value for value in domain_values):
-        description = f"{len(domain_values)} series"
+        description = board_word("series.count", len(domain_values))
         for label_scale_enc in label_scale_legend_encs:
             enc_legend = label_scale_enc.get("legend")
             if isinstance(enc_legend, dict):

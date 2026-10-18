@@ -42,3 +42,23 @@ ERR_STARTUP_FAILED = REGISTRY.register(
         docs_topic="errors",
     )
 )
+
+ERR_DBT_PROFILES_FORBIDDEN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-DBT-PROFILES-FORBIDDEN",
+        domain="serve",
+        title="dbt profiles are off limits",
+        message_template="Boards and agents can't read or change dbt profiles ({path}).",
+        doc=(
+            "Fired when a Cloud agent file tool reads, writes, edits, moves or "
+            "deletes a profiles.yml outside the board folders, or when a board "
+            "imports one. A committed dbt profile can hold warehouse "
+            "credentials, so Cloud never serves it to a board compile or an "
+            "agent, and omits it from file searches. The refusal is by name, "
+            "before any lookup, so it says nothing about whether the file "
+            "exists."
+        ),
+        summary="Fired when a board import or agent file tool touches a dbt profiles file.",
+        docs_topic="errors",
+    )
+)

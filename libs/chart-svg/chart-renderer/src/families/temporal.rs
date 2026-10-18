@@ -204,9 +204,9 @@ pub fn axis_time_format<'a>(
     labels_format.filter(|f| is_time_format(f)).or_else(|| grain_format(formats, tu))
 }
 
-/// A time `labels.format` on a standard date no calendar grain explains: a
-/// family that draws no continuous time axis (bar) refuses by name instead of
-/// painting raw band strings where production labels every tick through the format.
+/// A time `labels.format` on a standard date no calendar grain explains: the band
+/// arm of a family (bar) refuses by name instead of painting raw band strings
+/// where production labels every tick through the format.
 pub fn refuse_authored_time_format(family: &str, labels_format: Option<&str>) -> Result<(), String> {
     match labels_format {
         Some(fmt) if is_time_format(fmt) => Err(format!(
@@ -4016,29 +4016,10 @@ pub fn bare_temporal_ticks(
         .collect()
 }
 
-// ── Axis-free-edge overhang ─────────────────────────────────────────────────
-//
-// Production runs real Vega-Lite `autosize: fit`, which grows a margin to
-// contain whatever the scenegraph draws outside the plot. Measured against
-// `playground/temporal-label-cadence-transitions` (`wk_52`/`wk_130` vs
-// `dy_14`/`dy_90`): when the near-edge cadence-opener label (the two-row
-// "Jan"/"2025" label, centered on its own band) is wider than the distance
-// from its center to the plot's edge, the *axis-free* edge's margin grows by
-// exactly that shortfall — a single, non-iterative pass against the
-// pre-overhang ("tentative") band geometry, not a fixed-point solve (VL's
-// real layout is one, but the residual from approximating it non-iteratively
-// is under 1px against every measured case). The axis-*bearing* edge's own
-// value-label gutter absorbs the same kind of overhang without growing
-// further: `dy_90`'s last labeled day overhangs its value-axis edge by
-// ~2.8px with no margin change, so this only ever applies to the one edge
-// with no axis of its own.
-
-/// Rendered half-width (px) of a temporal label's wider row.
-///
-/// `axis_free_edge_overhang`'s `label_half_width` input — the max of
-/// `row1`/`row2`'s measured widths, halved (a two-row label is centered on
-/// its band both rows share the same center, so only the wider row's extent
-/// past that center matters).
+/// Rendered half-width (px) of a temporal label's wider row: the max of
+/// `row1`/`row2`'s measured widths, halved (a two-row label is centered on its
+/// band, both rows share the same center, so only the wider row's extent past
+/// that center matters).
 pub fn temporal_label_half_width(
     label: &TemporalLabel,
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
@@ -4046,42 +4027,6 @@ pub fn temporal_label_half_width(
     let w1 = measure(&label.row1)?;
     let w2 = if label.row2.is_empty() { 0.0 } else { measure(&label.row2)? };
     Ok(w1.max(w2) / 2.0)
-}
-
-/// SVG `text-anchor` for the x-axis tick label at `domain_idx` of `domain_len`
-/// point-scale positions.
-///
-/// Production (Vega-Lite) grows a label INWARD instead of centering it when
-/// its tick sits exactly on the point scale's domain edge — the first domain
-/// entry (`text-anchor="start"`, pinned at x=0) or the last (`"end"`, pinned
-/// at x=plot_width) — so the label never overhangs the canvas. Measured
-/// against production goldens: this is an exact index match, not a proximity
-/// heuristic — a label whose coarsened/visible tick lands one or more
-/// positions short of the true first/last domain entry stays centered even
-/// when it sits close to the edge (`native_week`/`week_first_visible` in
-/// `time-unit-label-cadence-matrix`).
-pub fn edge_anchor(domain_idx: usize, domain_len: usize) -> &'static str {
-    if domain_idx == 0 {
-        "start"
-    } else if domain_len > 0 && domain_idx == domain_len - 1 {
-        "end"
-    } else {
-        "middle"
-    }
-}
-
-/// Extra pixel margin the plot's axis-free edge needs so its near-edge
-/// temporal category label doesn't overhang it.
-///
-/// `label_half_width` is [`temporal_label_half_width`]'s result for the
-/// label nearest that edge (the first label for a left axis-free edge, the
-/// last for a right one). `band_center_from_edge` is that label's
-/// band-center distance from the plot's near edge, measured under the
-/// *tentative* geometry — i.e. using the edge's current fixed inset, before
-/// this overhang is added (the two are not solved as a fixed point; see the
-/// module note above). Returns 0 when the label already clears the edge.
-pub fn axis_free_edge_overhang(label_half_width: f64, band_center_from_edge: f64) -> f64 {
-    (label_half_width - band_center_from_edge).max(0.0)
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
@@ -5212,65 +5157,6 @@ mod tests {
         assert_eq!(row1s, vec!["Jan", "Apr", "Jul", "Oct", "Jan"], "coarsens to quarter openers");
     }
 
-    // ── axis_free_edge_overhang / temporal_label_half_width ─────────────────
-    //
-    // Numbers below are measured directly off production SVGs for
-    // `playground/temporal-label-cadence-transitions` (dbt Sans / Inter
-    // Variable 11px, card_padding 16.0, canvas 564×202): `wk_52`/`wk_130`'s
-    // "Jan"/"2025" opener overhangs its narrow band and grows the axis-free
-    // margin; `dy_14`'s wider band and `dy_90`'s inner (non-edge) Monday
-    // opener don't overhang, so production leaves the axis-free margin at
-    // its `card_padding + 2.0` baseline.
-
-    #[test]
-    fn no_overhang_when_label_fits_within_band_half_width() {
-        // dy_14: "Jan'25" full width 35.6479px (Inter Variable 11px) on a
-        // 505px / 14-band plot — half-width 17.824 fits inside the 18.036px
-        // half-band, so production adds nothing past the 2.0px baseline.
-        let half_width = 35.6479 / 2.0;
-        let band_center_from_edge = (505.0 / 14.0) / 2.0;
-        assert_eq!(axis_free_edge_overhang(half_width, band_center_from_edge), 0.0);
-    }
-
-    #[test]
-    fn no_overhang_when_label_is_not_near_the_edge() {
-        // dy_90: the first cadence-opener label ("6"/"Jan'25") sits on the
-        // 6th band, not the edge one — its center is 30.86px from the plot's
-        // left edge, comfortably past its own half-width (17.824px).
-        let half_width = 35.6479 / 2.0;
-        let band_center_from_edge = 30.8611;
-        assert_eq!(axis_free_edge_overhang(half_width, band_center_from_edge), 0.0);
-    }
-
-    #[test]
-    fn overhang_grows_margin_on_a_narrow_band() {
-        // wk_52: "2025" (the wider row of the first "Jan"/"2025" opener,
-        // 27.0435px at Inter Variable 11px) sits on a 505px / 52-band plot —
-        // half-width 13.5217 exceeds the 4.856px half-band, so production
-        // grows the axis-free margin by the shortfall (measured production
-        // margin: 26.0 vs the 18.0 baseline — an 8.0px growth; this
-        // non-iterative approximation lands within 1px of that).
-        let half_width = 27.0435 / 2.0;
-        let band_center_from_edge = (505.0 / 52.0) / 2.0;
-        let overhang = axis_free_edge_overhang(half_width, band_center_from_edge);
-        assert!(
-            (overhang - 8.6659).abs() < 0.01,
-            "overhang {overhang} should match the measured wk_52 shortfall"
-        );
-        assert!((18.0 + overhang - 26.0).abs() < 1.0, "predicted margin {} vs measured 26.0", 18.0 + overhang);
-    }
-
-    #[test]
-    fn overhang_grows_further_on_an_even_narrower_band() {
-        // wk_130: same "2025" label, but 130 bands instead of 52 (half-band
-        // 1.9423px) — a narrower band means more overhang (measured
-        // production margin: 29.0 vs the 18.0 baseline).
-        let half_width = 27.0435 / 2.0;
-        let band_center_from_edge = (505.0 / 130.0) / 2.0;
-        let overhang = axis_free_edge_overhang(half_width, band_center_from_edge);
-        assert!((18.0 + overhang - 29.0).abs() < 1.0, "predicted margin {} vs measured 29.0", 18.0 + overhang);
-    }
-
     #[test]
     fn label_half_width_takes_the_wider_row() {
         let label = TemporalLabel { domain_idx: 0, row1: "Jan".to_string(), row2: "2025".to_string() };
@@ -5288,36 +5174,6 @@ mod tests {
         let mut measure = |_: &str| -> Result<f64, String> { Ok(10.0) };
         let half = temporal_label_half_width(&label, &mut measure).unwrap();
         assert!((half - 5.0).abs() < 1e-9);
-    }
-
-    // ── edge_anchor ───────────────────────────────────────────────────────
-
-    #[test]
-    fn edge_anchor_first_domain_index_is_start() {
-        assert_eq!(edge_anchor(0, 6), "start");
-    }
-
-    #[test]
-    fn edge_anchor_last_domain_index_is_end() {
-        assert_eq!(edge_anchor(5, 6), "end");
-    }
-
-    #[test]
-    fn edge_anchor_interior_index_is_middle() {
-        assert_eq!(edge_anchor(1, 6), "middle");
-    }
-
-    #[test]
-    fn edge_anchor_close_to_but_not_at_edge_stays_middle() {
-        // Measured against production: a visible tick that falls short of
-        // the true last domain entry (coarsening skipped it) stays centered
-        // even though it is the rightmost label actually drawn.
-        assert_eq!(edge_anchor(4, 6), "middle");
-    }
-
-    #[test]
-    fn edge_anchor_single_point_domain_is_start() {
-        assert_eq!(edge_anchor(0, 1), "start");
     }
 
     #[test]

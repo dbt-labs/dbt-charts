@@ -39,6 +39,11 @@ impl Bounds {
         Bounds { x1, y1, x2, y2 }
     }
 
+    /// Vega `Bounds.set`: the corners in either order, normalized.
+    pub fn spanning(x1: f64, y1: f64, x2: f64, y2: f64) -> Self {
+        Bounds { x1: x1.min(x2), y1: y1.min(y2), x2: x1.max(x2), y2: y1.max(y2) }
+    }
+
     pub fn union(&mut self, o: &Bounds) {
         self.x1 = self.x1.min(o.x1);
         self.y1 = self.y1.min(o.y1);
@@ -166,14 +171,54 @@ pub fn label_row_advance(font_size: f64) -> f64 {
     font_size + 2.0
 }
 
-/// Vega's `padDomain` for a linear or time scale: the domain widened about its
-/// center so its ends sit `pad` pixels inside a range `pw` wide.
-pub fn pad_domain((lo, hi): (f64, f64), pw: f64, pad: f64) -> (f64, f64) {
+/// A continuous scale's transform: the space Vega pads a domain in and d3
+/// interpolates positions in. `sqrt` is `Pow(0.5)`.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Bend {
+    Linear,
+    Log,
+    Pow(f64),
+    Symlog(f64),
+}
+
+impl Bend {
+    pub fn fwd(self, v: f64) -> f64 {
+        match self {
+            Bend::Linear => v,
+            Bend::Log => v.ln(),
+            Bend::Pow(exponent) => v.signum() * v.abs().powf(exponent),
+            Bend::Symlog(constant) => v.signum() * (v.abs() / constant).ln_1p(),
+        }
+    }
+
+    pub fn inv(self, t: f64) -> f64 {
+        match self {
+            Bend::Linear => t,
+            Bend::Log => t.exp(),
+            Bend::Pow(exponent) => t.signum() * t.abs().powf(1.0 / exponent),
+            Bend::Symlog(constant) => t.signum() * t.abs().exp_m1() * constant,
+        }
+    }
+
+    /// A value's fraction along `(lo, hi)`, d3 centering a collapsed domain.
+    pub fn frac(self, (lo, hi): (f64, f64), v: f64) -> f64 {
+        if lo == hi {
+            return 0.5;
+        }
+        let (a, b) = (self.fwd(lo), self.fwd(hi));
+        (self.fwd(v) - a) / (b - a)
+    }
+}
+
+/// Vega's `padDomain`: the domain widened about its center, in the scale's
+/// transformed space, so its ends sit `pad` pixels inside a range `pw` wide.
+pub fn pad_domain((lo, hi): (f64, f64), pw: f64, pad: f64, bend: Bend) -> (f64, f64) {
     if pad <= 0.0 || lo == hi {
         return (lo, hi);
     }
-    let (mid, half) = ((lo + hi) / 2.0, (hi - lo) / 2.0 * pw / (pw - 2.0 * pad));
-    (mid - half, mid + half)
+    let (a, b) = (bend.fwd(lo), bend.fwd(hi));
+    let (mid, half) = ((a + b) / 2.0, (b - a) / 2.0 * pw / (pw - 2.0 * pad));
+    (bend.inv(mid - half), bend.inv(mid + half))
 }
 
 /// Ink bounds of a single-line text item, per vega-scenegraph
@@ -582,7 +627,7 @@ pub fn fit_plot(
     ink: impl FnMut(f64, f64, &mut Bounds),
     title: Option<&TitleInk>,
 ) -> FitMargins {
-    fit_passes(view_w, view_h, pad, false, ink, title)
+    fit_passes(view_w, view_h, pad, AUTOSIZE_PADDING_PASSES, false, ink, title)
 }
 
 /// [`fit_plot`] with the plot width pinned to `view_w`: the horizontal
@@ -597,13 +642,16 @@ pub fn fit_plot_height(
     ink: impl FnMut(f64, f64, &mut Bounds),
     title: Option<&TitleInk>,
 ) -> FitMargins {
-    fit_passes(view_w, view_h, pad, true, ink, title)
+    fit_passes(view_w, view_h, pad, AUTOSIZE_PADDING_PASSES, true, ink, title)
 }
 
-fn fit_passes(
+/// The padding passes spelled out: a vconcat root (the top rail's concat)
+/// lays its panes out once, so its margins are the first pass's.
+pub fn fit_passes(
     view_w: f64,
     view_h: f64,
     pad: (f64, f64, f64, f64),
+    passes: usize,
     fixed_width: bool,
     mut ink: impl FnMut(f64, f64, &mut Bounds),
     title: Option<&TitleInk>,
@@ -618,7 +666,7 @@ fn fit_passes(
     let (mut left, mut top, mut right, mut bottom) = (0.0, 0.0, 0.0, 0.0);
     let mut raw_left = 0.0;
     let mut scenegraph_plot = (pw, ph);
-    for pass in 1..=AUTOSIZE_PADDING_PASSES {
+    for pass in 1..=passes {
         let mut b = Bounds::new(0.0, 0.0, pw, ph);
         ink(pw, ph, &mut b);
         if let Some(t) = title {
@@ -634,7 +682,7 @@ fn fit_passes(
             pw = (avail_w - left - right).max(0.0);
         }
         ph = (avail_h - top - bottom).max(0.0);
-        if pass == SCENEGRAPH_PADDING_PASSES {
+        if pass <= SCENEGRAPH_PADDING_PASSES {
             scenegraph_plot = (pw, ph);
         }
     }

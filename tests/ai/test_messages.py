@@ -26,7 +26,7 @@ def test_assistant_message_defaults_content_and_tool_calls() -> None:
 
 
 def test_tool_result_message_requires_fields() -> None:
-    msg = ToolResultMessage(tool_call_id="call_1", name="execute_query", content="[]")
+    msg = ToolResultMessage(tool_call_id="call_1", name="execute_sql", content="[]")
     assert msg.role == "tool"
 
 
@@ -42,7 +42,7 @@ def test_assistant_message_content_must_be_a_string() -> None:
 
 
 def test_tool_call_arguments_round_trip() -> None:
-    tc = ToolCall(id="call_1", name="execute_query", arguments={"sql": "SELECT 1"})
+    tc = ToolCall(id="call_1", name="execute_sql", arguments={"sql": "SELECT 1"})
     assert tc.arguments == {"sql": "SELECT 1"}
 
 

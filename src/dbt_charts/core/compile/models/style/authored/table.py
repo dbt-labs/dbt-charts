@@ -331,8 +331,8 @@ class TableColumnConfig(ConstrainedModel):
     link: Annotated[str | Link | None, Url()] = Field(
         default=None,
         description=(
-            "URL template for cell values (Jinja template with row fields "
-            "available), or {url, open} to choose how a click opens the target."
+            "URL template for cell values, with the row's fields available. "
+            "Write {url, open} to choose how a click opens the target."
         ),
     )
     background: Annotated[str | None, Color(column_ref=True)] = Field(

@@ -62,14 +62,14 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("core/compile/config.py", 649): (
         "resolve_cache_boot(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/execute/adapters/adapter_registry.py", 237): (
+    ("core/execute/adapters/adapter_registry.py", 238): (
         "isinstance(project, FilesystemProject)-guarded data_dir computation"
     ),
-    ("core/execute/adapters/adapter_registry.py", 125): (
+    ("core/execute/adapters/adapter_registry.py", 126): (
         "isinstance(project, FilesystemProject)-guarded linked_dbt_path computation "
         "(project.dbt_root, linked-dbt-project sibling/external rule)"
     ),
-    ("core/execute/adapters/adapter_registry.py", 127): (
+    ("core/execute/adapters/adapter_registry.py", 128): (
         "isinstance(project, FilesystemProject)-guarded linked_dbt_path computation "
         "(project.dbt_project.exists, same narrow as the line above)"
     ),
@@ -77,44 +77,44 @@ ALLOWED: dict[tuple[str, int], str] = {
     # and app.state.project are FilesystemProject throughout server.py — no
     # runtime isinstance narrow needed, only the FilesystemProject import
     # (under TYPE_CHECKING) and explicit local annotations below.
-    ("core/serve/server.py", 231): (
+    ("core/serve/server.py", 232): (
         "_all_board_roots_mtime(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 324): (
+    ("core/serve/server.py", 325): (
         "_directory_candidates(..., project: FilesystemProject) — already FS-typed"
-    ),
-    ("core/serve/server.py", 341): (
-        "_resolve_directory_url(project: FilesystemProject) — already FS-typed"
     ),
     ("core/serve/server.py", 342): (
         "_resolve_directory_url(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 345): (
+    ("core/serve/server.py", 343): (
         "_resolve_directory_url(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 498): (
+    ("core/serve/server.py", 346): (
+        "_resolve_directory_url(project: FilesystemProject) — already FS-typed"
+    ),
+    ("core/serve/server.py", 506): (
         "_url_mount_dir(path, project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 643): (
+    ("core/serve/server.py", 651): (
         "_render_board_file(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 752): (
+    ("core/serve/server.py", 761): (
         "_render_board_download(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1176): (
+    ("core/serve/server.py", 1216): (
         "create_server: core_project inferred FilesystemProject from the parameter"
     ),
-    ("core/serve/server.py", 1215): (
+    ("core/serve/server.py", 1255): (
         "create_server: core_project inferred FilesystemProject from the parameter; "
         "the live-reload watch is opened over the project root"
     ),
-    ("core/serve/server.py", 1250): (
+    ("core/serve/server.py", 1290): (
         "_reload_on_change: project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1351): (
+    ("core/serve/server.py", 1397): (
         "profile_table: inspect_project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1545): (
+    ("core/serve/server.py", 1591): (
         "get_board: project explicitly typed FilesystemProject just above"
     ),
     (
@@ -133,22 +133,28 @@ ALLOWED: dict[tuple[str, int], str] = {
         "agent_api/pack.py",
         459,
     ): "apply_proposal(project: FilesystemProject) — already FS-typed",
-    ("agent_api/_paths.py", 412): (
+    ("agent_api/_paths.py", 421): (
         "_relpath_for_fs_location: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/_paths.py", 471): (
+    ("agent_api/_paths.py", 481): (
         "resolve_board_or_error: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/_paths.py", 615): (
+    ("agent_api/_paths.py", 625): (
         "compile_editor_buffer: project = FilesystemProject(root) constructed above"
     ),
-    ("agent_api/project_session.py", 325): (
+    ("agent_api/project_session.py", 326): (
         'ProjectSession.charts_dir: cast("FilesystemProject", self.project)-narrowed'
     ),
-    ("agent_api/serve.py", 80): (
+    ("agent_api/serve.py", 86): (
         "prepare_serve(project: FilesystemProject) — already FS-typed"
     ),
-    ("agent_api/serve.py", 88): (
+    ("core/serve/server.py", 1331): (
+        "health: create_server's FilesystemProject parameter, closed over"
+    ),
+    ("agent_api/serve.py", 477): (
+        "start_detached(project: FilesystemProject) — already FS-typed"
+    ),
+    ("agent_api/serve.py", 165): (
         "prepare_serve(project: FilesystemProject), already FS-typed "
         "(dbt_root, dialect inference reads the linked dbt project directory)"
     ),

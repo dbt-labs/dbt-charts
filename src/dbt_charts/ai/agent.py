@@ -90,7 +90,7 @@ _GENERIC_METADATA_HINT = (
     "WHERE table_schema = '<schema>' AND table_name = '<table>'`."
 )
 
-_SCHEMA_EXPLORATION_GUIDANCE = """Explore schema yourself with `execute_query` \
+_SCHEMA_EXPLORATION_GUIDANCE = """Explore schema yourself with `execute_sql` \
 against the warehouse's own metadata views — there is no separate schema tool. \
 Keep metadata queries scoped (filter by schema/table) instead of dumping every \
 column in the warehouse:
@@ -140,12 +140,12 @@ def build_sources_context(adapter_registry: AdapterRegistry) -> str:
 
 _TOOL_GUIDANCE = """## Tool Use
 
-- Source names in `execute_query` are the project-configured names listed under
+- Source names in `execute_sql` are the project-configured names listed under
   Data sources (e.g. `db`), NOT adapter types (`duckdb`, `postgres`). Inspect
   real data before making any claim — never invent columns or assume a schema
   you have not read.
-- Use `search_boards` and `read_file`/`glob_files`/`grep_files` to reuse
-  existing boards and project patterns.
+- Use `search_files` and `read_file` to reuse existing boards and project
+  patterns.
 - To just preview a chart for the user, render it directly with
   `render_board(yaml_content=...)` — no file needed.
 - To create or change a *saved* dashboard, write the YAML to a file: `write_file`

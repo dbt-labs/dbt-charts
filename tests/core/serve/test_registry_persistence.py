@@ -20,10 +20,11 @@ from dbt_charts.core.serve import server as server_mod
 
 _BOARD_YAML = """\
 title: Persist test
-source: duckdb
 queries:
   q:
-    sql: "SELECT 1 AS v"
+    type: values
+    rows:
+      - v: 1
 charts:
   c: {query: q, type: kpi, value: v}
 rows:

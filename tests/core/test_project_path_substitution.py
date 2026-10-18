@@ -465,7 +465,7 @@ rows:
 
 
 class TestListDashboardsSubstitution:
-    """list_boards and search_boards must enumerate through Project.iter_boards."""
+    """list_boards and search_files must enumerate through Project.iter_boards."""
 
     def test_list_boards_uses_iter_boards_not_disk(
         self,
@@ -497,12 +497,12 @@ class TestListDashboardsSubstitution:
         assert result.directory.relpath == "."
         assert not result.directory.relpath.startswith("/")
 
-    def test_search_boards_uses_iter_boards_not_disk(
+    def test_search_files_uses_iter_boards_not_disk(
         self,
         tmp_path: Path,
         in_memory_project: Callable[[Path, dict[str, str]], Project],
     ) -> None:
-        """search_boards finds in-memory board; on-disk decoy is invisible."""
+        """search_files finds in-memory board; on-disk decoy is invisible."""
         board_yaml = (
             "title: Xyzzy Sales\n"
             "notes: Xyzzy revenue metrics\n"
@@ -518,9 +518,9 @@ class TestListDashboardsSubstitution:
 
         project = in_memory_project(tmp_path, files)
 
-        from dbt_charts.agent_api.search import search_boards
+        from dbt_charts.agent_api.search import search_files
 
-        result = search_boards(query="xyzzy", project=project)
+        result = search_files(project, text="xyzzy")
         titles = [h.title for h in result.results]
         assert "Xyzzy Sales" in titles, titles
         assert "Decoy Xyzzy" not in titles, titles

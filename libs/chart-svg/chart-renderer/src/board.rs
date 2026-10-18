@@ -5796,15 +5796,15 @@ mod nested_box_sidecar_tests {
         );
     }
 
-    /// The gate's `y_on_right` check reads the real field path
-    /// (`style.axis_y.position`): a chart authored with a right y axis takes
-    /// `Shape::Legacy`, never `Shape::RailConcat`, so a nested grid board does
-    /// not refuse it.
+    /// The gate reads `show_rail` alone: a right-axis chart with no endpoint
+    /// rail takes `Shape::Fit`, never `Shape::RailConcat`, so a nested grid
+    /// board does not refuse it.
     #[test]
-    fn a_right_axis_chart_is_not_refused_inside_a_nested_grid_board() {
+    fn a_right_axis_chart_without_a_rail_is_not_refused_inside_a_nested_grid_board() {
         let fonts = real_fonts();
         let mut slope: serde_json::Value = serde_json::from_str(SLOPE_RESOLVED_JSON).unwrap();
         slope["style"]["axis_y"]["position"] = serde_json::json!("right");
+        slope["style"]["endpoint_labels"]["visible"] = serde_json::json!(false);
         let p = slope_in_nested_board_beside_tall_sibling(slope, "grid");
 
         render_board(&p, &fonts)

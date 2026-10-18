@@ -1924,7 +1924,7 @@ class TestRaiseOnDashboardFailure:
         from dbt_charts.core.diagnostics.registry import REGISTRY
         from dbt_charts.core.render import RenderError
 
-        fe = self._board_error(ERR_SOURCE_NOT_FOUND_EMPTY, source="s")
+        fe = self._board_error(ERR_SOURCE_NOT_FOUND_EMPTY, source="s", advice="")
         assert REGISTRY.get(fe.code).domain == "execute"
         with pytest.raises(ValueError, match="not found") as excinfo:
             raise_on_dashboard_failure(

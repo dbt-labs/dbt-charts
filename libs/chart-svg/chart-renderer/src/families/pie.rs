@@ -525,7 +525,7 @@ fn plan_legend(
     let symbol_stroke = r.style.slice_mark.stroke.as_ref().and_then(|s| s.color.clone());
     let entry_symbol = symbol_stroke.is_none().then_some(LegendSymbol::FilledCircle);
     let layout =
-        legend_from_widths(&label_ws, &vec![entry_symbol; entries.len()], &title, title_w, cfg)?;
+        legend_from_widths(&label_ws, &vec![entry_symbol; entries.len()], false, &title, title_w, cfg)?;
     Ok(Some(PieLegend { entries, layout, symbol_stroke }))
 }
 
@@ -2870,7 +2870,7 @@ mod tests {
                 series_key: None,
             }).collect();
         let title = legend_title_text("category", &cfg, &Default::default()).unwrap();
-        let legend = vega_legend(&entries, &title, &cfg, &test_fonts()).unwrap();
+        let legend = vega_legend(&entries, false, &title, &cfg, &test_fonts()).unwrap();
         (legend.box_w, legend.box_h())
     }
 

@@ -115,11 +115,11 @@ def test_follow_up_request_carries_function_call_output_and_no_previous_response
         AssistantMessage(
             tool_calls=[
                 ToolCall(
-                    id="call_abc", name="execute_query", arguments={"sql": "SELECT 1"}
+                    id="call_abc", name="execute_sql", arguments={"sql": "SELECT 1"}
                 )
             ]
         ),
-        ToolResultMessage(tool_call_id="call_abc", name="execute_query", content="[1]"),
+        ToolResultMessage(tool_call_id="call_abc", name="execute_sql", content="[1]"),
     ]
     list(client.stream_with_tools(messages=messages, system_prompt="you are helpful"))
 
@@ -158,7 +158,7 @@ def test_normalized_openai_tools_satisfy_strict_mode_schema_rules() -> None:
     """Every first-party tool schema must satisfy OpenAI's strict-mode /
     Structured Outputs constraints, not just the `format` allowlist.
 
-    Generalizes the #7013 regression (`render_board` / `execute_query` /
+    Generalizes the #7013 regression (`render_board` / `execute_sql` /
     `describe_board`'s `path: Path` fields serializing to
     `format: "path"`, which OpenAI validates before dispatching any call —
     400ing every chat request regardless of prompt) to the full ruleset a
@@ -416,7 +416,7 @@ def test_stream_with_tools_yields_tool_call_events() -> None:
 
     events: list[GatewayEvent] = [
         FunctionCall(
-            call_id="call_1", name="execute_query", arguments={"sql": "SELECT 1"}
+            call_id="call_1", name="execute_sql", arguments={"sql": "SELECT 1"}
         )
     ]
     gateway = _FakeGateway(events)
@@ -430,7 +430,7 @@ def test_stream_with_tools_yields_tool_call_events() -> None:
 
     tool_calls = [e for e in out if isinstance(e, ToolCallEvent)]
     assert len(tool_calls) == 1
-    assert tool_calls[0].name == "execute_query"
+    assert tool_calls[0].name == "execute_sql"
     assert tool_calls[0].arguments == {"sql": "SELECT 1"}
 
 

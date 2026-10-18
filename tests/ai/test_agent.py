@@ -594,9 +594,9 @@ def test_tool_result_duration_reflects_only_its_own_dispatch_call(
     monkeypatch.setattr("dbt_charts.ai.agent.dispatch_tool_call", fake_dispatch)
 
     tool_calls = [
-        ToolCallEvent(id="a", name="execute_query", arguments={}),
-        ToolCallEvent(id="b", name="execute_query", arguments={}),
-        ToolCallEvent(id="c", name="execute_query", arguments={}),
+        ToolCallEvent(id="a", name="execute_sql", arguments={}),
+        ToolCallEvent(id="b", name="execute_sql", arguments={}),
+        ToolCallEvent(id="c", name="execute_sql", arguments={}),
     ]
     client = MagicMock()
     client.stream_with_tools.side_effect = [

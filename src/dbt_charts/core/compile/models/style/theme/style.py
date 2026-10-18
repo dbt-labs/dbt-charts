@@ -84,10 +84,10 @@ class Style(BaseModel):
         description="Muted secondary-text color token (KPI support rows, table and spark subtitles)."
     )
     font: RootFontStyle = Field(
-        description="Root font configuration including emoji mode."
+        description="Root font: literal family, size, weight, color; never a `fonts` name."
     )
     border: BorderStyle = Field(
-        description="Frame drawn around the whole board; none by default."
+        description="Frame drawn around the whole board: `{width, color, radius}` or `'2px solid #333'`. Omit the key for no border."
     )
     box_shadow: Annotated[
         str | None,
@@ -145,7 +145,8 @@ class Style(BaseModel):
     fonts: Annotated[dict[str, NamedFont] | None, Merge(Strategy.DEEP)] = Field(
         default=None,
         description=(
-            "Named fonts other font slots reference as ``font: <name>`` or "
+            "Named fonts as ``<name>: {family, size, weight, color}``, never a bare "
+            "family string; other font slots reference one as ``font: <name>`` or "
             "``font: {extends: <name>, ...}``. ``heading`` carries the H1–H6 "
             "ramp in ``sizes``. An entry no slot references paints nothing."
         ),
@@ -164,7 +165,8 @@ class Style(BaseModel):
     palettes: dict[str, PaletteName] | None = Field(
         default=None,
         description=(
-            "Theme palette role assignments: open dict mapping role name to palette file name. "
+            "Theme palette role assignments: role name to a built-in palette name, never a color. "
+            "Custom colors go in ``charts.color.categorical.palette: [hex, ...]``. "
             "Default seed: chrome, info, negative, positive, warning, category, sequence, diverge."
         ),
     )

@@ -2238,3 +2238,26 @@ class TestParseSourceConfigEnv:
             parse_source_config(data, env={})
         supplied = parse_source_config(data, env={"SEALED_SECRET": "data/given.csv"})
         assert supplied.model_dump(by_alias=True)["files"]["t"] == "data/given.csv"
+
+
+def test_unknown_source_suggests_the_data_file_with_that_stem(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    from dbt_charts.core.diagnostics.base import DbtChartsError
+    from dbt_charts.core.execute.source_resolver import DefaultSourceResolver
+
+    (tmp_path / "cars.csv").write_text("a\n1\n")
+    (tmp_path / "cars.duckdb").write_bytes(b"")
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "other.csv").write_text("a\n1\n")
+
+    with pytest.raises(DbtChartsError) as exc:
+        DefaultSourceResolver(local_project(tmp_path)).resolve(
+            "cars", {}, ProjectSourcesConfig(sources={}), None
+        )
+
+    message = str(exc.value)
+    assert "Did you mean `source: ./cars.csv`?" in message
+    assert "./cars.csv, ./data/other.csv" in message
+    assert "Did you mean the database file `cars.duckdb`?" in message
+    assert "sources:\n  cars:\n    type: duckdb\n    path: cars.duckdb" in message

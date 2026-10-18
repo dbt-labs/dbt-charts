@@ -27,7 +27,7 @@ from dbt_charts.ai.tools import TOOL_HANDLERS
 
 # Tools whose handlers require a live warehouse adapter to run meaningfully.
 # Covered by the E2E lane against fixture projects with real data.
-_WAREHOUSE_ONLY: frozenset[str] = frozenset({"execute_query"})
+_WAREHOUSE_ONLY: frozenset[str] = frozenset({"execute_sql"})
 
 
 def _handler_args() -> dict[str, dict[str, Any]]:
@@ -37,7 +37,7 @@ def _handler_args() -> dict[str, dict[str, Any]]:
     """
     return {
         "render_board": {"path": "nonexistent.yml"},
-        "search_boards": {"query": "anything"},
+        "search_files": {"text": "anything"},
         "docs": {"topic": "yaml"},
         "describe_board": {"path": "nonexistent.yml"},
         "read_file": {"path": "nonexistent.yml"},
@@ -47,8 +47,6 @@ def _handler_args() -> dict[str, dict[str, Any]]:
             "old_string": "a",
             "new_string": "b",
         },
-        "glob_files": {"pattern": "*.yml"},
-        "grep_files": {"pattern": "anything"},
         "move_file": {"source_path": "nonexistent.yml", "destination_path": "dest.yml"},
         "delete_file": {"path": "nonexistent.yml"},
         "list_skills": {},

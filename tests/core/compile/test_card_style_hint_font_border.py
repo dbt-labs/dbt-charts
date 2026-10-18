@@ -67,7 +67,8 @@ def test_card_style_field_raises_with_hint(chart_type: str, style_key: str) -> N
     all_text = " ".join((e.message or "") + " " + (e.hint or "") for e in result.errors)
     assert style_key in all_text
     assert chart_type in all_text
-    assert "not supported" in all_text.lower() or "unsupported" in all_text.lower()
+    expected = "delete `" if style_key == "border" else "not supported"
+    assert expected in all_text.lower()
 
 
 # --- the hint must not misfire on a nested field that shares the key name ---

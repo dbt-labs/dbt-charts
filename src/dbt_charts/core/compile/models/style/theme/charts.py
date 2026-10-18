@@ -175,7 +175,7 @@ class ChartsStyle(_PaintedChartStyleBase, _LegendedChartStyleBase):
     # Declared here, not on _ChartStyleBase (see that class's docstring): the
     # board-level authoritative default. No InheritSlot — themes must set it.
     border: BorderStyle = Field(
-        description="Border around every chart card; callout cards keep their own."
+        description="Border around every chart card: `{width, color, radius}` or `'1px solid #ccc'`. Omit the key for no border; callout cards keep their own."
     )
 
     # Override _ChartStyleBase.padding to break the self-loop the InheritSlot
@@ -184,7 +184,7 @@ class ChartsStyle(_PaintedChartStyleBase, _LegendedChartStyleBase):
     # _ChartStyleBase.padding with the InheritSlot intact, which is what wires
     # the board → family fill at apply_inherit time.
     padding: Annotated[PaddingStyle, SkipInheritSlots()] = Field(
-        description="Per-chart-type padding override; 4 sides in pixels."
+        description="Padding as {top, right, bottom, left} in pixels, never one number."
     )
 
     # A sparse patch: the theme sets only the `auto` font leaves, and the
@@ -216,7 +216,7 @@ class ChartsStyle(_PaintedChartStyleBase, _LegendedChartStyleBase):
     category_colors: dict[str, CategoryColorBinding] = Field(
         default_factory=dict,
         description=(
-            "Board-wide category→color bindings, keyed by data field name. "
+            "Board-wide category colors as `<column>: {values: {<value>: color}}`. "
             "Pins a category to one swatch across every chart on the board."
         ),
     )

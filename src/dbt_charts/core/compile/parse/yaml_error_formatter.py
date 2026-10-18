@@ -10,16 +10,26 @@ Refs #94
 """
 
 import difflib
+import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from types import UnionType
-from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Literal,
+    Union,
+    get_args,
+    get_origin,
+)
 
 import yaml
 from pydantic import BaseModel, Tag
 
+from dbt_charts.core.compile.parse.source_map import build_source_index
 from dbt_charts.core.utils import YAML_LOADER
 
 if TYPE_CHECKING:
@@ -232,6 +242,23 @@ def _chart_type_from_error_path(
     return None
 
 
+def _authored_chart(field_path: list[str], yaml_content: str | None) -> "JsonObject":
+    """The chart mapping a ``charts.<name>...`` error path points into, as authored."""
+    data = _raw_mapping(yaml_content)
+    charts = data.get("charts") if data is not None else None
+    chart = charts.get(field_path[1]) if isinstance(charts, dict) else None
+    return chart if isinstance(chart, dict) else {}
+
+
+def _table_height_hint(field_name: str, pagination_at: str, chart: str) -> str:
+    return (
+        f"A table is as tall as its rows: delete `{field_name}:`. To show fewer "
+        f"rows, set `style.pagination.page_rows: 10` {pagination_at}; to cap "
+        "its slot, give the layout row around it a height:\n"
+        f"rows:\n  - height: 300\n    rows:\n      - {chart}"
+    )
+
+
 _CARTESIAN_CHART_TYPES = frozenset(
     {"bar", "line", "area", "scatter", "heatmap", "histogram"}
 )
@@ -305,6 +332,16 @@ def _unsupported_known_chart_field_hint(
                 "Use `style.columns.<column_name>.format:` per column instead."
             )
 
+    if field_name == "height" and chart_type == "table":
+        chart = field_path[1]
+        return _table_height_hint(field_name, f"on `charts.{chart}`", chart)
+
+    if field_name == "sort" and chart_type == "table":
+        return (
+            "`sort:` is not supported on `type: table`. A table shows rows in "
+            "query order: sort in the query with `ORDER BY`."
+        )
+
     if field_name == "axis_quantitative" and chart_type == "heatmap":
         return (
             "`axis_quantitative:` is not supported on `type: heatmap`. "
@@ -323,7 +360,9 @@ def _unsupported_known_chart_field_hint(
     supported = ", ".join(supporting_types)
     hint = (
         f"`{field_name}:` is not supported on `type: {chart_type}`. "
-        f"Supported chart types for `{field_name}:`: {supported}."
+        f"Supported chart types for `{field_name}:`: {supported}. "
+        f"Fields accepted on `type: {chart_type}`: "
+        f"{_format_allowed_keys(sorted(fields_by_type[chart_type]))}."
     )
     if field_name in ("height", "width"):
         hint += (
@@ -360,6 +399,23 @@ def _tagged_annotated_inner(annotation: Any, segment: str) -> tuple[bool, Any]:
     return False, args[0]
 
 
+def _literal_type_tag(
+    model: Any,  # type-state: explicit_any — pydantic annotation
+) -> str | None:
+    """The value a ``Field(discriminator="type")`` arm is selected by, if it has one.
+
+    Pydantic puts that value in the error loc, so path walking has to treat it
+    like a ``Tag`` -- a segment that picks the arm, not a key of its fields.
+    """
+    if not _is_model_type(model) or "type" not in model.model_fields:
+        return None
+    annotation = model.model_fields["type"].annotation
+    if get_origin(annotation) is not Literal:
+        return None
+    values = get_args(annotation)
+    return values[0] if len(values) == 1 else None
+
+
 def _annotation_tag(annotation: Any) -> str | None:
     if get_origin(annotation) is not Annotated:
         return None
@@ -383,10 +439,12 @@ def _next_annotations_for_segment(annotation: Any, segment: str) -> list[Any]:
     if origin is Annotated:
         return _next_annotations_for_segment(get_args(annotation)[0], segment)
     if origin in (Union, UnionType):
+        arms = [arg for arg in get_args(annotation) if arg is not type(None)]
+        literal_arms = [arg for arg in arms if _literal_type_tag(arg) == segment]
+        if literal_arms:
+            return literal_arms
         next_annotations: list[Any] = []
-        for arg in get_args(annotation):
-            if arg is type(None):
-                continue
+        for arg in arms:
             next_annotations.extend(_next_annotations_for_segment(arg, segment))
         return next_annotations
     if origin is dict:
@@ -430,7 +488,7 @@ def _segment_is_tag(
     origin = get_origin(annotation)
     if origin in (Union, UnionType):
         return any(
-            _segment_is_tag(arg, segment)
+            _segment_is_tag(arg, segment) or _literal_type_tag(arg) == segment
             for arg in get_args(annotation)
             if arg is not type(None)
         )
@@ -566,6 +624,75 @@ def _allowed_keys_at_path(parent_path: list[str]) -> list[str]:
     return sorted(keys)
 
 
+def _is_mapping_block(
+    annotation: Any,  # type-state: explicit_any — pydantic annotation
+) -> bool:
+    """True when *annotation* is a model (or a union holding one), not a
+    ``dict``/``list`` container whose children are named by the author."""
+    _, annotation = _tagged_annotated_inner(annotation, "")
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        return _is_mapping_block(get_args(annotation)[0])
+    if origin in (Union, UnionType):
+        return any(
+            _is_mapping_block(arg)
+            for arg in get_args(annotation)
+            if arg is not type(None)
+        )
+    return _is_model_type(annotation)
+
+
+def _mapping_block_keys(path: list[str]) -> list[str]:
+    """Keys at *path* whose value is itself a block of fields (``style:``)."""
+    keys: set[str] = set()
+    for annotation in _annotations_at_path(path):
+        for model in _model_types_from_annotation(annotation):
+            keys.update(
+                _field_key(name, field)
+                for name, field in model.model_fields.items()
+                if field.exclude is not True and _is_mapping_block(field.annotation)
+            )
+    return sorted(keys)
+
+
+_MAX_MISPLACED_HOMES = 3
+
+
+def _dotted(path: list[str]) -> str:
+    """The author-facing dotted path, or ``root`` for the document itself."""
+    dotted = ".".join(_display_path(path))
+    return dotted if dotted else "root"
+
+
+def _misplaced_key_hint(field_name: str, parent_path: list[str]) -> str | None:
+    """Name the blocks near *parent_path* that do accept *field_name*.
+
+    Searches each ancestor of the block the key was written in, and the field
+    blocks directly under it, nearest first. A match means the author knew the
+    key and put it one block off.
+    """
+    homes: list[str] = []
+    for depth in range(len(parent_path), -1, -1):
+        ancestor = parent_path[:depth]
+        if not any(_is_mapping_block(a) for a in _annotations_at_path(ancestor)):
+            continue
+        candidates = [ancestor] if depth < len(parent_path) else []
+        candidates.extend([*ancestor, key] for key in _mapping_block_keys(ancestor))
+        for candidate in candidates:
+            home = _dotted(candidate)
+            if (
+                candidate != parent_path
+                and home not in homes
+                and field_name in _allowed_keys_at_path(candidate)
+            ):
+                homes.append(home)
+    if not homes:
+        return None
+    placed = _dotted(parent_path)
+    where = " or ".join(f"`{home}`" for home in homes[:_MAX_MISPLACED_HOMES])
+    return f"`{field_name}` belongs at {where}, not at `{placed}`."
+
+
 def _docs_topic_for_field_path(field_path: list[str]) -> str:
     if not field_path:
         return "board"
@@ -633,6 +760,99 @@ def _retired_keys_in(yaml_content: str | None) -> "dict[tuple[str, ...], Retired
         return {}
     catalog, registry = _board_migration_context()
     return retired_keys(data, catalog, registry)
+
+
+_ABSENT = object()
+
+
+def _authored_at(
+    yaml_content: str | None, path: list[str]
+) -> Any:  # type-state: explicit_any — authored YAML value
+    """The value the author wrote at *path* (document keys, list indexes), or ``_ABSENT``."""
+    node: Any = _raw_mapping(yaml_content)  # type-state: explicit_any — YAML value
+    for segment in path:
+        if isinstance(node, dict) and segment in node:
+            node = node[segment]
+        elif isinstance(node, list) and segment.isdigit() and int(segment) < len(node):
+            node = node[int(segment)]
+        else:
+            return _ABSENT
+    return node
+
+
+_LAYOUT_KEYS = ("rows", "cols", "grid", "tabs")
+
+
+def _subtitle_hint(parent_path: list[str], yaml_content: str | None) -> str:
+    """A board has `title` and `text`; carry the author's own subtitle into `text:`."""
+    written = _authored_at(yaml_content, [*_display_path(parent_path), "subtitle"])
+    value = (
+        "<your subtitle>"
+        if written is _ABSENT
+        else json.dumps(str(written), ensure_ascii=False)
+    )
+    return (
+        "A board has `title` and `text`, no `subtitle`. Put it first in `text:` — "
+        f"`text: {value}` — or on a chart, which does take `subtitle`."
+    )
+
+
+# A bar's `position` is relative to the bar's end, whatever its orientation.
+_BAR_POSITION_FOR_WORD = {
+    "right": "above",
+    "end": "above",
+    "outside": "above",
+    "inside": "top",
+    "left": "bottom",
+    "start": "bottom",
+}
+_BAR_POSITION_MEANING = {
+    "horizontal": {
+        "above": "puts the label past the end of the bar (right)",
+        "top": "puts the label inside the end of the bar",
+        "bottom": "puts the label inside the start of the bar (left)",
+    },
+    "vertical": {
+        "above": "puts the label over the top of the bar",
+        "top": "puts the label inside the top of the bar",
+        "bottom": "puts the label inside the base of the bar",
+    },
+}
+
+
+def _bar_label_position_fix(
+    field_path_str: str, word: str, yaml_content: str | None
+) -> tuple[str, str] | None:
+    """The message and hint for a side/edge word written as a bar label `position`.
+
+    ``None`` when the word has no known replacement, so the allowed-values list stays.
+    """
+    display_path = _display_path(field_path_str.split("."))
+    if display_path[-4:] != ["marks", "bar", "labels", "position"]:
+        return None
+    replacement = _BAR_POSITION_FOR_WORD.get(word)
+    if replacement is None:
+        return None
+    orientation = _authored_at(
+        yaml_content, [*display_path[:2], "style", "orientation"]
+    )
+    message = f"Field '{field_path_str}': {word!r} is not a bar label position"
+    edit = f"write `position: {replacement}`"
+    if orientation in _BAR_POSITION_MEANING:
+        meaning = _BAR_POSITION_MEANING[orientation][replacement]
+        sides = (
+            " A vertical bar has no left or right."
+            if orientation == "vertical" and word in ("left", "right")
+            else ""
+        )
+        return (
+            message,
+            f"On a {orientation} bar, `{replacement}` {meaning}; {edit}.{sides}",
+        )
+    return message, (
+        f"`position` is relative to the bar's end: `{replacement}` puts the label past it "
+        f"(right of a horizontal bar, over a vertical one); {edit}."
+    )
 
 
 def _extra_field_diagnostic(
@@ -742,6 +962,18 @@ def _extra_field_diagnostic(
             fields=fields,
         )
 
+    if (
+        field_path[0:2] == ["style", "charts"]
+        and field_path[2:3] == ["table"]
+        and len(field_path) == 4
+        and "height" in field_name
+    ):
+        return _ExtraFieldDiagnostic(
+            message=message,
+            hint=_table_height_hint(field_name, "on the table chart", "<table chart>"),
+            fields=fields,
+        )
+
     # Theme-level style.charts.heatmap.axis_quantitative. Heatmap's axes are
     # both nominal — there is no quantitative axis for this field to style.
     if (
@@ -764,6 +996,49 @@ def _extra_field_diagnostic(
         return _ExtraFieldDiagnostic(
             message=message,
             hint=_AXIS_TITLE_TEXT_HINT,
+            fields=fields,
+        )
+
+    if field_name == "category_colors" and parent_path[-1:] == ["style"]:
+        return _ExtraFieldDiagnostic(
+            message=message,
+            hint=(
+                "`category_colors` pins a category to one color across the "
+                "whole board, so it is set board-wide at "
+                "`style.charts.category_colors`, keyed by data field."
+            ),
+            fields=fields,
+        )
+
+    if (
+        field_name == "fonts"
+        and "font" in allowed_keys
+        and not _path_is_axis_title(parent_path)
+    ):
+        return _ExtraFieldDiagnostic(
+            message=message,
+            hint=(
+                f"There are no font roles at {parent}; `font` is a mapping "
+                "(family, size, weight, case, color):\n"
+                "font:\n  family: Georgia\n  size: 14"
+            ),
+            fields=fields,
+        )
+
+    if field_name == "subtitle" and (not parent_path or parent_path[0] in _LAYOUT_KEYS):
+        return _ExtraFieldDiagnostic(
+            message=message,
+            hint=_subtitle_hint(parent_path, yaml_content),
+            fields=fields,
+        )
+
+    if field_name == "visible" and parent_path[-1:] == ["tooltip"]:
+        return _ExtraFieldDiagnostic(
+            message=message,
+            hint=(
+                "`style.charts.tooltip` has no `visible` switch: delete the line. "
+                "It styles the tooltip (background, border, font, ...)."
+            ),
             fields=fields,
         )
 
@@ -794,21 +1069,49 @@ def _extra_field_diagnostic(
             fields=fields,
         )
 
+    # `charts.<c>.<family-tag>.style.<family>`: the board-wide
+    # `style.charts.<family>` block copied into one chart's own style.
+    if (
+        len(field_path) == 5
+        and field_path[0] == "charts"
+        and field_path[3] == "style"
+        and field_name == _chart_type_from_error_path(field_path, yaml_content)
+    ):
+        chart = field_path[1]
+        style = _authored_chart(field_path, yaml_content).get("style")
+        nested = style.get(field_name) if isinstance(style, dict) else None
+        example = (
+            f", e.g. `charts.{chart}.style.{next(iter(nested))}`"
+            if isinstance(nested, dict) and nested
+            else ""
+        )
+        return _ExtraFieldDiagnostic(
+            message=message,
+            hint=(
+                f"Inside one chart's `style`, write the {field_name} keys directly: "
+                f"delete the `{field_name}:` line and move its keys up one level"
+                f"{example}. `style.charts.{field_name}` is the board-wide form."
+            ),
+            fields=fields,
+        )
+
     card_style_chart_type = _card_style_slot_chart_type(
         field_name, field_path, yaml_content
     )
     if card_style_chart_type is not None:
-        return _ExtraFieldDiagnostic(
-            message=message,
-            hint=(
-                f"`style.{field_name}` is not supported on "
-                f"`type: {card_style_chart_type}` — {card_style_chart_type} has no "
-                "per-chart card to paint it onto (it renders via Vega-Lite with no "
-                "card surface separate from the board frame). The field has no "
-                "effect and should be removed."
-            ),
-            fields=fields,
+        written = ".".join(_display_path(field_path))
+        hint = (
+            f"Delete `{written}`: a {card_style_chart_type} chart has no border "
+            "of its own. A border around every chart card is "
+            "`style.charts.border`; omit it for no border."
+            if field_name == "border"
+            else f"`style.{field_name}` is not supported on "
+            f"`type: {card_style_chart_type}` — {card_style_chart_type} has no "
+            "per-chart card to paint it onto (it renders via Vega-Lite with no "
+            "card surface separate from the board frame). The field has no "
+            "effect and should be removed."
         )
+        return _ExtraFieldDiagnostic(message=message, hint=hint, fields=fields)
 
     if field_path[0:1] == ["charts"] and len(field_path) >= 3:
         if parent_path[-1:] == ["style"] and field_name in ("height", "width"):
@@ -859,6 +1162,9 @@ def _extra_field_diagnostic(
     ]
     if suggestion is not None:
         hint_parts.append(f"Did you mean {suggestion!r}?")
+    misplaced = _misplaced_key_hint(field_name, parent_path)
+    if misplaced is not None:
+        hint_parts.append(misplaced)
     hint_parts.append(f"See: dct docs {docs_topic}")
     return _ExtraFieldDiagnostic(
         message=message,
@@ -882,49 +1188,41 @@ def get_valid_chart_types() -> tuple[str, ...]:
     return AUTHORED_CHART_TYPE_TAGS
 
 
+def _name_key(name: str) -> str:
+    """The comparison form of an identifier: case, spaces and hyphens ignored."""
+    return re.sub(r"[\s-]+", "_", name.strip().lower())
+
+
+def nearest_names(
+    name: str,
+    candidates: Sequence[str],
+    *,
+    limit: int = 3,
+    cutoff: float = 0.6,
+) -> list[str]:
+    """The *candidates* closest to *name*, best first, in their original spelling.
+
+    Names that differ only by case, spaces, hyphens or underscores compare equal,
+    so ``total_jobs`` finds ``"Total Jobs"``. Shared by field-key and column
+    advice.
+    """
+    by_key: dict[str, str] = {}
+    for candidate in candidates:
+        by_key.setdefault(_name_key(candidate), candidate)
+    matches = difflib.get_close_matches(
+        _name_key(name), list(by_key), n=limit, cutoff=cutoff
+    )
+    return [by_key[match] for match in matches]
+
+
 def suggest_similar_value(
     invalid_value: str,
     valid_values: Sequence[str],
     cutoff: float = 0.6,
 ) -> str | None:
-    """Suggest a similar valid value for a typo.
-
-    Uses difflib to find close matches to the invalid value.
-
-    Args:
-        invalid_value: The invalid value that was provided
-        valid_values: List of valid values to match against
-        cutoff: Minimum similarity ratio (0-1) for a match
-
-    Returns:
-        The closest valid value, or None if no good match
-    """
-    if not invalid_value or not valid_values:
-        return None
-
-    # Normalize for comparison
-    normalized_input = invalid_value.lower().strip()
-
-    # First check for exact match (case insensitive)
-    for valid in valid_values:
-        if valid.lower() == normalized_input:
-            return valid
-
-    # Use difflib to find close matches
-    matches = difflib.get_close_matches(
-        normalized_input,
-        [v.lower() for v in valid_values],
-        n=1,
-        cutoff=cutoff,
-    )
-
-    if matches:
-        # Return the original case version
-        for valid in valid_values:
-            if valid.lower() == matches[0]:
-                return valid
-
-    return None
+    """The single closest valid value for a typo, or None if no good match."""
+    matches = nearest_names(invalid_value, valid_values, limit=1, cutoff=cutoff)
+    return matches[0] if matches else None
 
 
 def _newer_schema_version_hint(yaml_content: str | None) -> str | None:
@@ -1074,13 +1372,21 @@ def format_validation_errors_structured(
         else:
             ec = ERR_INTERNAL
 
+        input_val = err.get("input")
+        bar_position_fix = (
+            _bar_label_position_fix(field_path_str, input_val, yaml_content)
+            if err_type == "literal_error" and isinstance(input_val, str)
+            else None
+        )
+
         # Include input value in message when it's a simple string (not a dict/list)
         # so error consumers can see what value was actually provided.
-        input_val = err.get("input")
         if extra_field_diagnostic is not None:
             message = extra_field_diagnostic.message
         elif coded:
             message = err_msg
+        elif bar_position_fix is not None:
+            message = bar_position_fix[0]
         elif field_path_str:
             if isinstance(input_val, str):
                 message = f"Field '{field_path_str}': {err_msg} (got: {input_val!r})"
@@ -1092,6 +1398,16 @@ def format_validation_errors_structured(
         hint: str | None = None
         if extra_field_diagnostic is not None:
             hint = extra_field_diagnostic.hint
+        elif bar_position_fix is not None:
+            hint = bar_position_fix[1]
+        elif err_type == "missing" and field_path_parts:
+            parent_parts = field_path_parts[:-1]
+            hint = (
+                f"`{field_path_parts[-1]}` is required at "
+                f"`{_dotted(parent_parts)}`. "
+                "Fields accepted there: "
+                f"{_format_allowed_keys(_allowed_keys_at_path(parent_parts))}."
+            )
         elif wrong_shape_keys:
             field_name = field_path_parts[-1] if field_path_parts else "field"
             docs_topic = _docs_topic_for_field_path(field_path_parts)
@@ -1102,10 +1418,76 @@ def format_validation_errors_structured(
                 if _path_is_total_label(field_path_parts)
                 else ""
             )
+            per_side = ""
+            if wrong_shape_keys == _SIDES_SORTED and _is_number(input_val):
+                sides = "".join(f"\n  {side}: {input_val}" for side in _SIDES)
+                per_side = f" Write it per side:\n{field_name}:{sides}"
             hint = (
                 f"'{field_name}' expects a mapping.{redirect} "
                 f"Available keys: {_format_allowed_keys(wrong_shape_keys)}. "
-                f"See: dct docs {docs_topic}"
+                f"See: dct docs {docs_topic}{per_side}"
+            )
+        elif field_path_parts[-2:] == ["frame", "margin"] and isinstance(
+            input_val, dict
+        ):
+            hint = (
+                "`style.frame.margin` is one number, the same on every side. "
+                "Per-side spacing is `style.margin` or `style.padding`: "
+                "`{top: …, right: …, bottom: …, left: …}`."
+            )
+        elif isinstance(input_val, dict) and None in input_val.values():
+            empty_key = next(k for k, v in input_val.items() if v is None)
+            hint = (
+                f"`{empty_key}:` is empty: indent the lines that follow so they "
+                f"sit under `{empty_key}:`, not beside it."
+            )
+        elif (
+            err_type == "literal_error"
+            and isinstance(input_val, str)
+            and field_path_parts
+            and (
+                nearest := suggest_similar_value(
+                    input_val, re.findall(r"'([^']*)'", err["ctx"]["expected"])
+                )
+            )
+        ):
+            hint = (
+                f"Did you mean {nearest!r}? Write `{field_path_parts[-1]}: {nearest}`."
+            )
+        elif err_type == "list_type" and field_path_parts[-2:] == [
+            "heading",
+            "sizes",
+        ]:
+            hint = (
+                "`sizes` is the H1–H6 heading ramp, a list of six sizes, "
+                "largest first: `sizes: [28, 20, 16, 14, 12, 12]`."
+            )
+        elif (
+            err_type == "string_type"
+            and field_path_parts[-1:] in (["x_label"], ["y_label"])
+            and isinstance(input_val, (bool, dict))
+        ):
+            hint = _axis_label_hint(field_path_parts[-1], input_val)
+        elif (
+            err_type == "string_type"
+            and isinstance(input_val, (int, float))
+            and field_path_parts
+        ):
+            literal = _authored_literal(yaml_content, field_path_parts)
+            quote_it = (
+                f"`{field_path_parts[-1]}: {json.dumps(literal)}`"
+                if literal is not None
+                else f"the value of `{field_path_parts[-1]}`"
+            )
+            hint = (
+                f"`{field_path_parts[-1]}` expects a string; received "
+                f"{_received_phrase(input_val)}. Quote it: {quote_it}."
+            )
+        elif err_type in _EXPECTED_BY_SCALAR_ERROR and field_path_parts:
+            hint = (
+                f"`{field_path_parts[-1]}` expects "
+                f"{_EXPECTED_BY_SCALAR_ERROR[err_type]}; received "
+                f"{_received_phrase(input_val)}."
             )
         elif (
             "variables" in field_path_parts
@@ -1128,9 +1510,8 @@ def format_validation_errors_structured(
 
         if newer_schema_hint is not None:
             if hint:
-                # Not every existing hint ends in sentence punctuation (e.g.
-                # "See: dct docs board") -- force a boundary so the two don't
-                # run together mid-sentence.
+                # Not every existing hint ends in sentence punctuation -- force
+                # a boundary so the two don't run together mid-sentence.
                 sep = "" if hint.endswith((".", "!", "?")) else "."
                 hint = f"{hint}{sep} {newer_schema_hint}"
             else:
@@ -1158,6 +1539,77 @@ def format_validation_errors_structured(
         )
 
     return structured
+
+
+_SIDES = ("top", "right", "bottom", "left")
+_SIDES_SORTED = sorted(_SIDES)
+
+
+def _is_number(value: Any) -> bool:  # type-state: explicit_any — raw YAML input
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _authored_literal(yaml_content: str | None, path: list[str]) -> str | None:
+    """The text the author typed after ``key:`` on a single-line scalar, or None.
+
+    YAML coerces ``No`` to false and ``1e3`` to 1000.0; a quote fix must echo
+    what was written, not what it parsed to.
+    """
+    if not yaml_content:
+        return None
+    found = build_source_index(yaml_content, "").source_map.get(
+        ".".join(_display_path(path))
+    )
+    if found is None or found.start_line != found.end_line:
+        return None
+    line = yaml_content.splitlines()[found.start_line - 1]
+    match = re.search(rf"\b{re.escape(path[-1])}:\s+(.+?)(?:\s+#.*)?\s*$", line)
+    return match[1] if match else None
+
+
+def _axis_label_hint(
+    field_name: str,
+    value: bool | dict[str, Any],  # type-state: explicit_any — raw YAML mapping
+) -> str:
+    axis = f"style.axis_{field_name[0]}.title"
+    if value is False:
+        return (
+            f"To hide the axis title, delete `{field_name}` and set "
+            f"`{axis}.visible: false` on this chart."
+        )
+    if value is True:
+        return f"Delete `{field_name}`: the axis title shows by default."
+    text = next((v for v in value.values() if isinstance(v, str)), "...")
+    return (
+        f"`{field_name}` is the axis title text only: `{field_name}: "
+        f"{json.dumps(text)}`. Its look (font, angle, visible) is `{axis}`."
+    )
+
+
+_EXPECTED_BY_SCALAR_ERROR = {
+    "string_type": "a string",
+    "int_type": "an integer",
+    "int_parsing": "an integer",
+    "float_type": "a number",
+    "float_parsing": "a number",
+    "bool_type": "true or false",
+    "bool_parsing": "true or false",
+}
+
+
+def _received_phrase(value: Any) -> str:  # type-state: explicit_any — raw YAML input
+    """Name an authored YAML value's kind and show it, e.g. ``a number: 3``."""
+    if isinstance(value, bool):
+        kind = "a boolean"
+    elif isinstance(value, (int, float)):
+        kind = "a number"
+    elif isinstance(value, list):
+        kind = "a list"
+    elif isinstance(value, dict):
+        kind = "a mapping"
+    else:
+        kind = "a string"
+    return f"{kind}: {value!r}"
 
 
 _SHAPE_NOUN_SEPARATORS = re.compile(r"[\s_-]+")
@@ -1395,7 +1847,7 @@ def _format_chart_type_discriminator_error(
     valid_chart_types = get_valid_chart_types()
     supported = ", ".join(valid_chart_types)
     if not isinstance(invalid_type, str):
-        return f"Missing required field 'type'. Supported chart types: {supported}."
+        return _missing_chart_type_message(field_path[1], input_value, supported)
 
     # A known shape noun beats a fuzzy tag guess: both branches below answer the
     # question the author actually asked, so neither falls through to "did you mean".
@@ -1435,3 +1887,33 @@ def _format_chart_type_discriminator_error(
             f"Supported chart types: {supported}."
         )
     return f"Unknown chart type {invalid_type!r}. Supported chart types: {supported}."
+
+
+def _missing_chart_type_message(
+    chart: str,
+    authored: dict[str, Any],  # type-state: explicit_any — raw YAML chart mapping
+    supported: str,
+) -> str:
+    """The edit for a chart with no ``type:``, read off the keys it does have."""
+    valid = get_valid_chart_types()
+    chart_fields = frozenset().union(*_authored_chart_fields_by_type().values())
+    lead = "Missing required field 'type'."
+    family = next(
+        (k for k, v in authored.items() if k in valid and isinstance(v, dict)), None
+    )
+    if family is not None:
+        return (
+            f"{lead} Write `type: {family}` under `charts.{chart}` and move the "
+            f"keys under `{family}:` up one level."
+        )
+    renamed = next(
+        (
+            k
+            for k, v in authored.items()
+            if k not in chart_fields and isinstance(v, str) and v in valid
+        ),
+        None,
+    )
+    if renamed is not None:
+        return f"{lead} Rename `{renamed}:` to `type:`."
+    return f"{lead} Add `type:` to `charts.{chart}`, one of: {supported}."

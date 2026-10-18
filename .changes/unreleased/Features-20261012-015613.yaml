@@ -1,0 +1,3 @@
+kind: Features
+body: The hosted connector's search and describe results list each project's queryable data sources with their SQL dialects, and a failed query names the source it ran on.
+time: 2026-10-12T01:56:13.464543-07:00

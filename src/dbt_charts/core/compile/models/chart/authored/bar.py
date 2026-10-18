@@ -100,7 +100,7 @@ class BarChart(_CartesianChartFields):
         Channel(),
         Field(
             default=None,
-            description="Column each bar starts from, so it runs from y_start to y instead of from zero. Same kind as y: both numeric, or both dates. Not with stacking.",
+            description="Column each bar starts from instead of zero (waterfall, range, Gantt, lollipop). Same kind as y: both numeric, or both dates. Not with stacking.",
         ),
     ]
     style: Annotated[
@@ -112,7 +112,7 @@ class BarChart(_CartesianChartFields):
         Field(
             default=None,
             description=(
-                "Extra marks drawn over this chart, each with its own type and columns. Not supported when "
+                "Extra marks on one shared x, each with its own type. Not supported when "
                 "type: histogram: a histogram bins x and aggregates to a "
                 "count, so there is no shared y measure for an overlay to "
                 "plot against."

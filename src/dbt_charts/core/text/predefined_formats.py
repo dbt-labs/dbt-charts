@@ -115,6 +115,13 @@ GRAIN_FORMAT_NAMES: dict[str, str] = {
     "yearweek": PredefinedTimeFormat.date_week,
 }
 GRAIN_NAMES: frozenset[str] = frozenset(GRAIN_FORMAT_NAMES.values())
+# The strftime spec an error offers in place of a grain name written in a slot.
+GRAIN_STRFTIME: dict[str, str] = {
+    PredefinedTimeFormat.date_year: "%Y",
+    PredefinedTimeFormat.date_quarter: "%b %Y",
+    PredefinedTimeFormat.date_month: "%b %Y",
+    PredefinedTimeFormat.date_week: "%-d %b %Y",
+}
 
 
 class PredefinedSpec(NamedTuple):

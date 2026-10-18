@@ -4,7 +4,7 @@ Resources: dct://boards, dct://board/{path},
            dct://docs/all, dct://docs/{topic}, dct://guide/*
 
 Tools: all tools from dbt_charts.ai.tool_schemas.ALL_TOOLS (render_board,
-       execute_query, search_boards, docs, describe_board, list_skills,
+       execute_sql, search_files, docs, describe_board, list_skills,
        get_skill, list_diagnostic_codes, get_diagnostic_code)
 
 Usage: dct mcp serve

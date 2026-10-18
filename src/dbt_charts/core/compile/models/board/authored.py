@@ -537,7 +537,15 @@ class AuthoredBoard(ConstrainedModel):
     )
 
     text: Annotated[str | None, Merge(Strategy.OVERRIDE), Content(), Markdown()] = (
-        Field(default=None, description="Markdown text content for text-only sections.")
+        Field(
+            default=None,
+            description=(
+                "A Markdown block, as Jinja over query results: "
+                "`{{ queries.totals.one.revenue }}` for a one-row query, "
+                "`{{ queries.top.rows[0].name }}` for row N. A value prints raw, "
+                "so format it in SQL; titles and subtitles read the same way."
+            ),
+        )
     )
     html_policy: Annotated[HtmlPolicy, Merge(Strategy.OVERRIDE)] = Field(
         default="none",
@@ -716,7 +724,14 @@ class AuthoredBoard(ConstrainedModel):
         ThemeName | str | list[str] | None, Merge(Strategy.OVERRIDE), Extends()
     ] = Field(
         default=None,
-        description="Board name(s) or relative path(s) this board inherits from, low to high priority. A built-in theme name resolves it directly.",
+        description=(
+            "Themes or board files to inherit, low to high priority. "
+            "A bare name is a built-in theme; write `./` before a file path "
+            "(`./_brand.yml`). One name or a list: `extends: neon`, `extends: [./base.yml, neon]`. The board's own explicit style, a "
+            "background included, beats every extended theme, so a dark "
+            "variant of a base that sets a background restates that "
+            "background in the variant."
+        ),
     )
 
     # Auto-link: synthesize a detail-page link for table charts when no explicit

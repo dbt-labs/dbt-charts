@@ -1,0 +1,108 @@
+---
+name: styling
+kind: workflow
+description: >
+  Every style option a board author uses beyond the basics: where `style:`
+  lives and what beats what, axes and scale types (log, explicit ticks, time
+  grains), marks and value labels, legends, colors, conditional formatting,
+  KPI, table and callout paint, number formats, fonts, frame, layout and
+  filter-bar styling. Use when a board's look must change or a chart needs
+  more than the defaults.
+metadata:
+  author: fivetran
+---
+
+# Styling
+
+There are two groups of visual objects, boards and charts (a table or KPI is a chart type), and each has a `style:`. These are its options; the lists are complete and an unknown key is rejected with the keys allowed there. `style:` goes on a board, a nested board, a chart and `charts/meta.yml`, and merges low to high: theme, `extends`, the board's `style`, a nested board's, `style.charts`, `style.charts.<type>`, a chart's own; an explicit key beats any theme. Inside one chart's `style:` write its family's keys directly (`charts.<c>.style.orientation`), never under `bar:` or `table:` as in `style.charts.bar`.
+
+For no border, omit `border`; `border: none` is rejected.
+
+## Board
+
+{{ keys('s_root') }}
+
+{{ keys('s_frame') }}
+
+{{ keys('s_font') }}
+
+{{ keys('s_fonts') }}
+
+{{ keys('s_footer') }}
+
+{{ keys('s_formats') }}
+
+{{ keys('s_variables') }}
+
+## Charts
+
+{{ keys('s_charts') }}
+
+{{ keys('s_family') }}
+
+### Axes
+
+{{ keys('s_axis_x') }}
+
+{{ keys('s_grid') }}
+
+{{ keys('s_ticks') }}
+
+{{ keys('s_labels') }}
+
+{{ keys('s_title') }}
+
+{{ keys('s_scale') }}
+
+{{ keys('s_continuous') }}
+
+### Marks
+
+{{ keys('s_bar_mark') }}
+
+{{ keys('s_bar_labels') }}
+
+{{ keys('s_line_mark') }}
+
+{{ keys('s_point_mark') }}
+
+{{ keys('s_area_mark') }}
+
+### Legend and color
+
+{{ keys('s_legend') }}
+
+{{ keys('s_color') }}
+
+{{ keys('s_categorical') }}
+
+{{ keys('s_gradient') }}
+
+## KPI
+
+{{ keys('s_kpi') }}
+
+{{ keys('s_kpi_value') }}
+
+{{ keys('s_kpi_support') }}
+
+## Table
+
+{{ keys('s_table') }}
+
+{{ keys('s_table_header') }}
+
+{{ keys('s_table_row') }}
+
+{{ keys('s_pagination') }}
+
+{{ keys('s_column') }}
+
+{{ keys('s_cond_rule') }}
+{{ rules('cond_rule') }}
+
+## Errors
+
+{{ codes('style') }}
+
+After any edit, {{ s('style_recheck') }}

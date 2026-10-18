@@ -208,7 +208,7 @@ def test_stream_yields_function_call_with_parsed_arguments(
                 item=SimpleNamespace(
                     type="function_call",
                     call_id="call_1",
-                    name="execute_query",
+                    name="execute_sql",
                     arguments='{"sql": "SELECT 1"}',
                 ),
             )
@@ -221,7 +221,7 @@ def test_stream_yields_function_call_with_parsed_arguments(
 
     assert out == [
         FunctionCall(
-            call_id="call_1", name="execute_query", arguments={"sql": "SELECT 1"}
+            call_id="call_1", name="execute_sql", arguments={"sql": "SELECT 1"}
         )
     ]
 
@@ -251,7 +251,7 @@ def test_stream_malformed_function_call_arguments_raises_gateway_error() -> None
             item=SimpleNamespace(
                 type="function_call",
                 call_id="call_1",
-                name="execute_query",
+                name="execute_sql",
                 arguments="{not json",
             ),
         )
@@ -275,7 +275,7 @@ def test_stream_event_failing_shim_validation_raises_gateway_error() -> None:
             item=SimpleNamespace(
                 type="function_call",
                 call_id="call_1",
-                name="execute_query",
+                name="execute_sql",
                 arguments={"sql": "SELECT 1"},
             ),
         )

@@ -82,6 +82,7 @@ class TestSourceResolverDiagnostics:
             query_name="q",
             source="postgre",
             available=["postgres", "duckdb"],
+            advice="",
         )
 
         diag = exc.to_diagnostic()

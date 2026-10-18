@@ -109,7 +109,7 @@ class _BaseQueryFields(BaseModel):
     )
     notes: Annotated[str | None, DisplayText()] = Field(
         default=None,
-        description="Prose summary of what this query returns, passed along with its results to tooling.",
+        description="What this query returns; handed to tooling with its results, never drawn.",
     )
     ignore: list[IgnoredQueryCode] | None = Field(
         default=None,
@@ -182,7 +182,12 @@ class AuthoredSqlQuery(_BaseQueryFields):
     )
     sql: str | None = Field(
         default=None,
-        description="The statement to run, with Jinja2 over board variables, other queries, and the filter helpers.",
+        description=(
+            "The SQL to run, as Jinja2. `{{ queries.base }}` inlines another query "
+            "of the same source as a subquery already aliased to its name (add "
+            "no `AS`); a bare `FROM base` fails. Variables go in through "
+            "`filter()`, `filter_date_range()` or `{{ name }}`."
+        ),
     )
     setup_sql: str | None = Field(
         default=None,

@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import logging
+import os
 import threading
 from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
@@ -442,8 +443,13 @@ def _render_structured_errors_html(
     status_override: int | None = None,
     error_palette: Mapping[str, str] | None = None,
     chrome: str = "",
+    chart_errors_status: int = 200,
 ) -> HTMLResponse:
     """Render a BoardRenderResult error result as a structured HTML page.
+
+    ``chart_errors_status`` is the status of a page whose board rendered but
+    some charts failed. Board routes pass 500, so a status check does not read
+    the board as healthy; the inspector's pages keep 200 and their partial view.
 
     ``chrome`` is the nav fragment from ``_error_nav`` — empty for the error
     sites with no directory to anchor a nav on (``/inspect/*``, the app-wide
@@ -458,6 +464,8 @@ def _render_structured_errors_html(
         )
     elif result.validation_errors:
         status = 422
+    elif result.chart_errors:
+        status = chart_errors_status
     else:
         status = 200
 
@@ -708,6 +716,7 @@ def _render_board_file(
             include_nav,
             board_theme,
         ),
+        chart_errors_status=500,
     )
 
 
@@ -1085,6 +1094,37 @@ def _render_registered_view_response(
     return _render_structured_errors_html(result.dashboard, request_path=request_path)
 
 
+_DuckDBConfig = dict[str, Any]  # type-state: explicit_any — passthrough
+
+
+def build_serve_registry(
+    project: FilesystemProject,
+    *,
+    dialect: str,
+    target: str | None,
+    max_workers: int | None,
+    read_only: bool = True,
+    allow_mutating_methods: bool = False,
+    allow_external_access_in_readonly: bool = False,
+    duckdb_config: _DuckDBConfig | None = None,
+) -> AdapterRegistry:
+    """The adapter registry a served board renders with.
+
+    The one construction both ``create_server`` and the ``--detach`` check use,
+    so the check cannot run under different settings than the server.
+    """
+    return build_adapter_registry(
+        project,
+        read_only=read_only,
+        allow_mutating_methods=allow_mutating_methods,
+        allow_external_access_in_readonly=allow_external_access_in_readonly,
+        duckdb_config=duckdb_config,
+        profile_type=dialect,
+        target=target if target is not None else "dev",
+        max_workers=max_workers,
+    )
+
+
 def create_server(
     project: FilesystemProject,
     dialect: str = "duckdb",
@@ -1143,15 +1183,15 @@ def create_server(
     boot = resolve_cache_boot(core_project, no_cache=no_cache, cache_path=cache_path)
 
     def _build_registry(project: FilesystemProject) -> AdapterRegistry:
-        return build_adapter_registry(
+        return build_serve_registry(
             project,
+            dialect=dialect,
+            target=target,
+            max_workers=max_workers,
             read_only=read_only,
             allow_mutating_methods=allow_mutating_methods,
             allow_external_access_in_readonly=allow_external_access_in_readonly,
             duckdb_config=duckdb_config,
-            profile_type=dialect,
-            target=target if target is not None else "dev",
-            max_workers=max_workers,
         )
 
     @asynccontextmanager
@@ -1281,9 +1321,15 @@ def create_server(
     )
 
     @app.get("/health")
-    async def health() -> dict[str, str]:
-        """Health check endpoint."""
-        return {"status": "ok", "service": "dbt-charts-server"}
+    async def health() -> dict[str, str | int]:
+        """Health check; names the process and project so `dct serve --detach`
+        can tell its own server from any other listener on the port."""
+        return {
+            "status": "ok",
+            "service": "dbt-charts-server",
+            "pid": os.getpid(),
+            "project": str(project.root),
+        }
 
     @app.get("/templates")
     async def list_templates() -> dict[str, list[str]]:

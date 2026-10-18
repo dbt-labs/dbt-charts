@@ -15,10 +15,12 @@ from dbt_charts.ai.tools import TOOL_HANDLERS
 
 # Verbs fully wired on both CLI and MCP.  cli_name is the `dct <name>` subcommand.
 # Note: execute_query's two forms (sql, and board + query) both map to `dct query` (D10).
+# `dct query SOURCE` with no SQL (a data profile) is CLI-only: it has no tool, so
+# no parity row; agents reach the same facts with SELECT through execute_query.
 _TOOL_TO_CLI: dict[str, str] = {
     "render_board": "render",
-    "execute_query": "query",
-    "search_boards": "search",
+    "execute_sql": "query",
+    "search_files": "search",
     "docs": "docs",
     "describe_board": "describe",
     "list_skills": "skills",
@@ -30,14 +32,12 @@ _TOOL_TO_CLI: dict[str, str] = {
 # Tools intentionally missing CLI parity (each comment explains why).
 _EXEMPT_TOOLS: set[str] = {
     "save_dashboard",  # Cloud-internal; filesystem agents use Edit + dct validate
-    # General project-file primitives for the in-process agent (read/write/edit/glob/
-    # grep). Deliberately not dct CLI verbs — dct is not a file manager; agents
+    # General project-file primitives for the in-process agent (read/write/edit/
+    # move/delete). Deliberately not dct CLI verbs — dct is not a file manager; agents
     # author boards directly with these, then `dct validate`/`dct render`.
     "read_file",
     "write_file",
     "edit_file",
-    "glob_files",
-    "grep_files",
     "move_file",
     "delete_file",
 }

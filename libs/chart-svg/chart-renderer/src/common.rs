@@ -1853,9 +1853,8 @@ impl AxisStyle {
     /// Production bakes every truthy mirror into a `ResolvedMirrorAxis`
     /// (`resolved/_base.py`), so `mirror: true` arrives as
     /// `{format: null, expr: null, ruler, tick_label: null}` where `ruler` is
-    /// built for the ghost's own edge (`axis_cascade.py:693-701`): on the
-    /// right-edge axis every caller here requires, a ruled primary gets an
-    /// identical ghost ruler, while an unruled primary can still get a ruled
+    /// built for the ghost's own edge (`axis_cascade.py:693-701`): a ruled
+    /// primary gets an identical ghost ruler, while an unruled primary can still get a ruled
     /// ghost (a raw SI format or a non-tabular font). The ghost repaints the
     /// primary's labels unless it carries its own `format`, which only a
     /// family that `paints_format` accepts; an authored `expr`, the
@@ -1919,6 +1918,23 @@ impl AxisStyle {
                 "{family}: axis_y.mirror.format {key:?} is not painted: the ghost has no baked ladder to anchor on"
             )),
             None => Ok(Some(MirrorGhost { format: Some(slot) })),
+        }
+    }
+
+    /// The transform of `scale.continuous.type`; Vega's defaults for the
+    /// exponent (1) and the symlog constant (1) when unauthored.
+    pub fn bend(&self) -> crate::vega_fit::Bend {
+        use crate::vega_fit::Bend;
+        let continuous = self.scale.get("continuous");
+        let param = |kind: &str, key: &str| {
+            continuous.and_then(|c| c.get(kind)).and_then(|p| p.get(key)).and_then(Value::as_f64).unwrap_or(1.0)
+        };
+        match continuous.and_then(|c| c.get("type")).and_then(Value::as_str) {
+            Some("log") => Bend::Log,
+            Some("pow") => Bend::Pow(param("pow", "exponent")),
+            Some("sqrt") => Bend::Pow(0.5),
+            Some("symlog") => Bend::Symlog(param("symlog", "constant")),
+            _ => Bend::Linear,
         }
     }
 
@@ -1987,6 +2003,16 @@ impl AxisStyle {
             == Some(true)
     }
 
+    /// The authored pair as Vega's scale reads it: each end through JS
+    /// `Number`, so a numeric string coerces and anything else is `NaN`
+    /// (which leaves a scale with no ticks and every position at 0).
+    pub fn coerced_continuous_domain(&self) -> Option<(f64, f64)> {
+        let pair = self.scale.get("continuous").and_then(|c| c.get("domain")).and_then(Value::as_array)?;
+        let [lo, hi] = pair.as_slice() else { return None };
+        let end = |v: &Value| js_to_number(v).unwrap_or(f64::NAN);
+        Some((end(lo), end(hi)))
+    }
+
     /// The authored `scale.continuous.domain` `(lo, hi)`, or `None`.
     ///
     /// Production's single spelling of "did the author pin this axis's
@@ -2003,6 +2029,15 @@ impl AxisStyle {
                 _ => None,
             })
     }
+}
+
+/// The `domainMin` a zero-anchored measure scale pins (`zero_anchor_pinned_floor`,
+/// `type_inference.py`): its baked ladder's lowest rung, never an authored
+/// `scale.values` (a statement about tick positions, not the domain). `None` pins
+/// nothing: a literal 0 would sit at the bottom of an all-negative domain.
+pub fn zero_anchor_pinned_floor(axis: &AxisStyle) -> Option<f64> {
+    let authored_values = axis.scale.get("values").is_some_and(|v| !v.is_null());
+    if authored_values { None } else { axis.tick_values.first().copied() }
 }
 
 /// Production's `effective_measure_domain` (`emitters/_cartesian.py`): the
@@ -2045,9 +2080,7 @@ pub fn effective_measure_domain(
     let lo = if let Some(domain_min) = axis.domain_min {
         domain_min
     } else if axis.is_zero_anchored() {
-        let authored_values = axis.scale.get("values").is_some_and(|v| !v.is_null());
-        let rung = if authored_values { None } else { axis.tick_values.first().copied() };
-        rung.unwrap_or_else(|| 0.0_f64.min(data_lo))
+        zero_anchor_pinned_floor(axis).unwrap_or_else(|| 0.0_f64.min(data_lo))
     } else {
         data_lo
     };
@@ -3741,15 +3774,56 @@ pub fn row_str(row: &serde_json::Map<String, Value>, field: &str) -> String {
     }
 }
 
+/// JS `Number(string)` (ECMA-262 StringToNumber): `None` where it is `NaN`.
+/// Blank is 0; `0x`/`0o`/`0b` prefixes read an unsigned integer; `Infinity`
+/// is the only named value; decimals take no digit separators and no
+/// trailing garbage.
+pub fn js_string_to_number(s: &str) -> Option<f64> {
+    let t = s.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    if t.is_empty() {
+        return Some(0.0);
+    }
+    let radix = match t.get(..2) {
+        Some("0x" | "0X") => Some(16),
+        Some("0o" | "0O") => Some(8),
+        Some("0b" | "0B") => Some(2),
+        _ => None,
+    };
+    if let Some(radix) = radix {
+        let digits = &t[2..];
+        if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
+            return None;
+        }
+        return Some(digits.chars().fold(0.0, |acc, c| acc * f64::from(radix) + f64::from(c.to_digit(radix).unwrap_or(0))));
+    }
+    let (sign, body) = match t.as_bytes()[0] {
+        b'-' => (-1.0, &t[1..]),
+        b'+' => (1.0, &t[1..]),
+        _ => (1.0, t),
+    };
+    if body == "Infinity" {
+        return Some(sign * f64::INFINITY);
+    }
+    let (mantissa, exponent) = body.split_once(['e', 'E']).map_or((body, None), |(m, e)| (m, Some(e)));
+    let (int, frac) = mantissa.split_once('.').map_or((mantissa, None), |(i, f)| (i, Some(f)));
+    let all_digits = |part: &str| part.bytes().all(|b| b.is_ascii_digit());
+    let mantissa_ok = all_digits(int) && frac.is_none_or(all_digits) && !(int.is_empty() && frac.is_none_or(str::is_empty));
+    let exponent_ok = exponent.is_none_or(|e| {
+        let digits = e.strip_prefix(['+', '-']).unwrap_or(e);
+        !digits.is_empty() && all_digits(digits)
+    });
+    if !mantissa_ok || !exponent_ok {
+        return None;
+    }
+    body.parse::<f64>().ok().map(|v| sign * v)
+}
+
 /// JS `Number(v)` of a JSON scalar; `None` where it is `NaN`.
 fn js_to_number(v: &Value) -> Option<f64> {
     match v {
         Value::Number(n) => n.as_f64(),
         Value::Bool(b) => Some(f64::from(u8::from(*b))),
-        Value::String(s) => {
-            let t = s.trim();
-            if t.is_empty() { Some(0.0) } else { t.parse().ok() }
-        }
+        Value::String(s) => js_string_to_number(s),
         _ => None,
     }
 }

@@ -58,9 +58,9 @@
 //!   here) + labelPadding (6)`, and the rotated title sits past the widest
 //!   label's own far edge plus `title.padding`.
 //!
-//! `axis_y.mirror` is unmodeled here (production's `mirror_axis.py` does
-//! apply to histogram) and refuses by name, same law bar.rs's own
-//! `axis_y.mirror` gate uses.
+//! `axis_y.mirror` repeats the count labels and ticks on the opposite edge
+//! (`mirror_axis.py` copies the primary's axis dict): the same label padding,
+//! tilt and, for a measured own-side align, the same align.
 //!
 //! Pinned against a captured production SVG for `charts/more-types_1` (the
 //! docs histogram fence) and a self-contained ladder rung
@@ -374,12 +374,10 @@ fn stack_color(
             let values = binned_rows
                 .iter()
                 .map(|row| match row.get(cf) {
-                    None | Some(Value::Null) => Ok(None),
-                    Some(cell) => crate::families::color_scale::date_days(&crate::common::row_str(row, cf)).map(Some).ok_or_else(|| {
-                        format!("histogram: a date-typed color column holds {cell}, which is not a date — not supported")
-                    }),
+                    None | Some(Value::Null) => None,
+                    Some(cell) => crate::families::heatmap::date_cell_day(cell),
                 })
-                .collect::<Result<Vec<Option<f64>>, String>>()?;
+                .collect::<Vec<Option<f64>>>();
             let (lo, hi) = extent(&values);
             continuous(values, ContinuousColor::dates(lo, hi), &crate::families::heatmap::legend_date_label)?
         }
@@ -520,12 +518,6 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     // `axis_y.mirror: true` repeats the labels and ticks on the opposite edge at
     // the primary's own offset (`mirror_axis.py`); a ghost `format` refuses.
     let mirror_active = ax_y.mirror_ghost("histogram", false)?.is_some();
-    if mirror_active && ax_y.labels.angle.is_some_and(|a| a != 0.0) {
-        return Err("histogram: axis_y.mirror with axis_y.labels.angle is not supported".into());
-    }
-    if mirror_active && ax_y.labels.align.is_some() {
-        return Err("histogram: axis_y.mirror with an authored axis_y.labels.align is not supported".into());
-    }
     // `measure_axis_to_vl` bakes a measured `labelPadding` only for an
     // own-side `labelAlign` (`vl_field_maps.py:457-461`) on an axis whose
     // tick labels it can reconstruct: no `labelExpr` (an authored
@@ -648,7 +640,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     let symbol_legend = (r.legend.visible
         && matches!(&stack_color, Some(StackColor { legend: LegendPaint::Symbols(_), .. }))
         && !(symbol_entries.is_empty() && legend_title.is_empty()))
-    .then(|| legend::vega_legend(&symbol_entries, &legend_title, &r.legend, fonts))
+    .then(|| legend::vega_legend(&symbol_entries, false, &legend_title, &r.legend, fonts))
     .transpose()?;
     let gradient_color = match &stack_color {
         Some(StackColor { legend: LegendPaint::Gradient(color), .. }) if r.legend.visible => Some(color),
@@ -714,6 +706,11 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     } else {
         vl_align
     };
+    // The ghost keeps a measured own-side `labelAlign` verbatim (it is authored,
+    // `mirror_axis.py` copies the primary's axis); otherwise it takes
+    // Vega-Lite's default for its own edge.
+    let (ghost_default_align, ghost_baseline) = vega_fit::vl_y_label_anchor(y_angle_norm, val_on_right);
+    let ghost_align = if y_labels_flipped { y_align } else { ghost_default_align };
     // How far the labels' ink reaches past their anchor, away from the plot
     // (`s = -bounds.x1` for a left axis): the widest label, or the widest
     // rotated ink about each label's own anchor.
@@ -809,14 +806,11 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                     b.union(&vega_fit::Bounds::new(x, ph / 2.0 - y_title_w / 2.0, x, ph / 2.0 + y_title_w / 2.0));
                 }
                 if mirror_active {
-                    let (x, align) = if val_on_right {
-                        (-(y_tick_eff + y_label_gap), "right")
-                    } else {
-                        (pw + y_tick_eff + y_label_gap, "left")
-                    };
+                    let x = if val_on_right { -(y_tick_eff + y_label_gap) } else { pw + y_tick_eff + y_label_gap };
                     for (&lw, &tv) in y_label_ws.iter().zip(&y_ticks) {
                         let y = ph * (1.0 - tv / y_domain_max);
-                        b.union(&vega_fit::text_ink(x, y, lw.min(y_limit), y_font_size, align, "middle"));
+                        let ink = vega_fit::text_ink(x, y, lw.min(y_limit), y_font_size, ghost_align, ghost_baseline);
+                        b.union(&if y_angle == 0.0 { ink } else { ink.rotate(y_angle, x, y) });
                     }
                 }
                 for (&lw, &tv) in y_label_ws.iter().zip(&y_ticks) {
@@ -1083,35 +1077,28 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     } else {
         -(y_tick_eff + y_label_gap) + 0.5
     };
-    let y_label_anchor = if y_labels_start { "start" } else { "end" };
-    for (&tv, lbl) in y_ticks.iter().zip(y_labels.iter()) {
-        let shift = vega_fit::baseline_shift(if y_angle == 0.0 { "middle" } else { y_baseline }, y_font_size);
-        if y_angle != 0.0 {
-            let gy = y_pos(tv) + 0.5;
-            let anchor = match y_align {
-                "left" => "start",
-                "right" => "end",
-                _ => "middle",
-            };
-            let _ = write!(
-                svg,
-                "<text text-anchor=\"{anchor}\" transform=\"translate({y_label_x:.3},{gy:.3}) \
-                 rotate({y_angle}) translate(0,{shift})\" font-family=\"{}\" font-size=\"{y_font_size}\" \
-                 font-weight=\"{y_label_weight}\" fill=\"{y_label_color}\">{}</text>",
-                vega_escape_attr(y_family),
-                xml_escape(lbl), y_label_weight = xml_escape_attr(&y_label_weight), y_label_color = xml_escape_attr(y_label_color)
-            );
-            continue;
-        }
-        let gy = y_pos(tv) + 0.5 + shift;
+    let paint_y_label = |svg: &mut String, x: f64, (align, baseline): (&str, &str), tv: f64, lbl: &str| {
+        let anchor = match align {
+            "left" => "start",
+            "right" => "end",
+            _ => "middle",
+        };
+        let shift = vega_fit::baseline_shift(baseline, y_font_size);
+        let placement = if y_angle != 0.0 {
+            format!("text-anchor=\"{anchor}\" transform=\"translate({x:.3},{:.3}) rotate({y_angle}) translate(0,{shift})\"", y_pos(tv) + 0.5)
+        } else {
+            format!("x=\"{x:.3}\" y=\"{:.3}\" text-anchor=\"{anchor}\"", y_pos(tv) + 0.5 + shift)
+        };
         let _ = write!(
             svg,
-            "<text x=\"{y_label_x:.3}\" y=\"{gy:.3}\" text-anchor=\"{y_label_anchor}\" \
-             font-family=\"{}\" font-size=\"{y_font_size}\" font-weight=\"{y_label_weight}\" \
-             fill=\"{y_label_color}\">{}</text>",
+            "<text {placement} font-family=\"{}\" font-size=\"{y_font_size}\" \
+             font-weight=\"{y_label_weight}\" fill=\"{y_label_color}\">{}</text>",
             vega_escape_attr(y_family),
-            xml_escape(lbl), y_label_anchor = xml_escape_attr(y_label_anchor), y_label_weight = xml_escape_attr(&y_label_weight), y_label_color = xml_escape_attr(y_label_color)
+            xml_escape(lbl), y_label_weight = xml_escape_attr(&y_label_weight), y_label_color = xml_escape_attr(y_label_color)
         );
+    };
+    for (&tv, lbl) in y_ticks.iter().zip(y_labels.iter()) {
+        paint_y_label(&mut svg, y_label_x, (y_align, if y_angle == 0.0 { "middle" } else { y_baseline }), tv, lbl);
     }
 
     // `label_edge_x` is the gutter's OUTER edge: `y_label_x`'s own INNER
@@ -1157,23 +1144,9 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                 );
             }
         }
-        let (ghost_x, ghost_anchor) = if val_on_right {
-            (-(y_tick_eff + y_label_gap) + 0.5, "end")
-        } else {
-            (plot_w + y_tick_eff + y_label_gap + 0.5, "start")
-        };
+        let ghost_x = if val_on_right { -(y_tick_eff + y_label_gap) + 0.5 } else { plot_w + y_tick_eff + y_label_gap + 0.5 };
         for (&tv, lbl) in y_ticks.iter().zip(y_labels.iter()) {
-            let gy = y_pos(tv) + 0.5 + vega_fit::baseline_shift("middle", y_font_size);
-            let _ = write!(
-                svg,
-                "<text x=\"{ghost_x:.3}\" y=\"{gy:.3}\" text-anchor=\"{ghost_anchor}\" \
-                 font-family=\"{}\" font-size=\"{y_font_size}\" font-weight=\"{y_label_weight}\" \
-                 fill=\"{y_label_color}\">{}</text>",
-                vega_escape_attr(y_family),
-                xml_escape(lbl),
-                y_label_weight = xml_escape_attr(&y_label_weight),
-                y_label_color = xml_escape_attr(y_label_color)
-            );
+            paint_y_label(&mut svg, ghost_x, (ghost_align, ghost_baseline), tv, lbl);
         }
         crate::contract::axis_group_close(&mut svg);
     }
@@ -1671,14 +1644,21 @@ mod tests {
         assert!(svg.contains("fill=\"rgb(255, 255, 204)\""), "{svg}");
     }
 
+    /// JavaScript reads a cell its `Date.parse` rejects as an Invalid Date, which
+    /// the color scale never maps: the bar paints as the unpainted band a null
+    /// cell does.
     #[test]
-    fn a_date_color_cell_that_is_no_date_refuses_by_name() {
-        let mut rows: Vec<serde_json::Value> =
-            (1..=10).map(|d| serde_json::json!({"amount": f64::from(d), "bucket": format!("2024-01-{d:02}")})).collect();
-        rows.push(serde_json::json!({"amount": 11.0, "bucket": "not a date"}));
-        let rows = serde_json::Value::Array(rows);
-        let err = render_err(minimal_valid_json(Some("bucket"), None, None), rows);
-        assert!(err.contains("is not a date"), "{err}");
+    fn a_date_color_cell_that_is_no_date_paints_the_unpainted_band() {
+        let dated = |last: serde_json::Value| {
+            let mut rows: Vec<serde_json::Value> =
+                (1..=10).map(|d| serde_json::json!({"amount": f64::from(d), "bucket": format!("2024-01-{d:02}")})).collect();
+            rows.push(serde_json::json!({"amount": 11.0, "bucket": last}));
+            render_ok(minimal_valid_json(Some("bucket"), None, None), serde_json::Value::Array(rows))
+        };
+        let bad = dated(serde_json::json!("not a date"));
+        let null = dated(serde_json::Value::Null);
+        let fills = |svg: &str| svg.matches("fill=\"#").count();
+        assert_eq!(fills(&bad), fills(&null), "the same marks paint as for a null cell");
     }
 
     #[test]
@@ -1832,20 +1812,19 @@ mod tests {
         }
     }
 
-    /// The mirrored ghost copies the primary's label angle and inherited align,
-    /// which this arm does not paint: both refuse by name.
+    /// The mirrored ghost repeats the primary's tilt on the opposite edge.
     #[test]
-    fn mirror_refuses_a_label_angle_and_an_authored_align() {
+    fn mirror_repeats_a_label_angle_on_the_opposite_edge() {
         let rows = serde_json::json!([{"amount": 1.0}, {"amount": 2.0}]);
-        let mut resolved = with_axis_y_mirror(minimal_valid_json(None, None, None), serde_json::json!(true));
-        resolved["style"]["axis_y"]["labels"]["angle"] = serde_json::json!(45.0);
-        assert_eq!(render_err(resolved, rows.clone()), "histogram: axis_y.mirror with axis_y.labels.angle is not supported");
-        let mut resolved = with_axis_y_mirror(minimal_valid_json(None, None, None), serde_json::json!(true));
-        resolved["style"]["axis_y"]["labels"]["align"] = serde_json::json!("right");
-        assert_eq!(
-            render_err(resolved, rows),
-            "histogram: axis_y.mirror with an authored axis_y.labels.align is not supported"
-        );
+        let tilted = |mirror: bool| {
+            let mut resolved = minimal_valid_json(None, None, None);
+            if mirror {
+                resolved = with_axis_y_mirror(resolved, serde_json::json!(true));
+            }
+            resolved["style"]["axis_y"]["labels"]["angle"] = serde_json::json!(45.0);
+            render_ok(resolved, rows.clone()).matches("rotate(45)").count()
+        };
+        assert_eq!(tilted(true), 2 * tilted(false));
     }
 
     fn with_axis_y_labels_align_and_domain(

@@ -90,9 +90,9 @@ def test_total_value_typo_does_not_get_the_label_hint() -> None:
     assert "Did you mean 'format'?" in hint
 
 
-def test_typo_under_total_label_keeps_the_generic_suggestion() -> None:
+def test_typo_under_total_label_explains_the_font_mapping() -> None:
     """`fonts:` is a plain typo for `font:`, not an attempt to set text."""
     hint = _hints(_board("      total:\n        label:\n          fonts: {size: 9}"))
 
     assert "authored on the chart" not in hint
-    assert "Did you mean 'font'?" in hint
+    assert "`font` is a mapping" in hint

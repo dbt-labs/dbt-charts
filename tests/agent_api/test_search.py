@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from dbt_charts.agent_api.search import (
     DEFAULT_SEARCH_LIMIT,
@@ -20,13 +20,16 @@ from dbt_charts.agent_api.search import (
     MAX_SUMMARY_CHARS,
     BoardListing,
     BoardMatch,
-    SearchBoardsArgs,
+    FileEntry,
+    FileHit,
+    SearchFilesArgs,
     SearchResult,
     paginate,
-    search_boards,
     search_boards_hits,
+    search_files,
 )
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.project import Project
 
 # ---------------------------------------------------------------------------
@@ -162,7 +165,30 @@ tags:
 """
 
 
-def _matches(hits: Sequence[BoardMatch | BoardListing]) -> list[BoardMatch]:
+class BoardSearch(BaseModel):
+    """A board search page: the shape ``search_files`` returns for ``kind="boards"``."""
+
+    success: bool
+    errors: list[Diagnostic]
+    results: list[BoardMatch | BoardListing]
+    next: str | None = None
+
+
+def board_search(
+    query: str,
+    project: Project,
+    *,
+    tags: list[str] | None = None,
+    limit: int = DEFAULT_SEARCH_LIMIT,
+    cursor: str | None = None,
+) -> BoardSearch:
+    page = search_files(project, text=query, tags=tags, limit=limit, cursor=cursor)
+    return BoardSearch.model_validate(page.model_dump())
+
+
+def _matches(
+    hits: Sequence[BoardMatch | BoardListing | FileHit | FileEntry],
+) -> list[BoardMatch]:
     """The hits of a keyword search, each a ranked match rather than a listing entry."""
     matches = [hit for hit in hits if isinstance(hit, BoardMatch)]
     assert len(matches) == len(hits)
@@ -269,7 +295,7 @@ class TestSearchDashboardsContract:
         typed Pydantic shape, attribute access, populated hit list, every
         documented hit field present with the expected type, default limit
         cap. All asserted on a single search call."""
-        result = search_boards(query="revenue", project=corpus_dir)
+        result = search_files(corpus_dir, text="revenue")
 
         assert isinstance(result, SearchResult)
         assert result.success is True
@@ -288,7 +314,7 @@ class TestSearchDashboardsContract:
 
     def test_empty_query_returns_typed_model(self, corpus_dir: Project) -> None:
         """An empty query is a listing: the same typed result, every board."""
-        result = search_boards(query="", project=corpus_dir)
+        result = search_files(corpus_dir)
         assert isinstance(result, SearchResult)
         assert result.success
         assert len(result.results) == 5
@@ -296,7 +322,7 @@ class TestSearchDashboardsContract:
     def test_listing_hit_wire_shape_is_title_notes_and_paths(
         self, corpus_dir: Project
     ) -> None:
-        wire = search_boards(query="", project=corpus_dir).model_dump()
+        wire = board_search(query="", project=corpus_dir).model_dump()
 
         assert {frozenset(hit) for hit in wire["results"]} == {
             frozenset({"title", "summary", "board_path", "file_path"})
@@ -305,7 +331,7 @@ class TestSearchDashboardsContract:
     def test_keyword_hit_wire_shape_adds_score_reasons_and_matched_charts(
         self, corpus_dir: Project
     ) -> None:
-        wire = search_boards(query="revenue", project=corpus_dir).model_dump()
+        wire = board_search(query="revenue", project=corpus_dir).model_dump()
 
         assert wire["results"]
         assert {frozenset(hit) for hit in wire["results"]} == {
@@ -325,7 +351,7 @@ class TestSearchDashboardsContract:
     def test_custom_limit(self, corpus_dir: Project) -> None:
         """Custom limit is respected."""
 
-        result = search_boards(query="revenue", project=corpus_dir, limit=2)
+        result = board_search(query="revenue", project=corpus_dir, limit=2)
         assert len(result.results) <= 2
 
     def test_max_limit_guard(
@@ -337,7 +363,7 @@ class TestSearchDashboardsContract:
         for i in range(MAX_SEARCH_LIMIT + 5):
             (boards / f"board_{i}.yml").write_text(f"title: Board {i}\nrows: []\n")
 
-        result = search_boards(
+        result = board_search(
             query="", project=local_project(tmp_path), limit=MAX_SEARCH_LIMIT * 10
         )
 
@@ -347,7 +373,7 @@ class TestSearchDashboardsContract:
     def test_results_sorted_by_score_descending(self, corpus_dir: Project) -> None:
         """Results are sorted by match_score descending."""
 
-        result = search_boards(query="revenue", project=corpus_dir)
+        result = board_search(query="revenue", project=corpus_dir)
         scores = [h.match_score for h in _matches(result.results)]
         assert scores == sorted(scores, reverse=True)
 
@@ -560,8 +586,8 @@ class TestCandidateCapKeepsWhatMatters:
         project = local_project(tmp_path)
 
         hits = search_boards_hits("", project, tags=["finance"])
-        first = search_boards("", project, tags=["finance"], limit=50)
-        second = search_boards(
+        first = board_search("", project, tags=["finance"], limit=50)
+        second = board_search(
             "", project, tags=["finance"], limit=50, cursor=first.next
         )
 
@@ -639,7 +665,7 @@ class TestMarkdownBoardsAreSearchable:
 class TestSearchDashboardsHits:
     """search_boards_hits is the unbounded ranked list a host with a
     per-principal access model (Cloud) filters before truncating. Local/OSS
-    callers never touch it: search_boards's contract (this class) is
+    callers never touch it: search_files's contract (this class) is
     unchanged by its existence."""
 
     def test_unbounded_listing_exceeds_the_public_search_cap(
@@ -652,7 +678,7 @@ class TestSearchDashboardsHits:
         project = local_project(tmp_path)
 
         hits = search_boards_hits("", project)
-        capped = search_boards(query="", project=project, limit=MAX_SEARCH_LIMIT + 5)
+        capped = board_search(query="", project=project, limit=MAX_SEARCH_LIMIT + 5)
 
         assert len(hits) == MAX_SEARCH_LIMIT + 5
         assert len(capped.results) == MAX_SEARCH_LIMIT
@@ -661,7 +687,7 @@ class TestSearchDashboardsHits:
         self, corpus_dir: Project
     ) -> None:
         hits = search_boards_hits("revenue", corpus_dir)
-        result = search_boards(query="revenue", project=corpus_dir, limit=2)
+        result = board_search(query="revenue", project=corpus_dir, limit=2)
 
         assert result.results == hits[:2]
 
@@ -694,12 +720,12 @@ class TestSearchPaging:
     """A listing larger than ``limit`` pages through ``next`` without gaps."""
 
     def test_pages_cover_the_listing_exactly_once(self, corpus_dir: Project) -> None:
-        full = [h.file_path for h in search_boards("", corpus_dir).results]
+        full = [h.file_path for h in board_search("", corpus_dir).results]
         seen: list[str] = []
         cursor: str | None = None
         pages = 0
         while True:
-            page = search_boards("", corpus_dir, limit=2, cursor=cursor)
+            page = board_search("", corpus_dir, limit=2, cursor=cursor)
             seen.extend(h.file_path for h in page.results)
             pages += 1
             cursor = page.next
@@ -710,28 +736,28 @@ class TestSearchPaging:
         assert pages == 3
 
     def test_the_last_page_has_no_next(self, corpus_dir: Project) -> None:
-        assert search_boards("", corpus_dir, limit=5).next is None
-        assert search_boards("", corpus_dir, limit=4).next == "4"
+        assert board_search("", corpus_dir, limit=5).next is None
+        assert board_search("", corpus_dir, limit=4).next == "4"
 
     def test_a_zero_limit_page_has_no_cursor_to_loop_on(self) -> None:
         assert paginate([1, 2, 3], limit=0, cursor=None) == ([], None)
 
     def test_ranked_search_pages_too(self, corpus_dir: Project) -> None:
         everything = search_boards_hits("revenue", corpus_dir)
-        first = search_boards("revenue", corpus_dir, limit=1)
-        second = search_boards("revenue", corpus_dir, limit=1, cursor=first.next)
+        first = board_search("revenue", corpus_dir, limit=1)
+        second = board_search("revenue", corpus_dir, limit=1, cursor=first.next)
 
         assert [first.results[0], second.results[0]] == everything[:2]
 
     @pytest.mark.parametrize("cursor", ["abc", "-1", "1.5", ""])
     def test_a_cursor_that_is_not_a_next_value_is_refused(self, cursor: str) -> None:
         with pytest.raises(ValidationError, match="next"):
-            SearchBoardsArgs(query="", cursor=cursor)
+            SearchFilesArgs(cursor=cursor)
 
     def test_next_is_dropped_from_the_wire_when_absent(
         self, corpus_dir: Project
     ) -> None:
-        wire = search_boards("", corpus_dir).model_dump(exclude_none=True)
+        wire = board_search("", corpus_dir).model_dump(exclude_none=True)
 
         assert "next" not in wire
 
@@ -765,7 +791,7 @@ class TestChartGrainSearch:
             "  - rev\n"
         )
 
-        result = search_boards(query="quick board", project=local_project(tmp_path))
+        result = board_search(query="quick board", project=local_project(tmp_path))
 
         assert result.success
         assert [h.title for h in result.results] == ["Quick Board"]
@@ -788,7 +814,7 @@ class TestChartGrainSearch:
             "  - odd\n"
         )
 
-        result = search_boards(query="odd", project=local_project(tmp_path))
+        result = board_search(query="odd", project=local_project(tmp_path))
 
         assert result.success
         (hit,) = result.results
@@ -812,7 +838,7 @@ class TestChartGrainSearch:
             "  - 2024\n"
         )
 
-        result = search_boards(query="2024", project=local_project(tmp_path))
+        result = board_search(query="2024", project=local_project(tmp_path))
 
         assert result.success
         (hit,) = result.results
@@ -837,7 +863,7 @@ class TestChartGrainSearch:
             "rows:\n" + row_lines + "  - costs\n"
         )
 
-        result = search_boards(query="revenue", project=local_project(tmp_path))
+        result = board_search(query="revenue", project=local_project(tmp_path))
 
         hit = result.results[0]
         assert isinstance(hit, BoardMatch)
@@ -859,7 +885,7 @@ class TestChartGrainSearch:
             "  - costs\n"
         )
 
-        result = search_boards(query="revenue", project=local_project(tmp_path))
+        result = board_search(query="revenue", project=local_project(tmp_path))
 
         hit = result.results[0]
         assert isinstance(hit, BoardMatch)
@@ -886,7 +912,7 @@ class TestChartGrainSearch:
             "  - fancy\n"
         )
 
-        result = search_boards(query="styled", project=local_project(tmp_path))
+        result = board_search(query="styled", project=local_project(tmp_path))
 
         assert set(result.model_dump()["results"][0]) == {
             "title",
@@ -933,7 +959,7 @@ class TestChartGrainSearch:
             "  - unrelated\n"
         )
 
-        result = search_boards(query="monthly revenue", project=local_project(tmp_path))
+        result = board_search(query="monthly revenue", project=local_project(tmp_path))
         titles = [h.title for h in result.results]
         assert titles[0] == "Analytics Board"
 
@@ -963,7 +989,7 @@ class TestChartGrainSearch:
             "  - topline_kpi\n"
         )
 
-        result = search_boards(query="topline", project=local_project(tmp_path))
+        result = board_search(query="topline", project=local_project(tmp_path))
         assert len(result.results) == 1
         hit = result.results[0]
         assert isinstance(hit, BoardMatch)
@@ -981,13 +1007,13 @@ class TestSearchDashboardsEdgeCases:
     def test_whitespace_only_query(self, corpus_dir: Project) -> None:
         """Whitespace-only query is the empty query: a listing."""
 
-        result = search_boards(query="   ", project=corpus_dir)
+        result = board_search(query="   ", project=corpus_dir)
         assert len(result.results) == 5
 
     def test_unknown_tag_filter(self, corpus_dir: Project) -> None:
         """Filtering by a nonexistent tag returns empty results."""
 
-        result = search_boards(
+        result = board_search(
             query="revenue", project=corpus_dir, tags=["nonexistent_tag_xyz"]
         )
         assert result.results == []
@@ -998,13 +1024,13 @@ class TestSearchDashboardsEdgeCases:
     ) -> None:
         """Zero or negative limit returns empty results."""
 
-        result = search_boards(query="revenue", project=corpus_dir, limit=limit)
+        result = board_search(query="revenue", project=corpus_dir, limit=limit)
         assert result.results == []
 
     def test_no_matching_dashboards(self, corpus_dir: Project) -> None:
         """Query that matches nothing returns empty results."""
 
-        result = search_boards(query="xyzzyplugh_no_match", project=corpus_dir)
+        result = board_search(query="xyzzyplugh_no_match", project=corpus_dir)
         assert result.results == []
 
 
@@ -1019,7 +1045,7 @@ class TestSearchDashboardsRelevance:
     def test_revenue_query_finds_sales_and_finance(self, corpus_dir: Project) -> None:
         """'revenue' should rank Sales and Finance dashboards highest."""
 
-        result = search_boards(query="revenue", project=corpus_dir)
+        result = board_search(query="revenue", project=corpus_dir)
         titles = [h.title for h in result.results]
         assert "Sales Performance" in titles
         assert "Finance Overview" in titles
@@ -1039,14 +1065,14 @@ class TestSearchDashboardsRelevance:
     ) -> None:
         """Domain-specific keyword should rank its dashboard first."""
 
-        result = search_boards(query=query, project=corpus_dir)
+        result = board_search(query=query, project=corpus_dir)
         assert len(result.results) > 0
         assert result.results[0].title == expected_top_title
 
     def test_tag_filter_narrows_results(self, corpus_dir: Project) -> None:
         """Filtering by tag 'sales' returns only the sales dashboard."""
 
-        result = search_boards(query="revenue", project=corpus_dir, tags=["sales"])
+        result = board_search(query="revenue", project=corpus_dir, tags=["sales"])
         assert len(result.results) > 0
         for hit in result.results:
             assert hit.title == "Sales Performance"
@@ -1066,7 +1092,7 @@ class TestSearchDashboardsRelevance:
         (boards / "a_gadget.yml").write_text(
             "title: Gadget A\nnotes: zephyr wind data\ntags:\n  - zephyr\nrows: []\n"
         )
-        result = search_boards(query="zephyr", project=local_project(tmp_path))
+        result = board_search(query="zephyr", project=local_project(tmp_path))
         assert len(result.results) == 2
         paths = [str(h.file_path) for h in result.results]
         assert paths == sorted(paths), f"Expected lexicographic order, got {paths}"
@@ -1074,7 +1100,7 @@ class TestSearchDashboardsRelevance:
     def test_title_match_reason_present(self, corpus_dir: Project) -> None:
         """Exact title term match should produce a 'title_match' reason."""
 
-        result = search_boards(query="Sales", project=corpus_dir)
+        result = board_search(query="Sales", project=corpus_dir)
         sales_hit = next(
             h for h in _matches(result.results) if h.title == "Sales Performance"
         )
@@ -1083,7 +1109,7 @@ class TestSearchDashboardsRelevance:
     def test_tag_match_reason_present(self, corpus_dir: Project) -> None:
         """Exact tag match should produce a 'tag_match' reason."""
 
-        result = search_boards(query="inventory", project=corpus_dir)
+        result = board_search(query="inventory", project=corpus_dir)
         inv_hit = next(
             h for h in _matches(result.results) if h.title == "Inventory Status"
         )
@@ -1104,7 +1130,7 @@ class TestSearchSummarySanitization:
             "charts:\n  c:\n    query: q\n    type: table\n"
             "rows:\n  - c\n"
         )
-        result = search_boards(query="above", project=local_project(tmp_path))
+        result = board_search(query="above", project=local_project(tmp_path))
         assert len(result.results) == 1
         assert "ai_notes" not in result.results[0].summary
         assert result.results[0].summary == "Above-the-fold layout"
@@ -1123,7 +1149,7 @@ class TestSearchDashboardsProjectScope:
             "rows:\n  - c\n"
         )
 
-        result = search_boards(query="zendesk", project=local_project(tmp_path))
+        result = board_search(query="zendesk", project=local_project(tmp_path))
 
         assert result.success is True
         assert len(result.results) == 0
@@ -1148,7 +1174,7 @@ class TestSearchDashboardsProjectScope:
             "rows:\n  - c\n"
         )
 
-        result = search_boards(query="zendesk", project=local_project(tmp_path))
+        result = board_search(query="zendesk", project=local_project(tmp_path))
 
         assert result.success is True
         titles = {h.title for h in result.results}
@@ -1175,7 +1201,7 @@ class TestSearchDashboardsProjectScope:
             "rows:\n  - c\n"
         )
 
-        result = search_boards(query="zendesk", project=local_project(tmp_path))
+        result = board_search(query="zendesk", project=local_project(tmp_path))
 
         assert result.success is True
         assert len(result.results) == 0
@@ -1194,7 +1220,7 @@ class TestSearchDashboardsProjectScope:
             "rows:\n  - c\n"
         )
 
-        result = search_boards(query="zendesk", project=local_project(tmp_path))
+        result = board_search(query="zendesk", project=local_project(tmp_path))
 
         assert result.success is True
         assert len(result.results) == 1
@@ -1230,7 +1256,7 @@ class TestSearchHitPathCoordinateSystems:
         self._write_nested_board(tmp_path)
         project = local_project(tmp_path)
 
-        result = search_boards(query="sub dashboard", project=project)
+        result = board_search(query="sub dashboard", project=project)
         assert len(result.results) == 1
         hit = result.results[0]
 
@@ -1249,7 +1275,7 @@ class TestSearchHitPathCoordinateSystems:
         self._write_nested_board(tmp_path)
         project = local_project(tmp_path)
 
-        result = search_boards(query="sub dashboard", project=project)
+        result = board_search(query="sub dashboard", project=project)
         assert len(result.results) == 1
         hit = result.results[0]
 
@@ -1287,7 +1313,7 @@ class TestSearchHitPathCoordinateSystems:
         )
         project = local_project(tmp_path)
 
-        result = search_boards(query="zendesk", project=project)
+        result = board_search(query="zendesk", project=project)
         assert len(result.results) == 1
         hit = result.results[0]
 
@@ -1314,30 +1340,32 @@ class TestSearchHitPathCoordinateSystems:
         self._write_nested_board(tmp_path)
         project = local_project(tmp_path)
 
-        result = search_boards(query="sub dashboard", project=project)
+        result = board_search(query="sub dashboard", project=project)
         hit = result.results[0]
 
         assert isinstance(hit.file_path, str)
         assert isinstance(hit.board_path, str)
 
 
-class TestSearchBoardsArgsWireSchema:
-    """The MCP wire model advertises exactly {query, tags, limit, cursor} — no path inputs."""
+class TestSearchFilesArgsWireSchema:
+    """The wire model advertises exactly the search inputs — no path inputs."""
 
     def test_wire_schema_has_expected_properties(self) -> None:
-        schema = SearchBoardsArgs.model_json_schema()
+        schema = SearchFilesArgs.model_json_schema()
         assert set(schema["properties"].keys()) == {
-            "query",
+            "kind",
+            "path",
+            "text",
             "tags",
             "limit",
             "cursor",
         }
-        assert schema["required"] == ["query"]
+        assert "required" not in schema
 
     def test_project_dir_is_not_in_wire_schema(self) -> None:
-        schema = SearchBoardsArgs.model_json_schema()
+        schema = SearchFilesArgs.model_json_schema()
         assert "project_dir" not in schema["properties"]
 
     def test_unknown_field_is_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            SearchBoardsArgs(query="x", directory="some/path")  # type: ignore[call-arg]
+            SearchFilesArgs.model_validate({"text": "x", "directory": "some/path"})

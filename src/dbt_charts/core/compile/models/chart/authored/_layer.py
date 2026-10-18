@@ -120,7 +120,7 @@ LayerColorColumn = Annotated[
         "Layer.color is a data channel (bare field name only). Paint belongs "
         "under the layer's `style.marks`, and '{value}' should be a palette "
         "token there (`category[1]`, `negative.solid`) — the mark key differs "
-        "per layer type, so see `dct docs charts`."
+        "per layer type (`dct skills styling`)."
     ),
 ]
 
@@ -180,14 +180,15 @@ class BarLayer(TypedLayerBase):
     style: Annotated[
         BarLayerStylePatch | None,
         Field(
-            default=None, description="Appearance overrides for this layer's bar marks."
+            default=None,
+            description="Only `marks`: a line layer's color is `marks: {line: {stroke: {color: '#hex'}}}`, a scatter's `marks: {point: {color: '#hex'}}`.",
         ),
     ] = None
     y_start: Annotated[
         YStartColumn | None,
         Field(
             default=None,
-            description="Column each bar starts from, so it runs from y_start to y instead of from zero. Same kind as the chart's y: both numeric, or both dates.",
+            description="Column each bar starts from instead of zero (waterfall, range, Gantt, lollipop). Same kind as y: both numeric, or both dates.",
         ),
     ]
 
@@ -200,7 +201,7 @@ class LineLayer(TypedLayerBase):
         LineLayerStylePatch | None,
         Field(
             default=None,
-            description="Appearance overrides for this layer's line marks.",
+            description="Only `marks`: a line layer's color is `marks: {line: {stroke: {color: '#hex'}}}`, a scatter's `marks: {point: {color: '#hex'}}`.",
         ),
     ] = None
 
@@ -213,7 +214,7 @@ class AreaLayer(TypedLayerBase):
         AreaLayerStylePatch | None,
         Field(
             default=None,
-            description="Appearance overrides for this layer's area marks.",
+            description="Only `marks`: a line layer's color is `marks: {line: {stroke: {color: '#hex'}}}`, a scatter's `marks: {point: {color: '#hex'}}`.",
         ),
     ] = None
 
@@ -226,7 +227,7 @@ class ScatterLayer(TypedLayerBase):
         ScatterLayerStylePatch | None,
         Field(
             default=None,
-            description="Appearance overrides for this layer's point marks.",
+            description="Only `marks`: a line layer's color is `marks: {line: {stroke: {color: '#hex'}}}`, a scatter's `marks: {point: {color: '#hex'}}`.",
         ),
     ] = None
 

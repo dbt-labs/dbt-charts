@@ -1,0 +1,3 @@
+kind: Breaking changes
+body: The AI tool `execute_query` is now `execute_sql` in MCP, chat, and the connector; update any client that calls it by name.
+time: 2026-10-17T15:36:13.490588-07:00

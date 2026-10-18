@@ -681,7 +681,7 @@ class ScaleContinuousStyle(ScaleDomainValidationMixin):
     type: Literal["linear", "log", "pow", "sqrt", "symlog", "temporal"] | None = Field(
         default=None,
         description=(
-            "Scale type override. 'linear'/'log'/'pow'/'sqrt'/'symlog' pass "
+            "Scale type override; a bar rejects 'log', so use 'symlog'. 'linear'/'log'/'pow'/'sqrt'/'symlog' pass "
             "straight through to Vega-Lite's quantitative scale.type. "
             "'temporal' is a dbt charts escape hatch for a cartesian x-axis: it "
             "forces a continuous temporal scale instead of the auto-inferred "

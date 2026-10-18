@@ -123,23 +123,14 @@ class TestReadToolsUseBackingStoreNotDisk:
         assert result["success"] is False
         assert result.get("content") is None
 
-    def test_glob_files_lists_backing_store(
+    def test_search_files_searches_backing_store(
         self, cloud_context: DbtChartsAIContext
     ) -> None:
         result = dispatch_tool_call(
-            "glob_files", {"pattern": "charts/*.yml"}, context=cloud_context
+            "search_files", {"kind": "all", "text": "In Store"}, context=cloud_context
         )
         assert result["success"] is True
-        assert result["matches"] == ["charts/report.yml"]
-
-    def test_grep_files_searches_backing_store(
-        self, cloud_context: DbtChartsAIContext
-    ) -> None:
-        result = dispatch_tool_call(
-            "grep_files", {"pattern": "In Store"}, context=cloud_context
-        )
-        assert result["success"] is True
-        assert [m["path"] for m in result["matches"]] == ["charts/report.yml"]
+        assert [m["file_path"] for m in result["results"]] == ["charts/report.yml"]
 
     def test_execute_query_named_form_reads_from_backing_store(
         self,
@@ -167,7 +158,7 @@ class TestReadToolsUseBackingStoreNotDisk:
             dashboards_directory=None,
         )
         result = dispatch_tool_call(
-            "execute_query",
+            "execute_sql",
             {"query": "inline", "board": "charts/queryable.yml"},
             context=context,
         )
@@ -200,7 +191,7 @@ class TestReadToolsUseBackingStoreNotDisk:
             dashboards_directory=None,
         )
         result = dispatch_tool_call(
-            "execute_query",
+            "execute_sql",
             {"query": "ragged", "board": "charts/ragged.yml"},
             context=context,
         )

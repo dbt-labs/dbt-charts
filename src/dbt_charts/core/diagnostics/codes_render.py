@@ -830,6 +830,7 @@ ERR_LABEL_VALUES_INVALID_DATE = REGISTRY.register(
 ERR_PERCENT_RANGE = REGISTRY.register(
     ErrorCode(
         code="ERR-PERCENT-RANGE",
+        summary="A percent format got a 0-100 value; it expects a 0-1 ratio.",
         domain="render",
         title="Percent format received a 0-100-shaped value instead of a ratio",
         message_template=(
@@ -2037,13 +2038,19 @@ WARN_LOCAL_TIME_LABEL_EXPR_ON_BUCKETED_AXIS = REGISTRY.register(
 WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER = REGISTRY.register(
     WarningCode(
         code="WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER",
+        summary="A field named like money or a percentage has no fitting format.",
         domain="render",
         title="Field looks like money, a percentage or a fraction but has no fitting format",
         message_template=(
             "Chart {chart_id!r}: field {field!r} looks like {kind} "
             "but the {surface} {format_state}."
         ),
-        fix_template="Set `{format_key}` to {suggestion} to match the field's meaning.",
+        fix_template=(
+            "Set `{format_key}` to {suggestion} to match the field's meaning. "
+            "If the name only resembles money or a ratio (peak_value, "
+            "index_value), silence it with `warnings_ignore: "
+            "[WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER]` on the chart."
+        ),
         doc=(
             "Fires when a chart's y-encoding field, a KPI's headline or "
             "support value, or a table column looks like money or a percentage "
@@ -2517,8 +2524,10 @@ WARN_TOO_MANY_COLOR_CATEGORIES = REGISTRY.register(
             "distinct series, more than the {max_categories} a reader can tell apart."
         ),
         fix_template=(
-            "Reduce the number of color categories by grouping small values into "
-            "'Other', or filter the data to the most significant categories."
+            "Cut the categories in the query, not the chart: keep the top N and "
+            "fold the rest into Other, e.g. `CASE WHEN rank <= 6 THEN category "
+            "ELSE 'Other' END AS category` over a `RANK() OVER (ORDER BY total "
+            "DESC)` CTE, then re-aggregate by that column."
         ),
         doc=(
             "Fires when a categorical color encoding has more distinct values than "

@@ -54,7 +54,10 @@ from dbt_charts.core.compile.models.source import (
     DuckDBSourceConfig,
     SourceOptionScalar,
 )
-from dbt_charts.core.compile.sql_guard import validate_select_only, validate_setup_sql
+from dbt_charts.core.compile.sql_guard import (
+    validate_select_only,
+    validate_setup_sql,
+)
 from dbt_charts.core.compile.template.parameterized import render_parameterized
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
@@ -62,6 +65,8 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
     ERR_ADAPTER_RELATIVE_PATH_NO_DATA_DIR,
     ERR_ADAPTER_UNSUPPORTED_DUCKDB_FIELD,
+    ERR_BINDER_GROUP_BY,
+    ERR_BINDER_QUERY_SHAPE,
     ERR_BINDER_TYPE_MISMATCH,
     ERR_BINDER_UNKNOWN_COLUMN,
     ERR_BINDER_UNKNOWN_RELATION,
@@ -72,6 +77,7 @@ from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.diagnostics.registry import ErrorCode
 from dbt_charts.core.dialects import get_dialect
 from dbt_charts.core.execute.adapters.base import (
+    GROUP_BY_MESSAGE,
     BaseAdapter,
     QueryParams,
     QueryResult,
@@ -88,6 +94,7 @@ from dbt_charts.core.execute.adapters.dbt_utils import (
     DbtRefResolver,
     source_target_path,
 )
+from dbt_charts.core.execute.column_advice import duckdb_unknown_column_advice
 from dbt_charts.core.execute.duckdb_config import normalize_duckdb_config
 
 # Relative read_csv()/read_parquet() paths resolve against data_dir via a
@@ -164,7 +171,10 @@ def _duckdb_literal(value: str) -> str:
 
 
 def _classify_duckdb_error(
-    exc: Exception, operation: str = "DuckDB SQL execution"
+    exc: Exception,
+    operation: str = "DuckDB SQL execution",
+    *,
+    column_advice: str | None = None,
 ) -> QueryResult:
     """Map a DuckDB exception to a typed ERR-* QueryResult.
 
@@ -194,10 +204,11 @@ def _classify_duckdb_error(
 
     if isinstance(exc, duckdb.InterruptException):
         return interrupted()
-    return QueryResult(
-        data=[],
-        error=QueryError.from_code(duckdb_error_code(exc), detail=str(exc)),
-    )
+    code = duckdb_error_code(exc)
+    detail = str(exc)
+    if column_advice is not None:
+        detail = f"{detail}\n{column_advice}"
+    return QueryResult(data=[], error=QueryError.from_code(code, detail=detail))
 
 
 # "Catalog Error: Table with name x does not exist!" (also View and Schema); a
@@ -205,6 +216,11 @@ def _classify_duckdb_error(
 _DUCKDB_MISSING_RELATION = re.compile(
     r"(Table|View|Schema) with name .* does not exist"
 )
+
+
+# Binder rejections of how a UNION or ORDER BY is assembled, not of a name in
+# it. GROUP BY is ERR-BINDER-GROUP-BY, checked first.
+_BINDER_SHAPE_RE = re.compile(r"Set operations can only apply|ORDER term out of range")
 
 
 def duckdb_error_code(exc: Exception) -> ErrorCode:
@@ -216,6 +232,10 @@ def duckdb_error_code(exc: Exception) -> ErrorCode:
         str(exc)
     ):
         return ERR_BINDER_UNKNOWN_RELATION
+    if isinstance(exc, duckdb.BinderException) and GROUP_BY_MESSAGE.search(str(exc)):
+        return ERR_BINDER_GROUP_BY
+    if isinstance(exc, duckdb.BinderException) and _BINDER_SHAPE_RE.search(str(exc)):
+        return ERR_BINDER_QUERY_SHAPE
     if isinstance(exc, (duckdb.BinderException, duckdb.CatalogException)):
         return ERR_BINDER_UNKNOWN_COLUMN
     if isinstance(exc, duckdb.TypeMismatchException):
@@ -787,7 +807,11 @@ class DuckDBAdapter(BaseAdapter):
             )
 
         except Exception as e:  # noqa: BLE001
-            return _classify_duckdb_error(e)
+            column_advice = None
+            if duckdb_error_code(e) is ERR_BINDER_UNKNOWN_COLUMN:
+                with self._executing(conn):
+                    column_advice = duckdb_unknown_column_advice(conn, sql, str(e))
+            return _classify_duckdb_error(e, column_advice=column_advice)
 
     def _get_duckdb_connection_for_query(
         self, source_config: dict[str, Any] | None = None

@@ -1,0 +1,3 @@
+kind: Fixes
+body: '`execute_sql` now honors `lenient_variables`, so an unbound filter variable no longer fails the query.'
+time: 2026-10-17T10:35:58.702961-07:00

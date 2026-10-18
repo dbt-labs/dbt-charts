@@ -315,6 +315,7 @@ def normalize_query(
                         query_name=name,
                         source=raw_source,
                         available=sorted(sources),
+                        advice="",
                     )
             # SqlQuery.source is required. This pre-check catches both the
             # missing-key case (source absent from query_dict) and the

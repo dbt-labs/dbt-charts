@@ -72,7 +72,7 @@ class SparkBarChartStyle(BaseModel):
     # InheritSlot: per-family padding inherits per-side from Style.charts.padding.
     padding: Annotated[PaddingStyle, InheritSlot(from_path="Style.charts.padding")] = (
         Field(
-            description="Per-chart-type padding override; 4 sides in pixels.",
+            description="Padding as {top, right, bottom, left} in pixels, never one number.",
         )
     )
     bar: SparkBarBarStyle = Field(description="Bar geometry (height, padding, color).")

@@ -72,6 +72,8 @@ from dbt_charts.core.compile.sql_guard import (
     sqlglot_dialect,
 )
 from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_BINDER_GROUP_BY,
+    ERR_BINDER_QUERY_SHAPE,
     ERR_BINDER_TYPE_MISMATCH,
     ERR_BINDER_UNKNOWN_COLUMN,
     ERR_BINDER_UNKNOWN_RELATION,
@@ -602,6 +604,8 @@ def _failure(
 # local DuckDB file. Pinned as a decision, not an accident.
 _QUERY_DEFECT_CODES = frozenset(
     {
+        ERR_BINDER_GROUP_BY.code,
+        ERR_BINDER_QUERY_SHAPE.code,
         ERR_BINDER_TYPE_MISMATCH.code,
         ERR_BINDER_UNKNOWN_COLUMN.code,
         ERR_BINDER_UNKNOWN_RELATION.code,

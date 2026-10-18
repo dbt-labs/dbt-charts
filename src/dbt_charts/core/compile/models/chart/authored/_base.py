@@ -329,10 +329,11 @@ class _FieldLabelsField(BaseModel):
         Field(
             default_factory=dict,
             description=(
-                "Display text per query column, painted as written wherever the "
-                "chart would otherwise derive text from that column's name: "
-                "legend titles and entries, tooltip rows, axis titles. "
-                "x_label/y_label and a layer's label win on their own surface."
+                "Display text per query column in legends, tooltips and axis titles. "
+                "Painted as written wherever the chart would otherwise derive text "
+                "from the column's name; x_label/y_label and a layer's label win "
+                "on their own surface. Not for kpi or table: use "
+                "`style.columns.<column>.label`."
             ),
         ),
     ]
@@ -357,7 +358,10 @@ class _SharedChartFields(_BaseChartFields):
     subtitle: Annotated[
         str | None,
         DisplayText(),
-        Field(default=None, description="Supporting text beneath the chart title."),
+        Field(
+            default=None,
+            description="Supporting text beneath the chart title; a KPI uses `support.label` instead.",
+        ),
     ]
 
 
@@ -404,14 +408,14 @@ class _CartesianChartFields(_SharedChartFields, _FieldLabelsField):
         str | None,
         Field(
             default=None,
-            description="Title for the X axis, replacing the one derived from the x column's name.",
+            description="X axis title, replacing the column-derived one. Quote a number, as in '2013'.",
         ),
     ]
     y_label: Annotated[
         str | None,
         Field(
             default=None,
-            description="Title for the Y axis, replacing the one the chart derives on its own.",
+            description="Y axis title, replacing the derived one. Quote a number, as in '2013'.",
         ),
     ]
     # None = no color encoding (solid fill from theme).
@@ -436,9 +440,9 @@ class _CartesianChartFields(_SharedChartFields, _FieldLabelsField):
         Field(
             default=None,
             description=(
-                "Partition this chart into small multiples by a `rows` column "
-                "(vertical stack), a `columns` column (side by side), or both "
-                "(grid). Panels share one measure scale by default."
+                "Small multiples by a `rows` column, a `columns` column, or both. "
+                "Panels share one measure scale by default. A layer's own `query` "
+                "must not return the partition column."
             ),
         ),
     ]

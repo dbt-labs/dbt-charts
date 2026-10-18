@@ -242,8 +242,7 @@ rows:
 
         assert height_error.hint is not None
         assert "Did you mean 'height'?" not in height_error.hint
-        assert "`height:` is not supported on `type: table`" in height_error.hint
-        assert "Supported chart types for `height:`" in height_error.hint
+        assert height_error.hint.startswith("A table is as tall as its rows")
 
     def test_conditional_formatting_on_bar_gets_the_retired_key_hint(
         self,
@@ -2012,4 +2011,138 @@ rows: [c]
 
         assert "`style.page` was removed in 0.7.0" in _hint_for(
             excinfo.value.diagnostics, "page"
+        )
+
+
+_CHART_BOARD = """queries:
+  q:
+    sql: "SELECT 1 AS a, 2 AS b"
+charts:
+  rev:
+    type: bar
+    query: q
+    x: a
+    y: b
+{extra}
+rows: [rev]
+"""
+
+
+class TestMisplacedKeyNamesItsBlock:
+    """A key the schema knows elsewhere on the path names where it belongs."""
+
+    def test_chart_key_in_style_names_the_chart(self) -> None:
+        result = compile(_CHART_BOARD.format(extra="    style:\n      x_label: Month"))
+
+        hint = _hint_for(result.errors, "x_label")
+        assert "`x_label` belongs at `charts.rev`, not at `charts.rev.style`" in hint
+
+    def test_style_key_on_the_chart_names_the_style_block(self) -> None:
+        result = compile(_CHART_BOARD.format(extra="    legend: right"))
+
+        hint = _hint_for(result.errors, "legend")
+        assert "`legend` belongs at `charts.rev.style`, not at `charts.rev`" in hint
+
+    def test_key_valid_nowhere_nearby_names_no_block(self) -> None:
+        result = compile(_CHART_BOARD.format(extra="    zzz_unknown: 1"))
+
+        assert "belongs at" not in _hint_for(result.errors, "zzz_unknown")
+
+    def test_container_blocks_are_not_offered_as_homes(self) -> None:
+        # `charts` holds named charts; a key valid on a chart is not valid "at charts".
+        result = compile("queries: {}\nrows: []\nx_label: Month\n")
+
+        assert "belongs at" not in _hint_for(result.errors, "x_label")
+
+
+class TestRequiredFieldListsTheBlocksFields:
+    def test_missing_required_field_lists_accepted_fields(self) -> None:
+        result = compile(_CHART_BOARD.format(extra="    sort:\n      order: asc"))
+
+        error = next(e for e in result.errors if e.path == "charts.rev.bar.sort.by")
+        assert error.hint is not None
+        assert "`by` is required at `charts.rev.sort`" in error.hint
+        assert "Fields accepted there: by, order." in error.hint
+
+
+class TestChartTypeMismatchListsValidFields:
+    def test_field_unsupported_on_chart_type_lists_that_types_fields(self) -> None:
+        result = compile(
+            _CHART_BOARD.replace("type: bar", "type: kpi").format(extra="")
+        )
+
+        hint = _hint_for(result.errors, "x")
+        assert "`x:` is not supported on `type: kpi`" in hint
+        assert "Fields accepted on `type: kpi`: " in hint
+        assert "value" in hint.split("Fields accepted on `type: kpi`: ")[1]
+
+
+_LAYER_BOARD = _CHART_BOARD.format(
+    extra="    layers:\n      - type: line\n        y: b\n        style:\n{style}"
+)
+
+
+class TestLayerPathsGetShallowPathAdvice:
+    def test_unknown_layer_style_key_lists_the_layer_styles_keys(self) -> None:
+        result = compile(_LAYER_BOARD.format(style="          color: red"))
+
+        error = next(e for e in result.errors if e.path.endswith("line.style.color"))
+        assert error.hint is not None
+        assert "Allowed keys: " in error.hint
+        assert "marks" in error.hint.split("Allowed keys: ")[1]
+
+
+def _color_hint(errors: list[Diagnostic]) -> str:
+    hint = next(e for e in errors if e.path == "charts.rev.bar.color").hint
+    assert hint is not None
+    return hint
+
+
+class TestScalarTypeMismatchNamesWhatWasReceived:
+    def test_number_where_string_expected(self) -> None:
+        result = compile(_CHART_BOARD.format(extra="    color: 3"))
+
+        hint = _color_hint(result.errors)
+        assert "`color` expects a string" in hint
+        assert "received a number: 3" in hint
+
+    def test_list_where_string_expected(self) -> None:
+        result = compile(_CHART_BOARD.format(extra="    color: [a, b]"))
+
+        hint = _color_hint(result.errors)
+        assert "received a list: ['a', 'b']" in hint
+
+
+class TestFontsKeyExplainsFontMapping:
+    def test_fonts_where_font_is_the_key_shows_the_mapping(self) -> None:
+        result = compile(
+            _CHART_BOARD.format(extra="").replace(
+                "rows: [rev]",
+                "style:\n  title:\n    fonts:\n      heading: Georgia\nrows: [rev]",
+            )
+        )
+
+        hint = _hint_for(result.errors, "fonts")
+        assert "no font roles" in hint
+        assert "`font` is a mapping" in hint
+        assert "font:\n  family:" in hint
+
+
+class TestUnsupportedKeysNameTheirReplacement:
+    def test_table_sort_points_at_order_by(self) -> None:
+        result = compile(
+            _CHART_BOARD.replace("type: bar", "type: table").format(
+                extra="    sort:\n      by: a"
+            )
+        )
+
+        assert "ORDER BY" in _hint_for(result.errors, "sort")
+
+    def test_chart_style_category_colors_points_at_the_board_pins(self) -> None:
+        result = compile(
+            _CHART_BOARD.format(extra="    style:\n      category_colors: {a: red}")
+        )
+
+        assert "style.charts.category_colors" in _hint_for(
+            result.errors, "category_colors"
         )

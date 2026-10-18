@@ -1,0 +1,3 @@
+kind: Fixes
+body: Replacing a detached server with dct serve --detach waits until the old server has released its port, so it no longer fails with "port in use" on Windows.
+time: 2026-10-17T15:23:32.857524-07:00

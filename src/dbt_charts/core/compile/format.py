@@ -59,6 +59,7 @@ from dbt_charts.core.text.predefined_formats import (
     ALL_PREDEFINED_NAMES,
     GRAIN_FORMAT_NAMES,
     GRAIN_NAMES,
+    GRAIN_STRFTIME,
     PREDEFINED_NATIVE,
     PREDEFINED_NUMBER_NAMES,
     PREDEFINED_SPECS,
@@ -144,6 +145,7 @@ def resolve_format(
         raise CompilationError.from_code(
             ERR_FORMAT_GRAIN_NAME_NOT_REDEFINED,
             spec=format_str,
+            replacement=GRAIN_STRFTIME[format_str],
             field_path="a format",
         )
     if format_str in PREDEFINED_TIME_NAMES:

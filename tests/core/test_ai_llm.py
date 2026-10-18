@@ -119,7 +119,7 @@ def test_openai_adapter_second_call_replays_tool_history_without_assistant_echo(
     from dbt_charts.ai.openai_gateway import FunctionCall, TextDelta
 
     first_turn = [
-        FunctionCall(call_id="call_1", name="execute_query", arguments={}),
+        FunctionCall(call_id="call_1", name="execute_sql", arguments={}),
     ]
     second_turn = [TextDelta(text="Done.")]
 
@@ -134,11 +134,11 @@ def test_openai_adapter_second_call_replays_tool_history_without_assistant_echo(
     messages.append(
         AssistantMessage(
             content="Let me render that for you.",
-            tool_calls=[ToolCall(id="call_1", name="execute_query", arguments={})],
+            tool_calls=[ToolCall(id="call_1", name="execute_sql", arguments={})],
         )
     )
     messages.append(
-        ToolResultMessage(tool_call_id="call_1", name="execute_query", content="{}")
+        ToolResultMessage(tool_call_id="call_1", name="execute_sql", content="{}")
     )
 
     list(client.stream_with_tools(messages=messages, system_prompt="SYSTEM", tools=[]))

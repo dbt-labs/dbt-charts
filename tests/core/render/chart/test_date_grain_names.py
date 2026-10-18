@@ -170,6 +170,29 @@ rows:
     assert [e.code for e in result.errors] == ["ERR-FORMAT-GRAIN-NAME-NOT-REDEFINED"]
 
 
+@pytest.mark.parametrize(
+    ("name", "spec"),
+    [
+        ("date_year", "%Y"),
+        ("date_quarter", "%b %Y"),
+        ("date_month", "%b %Y"),
+        ("date_week", "%-d %b %Y"),
+    ],
+)
+def test_the_grain_name_error_leads_with_the_strftime_spec_to_write(
+    name: str, spec: str
+) -> None:
+    result = compile_board(
+        _board(
+            chart_style=f"      axis_x:\n        labels:\n          format: {name}\n"
+        )
+    )
+    (error,) = result.errors
+    edit = f'Replace {name!r} with the strftime spec "{spec}".'
+    assert edit in error.message
+    assert error.message.index(edit) < error.message.index("style.formats")
+
+
 def test_a_slot_format_naming_a_redefined_grain_paints_the_redefinition(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

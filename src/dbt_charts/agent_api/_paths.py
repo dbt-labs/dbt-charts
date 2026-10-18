@@ -18,6 +18,7 @@ from dbt_charts.core.diagnostics import (
     Diagnostic,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.codes_execute import ERR_TOOL_ARGUMENTS_INVALID
 from dbt_charts.core.project import (
     BOARD_CANDIDATE_SUFFIXES as BOARD_CANDIDATE_SUFFIXES,
     CHARTS_SUBDIR as CHARTS_SUBDIR,
@@ -218,7 +219,9 @@ def project_config_content_diagnostics(content: str, relpath: str) -> list[Diagn
     return _project_config_diagnostics_for_data(data, relpath)
 
 
-def iter_expanded_board_files(project: Project, under: str | None) -> list[ProjectPath]:
+def iter_expanded_board_files(
+    project: Project, under: str | None, *, include_markdown: bool = False
+) -> list[ProjectPath]:
     """Board files under ``under``, sorted — the shared directory-walk filter.
 
     ``under`` ``None`` scans every board root (see ``Project.iter_boards``);
@@ -238,7 +241,7 @@ def iter_expanded_board_files(project: Project, under: str | None) -> list[Proje
     return sorted(
         pf
         for pf in project.iter_boards(under=under, recursive=True)
-        if pf.is_yaml
+        if (pf.is_yaml or (include_markdown and pf.is_markdown))
         and not pf.is_private
         and not pf.is_meta
         and not (pf.parent / INSPECT_TEMPLATE_MANIFEST).exists()
@@ -378,13 +381,19 @@ class PathOutsideProjectError(DbtChartsError, ValueError):
 def resolution_error_diagnostic(exc: ValueError) -> Diagnostic:
     """Diagnostic for a ``ValueError`` out of ``resolve_board_path``.
 
-    Only an escaping path is the user's mistake; every other ``ValueError`` here
-    (a non-local project, a malformed relpath) is a caller bug and stays
-    ``ERR-INTERNAL``.
+    An escaping path is ``ERR-PATH-OUTSIDE-PROJECT``. Any other ``ValueError``
+    is a path this project cannot take (absolute or ``..`` on a hosted project,
+    an empty path, a backslash): the caller's argument, not an engine fault.
     """
     if isinstance(exc, PathOutsideProjectError):
         return exc.to_diagnostic()
-    return DbtChartsError.from_code(ERR_INTERNAL, message=str(exc)).to_diagnostic()
+    return DbtChartsError.from_code(
+        ERR_TOOL_ARGUMENTS_INVALID,
+        message=(
+            f"Board path cannot be used here: {exc}. Pass a project-relative "
+            "path such as charts/orders.yml."
+        ),
+    ).to_diagnostic()
 
 
 def _relpath_for_fs_location(path: Path, project: Project) -> str | None:
@@ -402,12 +411,12 @@ def _relpath_for_fs_location(path: Path, project: Project) -> str | None:
     symlink-blind ``normpath`` fallback accepts paths through intentional
     project-internal symlinks (e.g. ``charts/tasks/`` -> ``../../tasks/``).
     Returns ``None`` if neither check places *path* inside the root; raises
-    ``ValueError`` if *project* is not a local filesystem project.
+    ``ValueError`` if *project* is not a local filesystem project, which
+    ``resolution_error_diagnostic`` reports as the caller's argument.
     """
     if not isinstance(project, FilesystemProject):
         raise ValueError(
-            "Absolute or '..'-relative board paths require a local filesystem "
-            f"project; got {type(project).__name__}."
+            "absolute or '..'-relative board paths need a local filesystem project"
         )
     root = project.root
     resolved = path.resolve()
@@ -455,7 +464,8 @@ def resolve_board_or_error(path: Path, project: Project) -> BoardFile | Diagnost
     located input — shared by the CLI render verb and the AI render tool so the
     boards-first retry and the ``ERR-FILE-NOT-FOUND`` envelope never drift
     between surfaces. Returns a ``Diagnostic`` for an escaping path
-    (``ERR-PATH-OUTSIDE-PROJECT``) or a missing board (``ERR-FILE-NOT-FOUND``).
+    (``ERR-PATH-OUTSIDE-PROJECT``), a path the project cannot take
+    (``ERR-TOOL-ARGUMENTS-INVALID``) or a missing board (``ERR-FILE-NOT-FOUND``).
     """
     try:
         resolved = resolve_board_path(path, project)

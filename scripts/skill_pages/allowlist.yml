@@ -1,0 +1,290 @@
+# What the generated skill pages show in full, and in what order. Names only:
+# types, defaults, descriptions and values all come from the engine at
+# generation time, and a name the engine no longer has fails generation.
+#
+# objects.<name>.path   AuthoredBoard.style.charts ... a model, then fields to walk
+#                       (`chart:bar` starts at a chart type's model)
+# objects.<name>.keys   shown in full, in order; every other field is named in an
+#                       "Also exist" line
+# objects.<name>.detail keys whose whole description is shown, not the first sentence
+
+objects:
+  board:
+    path: AuthoredBoard
+    label: board (root or nested)
+    keys: [title, text, source, variables, queries, charts, rows, cols, grid, tabs, width, height, style, extends]
+    hide: [theme]
+    detail: [text]
+  query:
+    path: AuthoredSqlQuery
+    label: queries.<name>
+    keys: [sql, source, notes, formats]
+    detail: [sql, formats]
+  chart_common:
+    path: chart:bar
+    label: charts.<name>
+    detail: [title, color]
+    keys: [query, title, subtitle, x, y, color, sort, x_label, y_label, field_labels, layers, multiples, width, height, style]
+  layer:
+    path: chart:bar.layers=BarLayer
+    label: layers[]
+    keys: [type, y, x, query, label, color, style]
+    detail: [style]
+  multiples:
+    path: chart:bar.multiples
+    label: multiples
+    keys: [columns, scale]
+  sort:
+    path: chart:bar.sort
+    label: sort
+    keys: [by, order]
+  variable:
+    path: Variable
+    label: variables.<name>
+    keys: [options, default, label, required, min, max, step, data_type, input]
+    detail: [input]
+  variable_options:
+    path: Variable.options
+    label: options
+    keys: [static, query, column, label_column]
+  grid:
+    path: AuthoredBoard.grid
+    label: grid
+    keys: [columns, items]
+  grid_item:
+    path: AuthoredBoard.grid.items
+    label: grid.items[]
+    keys: [item, col, row, col_span, row_span]
+  tabs:
+    path: AuthoredBoard.tabs
+    label: tabs
+    keys: [items]
+  style_root:
+    path: AuthoredBoard.style
+    keys: [accent, background, border, charts, font, fonts, footer, formats, frame, gap, layout, margin, muted, opacity, padding, text, timestamp, title, variables]
+
+  # --- styling ---
+  s_root:
+    path: StylePatch
+    label: style
+    keys: [background, accent, muted, font, fonts, formats, palettes, border, frame, title, text, footer, charts]
+    detail: [fonts, palettes, border]
+  s_frame:
+    path: StylePatch.frame
+    label: style.frame
+    keys: [width, max_width, margin, card_padding, card_gap]
+  s_charts:
+    path: StylePatch.charts
+    label: style.charts (all charts; style.charts.<type> for one type)
+    keys: [tooltip, category_colors, border, default_chart_height, default_table_height, marks, font]
+    detail: [category_colors, border]
+  s_family:
+    path: chart:bar.style
+    label: style.charts.bar, a bar chart's style
+    keys: [background, padding, aspect_ratio, color, axis_x, axis_y, legend, marks, stack, orientation, endpoint_labels]
+    detail: [axis_x, axis_y]
+  s_axis_x:
+    path: chart:bar.style.axis_x
+    label: axis_x
+    keys: [type, time_unit]
+  s_axis_y:
+    path: chart:bar.style.axis_y
+    label: axis_y
+    keys: [position]
+  s_grid:
+    path: chart:bar.style.axis_x.grid
+    label: axis_x.grid, axis_y.grid
+    keys: []
+  s_ticks:
+    path: chart:bar.style.axis_x.ticks
+    label: axis_x.ticks
+    keys: []
+  s_labels:
+    path: chart:bar.style.axis_x.labels
+    label: axis_x.labels, axis_y.labels
+    keys: []
+  s_title:
+    path: chart:bar.style.axis_x.title
+    label: axis_x.title
+    keys: []
+  s_scale:
+    path: chart:bar.style.axis_y.scale
+    label: axis_y.scale
+    keys: [values, nice, headroom]
+  s_continuous:
+    path: chart:bar.style.axis_y.scale.continuous
+    label: axis_y.scale.continuous
+    keys: [type, domain, zero]
+  s_bar_mark:
+    path: chart:bar.style.marks.bar
+    label: marks.bar
+    keys: [band_width, border, labels, total_label]
+  s_bar_labels:
+    path: chart:bar.style.marks.bar.labels
+    label: marks.bar.labels
+    keys: [visible, format, position, field]
+    detail: [position, field, format]
+  s_line_mark:
+    path: chart:line.style.marks.line
+    label: marks.line
+    keys: [stroke, curve, labels]
+  s_point_mark:
+    path: chart:line.style.marks.point
+    label: marks.point
+    keys: []
+  s_area_mark:
+    path: chart:area.style.marks.area
+    label: marks.area
+    keys: []
+  s_legend:
+    path: chart:bar.style.legend
+    label: legend
+    keys: [visible, position, values]
+  s_legend_position:
+    path: chart:bar.style.legend.position
+    label: legend.position
+    keys: [edge, align]
+  s_color:
+    path: chart:bar.style.color
+    label: color
+    keys: [static, categorical, gradient]
+    detail: [static]
+  s_categorical:
+    path: chart:bar.style.color.categorical
+    label: color.categorical
+    keys: [palette, single_series_palette]
+    detail: [single_series_palette]
+  s_gradient:
+    path: chart:bar.style.color.gradient
+    label: color.gradient
+    keys: []
+  s_kpi:
+    path: chart:kpi.style
+    label: a kpi's style
+    keys: [variant, align, value, label, support]
+  s_kpi_value:
+    path: chart:kpi.style.value
+    label: kpi style.value
+    keys: []
+  s_kpi_support:
+    path: chart:kpi.style.support
+    label: kpi style.support
+    keys: [tone]
+  s_table:
+    path: chart:table.style
+    label: a table's style
+    keys: [wrap, header, row, pagination, column_defaults, columns, row_numbers]
+  s_table_header:
+    path: chart:table.style.header
+    label: table style.header
+    keys: []
+  s_table_row:
+    path: chart:table.style.row
+    label: table style.row
+    keys: [height, stripe, role]
+  s_pagination:
+    path: chart:table.style.pagination
+    label: table style.pagination
+    keys: []
+  s_column:
+    path: chart:table.style.columns
+    label: table style.columns.<column>
+    keys: [visible, label, format, align, width, link, background, font, scale, glyph, spark]
+  s_cond_rule:
+    path: chart:table.conditional_formatting.when
+    label: conditional_formatting.<column>.when[], on a table or kpi
+    keys: []
+  s_font:
+    path: StylePatch.font
+    label: style.font
+    keys: [family, size, weight, color]
+  s_fonts:
+    path: StylePatch.fonts
+    label: style.fonts.<name>
+    keys: [family, size, weight, color]
+  s_footer:
+    path: StylePatch.footer
+    label: style.footer
+    keys: [visible, text, divider]
+  s_formats:
+    path: StylePatch.formats
+    label: style.formats.<name>
+    keys: [spec, prefix, suffix, notation]
+    detail: [spec, notation]
+  s_variables:
+    path: StylePatch.variables
+    label: style.variables
+    keys: []
+
+  # --- themes ---
+  theme_fields:
+    path: AuthoredBoard
+    label: board root or nested board
+    keys: [extends]
+    hide: [theme]
+    also: false
+    detail: [extends]
+    also: false
+  theme_style:
+    path: StylePatch
+    label: style
+    keys: [palettes]
+    detail: [palettes]
+    also: false
+  kpi_support:
+    path: chart:kpi.support
+    label: kpi support
+    keys: [value, label, glyph]
+
+rules:
+  cond_rule:
+    path: chart:table.conditional_formatting.when
+    only: ["exactly one condition operator", "glyph_color requires glyph"]
+  board:
+    path: AuthoredBoard
+    only: [one layout type]
+  bar:
+    path: chart:bar
+    only: ["x requires a y", "can't be stacked", "multi-metric (y: [...]) charts require"]
+
+chart_types:
+  - {type: bar, keys: [x, y, color, y_start, layers]}
+  - {type: line, keys: [x, y, color, layers]}
+  - {type: area, keys: [x, y, color, layers]}
+  - {type: scatter, keys: [x, y, color, size, shape, layers]}
+  - {type: histogram, keys: [x, color]}
+  - {type: heatmap, keys: [x, y, color]}
+  - {type: kpi, keys: [value, label, glyph, support, background, conditional_formatting]}
+  - {type: table, keys: [rows, columns, values, conditional_formatting]}
+  - {type: callout, keys: [message, title]}
+
+commands:
+  - {cmd: query, line: "dct query", pick: [[0, 0]]}
+  - {cmd: query, line: "dct query SOURCE", pick: [[1, 0], [1, 1]]}
+  - {cmd: query, line: "dct query SOURCE 'SQL'", pick: [[1, 2], [2, 2]]}
+  - {cmd: render, args: [boards], flags: ["--format text"], option: "--format"}
+  - {cmd: serve, flags: ["--detach", "--port 8080"], option: "--detach"}
+  - {cmd: serve, flags: ["--stop", "--port 8080"], option: "--stop"}
+
+init_flags: [--yes, --no-mcp, --no-vscode, --no-cursor]
+
+source_types: [postgres, snowflake, bigquery, databricks]
+
+formats:
+  - sample: 1234567.891
+    names: [currency, currency_whole, currency_full, currency_compact, compact, number, number_full, integer, id, delta]
+  - sample: 2025
+    names: [year]
+  - sample: 0.2534
+    names: [percent, percent_whole, percent_delta]
+
+helpers:
+  filter: [none]
+  filter_date_range: [date_range]
+
+themes: [clarity, paper, vivid, neon, stark]
+
+codes:
+  style: [ERR-WRONG-SHAPE, ERR-LEGEND-ALIGN-UNSUPPORTED, ERR-AXIS-COLUMN-REQUIRES-TABULAR-FONT, ERR-GAP-FILL-BUCKET-COLLISION]
+  theme: [ERR-EXTENDS-UNRESOLVED, ERR-COLOR-TOKEN, ERR-CATEGORY-COLOR-PALETTE-EXHAUSTED]
+  common: [ERR-YAML-SYNTAX, ERR-BAR-Y-NOT-NUMERIC, WARN-MISSING-JOIN-PREDICATE, WARN-DATE-AS-TEXT, WARN-REDUNDANT-ENCODING, WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER, ERR-PERCENT-RANGE, ERR-LABEL-FORMAT-AXIS-MISMATCH, WARN-TABLE-CRAMPED]

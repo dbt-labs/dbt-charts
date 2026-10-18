@@ -16,17 +16,30 @@ if TYPE_CHECKING:
 
 @with_project
 def search_command(
-    query: str,
+    text: str | None,
     *,
     project: Project,
+    kind: str = "boards",
+    path: str | None = None,
     json_output: bool = False,
     limit: int = 10,
 ) -> None:
-    """Search dashboards by keyword with ranked results."""
-    from dbt_charts.agent_api import ProjectSession
+    """Search the project's boards, or its meta, model, and config files."""
+    from pydantic import ValidationError
 
-    with ProjectSession.from_project(project) as project_session:
-        result = project_session.search_boards(query, limit=limit)
+    from dbt_charts.agent_api.argument_errors import format_argument_error
+    from dbt_charts.agent_api.search import SearchFilesArgs, search_files
+
+    try:
+        args = SearchFilesArgs.model_validate(
+            {"kind": kind, "path": path, "text": text}
+        )
+    except ValidationError as exc:
+        typer.echo(format_argument_error("search", exc), err=True)
+        raise typer.Exit(2) from exc
+    result = search_files(
+        project, kind=args.kind, path=args.path, text=args.text, limit=limit
+    )
 
     if json_output:
         typer.echo(result.model_dump_json(indent=2, exclude_none=True))
@@ -40,7 +53,7 @@ def search_command(
 
 
 def _print_rich(result: SearchResult) -> None:
-    from dbt_charts.agent_api.search import BoardMatch
+    from dbt_charts.agent_api.search import BoardListing, BoardMatch, FileHit
 
     if not result.success:
         print_diagnostics(result.errors)
@@ -51,6 +64,12 @@ def _print_rich(result: SearchResult) -> None:
         return
 
     for hit in result.results:
+        if isinstance(hit, FileHit):
+            typer.echo(f"  {hit.file_path}:{hit.line}: {hit.text}")
+            continue
+        if not isinstance(hit, BoardListing):
+            typer.echo(f"  {hit.file_path}")
+            continue
         score = f"[{hit.match_score:.2f}] " if isinstance(hit, BoardMatch) else ""
         typer.echo(f"  {score}{hit.title}  {hit.file_path}")
         if hit.summary:

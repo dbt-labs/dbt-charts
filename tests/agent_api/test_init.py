@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 from dbt_charts.agent_api.init import init_project
 
@@ -81,3 +82,13 @@ def test_non_mapping_dbt_project_adds_no_hint_and_does_not_crash(
     result = init_project(tmp_path)
 
     assert not any("dbt-charts" in hint for hint in result.hints)
+
+
+def test_init_leaves_data_files_out_of_the_config(tmp_path: Path) -> None:
+    (tmp_path / "cars.duckdb").write_bytes(b"")
+    (tmp_path / "cars.csv").write_text("a\n1\n")
+
+    init_project(tmp_path)
+
+    config = yaml.safe_load((tmp_path / "dbt_charts.yml").read_text())
+    assert not config or "sources" not in config

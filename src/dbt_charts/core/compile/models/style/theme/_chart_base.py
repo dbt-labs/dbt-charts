@@ -97,7 +97,9 @@ class _ChartStyleBase(BaseModel):
     # break the self-loop the InheritSlot would otherwise create at the top of
     # the chain.
     padding: Annotated[PaddingStyle, InheritSlot(from_path="Style.charts.padding")] = (
-        Field(description="Per-chart-type padding override; 4 sides in pixels.")
+        Field(
+            description="Padding as {top, right, bottom, left} in pixels, never one number."
+        )
     )
 
     # Cascade-managed sentinels — chart-local paint and typography overrides.
@@ -298,11 +300,11 @@ class _CartesianChartStyle(
     )
     axis_x: Annotated[AxisXStylePatch | None, SkipInheritSlots()] = Field(
         default=None,
-        description="Per-chart-type x-axis style overrides; None inherits the global axis_x at render.",
+        description="The category or time axis, in either orientation (a horizontal bar's category axis is still `axis_x`). Inherits the global axis_x.",
     )
     axis_y: Annotated[AxisYStylePatch | None, SkipInheritSlots()] = Field(
         default=None,
-        description="Per-chart-type y-axis style overrides; None inherits the global axis_y at render.",
+        description="The measure axis, in either orientation: its number format goes here, a horizontal bar's too. Inherits the global axis_y.",
     )
     axis_band: Annotated[BandAxisStylePatch | None, SkipInheritSlots()] = Field(
         default=None,

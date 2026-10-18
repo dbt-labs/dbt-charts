@@ -15,6 +15,7 @@ pub mod families;
 pub mod font_normalize;
 pub mod frame;
 pub mod href;
+pub mod js_date;
 pub mod label_template;
 pub mod number_locale;
 pub mod prose;

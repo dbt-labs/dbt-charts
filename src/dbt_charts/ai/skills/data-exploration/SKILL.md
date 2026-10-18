@@ -14,16 +14,19 @@ metadata:
 
 # Data Exploration
 
-Explore the schema with your own SQL through `{{ s_execute_query }}` before
+Explore the schema with your own SQL through `{{ s_execute_sql }}` before
 writing analysis queries. The warehouse's metadata views are the source of
 truth: discover the real data vocabulary, then verify only the small pieces
 needed to answer the question.
 
 ## Workflow
 
-1. **Know your sources.** The configured data sources (name + dialect) are
-   listed in your context. Source names are project-configured names (e.g.
-   `db`), not adapter types.
+1. **Know your sources.** {{#if_tool write_file}}The configured data sources
+   (name + dialect) are listed in your context. {{/if_tool}}A result that
+   carries a project block lists that project's `sources`, each with its name
+   and dialect (or type, when the warehouse is only known at run time);
+   `default: true` marks the one SQL runs on when you omit `source`. Source
+   names are project-configured names (e.g. `db`), not adapter types.
 2. **List what exists — scoped, not everything.** Query the dialect's metadata
    views. On most warehouses:
 
@@ -56,7 +59,7 @@ needed to answer the question.
    WHERE LOWER(column_name) LIKE '%customer%' OR LOWER(table_name) LIKE '%customer%'
    ```
 
-5. **Sample only after narrowing candidates.** Use `{{ s_execute_query }}` on
+5. **Sample only after narrowing candidates.** Use `{{ s_execute_sql }}` on
    likely tables to validate cardinality, inspect example values (`SELECT
    DISTINCT` before filtering on a value), test joins, or answer a concrete
    data question.
@@ -80,7 +83,7 @@ metadata search first, then explain why they match.
 Keep metadata queries scoped: filter by schema or table instead of dumping
 every column in the warehouse into one result.
 
-When sampling with `{{ s_execute_query }}`:
+When sampling with `{{ s_execute_sql }}`:
 
 - select only the columns needed for the question
 - use small limits for row samples

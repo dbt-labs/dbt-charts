@@ -456,6 +456,56 @@ class TestValidateSelectOnlyDefer:
         assert exc_info.value.fields["sql_start_col"] == position.start_col
         assert exc_info.value.fields["sql_end_col"] == position.end_col
 
+    def test_unclosed_cte_paren_is_named(self) -> None:
+        # The author's CTE `s AS (` is never closed, so the parser reports
+        # "Expecting )" far from the cause. DuckDB rejects this SQL too.
+        sql = (
+            "WITH s AS (SELECT * FROM (SELECT a, b FROM t) u "
+            "UNPIVOT (v FOR k IN (a, b)), n AS (SELECT 1 AS m) "
+            "SELECT * FROM s JOIN n ON TRUE"
+        )
+        with pytest.raises(UnparseableSqlError) as exc_info:
+            validate_select_only(sql, dialect="duckdb")
+        assert "has 5 '(' but 4 ')'" in str(exc_info.value)
+        assert "missing its closing ')'" in str(exc_info.value)
+
+    def test_extra_closing_paren_is_named(self) -> None:
+        with pytest.raises(UnparseableSqlError) as exc_info:
+            validate_select_only("SELECT (1 + 2)) AS x", dialect="duckdb")
+        assert "has 1 '(' but 2 ')'" in str(exc_info.value)
+        assert "extra ')'" in str(exc_info.value)
+
+    def test_missing_comma_between_ctes_is_named(self) -> None:
+        sql = "WITH a AS (SELECT 1 AS x) b AS (SELECT 2 AS y) SELECT * FROM a, b"
+        with pytest.raises(UnparseableSqlError) as exc_info:
+            validate_select_only(sql, dialect="duckdb")
+        assert "needs a comma between CTEs" in str(exc_info.value)
+
+    def test_a_pivot_statement_cannot_launder_a_write(self) -> None:
+        with pytest.raises(MutatingSqlError):
+            validate_select_only(
+                "CREATE TABLE p AS PIVOT (SELECT 1 AS a, 2 AS b) ON b USING sum(a)",
+                dialect="duckdb",
+            )
+
+    def test_balanced_parse_failure_adds_no_paren_advice(self) -> None:
+        with pytest.raises(UnparseableSqlError) as exc_info:
+            validate_select_only("WITHasdf x AS (SELECT 1) SELECT * FROM x")
+        assert "'(' but" not in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT * FROM (SELECT 1 AS a, 2 AS b) u UNPIVOT (v FOR k IN (a, b))",
+            "UNPIVOT (SELECT 1 AS a, 2 AS b) ON a, b INTO NAME k VALUE v",
+            "SELECT * FROM (SELECT 1 AS a, 2 AS b) PIVOT (sum(a) FOR b IN (2))",
+            "PIVOT (SELECT 1 AS a, 2 AS b) ON b USING sum(a)",
+            "WITH x AS (SELECT 1 AS a, 2 AS b) UNPIVOT x ON a, b",
+        ],
+    )
+    def test_duckdb_pivot_forms_the_warehouse_runs_parse(self, sql: str) -> None:
+        validate_select_only(sql, dialect="duckdb")
+
     def test_non_sqlglot_unparseable_error_has_no_position(self) -> None:
         # The jinja-node bail-out path (a plain str cause) has no sqlglot
         # position to capture — must not fabricate one.
@@ -723,3 +773,11 @@ def test_lakecompute_parses_as_duckdb() -> None:
     from dbt_charts.core.compile.sql_guard import sqlglot_dialect
 
     assert sqlglot_dialect("lakecompute") == "duckdb"
+
+
+def test_unparseable_sql_fix_names_reserved_word_aliases_first() -> None:
+    from dbt_charts.core.diagnostics.codes_execute import ERR_UNPARSEABLE_SQL
+
+    fix = ERR_UNPARSEABLE_SQL.fix_template
+    assert fix is not None
+    assert fix.index("reserved word") < fix.index("unclosed `(`")

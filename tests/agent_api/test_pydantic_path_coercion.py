@@ -51,9 +51,9 @@ class TestMcpSchemaFormat:
         ), f"schema should carry format=path, got: {prop}"
 
     def test_execute_query_schema_board_path_format(self) -> None:
-        from dbt_charts.ai.tool_schemas import EXECUTE_QUERY
+        from dbt_charts.ai.tool_schemas import EXECUTE_SQL
 
-        schema = EXECUTE_QUERY["input_schema"]
+        schema = EXECUTE_SQL["input_schema"]
         self._assert_path_format(schema["properties"]["board"])
 
 
@@ -165,15 +165,15 @@ class TestDispatchPathContract:
     def test_execute_query_dispatch_accepts_string_board(self, tmp_path: Path) -> None:
         dispatch, ctx = self._ctx(tmp_path)
         result = dispatch(
-            "execute_query",
+            "execute_sql",
             {"query": "revenue", "board": "charts/x.yml"},
             context=ctx,
         )
         assert isinstance(result, dict)
         assert result.get("success") is False
 
-    def test_search_boards_dispatch_takes_query_only(self, tmp_path: Path) -> None:
+    def test_search_files_dispatch_takes_text_only(self, tmp_path: Path) -> None:
         dispatch, ctx = self._ctx(tmp_path)
-        result = dispatch("search_boards", {"query": "revenue"}, context=ctx)
+        result = dispatch("search_files", {"text": "revenue"}, context=ctx)
         assert isinstance(result, dict)
         assert result.get("success") is True

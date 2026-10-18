@@ -35,6 +35,7 @@ import sqlglot
 import sqlglot.errors
 import sqlglot.expressions as exp
 from sqlglot.dialects.dialect import Dialect as SqlglotDialect
+from sqlglot.tokens import TokenType
 
 from dbt_charts.core.compile.config import get_execution_config
 from dbt_charts.core.diagnostics.execution import (
@@ -97,6 +98,9 @@ _ALLOWED_QUERY_NODES: frozenset[type[exp.Expression]] = frozenset(
         exp.Except,
         exp.Describe,
         exp.Show,
+        # DuckDB's PIVOT / UNPIVOT statement forms (`UNPIVOT t ON a, b`) are
+        # SELECT sugar; the descendant scan still bans any write inside them.
+        exp.Pivot,
     }
 )
 
@@ -370,6 +374,57 @@ def as_expressions(nodes: Iterable[exp.Expr | None]) -> list[exp.Expression]:
     return result
 
 
+_DOUBLE_ALIAS_RE = re.compile(r"\)\s+AS\s+\w+\s+AS\s+(\w+)", re.IGNORECASE)
+
+
+def double_alias_advice(sql: str) -> str | None:
+    """The fix for ``) AS name AS other``: a ``{{ queries.x }}`` inlines as
+    ``(...) AS x`` already, so an alias written after it is a second one."""
+    match = _DOUBLE_ALIAS_RE.search(sql)
+    if match is None:
+        return None
+    return (
+        "A `{{ queries.x }}` reference already carries its alias: delete the "
+        f"`AS {match[1]}` you wrote after it."
+    )
+
+
+def _parse_failure_advice(skeleton: str, dialect: str | None) -> str | None:
+    """The authoring slip behind a parse failure, when one is recognizable.
+
+    sqlglot reports an unclosed parenthesis or a missing comma between CTEs at
+    the first token it cannot place, often far from the cause. Counting tokens,
+    not characters, keeps parentheses inside strings and comments out of it.
+    """
+    try:
+        tokens = sqlglot.tokenize(skeleton, read=sqlglot_dialect(dialect))
+    except sqlglot.errors.TokenError:
+        return None
+    if (advice := double_alias_advice(skeleton)) is not None:
+        return advice
+    opens = sum(token.token_type == TokenType.L_PAREN for token in tokens)
+    closes = sum(token.token_type == TokenType.R_PAREN for token in tokens)
+    if opens != closes:
+        fix = (
+            "a CTE or subquery is missing its closing ')'"
+            if opens > closes
+            else "there is an extra ')'"
+        )
+        return f"The SQL has {opens} '(' but {closes} ')': {fix}."
+    depth = 0
+    for i, token in enumerate(tokens):
+        depth += token.token_type == TokenType.L_PAREN
+        depth -= token.token_type == TokenType.R_PAREN
+        if (
+            depth == 0
+            and token.token_type == TokenType.R_PAREN
+            and [t.token_type for t in tokens[i + 2 : i + 4]]
+            == [TokenType.ALIAS, TokenType.L_PAREN]
+        ):
+            return "A WITH clause needs a comma between CTEs: `), name AS (`."
+    return None
+
+
 def _parse(
     skeleton: str, dialect: str | None, rebuild_single_branch: Callable[[], str]
 ) -> list[exp.Expression]:
@@ -386,7 +441,11 @@ def _parse(
             if _branch_join_is_the_artifact(rebuild_single_branch, dialect)
             else _sqlglot_error_position(exc, skeleton)
         )
-        raise UnparseableSqlError(exc, sql_position=position) from exc
+        raise UnparseableSqlError(
+            exc,
+            sql_position=position,
+            advice=_parse_failure_advice(skeleton, dialect),
+        ) from exc
     return as_expressions(parsed)
 
 

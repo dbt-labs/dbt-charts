@@ -45,7 +45,7 @@ class TestSurfaceSelection:
             ("{{ s_render_board }}", "cli", "dct render"),
             # Regression: the CLI side uses positional board context.
             ("{{ s_execute_named_query }}", "cli", "dct query BOARD.yml QUERY"),
-            ("{{ s_execute_named_query }}", "tool", "execute_query(board, query)"),
+            ("{{ s_execute_named_query }}", "tool", "execute_sql(board, query)"),
         ],
     )
     def test_s_macro_picks_correct_side(
@@ -109,18 +109,18 @@ class TestToolAvailabilityGate:
 
     def test_drops_block_when_tool_unavailable(self) -> None:
         body = (
-            "Before.\n{{#if_tool search_boards}}Call search_boards.{{/if_tool}}\nAfter."
+            "Before.\n{{#if_tool search_files}}Call search_files.{{/if_tool}}\nAfter."
         )
         out = render_skill_body(body, surface="tool", available_tools={"render_board"})
-        assert "search_boards" not in out
+        assert "search_files" not in out
         assert "Before." in out
         assert "After." in out
 
     def test_keeps_all_blocks_when_available_tools_is_none(self) -> None:
         """available_tools=None (the default) preserves CLI/MCP behavior — nothing gated."""
-        body = "{{#if_tool search_boards}}Call search_boards.{{/if_tool}}"
+        body = "{{#if_tool search_files}}Call search_files.{{/if_tool}}"
         out = render_skill_body(body, surface="tool")
-        assert "Call search_boards." in out
+        assert "Call search_files." in out
 
 
 class TestPassthrough:
@@ -176,13 +176,23 @@ class TestNoBareInstallSetNameInSkillBodies:
     def test_no_bare_install_set_name_outside_guide_uri(self) -> None:
         from dbt_charts.agent_api.skill_install import skills_for_file_install
 
-        install_names = sorted(
-            (s.name for s in skills_for_file_install()), key=len, reverse=True
+        # `chart` and `styling` are ordinary words in every skill's prose, so
+        # they only count in a reference position: a lookup call, the CLI
+        # command, an install directory, or "the <name> skill".
+        ordinary = {"chart", "styling"}
+        names = sorted(
+            (s.name for s in skills_for_file_install()),
+            key=len,
+            reverse=True,
+        )
+        rare = [n for n in names if n not in ordinary]
+        reference = "|".join(
+            rf"get_skill\(['\"]{n}['\"]\)|dct skills {n}\b|dct-{n}\b|the {n} skill"
+            for n in sorted(ordinary)
         )
         name_re = re.compile(
-            r"(?<![\w-])("
-            + "|".join(re.escape(n) for n in install_names)
-            + r")(?![\w-])"
+            r"(?<![\w-])(" + "|".join(re.escape(n) for n in rare) + r")(?![\w-])"
+            "|" + reference
         )
         skills_root = files("dbt_charts.ai.skills")
         offenders: list[str] = []
@@ -199,3 +209,19 @@ class TestNoBareInstallSetNameInSkillBodies:
                 if name_re.search(line):
                     offenders.append(f"{skill_md}: {line.strip()}")
         assert offenders == []
+
+
+class TestIfSurface:
+    BODY = (
+        "a{{#if_surface cli}}CLI{{/if_surface}}b"
+        "{{#if_surface tool}}TOOL{{/if_surface}}c"
+    )
+
+    def test_tool_keeps_only_tool_blocks(self) -> None:
+        assert render_skill_body(self.BODY, surface="tool") == "abTOOLc"
+
+    def test_cli_keeps_cli_blocks(self) -> None:
+        assert render_skill_body(self.BODY, surface="cli") == "aCLIbc"
+
+    def test_install_keeps_cli_blocks(self) -> None:
+        assert render_skill_body(self.BODY, surface="install") == "aCLIbc"

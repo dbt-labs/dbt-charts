@@ -174,7 +174,7 @@ class TestSharedPromptComposition:
 
         assert "Data Exploration" in prompt
         assert "INFORMATION_SCHEMA" in prompt
-        assert "execute_query" in prompt
+        assert "execute_sql" in prompt
         assert "{{ s_" not in prompt
 
     def test_data_exploration_skill_preserves_board_template_tokens(self) -> None:
@@ -216,20 +216,20 @@ class TestSharedPromptComposition:
 class TestPromptGatedByAvailableTools:
     """build_dbt_charts_system_prompt drops prose for tools the surface lacks."""
 
-    def test_playground_tool_set_omits_search_boards(self) -> None:
+    def test_playground_tool_set_omits_search_files(self) -> None:
         prompt = build_dbt_charts_system_prompt(
             "dashboard_design",
-            available_tools={"render_board", "execute_query"},
+            available_tools={"render_board", "execute_sql"},
         )
 
-        assert "search_boards" not in prompt
+        assert "search_files" not in prompt
         assert "render_board" in prompt
 
-    def test_default_available_tools_none_keeps_search_boards(self) -> None:
+    def test_default_available_tools_none_keeps_search_files(self) -> None:
         """No available_tools declared (CLI/MCP/full chat) — nothing is gated."""
         prompt = build_dbt_charts_system_prompt("dashboard_design")
 
-        assert "search_boards" in prompt
+        assert "search_files" in prompt
 
 
 class TestAnalystRunbookSkill:
@@ -246,7 +246,7 @@ class TestAnalystRunbookSkill:
         prompt = load_shared_prompt("analyst-runbook", surface="tool")
 
         assert "triage" in prompt.lower()
-        assert "search_boards" in prompt  # reuse-first, mandatory step
+        assert "search_files" in prompt  # reuse-first, mandatory step
 
     def test_runbook_verifies_the_answer_not_only_the_artifact(self) -> None:
         prompt = load_shared_prompt("analyst-runbook", surface="tool")

@@ -9,13 +9,18 @@ from typing import TYPE_CHECKING, Any
 import typer
 from rich.table import Table
 
-from dbt_charts.agent_api import Project
 from dbt_charts.cli._console import dct_console
 from dbt_charts.cli._error_format import print_diagnostics
+from dbt_charts.cli._json_output import print_json_result
 from dbt_charts.cli._project import with_project
+from dbt_charts.cli.filesystem_project import FilesystemProject
 
 if TYPE_CHECKING:
-    from dbt_charts.agent_api.describe import DescribeBoardResult, TemplateDescription
+    from dbt_charts.agent_api.describe import (
+        DescribeBoardResult,
+        ProjectOverview,
+        TemplateDescription,
+    )
 
 console = dct_console()
 
@@ -24,12 +29,22 @@ console = dct_console()
 def describe_command(
     paths: list[Path],
     *,
-    project: Project,
+    project: FilesystemProject,
+    all_charts: bool = False,
     chart: str | None = None,
     json_output: bool = False,
 ) -> None:
-    """Describe the structure of one or more board files, or one chart."""
+    """Describe the project (no paths), or the structure of board files or one chart."""
     from dbt_charts.agent_api import ProjectSession
+    from dbt_charts.agent_api.describe import describe_project
+
+    if not paths:
+        overview = describe_project(project, include_charts=all_charts)
+        if json_output:
+            print_json_result(overview)
+        else:
+            _print_overview(overview, project.root)
+        return
 
     with ProjectSession.from_project(project) as project_session:
         if chart is None:
@@ -38,6 +53,47 @@ def describe_command(
             (path,) = paths
             results = [project_session.describe_chart(path, chart)]
     _emit(results, json_output=json_output)
+
+
+def _print_overview(overview: ProjectOverview, root: Path) -> None:
+    # Plain echo, not rich: paths and SQL names must not wrap at 80 columns or
+    # be read as markup, and the reader is usually an agent.
+    echo = typer.echo
+    echo(f"Project: {root}")
+    echo(f"Config: {overview.config_file or 'none'}")
+    if overview.sources_error:
+        echo(f"Sources unreadable: {overview.sources_error}")
+    if overview.configured_sources:
+        names = ", ".join(s.name for s in overview.configured_sources)
+        echo(f"\nSources (write the name as `source:`): {names}")
+    if overview.data_files:
+        echo(
+            "\nData files (write the path as `source:`): "
+            + ", ".join(overview.data_files)
+        )
+    for rel, block in overview.database_files.items():
+        echo(f"\nDatabase file {rel}; declare it in dbt_charts.yml:\n{block.rstrip()}")
+    echo(f"\nBoards ({len(overview.boards)}):")
+    for b in overview.boards:
+        echo(f"  {b.path}  {b.url}  {b.title or '(does not compile)'}")
+        for c in b.charts:
+            query = "(inline)" if c.inline else c.query
+            parts = [c.name, f"type={c.type}"]
+            if query:
+                parts.append(f"query={query}")
+            if c.title:
+                parts.append(f"title={c.title}")
+            echo("    " + "  ".join(parts))
+    if not overview.tables:
+        echo("\nTables read: none")
+    else:
+        echo("\nTables read:")
+    for t in overview.tables:
+        echo(f"  {t.table}: {', '.join(t.boards)}")
+    if overview.incomplete:
+        echo("\nIncomplete, so the table list may miss reads from:")
+        for i in overview.incomplete:
+            echo(f"  {i.board}: {i.reason}")
 
 
 def _print_template(path: str, template: TemplateDescription) -> None:

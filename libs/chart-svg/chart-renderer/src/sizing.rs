@@ -964,36 +964,23 @@ pub struct SizingCtx<'a> {
 
 /// A CHEAP raw-JSON gate for a refusal site that cannot afford a full
 /// resolved-chart deserialize. It calls `families::line::shape` itself
-/// rather than re-deriving the decision: a hand-copied gate drifts (a
-/// legend condition `shape()` never checks, a wrong y-axis field path)
-/// and lets a real RailConcat chart through unrefused. `y_on_right`/
-/// `show_rail` read the IDENTICAL field paths `render_line_panel` does
-/// (`style.axis_y.position`; `color.is_some() && style.endpoint_labels.
-/// visible`). `has_support_table`/`composed_strip`/`legend_active` need
-/// the full resolved chart; passing `false` for all three forces
-/// `shape`'s own `!has_support_table || (composed_strip && ...)` term
-/// TRUE (its most permissive reading), so this can only WIDEN which
-/// charts count as RailConcat-eligible, never narrow past a real one.
+/// rather than re-deriving the decision, reading the IDENTICAL field path
+/// `render_line_panel` does (`color.is_some() && style.endpoint_labels.
+/// visible`).
 fn railconcat_eligible_json(chart: &Value) -> bool {
     let chart_type = chart.get("chart_type").and_then(Value::as_str);
     if !matches!(chart_type, Some("line") | Some("area")) {
         return false;
     }
-    let style = chart.get("style");
-    let y_on_right = style
-        .and_then(|s| s.get("axis_y"))
-        .and_then(|a| a.get("position"))
-        .and_then(Value::as_str)
-        == Some("right");
     let is_multi = chart.get("color").is_some_and(|c| !c.is_null());
     let show_rail = is_multi
-        && style
+        && chart
+            .get("style")
             .and_then(|s| s.get("endpoint_labels"))
             .and_then(|e| e.get("visible"))
             .and_then(Value::as_bool)
             .unwrap_or(false);
-    crate::families::line::shape(y_on_right, show_rail, false, false)
-        == crate::families::line::Shape::RailConcat
+    crate::families::line::shape(show_rail) == crate::families::line::Shape::RailConcat
 }
 
 /// One layout item's resolved height, at a given width — the single entry

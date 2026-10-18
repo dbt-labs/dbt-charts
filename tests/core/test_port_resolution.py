@@ -8,6 +8,7 @@ import pytest
 
 from dbt_charts.core.serve.port import (
     find_available_port,
+    is_port_available,
     port_from_project_dir,
     resolve_port,
 )
@@ -65,6 +66,9 @@ def test_find_available_port_skips_occupied():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind(("localhost", 0))
+        # Listen like a real server: Linux lets our SO_REUSEADDR server share a
+        # port with a socket that is bound but not listening.
+        s.listen(1)
         occupied_port = s.getsockname()[1]
         # While occupied, find_available_port should skip it
         result = find_available_port(occupied_port)
@@ -135,6 +139,9 @@ def test_resolve_port_auto_increment_on_occupied(tmp_path):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind(("localhost", expected_port))
+        # Listen like a real server: Linux lets our SO_REUSEADDR server share a
+        # port with a socket that is bound but not listening.
+        s.listen(1)
         port = resolve_port(project_dir=tmp_path)
         assert port != expected_port
         assert port > expected_port
@@ -175,3 +182,31 @@ def test_resolve_port_explicit_not_auto_incremented(tmp_path):
 # Sweeping every shipped example project's port is intentionally not
 # covered here — most of them stay at the monorepo examples/ root, outside
 # dbt-charts/.
+
+
+@pytest.mark.windows
+def test_is_port_available_after_server_closed_with_time_wait():
+    """A port whose last server just closed (connections in TIME_WAIT) can be bound
+    again, as the server itself binds it with SO_REUSEADDR."""
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # as uvicorn does
+    server.bind(("127.0.0.1", 0))
+    port = server.getsockname()[1]
+    server.listen(1)
+    client = socket.create_connection(("127.0.0.1", port))
+    conn, _ = server.accept()
+    conn.close()  # the server side closes first, so its end sits in TIME_WAIT
+    server.close()
+    client.close()
+    assert is_port_available(port, "127.0.0.1")
+
+
+@pytest.mark.windows
+@pytest.mark.parametrize("listen_on", ["127.0.0.1", "0.0.0.0"])  # noqa: S104
+def test_is_port_available_false_while_listening(listen_on: str):
+    """A wildcard listener counts too: with SO_REUSEADDR, BSD/macOS let a
+    127.0.0.1 bind succeed beside it."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        server.bind((listen_on, 0))
+        server.listen(1)
+        assert not is_port_available(server.getsockname()[1], "127.0.0.1")

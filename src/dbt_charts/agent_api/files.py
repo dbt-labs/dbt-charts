@@ -1,9 +1,9 @@
 """General project-file tools for the chat agent.
 
-Claude-Code-style primitives — read, write, edit, glob, grep — that let an
+Claude-Code-style primitives — read, write, edit, move, delete — that let an
 agent author and save boards directly, rather than via a domain-specific
 "write a dashboard" verb. The agent composes these with the typed dct tools
-(``render_board``, ``schema``, ``execute_query``).
+(``render_board``, ``schema``, ``execute_sql``).
 
 Every path is resolved against and confined to the project root. A path that
 escapes the root (``..`` traversal, absolute path outside, symlink out) is
@@ -12,33 +12,24 @@ refused — these tools never touch the wider filesystem.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterator
+from collections.abc import Collection
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.agent_api._link_scan import LinkHit, board_slug, rewrite_links
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.project import CHARTS_SUBDIR, Project
-
-# Cap grep/glob payloads — read_file returns full content (model must handle size).
-MAX_GREP_MATCHES = 200
-MAX_GLOB_MATCHES = 500
-
-# Discovery defaults to the charts subtree: dashboards are the common target, and
-# grep scans every byte in scope — on a connected repo the models tree dwarfs
-# charts/. An explicit pattern/glob widens to any project path.
-DEFAULT_FILES_GLOB = f"{CHARTS_SUBDIR}/**/*"
+from dbt_charts.core.project import Project
 
 # Errors a backing-store read can raise for a single file that should be skipped
 # rather than aborting a whole read: not-a-text-file, gone, or unreadable. Single-file
-# reads only — glob/grep skip unreadable files inside ProjectFileQueries itself.
+# reads only — search skips unreadable files inside ProjectFileQueries itself.
 _UNREADABLE_FILE = (UnicodeDecodeError, OSError, ExecutionError)
 
 
 class ReadFileArgs(BaseModel):
     """Read a UTF-8 text file from the project. Path is root-relative (includes
     the charts/ prefix for a dashboard, e.g. 'charts/looker/x.yaml') — not the
-    board-relative form. If the path came from search_boards, use the hit's
+    board-relative form. If the path came from search_files, use the hit's
     file_path, not board_path."""
 
     path: str = Field(description="File path relative to the project root.")
@@ -51,7 +42,7 @@ class WriteFileArgs(BaseModel):
     it — you cannot preserve what you have not seen. To change
     part of an existing file, prefer edit_file. Path is root-relative (includes the
     charts/ prefix for a dashboard) and may not escape it. If the path came
-    from search_boards, use the hit's file_path, not board_path.
+    from search_files, use the hit's file_path, not board_path.
     """
 
     path: str = Field(description="File path relative to the project root.")
@@ -64,7 +55,7 @@ class EditFileArgs(BaseModel):
     Fails (writing nothing) if old_string is absent or appears more than once —
     include enough surrounding context to make it unique. Path is
     root-relative (includes the charts/ prefix for a dashboard) and may not
-    escape it. If the path came from search_boards, use the hit's
+    escape it. If the path came from search_files, use the hit's
     file_path, not board_path.
     """
 
@@ -97,42 +88,6 @@ class DeleteFileArgs(BaseModel):
     the project root and may not escape it."""
 
     path: str = Field(description="File path relative to the project root.")
-
-
-class GlobFilesArgs(BaseModel):
-    """List files matching a glob pattern (e.g. 'charts/*.yml').
-
-    Omitting the pattern lists the whole charts subtree — the default scope for
-    discovery. Pass an explicit project-root-relative pattern to list other
-    project files (e.g. 'models/**/*.sql' for dbt models). ``*`` matches within
-    a path segment; ``**`` recurses into subdirectories.
-    """
-
-    pattern: str | None = Field(
-        default=None,
-        description=(
-            "Glob pattern relative to the project root. "
-            f"Omit to list all of {CHARTS_SUBDIR}/."
-        ),
-    )
-
-
-class GrepFilesArgs(BaseModel):
-    """Search file contents for a substring, in the charts subtree by default.
-
-    Pass an explicit glob to search other project files (e.g. 'models/**/*.sql'
-    for dbt models, '**/*' for the whole project). Skips build/cache
-    directories (.git, .venv, node_modules, __pycache__, …).
-    """
-
-    pattern: str = Field(description="Substring to search for (case-sensitive).")
-    glob: str | None = Field(
-        default=None,
-        description=(
-            "Glob restricting which files are searched. "
-            f"Omit to search only {CHARTS_SUBDIR}/."
-        ),
-    )
 
 
 class ReadFileResult(BaseModel):
@@ -178,32 +133,6 @@ class DeleteFileResult(BaseModel):
 
     success: bool
     path: str
-    error: str | None = None
-
-
-class GlobResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    success: bool
-    matches: list[str] = Field(default_factory=list)
-    truncated: bool = False
-    error: str | None = None
-
-
-class GrepMatch(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    path: str
-    line_number: int
-    line: str
-
-
-class GrepResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    success: bool
-    matches: list[GrepMatch] = Field(default_factory=list)
-    truncated: bool = False
     error: str | None = None
 
 
@@ -378,68 +307,3 @@ def delete_file(path: str, project: Project) -> DeleteFileResult:
     except (ValueError, OSError) as exc:
         return DeleteFileResult(success=False, path=path, error=str(exc))
     return DeleteFileResult(success=True, path=path)
-
-
-def glob_files_paths(pattern: str | None, project: Project) -> Iterator[str]:
-    """Yield relpath for every file matching *pattern*; uncapped.
-
-    ``None`` lists the whole charts subtree (the documented tool default).
-    Hosts with per-principal access control call this directly, filter to
-    visible paths, and only then truncate — filtering an already-capped
-    ``glob_files`` result would produce false empty sets when invisible
-    boards fill the cap.
-    """
-    for pf in project.files.glob(
-        pattern if pattern is not None else DEFAULT_FILES_GLOB
-    ):
-        yield pf.relpath
-
-
-def glob_files(pattern: str | None, project: Project) -> GlobResult:
-    """List files matching *pattern*; ``None`` (the documented tool default)
-    lists the charts subtree. Hosts with per-principal access control must not
-    truncate before filtering — see ``glob_files_paths``."""
-    matches: list[str] = []
-    truncated = False
-    try:
-        for path in glob_files_paths(pattern, project):
-            if len(matches) < MAX_GLOB_MATCHES:
-                matches.append(path)
-            else:
-                truncated = True
-                break
-    except ValueError as exc:
-        return GlobResult(success=False, error=str(exc))
-    return GlobResult(success=True, matches=matches, truncated=truncated)
-
-
-def grep_files_hits(
-    pattern: str, project: Project, glob: str | None = None
-) -> Iterator[GrepMatch]:
-    """Yield every content match for *pattern*; uncapped.
-
-    ``glob=None`` searches only the charts subtree (same default as
-    ``grep_files``). Hosts with per-principal access control call this
-    directly, filter to visible paths, and only then truncate.
-    """
-    resolved_glob = glob if glob is not None else DEFAULT_FILES_GLOB
-    for hit in project.files.grep(pattern, glob=resolved_glob):
-        yield GrepMatch(path=hit.relpath, line_number=hit.line_number, line=hit.line)
-
-
-def grep_files(pattern: str, project: Project, glob: str | None = None) -> GrepResult:
-    """Search file contents for *pattern*; ``glob=None`` (the documented tool
-    default) searches only the charts subtree. Hosts with per-principal access
-    control must not truncate before filtering — see ``grep_files_hits``."""
-    matches: list[GrepMatch] = []
-    truncated = False
-    try:
-        for match in grep_files_hits(pattern, project, glob=glob):
-            if len(matches) < MAX_GREP_MATCHES:
-                matches.append(match)
-            else:
-                truncated = True
-                break
-    except ValueError as exc:
-        return GrepResult(success=False, error=str(exc))
-    return GrepResult(success=True, matches=matches, truncated=truncated)

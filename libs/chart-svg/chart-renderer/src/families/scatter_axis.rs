@@ -21,6 +21,7 @@
 use std::fmt::Write as _;
 
 use crate::common::AxisStyle;
+use crate::families::cartesian::BandGeometry;
 use crate::families::line::{bare_label_anchor, bare_label_layout, flush_align, flush_anchor, tilted_temporal_label};
 use crate::families::temporal::{
     authored_tick_count, bare_temporal_ticks, date_text_day, generic_layout, none_tick_labels, part_band_texts, time_part_ticks, AuthoredTickCadence, build_all_temporal_labels, complete_buckets, days_from_civil, interval_tick_days, interval_tick_labels, native_tick_interval,
@@ -64,6 +65,8 @@ enum Scale {
     Utc { lo: f64, hi: f64, pad: f64 },
     /// A point scale over the sorted distinct buckets.
     Point { domain: Vec<String>, padding: f64 },
+    /// Beside a bar layer, the band scale a bar needs, over a unit range.
+    Band { domain: Vec<String>, geometry: BandGeometry },
 }
 
 impl Scale {
@@ -71,8 +74,17 @@ impl Scale {
     /// `pad` pixels inside a range `pw` wide.
     fn domain_at(&self, pw: f64) -> (f64, f64) {
         match *self {
-            Scale::Utc { lo, hi, pad } => vega_fit::pad_domain((lo, hi), pw, pad),
-            Scale::Point { .. } => unreachable!("only a UTC scale has a day domain"),
+            Scale::Utc { lo, hi, pad } => vega_fit::pad_domain((lo, hi), pw, pad, vega_fit::Bend::Linear),
+            Scale::Point { .. } | Scale::Band { .. } => unreachable!("only a UTC scale has a day domain"),
+        }
+    }
+
+    /// A band axis sits half a pixel left of its band centers (Vega places a band
+    /// tick at `scale(d) + bandwidth / 2` under the axis's own +0.5 shift).
+    fn band_shift(&self, pw: f64) -> f64 {
+        match self {
+            Scale::Band { .. } if pw > 0.0 => 0.5 / pw,
+            _ => 0.0,
         }
     }
 
@@ -85,12 +97,13 @@ impl Scale {
                 if lo == hi { 0.5 } else { (day - lo) / (hi - lo) }
             }
             (Scale::Point { domain, padding }, At::Index(i)) => {
-                // d3's point scale: `step = 1 / max(1, n - 1 + 2·padding)`, the
-                // run centered (`align: 0.5`).
+                // d3's point scale: `step = 1 / max(1, n - 1 + 2·padding)`, the run centered.
                 let n = domain.len() as f64;
                 let step = 1.0 / (n - 1.0 + 2.0 * padding).max(1.0);
                 (1.0 - step * (n - 1.0)) * 0.5 + step * i as f64
             }
+            // A band's mark sits at its band's center.
+            (Scale::Band { geometry, .. }, At::Index(i)) => geometry.edge(i, 0.5),
             _ => unreachable!("a UTC scale positions days, a point scale categories"),
         }
     }
@@ -116,8 +129,9 @@ enum Ticks {
         /// calendar interval.
         cadence: Option<AuthoredTickCadence>,
     },
-    /// Vega's own ticks of the domain, which move with the plot width.
-    Bare(Option<AuthoredTickCadence>),
+    /// Vega's own ticks of the domain, which move with the plot width, each
+    /// painted through the authored time format where there is one.
+    Bare { cadence: Option<AuthoredTickCadence>, time_format: Option<String> },
     /// Vega's own ticks of a time-part scale (`timeUnit: month`, ...), under
     /// the part's own text.
     Part { part: TimePart, count: Option<usize>, time_format: Option<String> },
@@ -168,6 +182,8 @@ pub(crate) struct DateColumn<'a> {
     /// (`filterinvalid.ts:36-55`).
     pub(crate) kept: &'a [String],
     pub(crate) law: XResolution,
+    /// A band-needing layer shares the scale, which makes an ordinal one a band scale.
+    pub(crate) band_layer: bool,
 }
 
 /// `scale.continuous.domain` on a date axis: a pair of ISO dates, or of epoch
@@ -375,7 +391,12 @@ impl TemporalXAxis {
                 let Some(i) = domain.iter().position(|d| *d == col.ladder[tl.domain_idx]) else { continue };
                 labels.push(axis.label(tl, At::Index(i), resolved.format_tu, fonts)?);
             }
-            axis.scale = Scale::Point { domain, padding };
+            axis.scale = if col.band_layer {
+                let n = domain.len();
+                Scale::Band { domain, geometry: BandGeometry::new(n, 0.0, 1.0, padding, padding) }
+            } else {
+                Scale::Point { domain, padding }
+            };
             axis.ticks = Ticks::Fixed(labels);
             return Ok(axis);
         }
@@ -421,7 +442,10 @@ impl TemporalXAxis {
             };
             axis.angle = labels_cfg.angle.unwrap_or(angle);
             axis.parity = if pinned { overlap.is_none() } else { parity };
-            axis.ticks = Ticks::Bare(cadence);
+            axis.ticks = Ticks::Bare {
+                cadence,
+                time_format: labels_cfg.spec().filter(|f| crate::families::temporal::is_time_format(f)).map(str::to_string),
+            };
             return Ok(axis);
         };
 
@@ -501,8 +525,8 @@ impl TemporalXAxis {
         match &self.ticks {
             Ticks::Fixed(labels) => Ok(labels
                 .iter()
-                .map(|l| (self.scale.frac(l.at, pw), l.clone()))
-                .filter(|&(frac, _)| matches!(self.scale, Scale::Point { .. }) || in_range(frac))
+                .map(|l| (self.scale.frac(l.at, pw) - self.scale.band_shift(pw), l.clone()))
+                .filter(|&(frac, _)| matches!(self.scale, Scale::Point { .. } | Scale::Band { .. }) || in_range(frac))
                 .collect()),
             Ticks::Native { ladder, tu, format_tu, visibility_tu, fiscal, time_format, vl_default_labels, cadence } => {
                 let days = native_tick_days(&self.scale, *tu, *cadence, pw)?;
@@ -521,9 +545,10 @@ impl TemporalXAxis {
                     })
                     .collect()
             }
-            Ticks::Bare(cadence) => {
+            Ticks::Bare { cadence, time_format } => {
                 let (lo, hi) = self.scale.domain_at(pw);
-                bare_temporal_ticks((lo, hi), pw, *cadence, None)?
+                let authored = crate::families::temporal::AuthoredTimeFormat::parse("scatter", time_format.as_deref())?;
+                bare_temporal_ticks((lo, hi), pw, *cadence, authored)?
                     .into_iter()
                     .map(|t| self.plain_label(t.text, t.day as f64, t.frac, fonts))
                     .collect()
@@ -536,6 +561,14 @@ impl TemporalXAxis {
                     .map(|t| self.plain_label(t.text, t.at, t.frac, fonts))
                     .collect()
             }
+        }
+    }
+
+    /// Production draws the injected opener ticks of a thinned bar axis whatever
+    /// the theme says of the axis's ticks (`type_inference.py`, `restores_ticks`).
+    pub(crate) fn show_injected_ticks(&mut self) {
+        if matches!(self.ticks, Ticks::Fixed(_)) {
+            self.ticks_visible = true;
         }
     }
 
@@ -556,11 +589,46 @@ impl TemporalXAxis {
                 };
                 self.scale.frac(At::Day(day), pw)
             }
-            Scale::Point { domain, .. } => {
+            Scale::Point { domain, .. } | Scale::Band { domain, .. } => {
                 let i = domain.iter().position(|d| d == date).expect("a kept date is in the point domain");
                 self.scale.frac(At::Index(i), pw)
             }
         }
+    }
+
+    /// A band scale's bandwidth as a fraction of the plot width; `None` on any
+    /// other scale.
+    pub(crate) fn bandwidth(&self) -> Option<f64> {
+        match &self.scale {
+            Scale::Band { geometry, .. } => Some(geometry.bandwidth()),
+            _ => None,
+        }
+    }
+
+    /// The scale fractions of a band scale's first and last band centers.
+    pub(crate) fn band_ends(&self, pw: f64) -> Option<(f64, f64)> {
+        match &self.scale {
+            Scale::Band { domain, .. } => {
+                Some((self.scale.frac(At::Index(0), pw), self.scale.frac(At::Index(domain.len() - 1), pw)))
+            }
+            _ => None,
+        }
+    }
+
+    /// A UTC scale's domain in days at plot width `pw`; `None` on a point scale.
+    pub(crate) fn day_domain(&self, pw: f64) -> Option<(f64, f64)> {
+        matches!(self.scale, Scale::Utc { .. }).then(|| self.scale.domain_at(pw))
+    }
+
+    /// The fractions a `date`'s bucket starts and ends at on a bucketed scale at
+    /// plot width `pw`; `None` on a scale no calendar grain buckets.
+    pub(crate) fn bucket_span(&self, date: &str, pw: f64) -> Option<(f64, f64)> {
+        let tu = self.grain.filter(|_| matches!(self.scale, Scale::Utc { .. }))?;
+        let start = parse_iso_date(&time_unit_floor(date, tu).expect("a kept date parsed at resolve"))
+            .expect("a floored date parses");
+        let end = crate::families::temporal::next_bucket(start, tu);
+        let at = |(y, m, d): (i32, u8, u8)| self.scale.frac(At::Day(days_from_civil(y, m, d) as f64), pw);
+        Some((at(start), at(end)))
     }
 
     /// A point's tooltip x value: the full bucket at the data grain
@@ -590,7 +658,7 @@ impl TemporalXAxis {
         match self.align.as_deref() {
             Some(authored) => authored,
             None if self.angle != 0.0 => l.tilted_align,
-            None if matches!(self.scale, Scale::Point { .. }) => "center",
+            None if matches!(self.scale, Scale::Point { .. } | Scale::Band { .. }) => "center",
             None => flush_align(frac),
         }
     }
@@ -704,7 +772,7 @@ impl TemporalXAxis {
                 continue;
             }
             let anchor = match (&self.align, &self.scale) {
-                (Some(_), _) | (None, Scale::Point { .. }) => self.anchor(l, *frac),
+                (Some(_), _) | (None, Scale::Point { .. } | Scale::Band { .. }) => self.anchor(l, *frac),
                 _ => flush_anchor(*frac),
             };
             let mut row = |y: f64, text: &str| {

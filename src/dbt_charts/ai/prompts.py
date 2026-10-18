@@ -287,7 +287,7 @@ def build_dbt_charts_system_prompt(
 
     ``available_tools`` gates ``{{#if_tool NAME}}`` blocks in the shared skills
     to the tool set the calling surface actually has (e.g. the Playground,
-    which lacks ``search_boards``). ``None`` (the default)
+    which lacks ``search_files``). ``None`` (the default)
     keeps every block — CLI, MCP, and full chat are unaffected.
     """
     skill_names = _PROMPT_SKILLS.get(prompt_type)

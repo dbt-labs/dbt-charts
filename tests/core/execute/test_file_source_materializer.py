@@ -240,6 +240,26 @@ class TestCsvMaterialize:
         assert [r["region"] for r in rows] == ["North", "North", "South"]
         assert [r["amount"] for r in rows] == [100, 150, 200]
 
+    def test_unknown_column_names_the_files_columns(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = _make_project(
+            tmp_path,
+            {"data/sales.csv": "region,amount\nNorth,100\n"},
+            local_project,
+        )
+        mat = FileSourceMaterializer(project)
+
+        with pytest.raises(QueryError) as exc_info:
+            mat.materialize_and_run(
+                _csv_source({"sales": "data/sales.csv"}),
+                "SELECT amoun FROM sales",
+                {},
+                "sales",
+            )
+
+        assert 'Did you mean "amount"?' in str(exc_info.value)
+
     def test_csv_where_filter(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:

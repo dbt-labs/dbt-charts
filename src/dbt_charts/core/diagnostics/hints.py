@@ -283,6 +283,27 @@ def suggest_close_chart(
     return _suggest_close_match(chart, available)
 
 
+def suggest_layout_chart(
+    ref: str,
+    available: Sequence[str] = (),
+    **_kwargs: object,  # type-state: object_annotation — hint_generator is called with every field of the code; the rest are heterogeneous and unread
+) -> str | None:
+    """The edit for a layout name that is not a chart key: the closest key, then all.
+
+    ``available`` is empty for a reference outside a layout, which has no hint.
+    """
+    if not available:
+        return None
+    keys = ", ".join(f"`{name}`" for name in available)
+    rule = f"Every name in `rows`, `cols` or `grid` is a key under `charts:` ({keys})."
+    matches = difflib.get_close_matches(ref, available, n=1, cutoff=0.5)
+    if matches:
+        return f"Did you mean `{matches[0]}`? Replace `{ref}` with it. {rule}"
+    return (
+        f"{rule} Replace `{ref}` with one of them, or define `{ref}` under `charts:`."
+    )
+
+
 def suggest_close_extends(
     entry: str,
     available: Sequence[str] = (),

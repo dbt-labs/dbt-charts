@@ -759,13 +759,16 @@ app.add_typer(artifact_app, name="artifact", rich_help_panel="Dashboards")
 @app.command("describe", rich_help_panel="Dashboards")
 def describe(
     paths: Annotated[
-        list[Path],
+        list[Path] | None,
         typer.Argument(
             metavar="[PATH]...",
-            help="Path(s) to board YAML files or directories to describe.",
+            help=(
+                "Path(s) to board YAML files or directories to describe. "
+                "Omit for the project overview."
+            ),
             callback=cwd_first_all,
         ),
-    ],
+    ] = None,
     chart: Annotated[
         str | None,
         typer.Option(
@@ -776,6 +779,12 @@ def describe(
             ),
         ),
     ] = None,
+    all_charts: Annotated[
+        bool,
+        typer.Option(
+            "--all", help="Project overview only: also list each board's charts."
+        ),
+    ] = False,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Output as JSON"),
@@ -783,9 +792,13 @@ def describe(
     project_dir: ProjectDirOption = None,
     dbt_project_dir: DbtProjectDirOption = None,
 ) -> None:
-    """Describe a dashboard's queries, charts, variables, and layout.
+    """Describe the project, or a board's queries, charts, variables, and layout.
 
-    Compiles the board YAML and returns a structured summary without executing
+    With no path, prints the project overview: config file, sources (and the
+    `source:` value for each data file), boards with their serve URLs, and
+    the warehouse tables the boards read. Add --all to list every board's charts.
+
+    With a path, compiles the board YAML and returns a structured summary without executing
     any queries. Use this for orientation when picking up an unfamiliar dashboard.
     Accepts multiple paths; each may be a file or a directory (walked recursively).
     With --chart, describes a single chart on one board.
@@ -798,13 +811,24 @@ def describe(
       dct describe charts/
       dct describe charts/*.yml --json | jq '.[] | select(.charts | length > 5)'
       dct describe charts/sales.yml --chart revenue_kpi
+      dct describe
+      dct describe --all --json
     """
-    if chart is not None and len(paths) != 1:
+    if paths is None:
+        if chart is not None:
+            raise typer.BadParameter("--chart needs a board file", param_hint="--chart")
+        paths = []
+    elif all_charts:
+        raise typer.BadParameter(
+            "--all is for the project overview; omit the path", param_hint="--all"
+        )
+    elif chart is not None and len(paths) != 1:
         raise typer.BadParameter(
             "--chart takes exactly one board file", param_hint="--chart"
         )
     describe_cmd.describe_command(
         paths,
+        all_charts=all_charts,
         chart=chart,
         json_output=json_output,
         project_dir=project_dir,
@@ -1213,34 +1237,55 @@ def artifact_schema() -> None:
 
 @app.command("search", rich_help_panel="Dashboards")
 def search(
-    query: Annotated[
+    text: Annotated[
+        str | None,
+        typer.Argument(
+            help=(
+                "Boards: keywords to match against board metadata. Other kinds: "
+                "a substring to find in file contents. Omit to list."
+            )
+        ),
+    ] = None,
+    kind: Annotated[
         str,
-        typer.Argument(help="Keywords to match against dashboard metadata"),
-    ],
+        typer.Option(
+            "--kind",
+            help="What to search: boards, meta, models, config, or all",
+        ),
+    ] = "boards",
+    path: Annotated[
+        str | None,
+        typer.Option("--path", help="Glob over project-relative paths to narrow by"),
+    ] = None,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Output as JSON"),
     ] = False,
     limit: Annotated[
         int,
-        typer.Option("--limit", help="Maximum results to return (default 10, max 50)"),
+        typer.Option("--limit", help="Maximum results to return (default 10, max 200)"),
     ] = 10,
     project_dir: ProjectDirOption = None,
     dbt_project_dir: DbtProjectDirOption = None,
 ) -> None:
-    """Search dashboards by keyword with ranked results.
+    """Search the project's boards, or its meta, model, and config files.
 
-    Returns dashboards ranked by relevance to the query. Each hit includes
-    the title, summary, match score, source path, and matched query/chart names.
+    Boards come back ranked by relevance with the title, summary, match score,
+    source path, and matched chart names. Other kinds return the matching
+    lines, or the file paths when no text is given.
 
     \b
     Examples:
       dct search revenue
       dct search "monthly trends" --limit 5
       dct search orders --json
+      dct search --kind meta
+      dct search order_id --kind models
     """
     search_cmd.search_command(
-        query=query,
+        text=text,
+        kind=kind,
+        path=path,
         json_output=json_output,
         limit=limit,
         project_dir=project_dir,
@@ -1348,6 +1393,26 @@ def serve(
             ),
         ),
     ] = None,
+    detach: Annotated[
+        bool,
+        typer.Option(
+            "--detach",
+            help=(
+                "Serve in the background, check every board, print each board's "
+                "URL and status, and return. A server already running this "
+                "project on the port is reused; one for another project is "
+                "replaced. Stop it with --stop."
+            ),
+        ),
+    ] = False,
+    stop: Annotated[
+        bool,
+        typer.Option("--stop", help="Stop the server --detach left on --port."),
+    ] = False,
+    describe: Annotated[
+        bool,
+        typer.Option("--describe", help="With --detach, print what each chart draws."),
+    ] = False,
 ) -> None:
     """Start the dashboard server.
 
@@ -1384,6 +1449,8 @@ def serve(
       dct serve --max-workers 16
       dct serve --cache cache.duckdb
       dct serve --no-cache
+      dct serve --detach
+      dct serve --stop --port 9123
     """
     if cache is not None and no_cache:
         raise typer.BadParameter(
@@ -1391,6 +1458,8 @@ def serve(
             "mutually exclusive",
             param_hint="--cache",
         )
+    if detach and stop:
+        raise typer.BadParameter("--detach and --stop are mutually exclusive")
     serve_cmd.serve_command(
         port=port,
         host=host,
@@ -1401,6 +1470,9 @@ def serve(
         max_workers=max_workers,
         no_cache=no_cache,
         cache_path=cache,
+        detach=detach,
+        stop=stop,
+        describe=describe,
     )
 
 
@@ -1518,16 +1590,28 @@ def migrate(
     rich_help_panel="Data & SQL",
     help="""\b
 SQL and named board queries — common forms:
+  dct query
+  dct query SOURCE
   dct query SOURCE 'SQL'
   dct query data/orders.csv 'SELECT * FROM orders'
   dct query BOARD.yml REFERENCE
   dct query SOURCE 'SQL' --validate
 
+With no operands, lists the configured sources and the data files in the project
+root and data/, each with the `source:` value to write (an unknown source name
+lists them too, and suggests a data file of the same name).
+
+With no SQL, a source (duckdb, sqlite, csv, parquet, json; a file path such as
+./shop.csv works too) prints a data profile: per table the row count; per column
+type, nulls, values or range; 3 sample rows. --table NAME (repeatable) profiles those tables in full.
+In `sh -c`, wrap SQL that has string literals in double quotes, as in
+"SELECT n FROM t WHERE kind = 'new'" (or use --file).
+
 The first operand is the query context: a data source name, a CSV/JSON/Parquet
 file path (table name = file stem, as a board's `source:`), or a board file
 (.yml, .yaml, .md, .markdown).
 --file reads SQL from a file for source contexts.
-Results print as CSV under the same byte budget as the MCP execute_query tool;
+Results print as CSV under the same byte budget as the MCP execute_sql tool;
 use SQL LIMIT to bound rows. --json returns up to 1,000 rows.""",
 )
 def query(
@@ -1555,6 +1639,10 @@ def query(
     file: Annotated[
         Path | None,
         typer.Option("--file", "-f", metavar="PATH", help="Read SQL from file"),
+    ] = None,
+    table: Annotated[
+        list[str] | None,
+        typer.Option("--table", help="Profile this table in full (repeatable; no SQL)"),
     ] = None,
     dialect: Annotated[
         str | None,
@@ -1588,6 +1676,7 @@ def query(
         query_text=query_text,
         validate=validate,
         file=file,
+        table=table,
         dialect=dialect,
         vars=variables or None,
         show_suppressed=show_suppressed,

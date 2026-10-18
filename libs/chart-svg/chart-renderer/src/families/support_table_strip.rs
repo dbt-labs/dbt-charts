@@ -77,6 +77,9 @@ pub struct SupportTableEntry {
     /// Presence signals a `per_series:` entry — the source column each
     /// expanded series row sums (`build_rows_composed`'s per_series branch).
     pub per_series: Option<String>,
+    /// A `per_series` entry that reads one column per row: it names no series
+    /// yet still retires the series legend.
+    pub by_measure: bool,
 }
 
 impl From<RawSupportTableEntry> for SupportTableEntry {
@@ -88,6 +91,7 @@ impl From<RawSupportTableEntry> for SupportTableEntry {
                 aggregate: raw.aggregate,
                 format: raw.format,
                 per_series: None,
+                by_measure: true,
             },
             per_series => SupportTableEntry {
                 source: raw.source,
@@ -95,6 +99,7 @@ impl From<RawSupportTableEntry> for SupportTableEntry {
                 format: raw.format,
                 label: raw.label,
                 per_series,
+                by_measure: false,
             },
         }
     }
@@ -103,6 +108,43 @@ impl From<RawSupportTableEntry> for SupportTableEntry {
 #[derive(Deserialize, Debug)]
 pub struct SupportTableConfig {
     pub entries: Vec<SupportTableEntry>,
+    #[serde(skip)]
+    fold: Option<StripFold>,
+}
+
+/// A wide chart's strip reads the rows as queried, one per x, and paints each
+/// cell once per measure: the fold hands the strip's text layer one datum per
+/// measure per row, each carrying the same cell value.
+#[derive(Debug)]
+struct StripFold {
+    rows: Vec<serde_json::Map<String, Value>>,
+    measures: usize,
+}
+
+impl SupportTableConfig {
+    /// Whether a `per_series` entry of either kind is present: production
+    /// retires the series legend then, as the strip's rows or column headers
+    /// stand for it.
+    pub fn retires_series_legend(&self) -> bool {
+        self.entries.iter().any(|e| e.per_series.is_some() || e.by_measure)
+    }
+
+    /// The rows the strip reads: as queried on a wide chart, else `rows`.
+    pub fn source_rows<'a>(&'a self, rows: &'a [serde_json::Map<String, Value>]) -> &'a [serde_json::Map<String, Value>] {
+        self.fold.as_ref().map_or(rows, |fold| fold.rows.as_slice())
+    }
+
+    /// How many times a cell paints: once per measure on a wide chart.
+    pub fn cell_copies(&self) -> usize {
+        self.fold.as_ref().map_or(1, |fold| fold.measures)
+    }
+
+    pub fn folded_from(mut self, rows: &[serde_json::Map<String, Value>], measures: usize) -> Self {
+        if measures > 0 {
+            self.fold = Some(StripFold { rows: rows.to_vec(), measures });
+        }
+        self
+    }
 }
 
 #[derive(Deserialize, Clone)]
@@ -1020,6 +1062,9 @@ pub struct ComposedRow {
     /// 4337`'s `band_budget_w` widening loop, `max_abs_val = max(_vals,
     /// key=abs)`). 0.0 on an unanchored row (nothing to widen for).
     pub anchor_worst_case_w: f64,
+    /// Each cell paints once per entry, shifted along the category axis: a wide
+    /// chart carries one entry per measure, every other row a single `0.0`.
+    pub copy_dx: Vec<f64>,
 }
 
 /// Cells + the pooled bare-cell width (dx input) for one row's own values —
@@ -1252,6 +1297,7 @@ pub fn build_rows_composed(
     if domain.len() != x_positions.len() {
         return Err("support_table: domain/x_positions length mismatch".into());
     }
+    let rows = config.source_rows(rows);
     validate_against_data(config, rows, x_field, domain)?;
     let (font_family, font_size) = cell_font(style)?;
     let (label_family, label_size) = label_font_resolved(style);
@@ -1314,6 +1360,7 @@ pub fn build_rows_composed(
                     stub_dx: 0.0,
                     series: Some(series_order[i].clone()),
                     anchor_worst_case_w,
+                    copy_dx: vec![0.0],
                 });
             }
             continue;
@@ -1330,7 +1377,9 @@ pub fn build_rows_composed(
         };
         let label = truncate_label(fonts, label_family, label_size, &label, true)?;
         let label_w = fonts.measure_shaped(&label, label_family, label_size)?;
-        let dx = if band_centered { max_bare_w / 2.0 } else { 0.0 };
+        // A `by_measure` entry reads the folded rows directly, one copy per measure, so
+        // production applies no band-centering `dx` to it.
+        let dx = if band_centered && !entry.by_measure { max_bare_w / 2.0 } else { 0.0 };
         out.push(ComposedRow {
             label,
             label_w,
@@ -1340,6 +1389,7 @@ pub fn build_rows_composed(
             stub_dx: 0.0,
             series: None,
             anchor_worst_case_w,
+            copy_dx: vec![0.0; config.cell_copies()],
         });
     }
     Ok(out)
@@ -1682,14 +1732,14 @@ pub fn render_rows_composed(
         let row_y = origin_y + row_y_base(i, style, axis_offset) + baseline;
         let dx = if axis_on_right { row.dx } else { -row.dx };
         crate::contract::mark_group_open(out, "text", "strip")?;
-        for cell in &row.cells {
+        for (cell, copy_dx) in row.cells.iter().flat_map(|cell| row.copy_dx.iter().map(move |dx| (cell, dx))) {
             let _ = write!(
                 out,
                 "<text{} x=\"{:.2}\" y=\"{row_y:.2}\" text-anchor=\"{cell_anchor}\" \
                  font-family=\"{}\" font-size=\"{font_size}\" font-weight=\"{font_weight}\" \
                  fill=\"{font_color}\">{}</text>",
                 crate::contract::cell_label_attr(&cell.aria)?,
-                origin_x + cell.x + dx,
+                origin_x + cell.x + dx + copy_dx,
                 vega_escape_attr(font_family),
                 xml_escape(&cell.text), cell_anchor = xml_escape_attr(cell_anchor), font_weight = xml_escape_attr(&font_weight), font_color = xml_escape_attr(font_color)
             );
@@ -1973,6 +2023,7 @@ mod numerals_tests {
                 format: Some(slot),
                 label: None,
                 per_series: None,
+                by_measure: false,
             };
             let rows: Vec<serde_json::Map<String, Value>> =
                 vec![serde_json::json!({"week": "2024-01-01", "units": 150.0}).as_object().unwrap().clone()];
@@ -2401,6 +2452,7 @@ mod tests {
                     format: Some(",d".into()),
                     label: None,
                     per_series: Some("revenue".into()),
+                    by_measure: false,
                 },
                 SupportTableEntry {
                     source: Some("revenue".into()),
@@ -2408,8 +2460,10 @@ mod tests {
                     format: Some(",d".into()),
                     label: Some("Total".into()),
                     per_series: None,
+                    by_measure: false,
                 },
             ],
+            fold: None,
         };
         assert_eq!(visual_row_count(&config, 3).unwrap(), 4, "3 series rows + 1 aggregate row");
     }
@@ -2423,7 +2477,9 @@ mod tests {
                 format: Some(",d".into()),
                 label: None,
                 per_series: Some("revenue".into()),
+                by_measure: false,
             }],
+            fold: None,
         };
         let err = visual_row_count(&config, 0).unwrap_err();
         assert!(err.contains("series_count"), "names the missing input: {err}");
@@ -2438,7 +2494,9 @@ mod tests {
                 format: Some(",d".into()),
                 label: None,
                 per_series: Some("revenue".into()),
+                by_measure: false,
             }],
+            fold: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> =
             vec![serde_json::json!({"week": "2024-01-01", "revenue": 10.0}).as_object().unwrap().clone()];
@@ -2461,7 +2519,9 @@ mod tests {
                 format: Some(",d".into()),
                 label: None,
                 per_series: Some("revenue".into()),
+                by_measure: false,
             }],
+            fold: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> = vec![
             serde_json::json!({"week": "2024-01-01", "category": "A", "revenue": 100.0})
@@ -2507,7 +2567,9 @@ mod tests {
                 format: Some(FormatSlot { raw: Some("currency_whole".into()), ..FormatSlot::from("$,.0f") }),
                 label: Some("Total".into()),
                 per_series: None,
+                by_measure: false,
             }],
+            fold: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> = vec![
             serde_json::json!({"week": "2024-01-01", "revenue": 100.0}).as_object().unwrap().clone(),
@@ -2530,7 +2592,9 @@ mod tests {
                 format: Some(",d".into()),
                 label: None,
                 per_series: None,
+                by_measure: false,
             }],
+            fold: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> =
             vec![serde_json::json!({"week": "2024-01-01", "avg_order_revenue": 42.0}).as_object().unwrap().clone()];
@@ -2554,7 +2618,9 @@ mod tests {
                 format: None,
                 label: Some("Units".into()),
                 per_series: None,
+                by_measure: false,
             }],
+            fold: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> =
             vec![serde_json::json!({"week": "2024-01-01", "units": 150.0}).as_object().unwrap().clone()];
@@ -2603,6 +2669,7 @@ mod tests {
                     format: Some(",d".into()),
                     label: Some("Count".into()),
                     per_series: None,
+                    by_measure: false,
                 },
                 SupportTableEntry {
                     source: Some("product".into()),
@@ -2610,8 +2677,10 @@ mod tests {
                     format: Some(",d".into()),
                     label: Some("Distinct".into()),
                     per_series: None,
+                    by_measure: false,
                 },
             ],
+            fold: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> = vec![
             serde_json::json!({"week": "2024-01-01", "product": "Alpha"}).as_object().unwrap().clone(),
@@ -2648,7 +2717,9 @@ mod tests {
                 format: None,
                 label: Some("Product".into()),
                 per_series: None,
+                by_measure: false,
             }],
+            fold: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> = vec![
             serde_json::json!({"week": "2024-01-01", "product": "Alpha"}).as_object().unwrap().clone(),
@@ -2680,7 +2751,9 @@ mod tests {
                 format: None,
                 label: Some("Code".into()),
                 per_series: None,
+                by_measure: false,
             }],
+            fold: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> = vec![
             serde_json::json!({"week": "2024-01-01", "code": "007"}).as_object().unwrap().clone(),
@@ -2712,7 +2785,9 @@ mod tests {
                 format: Some(",d".into()),
                 label: Some("Revenue".into()),
                 per_series: None,
+                by_measure: false,
             }],
+            fold: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> =
             vec![serde_json::json!({"week": "2024-01-01", "revenue": "not-a-number"}).as_object().unwrap().clone()];
@@ -2736,7 +2811,9 @@ mod tests {
                 format: None,
                 label: Some("Total".into()),
                 per_series: None,
+                by_measure: false,
             }],
+            fold: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> = vec![
             serde_json::json!({"week": "2024-01-01", "revenue": 100.0}).as_object().unwrap().clone(),
@@ -2762,7 +2839,9 @@ mod tests {
                 format: None,
                 label: Some("Revenue".into()),
                 per_series: None,
+                by_measure: false,
             }],
+            fold: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> = vec![
             serde_json::json!({"week": "2024-01-01", "category": "A", "revenue": 100.0})
@@ -2791,7 +2870,9 @@ mod tests {
                 format: None,
                 label: Some("Missing".into()),
                 per_series: None,
+                by_measure: false,
             }],
+            fold: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> =
             vec![serde_json::json!({"week": "2024-01-01", "revenue": 100.0}).as_object().unwrap().clone()];
@@ -2812,7 +2893,9 @@ mod tests {
                 format: None,
                 label: Some("Revenue".into()),
                 per_series: None,
+                by_measure: false,
             }],
+            fold: None,
         };
         let n = SUPPORT_TABLE_MAX_X_TICKS + 1;
         let rows: Vec<serde_json::Map<String, Value>> = (0..n)
@@ -2837,7 +2920,9 @@ mod tests {
                 format: None,
                 label: Some("A Very Long Row Label That Overruns The Gutter Width".into()),
                 per_series: None,
+                by_measure: false,
             }],
+            fold: None,
         };
         let rows: Vec<serde_json::Map<String, Value>> =
             vec![serde_json::json!({"week": "2024-01-01", "revenue": 1.0}).as_object().unwrap().clone()];
@@ -2897,6 +2982,7 @@ mod tests {
             stub_dx: 0.0,
             series: None,
             anchor_worst_case_w: 0.0,
+            copy_dx: vec![0.0],
         }];
         let attr = |svg: &str, tag: &str, name: &str| -> String {
             let idx = svg.find(&format!(">{tag}<")).unwrap();
@@ -2927,7 +3013,9 @@ mod tests {
                 format: Some(",d".into()),
                 label: label.map(str::to_string),
                 per_series: Some("revenue".into()),
+                by_measure: false,
             }],
+            fold: None,
         }
     }
 
@@ -3045,6 +3133,7 @@ mod tests {
                     format: Some(",d".into()),
                     label: None,
                     per_series: Some("revenue".into()),
+                    by_measure: false,
                 },
                 SupportTableEntry {
                     source: Some("revenue".into()),
@@ -3052,8 +3141,10 @@ mod tests {
                     format: Some(",d".into()),
                     label: Some("Total".into()),
                     per_series: None,
+                    by_measure: false,
                 },
             ],
+            fold: None,
         };
         let mut rows = per_series_rows();
         rows.push(
@@ -3147,6 +3238,7 @@ mod tests {
             format: Some(FormatSlot { raw: Some(name.into()), ..FormatSlot::from(spec) }),
             label: Some("Share".into()),
             per_series: None,
+            by_measure: false,
         }
     }
 
@@ -3168,7 +3260,7 @@ mod tests {
         let (rows, domain) = share_rows(values);
         let xs: Vec<f64> = (0..values.len()).map(|i| 100.0 * i as f64).collect();
         build_rows_composed("c",
-            &SupportTableConfig { entries: vec![entry] },
+            &SupportTableConfig { entries: vec![entry], fold: None },
             &rows,
             "q",
             &domain,

@@ -24,9 +24,11 @@ from dbt_charts.core.compile.models.source import (
     JsonSourceConfig,
     ParquetSourceConfig,
 )
+from dbt_charts.core.compile.sql_guard import double_alias_advice
 from dbt_charts.core.compile.template.parameterized import render_parameterized
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_BINDER_UNKNOWN_COLUMN,
     ERR_FILE_SOURCE_DECIMAL_TOO_WIDE,
     ERR_FILE_SOURCE_DUPLICATE_COLUMN,
     ERR_FILE_SOURCE_TOO_LARGE,
@@ -41,6 +43,7 @@ from dbt_charts.core.execute.adapters.base import QueryParams
 from dbt_charts.core.execute.adapters.duckdb_adapter import duckdb_error_code
 from dbt_charts.core.execute.arrow_ingest import RelationStream, ingest, insert_rows
 from dbt_charts.core.execute.cache_composition import quote_identifier, rows_from_result
+from dbt_charts.core.execute.column_advice import duckdb_unknown_column_advice
 from dbt_charts.core.execute.duckdb_cache import compute_source_hash
 from dbt_charts.core.project import is_glob
 
@@ -234,8 +237,19 @@ class FileSourceMaterializer:
             except DbtChartsError:
                 raise
             except Exception as exc:  # noqa: BLE001 — DuckDB exposes many execution exception classes at this boundary
+                code = duckdb_error_code(exc)
+                advice = (
+                    duckdb_unknown_column_advice(conn, resolved_sql, str(exc))
+                    if code is ERR_BINDER_UNKNOWN_COLUMN
+                    else double_alias_advice(resolved_sql)
+                )
                 raise QueryError(
-                    f"{exc}\nSQL:\n{resolved_sql}", code=duckdb_error_code(exc)
+                    "\n".join(
+                        part
+                        for part in (str(exc), advice, f"SQL:\n{resolved_sql}")
+                        if part
+                    ),
+                    code=code,
                 ) from exc
 
     @staticmethod

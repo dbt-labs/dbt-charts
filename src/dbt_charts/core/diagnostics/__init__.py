@@ -67,6 +67,8 @@ from dbt_charts.core.diagnostics.codes_compile import (
 )
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_ADAPTER_NOT_INSTALLED,
+    ERR_BINDER_GROUP_BY,
+    ERR_BINDER_QUERY_SHAPE,
     ERR_BINDER_TYPE_MISMATCH,
     ERR_BINDER_UNKNOWN_COLUMN,
     ERR_BINDER_UNKNOWN_RELATION,
@@ -189,6 +191,7 @@ from dbt_charts.core.diagnostics.codes_render import (
     WARN_Y_ENCODING_MOSTLY_NULL,
 )
 from dbt_charts.core.diagnostics.codes_serve import (
+    ERR_DBT_PROFILES_FORBIDDEN,
     ERR_INVALID_DEFAULT_THEME,
     ERR_STARTUP_FAILED,
 )
@@ -300,6 +303,8 @@ __all__ = [
     "ERR_UNPARSEABLE_SQL",
     "ERR_BINDER_UNKNOWN_COLUMN",
     "ERR_BINDER_UNKNOWN_RELATION",
+    "ERR_BINDER_GROUP_BY",
+    "ERR_BINDER_QUERY_SHAPE",
     "ERR_BINDER_TYPE_MISMATCH",
     "ERR_WAREHOUSE_CONNECTION",
     "ERR_ADAPTER_NOT_INSTALLED",
@@ -404,6 +409,7 @@ __all__ = [
     "WARN_VALUE_LABELS_CROWD_WIDTH",
     "WARN_Y_ENCODING_MOSTLY_NULL",
     # Serve errors
+    "ERR_DBT_PROFILES_FORBIDDEN",
     "ERR_INVALID_DEFAULT_THEME",
     "ERR_STARTUP_FAILED",
     # Query diagnostic adapter

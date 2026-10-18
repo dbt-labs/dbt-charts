@@ -1,0 +1,3 @@
+kind: Features
+body: dct query SOURCE prints a data profile, and an unknown source lists the sources and data files you can use (dct query alone lists them too).
+time: 2026-10-16T04:57:42.692402-07:00

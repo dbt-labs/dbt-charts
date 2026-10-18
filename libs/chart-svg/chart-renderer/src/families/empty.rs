@@ -292,7 +292,7 @@ fn render_discrete(family: &str, payload: &Payload, fonts: &FontBook) -> Result<
                 require_font(family, what, font)?;
             }
             let title = legend_title_text(field, &extra.legend, &extra.field_labels)?;
-            Some(vega_legend(&[], &title, &extra.legend, fonts)?)
+            Some(vega_legend(&[], false, &title, &extra.legend, fonts)?)
         }
         _ => None,
     };

@@ -95,6 +95,8 @@ struct AxisLabels {
 struct AxisY {
     mirror: Option<Value>,
     position: Option<String>,
+    #[serde(default)]
+    tick_values: Vec<f64>,
     labels: Option<AxisLabels>,
 }
 
@@ -447,7 +449,8 @@ fn mirror(facts: &Facts) -> Result<(), Diagnostic> {
 /// The ghost axis sits on the edge opposite the primary. A label alignment
 /// authored for that edge's own side grows its labels back over the plot: it
 /// needs the ghost's labels measured, which an `expr`-painted, case-folded or
-/// unformatted axis cannot do.
+/// unformatted axis cannot do, nor one with neither a baked ladder nor a
+/// measure field to estimate from (a histogram's count axis).
 fn unmeasurable_align(facts: &Facts) -> Result<(), Diagnostic> {
     let axis_y = &facts.style.axis_y;
     let (Some(labels), Some(mirror)) = (&axis_y.labels, &axis_y.mirror) else { return Ok(()) };
@@ -457,12 +460,19 @@ fn unmeasurable_align(facts: &Facts) -> Result<(), Diagnostic> {
     }
     let set = |key: &str| mirror.get(key).is_some_and(|v| !v.is_null());
     let cased = labels.font.as_ref().and_then(|f| f.case.as_deref()).is_some_and(|c| matches!(c, "upper" | "lower"));
+    // A heatmap's y is its nominal band axis: no numeric value to estimate from.
+    let has_source = !axis_y.tick_values.is_empty()
+        || (facts.chart_type != "heatmap" && facts.y.as_ref().is_some_and(Value::is_string))
+        || facts.layers.iter().any(|l| l.y.as_ref().is_some_and(Value::is_string));
     let measurable = if set("expr") {
         false
     } else if set("format") {
-        true
+        has_source
     } else {
-        labels.expr.as_ref().is_none_or(Value::is_null) && !cased && labels.format.as_ref().is_some_and(|f| !f.is_null())
+        has_source
+            && labels.expr.as_ref().is_none_or(Value::is_null)
+            && !cased
+            && labels.format.as_ref().is_some_and(|f| !f.is_null())
     };
     if measurable {
         return Ok(());

@@ -37,6 +37,6 @@ class AreaChart(_CartesianChartFields):
         list[CartesianLayer] | None,
         Field(
             default=None,
-            description="Extra marks drawn over this chart, each with its own type and columns.",
+            description="Extra marks on one shared x, each with its own type.",
         ),
     ]

@@ -9,6 +9,7 @@ from dbt_charts.core.diagnostics.hints import (
     suggest_close_palette,
     suggest_close_source,
     suggest_close_theme,
+    suggest_layout_chart,
 )
 from dbt_charts.core.diagnostics.registry import REGISTRY, ErrorCode, WarningCode
 
@@ -138,7 +139,8 @@ ERR_EXTRA_FIELD = REGISTRY.register(
             "not recognize. Remove the unknown field or refer to the YAML reference "
             "for the supported keys. When the key is one a past grammar renamed, "
             "moved, or removed, the hint names its successor and the version that "
-            "retired it."
+            "retired it. When the key is valid in a nearby block (the chart for a "
+            "key written under `style:`, or the reverse), the hint names that block."
         ),
         docs_topic="board",
     )
@@ -252,7 +254,7 @@ ERR_SOURCE_NOT_FOUND = REGISTRY.register(
             "Query {query_name!r} references unknown source {source!r}. "
             "Available sources: {available}. "
             "dct sources are declared under `sources:` in your dbt_charts.yml; "
-            "the source name is not the dbt project name."
+            "the source name is not the dbt project name.{advice}"
         ),
         doc=(
             "Fired when a query's `source:` names a source that is not declared "
@@ -437,6 +439,7 @@ ERR_UNRESOLVED_REFERENCE = REGISTRY.register(
             "ensure the referenced chart, query, or layout item is declared."
         ),
         docs_topic="queries",
+        hint_generator=suggest_layout_chart,
     )
 )
 
@@ -499,8 +502,9 @@ ERR_VALIDATION_FIELD = REGISTRY.register(
             "Fired when a board YAML field fails Pydantic's type or constraint "
             "validation, or a normalize-stage rule on one field that Pydantic "
             "cannot express (a cross-field exclusion, a root-only constraint). "
-            "The message carries the specific error. Check the field value "
-            "against the schema."
+            "The message carries the specific error. A missing required field "
+            "lists the fields the block accepts. Check the field value against "
+            "the schema."
         ),
         docs_topic="board",
     )
@@ -1551,11 +1555,10 @@ ERR_FORMAT_GRAIN_NAME_NOT_REDEFINED = REGISTRY.register(
         domain="compile",
         title="An engine date grain name used as a format without being redefined",
         message_template=(
-            "Format {spec!r} at {field_path} names the engine's own {spec} "
-            "axis labels, which only a date axis that detects that grain can "
-            "paint. Redefine it in `style.formats` with a strftime spec "
-            '(`{spec}: "%b %Y"`) to relabel that grain across the board, '
-            "or use a strftime spec here."
+            "Format {spec!r} at {field_path} names the engine's own date axis "
+            'labels. Replace {spec!r} with the strftime spec "{replacement}". '
+            "To relabel that grain on every chart instead, redefine it in "
+            '`style.formats` (`{spec}: "{replacement}"`).'
         ),
         doc=(
             "`date_year`, `date_quarter`, `date_month` and `date_week` mean the "

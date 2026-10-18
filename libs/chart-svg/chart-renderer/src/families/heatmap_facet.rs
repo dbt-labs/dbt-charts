@@ -33,12 +33,12 @@ use crate::families::facet_compose::{
 };
 use crate::families::facet_title::{layout_title, TitleLayout, TitleSource};
 use crate::families::heatmap::{
-    category_legend_entries, color_categories, emit_gradient_def, CategoryScale, emit_rotated_x_label, format_legend_value, svg_text_anchor, gradient_ladder, paint_cells, tooltip_value_title, CellFill, CellPaint,
+    category_legend_entries, color_categories, interp_color, emit_gradient_def, CategoryScale, emit_rotated_x_label, format_legend_value, svg_text_anchor, gradient_ladder, paint_cells, tooltip_value_title, CellFill, CellPaint,
     HeatmapResolved, AXIS_TRANSLATE, BREATHING_ROOM_PX,
 };
 use crate::families::color_scale::ContinuousColor;
 use crate::families::legend::{
-    emit_vega_legend, horizontal_gradient_length, unit_position, vega_legend, LegendConfig, LegendSymbol,
+    LegendEntry, emit_vega_legend, horizontal_gradient_length, unit_position, vega_legend, LegendConfig, LegendSymbol,
     VEGA_GRADIENT_THICKNESS,
 };
 use crate::families::multiples::{self, Panel};
@@ -574,6 +574,10 @@ struct PanelStyle<'a> {
     y_title_style: &'a crate::common::AxisTitle,
     /// What a visible y title adds left of the label band (`y_title_extra`).
     y_title_extra: f64,
+    /// `axis_y.mirror`: the shared axis stays on the left and its labels repeat
+    /// on the right edge (a `row_footer` without the title), starting at the
+    /// primary's own `labelPadding` (`y_label_pad`).
+    mirror: bool,
 }
 
 /// Where a panel sits in a facet row, for the right-side shared axis.
@@ -686,7 +690,8 @@ fn render_panel(
     if style.cell_x_axis {
         x_axis.paint(&mut svg, style.ax_x, left, plot_w, plot_h)?;
     }
-    let right_axis = style.y_right && !style.own_axis;
+    let right_axis = (style.y_right || style.mirror) && !style.own_axis;
+    let right_title_extra = if style.y_right { style.y_title_extra } else { 0.0 };
     let value_axis_start = svg.len();
     if own_right || (right_axis && right.paint) {
         let edge_x = left + plot_w + if own_right { 0.0 } else { right.overhang } + AXIS_TRANSLATE;
@@ -704,7 +709,7 @@ fn render_panel(
                 svg,
                 "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"start\" font-family=\"{}\" font-size=\"{}\" \
                  font-weight=\"{}\" fill=\"{}\">{}</text>",
-                edge_x + style.y_tick_len + BREATHING_ROOM_PX,
+                edge_x + if style.y_right { style.y_tick_len + BREATHING_ROOM_PX } else { style.y_label_pad },
                 cy + label_shift,
                 vega_escape_attr(style.y_family),
                 style.y_font_size,
@@ -713,15 +718,17 @@ fn render_panel(
                 xml_escape(band)
             );
         }
-        crate::common::emit_axis_title_rotated(
-            &mut svg,
-            style.y_title,
-            style.y_title_style,
-            edge_x + style.y_label_pad,
-            plot_h / 2.0,
-            1.0,
-            None,
-        );
+        if style.y_right {
+            crate::common::emit_axis_title_rotated(
+                &mut svg,
+                style.y_title,
+                style.y_title_style,
+                edge_x + style.y_label_pad,
+                plot_h / 2.0,
+                1.0,
+                None,
+            );
+        }
         crate::contract::axis_group_close(&mut svg);
     }
     let value_axis = (right_axis && right.paint)
@@ -731,7 +738,7 @@ fn render_panel(
 
     let mut ink = vega_fit::Bounds::new(left, 0.0, left + plot_w, plot_h);
     if right_axis && right.fold {
-        ink.union(&vega_fit::Bounds::new(left, 0.0, left + plot_w + right.overhang + style.y_label_pad + style.y_title_extra, plot_h));
+        ink.union(&vega_fit::Bounds::new(left, 0.0, left + plot_w + right.overhang + style.y_label_pad + right_title_extra, plot_h));
     }
     if style.cell_x_axis {
         let mut axis_ink = vega_fit::Bounds::empty_new();
@@ -754,7 +761,7 @@ fn render_panel(
         top_axis_overhang: (-ink.y1).max(0.0),
         legend: None,
         ink,
-        axis_w_overhang: if right_axis { left + style.y_label_pad + style.y_title_extra } else { left },
+        axis_w_overhang: if right_axis { left + style.y_label_pad + right_title_extra } else { left },
         left_mark_overhang: left,
         plot_top: 0.0,
         raw_right_reach: 0.0,
@@ -1063,7 +1070,11 @@ pub(crate) fn render_facet(
         .collect::<Result<_, _>>()?;
     let widest_y = y_raw_widths.iter().fold(0.0_f64, |acc, (_, w)| acc.max(*w));
     let y_axis_px = if mc.columns.is_some() { facet_extra_axis_px(&ax_y.labels, &y_shared, fonts)? } else { 0.0 };
-    let y_subset_narrowed = panel_domain_is_proper_subset(&panels, axes, &r.y)
+    let mirror = r.style.axis_y.mirror_requested("heatmap")?;
+    // `facet_independent_channels`: a mirrored y never narrows, since the ghost
+    // layer would be instantiated once per panel.
+    let y_subset_narrowed = !mirror
+        && panel_domain_is_proper_subset(&panels, axes, &r.y)
         && (mc.columns.is_none() || naive_panel_w - y_axis_px >= FACET_MIN_PANEL_PX);
     // An independent scale gives every cell its own y axis, whatever its domain.
     let y_narrowed = independent || y_subset_narrowed;
@@ -1122,6 +1133,7 @@ pub(crate) fn render_facet(
         y_title: &y_title,
         y_title_style: &ax_y.title,
         y_title_extra,
+        mirror,
     };
 
     // A partition field the chart also encodes stays a column of its own
@@ -1190,8 +1202,11 @@ pub(crate) fn render_facet(
             .collect::<Result<_, _>>()?,
         FacetColor::Categories(_) => Vec::new(),
     };
+    // The mirror's ghost rule layer strokes the same color, which turns the
+    // gradient into a symbol legend: a circle per ladder rung.
+    let ladder_symbols = style.mirror && matches!(color, FacetColor::Gradient { .. });
     let legend = match &color {
-        FacetColor::Gradient { min, max, ticks } => r
+        FacetColor::Gradient { min, max, ticks } if !ladder_symbols => r
             .legend
             .visible
             .then(|| {
@@ -1199,14 +1214,26 @@ pub(crate) fn render_facet(
                     .with_title(&r.legend, legend_title.clone(), fonts)
             })
             .transpose()?,
-        FacetColor::Categories(_) => None,
+        _ => None,
     };
-    let symbol_entries = match &color {
+    let ladder: Vec<(String, String)> = match &color {
+        FacetColor::Gradient { min, max, ticks } if ladder_symbols => leg_labels
+            .iter()
+            .zip(ticks)
+            .map(|(label, &tick)| Ok((label.clone(), interp_color(&r.style.color_gradient.resolved_stops, *min, *max, tick)?)))
+            .collect::<Result<_, String>>()?,
+        _ => Vec::new(),
+    };
+    let symbol_entries: Vec<LegendEntry> = match &color {
         FacetColor::Categories(scale) => category_legend_entries(scale, r.legend.values.as_deref()),
-        FacetColor::Gradient { .. } => Vec::new(),
+        FacetColor::Gradient { .. } => ladder
+            .iter()
+            .map(|(label, fill)| LegendEntry { label, fill, symbol: None, series_key: None })
+            .collect(),
     };
-    let symbol_legend = (r.legend.visible && categorical)
-        .then(|| vega_legend(&symbol_entries, &legend_title, &r.legend, fonts))
+    let entry_symbol = if ladder_symbols { LegendSymbol::Circle } else { LegendSymbol::FilledSquare };
+    let symbol_legend = (r.legend.visible && (categorical || ladder_symbols))
+        .then(|| vega_legend(&symbol_entries, false, &legend_title, &r.legend, fonts))
         .transpose()?;
     let render_pass = |plot_w: f64, plot_h: f64, value_axis_right_overhang: f64| -> Result<_, Diagnostic> {
         Ok(panel_rows
@@ -1243,7 +1270,7 @@ pub(crate) fn render_facet(
                 width: Box::new(|_, _| symbols.box_w),
                 height: Box::new(|_| symbols.box_h()),
                 paint: Box::new(|svg, x, y, _, _| {
-                    emit_vega_legend(svg, &symbol_entries, symbols, &r.legend, LegendSymbol::FilledSquare, x, y, false)
+                    emit_vega_legend(svg, &symbol_entries, symbols, &r.legend, entry_symbol, x, y, false)
                 }),
             }))
             .collect(),
@@ -1256,7 +1283,8 @@ pub(crate) fn render_facet(
         panel_cols_n,
         row_axis_idx: index_of(&mc.rows),
         col_axis_idx: index_of(&mc.columns),
-        has_mirror: false,
+        has_mirror: style.mirror,
+        mirror_in_panel: true,
         own_value_axes: independent,
         extra_axis_px,
         cell_x_axis,

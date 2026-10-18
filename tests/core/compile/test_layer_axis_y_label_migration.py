@@ -175,8 +175,8 @@ rows:
     assert label_errors, (
         f"expected a stranded axis_y.label error: {[e.message for e in result.errors]}"
     )
-    assert all("labels" not in (e.hint or "") for e in label_errors), (
-        "unlike support_table/notes, this stranded position names no replacement"
+    assert all("Did you mean 'labels'?" in (e.hint or "") for e in label_errors), (
+        "the layer path lists its allowed keys, so the typo gets the nearest one"
     )
 
 

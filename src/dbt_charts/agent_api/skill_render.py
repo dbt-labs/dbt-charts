@@ -45,6 +45,14 @@ _IF_TOOL_RE = re.compile(
     r"\{\{#if_tool\s+([a-z][a-z0-9_]*)\s*\}\}(.*?)\{\{/if_tool\}\}", re.DOTALL
 )
 
+# Matches `{{#if_surface tool}} ... {{/if_surface}}` / `{{#if_surface cli}}`:
+# content that exists on one side only and is too large or generated to be an
+# alias value (the CLI command table). `cli` also renders on the `install`
+# surface, which is the same dct-side text written to disk.
+_IF_SURFACE_RE = re.compile(
+    r"\{\{#if_surface\s+(tool|cli)\s*\}\}(.*?)\{\{/if_surface\}\}", re.DOTALL
+)
+
 
 @cache
 def _aliases() -> dict[str, dict[str, str]]:
@@ -92,7 +100,7 @@ def render_skill_body(
     surface: SkillSurface,
     available_tools: set[str] | None = None,
 ) -> str:
-    """Return ``body`` with ``{{#if_tool}}`` blocks gated and ``{{ s_key }}`` macros expanded.
+    """Return ``body`` with ``{{#if_tool}}``/``{{#if_surface}}`` blocks gated and ``{{ s_key }}`` macros expanded.
 
     ``{{#if_tool NAME}} ... {{/if_tool}}`` blocks are kept only when the surface
     actually has ``NAME`` in its tool set — dropped (including the markers)
@@ -115,10 +123,14 @@ def render_skill_body(
             return block
         return ""
 
-    gated = _IF_TOOL_RE.sub(gate, body)
+    side = {"tool": "tool", "cli": "dct", "install": "install"}[surface]
+
+    def surface_gate(match: re.Match[str]) -> str:
+        return match.group(2) if (match.group(1) == "tool") == (side == "tool") else ""
+
+    surfaced = _IF_SURFACE_RE.sub(surface_gate, body)
 
     aliases = _aliases()
-    side = {"tool": "tool", "cli": "dct", "install": "install"}[surface]
 
     def repl(match: re.Match[str]) -> str:
         key = match.group(1)
@@ -129,4 +141,5 @@ def render_skill_body(
             )
         return aliases[key][side]
 
-    return _MACRO_RE.sub(repl, gated)
+    # Macros first, so an alias value may carry a `{{#if_tool}}` block.
+    return _IF_TOOL_RE.sub(gate, _MACRO_RE.sub(repl, surfaced))

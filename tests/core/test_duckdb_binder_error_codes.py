@@ -43,6 +43,22 @@ class TestDuckDBBinderErrorCodes:
         finally:
             adapter.close()
 
+    def test_group_by_mismatch_returns_binder_group_by_code(self) -> None:
+        """A bare column beside an aggregate is a GROUP BY fix, not a missing column."""
+        from dbt_charts.core.diagnostics.codes_execute import ERR_BINDER_GROUP_BY
+
+        adapter = DuckDBAdapter(source_config=DuckDBSourceConfig(type="duckdb"))
+        try:
+            result = adapter._execute(
+                _make_query("SELECT a, count(*) FROM (SELECT 1 AS a) t")
+            )
+            assert result.error is not None
+            assert result.error.code is ERR_BINDER_GROUP_BY
+            assert "GROUP BY" in str(result.error)
+            assert "exist" not in str(result.error).split("GROUP BY")[-1]
+        finally:
+            adapter.close()
+
     def test_type_mismatch_exception_returns_binder_type_mismatch_code(self) -> None:
         """TypeMismatchException → ERR-BINDER-TYPE-MISMATCH (via _classify_duckdb_error)."""
         import duckdb

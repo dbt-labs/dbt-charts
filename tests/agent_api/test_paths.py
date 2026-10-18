@@ -400,7 +400,28 @@ def test_resolve_board_or_error_absolute_non_filesystem_project_is_enveloped(
     result = resolve_board_or_error(absolute_board, project)
 
     assert isinstance(result, Diagnostic)
-    assert result.code == "ERR-INTERNAL"
+    assert result.code == "ERR-TOOL-ARGUMENTS-INVALID"
+    assert "charts/orders.yml" in result.message
+
+
+def test_every_verb_gives_an_absolute_board_path_on_a_hosted_project_one_code(
+    tmp_path: Path,
+    in_memory_project: Callable[[Path, dict[str, str]], object],
+) -> None:
+    from dbt_charts.agent_api.describe import describe_board
+    from dbt_charts.agent_api.validate import validate
+
+    project: Project = in_memory_project(  # type: ignore[assignment]
+        tmp_path, {"charts/x.yaml": "title: x\n"}
+    )
+    absolute_board = tmp_path / "charts" / "x.yaml"
+
+    codes = {
+        validate(absolute_board, project=project).errors[0].code,
+        describe_board(absolute_board, project=project).errors[0].code,
+    }
+
+    assert codes == {"ERR-TOOL-ARGUMENTS-INVALID"}
 
 
 def test_resolve_board_path_non_filesystem_store_fallback(
@@ -629,7 +650,7 @@ def test_render_board_boards_first_stripped_path(
 ) -> None:
     """resolve_board_or_error('looker/x.yaml') resolves charts/looker/x.yaml — prod repro.
 
-    search_boards returns board_path='looker/x.yaml' (charts/ prefix stripped).
+    search_files returns board_path='looker/x.yaml' (charts/ prefix stripped).
     Before this fix, passing that path to render_board caused
     'ERR-INPUT-INVALID File not found: looker/x.yaml'. The charts/-first
     retry lives in resolve_board_or_error — the shared agent_api seam every
@@ -751,14 +772,14 @@ def test_resolve_board_or_error_directory_returns_structured_error(
 def test_search_board_path_renders_as_link(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """search_boards board_path resolves via resolve_board_or_error without error.
+    """search_files board_path resolves via resolve_board_or_error without error.
 
     Regression: before the fix, every render after a search failed with
     'File not found: <stripped-path>'.
     """
     from dbt_charts.agent_api import ProjectSession
     from dbt_charts.agent_api._paths import resolve_board_or_error
-    from dbt_charts.agent_api.search import search_boards
+    from dbt_charts.agent_api.search import BoardListing, search_files
     from dbt_charts.core.diagnostics import Diagnostic
 
     boards = tmp_path / "charts"
@@ -766,10 +787,12 @@ def test_search_board_path_renders_as_link(
     (boards / "sales.yaml").write_text(_INLINE_BOARD)
     project = local_project(tmp_path)
 
-    results = search_boards(query="sales", project=project)
+    results = search_files(project, text="sales")
     assert results.results, "search must find the board"
 
-    board_path = results.results[0].board_path  # "sales.yaml" — charts/ prefix stripped
+    hit = results.results[0]
+    assert isinstance(hit, BoardListing)
+    board_path = hit.board_path  # "sales.yaml" — charts/ prefix stripped
 
     board = resolve_board_or_error(Path(board_path), project)
     assert not isinstance(board, Diagnostic), board
@@ -788,7 +811,7 @@ def test_render_board_boards_first_non_filesystem_project(
 
     CloudManagedProject never writes to disk — raw Path.exists() returns False
     for all candidates. Without routing the fallback through project.path_for_fspath,
-    every resolve_board_or_error call after search_boards returns
+    every resolve_board_or_error call after search_files returns
     'ERR-FILE-NOT-FOUND: looker/x.yaml'.
     """
     from dbt_charts.agent_api import ProjectSession

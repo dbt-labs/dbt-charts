@@ -76,6 +76,8 @@ pub struct Column {
     /// That column's series, ink and category index for each of `cells`;
     /// empty elsewhere. A missing (category, series) pair has no cell.
     pub cell_series: Vec<(String, Option<String>, usize)>,
+    /// How many times each cell paints: once per measure on a wide chart.
+    pub copies: usize,
 }
 
 #[derive(Debug)]
@@ -180,6 +182,7 @@ pub fn build_block(
     if domain.len() != centers.len() {
         return Err("support_table: domain/centers length mismatch".into());
     }
+    let rows = config.source_rows(rows);
     validate_against_data(config, rows, cat_field, domain)?;
     let font_size = style.font.size.ok_or("support_table: font.size absent (theme required)")?;
     let cell_ink =
@@ -292,6 +295,7 @@ pub fn build_block(
                 hung_w,
                 cells,
                 cell_series,
+                copies: 1,
             });
             continue;
         }
@@ -308,6 +312,7 @@ pub fn build_block(
                 hung_w,
                 cells,
                 cell_series: Vec::new(),
+                copies: if entry.per_series.is_some() { 1 } else { config.cell_copies() },
             });
         }
     }
@@ -430,16 +435,18 @@ impl ColumnBlock {
                 let ink = col.cell_series.get(k).and_then(|(_, ink, _)| ink.as_deref()).or(col.ink.as_deref()).unwrap_or(cell_ink);
                 let cell_x = origin_x + col.cell_x(edge, cell);
                 let y = origin_y + cell.x + cell_shift;
-                let _ = write!(
-                    out,
-                    "<text{} x=\"{cell_x:.2}\" y=\"{y:.2}\" text-anchor=\"end\" font-family=\"{}\" \
-                     font-size=\"{font_size}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
-                    crate::contract::cell_label_attr(&cell.aria)?,
-                    vega_escape_attr(paint),
-                    xml_escape_attr(&cell_weight),
-                    xml_escape_attr(ink),
-                    xml_escape(&cell.text),
-                );
+                for _ in 0..col.copies {
+                    let _ = write!(
+                        out,
+                        "<text{} x=\"{cell_x:.2}\" y=\"{y:.2}\" text-anchor=\"end\" font-family=\"{}\" \
+                         font-size=\"{font_size}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
+                        crate::contract::cell_label_attr(&cell.aria)?,
+                        vega_escape_attr(paint),
+                        xml_escape_attr(&cell_weight),
+                        xml_escape_attr(ink),
+                        xml_escape(&cell.text),
+                    );
+                }
             }
             crate::contract::mark_group_close(out);
             if style.row.divider.visible && i < last {
@@ -540,7 +547,7 @@ mod tests {
     /// authored order; right block starts `gutter` past the plot.
     #[test]
     fn right_edges_run_left_to_right_on_both_sides() {
-        let col = |width: f64| Column { header: String::new(), header_w: 0.0, width, ink: None, series: None, hung_w: 0.0, cells: vec![], cell_series: vec![] };
+        let col = |width: f64| Column { header: String::new(), header_w: 0.0, width, ink: None, series: None, hung_w: 0.0, cells: vec![], cell_series: vec![], copies: 1 };
         let mut block = ColumnBlock {
             columns: vec![col(50.0), col(30.0)],
             side: Side::Left,

@@ -13,8 +13,8 @@ from dbt_charts.agent_api import (
     board_artifact as _board_artifact,
     describe as _describe,
     migrate as _migrate,
+    profile as _profile,
     query as _query,
-    search as _search,
     validate as _validate,
 )
 from dbt_charts.agent_api.board_artifact import EmitBoardArtifactResult
@@ -41,12 +41,13 @@ from dbt_charts.core.inspect.query_validator import (
     validate_query as _core_validate_query,
 )
 from dbt_charts.core.project import BoardFile, Project
+from dbt_charts.core.project_data_files import sources_listing
 from dbt_charts.core.project_roots import find_project_root
 from dbt_charts.core.render.board_links import LinkContext
 from dbt_charts.core.render.svg_cache import RenderedSvgCache, svg_cache_scope
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from dbt_charts.cli.filesystem_project import FilesystemProject
     from dbt_charts.core.board import BoardRenderResult
@@ -246,7 +247,7 @@ class ProjectSession:
         # materialized via a non-filesystem Project's disk.
         #
         # Threading file_materializer through here is what makes dct query /
-        # MCP execute_query work against a file source the same
+        # MCP execute_sql work against a file source the same
         # way a local render already does.
         return build_adapter_registry(
             self.project,
@@ -418,9 +419,6 @@ class ProjectSession:
     def describe_chart(self, path: Path, chart: str) -> _describe.DescribeBoardResult:
         return _describe.describe_board(path, project=self.project, chart=chart)
 
-    def search_boards(self, query: str, limit: int = 10) -> _search.SearchResult:
-        return _search.search_boards(query, project=self.project, limit=limit)
-
     def lookup_board_query_sql(
         self,
         name: str,
@@ -462,6 +460,17 @@ class ProjectSession:
             limit=limit,
             adapter_registry=self.adapter_registry,
             lenient_variables=lenient_variables,
+        )
+
+    def list_sources(self) -> str:
+        return sources_listing(
+            self.project,
+            [item["name"] for item in self.adapter_registry.list_sql_sources()],
+        )
+
+    def profile_source(self, source: str, tables: Sequence[str] = ()) -> str:
+        return _profile.profile_source(
+            source, adapter_registry=self.adapter_registry, wanted=tables
         )
 
     def emit_board(

@@ -242,61 +242,6 @@ pub(crate) fn js_number_string(v: f64) -> String {
     }
 }
 
-/// A date cell as epoch days, fractional past midnight: `Date.parse` over the
-/// shapes `infer_vega_type_from_data` types temporal, `YYYY-MM-DD`,
-/// `YYYY/MM/DD` and `MM/DD/YYYY`, optionally followed by a `T` or space and
-/// `HH:MM[:SS[.fff]]` and, after a `T`, a `Z` or `±HH:MM` offset. A time with
-/// no offset reads as UTC, the zone the renderer pins.
-pub(crate) fn date_days(text: &str) -> Option<f64> {
-    let b = text.as_bytes();
-    let digits = |range: std::ops::Range<usize>| -> Option<u32> {
-        let part = b.get(range)?;
-        part.iter().all(u8::is_ascii_digit).then(|| part.iter().fold(0, |n, &d| n * 10 + u32::from(d - b'0')))
-    };
-    let (y, m, d) = if b.get(2) == Some(&b'/') && b.get(5) == Some(&b'/') {
-        (digits(6..10)?, digits(0..2)?, digits(3..5)?)
-    } else if matches!(b.get(4), Some(b'-' | b'/')) && matches!(b.get(7), Some(b'-' | b'/')) {
-        (digits(0..4)?, digits(5..7)?, digits(8..10)?)
-    } else {
-        return None;
-    };
-    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
-        return None;
-    }
-    let days = crate::families::temporal::days_from_civil(y as i32, m as u8, d as u8) as f64;
-    let rest = &text[10..];
-    if rest.is_empty() {
-        return Some(days);
-    }
-    let iso = rest.starts_with('T');
-    let time = rest.strip_prefix(['T', ' '])?;
-    let (clock, offset_minutes) = match time.find(['Z', '+', '-']) {
-        Some(i) if iso => {
-            let offset = &time[i..];
-            let minutes = match offset.as_bytes()[0] {
-                b'Z' if offset.len() == 1 => 0,
-                sign @ (b'+' | b'-') => {
-                    let (h, mm) = offset[1..].split_once(':')?;
-                    let total: i32 = h.parse::<i32>().ok()? * 60 + mm.parse::<i32>().ok()?;
-                    if sign == b'-' { -total } else { total }
-                }
-                _ => return None,
-            };
-            (&time[..i], minutes)
-        }
-        Some(_) => return None,
-        None => (time, 0),
-    };
-    let mut parts = clock.split(':');
-    let hours: f64 = parts.next()?.parse().ok()?;
-    let minutes: f64 = parts.next()?.parse().ok()?;
-    let seconds: f64 = parts.next().map_or(Some(0.0), |s| s.parse().ok())?;
-    if parts.next().is_some() || hours >= 25.0 || minutes >= 60.0 || seconds >= 60.0 {
-        return None;
-    }
-    Some(days + (hours * 3600.0 + minutes * 60.0 + seconds - f64::from(offset_minutes) * 60.0) / 86_400.0)
-}
-
 /// `d3.piecewise(d3.interpolateHcl, colors)(t)`.
 fn piecewise_hcl(colors: &[Rgb], t: f64) -> Rgb {
     // A one-color ramp has no segment to mix; the scale reports it unpaintable.
@@ -674,22 +619,6 @@ mod tests {
     fn a_tick_step_sets_the_decimal_precision() {
         for (step, precision) in [(0.0, 0), (5.0, 0), (20.0, 0), (1.0, 0), (0.5, 1), (0.1, 1), (0.05, 2), (0.001, 3), (1000.0, 0)] {
             assert_eq!(tick_precision(step), precision, "{step}");
-        }
-    }
-
-    /// `Date.parse` over the shapes a temporal column takes, in epoch days.
-    #[test]
-    fn a_date_cell_reads_as_epoch_days() {
-        let jan_first = 19_723.0;
-        assert_eq!(date_days("2024-01-01"), Some(jan_first));
-        assert_eq!(date_days("2024/01/02"), Some(jan_first + 1.0));
-        assert_eq!(date_days("01/03/2024"), Some(jan_first + 2.0));
-        assert_eq!(date_days("2024-01-01T12:00:00Z"), Some(jan_first + 0.5));
-        assert_eq!(date_days("2024-01-01 06:00"), Some(jan_first + 0.25));
-        assert_eq!(date_days("2024-01-01T12:00+02:00"), Some(jan_first + 10.0 / 24.0));
-        assert_eq!(date_days("2024-01-01T24:00:00Z"), Some(jan_first + 1.0));
-        for bad in ["", "2024-13-01", "2024-01-32", "2024-01-01T25:00", "2024-01-01T10:60", "2024-01-01 10:00Z", "Jan 1 2024"] {
-            assert_eq!(date_days(bad), None, "{bad}");
         }
     }
 

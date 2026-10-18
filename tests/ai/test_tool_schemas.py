@@ -10,12 +10,13 @@ from dbt_charts.ai.tool_schemas import (
     AGENT_TOOLS,
     ALL_TOOLS,
     DELETE_FILE,
-    EXECUTE_QUERY,
+    EXECUTE_SQL,
     FILE_TOOLS,
     MOVE_FILE,
     RENDER_BOARD,
-    SEARCH_BOARDS,
+    SEARCH_FILES,
     SUGGEST_BOARD_PLACEMENT,
+    WRITE_FILE,
     subset_tool,
 )
 
@@ -61,7 +62,7 @@ class TestOpenAIStrictModeValidity:
         )
 
     def test_execute_query_variables_is_array(self) -> None:
-        schema = EXECUTE_QUERY["input_schema"]
+        schema = EXECUTE_SQL["input_schema"]
         variables_schema = schema["properties"]["variables"]
         any_of = variables_schema.get("anyOf", [])
         types_present = {s.get("type") for s in any_of}
@@ -87,9 +88,9 @@ class TestSubsetTool:
         assert "include_raw_data" in RENDER_BOARD["input_schema"]["properties"]
 
     def test_drops_narrowed_out_required_entries(self) -> None:
-        narrowed = subset_tool(SEARCH_BOARDS, ["tags"])
-        assert "query" in SEARCH_BOARDS["input_schema"]["required"]
-        assert narrowed["input_schema"]["required"] == []
+        narrowed = subset_tool(WRITE_FILE, ["path"])
+        assert "content" in WRITE_FILE["input_schema"]["required"]
+        assert narrowed["input_schema"]["required"] == ["path"]
 
     def test_unknown_property_raises(self) -> None:
         """A renamed field must fail loudly, not silently shrink the schema the
@@ -129,7 +130,7 @@ class TestSuggestBoardPlacement:
 
 class TestMoveDeleteFileTools:
     """move_file/delete_file are chat-only (FILE_TOOLS), same precedent as
-    read/write/edit/glob/grep — never MCP-visible (ALL_TOOLS)."""
+    read/write/edit — never MCP-visible (ALL_TOOLS)."""
 
     def test_schema_shape(self) -> None:
         assert MOVE_FILE["name"] == "move_file"
@@ -218,7 +219,7 @@ class TestToStrictJsonSchema:
 
 _WRITE_TOOLS = {"write_file", "edit_file", "move_file", "delete_file"}
 # Boards can declare http sources, so these reach arbitrary URLs (GET only).
-_OPEN_WORLD_TOOLS = {"render_board", "execute_query"}
+_OPEN_WORLD_TOOLS = {"render_board", "execute_sql"}
 
 
 class TestToolAnnotations:
@@ -256,5 +257,19 @@ class TestToolAnnotations:
 
 
 def test_execute_query_has_no_row_or_token_knobs() -> None:
-    properties = EXECUTE_QUERY["input_schema"]["properties"]
+    properties = EXECUTE_SQL["input_schema"]["properties"]
     assert {"limit", "max_tokens", "include_raw_data"}.isdisjoint(properties)
+
+
+class TestOneSearchTool:
+    """One tool finds boards and files; the three it replaced are gone."""
+
+    def test_search_files_is_the_only_search_tool(self) -> None:
+        names = [tool["name"] for tool in AGENT_TOOLS]
+
+        assert SEARCH_FILES in ALL_TOOLS
+        assert {"search_boards", "glob_files", "grep_files"}.isdisjoint(names)
+
+    def test_description_names_every_kind(self) -> None:
+        for kind in ("boards", "meta", "models", "config", "all"):
+            assert f"`{kind}`" in SEARCH_FILES["description"]

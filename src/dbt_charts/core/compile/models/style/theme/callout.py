@@ -59,7 +59,9 @@ class CalloutChartStyle(BaseModel):
         description="Callout card border style. A color of `by_tone` is the tone's color."
     )
     padding: Annotated[PaddingStyle, InheritSlot(from_path="Style.charts.padding")] = (
-        Field(description="Per-chart-type padding override; 4 sides in pixels.")
+        Field(
+            description="Padding as {top, right, bottom, left} in pixels, never one number."
+        )
     )
     section_gap: float = Field(
         description="Vertical gap between callout title and message in pixels."

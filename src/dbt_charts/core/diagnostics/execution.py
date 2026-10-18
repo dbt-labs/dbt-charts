@@ -228,11 +228,14 @@ class UnparseableSqlError(ExecutionError):
         cause: Exception | str,
         *,
         sql_position: SqlErrorPosition | None = None,
+        advice: str | None = None,
     ) -> None:
         self.cause = cause
         self.sql_position = sql_position
         self.code = ERR_UNPARSEABLE_SQL
         detail = strip_ansi(str(cause))
+        if advice is not None:
+            detail = f"{advice} {detail}"
         super().__init__(ERR_UNPARSEABLE_SQL.message_template.format(cause=detail))
         if sql_position is not None:
             # Carried on .fields too (not just the plain attr) so the

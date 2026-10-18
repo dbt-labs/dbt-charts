@@ -702,8 +702,11 @@ class LayeredSchemaResolver:
                     query_name=AD_HOC_QUERY_NAME,
                     source=source,
                     available=available,
+                    advice="",
                 )
-            raise DbtChartsError.from_code(ERR_SOURCE_NOT_FOUND_EMPTY, source=source)
+            raise DbtChartsError.from_code(
+                ERR_SOURCE_NOT_FOUND_EMPTY, source=source, advice=""
+            )
         return entry
 
 

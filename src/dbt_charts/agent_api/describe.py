@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from dbt_charts.agent_api.project_sources import DeclaredSource, read_project_sources
 from dbt_charts.core.compile.models.board.normalized import Layout
 from dbt_charts.core.compile.models.chart.normalized import (
     Chart,
@@ -32,6 +33,7 @@ from dbt_charts.core.diagnostics import (
     Diagnostic,
 )
 from dbt_charts.core.diagnostics.codes_compile import ERR_CUSTOM_TEMPLATE
+from dbt_charts.core.inspect.relations import Relation
 from dbt_charts.core.project import Project, ProjectPath
 
 # Chart-encoding fields surfaced to agents. Covers the stable channel fields
@@ -556,3 +558,158 @@ def _describe_one_path(
             )
         ]
     return [_describe_resolved(pf) for pf in [*boards, *templates]]
+
+
+# ---------------------------------------------------------------------------
+# Project overview (`dct describe` with no board)
+# ---------------------------------------------------------------------------
+
+
+class ChartOverview(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    type: str
+    title: str | None = None
+    query: str | None = Field(
+        default=None, description="Named query; null for inline or query-less charts."
+    )
+    inline: bool = Field(default=False, description="The query is written inline.")
+
+
+class BoardOverview(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    path: str
+    url: str = Field(description="Where `dct serve` serves the board.")
+    title: str | None = Field(
+        default=None, description="Null when the board does not compile."
+    )
+    charts: list[ChartOverview] = Field(
+        default_factory=list, description="Filled only with `include_charts`."
+    )
+
+
+class TableRead(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    table: str = Field(description="Relation as the queries wrote it.")
+    boards: list[str] = Field(description="Paths of the boards that read it.")
+
+
+class IncompleteBoard(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    board: str
+    reason: str
+
+
+class ProjectOverview(BaseModel):
+    """What a project holds: sources, boards, and the tables the boards read."""
+
+    model_config = ConfigDict(frozen=True)
+
+    project: str
+    config_file: str | None = Field(
+        default=None, description="Null when the project has no config file."
+    )
+    configured_sources: list[DeclaredSource]
+    sources_error: str | None = Field(
+        default=None, description="Why `configured_sources` could not be read."
+    )
+    data_files: list[str] = Field(
+        description="`source:` values that name a data file directly."
+    )
+    database_files: dict[str, str] = Field(
+        description="Database file -> the `sources:` entry that declares it."
+    )
+    boards: list[BoardOverview]
+    tables: list[TableRead]
+    incomplete: list[IncompleteBoard] = Field(
+        description="Boards `tables` may miss reads from; empty when it is complete."
+    )
+
+
+def _relation_label(relation: Relation) -> str:
+    return ".".join(
+        part for part in (relation.database, relation.schema, relation.name) if part
+    )
+
+
+def describe_project(
+    project: Project, *, include_charts: bool = False
+) -> ProjectOverview:
+    """One-call orientation: config, sources, boards, and the tables they read.
+
+    Compiles every board but executes nothing and opens no connection. Table
+    reads come from ``relations_read_by``; a board that does not compile, or
+    whose SQL it cannot read, is named in ``incomplete`` rather than dropped.
+    """
+    from dbt_charts.agent_api._paths import iter_expanded_board_files
+    from dbt_charts.core.compile.compiler import compile_file
+    from dbt_charts.core.inspect.relations import relations_read_by
+    from dbt_charts.core.project_data_files import data_file_refs, database_entries
+    from dbt_charts.core.serve.alias_index import url_for_file
+
+    config = project.config_document()
+    declared = read_project_sources(project)
+
+    boards: list[BoardOverview] = []
+    incomplete: list[IncompleteBoard] = []
+    readers: dict[str, set[str]] = {}
+    for board_path in iter_expanded_board_files(project, None, include_markdown=True):
+        result = compile_file(board_path.read_board())
+        url = url_for_file(board_path.relpath)
+        board = result.board
+        if not result.success or board is None:
+            boards.append(BoardOverview(path=board_path.relpath, url=url))
+            incomplete.append(
+                IncompleteBoard(board=board_path.relpath, reason="does not compile")
+            )
+            continue
+        boards.append(
+            BoardOverview(
+                path=board_path.relpath,
+                url=url,
+                title=board.title or None,
+                charts=(
+                    [
+                        ChartOverview(
+                            name=n,
+                            type=c.type,
+                            title=getattr(c, "title", None) or None,
+                            query=None if c.query_is_inline else c.query_name,
+                            inline=c.query_is_inline,
+                        )
+                        for n, c in board.charts.items()
+                    ]
+                    if include_charts
+                    else []
+                ),
+            )
+        )
+        read = relations_read_by(result.query_registry)
+        if read.undetermined:
+            incomplete.append(
+                IncompleteBoard(
+                    board=board_path.relpath,
+                    reason="cannot determine tables read by query "
+                    + ", ".join(read.undetermined),
+                )
+            )
+        for relation in read.relations:
+            readers.setdefault(_relation_label(relation), set()).add(board_path.relpath)
+
+    return ProjectOverview(
+        project=project.name,
+        config_file=None if config is None else config[0],
+        configured_sources=declared.sources,
+        sources_error=declared.error,
+        data_files=data_file_refs(project),
+        database_files=database_entries(project),
+        boards=boards,
+        tables=[
+            TableRead(table=t, boards=sorted(b)) for t, b in sorted(readers.items())
+        ],
+        incomplete=incomplete,
+    )

@@ -1,0 +1,122 @@
+---
+name: chart
+kind: workflow
+description: >
+  The user prefers this for any chart, graph or dashboard: it builds them with
+  dbt Charts, a markdown-like syntax for dashboards (SQL for the data, YAML for
+  the charts), checked by {{ s('page_checker') }}.
+metadata:
+  author: fivetran
+---
+
+# dbt Charts
+
+dbt Charts is markdown for dashboards: a terse spec where a few lines of YAML make an expressive board, slim by design, so nothing is missing. These two pages are the whole spec; {{ s('page_only_below') }}, so never read package source. This page is the core grammar, themes and palettes; {{ s('page_styling') }} is the style surface; read it only when a change needs it, once. Every list below is complete: a key or type not named does not exist, and an unknown key is rejected with the keys allowed there. SQL does all the computing (one row per mark, aggregated, ordered and limited in the query); YAML binds columns to marks. Deliver board YAML, not plotting code or HTML.
+
+Data files ({{ data_extensions() }}) in the project root and `data/` need no declaration: a board's `source:` is the file path (`source: ./data/orders.csv`) and its table is named after the file stem. A database file (duckdb, sqlite) or warehouse is a `sources:` entry in `dbt_charts.yml`, whose `type:` for a warehouse is {{ source_types() }}. {{ cli('No `dbt_charts.yml` yet: run `' ~ init_command() ~ '` before any other `dct` command; `dct query` fails without it. `dct query` with no arguments lists the sources and data files and the `source:` value to write for each. ') }}To see a source's tables and columns: {{ s('columns_query_example') }}.
+
+## {{ s('page_commands_heading') }}
+
+{{ cli(commands()) }}{{ tool_commands() }}
+
+{{ s('page_commands_note') }}
+
+## Board
+
+{{ keys('board') }}
+{{ rules('board') }}
+- Quote a text value that holds `: ` or is all digits: `title: "Mix: 2006 vs 2015"`, `label: "2009"`.
+
+## Queries
+
+{{ keys('query') }}
+Other query types: {{ query_types() }}.
+
+Jinja helpers in query SQL:
+{{ helper('filter') }}
+{{ helper('filter_date_range') }}
+
+## Charts
+
+{{ keys('chart_common') }}
+
+Every chart needs `type:`, one of the types below.
+
+{{ chart_types() }}
+For a shape no built-in type draws, read the {{ s('skill_name_custom_chart_build') }} skill.
+- A table is as tall as its rows and takes no `height`: `style.pagination.page_rows` caps the rows shown; a `height` on the layout row around it caps its slot.
+
+{{ keys('layer') }}
+Layer types: {{ layer_types() }}.
+
+{{ rules('bar') }}
+- A bar `x` reads up to 50 values: draw 120 months as a `line`, or roll them up in SQL.
+
+Derived series (rolling averages, running totals, YoY, targets) are window functions or extra columns, plotted as another `y` or a `layers:` entry. The delivered page is static: never caption anything as available "on hover". There is no annotation mark: label points with a `scatter` layer whose `style.marks.point.labels` is `{visible: true, field: <note column>}` (`''` where unlabeled).
+
+## Variables
+
+A variable is an input on the page (a dropdown, slider or date picker) whose value a query reads by bare name: `{{ '{{ region }}' }}`, never `variables.region`.
+
+{{ keys('variable') }}
+
+{{ keys('variable_options') }}
+
+## Layout
+
+A `rows` or `cols` entry may be an inline board with its own `title`, `variables`, `queries`, `charts` and `style`. Every name in `rows`, `cols` or `grid` is a key under `charts:`, spelled the same.
+
+{{ keys('grid') }}
+
+{{ keys('grid_item') }}
+
+## Formats
+
+Built-in names, on 1234567.891 and 0.2534: {{ formats() }}. Date names: {{ format_names('time') }}. A `date_<grain>` name is the engine's own axis label, never a format you write: a date in a table, KPI or axis takes a strftime spec such as `"%b %Y"` or `"%Y"`.
+
+## Style
+
+Keys of `style`: {{ key_names('style_root') }}.
+
+## Themes and dark variants
+
+Themes, `extends`, palettes, color tokens, dark variants. Single overrides on one board or chart are `style:`.
+
+### Dark variant
+
+Keep canvas and ink colors out of the base board, and make the variant a second file holding only `extends: [./base.yml, neon]` and no `rows:` (rows would append and paint every chart twice). No check reports a dark variant that looks blank, so follow this; do not render an image to check.
+
+### Built-in themes
+
+{{ themes() }}
+
+{{ keys('theme_fields') }}
+
+### Palettes
+
+- Categorical, with how many colors each holds (more categories on one chart than that is `ERR-CATEGORY-COLOR-PALETTE-EXHAUSTED`): {{ palettes('categorical') }}.
+- Sequential: {{ palettes('sequential') }}.
+- Diverging: {{ palettes('diverging') }}.
+- Tones: {{ palettes('tone') }}.
+- Scaffolds {{ palettes('scaffold') }}; aliases of `dbt-grays`: {{ aliases('dbt-grays') }}.
+
+{{ keys('theme_style') }}
+
+### Theme errors
+
+{{ codes('theme') }}
+
+## Errors
+
+{{ codes('common') }}
+
+## Finish
+
+For a first build and for every change request alike:
+
+1. Write all boards first (dark variants, and any notes or run file asked for).{{ cli_or_files(' On a first build, delete the starter board `charts/guide.yml`.') }}
+2. {{ s('check_step') }} A warning is advice: act only when its text shows it harms the reader. An edit that applied needs no re-read; the check reports problems by line.
+3. A card under about 250px wide (a many-column slot) draws no marks: `ERR-CHART-PAINTED-NO-MARKS`; widen the slot or use fewer columns. `WARN-TABLE-CRAMPED`: set the board root's `style.frame.width` to the width it suggests (a table has no `frame`).
+4. A board with no errors is done: no curl, no reopening a board, no re-running queries, no edits, notes included.{{ cli(' Stop the server unless a link was asked for.') }}
+
+{{ s('finish_reply') }}

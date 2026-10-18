@@ -282,7 +282,7 @@ ERR_SOURCE_NOT_FOUND_EMPTY = REGISTRY.register(
         title="No source profiles are configured",
         message_template=(
             "Source {source!r} not found. No source profiles are configured. "
-            "Declare sources under `sources:` in your dbt_charts.yml."
+            "Declare sources under `sources:` in your dbt_charts.yml.{advice}"
         ),
         doc=(
             "Fired when a query references a source but no source profiles are "
@@ -583,18 +583,23 @@ ERR_UNPARSEABLE_SQL = REGISTRY.register(
         title="SQL could not be parsed for static checks",
         message_template="Could not parse this SQL: {cause}",
         fix_template=(
-            "If the warehouse accepts this query, the SQL is fine; the parser "
-            "just does not model that dialect or macro yet, and only dbt charts' "
-            "static checks (read-only enforcement, reaggregation and join "
-            "lint) are skipped for it. If the warehouse rejects it too, fix the "
-            "syntax at the reported position."
+            "First suspect a reserved word used as an alias or CTE name (drop, "
+            "pivot, share, count): rename it or double-quote it. Then check "
+            "for an unclosed `(` or a missing comma between CTEs: the parser "
+            "reports either at the next token, not where it was dropped, and "
+            "the message leads with the paren count when they differ. PIVOT and UNPIVOT parse in every form DuckDB accepts. If "
+            "the SQL is valid in your warehouse and still lands here, the "
+            "construct is one the parser does not model; the error carries "
+            "the position."
         ),
         doc=(
-            "Fired when dbt charts' static SQL parser cannot parse a query. The "
-            "query is still sent to the warehouse; what is lost is the static "
-            "read-only check and the semantic lint that run on parseable SQL. "
-            "It is not necessarily an error in the SQL itself; unmodeled "
-            "dialect syntax and dbt macros land here too."
+            "Fired when dbt charts' static SQL parser cannot parse a query. "
+            "Every query is parsed for its read-only check before it reaches "
+            "the warehouse, so a query the parser cannot read is refused, not "
+            "sent. The usual cause is an authoring slip: an unclosed paren (the "
+            "message leads with the `(` and `)` counts when they differ), or a "
+            "missing comma between CTEs. Unmodeled dialect syntax and dbt "
+            "macros land here too."
         ),
         docs_topic="queries",
     )
@@ -611,8 +616,48 @@ ERR_BINDER_UNKNOWN_COLUMN = REGISTRY.register(
         ),
         doc=(
             "Fired when the warehouse reports that a column reference could not "
-            "be resolved during query binding. Check that all referenced columns "
-            "exist in the source."
+            "be resolved during query binding. On DuckDB the "
+            "message ends with the nearest real column (case, spaces and "
+            "underscores ignored), or the relation's columns when none is near."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_BINDER_GROUP_BY = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BINDER-GROUP-BY",
+        domain="execute",
+        title="Warehouse rejected a column that is neither grouped nor aggregated",
+        message_template=(
+            "Warehouse rejected the query because a selected column is neither "
+            "grouped nor aggregated: {detail}. Add the column to GROUP BY or "
+            "wrap it in an aggregate such as max() or any_value()."
+        ),
+        doc=(
+            "Fired when the warehouse reports that a selected column must appear "
+            "in the GROUP BY clause or be used in an aggregate function. The "
+            "column exists; add it to GROUP BY or wrap it in an aggregate."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_BINDER_QUERY_SHAPE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BINDER-QUERY-SHAPE",
+        domain="execute",
+        title="Warehouse rejected how a UNION or ORDER BY is assembled",
+        message_template="Warehouse rejected the shape of the query: {detail}",
+        fix_template=(
+            "For UNION, give every SELECT the same number of columns in the "
+            "same order. ORDER BY positions must be within the select list."
+        ),
+        doc=(
+            "Fired when the warehouse's binder rejects a UNION whose branches "
+            "differ in column count, or an ORDER BY position outside the "
+            "select list. The column and table names resolved fine. A selected "
+            "column missing from GROUP BY is ERR-BINDER-GROUP-BY."
         ),
         docs_topic="queries",
     )
@@ -1293,7 +1338,7 @@ ERR_BOARD_QUERY_NOT_FOUND = REGISTRY.register(
         ),
         doc=(
             "Fired when a named-query run (`dct query BOARD NAME`, or "
-            "`execute_query` with `board` and `query`) names a query the board "
+            "`execute_sql` with `board` and `query`) names a query the board "
             "does not declare under `queries:`. Distinct from ERR-UNKNOWN-QUERY, "
             "where a chart references the missing query."
         ),

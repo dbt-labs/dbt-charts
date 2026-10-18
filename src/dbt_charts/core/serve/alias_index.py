@@ -144,7 +144,7 @@ def board_file_candidates(
     ]
 
 
-def _url_for_file(relpath: str) -> str:
+def url_for_file(relpath: str) -> str:
     """Return the canonical served URL for a board's project-relative path.
 
     This is the inverse of board_file_candidates: given a board's relpath
@@ -304,7 +304,7 @@ class AliasIndex:
             if not raw_aliases:
                 continue
 
-            canonical_url = _url_for_file(pf.relpath)
+            canonical_url = url_for_file(pf.relpath)
 
             for raw_alias in raw_aliases:
                 # Validate and normalize the alias

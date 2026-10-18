@@ -90,7 +90,7 @@ class VariableOptions(BaseModel):
     )
     label_column: str | None = Field(
         default=None,
-        description="Column in the query result to use as display labels (separate from values).",
+        description="Query column shown as the option text, apart from the value.",
     )
 
 
@@ -174,7 +174,7 @@ class Variable(BaseModel):
 
     input: VariableInputType = Field(
         default="auto",
-        description="UI control type (select, multiselect, slider, daterange, etc.). 'auto' detects from options.",
+        description="Control type. `auto` (the default) picks one from `options` and `data_type`: omit it except for `daterange`.",
     )
     input_auto_detected: bool = Field(
         default=False,
@@ -190,7 +190,7 @@ class Variable(BaseModel):
     )
     default: Any | None = Field(
         default=None,
-        description="Value the variable takes when neither a URL param nor --var supplies one.",
+        description="Value used when no URL param or --var sets one. Quote one containing `: `. A daterange takes a list.",
     )
     placeholder: str | None = Field(
         default=None, description="Hint text shown inside the input while it is empty."

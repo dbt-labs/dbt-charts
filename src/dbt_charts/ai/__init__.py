@@ -5,7 +5,7 @@ It consolidates common patterns like prompt loading, tool dispatch, and YAML ext
 
 Modules:
     prompts: Prompt loading and building utilities
-    tool_schemas: Canonical tool definitions (render_board, execute_query, ...)
+    tool_schemas: Canonical tool definitions (render_board, execute_sql, ...)
     tools: Tool-call dispatch over those definitions
     yaml_utils: YAML extraction from AI responses
 """

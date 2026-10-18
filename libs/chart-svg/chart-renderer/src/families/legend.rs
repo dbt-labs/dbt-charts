@@ -19,17 +19,6 @@ use crate::svg::{xml_escape, xml_escape_attr, vega_escape_attr};
 use crate::text::FontBook;
 use crate::vega_fit;
 
-// Measured against a production reference SVG (vertical legend, line family):
-// symbol drawn at radius 5 but centered in a 12px box (1px inset each side),
-// row height 16, title band 17.
-const LEGEND_SYMBOL_R: f64 = 5.0;
-const LEGEND_SYMBOL_BOX: f64 = 12.0;
-const LEGEND_LABEL_GAP: f64 = 8.0;
-const LEGEND_ROW_H: f64 = 16.0;
-const LEGEND_TITLE_H: f64 = 17.0;
-/// Gap between the plot's own content (axis labels, rail) and the legend panel.
-pub const LEGEND_GAP: f64 = 24.0;
-
 #[derive(Deserialize)]
 pub struct LegendConfig {
     pub visible: bool,
@@ -395,10 +384,12 @@ const VEGA_COLUMN_PADDING: f64 = 10.0;
 /// `columns` columns (0 → one row). `label_offset` is VL's `labelOffset`.
 /// `symbols[i]` is `Some(..)` only for a mixed-mark legend entry (see the
 /// struct doc's mixed-mark exception) — `&[None; n]` for every ordinary
-/// (uniform) legend.
+/// (uniform) legend. `mixed_marks` is a plain line layer whose entry the legend
+/// does not list: it still collapses the cell, as the mixed-mark exception does.
 pub fn legend_grid(
     label_ws: &[f64],
     symbols: &[Option<LegendSymbol>],
+    mixed_marks: bool,
     font_size: f64,
     columns: usize,
     label_offset: f64,
@@ -412,9 +403,10 @@ pub fn legend_grid(
     // `_mixed_mark_legend_symbols`: a stroke-family glyph collapses the cell to
     // the font size; entries drawing only Vega's default 100-size square or
     // circle keep the uniform row.
-    let mixed = symbols
-        .iter()
-        .any(|s| matches!(s, Some(LegendSymbol::Stroke(_) | LegendSymbol::StrokedCircle(_))));
+    let mixed = mixed_marks
+        || symbols
+            .iter()
+            .any(|s| matches!(s, Some(LegendSymbol::Stroke(_) | LegendSymbol::StrokedCircle(_))));
     let size = if symbols.iter().any(|s| matches!(s, Some(LegendSymbol::Dash(_)))) {
         (VEGA_DASH_SYMBOL_SIZE.sqrt() + VEGA_SYMBOL_STROKE_WIDTH).ceil().max(font_size)
     } else if mixed {
@@ -971,6 +963,7 @@ pub fn limit_legend_text<'a>(
 /// Lay `entries` out as Vega would under `title_text` (empty for none).
 pub fn vega_legend(
     entries: &[LegendEntry],
+    mixed_marks: bool,
     title_text: &str,
     cfg: &LegendConfig,
     fonts: &FontBook,
@@ -989,7 +982,7 @@ pub fn vega_legend(
         fonts.measure_shaped(title_text, cfg.title.font.family_or("sans-serif"), cfg.title.font.size_or(12.0))?
     };
     let symbols: Vec<Option<LegendSymbol>> = entries.iter().map(|e| e.symbol).collect();
-    legend_from_widths(&ws, &symbols, title_text, title_w, cfg)
+    legend_from_widths(&ws, &symbols, mixed_marks, title_text, title_w, cfg)
 }
 
 /// Vega's `entryColumns` (vega-parser `guides/guide-util.js:23-26`): the
@@ -1011,6 +1004,7 @@ pub fn entry_columns(cfg: &LegendConfig) -> usize {
 pub fn legend_from_widths(
     label_ws: &[f64],
     symbols: &[Option<LegendSymbol>],
+    mixed_marks: bool,
     title_text: &str,
     title_w: f64,
     cfg: &LegendConfig,
@@ -1029,7 +1023,7 @@ pub fn legend_from_widths(
     }
     let slot_ws: Vec<f64> = order.iter().map(|&idx| label_ws[idx]).collect();
     let slot_symbols: Vec<Option<LegendSymbol>> = order.iter().map(|&idx| symbols[idx]).collect();
-    let grid = legend_grid(&slot_ws, &slot_symbols, size, columns, label_offset);
+    let grid = legend_grid(&slot_ws, &slot_symbols, mixed_marks, size, columns, label_offset);
     let title_size = cfg.title.font.size_or(12.0);
     let title_band = if title_text.is_empty() {
         0.0
@@ -1369,73 +1363,6 @@ impl LegendEntry<'_> {
     }
 }
 
-/// A left or bottom legend anchors on the bounds `legend_origin` reads,
-/// which a family models on its fit arm alone: beside `blocker` (an arm or an
-/// overlay whose bounds that union leaves out) it refuses by name.
-pub fn refuse_far_edge_legend(
-    family: &str,
-    shown: bool,
-    cfg: &LegendConfig,
-    blocker: Option<&str>,
-) -> Result<(), String> {
-    let edge = cfg.position.edge.as_str();
-    match blocker {
-        Some(blocker) if shown && matches!(edge, "left" | "bottom") => {
-            Err(format!("{family}: legend.position={edge:?} beside {blocker} is not modeled"))
-        }
-        _ => Ok(()),
-    }
-}
-
-/// A legacy margin arm draws its measured one-column legend
-/// (`emit_vertical_legend`), so a vertical legend over several `entry_columns`
-/// refuses there by name.
-pub fn refuse_legacy_columns(family: &str, cfg: &LegendConfig) -> Result<(), String> {
-    let columns = entry_columns(cfg);
-    if cfg.direction == "vertical" && columns > 1 {
-        return Err(format!(
-            "{family}: legend.columns={columns} on a vertical legend is not modeled on the legacy margin arm \
-             — its measured legend is one column"
-        ));
-    }
-    Ok(())
-}
-
-/// Pixel width the vertical legend panel claims: swatch + gap + the wider of
-/// the widest entry label or the title text.
-pub fn vertical_legend_width(
-    entries: &[LegendEntry],
-    title_text: &str,
-    cfg: &LegendConfig,
-    fonts: &FontBook,
-) -> Result<f64, String> {
-    let leg_label_font = &cfg.label.font;
-    let leg_label_size = leg_label_font.size_or(11.0);
-    let leg_label_family = leg_label_font.family_or("sans-serif");
-    let leg_title_font = &cfg.title.font;
-    let leg_title_size = leg_title_font.size_or(12.0);
-    let leg_title_family = leg_title_font.family_or("sans-serif");
-
-    let max_label_w = entries.iter().try_fold(0.0_f64, |acc, e| {
-        fonts.measure(e.label, leg_label_family, leg_label_size).map(|w| acc.max(w))
-    })?;
-    let title_w = if title_text.is_empty() {
-        0.0
-    } else {
-        fonts.measure(title_text, leg_title_family, leg_title_size)?
-    };
-    Ok((LEGEND_SYMBOL_BOX + LEGEND_LABEL_GAP + max_label_w.max(title_w)).max(52.0))
-}
-
-/// Pixel height the vertical legend panel claims: title band (when the
-/// title actually renders — an empty `title_text`, including `title.visible:
-/// false` folded into it by `legend_title_text`, claims none) plus one row
-/// per entry.
-pub fn vertical_legend_height(entries: &[LegendEntry], title_text: &str) -> f64 {
-    let title_band = if title_text.is_empty() { 0.0 } else { LEGEND_TITLE_H };
-    title_band + entries.len() as f64 * LEGEND_ROW_H
-}
-
 /// Title text for a legend: the color field's display name, cased per the
 /// legend's own title font (production's `field_display_text`) — empty when
 /// `legend.title.visible: false` is authored, production's own signal to
@@ -1462,79 +1389,6 @@ pub fn color_channel_title(
     field_labels: &FieldLabels,
 ) -> Result<String, String> {
     field_display_text(color_field, field_labels, cfg.title.font.case.as_deref().unwrap_or("title"))
-}
-
-/// Emit the vertical legend (title + swatch/label rows), top-left corner at `(x, y)`.
-pub fn emit_vertical_legend(
-    svg: &mut String,
-    entries: &[LegendEntry],
-    title_text: &str,
-    cfg: &LegendConfig,
-    x: f64,
-    y: f64,
-    stamp_series: bool,
-) {
-    let leg_label_font = &cfg.label.font;
-    let leg_label_size = leg_label_font.size_or(11.0);
-    let leg_label_family = leg_label_font.family_or("sans-serif");
-    let leg_label_color = leg_label_font.color.as_deref().unwrap_or("#626366");
-    let leg_label_weight = leg_label_font.weight_str();
-
-    let leg_title_font = &cfg.title.font;
-    let leg_title_size = leg_title_font.size_or(12.0);
-    let leg_title_family = leg_title_font.family_or("sans-serif");
-    let leg_title_color = leg_title_font.color.as_deref().unwrap_or("#313233");
-    let leg_title_weight = leg_title_font.weight_str();
-
-    crate::contract::legend_open(svg);
-    if !title_text.is_empty() {
-        crate::contract::legend_title_open(svg);
-        let _ = write!(
-            svg,
-            "<text x=\"{x:.2}\" y=\"{:.2}\" text-anchor=\"start\" \
-             font-family=\"{}\" font-size=\"{leg_title_size}\" \
-             font-weight=\"{leg_title_weight}\" fill=\"{leg_title_color}\">{}</text>",
-            y + leg_title_size * 0.75,
-            vega_escape_attr(leg_title_family),
-            xml_escape(title_text), leg_title_weight = xml_escape_attr(&leg_title_weight), leg_title_color = xml_escape_attr(leg_title_color)
-        );
-        crate::contract::mark_group_close(svg);
-    }
-
-    let title_band = if title_text.is_empty() { 0.0 } else { LEGEND_TITLE_H };
-    crate::contract::legend_entries_open(svg);
-    for (i, entry) in entries.iter().enumerate() {
-        let item_y = y + title_band + i as f64 * LEGEND_ROW_H;
-        let cx = x + LEGEND_SYMBOL_BOX / 2.0;
-        let cy = item_y + LEGEND_SYMBOL_BOX / 2.0;
-        crate::contract::legend_symbol_open(svg);
-        let _ = write!(
-            svg,
-            "<path transform=\"translate({cx:.2},{cy:.2})\" \
-             d=\"M{LEGEND_SYMBOL_R},0A{LEGEND_SYMBOL_R},{LEGEND_SYMBOL_R},0,1,1,\
-             -{LEGEND_SYMBOL_R},0A{LEGEND_SYMBOL_R},{LEGEND_SYMBOL_R},0,1,1,{LEGEND_SYMBOL_R},0\" \
-             fill=\"{}\"/>",
-            xml_escape_attr(entry.fill)
-        );
-        crate::contract::mark_group_close(svg);
-        let tx = x + LEGEND_SYMBOL_BOX + LEGEND_LABEL_GAP;
-        let ty = item_y + LEGEND_SYMBOL_BOX / 2.0 + leg_label_size * 0.27;
-        // See `emit_vega_legend`'s doc comment on the `.role-legend-label`
-        // wrap and the `data-dbt-series` stamp gate.
-        let series_attr = entry.series_attr(stamp_series);
-        crate::contract::legend_label_open(svg, &series_attr);
-        let _ = write!(
-            svg,
-            "<text x=\"{tx:.2}\" y=\"{ty:.2}\" text-anchor=\"start\" \
-             font-family=\"{}\" font-size=\"{leg_label_size}\" \
-             font-weight=\"{leg_label_weight}\" fill=\"{leg_label_color}\">{}</text>",
-            vega_escape_attr(leg_label_family),
-            xml_escape(entry.label), leg_label_weight = xml_escape_attr(&leg_label_weight), leg_label_color = xml_escape_attr(leg_label_color)
-        );
-        svg.push_str("</g>");
-    }
-    crate::contract::mark_group_close(svg);
-    crate::contract::mark_group_close(svg);
 }
 
 #[cfg(test)]
@@ -1734,18 +1588,18 @@ mod tests {
     #[test]
     fn legend_grid_matches_vega() {
         let no_symbols = [None, None, None];
-        let g = legend_grid(&[60.0, 58.0, 30.0], &no_symbols, 11.0, 0, 8.0);
+        let g = legend_grid(&[60.0, 58.0, 30.0], &no_symbols, false, 11.0, 0, 8.0);
         assert_eq!(g.width, 230.0);
         assert_eq!((g.size, g.label_x, g.box_h), (12.0, 20.0, 13.0));
         assert_eq!(g.row_y, vec![0.25]);
         assert_eq!(g.col_x, vec![0.0, 91.0, 180.0]);
-        let g = legend_grid(&[60.0, 58.0, 30.0], &no_symbols, 11.0, 2, 8.0);
+        let g = legend_grid(&[60.0, 58.0, 30.0], &no_symbols, false, 11.0, 2, 8.0);
         assert_eq!((g.row_y.clone(), g.box_h), (vec![0.25, 16.0], 29.0));
-        let g = legend_grid(&[60.0, 58.0, 30.0], &no_symbols, 15.0, 2, 8.0);
+        let g = legend_grid(&[60.0, 58.0, 30.0], &no_symbols, false, 15.0, 2, 8.0);
         assert_eq!((g.size, g.row_y.clone(), g.box_h), (15.0, vec![0.25, 18.0], 34.0));
-        let g = legend_grid(&[60.0, 58.0], &no_symbols[..2], 11.0, 1, 8.0);
+        let g = legend_grid(&[60.0, 58.0], &no_symbols[..2], false, 11.0, 1, 8.0);
         assert_eq!((g.row_y.clone(), g.box_h), (vec![0.0, 16.0], 29.0));
-        assert!(legend_grid(&[], &[], 11.0, 2, 8.0).row_y.is_empty());
+        assert!(legend_grid(&[], &[], false, 11.0, 2, 8.0).row_y.is_empty());
     }
 
     /// `_mixed_mark_legend_symbols`'s `symbolSize`/`symbolStrokeWidth`
@@ -1766,16 +1620,24 @@ mod tests {
     #[test]
     fn mixed_mark_legend_centers_on_font_size_not_the_uniform_cell() {
         let symbols = [Some(LegendSymbol::Square("#40639c")), Some(LegendSymbol::Stroke(2.0))];
-        let g = legend_grid(&[70.0, 90.0], &symbols, 11.0, 0, 8.0);
+        let g = legend_grid(&[70.0, 90.0], &symbols, false, 11.0, 0, 8.0);
         assert_eq!(g.size, 11.0, "mixed legend's cell collapses to fontSize: {}", g.size);
         assert_eq!(g.box_h, 12.0, "row height is the square entry's own 12, not 13: {}", g.box_h);
         assert_eq!(g.row_y, vec![0.0]);
     }
 
+    /// A line layer whose own entry is unlisted still collapses the cell to the font size.
+    #[test]
+    fn an_unlisted_stroke_layer_still_collapses_the_cell_to_the_font_size() {
+        let symbols = [Some(LegendSymbol::Square("#40639c"))];
+        assert_eq!(legend_grid(&[70.0], &symbols, true, 11.0, 0, 8.0).size, 11.0);
+        assert_eq!(legend_grid(&[70.0], &symbols, false, 11.0, 0, 8.0).size, 12.0);
+    }
+
     #[test]
     fn a_square_and_circle_legend_keeps_the_uniform_cell() {
         let symbols = [Some(LegendSymbol::Square("#40639c")), Some(LegendSymbol::Circle)];
-        let g = legend_grid(&[70.0, 90.0], &symbols, 11.0, 0, 8.0);
+        let g = legend_grid(&[70.0, 90.0], &symbols, false, 11.0, 0, 8.0);
         assert_eq!(g.size, 12.0, "{}", g.size);
     }
 
@@ -1784,7 +1646,7 @@ mod tests {
     #[test]
     fn a_square_and_a_bordered_circle_keep_the_uniform_cell_a_stroked_circle_collapses() {
         let size = |circle| {
-            legend_grid(&[70.0, 90.0], &[Some(LegendSymbol::Square("#fff")), Some(circle)], 11.0, 0, 8.0).size
+            legend_grid(&[70.0, 90.0], &[Some(LegendSymbol::Square("#fff")), Some(circle)], false, 11.0, 0, 8.0).size
         };
         assert_eq!(size(LegendSymbol::BorderedCircle("#fff")), 12.0);
         assert_eq!(size(LegendSymbol::StrokedCircle("#fff")), 11.0);
@@ -1792,7 +1654,7 @@ mod tests {
 
     #[test]
     fn the_short_stroke_glyph_stays_one_stroke_tall_in_a_vertical_legend() {
-        let box_h = |symbol| legend_grid(&[70.0, 90.0], &[Some(symbol), Some(symbol)], 11.0, 1, 8.0).box_h;
+        let box_h = |symbol| legend_grid(&[70.0, 90.0], &[Some(symbol), Some(symbol)], false, 11.0, 1, 8.0).box_h;
         assert!(box_h(LegendSymbol::ShortStroke) < box_h(LegendSymbol::Square("#40639c")));
     }
 
@@ -1809,7 +1671,7 @@ mod tests {
     fn mixed_mark_legend_column_pitch_reads_the_stroke_glyphs_own_bound() {
         let symbols = [Some(LegendSymbol::Square("#40639c")), Some(LegendSymbol::Stroke(2.0))];
         let label_ws = [63.0888671875, 79.2236328125];
-        let g = legend_grid(&label_ws, &symbols, 11.0, 0, 8.0);
+        let g = legend_grid(&label_ws, &symbols, false, 11.0, 0, 8.0);
         assert_eq!(g.col_x, vec![0.0, 100.0], "column pitch matches the reference translate: {:?}", g.col_x);
     }
 
@@ -1820,7 +1682,7 @@ mod tests {
     #[test]
     fn mixed_mark_legend_column_pitch_when_the_stroke_glyph_is_the_base_entry() {
         let symbols = [Some(LegendSymbol::Stroke(2.0)), Some(LegendSymbol::Square("#40639c"))];
-        let g = legend_grid(&[50.0, 50.0], &symbols, 11.0, 0, 8.0);
+        let g = legend_grid(&[50.0, 50.0], &symbols, false, 11.0, 0, 8.0);
         assert_eq!(g.col_x, vec![0.0, 80.0], "column pitch reads column 1's own square bound: {:?}", g.col_x);
     }
 
@@ -1955,13 +1817,13 @@ mod tests {
                 series_key: None,
             }).collect();
         let order = |direction: &str, columns: u32, n: usize| {
-            vega_legend(&entries[..n], "", &legend_cfg(direction, Some(columns)), &fonts).unwrap().order
+            vega_legend(&entries[..n], false, "", &legend_cfg(direction, Some(columns)), &fonts).unwrap().order
         };
         assert_eq!(order("vertical", 2, 5), vec![0, 3, 1, 4, 2]);
         assert_eq!(order("vertical", 3, 5), vec![0, 2, 4, 1, 3]);
         assert_eq!(order("vertical", 3, 4), vec![0, 2, 1, 3]);
         assert_eq!(order("horizontal", 2, 5), vec![0, 1, 2, 3, 4]);
-        let legend = vega_legend(&entries, "", &legend_cfg("vertical", Some(2)), &fonts).unwrap();
+        let legend = vega_legend(&entries, false, "", &legend_cfg("vertical", Some(2)), &fonts).unwrap();
         assert_eq!((legend.grid.col_x.len(), legend.grid.row_y.len()), (2, 3));
         let mut svg = String::new();
         emit_vega_legend(&mut svg, &entries, &legend, &legend_cfg("vertical", Some(2)), LegendSymbol::Circle, 0.0, 0.0, false);
@@ -2012,7 +1874,7 @@ mod tests {
             },
         ];
         let fonts = test_fonts();
-        let legend = vega_legend(&entries, "", &cfg, &fonts).unwrap();
+        let legend = vega_legend(&entries, false, "", &cfg, &fonts).unwrap();
         let mut svg = String::new();
         emit_vega_legend(&mut svg, &entries, &legend, &cfg, LegendSymbol::Square("#fff"), 0.0, 0.0, false);
         assert!(svg.contains("<rect"), "base entry keeps its square: {svg}");
@@ -2054,16 +1916,9 @@ mod tests {
         let mut cfg = legend_cfg("vertical", None);
         cfg.title.visible = Some(true);
         let entries = titled_entries();
-        let legend = vega_legend(&entries, "Segment", &cfg, &test_fonts()).unwrap();
+        let legend = vega_legend(&entries, false, "Segment", &cfg, &test_fonts()).unwrap();
         let mut svg = String::new();
         emit_vega_legend(&mut svg, &entries, &legend, &cfg, LegendSymbol::Circle, 0.0, 0.0, false);
-        assert_vega_legend_roles(&svg, &["Enterprise", "SMB"]);
-    }
-
-    #[test]
-    fn a_vertical_margin_legend_draws_vegas_legend_groups() {
-        let mut svg = String::new();
-        emit_vertical_legend(&mut svg, &titled_entries(), "Segment", &legend_cfg("vertical", None), 0.0, 0.0, false);
         assert_vega_legend_roles(&svg, &["Enterprise", "SMB"]);
     }
 }

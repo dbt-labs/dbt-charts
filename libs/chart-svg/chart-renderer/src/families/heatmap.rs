@@ -34,7 +34,7 @@ use crate::families::legend::{
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::svg::{xml_escape, xml_escape_attr, vega_escape_attr};
 use crate::families::temporal::{
-    axis_time_format, date_text_day, fold_steep, infer_vega_type, parse_iso_date, rewrite_with_expr, resolve_vertical_temporal_labels, AuthoredTimeFormat,
+    axis_time_format, fold_steep, infer_vega_type, parse_iso_date, rewrite_with_expr, resolve_vertical_temporal_labels, AuthoredTimeFormat,
     TimeUnit, VegaType,
 };
 use crate::text::FontBook;
@@ -47,6 +47,9 @@ pub(crate) const BREATHING_ROOM_PX: f64 = 4.0;
 /// Vega's `config.axis.translate`: every axis group is drawn half a pixel in
 /// from its anchor so 1px strokes land on a pixel boundary.
 pub(crate) const AXIS_TRANSLATE: f64 = 0.5;
+
+/// The tick count of a symbol legend over a continuous scale (Vega's `legend.tickCount` default).
+const SYMBOL_LEGEND_TICK_COUNT: usize = 5;
 
 #[derive(Deserialize)]
 pub(crate) struct HeatmapResolved {
@@ -193,17 +196,27 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     if date_color && (r.multiples.is_some() || r.legend.direction != "vertical" || r.legend.position.edge != "right") {
         return Err("heatmap: a date-like color is modeled with a vertical legend on the right only".into());
     }
-    if date_color {
-        let authored = r.legend.values.iter().flatten().map(|v| Value::from(v.as_str())).collect::<Vec<_>>();
-        color_values_are_dates(rows.iter().filter_map(|row| row.get(&r.color)).chain(&authored))?;
-    }
     let categorical = categorical && !date_color;
     if r.multiples.is_some() {
-        if r.style.axis_y.mirror_requested("heatmap")? {
-            return Err("heatmap: multiples with axis_y.mirror not supported".into());
-        }
         return Ok(crate::families::heatmap_facet::render_facet(payload, fonts, &r, categorical)?);
     }
+
+    // Vega-Lite filters a row whose quantitative or temporal color is invalid out
+    // of the data before any scale reads it, so a band only such rows fill
+    // leaves the grid.
+    let rows: Vec<_> = if categorical {
+        rows
+    } else {
+        rows.into_iter()
+            .filter(|row| {
+                if date_color {
+                    row.get(&r.color).and_then(date_cell_day).is_some()
+                } else {
+                    crate::common::row_num(row, &r.color).is_some_and(f64::is_finite)
+                }
+            })
+            .collect()
+    };
 
     // The chart's OWN effective background — see `HeatmapResolved::background`.
     let frame = ChartFrame::of(payload, r.background.as_str());
@@ -297,6 +310,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
 
     // ── Y category axis ───────────────────────────────────────────────────
     let ax_y = &r.style.axis_y;
+    let mirror_active = ax_y.mirror_requested("heatmap")?;
     let y_label_family = ax_y.labels.font.family_or("sans-serif");
     let y_label_fs = ax_y.labels.font.size_or(11.0);
     let y_tick_visible = ax_y.ticks.visible.unwrap_or(true);
@@ -328,18 +342,21 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             None => y_label_ws.iter().map(|&w| (w, false)).collect(),
         }
     };
-    // An own-side `labels.align` grows the row labels back ACROSS the axis
-    // line, which Vega-Lite's own fit estimate does not reserve for. Rather
-    // than leave them over the plot, production measures the exact nominal
-    // row labels and bakes `labelPadding = max_width + 4`, capped at the
-    // label limit (`vl_field_maps.py::measure_axis_to_vl`); Vega then
-    // left-anchors every label at −labelPadding. An align it cannot measure
-    // from — `center`, or an upper/lower `font.case`, which renders through
-    // a `labelExpr` the measurement can't see — drops back to Vega-Lite's
-    // away-side default (`_fallback_reversed_label_align`). A date y paints a
-    // `labelExpr` too, so it always takes the away-side default.
+    // An own-side `labels.align` (`left` on a left axis, `right` on a right
+    // one) grows the row labels back ACROSS the axis line, which Vega-Lite's
+    // own fit estimate does not reserve for. Rather than leave them over the
+    // plot, production measures the exact nominal row labels and bakes
+    // `labelPadding = max_width + 4`, capped at the label limit
+    // (`vl_field_maps.py::measure_axis_to_vl`); Vega then anchors every label
+    // at -labelPadding. An align it cannot measure from, `center` or an
+    // upper/lower `font.case` (which renders through a `labelExpr` the
+    // measurement can't see), drops back to Vega-Lite's away-side default
+    // (`_fallback_reversed_label_align`). A date y paints a `labelExpr` too,
+    // so it always takes the away-side default.
     let y_case = ax_y.labels.font.case.as_deref().unwrap_or("none");
-    let y_own_side = ax_y.labels.align.as_deref() == Some("left")
+    let y_right = ax_y.position.as_deref() == Some("right");
+    let own_align = if y_right { "right" } else { "left" };
+    let y_own_side = ax_y.labels.align.as_deref() == Some(own_align)
         && !matches!(y_case, "upper" | "lower")
         && y_dates.is_none();
     let y_label_pad = if y_own_side {
@@ -349,35 +366,24 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             .padding
             .ok_or("heatmap: axis_y.labels.padding absent (theme required)")?
     };
-    // A resolved `right` align on a right axis is measurable: production bakes
-    // `labelPadding = max_width + 4` and end-anchors the labels there.
-    let y_right = ax_y.position.as_deref() == Some("right");
-    if y_right && (y_dates.is_some() || ax_y.labels.align.as_deref() != Some("right") || matches!(y_case, "upper" | "lower")) {
-        return Err("heatmap: a right y axis is only modeled with a date-free y, a resolved axis_y.labels.align of right and no upper or lower case; every other align is not supported".into());
-    }
-    let y_label_pad = if y_right { y_label_max_w.min(y_label_limit) + BREATHING_ROOM_PX } else { y_label_pad };
     // An authored align wins; else Vega-Lite's default for the angle (`right`, the
     // text ending at the axis, when flat).
     let y_angle = vega_fit::normalize_angle(ax_y.labels.angle.unwrap_or(0.0));
     let (vl_y_align, y_baseline) = vega_fit::vl_y_label_anchor(y_angle, !y_right);
-    let y_ink_align = if y_own_side {
-        "left"
-    } else if y_right {
-        "right"
-    } else {
-        vl_y_align
-    };
-    let y_text_anchor = svg_text_anchor(y_ink_align);
+    let y_ink_align = if y_own_side { own_align } else { vl_y_align };
+    let (ghost_default_align, ghost_baseline) = vega_fit::vl_y_label_anchor(y_angle, y_right);
+    let mut y_edges = vec![YEdge { right: y_right, align: y_ink_align, baseline: y_baseline }];
+    if mirror_active {
+        let align = if y_own_side { own_align } else { ghost_default_align };
+        y_edges.push(YEdge { right: !y_right, align, baseline: ghost_baseline });
+    }
     let y_labels_hidden = ax_y.labels.visible == Some(false);
-    let y_ink = |anchor_x: f64, cy: f64, label_w: f64, extra_row: bool| {
-        crate::common::rotated_category_label_ink(anchor_x, cy, label_w, y_label_fs, y_ink_align, y_baseline, y_angle, extra_row)
+    let y_ink = |edge: &YEdge, anchor_x: f64, cy: f64, label_w: f64, extra_row: bool| {
+        crate::common::rotated_category_label_ink(anchor_x, cy, label_w, y_label_fs, edge.align, edge.baseline, y_angle, extra_row)
     };
     let y_gutter = y_tick_len + y_label_pad;
-    // The labels' anchor x past the plot's left edge, for a plot `pw` wide.
-    let y_anchor_x = |pw: f64| if y_right { pw + y_gutter } else { -y_gutter };
-    if ax_y.mirror_requested("heatmap")? {
-        return Err("heatmap: axis_y.mirror is not supported".into());
-    }
+    // The labels' anchor x past an edge, for a plot `pw` wide.
+    let y_anchor_x = |edge: &YEdge, pw: f64| if edge.right { pw + y_gutter } else { -y_gutter };
 
     // ── Axis titles ───────────────────────────────────────────────────────
     // A title is drawn unless the style hides it (`axis_to_vl` sets
@@ -411,7 +417,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     // Hidden labels leave the axis its ticks, which the title clears.
     let y_tick_edge = if y_labels_hidden { y_tick_len } else { 0.0 };
     let y_label_edge = y_label_specs.iter().fold(if y_right { y_tick_edge } else { -y_tick_edge }, |edge, &(lw, extra_row)| {
-        let ink = y_ink(y_anchor_x(0.0), 0.0, lw, extra_row);
+        let ink = y_ink(&y_edges[0], y_anchor_x(&y_edges[0], 0.0), 0.0, lw, extra_row);
         if y_right { edge.max(ink.x2) } else { edge.min(ink.x1) }
     });
     // How far the x labels reach below their row's anchor: the bottom title
@@ -474,15 +480,38 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     } else {
         fonts.measure_shaped(&leg_title_text, leg_title_family, leg_title_size)?
     };
-    // A nominal color's symbol legend: a fill-only square per category.
+    // A nominal color's symbol legend: a fill-only square per category. The
+    // mirror's ghost rule layer strokes the same color, which turns a
+    // numeric gradient into a symbol legend too: a stroked circle per rung.
+    let ladder_symbols = mirror_active && !matches!(coloring, Coloring::Categories(_));
+    let ladder: Vec<(String, String)> = match &coloring {
+        Coloring::Gradient { min, max, ticks } if ladder_symbols => leg_labels
+            .iter()
+            .zip(ticks)
+            .map(|(label, &tick)| {
+                Ok((label.clone(), interp_color(&r.style.color_gradient.resolved_stops, *min, *max, tick)?))
+            })
+            .collect::<Result<_, String>>()?,
+        Coloring::DateGradient { min, max } if ladder_symbols => {
+            date_legend_ticks(*min, *max, SYMBOL_LEGEND_TICK_COUNT, r.legend.values.as_deref())?
+                .into_iter()
+                .map(|day| Ok((legend_date_label(day)?, self::date_color(*min, *max, day))))
+                .collect::<Result<_, String>>()?
+        }
+        _ => Vec::new(),
+    };
     let symbol_entries: Vec<LegendEntry> = match &coloring {
         Coloring::Categories(scale) => category_legend_entries(scale, r.legend.values.as_deref()),
-        Coloring::Gradient { .. } | Coloring::DateGradient { .. } => Vec::new(),
+        _ => ladder
+            .iter()
+            .map(|(label, fill)| LegendEntry { label, fill, symbol: Some(LegendSymbol::Circle), series_key: None })
+            .collect(),
     };
-    let symbol_legend = (has_legend && matches!(coloring, Coloring::Categories(_)))
-        .then(|| vega_legend(&symbol_entries, &leg_title_text, &r.legend, fonts))
+    let symbol_legend = (has_legend && (ladder_symbols || matches!(coloring, Coloring::Categories(_))))
+        .then(|| vega_legend(&symbol_entries, false, &leg_title_text, &r.legend, fonts))
         .transpose()?;
-    let gradient = has_legend && matches!(coloring, Coloring::Gradient { .. } | Coloring::DateGradient { .. });
+    let gradient =
+        has_legend && !ladder_symbols && matches!(coloring, Coloring::Gradient { .. } | Coloring::DateGradient { .. });
     let vertical_gradient = gradient && r.legend.direction == "vertical";
     let gradient_legend = match &coloring {
         Coloring::Gradient { min, max, ticks } if gradient => {
@@ -539,7 +568,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     // Each date label's block (both rows) and whether Vega's greedy overlap
     // pass keeps it, for a plot `pw` x `ph`: ink and visibility both follow
     // the band spacing, so they are read per fit pass.
-    let y_date_ink = |pw: f64, ph: f64| -> Vec<Bounds> {
+    let y_date_ink = |edge: &YEdge, pw: f64, ph: f64| -> Vec<Bounds> {
         let ys = BandScale::new(y_domain.clone(), 0.0, ph, 0.0, 0.0);
         y_dates
             .iter()
@@ -548,12 +577,12 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                 let cy = ys.position(&y_domain[label.domain_idx]).expect("a label names a band of its own domain")
                     + ys.bandwidth() / 2.0
                     - AXIS_TRANSLATE;
-                y_ink(y_anchor_x(pw), cy, label.w1.max(label.w2).min(y_label_limit), !label.row2.is_empty())
+                y_ink(edge, y_anchor_x(edge, pw), cy, label.w1.max(label.w2).min(y_label_limit), !label.row2.is_empty())
             })
             .collect()
     };
     let y_date_visible = |pw: f64, ph: f64| -> Vec<bool> {
-        let ink = y_date_ink(pw, ph);
+        let ink = y_date_ink(&y_edges[0], pw, ph);
         match y_greedy_gap {
             Some(gap) => vega_fit::greedy_visible(&ink, gap),
             None => vec![true; ink.len()],
@@ -569,26 +598,28 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         // The axis group sits a crisp half pixel above its labels' own
         // coordinates in the bounds Vega reads (`axis.js:77`), which only
         // shows where a label overhangs the plot top.
-        if y_labels_hidden {
-            // Hidden labels leave the axis its ticks alone.
-            if y_tick_len > 0.0 {
-                let (x1, x2) = if y_right { (pw, pw + y_tick_len) } else { (-y_tick_len, 0.0) };
-                for cat in &y_label_bands {
+        for edge in &y_edges {
+            if y_labels_hidden {
+                // Hidden labels leave the axis its ticks alone.
+                if y_tick_len > 0.0 {
+                    let (x1, x2) = if edge.right { (pw, pw + y_tick_len) } else { (-y_tick_len, 0.0) };
+                    for cat in &y_label_bands {
+                        let Some(by) = ys.position(cat) else { continue };
+                        let cy = by + ys.bandwidth() / 2.0 - AXIS_TRANSLATE;
+                        y_axis.union(&Bounds::new(x1, cy, x2, cy));
+                    }
+                }
+            } else if y_dates.is_some() {
+                let visible = y_date_visible(pw, ph);
+                for (ink, _) in y_date_ink(edge, pw, ph).iter().zip(&visible).filter(|(_, v)| **v) {
+                    y_axis.union(ink);
+                }
+            } else {
+                for (cat, lw) in y_label_bands.iter().zip(&y_label_ws) {
                     let Some(by) = ys.position(cat) else { continue };
                     let cy = by + ys.bandwidth() / 2.0 - AXIS_TRANSLATE;
-                    y_axis.union(&Bounds::new(x1, cy, x2, cy));
+                    y_axis.union(&y_ink(edge, y_anchor_x(edge, pw), cy, *lw, false));
                 }
-            }
-        } else if y_dates.is_some() {
-            let visible = y_date_visible(pw, ph);
-            for (ink, _) in y_date_ink(pw, ph).iter().zip(&visible).filter(|(_, v)| **v) {
-                y_axis.union(ink);
-            }
-        } else {
-            for (cat, lw) in y_label_bands.iter().zip(&y_label_ws) {
-                let Some(by) = ys.position(cat) else { continue };
-                let cy = by + ys.bandwidth() / 2.0 - AXIS_TRANSLATE;
-                y_axis.union(&y_ink(y_anchor_x(pw), cy, *lw, false));
             }
         }
         if y_title_extra > 0.0 {
@@ -745,70 +776,75 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     let y_label_weight = ax_y.labels.font.weight_str();
     let y_tick_color = crate::common::required_ink(ax_y.ticks.color.as_deref(), "heatmap", "axis_y.ticks.color")?;
     let y_tick_w_px = ax_y.ticks.width.unwrap_or(1.0);
-    let y_axis_x = plot_left + if y_right { plot_w } else { 0.0 } + AXIS_TRANSLATE;
-    let y_label_x = if y_right { y_axis_x + y_gutter } else { y_axis_x - y_gutter };
-    // One row per drawn label: every band for a category y, only the ladder's
-    // openers (and a second context row under them) for a date y.
-    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (y_axis_x, plot_top))?;
     let y_visible = y_date_visible(plot_w, plot_h);
     let y_rows: Vec<(&str, &str)> = match &y_dates {
         Some(labels) => labels.iter().map(|l| (y_domain[l.domain_idx].as_str(), l.row1.as_str())).collect(),
         None => y_domain.iter().map(|d| (d.as_str(), d.as_str())).collect(),
     };
-    for (i, &(band_val, row1)) in y_rows.iter().enumerate() {
-        let Some(band_y) = y_scale.position(band_val) else { continue };
-        let center = band_y + cell_h / 2.0;
-        if y_tick_visible {
-            let tick_y = plot_top + center.floor() + AXIS_TRANSLATE;
-            let _ = write!(
-                svg,
-                "<line x1=\"{:.2}\" y1=\"{tick_y:.2}\" x2=\"{y_axis_x:.2}\" y2=\"{tick_y:.2}\" \
-                 stroke=\"{y_tick_color}\" stroke-width=\"{y_tick_w_px}\"/>",
-                if y_right { y_axis_x + y_tick_len } else { y_axis_x - y_tick_len },
-                y_tick_color = xml_escape_attr(y_tick_color)
-            );
-        }
-        if y_labels_hidden {
-            continue;
-        }
-        let row2 = y_dates.as_ref().map(|labels| labels[i].row2.as_str()).unwrap_or("");
-        let hidden = if y_dates.is_some() && !y_visible[i] { " opacity=\"0\"" } else { "" };
-        if y_angle != 0.0 {
-            emit_rotated_x_label(
-                &mut svg,
-                (y_label_x, plot_top + center, y_angle, vega_fit::baseline_shift(y_baseline, y_label_fs)),
-                (y_text_anchor, y_label_family, y_label_fs, &y_label_weight, y_label_color),
-                (row1, row2),
-                hidden,
-            );
-            continue;
-        }
-        let row1_y = plot_top + center + vega_fit::baseline_shift("middle", y_label_fs);
-        for (text, y) in [(row1, row1_y), (row2, row1_y + vega_fit::label_row_advance(y_label_fs))] {
-            if text.is_empty() {
+    for (edge_idx, edge) in y_edges.iter().enumerate() {
+        let y_text_anchor = svg_text_anchor(edge.align);
+        let y_axis_x = plot_left + if edge.right { plot_w } else { 0.0 } + AXIS_TRANSLATE;
+        let y_label_x = if edge.right { y_axis_x + y_gutter } else { y_axis_x - y_gutter };
+        // One row per drawn label: every band for a category y, only the ladder's
+        // openers (and a second context row under them) for a date y.
+        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (y_axis_x, plot_top))?;
+        for (i, &(band_val, row1)) in y_rows.iter().enumerate() {
+            let Some(band_y) = y_scale.position(band_val) else { continue };
+            let center = band_y + cell_h / 2.0;
+            if y_tick_visible {
+                let tick_y = plot_top + center.floor() + AXIS_TRANSLATE;
+                let _ = write!(
+                    svg,
+                    "<line x1=\"{:.2}\" y1=\"{tick_y:.2}\" x2=\"{y_axis_x:.2}\" y2=\"{tick_y:.2}\" \
+                     stroke=\"{y_tick_color}\" stroke-width=\"{y_tick_w_px}\"/>",
+                    if edge.right { y_axis_x + y_tick_len } else { y_axis_x - y_tick_len },
+                    y_tick_color = xml_escape_attr(y_tick_color)
+                );
+            }
+            if y_labels_hidden {
                 continue;
             }
-            let _ = write!(
-                svg,
-                "<text x=\"{y_label_x:.2}\" y=\"{y:.2}\" text-anchor=\"{y_text_anchor}\" \
-                 font-family=\"{}\" font-size=\"{y_label_fs}\" \
-                 font-weight=\"{y_label_weight}\" fill=\"{y_label_color}\"{hidden}>{}</text>",
-                vega_escape_attr(y_label_family),
-                xml_escape(text), y_text_anchor = xml_escape_attr(y_text_anchor), y_label_weight = xml_escape_attr(&y_label_weight), y_label_color = xml_escape_attr(y_label_color)
+            let row2 = y_dates.as_ref().map(|labels| labels[i].row2.as_str()).unwrap_or("");
+            let hidden = if y_dates.is_some() && !y_visible[i] { " opacity=\"0\"" } else { "" };
+            if y_angle != 0.0 {
+                emit_rotated_x_label(
+                    &mut svg,
+                    (y_label_x, plot_top + center, y_angle, vega_fit::baseline_shift(edge.baseline, y_label_fs)),
+                    (y_text_anchor, y_label_family, y_label_fs, &y_label_weight, y_label_color),
+                    (row1, row2),
+                    hidden,
+                );
+                continue;
+            }
+            let row1_y = plot_top + center + vega_fit::baseline_shift("middle", y_label_fs);
+            for (text, y) in [(row1, row1_y), (row2, row1_y + vega_fit::label_row_advance(y_label_fs))] {
+                if text.is_empty() {
+                    continue;
+                }
+                let _ = write!(
+                    svg,
+                    "<text x=\"{y_label_x:.2}\" y=\"{y:.2}\" text-anchor=\"{y_text_anchor}\" \
+                     font-family=\"{}\" font-size=\"{y_label_fs}\" \
+                     font-weight=\"{y_label_weight}\" fill=\"{y_label_color}\"{hidden}>{}</text>",
+                    vega_escape_attr(y_label_family),
+                    xml_escape(text), y_text_anchor = xml_escape_attr(y_text_anchor), y_label_weight = xml_escape_attr(&y_label_weight), y_label_color = xml_escape_attr(y_label_color)
+                );
+            }
+        }
+        // The ghost axis carries no title (`mirror_axis.py` nulls it).
+        if edge_idx == 0 {
+            crate::common::emit_axis_title_rotated(
+                &mut svg,
+                &y_title_text,
+                &ax_y.title,
+                y_axis_x + y_label_edge,
+                plot_top + plot_h / 2.0,
+                if y_right { 1.0 } else { -1.0 },
+                None,
             );
         }
+        crate::contract::axis_group_close(&mut svg);
     }
-
-    crate::common::emit_axis_title_rotated(
-        &mut svg,
-        &y_title_text,
-        &ax_y.title,
-        y_axis_x + y_label_edge,
-        plot_top + plot_h / 2.0,
-        if y_right { 1.0 } else { -1.0 },
-        None,
-    );
-    crate::contract::axis_group_close(&mut svg);
 
     // ── Legend ────────────────────────────────────────────────────────────
     // A symbol legend slides inside its own paint arm; a gradient block
@@ -852,6 +888,14 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
 
     svg.push_str("</svg>");
     Ok(svg)
+}
+
+/// One drawn edge of the y category axis: whether it sits on the right, and
+/// how its labels anchor.
+struct YEdge {
+    right: bool,
+    align: &'static str,
+    baseline: &'static str,
 }
 
 /// What the color channel paints, owned: a gradient over a measure, or one
@@ -1248,29 +1292,13 @@ pub(crate) fn gradient_ladder(
 const MS_PER_DAY: f64 = 86_400_000.0;
 
 /// A date cell's day number. `None` for a cell Vega-Lite filters out of a
-/// grid: null, or an invalid date.
-fn date_cell_day(cell: &Value) -> Option<f64> {
-    cell.as_str().and_then(date_text_day)
-}
-
-/// A date-typed column types from its first ten cells, so a later cell may be
-/// anything. Text with no digit is `NaN` to `Date.parse` and filtered, as is
-/// null; any other cell this cannot read may be a date JS parses, so it refuses
-/// by name rather than vanish from the grid, the color domain or the legend.
-fn color_values_are_dates<'a>(cells: impl Iterator<Item = &'a Value>) -> Result<(), String> {
-    for cell in cells {
-        let filtered = match cell {
-            Value::Null => true,
-            Value::String(text) => date_text_day(text).is_some() || !text.bytes().any(|b| b.is_ascii_digit()),
-            _ => false,
-        };
-        if !filtered {
-            return Err(format!(
-                "heatmap: a date-typed color column holds {cell}, which is not an ISO date — not supported"
-            ));
-        }
+/// grid: null, or an invalid date. A number is epoch milliseconds, as `new Date(n)` reads it.
+pub(crate) fn date_cell_day(cell: &Value) -> Option<f64> {
+    match cell {
+        Value::String(text) => crate::js_date::parse_days(text),
+        Value::Number(ms) => ms.as_f64().filter(|ms| ms.abs() <= 8.64e15).map(|ms| ms / MS_PER_DAY),
+        _ => None,
     }
-    Ok(())
 }
 
 /// A time scale's domain is the raw date extent (it is never niced); a column
@@ -1305,13 +1333,15 @@ fn date_ticks(min: f64, max: f64, count: usize) -> Result<Vec<f64>, String> {
 /// `Date.parse` leaves it), else `max(2, 2 * floor(length / 100))` target
 /// ticks, or the two ends when fewer than three (`LegendEntries`).
 fn date_legend_values(min: f64, max: f64, plot_h: f64, authored: Option<&[String]>) -> Result<Vec<f64>, String> {
+    date_legend_ticks(min, max, gradient_tick_count(gradient_length(plot_h)), authored)
+}
+
+/// A date legend's labeled days for `count` target ticks.
+fn date_legend_ticks(min: f64, max: f64, count: usize, authored: Option<&[String]>) -> Result<Vec<f64>, String> {
     match authored {
-        Some(values) => Ok(values.iter().map(|v| date_text_day(v).unwrap_or(f64::NAN)).collect()),
+        Some(values) => Ok(values.iter().map(|v| crate::js_date::parse_days(v).unwrap_or(f64::NAN)).collect()),
         None if min == max => Ok(vec![min]),
-        None => {
-            let ticks = date_ticks(min, max, gradient_tick_count(gradient_length(plot_h)))?;
-            Ok(gradient_labeled_values(ticks, min, max))
-        }
+        None => Ok(gradient_labeled_values(date_ticks(min, max, count)?, min, max)),
     }
 }
 
@@ -1341,7 +1371,7 @@ pub(crate) fn emit_date_gradient_def(out: &mut String, id: &str, min: f64, max: 
 
 /// The resolved stops interpolated piecewise in sRGB (`d3.interpolateRgb`),
 /// printed the way d3 formats a color.
-fn interp_color(stops: &[String], domain_min: f64, domain_max: f64, value: f64) -> Result<String, String> {
+pub(crate) fn interp_color(stops: &[String], domain_min: f64, domain_max: f64, value: f64) -> Result<String, String> {
     let colors = stops
         .iter()
         .map(|stop| d3rs::color::parse_hex(stop).ok_or_else(|| format!("heatmap: gradient stop {stop:?} is not a #rrggbb color")))
@@ -2170,15 +2200,16 @@ mod tests {
         assert!(!svg.contains("role-mark"), "no tooltip wiring for a date-like x: {svg}");
     }
 
-    /// `axis_y.mirror` is line's own fit-arm feature (line.rs); heatmap has
-    /// no ghost-axis model — refuse rather than silently ignore an
-    /// authored mirror and render an unmirrored chart.
+    /// `axis_y.mirror` repeats the category labels on the right edge, and the
+    /// ghost rule layer's stroke turns the gradient legend into a symbol
+    /// legend.
     #[test]
-    fn mirror_refuses() {
-        let j = heatmap_payload(|j| j["resolved"]["style"]["axis_y"]["mirror"] = json!(true));
-        let p: Payload = serde_json::from_value(j).unwrap();
-        let err = render(&p, &test_fonts()).expect_err("heatmap does not model mirror");
-        assert!(err.contains("mirror"), "error names the unmodeled field: {err}");
+    fn mirror_repeats_the_category_labels_on_the_right_edge() {
+        let plain = render_json(heatmap_payload(|_| {}));
+        let svg = render_json(heatmap_payload(|j| j["resolved"]["style"]["axis_y"]["mirror"] = json!(true)));
+        let labels = |svg: &str| svg.matches(">Accessories</text>").count();
+        assert_eq!((labels(&plain), labels(&svg)), (1, 2), "{svg}");
+        assert!(plain.contains("fill=\"url(#") && !svg.contains("fill=\"url(#"), "the gradient turns into symbols");
     }
 
     /// Front-end contract: `tooltip_format` (already set in the base
@@ -2292,14 +2323,19 @@ mod tests {
         assert_eq!(svg.matches("aria-roledescription=\"rect mark\"").count(), cells, "{svg}");
     }
 
-    /// A right y axis has no probed geometry: it refuses rather than inventing one.
+    /// A right y axis puts its labels on the away side of the cells, and an
+    /// own-side (`left`) label alignment pads the axis by the widest label.
     #[test]
-    fn a_right_y_axis_refuses() {
-        let p: Payload = serde_json::from_value(heatmap_payload(|j| {
+    fn a_right_y_axis_renders_away_and_own_side() {
+        let away = render_json(heatmap_payload(|j| {
             j["resolved"]["style"]["axis_y"]["position"] = json!("right");
-        }))
-        .unwrap();
-        assert!(render(&p, &test_fonts()).expect_err("refuses").contains("axis_y"));
+        }));
+        let own = render_json(heatmap_payload(|j| {
+            j["resolved"]["style"]["axis_y"]["position"] = json!("right");
+            j["resolved"]["style"]["axis_y"]["labels"]["align"] = json!("right");
+        }));
+        assert!(away.contains("role-axis") && own.contains("role-axis"));
+        assert_ne!(away, own);
     }
 
     /// A vertical gradient below the plot keeps the side length, `clamp(plot
@@ -2310,9 +2346,6 @@ mod tests {
             j["resolved"]["legend"]["position"] = json!({"edge": "bottom", "align": "start", "overlay": false});
         }));
         assert!(svg.contains("fill=\"url(#"), "{svg}");
-        let mirrored: Payload =
-            serde_json::from_value(heatmap_payload(|j| j["resolved"]["style"]["axis_y"]["mirror"] = json!(true))).unwrap();
-        assert!(render(&mirrored, &test_fonts()).expect_err("refuses").contains("axis_y.mirror"));
     }
 
     /// Oracle: `format_d3(47368, ",.2~f", "US$", "", None, placement)` is
@@ -2387,18 +2420,6 @@ mod tests {
         assert_eq!(values[0], 19723.0);
         assert!(values[1].is_nan());
         assert_eq!(super::legend_date_label(values[1]).unwrap(), "NaN, 0NaN");
-    }
-
-    /// A later cell of a date column is read, filtered as `NaN`, or refused;
-    /// the authored legend values are held to the same rule.
-    #[test]
-    fn a_date_color_cell_is_read_filtered_or_refused() {
-        let cells = |v: &[serde_json::Value]| super::color_values_are_dates(v.iter());
-        assert!(cells(&[serde_json::json!("2024-01-01"), serde_json::json!(null), serde_json::json!("soon")]).is_ok());
-        for unreadable in [serde_json::json!(5), serde_json::json!("2024/01/05"), serde_json::json!("2024-01-01T25:00:00")] {
-            let err = cells(&[unreadable]).unwrap_err();
-            assert!(err.contains("which is not an ISO date"), "{err}");
-        }
     }
 
     /// A zero-width time domain maps every date to the middle of the range.

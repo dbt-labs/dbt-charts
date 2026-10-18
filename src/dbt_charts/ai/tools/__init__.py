@@ -117,21 +117,24 @@ def _handle_query(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, An
             source=parsed.source or ctx.default_source,
             limit=_query.MAX_QUERY_LIMIT,
             adapter_registry=ctx.project_session.adapter_registry,
+            lenient_variables=parsed.lenient_variables,
         ).model_dump(mode="json", exclude_none=True)
         hint = SQL_QUERY_HINT
     return with_csv(result, hint=hint) if result["success"] else fit_failure(result)
 
 
 def _handle_search(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, Any]:
-    parsed = _search.SearchBoardsArgs.model_validate(args)
+    parsed = _search.SearchFilesArgs.model_validate(args)
     project = (
         FilesystemProject(ctx.dashboards_directory)
         if ctx.dashboards_directory is not None
         else ctx.project_session.project
     )
-    return _search.search_boards(
-        parsed.query,
+    return _search.search_files(
         project,
+        kind=parsed.kind,
+        path=parsed.path,
+        text=parsed.text,
         tags=parsed.tags,
         limit=_search.DEFAULT_SEARCH_LIMIT if parsed.limit is None else parsed.limit,
         cursor=parsed.cursor,
@@ -276,33 +279,15 @@ def _handle_delete_file(
     ).model_dump(mode="json", exclude_none=True)
 
 
-def _handle_glob_files(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, Any]:
-    parsed = _files.GlobFilesArgs.model_validate(args)
-    return _files.glob_files(
-        parsed.pattern, project=ctx.project_session.project
-    ).model_dump(mode="json", exclude_none=True)
-
-
-def _handle_grep_files(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, Any]:
-    parsed = _files.GrepFilesArgs.model_validate(args)
-    return _files.grep_files(
-        parsed.pattern,
-        project=ctx.project_session.project,
-        glob=parsed.glob,
-    ).model_dump(mode="json", exclude_none=True)
-
-
 TOOL_HANDLERS: dict[str, ToolHandler] = {
     "render_board": _handle_render,
-    "execute_query": _handle_query,
-    "search_boards": _handle_search,
+    "execute_sql": _handle_query,
+    "search_files": _handle_search,
     "docs": _handle_docs,
     "describe_board": _handle_describe_board,
     "read_file": _handle_read_file,
     "write_file": _handle_write_file,
     "edit_file": _handle_edit_file,
-    "glob_files": _handle_glob_files,
-    "grep_files": _handle_grep_files,
     "move_file": _handle_move_file,
     "delete_file": _handle_delete_file,
     "list_skills": _handle_list_skills,

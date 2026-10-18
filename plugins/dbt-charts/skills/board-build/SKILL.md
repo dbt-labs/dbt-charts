@@ -52,17 +52,20 @@ A variable's `label` is inferred from its object key, and its `input: auto`, `re
 
 ### Step 1 — Explore the Data
 
-Explore the schema with `execute_query` against the warehouse's
+Explore the schema with `execute_sql` against the warehouse's
 metadata views (e.g. `INFORMATION_SCHEMA.TABLES`, then
 `INFORMATION_SCHEMA.COLUMNS` filtered to the tables you care about) before
 writing any query. Never invent a table or column name you have not seen.
 
-Use `search_boards` when the user asks for something similar to an
+Use `search_files` when the user asks for something similar to an
 existing dashboard or when you need validated query patterns to reuse. Reuse
 returned dashboard paths and query names exactly; never invent file globs such
-as `data/*.csv` or guess paths from memory.
+as `data/*.csv` or guess paths from memory. A `meta.yml` in `charts/` or one of
+its folders sets the theme, style and regional defaults for every board beneath
+it: find them with `search_files` (`kind: "meta"`) and read the nearest
+one with `read_file` before styling a board there.
 
-Use `execute_query` to verify cardinality and sample values before writing any YAML:
+Use `execute_sql` to verify cardinality and sample values before writing any YAML:
 
 ```sql
 SELECT status, COUNT(*) FROM orders GROUP BY status;
@@ -91,7 +94,7 @@ rows:
 
 Then verify with two calls:
 
-1. `execute_query` — confirm the data shape and columns
+1. `execute_sql` — confirm the data shape and columns
 2. `render_board` — compile + render to see the visual
 
 ### Step 3 — Iterate on That Chart
@@ -158,8 +161,8 @@ Pass concrete values via the `variables` parameter when testing. When the query 
 
 | Tool | When | What It Catches |
 |------|------|-----------------|
-| `execute_query` | While drafting raw SQL | SQL errors, missing tables, wrong column names |
-| `execute_query(board, query)` | After saving YAML with named queries | Actual named-query columns and sample rows |
+| `execute_sql` | While drafting raw SQL | SQL errors, missing tables, wrong column names |
+| `execute_sql(board, query)` | After saving YAML with named queries | Actual named-query columns and sample rows |
 | `render_board` | After every YAML edit and before delivery | YAML schema errors, unknown fields, broken chart/query/layout references, query execution, render errors, layout issues, misleading visuals |
 
 These tools are fast. Use them after every change, not just at the end.
@@ -325,7 +328,7 @@ The `$` in these specs prints the board locale's currency: `$` in `en-US`, `€`
 | Mistake | Fix |
 |---------|-----|
 | Building the entire dashboard in one pass | Build one chart at a time |
-| Writing SQL without checking column names | Check INFORMATION_SCHEMA via `execute_query` first |
+| Writing SQL without checking column names | Check INFORMATION_SCHEMA via `execute_sql` first |
 | Hardcoding values during exploration | Use `{{ variables }}` from the start so the query cache survives |
 | Skipping the render between changes | `render_board` after every YAML edit |
 | Too many charts (>8) the user didn't ask for | Split into multiple dashboards |
@@ -348,7 +351,7 @@ The `$` in these specs prints the board locale's currency: `$` in `en-US`, `€`
 | Excuse | Reality |
 |--------|---------|
 | "User asked for the whole dashboard at once" | Build incrementally anyway. Iterate to the result, don't one-shot it. |
-| "I know what the columns are called" | You don't. Check INFORMATION_SCHEMA with `execute_query`. |
+| "I know what the columns are called" | You don't. Check INFORMATION_SCHEMA with `execute_sql`. |
 | "Validation is slow, I'll do it at the end" | Validation is instant. Skipping it costs more time debugging later. |
 | "It's just a quick chart, no need for variables" | Variables cost nothing and enable caching. Use them. |
 | "15 charts is too many, I'll trim their list" | An explicit user ask wins. Suggest a split once, then build all 15. The 8-max default applies when the design is yours to choose. |

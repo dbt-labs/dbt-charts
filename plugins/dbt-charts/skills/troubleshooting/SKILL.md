@@ -129,7 +129,7 @@ Use `options.static` for static values, not `options.values`.
 
 ## SQL Execution Errors
 
-These come from any of: `execute_query`, `execute_query(board, query)`, `render_board`.
+These come from any of: `execute_sql`, `execute_sql(board, query)`, `render_board`.
 
 ### "table does not exist"
 
@@ -170,7 +170,7 @@ These show up when `render_board` produces unexpected visual results.
 
 ### Chart shows no data
 
-- Verify the query returns rows: `execute_query` with the same SQL
+- Verify the query returns rows: `execute_sql` with the same SQL
 - Check that `x:` and `y:` column names match the query's SELECT aliases exactly (case-sensitive)
 - Check variable defaults — a restrictive filter might exclude all data
 
@@ -193,8 +193,8 @@ These show up when `render_board` produces unexpected visual results.
 When stuck, work through this in order:
 
 1. **Read the full error** — not just the first line. The details matter.
-1. **Test one query at a time** — `execute_query(board, query)` for saved board queries, `execute_query` for raw SQL.
-1. **Check column names** — INFORMATION_SCHEMA via `execute_query`.
+1. **Test one query at a time** — `execute_sql(board, query)` for saved board queries, `execute_sql` for raw SQL.
+1. **Check column names** — INFORMATION_SCHEMA via `execute_sql`.
 1. **Simplify** — Remove charts until you find the one that's broken.
 1. **Re-render** — Confirm the fix visually.
 
@@ -204,8 +204,8 @@ When stuck, work through this in order:
 |---------|-----|
 | Changing YAML randomly until errors stop | Read the error. Diagnose first, then fix. |
 | Referencing queries in layout | Create a chart that references the query. Layout references charts. |
-| Assuming column names | Check INFORMATION_SCHEMA via `execute_query` to verify |
-| Wrong `source` | Source names are the project-configured names listed in your context, not adapter types |
+| Assuming column names | Check INFORMATION_SCHEMA via `execute_sql` to verify |
+| Wrong `source` | Source names are the project-configured names, not adapter types: take them from the project's `sources` |
 | Variable `default` inside `options` | `default` goes at the variable level, not nested inside `options` |
 
 ## Rationalizations to Resist

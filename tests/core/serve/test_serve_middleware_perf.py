@@ -100,3 +100,15 @@ def test_alias_index_rebuilt_when_markdown_board_touched(tmp_path: Path) -> None
 
         client.get("/")
         assert build_spy.call_count == 1
+
+
+def test_health_names_the_serving_process_and_project(tmp_path: Path) -> None:
+    """`dct serve --detach` identifies its server by asking it, not the OS."""
+    import os
+
+    project_dir = _project(tmp_path)
+    with TestClient(create_server(FilesystemProject(project_dir))) as client:
+        body = client.get("/health").json()
+
+    assert body["pid"] == os.getpid()
+    assert Path(body["project"]) == project_dir

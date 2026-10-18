@@ -52,24 +52,24 @@ class TestDispatchToolCall:
         make_context: Callable[..., DbtChartsAIContext],
         tmp_path: Path,
     ) -> None:
-        """search_boards receives the context's dashboards_directory project."""
+        """search_files receives the context's dashboards_directory project."""
         from dbt_charts.cli.filesystem_project import FilesystemProject
 
         captured: dict[str, object] = {}
 
-        def fake_search_boards(query, project, *, tags=None, limit=10, cursor=None):
+        def fake_search_files(project, **kwargs):
             from dbt_charts.agent_api.search import SearchResult
 
             captured["project"] = project
             return SearchResult(success=True, errors=[], results=[])
 
         monkeypatch.setattr(
-            "dbt_charts.agent_api.search.search_boards",
-            fake_search_boards,
+            "dbt_charts.agent_api.search.search_files",
+            fake_search_files,
         )
 
         context = make_context(dashboards_directory=tmp_path)
-        dispatch_tool_call("search_boards", {"query": "orders"}, context=context)
+        dispatch_tool_call("search_files", {"text": "orders"}, context=context)
 
         assert isinstance(captured["project"], FilesystemProject)
         assert captured["project"].root == tmp_path.resolve()
@@ -101,8 +101,8 @@ class TestDispatchToolCall:
         """project_dir is no longer a wire field; passing it raises a validation error
         caught at the dispatch boundary."""
         result = dispatch_tool_call(
-            "search_boards",
-            {"query": "orders", "project_dir": "/some/path"},
+            "search_files",
+            {"text": "orders", "project_dir": "/some/path"},
             context=context,
         )
         assert result["success"] is False
@@ -111,14 +111,14 @@ class TestDispatchToolCall:
         ("tool", "args", "expected"),
         [
             (
-                "search_boards",
-                {"query": "x", "project": "p1"},
-                "search_boards: project: is not an argument of this tool",
+                "search_files",
+                {"text": "x", "project": "p1"},
+                "search_files: project: is not an argument of this tool",
             ),
             (
-                "execute_query",
+                "execute_sql",
                 {"sql": "select 1", "variables": [{"name": "r", "value": None}]},
-                "execute_query: variables.0.value: got null, expected one of "
+                "execute_sql: variables.0.value: got null, expected one of "
                 "str, int, float, bool, list[str]",
             ),
         ],
@@ -157,13 +157,31 @@ class TestDispatchToolCall:
 
         monkeypatch.setattr(query_module, "execute_query", fails_loudly)
 
-        result = dispatch_tool_call(
-            "execute_query", {"sql": "select 1"}, context=context
-        )
+        result = dispatch_tool_call("execute_sql", {"sql": "select 1"}, context=context)
 
         assert result["error_code"] == "ERR-WAREHOUSE-RUNTIME"
         assert result["errors"][0].endswith("(truncated)")
         assert len(model_json(result).encode("utf-8")) <= MODEL_RESULT_BYTE_BUDGET
+
+    def test_execute_query_forwards_lenient_variables(
+        self, tmp_path: Path, make_context: Callable[..., DbtChartsAIContext]
+    ) -> None:
+        (tmp_path / "dbt_charts.yml").write_text(
+            "sources:\n  db:\n    type: duckdb\n    path: ':memory:'\n"
+        )
+        context = make_context()
+        args = {
+            "sql": "SELECT 1 AS n WHERE {{ filter('city', city) }}",
+            "source": "db",
+        }
+
+        strict = dispatch_tool_call("execute_sql", args, context=context)
+        lenient = dispatch_tool_call(
+            "execute_sql", {**args, "lenient_variables": True}, context=context
+        )
+
+        assert strict["success"] is False
+        assert lenient["success"] is True, lenient
 
     def test_dispatch_labels_an_unclassified_exception_internal(
         self, context: DbtChartsAIContext
@@ -204,7 +222,7 @@ class TestDispatchToolCall:
         assert result["success"] is False
         assert result["error_code"] == "ERR-FILE-NOT-FOUND"
 
-    def test_dispatch_search_boards_subdir_returns_results(
+    def test_dispatch_search_files_subdir_returns_results(
         self,
         make_context: Callable[..., DbtChartsAIContext],
         tmp_path: Path,
@@ -225,20 +243,20 @@ class TestDispatchToolCall:
             project_session=ProjectSession.open(tmp_path, read_only=False)
         )
         result = dispatch_tool_call(
-            "search_boards",
-            {"query": "zendesk"},
+            "search_files",
+            {"text": "zendesk"},
             context=context,
         )
         assert result["success"] is True
         assert len(result["results"]) == 1
         assert result["results"][0]["title"] == "Sales Dashboard"
 
-    def test_dispatch_search_boards_without_a_query_lists_and_pages(
+    def test_dispatch_search_files_without_text_lists_and_pages(
         self,
         make_context: Callable[..., DbtChartsAIContext],
         tmp_path: Path,
     ) -> None:
-        """The shared handler lists on an empty query, so chat and stdio get the
+        """The shared handler lists without text, so chat and stdio get the
         same listing the connector does."""
         from dbt_charts.agent_api import ProjectSession
 
@@ -250,12 +268,10 @@ class TestDispatchToolCall:
         context = make_context(
             project_session=ProjectSession.open(tmp_path, read_only=False)
         )
-        first = dispatch_tool_call(
-            "search_boards", {"query": "", "limit": 2}, context=context
-        )
+        first = dispatch_tool_call("search_files", {"limit": 2}, context=context)
         second = dispatch_tool_call(
-            "search_boards",
-            {"query": "", "limit": 2, "cursor": first["next"]},
+            "search_files",
+            {"limit": 2, "cursor": first["next"]},
             context=context,
         )
 
@@ -332,13 +348,13 @@ class TestDispatchToolCall:
             built.update(json.loads(comment))
             return {"success": True}
 
-        monkeypatch.setitem(TOOL_HANDLERS, "execute_query", handle_execute_query)
+        monkeypatch.setitem(TOOL_HANDLERS, "execute_sql", handle_execute_query)
         with attribute({"actor": "42", "client": "connector"}, {}):
-            dispatch_tool_call("execute_query", {}, context=context)
+            dispatch_tool_call("execute_sql", {}, context=context)
 
         assert built["dbt_charts_actor"] == "42"
         assert built["dbt_charts_client"] == "connector"
-        assert built["dbt_charts_tool"] == "execute_query"
+        assert built["dbt_charts_tool"] == "execute_sql"
         assert re.fullmatch(r"[a-z0-9_-]{0,63}", built["dbt_charts_tool"])
 
     def test_dispatch_unknown_tool_not_in_extra_handlers_errors(
@@ -351,6 +367,14 @@ class TestDispatchToolCall:
             extra_handlers={"other_tool": lambda args, ctx: {}},
         )
         assert result == {"error": "Unknown tool: nonexistent_tool"}
+
+    def test_dispatch_retired_execute_query_name_is_unknown(
+        self, context: DbtChartsAIContext
+    ) -> None:
+        result = dispatch_tool_call(
+            "execute_query", {"sql": "SELECT 1"}, context=context
+        )
+        assert result == {"error": "Unknown tool: execute_query"}
 
     def test_dispatch_tool_overrides_take_priority_over_core_registry(
         self, context: DbtChartsAIContext
@@ -555,20 +579,18 @@ def _project_scaffold_context(
     )
 
 
-# Happy-path args for each TOOL_HANDLERS entry. search_boards needs a safe tmp
+# Happy-path args for each TOOL_HANDLERS entry. search_files needs a safe tmp
 # directory (the default cwd may contain YAML files that fail list_dashboards).
 _TOOL_HAPPY_PATH_ARGS: dict[str, dict[str, Any]] = {
     "render_board": {"yaml_content": _INLINE_BOARD_YAML},
-    "execute_query": {"sql": "SELECT 1 AS x"},
-    "search_boards": {"query": "overview"},
+    "execute_sql": {"sql": "SELECT 1 AS x"},
+    "search_files": {"text": "overview"},
     "docs": {"topic": "board"},
     "describe_board": {"path": "nonexistent.yml"},
     # "project_dir" injected at test time (writes stay inside tmp_path).
     "read_file": {"path": "nonexistent.yml"},
     "write_file": {"path": "out.yml", "content": "title: X\n"},
     "edit_file": {"path": "nonexistent.yml", "old_string": "a", "new_string": "b"},
-    "glob_files": {"pattern": "*.yml"},
-    "grep_files": {"pattern": "anything"},
     "move_file": {"source_path": "nonexistent.yml", "destination_path": "dest.yml"},
     "delete_file": {"path": "nonexistent.yml"},
     "list_skills": {},
@@ -612,7 +634,7 @@ class TestAllToolHandlersHappyPath:
         ctx = _project_scaffold_context(tmp_path)
 
         result = dispatch_tool_call(
-            "execute_query",
+            "execute_sql",
             {
                 "board": str(tmp_path / "proj" / "charts" / "overview.yml"),
                 "query": "metrics",
@@ -718,7 +740,7 @@ class TestToolErrorEnvelopes:
         self, context: DbtChartsAIContext
     ) -> None:
         """execute_query with empty SQL → success=False and non-empty errors list."""
-        result = dispatch_tool_call("execute_query", {"sql": ""}, context=context)
+        result = dispatch_tool_call("execute_sql", {"sql": ""}, context=context)
         assert result["success"] is False
         assert isinstance(result.get("errors"), list) and result["errors"]
 
@@ -770,28 +792,28 @@ class TestToolErrorEnvelopes:
         [
             pytest.param(
                 {},
-                "execute_query: needs either 'sql', or both 'board' and 'query'",
+                "execute_sql: needs either 'sql', or both 'board' and 'query'",
                 id="neither-form",
             ),
             pytest.param(
                 {"board": "charts/x.yml"},
-                "execute_query: needs either 'sql', or both 'board' and 'query'",
+                "execute_sql: needs either 'sql', or both 'board' and 'query'",
                 id="board-without-query",
             ),
             pytest.param(
                 {"query": "revenue"},
-                "execute_query: needs either 'sql', or both 'board' and 'query'",
+                "execute_sql: needs either 'sql', or both 'board' and 'query'",
                 id="query-without-board",
             ),
             pytest.param(
                 {"sql": "SELECT 1", "board": "charts/x.yml", "query": "revenue"},
-                "execute_query: takes either 'sql' or 'board' + 'query', not both",
+                "execute_sql: takes either 'sql' or 'board' + 'query', not both",
                 id="both-forms",
             ),
             *(
                 pytest.param(
                     {"board": "charts/x.yml", "query": "revenue", **option},
-                    "execute_query: 'source', 'lenient_variables' and 'description' "
+                    "execute_sql: 'source', 'lenient_variables' and 'description' "
                     "apply to 'sql' only; a board query names its own source",
                     id=f"{name}-with-board-form",
                 )
@@ -812,7 +834,7 @@ class TestToolErrorEnvelopes:
         malformed call surfaces as {"success": False, "errors": [...]} rather than
         leaking through handle_call_tool as an MCP transport error.
         """
-        result = dispatch_tool_call("execute_query", args, context=context)
+        result = dispatch_tool_call("execute_sql", args, context=context)
         assert result == {
             "success": False,
             "errors": [message],
@@ -842,7 +864,7 @@ class TestToolErrorEnvelopes:
         """
         ctx = make_context(dashboards_directory=tmp_path)
         result = dispatch_tool_call(
-            "execute_query",
+            "execute_sql",
             {
                 "query": "revenue",
                 "board": str(tmp_path / "nonexistent-board-xyz.yml"),
@@ -931,7 +953,13 @@ class TestDefaultSourceFallback:
         captured: dict[str, object] = {}
 
         def fake_execute_query(
-            *, sql, variables=None, source=None, limit, adapter_registry
+            *,
+            sql,
+            variables=None,
+            source=None,
+            limit,
+            adapter_registry,
+            lenient_variables,
         ):
             captured["source"] = source
             from dbt_charts.agent_api.query import ExecuteQueryResult
@@ -950,7 +978,7 @@ class TestDefaultSourceFallback:
         )
 
         ctx = make_context(default_source="dundersign_db")
-        dispatch_tool_call("execute_query", {"sql": "SELECT 1"}, context=ctx)
+        dispatch_tool_call("execute_sql", {"sql": "SELECT 1"}, context=ctx)
 
         assert captured["source"] == "dundersign_db"
 
@@ -968,7 +996,13 @@ class TestDefaultSourceFallback:
         captured: dict[str, int] = {}
 
         def fake_execute_query(
-            *, sql, variables=None, source=None, limit, adapter_registry
+            *,
+            sql,
+            variables=None,
+            source=None,
+            limit,
+            adapter_registry,
+            lenient_variables,
         ):
             captured["sql"] = limit
             return ExecuteQueryResult(
@@ -990,14 +1024,14 @@ class TestDefaultSourceFallback:
         monkeypatch.setattr("dbt_charts.agent_api.query.query_board", fake_query_board)
         ctx = make_context()
 
-        dispatch_tool_call("execute_query", {"sql": "SELECT 1"}, context=ctx)
+        dispatch_tool_call("execute_sql", {"sql": "SELECT 1"}, context=ctx)
         dispatch_tool_call(
-            "execute_query", {"board": "charts/x.yml", "query": "q"}, context=ctx
+            "execute_sql", {"board": "charts/x.yml", "query": "q"}, context=ctx
         )
         assert captured == {"sql": MAX_QUERY_LIMIT, "board": MAX_QUERY_LIMIT}
 
         rejected = dispatch_tool_call(
-            "execute_query", {"sql": "SELECT 1", "limit": 5}, context=ctx
+            "execute_sql", {"sql": "SELECT 1", "limit": 5}, context=ctx
         )
         assert rejected["success"] is False
         assert "limit" in rejected["errors"][0]
@@ -1032,9 +1066,9 @@ class TestDefaultSourceFallback:
         monkeypatch.setattr("dbt_charts.agent_api.query.query_board", fake_query_board)
         ctx = make_context()
 
-        sql = dispatch_tool_call("execute_query", {"sql": "SELECT 1"}, context=ctx)
+        sql = dispatch_tool_call("execute_sql", {"sql": "SELECT 1"}, context=ctx)
         board = dispatch_tool_call(
-            "execute_query", {"board": "charts/x.yml", "query": "q"}, context=ctx
+            "execute_sql", {"board": "charts/x.yml", "query": "q"}, context=ctx
         )
 
         assert sql["truncated"] is True
@@ -1052,7 +1086,13 @@ class TestDefaultSourceFallback:
         captured: dict[str, object] = {}
 
         def fake_execute_query(
-            *, sql, variables=None, source=None, limit, adapter_registry
+            *,
+            sql,
+            variables=None,
+            source=None,
+            limit,
+            adapter_registry,
+            lenient_variables,
         ):
             captured["source"] = source
             from dbt_charts.agent_api.query import ExecuteQueryResult
@@ -1072,7 +1112,7 @@ class TestDefaultSourceFallback:
 
         ctx = make_context(default_source="dundersign_db")
         dispatch_tool_call(
-            "execute_query", {"sql": "SELECT 1", "source": "examples_db"}, context=ctx
+            "execute_sql", {"sql": "SELECT 1", "source": "examples_db"}, context=ctx
         )
 
         assert captured["source"] == "examples_db"
@@ -1086,7 +1126,13 @@ class TestDefaultSourceFallback:
         captured: dict[str, object] = {}
 
         def fake_execute_query(
-            *, sql, variables=None, source=None, limit, adapter_registry
+            *,
+            sql,
+            variables=None,
+            source=None,
+            limit,
+            adapter_registry,
+            lenient_variables,
         ):
             captured["source"] = source
             from dbt_charts.agent_api.query import ExecuteQueryResult
@@ -1105,7 +1151,7 @@ class TestDefaultSourceFallback:
         )
 
         ctx = make_context()  # no default_source
-        dispatch_tool_call("execute_query", {"sql": "SELECT 1"}, context=ctx)
+        dispatch_tool_call("execute_sql", {"sql": "SELECT 1"}, context=ctx)
 
         assert captured["source"] is None
 
@@ -1127,7 +1173,13 @@ class TestVariableBindingsWireShape:
         captured: dict[str, object] = {}
 
         def fake_execute_query(
-            *, sql, variables=None, source=None, limit, adapter_registry
+            *,
+            sql,
+            variables=None,
+            source=None,
+            limit,
+            adapter_registry,
+            lenient_variables,
         ):
             captured["variables"] = variables
             from dbt_charts.agent_api.query import ExecuteQueryResult
@@ -1146,7 +1198,7 @@ class TestVariableBindingsWireShape:
         )
         ctx = make_context()
         dispatch_tool_call(
-            "execute_query",
+            "execute_sql",
             {"sql": "SELECT 1 AS x", "variables": [{"name": "region", "value": "US"}]},
             context=ctx,
         )
@@ -1157,7 +1209,7 @@ class TestVariableBindingsWireShape:
     ) -> None:
         """Duplicate variable names in the binding list → success=False."""
         result = dispatch_tool_call(
-            "execute_query",
+            "execute_sql",
             {
                 "sql": "SELECT 1",
                 "variables": [

@@ -102,7 +102,7 @@ After setup, your AI assistant has access to these tools:
 | Tool | Purpose |
 |------|---------|
 | `render_board` | Compile, execute queries, and generate visual HTML/text output |
-| `execute_query` | Run ad-hoc SQL, or one named query from a saved board, and inspect columns/sample rows |
+| `execute_sql` | Run ad-hoc SQL, or one named query from a saved board, and inspect columns/sample rows |
 | `docs` | Browse the packaged YAML reference corpus offline |
 | `list_skills` / `get_skill` | Discover and read packaged dbt charts authoring skills — `get_skill` returns the full body including example YAML |
 

@@ -282,7 +282,10 @@ def _validate_layout_references(
 
             if item not in chart_names:
                 error = ValidationError.from_code(
-                    ERR_UNRESOLVED_REFERENCE, ref=item, context=" in layout item"
+                    ERR_UNRESOLVED_REFERENCE,
+                    ref=item,
+                    context=" in layout item",
+                    available=sorted(chart_names),
                 )
                 # `{context}` is a pre-formatted message suffix, but `fields`
                 # is the machine-readable surface — store the bare value, so

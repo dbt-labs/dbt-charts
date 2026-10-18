@@ -87,7 +87,7 @@ rows:
 
     error = result.errors[0]
     assert "Missing required field 'type'" in error.message
-    assert "Supported chart types:" in error.message
+    assert "Add `type:` to `charts.missing_type`, one of: bar" in error.message
     assert error.hint is None
     assert "_discriminate_authored_chart" not in error.message
 

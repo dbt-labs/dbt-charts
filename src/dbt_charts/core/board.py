@@ -112,7 +112,7 @@ class BoardRenderResult(BaseModel):
     # `http://localhost:<port>/...` URL, and Cloud's dashboard addresses are
     # org/project/branch-scoped and access-controlled, which core has no
     # concept of. Cloud resolves agent-facing dashboard URLs through its own
-    # router instead (`search_boards`).
+    # router instead (`search_files`).
     url: str | None = None
     # Per-query (name, data_as_of, policy) records populated on success. Consumed
     # by Cloud's snapshot writer to compute expires_at anchored on actual data age.

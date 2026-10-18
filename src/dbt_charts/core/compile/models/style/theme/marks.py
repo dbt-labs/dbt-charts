@@ -272,7 +272,7 @@ class MarkLabelsStyle(BaseModel):
     # (e.g. a value already scaled to millions → bare "190"). None = label the y-field.
     field: Annotated[str | None, Absent("the chart's y-field")] = Field(
         default=None,
-        description="Column to source label text from; None uses the chart's y-field.",
+        description="Column whose text labels each mark; `''` where unlabeled, never NULL. Default: the y column.",
     )
     # None here means "fall back to the resolved measure-axis format" — filled
     # in directly at chart-resolve time (_marks.py's per-family label-format
@@ -286,7 +286,7 @@ class MarkLabelsStyle(BaseModel):
         Absent("the measure axis format"),
     ] = Field(
         default=None,
-        description="Number format string for value labels.",
+        description="Value label format: a name or d3 spec. Without one it takes the axis format, also when `field` names another column.",
     )
     dx: Annotated[int | None, AutoUnset()] = Field(
         default=None,
@@ -360,12 +360,9 @@ class BarLabelsStyle(MarkLabelsStyle):
         Field(
             default=None,
             description=(
-                "Label position relative to the bar. "
-                "'above' places labels above the bar top (outside). "
-                "'top' places labels just inside the top edge. "
-                "'middle' centers labels vertically in the bar. "
-                "'middle_aligned' centers all labels at a common height (mean of bar heights / 2). "
-                "'bottom' places labels just inside the bottom edge."
+                "Label position: `above` (past the bar's end, outside), `top` "
+                "(inside the end), `middle`, `middle_aligned` (all at one height), "
+                "`bottom` (inside the start)."
             ),
         )
     )

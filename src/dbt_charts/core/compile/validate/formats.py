@@ -71,6 +71,7 @@ from dbt_charts.core.text.format_d3 import (
 from dbt_charts.core.text.predefined_formats import (
     ALL_PREDEFINED_NAMES,
     GRAIN_NAMES,
+    GRAIN_STRFTIME,
     PREDEFINED_NUMBER_NAMES,
     PREDEFINED_TEXT_NAMES,
     PREDEFINED_TIME_NAMES,
@@ -263,7 +264,10 @@ def _validate_spec(
     if spec in ALL_PREDEFINED_NAMES:
         if spec in GRAIN_NAMES and not grain_is_redefined(spec, aliases):
             raise CompilationError.from_code(
-                ERR_FORMAT_GRAIN_NAME_NOT_REDEFINED, spec=spec, field_path=field_path
+                ERR_FORMAT_GRAIN_NAME_NOT_REDEFINED,
+                spec=spec,
+                replacement=GRAIN_STRFTIME[spec],
+                field_path=field_path,
             )
         if vega_painted and spec in PYTHON_ONLY_NATIVE_NAMES:
             raise CompilationError.from_code(
@@ -461,6 +465,7 @@ def _validate_query_formats(
             raise CompilationError.from_code(
                 ERR_FORMAT_GRAIN_NAME_NOT_REDEFINED,
                 spec=name,
+                replacement=GRAIN_STRFTIME[name],
                 field_path=f"queries.{query_name}.formats.{column}",
             )
         if name in ALL_PREDEFINED_NAMES or name in formats:

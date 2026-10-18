@@ -44,9 +44,6 @@ from dbt_charts.agent_api.doctor import DoctorCheck, DoctorReport
 from dbt_charts.agent_api.file_refs import ExpandedPrompt, FileRef
 from dbt_charts.agent_api.files import (
     EditFileResult,
-    GlobResult,
-    GrepMatch,
-    GrepResult,
     ReadFileResult,
     WriteFileResult,
 )
@@ -60,7 +57,12 @@ from dbt_charts.agent_api.query import (
     QueryBoardResult,
 )
 from dbt_charts.agent_api.schema_hints import ChartTypeDisplay, SchemaHints
-from dbt_charts.agent_api.search import BoardMatch, SearchResult
+from dbt_charts.agent_api.search import (
+    BoardMatch,
+    FileEntry,
+    FileHit,
+    SearchResult,
+)
 from dbt_charts.agent_api.skill_install import InstallSkillsResult
 from dbt_charts.agent_api.skills import (
     Skill,
@@ -77,8 +79,6 @@ FROZEN_RESULT_INSTANCES: list[tuple[BaseModel, str]] = [
     (ReadFileResult(success=True, path="x"), "success"),
     (WriteFileResult(success=True, path="x"), "success"),
     (EditFileResult(success=True, path="x"), "success"),
-    (GlobResult(success=True), "success"),
-    (GrepResult(success=True), "success"),
     (ValidateTemplatesResult(success=True), "success"),
     (DescribeBoardResult(success=True, path="x"), "success"),
     (DiagnosticCodeSummary(code="X", summary="s"), "code"),
@@ -124,7 +124,8 @@ FROZEN_RESULT_INSTANCES: list[tuple[BaseModel, str]] = [
     ),
     (InstallSkillsResult(), "installed"),
     (DocsResult(mode="index"), "mode"),
-    (GrepMatch(path="x", line_number=1, line="l"), "path"),
+    (FileHit(file_path="x", line=1, text="l"), "file_path"),
+    (FileEntry(file_path="x"), "file_path"),
     (
         BoardMatch(
             title="t",

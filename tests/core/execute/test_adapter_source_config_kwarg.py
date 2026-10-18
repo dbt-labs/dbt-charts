@@ -155,6 +155,7 @@ class TestAdapterReceivesTypedSourceConfig:
             query_name="q",
             source="bad_db",
             available=["good_db"],
+            advice="",
         )
 
         registry, adapter = _make_registry(local_project, resolver=mock_resolver)

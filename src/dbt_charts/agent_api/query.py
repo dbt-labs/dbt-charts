@@ -7,7 +7,10 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from dbt_charts.agent_api._paths import PathOutsideProjectError, resolve_board_path
+from dbt_charts.agent_api._paths import (
+    resolution_error_diagnostic,
+    resolve_board_path,
+)
 from dbt_charts.core.compile import compile_file
 from dbt_charts.core.compile.compiler import CompileResult
 from dbt_charts.core.compile.models.board.normalized import Board
@@ -19,15 +22,14 @@ from dbt_charts.core.compile.template.jinja import extract_sql_variable_dependen
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FILE_NOT_FOUND,
-    ERR_PATH_OUTSIDE_PROJECT,
 )
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BOARD_FILE_UNREADABLE,
     ERR_BOARD_QUERY_NOT_FOUND,
-    ERR_TOOL_ARGUMENTS_INVALID,
     ERR_VARIABLE_UNBOUND,
 )
 from dbt_charts.core.diagnostics.codes_unknown import ERR_INTERNAL
+from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.inspect.query_validator import QueryDiagnostic, validate_query
 from dbt_charts.core.project import InMemoryBoard, Project
@@ -65,7 +67,7 @@ def _query_not_found(path: PurePosixPath, name: str, available: list[str]) -> st
 class VariableBinding(BaseModel):
     """One variable binding in a tool call: a name–value pair.
 
-    Used in the ``variables`` field of ``render_board`` and ``execute_query``
+    Used in the ``variables`` field of ``render_board`` and ``execute_sql``
     instead of an open-keyed dict, so that OpenAI strict mode can validate the
     full tool-call structure.
     """
@@ -120,23 +122,9 @@ def _load_board_query(
     """
     try:
         file_path = resolve_board_path(path, project)
-    except PathOutsideProjectError as exc:
-        return _BoardFailure(
-            PurePosixPath(path), [str(exc)], ERR_PATH_OUTSIDE_PROJECT.code
-        )
-    except ValueError:
-        # A path the project cannot take (absolute or '..' with no local root, an
-        # empty path, a backslash): the caller's argument, not an engine fault.
-        rejected = DbtChartsError.from_code(
-            ERR_TOOL_ARGUMENTS_INVALID,
-            message=(
-                f"Board path {path} cannot be used here: pass a project-relative "
-                "path such as charts/orders.yml."
-            ),
-        )
-        return _BoardFailure(
-            PurePosixPath(path), [str(rejected)], ERR_TOOL_ARGUMENTS_INVALID.code
-        )
+    except ValueError as exc:
+        rejected = resolution_error_diagnostic(exc)
+        return _BoardFailure(PurePosixPath(path), [rejected.message], rejected.code)
     display = PurePosixPath(file_path.relpath)
     if not file_path.exists():
         return _BoardFailure(display, [_file_missing(display)], ERR_FILE_NOT_FOUND.code)
@@ -336,11 +324,11 @@ def lookup_board_query_sql(
 
 
 class ExecuteQueryArgs(BaseModel):
-    """Run a query and return its columns and rows. Give exactly one of two forms: raw SQL (`sql`), or one named query from a stored board (`board` + `query`). Use {{ variable_name }} for parameterized values in raw SQL — these work identically in dashboard YAML, so queries you test here will be cached when reused in dashboards. The named form runs the query the board's author wrote, including Jinja variable substitution (declared defaults apply) and non-SQL query types (values, http); use it to inspect what a named query produces when debugging chart errors like 'unknown column foo'. Great for exploring data shape before writing chart configs. Return values in natural units — never scale for display (no /1000, no _k/_m columns); compact display belongs to the chart's number format (e.g. currency). The result is CSV bounded at about 25,000 tokens; page in SQL with LIMIT and OFFSET."""
+    """Run a query and return its rows as CSV. Give exactly one of two forms: raw SQL (`sql`, on a named `source` or the project's default), or one named query from a stored board (`board` + `query`). Prefer `sql` to explore data or answer a question. Prefer the named form to see what a board's query produces, for example when debugging a chart error like 'unknown column foo': it runs the query as the board's author wrote it, including Jinja variable substitution (declared defaults apply) and non-SQL query types (values, http). The result is CSV bounded at about 25,000 tokens; page in SQL with LIMIT and OFFSET."""
 
     sql: str | None = Field(
         None,
-        description="SQL query to execute. Use {{ variable_name }} for parameterized values — these work identically in dashboard YAML, so queries you test here will be cached when reused in dashboards. Not with 'board'/'query'.",
+        description="SQL to execute. Use {{ variable_name }} for parameterized values, bound by 'variables'. Not with 'board'/'query'.",
     )
     board: Path | None = Field(
         None,
@@ -448,18 +436,18 @@ def _query_diagnostics(
         return []
 
 
-def _inline_file_source_board(source: str, project: Project) -> Board:
+def _inline_file_source_board(source: str, project: Project) -> Board | Diagnostic:
     """Compile a root-level board whose `source:` is the inline file path, so
-    the compiler's own resolver registers it. Its `select 1` never executes."""
+    the compiler's own resolver registers it. Its `select 1` never executes.
+    A path the compiler refuses comes back as its first compile error; the
+    board holds one source, so that is the only error it can carry."""
     text = json.dumps(
         {"title": source, "source": source, "queries": {"query": "select 1"}}
     )
     result = compile_file(
         InMemoryBoard(text, path=project.path("query.yml")), apply_meta=False
     )
-    if result.board is None:
-        raise ValueError("; ".join(e.message for e in result.errors))
-    return result.board
+    return result.errors[0] if result.board is None else result.board
 
 
 def execute_query(
@@ -475,9 +463,7 @@ def execute_query(
 
     Runs SQL directly against the configured data sources, or against an
     inline file path (`data/orders.csv`, table name = stem) as a board's
-    `source:` would. Use {{ variable_name }} syntax for parameterized values —
-    these work identically in dashboard YAML, so queries tested here will be
-    cached when reused in dashboards.
+    `source:` would. Use {{ variable_name }} syntax for parameterized values.
     """
     limit = min(limit, MAX_QUERY_LIMIT)
     fetch_limit = limit + 1
@@ -497,11 +483,21 @@ def execute_query(
             limit=fetch_limit,
             lenient_variables=lenient_variables,
         )
-        board = (
-            _inline_file_source_board(source, adapter_registry.project)
-            if source is not None and is_file_source_ref(source)
-            else None
-        )
+        board = None
+        if source is not None and is_file_source_ref(source):
+            compiled = _inline_file_source_board(source, adapter_registry.project)
+            if isinstance(compiled, Diagnostic):
+                return ExecuteQueryResult(
+                    success=False,
+                    data=[],
+                    columns=[],
+                    errors=[compiled.message],
+                    error_code=compiled.code,
+                    row_count=0,
+                    truncated=False,
+                    diagnostics=diagnostics,
+                )
+            board = compiled
 
         result = adapter_registry.execute(query, variables=variables, board=board)
 

@@ -555,7 +555,7 @@ def gate_label_format(
 
     default_remedy = (
         "This axis is temporal — d3's number grammar doesn't read over "
-        'dates. Author a time spec here (e.g. "%b %Y").'
+        'dates. Write a time spec: `format: "%Y"` for years, `"%b %Y"` for months.'
         if vl_type == "temporal"
         else (
             "axis_x addresses the dimension channel — author the number "

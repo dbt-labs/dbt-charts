@@ -375,10 +375,12 @@ class TestDispatchErrors:
         )
         assert result.exit_code == 1
 
-    def test_source_without_sql_or_file_exits_one(self, project_dir: Path) -> None:
+    def test_source_without_sql_or_file_profiles_and_an_empty_source_exits_one(
+        self, project_dir: Path
+    ) -> None:
         result = runner.invoke(app, ["query", "db", "--project-dir", str(project_dir)])
         assert result.exit_code == 1
-        assert "SQL" in result.output or "--file" in result.output
+        assert "has no tables" in result.output
 
     def test_file_not_found_exits_one(self, project_dir: Path) -> None:
         result = runner.invoke(
@@ -427,7 +429,7 @@ class TestDispatchErrors:
             ["query", "revenue", "--json", "--project-dir", str(project_dir)],
         )
         assert result.exit_code == 1
-        assert "SQL" in result.output or "--file" in result.output
+        assert "--json is not supported" in result.output
 
     def test_board_execute_with_sql_shaped_reference_exits_one(
         self, project_dir: Path

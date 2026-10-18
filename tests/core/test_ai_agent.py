@@ -39,7 +39,7 @@ class FakeLLMClient:
         self.calls.append(deepcopy(messages))
         if len(self.calls) == 1:
             yield ThinkingStatus(status="Planning", block="rs_1:0")
-            yield ToolCallEvent(id="call_1", name="execute_query", arguments={})
+            yield ToolCallEvent(id="call_1", name="execute_sql", arguments={})
             return
 
         yield ContentDelta(delta="Done.")
@@ -137,7 +137,7 @@ def test_build_agent_system_prompt_lists_sources_and_exploration_guidance(
     assert "- bq (bigquery)" in prompt
     assert "- pg (postgres)" in prompt
     assert "INFORMATION_SCHEMA" in prompt
-    assert "execute_query" in prompt
+    assert "execute_sql" in prompt
     # BigQuery source present → the dataset-qualification hint is included.
     assert "INFORMATION_SCHEMA.SCHEMATA" in prompt
     # No embedded warehouse schema dump.
@@ -307,11 +307,11 @@ def test_run_agent_executes_tools_and_finishes(monkeypatch, tmp_path: Path) -> N
     assert tool_result.duration_s >= 0
     assert events == [
         ThinkingStatus(status="Planning", block="rs_1:0"),
-        ToolCallEvent(id="call_1", name="execute_query", arguments={}),
+        ToolCallEvent(id="call_1", name="execute_sql", arguments={}),
         ToolResultEvent(
             id="call_1",
-            name="execute_query",
-            result={"ok": True, "tool": "execute_query", "args": {}},
+            name="execute_sql",
+            result={"ok": True, "tool": "execute_sql", "args": {}},
             duration_s=tool_result.duration_s,
             outcome="ok",
         ),
@@ -323,9 +323,9 @@ def test_run_agent_executes_tools_and_finishes(monkeypatch, tmp_path: Path) -> N
     tool_message = fake_client.calls[1][-1]
     assert tool_message.role == "tool"
     assert tool_message.tool_call_id == "call_1"
-    assert tool_message.name == "execute_query"
+    assert tool_message.name == "execute_sql"
     assert tool_message.content == json.dumps(
-        {"ok": True, "tool": "execute_query", "args": {}},
+        {"ok": True, "tool": "execute_sql", "args": {}},
         default=str,
     )
 
@@ -417,7 +417,7 @@ def test_run_agent_stops_after_max_iterations(monkeypatch, tmp_path: Path) -> No
 
     class LoopClient:
         def stream_with_tools(self, *, messages, system_prompt, tools):
-            yield ToolCallEvent(id="call_1", name="execute_query", arguments={})
+            yield ToolCallEvent(id="call_1", name="execute_sql", arguments={})
 
     ctx = _make_ctx(tmp_path)
     events = list(

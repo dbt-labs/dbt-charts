@@ -279,12 +279,14 @@ class TestWarehouseCheckDuckDB:
             "SELECT a, b FROM t WHERE a IN ()",
             "SELECT a, b FROM t LIMIT 1, 2",
             "SELECT a, b FROM t WHERE a = 1 AND",
+            "SELECT a, count(*) AS n FROM t",
         ],
         ids=[
             "doubled_order_direction",
             "empty_in_list",
             "mysql_style_limit_offset",
             "truncated_predicate",
+            "ungrouped_column",
         ],
     )
     def test_sql_the_warehouse_refuses_is_invalid(self, tmp_path, sql):

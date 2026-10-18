@@ -43,7 +43,7 @@ _diagnostic_adapter: TypeAdapter[QueryDiagnostic] | None = None
 def _diagnostic_wire_dict(d: QueryDiagnostic) -> dict[str, Any]:
     """Serialize a QueryDiagnostic the way ExecuteQueryResult does via
     model_dump_json(exclude_none=True), so `--validate --json` matches
-    execute_query's wire shape key-for-key instead of the null-filled shape
+    execute_sql's wire shape key-for-key instead of the null-filled shape
     `QueryDiagnostic.to_dict()` used to produce.
 
     Builds the adapter lazily: `dbt_charts.core.inspect.query_validator`
@@ -252,6 +252,7 @@ def query_command(
     query_text: str | None = None,
     validate: bool = False,
     file: Path | None = None,
+    table: list[str] | None = None,
     dialect: str | None = None,
     vars: dict[str, Any] | None = None,
     show_suppressed: bool = False,
@@ -262,6 +263,46 @@ def query_command(
     """Run a named board query, raw SQL, or static SQL lint — selected from the input args."""
     from dbt_charts.agent_api import ProjectSession
     from dbt_charts.agent_api.query import MAX_QUERY_LIMIT
+
+    if context is None and query_text is None and file is None and not validate:
+        if json_output:
+            typer.echo(
+                "Error: a source listing prints text; --json is not supported.",
+                err=True,
+            )
+            raise typer.Exit(1)
+        with ProjectSession.from_project(project) as project_session:
+            try:
+                typer.echo(project_session.list_sources())
+            except ValueError as e:
+                typer.echo(f"Error: {e}", err=True)
+                raise typer.Exit(1) from e
+        return
+
+    profiling = (
+        context is not None
+        and query_text is None
+        and file is None
+        and not validate
+        and not _is_board_context(context)
+    )
+    if table is not None and not profiling:
+        typer.echo("Error: --table applies to a profile (no SQL, no --file).", err=True)
+        raise typer.Exit(1)
+    if profiling:
+        assert context is not None
+        if json_output:
+            typer.echo(
+                "Error: a profile prints text; --json is not supported.", err=True
+            )
+            raise typer.Exit(1)
+        with ProjectSession.from_project(project) as project_session:
+            try:
+                typer.echo(project_session.profile_source(context, table or ()))
+            except ValueError as e:
+                typer.echo(f"Error: {e}", err=True)
+                raise typer.Exit(1) from e
+        return
 
     # --- 1. Resolve input shape ---
     sql_text, mode_is_named, query_name, board, source = _resolve_query_input(

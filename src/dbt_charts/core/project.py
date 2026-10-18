@@ -314,7 +314,7 @@ def board_slug(relpath: str) -> str:
     would make a directory and its own index board indistinguishable, and
     would corrupt relative-link resolution (which derives a board's
     directory from its slug). Collapsing ``index`` into a clean URL is a
-    display concern for the URL layer alone (``alias_index._url_for_file``).
+    display concern for the URL layer alone (``alias_index.url_for_file``).
     Works for a directory relpath too (no suffix to strip), so the same
     function serves both board-file identity and directory-listing URLs.
 

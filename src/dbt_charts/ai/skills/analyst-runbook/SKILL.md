@@ -19,7 +19,7 @@ off to the build skills, **verify the answer**, and deliver it with a written re
 
 ## 1. Intake triage (first, every request)
 
-{{#if_tool search_boards}}**Reuse first.** Call `{{ s_search_boards }}` for boards that already answer
+{{#if_tool search_files}}**Reuse first.** Call `{{ s_search_files }}` for boards that already answer
 this or come close. Adapt an existing dashboard instead of building from scratch
 whenever one fits — and say which you reused.{{/if_tool}}
 
@@ -50,7 +50,7 @@ Explore the data, then build incrementally — hand off to the skill that owns e
 - **`{{ s_skill_build }}`** — build/edit boards (explore schema → write → validate → render)
 - **`{{ s_skill_design_board }}`** — chart-type, layout, and color decisions
 - **`{{ s_skill_design_report }}`** — narrative reports
-- Use `{{ s_execute_query }}` against the warehouse metadata views
+- Use `{{ s_execute_sql }}` against the warehouse metadata views
   (INFORMATION_SCHEMA and friends) to find the real vocabulary, and to confirm
   values before you claim them.
 
@@ -60,7 +60,7 @@ Explore the data, then build incrementally — hand off to the skill that owns e
 Before delivering, also verify the *answer*:
 
 - **Right source.** Numbers come from the table that actually owns this metric, not a
-  lookalike column. Confirm with `{{ s_execute_query }}`.
+  lookalike column. Confirm with `{{ s_execute_sql }}`.
 - **Right question.** The result answers what was asked — right grain, right filters,
   right time window — with no extra or missing slices.
 - **Sanity.** Totals, row counts, and units are plausible; nulls, duplicates, or

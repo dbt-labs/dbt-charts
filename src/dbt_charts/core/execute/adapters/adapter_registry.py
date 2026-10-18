@@ -83,6 +83,7 @@ from dbt_charts.core.execute.sql_translate import (
     render_in_dialect,
 )
 from dbt_charts.core.project import Project
+from dbt_charts.core.project_data_files import unknown_source_advice
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Board
@@ -359,7 +360,7 @@ class AdapterRegistry:
         self._dbt_refs = DbtRefResolver(project)
         self._sources = SourceRegistry(project_sources=project_sources)
         self._resolver: SourceResolver = (
-            resolver if resolver is not None else DefaultSourceResolver()
+            resolver if resolver is not None else DefaultSourceResolver(project)
         )
         # DuckDB config that cold schema introspection must mirror so its
         # connection matches the execute connection. DuckDB rejects a second
@@ -1187,11 +1188,15 @@ class AdapterRegistry:
             return config
 
         available = [item["name"] for item in self.list_sql_sources()]
+        advice = unknown_source_advice(self._project, source)
         if available:
             raise DbtChartsError.from_code(
                 ERR_SOURCE_NOT_FOUND,
                 query_name=AD_HOC_QUERY_NAME,
                 source=source,
                 available=available,
+                advice=advice,
             )
-        raise DbtChartsError.from_code(ERR_SOURCE_NOT_FOUND_EMPTY, source=source)
+        raise DbtChartsError.from_code(
+            ERR_SOURCE_NOT_FOUND_EMPTY, source=source, advice=advice
+        )

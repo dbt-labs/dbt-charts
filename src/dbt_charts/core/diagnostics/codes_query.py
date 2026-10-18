@@ -14,12 +14,15 @@ from dbt_charts.core.diagnostics.registry import REGISTRY, WarningCode
 WARN_MISSING_JOIN_PREDICATE = REGISTRY.register(
     WarningCode(
         code="WARN-MISSING-JOIN-PREDICATE",
+        summary="A CROSS JOIN or constant-predicate join between two many-row sources.",
         domain="query",
         title="Join is missing a predicate and may produce a cross join",
         message_template=("Query {query_name!r}: {message}"),
         fix_template=(
             "Add an ON clause that relates the tables, or join a source that "
-            "returns one row (an aggregate with no GROUP BY, or LIMIT 1)."
+            "returns one row (an aggregate with no GROUP BY, or LIMIT 1). "
+            "Intentional? Silence it with `ignore: [WARN-MISSING-JOIN-PREDICATE]` "
+            "on the query."
         ),
         doc=(
             "Fires when query validation detects a CROSS JOIN, a comma join, or a "

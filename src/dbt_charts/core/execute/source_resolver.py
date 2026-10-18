@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path  # noqa: TID251 — resolves dbt profiles_dir on disk
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.source import (
@@ -44,12 +44,16 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_SOURCE_NOT_NAMED,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError
+from dbt_charts.core.project_data_files import unknown_source_advice
 from dbt_charts.core.project_roots import resolve_dbt_profile_name
+
+if TYPE_CHECKING:
+    from dbt_charts.core.project import Project
 
 # ERR-SOURCE-NOT-FOUND and ERR-SOURCE-INLINE-FORBIDDEN's message_template
 # requires query_name — most SourceResolver callers execute a named
 # dashboard/view query and pass the real name, but a few (schema
-# introspection, bulk profiling, ad-hoc `execute_query`) have none to give.
+# introspection, bulk profiling, ad-hoc `execute_sql`) have none to give.
 AD_HOC_QUERY_NAME = "ad-hoc query"
 
 
@@ -110,7 +114,7 @@ class SourceResolver(Protocol):
             query_name: Author-facing name of the query being resolved, for
                 ERR-SOURCE-NOT-FOUND / ERR-SOURCE-INLINE-FORBIDDEN messages.
                 Callers outside a named dashboard query (schema introspection,
-                bulk profiling, ad-hoc `dct describe`/`execute_query`) have no
+                bulk profiling, ad-hoc `dct describe`/`execute_sql`) have no
                 name to give — the default documents that explicitly instead
                 of guessing one.
 
@@ -151,6 +155,10 @@ class DefaultSourceResolver:
     their own policy gates, and delegate to super().resolve() for the shared
     lookup algorithm.
     """
+
+    def __init__(self, project: Project | None = None) -> None:
+        """*project*: searched for data files to suggest as sources."""
+        self._project = project
 
     def resolve(
         self,
@@ -196,6 +204,7 @@ class DefaultSourceResolver:
                 query_name=query_name,
                 source=authored,
                 available=available,
+                advice=self._advice(authored),
             )
 
         if dbt_context is not None:
@@ -204,6 +213,14 @@ class DefaultSourceResolver:
         raise DbtChartsError.from_code(
             ERR_SOURCE_NOT_FOUND_EMPTY,
             source=authored,
+            advice=self._advice(authored),
+        )
+
+    def _advice(self, source: str) -> str:
+        return (
+            unknown_source_advice(self._project, source)
+            if self._project is not None
+            else ""
         )
 
     def _parse(self, source_dict: dict[str, Any]) -> SourceConfig:
@@ -366,7 +383,7 @@ class AllowlistedSourceResolver(DefaultSourceResolver):
     The execute paths then dispatch a resolved file config themselves: `Executor`
     (the render path) short-circuits a file-source query into the
     `FileSourceMaterializer` before resolution ("Step 4c"), and `agent_api`'s
-    `execute_query`, which Cloud exposes over MCP and chat, goes
+    `execute_sql`, which Cloud exposes over MCP and chat, goes
     through `AdapterRegistry.execute`, which hands the resolved file config to the
     registry's materializer — or refuses it when none is configured. That refusal
     is the one place the "you need a materializer" answer lives.
@@ -460,4 +477,5 @@ class AllowlistedSourceResolver(DefaultSourceResolver):
             query_name=query_name,
             source=offending,
             available=sorted(project_sources.sources),
+            advice="",
         )

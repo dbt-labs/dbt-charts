@@ -170,7 +170,7 @@ impl ShapeLegend {
             })
             .collect();
         let paths = symbols.iter().map(|s| path(s, SYMBOL_RADIUS)).collect::<Result<Vec<_>, _>>()?;
-        let grid = legend_grid(&label_ws, &glyphs, LABEL_SIZE, 1, LABEL_OFFSET);
+        let grid = legend_grid(&label_ws, &glyphs, false, LABEL_SIZE, 1, LABEL_OFFSET);
         let title_w = fonts.measure_shaped(&title, family, TITLE_SIZE)?;
         let w = title_w.max(grid.width).ceil();
         let h = TITLE_SIZE + TITLE_PADDING + grid.box_h;

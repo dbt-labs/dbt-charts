@@ -1,0 +1,3 @@
+kind: Breaking changes
+body: The search_boards, glob_files and grep_files tools are replaced by one search_files tool (use `kind` to search meta, models and config files), and the hosted connector can now read project files.
+time: 2026-10-17T11:51:35.666399-07:00

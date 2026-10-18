@@ -1,0 +1,3 @@
+kind: Features
+body: 'Error messages name the one edit to make: the quoted YAML line, the nearest real column, the right chart key, and the strftime replacement.'
+time: 2026-10-16T04:02:40.304846-07:00

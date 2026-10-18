@@ -15,6 +15,74 @@ if TYPE_CHECKING:
     from dbt_charts.cli.filesystem_project import FilesystemProject
 
 
+def _count_noun(n: int, noun: str) -> str:
+    return f"no {noun}s" if n == 0 else f"{n} {noun}{'' if n == 1 else 's'}"
+
+
+def _detached(
+    project: FilesystemProject,
+    *,
+    port: int | None,
+    host: str,
+    stop: bool,
+    describe: bool,
+    dialect: str | None,
+    target: str | None,
+    max_workers: int | None,
+    no_cache: bool,
+    cache_path: Path | None,
+) -> None:
+    from dbt_charts.agent_api.serve import (
+        DetachedServeError,
+        start_detached,
+        stop_detached,
+    )
+
+    try:
+        if stop:
+            if port is None:
+                raise DetachedServeError("--stop needs --port.")
+            typer.echo(f"Stopped server (pid {stop_detached(port)}) on port {port}.")
+            return
+        server = start_detached(
+            project,
+            port=port,
+            host=host,
+            dialect=dialect,
+            target=target,
+            max_workers=max_workers,
+            no_cache=no_cache,
+            cache_path=cache_path,
+            describe=describe,
+        )
+    except DetachedServeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+
+    if server.replaced is not None:
+        typer.echo(f"Replaced the server for {server.replaced} on port {server.port}.")
+    for board in server.boards:
+        if board.description is not None:
+            typer.echo(board.description)
+    print_diagnostics([d for b in server.boards for d in (*b.warnings, *b.errors)])
+    for board in server.boards:
+        status = (
+            f"{_count_noun(len(board.errors), 'error')}, "
+            f"{_count_noun(len(board.warnings), 'warning')}"
+            if board.errors or board.warnings
+            else "ok"
+        )
+        typer.echo(f"{board.url}  {status}")
+    verb = "reusing" if server.reused else "started"
+    typer.echo(
+        f"Server {verb} (pid {server.pid}); stop with: "
+        f"dct serve --stop --port {server.port}"
+    )
+    if any(board.errors for board in server.boards):
+        typer.echo("The server is up; the boards above have errors.")
+        raise typer.Exit(1)
+
+
 @with_project
 def serve_command(
     port: int | None = None,
@@ -26,6 +94,9 @@ def serve_command(
     max_workers: int | None = None,
     no_cache: bool = False,
     cache_path: Path | None = None,
+    detach: bool = False,
+    stop: bool = False,
+    describe: bool = False,
 ) -> None:
     """Start unified dbt charts server.
 
@@ -44,6 +115,10 @@ def serve_command(
         dialect: SQL dialect (auto-detected from dbt profile, or duckdb)
         target: dbt target name (defaults to DBT_TARGET env var, then profile default)
         no_cache: Skip the query-result cache entirely.
+        detach: Serve in a background process, check every board, print each
+            board's URL and status, and return; the server keeps running.
+        stop: Stop the server ``--detach`` left on ``port``.
+        describe: With ``detach``, also print what each chart draws.
         cache_path: Persist the query-result cache to this DuckDB file (created
             if absent). None (the default) falls through to the project's
             cache: block, then to the per-user file.
@@ -54,6 +129,21 @@ def serve_command(
     """
     from dbt_charts.agent_api import set_surface
     from dbt_charts.agent_api.serve import format_startup_failure, prepare_serve
+
+    if stop or detach:
+        _detached(
+            project,
+            port=port,
+            host=host,
+            stop=stop,
+            describe=describe,
+            dialect=dialect,
+            target=target,
+            max_workers=max_workers,
+            no_cache=no_cache,
+            cache_path=cache_path,
+        )
+        return
 
     # Narrows the root callback's "cli": a served dashboard's queries are a
     # different cost story from a one-shot `dct render`.

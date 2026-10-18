@@ -30,6 +30,7 @@ import yaml
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_BINDER_GROUP_BY,
     ERR_BINDER_TYPE_MISMATCH,
     ERR_BINDER_UNKNOWN_COLUMN,
     ERR_BINDER_UNKNOWN_RELATION,
@@ -135,6 +136,15 @@ class TestClassifyWarehouseErrorOtherDialects:
         )
         assert result.error is not None
         assert result.error.code is ERR_BINDER_UNKNOWN_RELATION
+
+    def test_snowflake_group_by_message(self) -> None:
+        exc = Exception(
+            "001104 (42601): SQL compilation error: error line 1 at position 7\n"
+            "'T.ID' in select clause is neither an aggregate nor in the group by clause."
+        )
+        result = classify_warehouse_error("dbt SQL execution", exc, "snowflake")
+        assert result.error is not None
+        assert result.error.code is ERR_BINDER_GROUP_BY
 
     def test_missing_column_message_is_not_a_missing_relation(self) -> None:
         exc = Exception('column "amount" does not exist\nLINE 1: select amount')
@@ -531,6 +541,11 @@ class TestClassifyWarehouseErrorBySqlstate:
             "lakecompute SQL execution", error, "lakecompute"
         )
         assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
+
+    def test_grouping_error_is_a_group_by_mismatch(self) -> None:
+        error = WarehouseStatementError("42803", "column must appear in GROUP BY")
+        result = classify_warehouse_error("postgres SQL execution", error, "postgres")
+        assert result.error.code is ERR_BINDER_GROUP_BY
 
     def test_invalid_cast_is_a_type_mismatch(self) -> None:
         error = WarehouseStatementError("22018", "Could not convert 'abc'")

@@ -1061,7 +1061,7 @@ class TestBoardSlug:
     def test_host_index_board_keeps_its_leaf(self) -> None:
         """board_slug is a file-identity slug, not a URL: the ``index`` leaf
         stays so every board file maps to a unique slug. Collapsing ``index``
-        for display is a URL-layer concern (``alias_index._url_for_file``),
+        for display is a URL-layer concern (``alias_index.url_for_file``),
         never this function's job -- collapsing it here broke relative-link
         resolution, CLI move, and Cloud's access-key lookup for index boards
         (all of which need the slug to identify the exact file)."""

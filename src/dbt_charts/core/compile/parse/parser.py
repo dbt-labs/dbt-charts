@@ -222,15 +222,16 @@ def quote_colon_typos(content: str) -> tuple[str, list[ParseError]] | None:
             match = _KEY_VALUE_LINE_RE.match(lines[index])
             if match is None or not _COLON_SPACE_RE.search(match[2]):
                 return None
+            escaped = match[2].replace("\\", "\\\\").replace('"', '\\"')
+            repaired = f'{match[1]}"{escaped}"'
             note = (
-                "The rest of this report comes from the file with line "
-                f"{index + 1} quoted."
+                f"Write: {repaired.strip()}\nThe rest of this report comes from "
+                f"the file with line {index + 1} quoted."
             )
             errors.append(
                 yaml_syntax_error(e, text, source=UNNAMED_YAML_SOURCE, note=note)
             )
-            escaped = match[2].replace("\\", "\\\\").replace('"', '\\"')
-            lines[index] = f'{match[1]}"{escaped}"'
+            lines[index] = repaired
         else:
             return (text, errors) if errors else None
 

@@ -373,6 +373,14 @@ pub fn resolve_cartesian_x_type(
     {
         vl_type = VegaType::Ordinal;
     }
+    // Vega's `timeunit` transform yields NaN for a year below 100: production draws no tick and puts the
+    // marks at x 0. A bar raises `ERR-CHART-PAINTED-NO-MARKS` instead, which its own arm owns.
+    if vl_type == VegaType::Temporal
+        && matches!(mark, "line" | "area" | "scatter")
+        && cells.iter().any(|cell| cell.as_str().and_then(parse_date).is_some_and(|((year, _, _), _)| year < 100))
+    {
+        return Err(format!("{mark}: a temporal x axis over a year below 100 is not supported (Vega reads it as NaN)"));
+    }
     Ok(XResolution { vl_type, from_data, grain, fill_grain })
 }
 
@@ -414,6 +422,22 @@ mod tests {
         let axis = XAxis { time_unit: None, authored_type: None, raw_type: None, fill: Some("null"), fiscal_year_start_month: 1 };
         let bar = resolve_cartesian_x_type(&rows, "x", &axis, "bar", false, &[]).unwrap();
         assert_eq!((bar.vl_type, bar.grain), (VegaType::Temporal, Grain::None));
+    }
+
+    /// Vega reads a year below 100 as NaN on a temporal scale; a bar raises its own error, the other
+    /// cartesian marks refuse by name.
+    #[test]
+    fn a_year_below_100_refuses_off_the_bar_mark() {
+        let rows: Vec<Row> = ["0099-01-01", "0100-01-01"]
+            .iter()
+            .map(|d| Row::from_iter([("x".to_string(), Value::from(*d))]))
+            .collect();
+        let axis = XAxis { time_unit: None, authored_type: Some("temporal"), raw_type: None, fill: Some("null"), fiscal_year_start_month: 1 };
+        for mark in ["line", "area", "scatter"] {
+            let err = resolve_cartesian_x_type(&rows, "x", &axis, mark, false, &[]).unwrap_err();
+            assert!(err.contains("a temporal x axis over a year below 100"), "{mark}: {err}");
+        }
+        assert!(resolve_cartesian_x_type(&rows, "x", &axis, "bar", false, &[]).is_ok());
     }
 
     #[test]

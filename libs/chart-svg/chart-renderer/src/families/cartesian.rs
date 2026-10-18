@@ -26,7 +26,14 @@ use serde_json::json;
 #[derive(Clone)]
 pub struct BandScale {
     domain: Vec<String>,
-    geometry: BandGeometry,
+    geometry: Bands,
+}
+
+#[derive(Clone)]
+enum Bands {
+    Uniform(BandGeometry),
+    /// Bands that sit where their data does (a time axis): one leading edge per domain entry, no shared width.
+    Anchored(Vec<f64>),
 }
 
 /// d3's band layout for `n` bands over a pixel range: the one place the
@@ -74,22 +81,35 @@ impl BandScale {
         padding_inner: f64,
         padding_outer: f64,
     ) -> Self {
-        let geometry = BandGeometry::new(domain.len(), range_start, range_end, padding_inner, padding_outer);
+        let geometry = Bands::Uniform(BandGeometry::new(domain.len(), range_start, range_end, padding_inner, padding_outer));
         BandScale { domain, geometry }
+    }
+
+    /// A band scale whose entry `i` leads at `starts[i]` pixels.
+    pub fn anchored(domain: Vec<String>, starts: Vec<f64>) -> Self {
+        assert_eq!(domain.len(), starts.len(), "an anchored band scale places every domain entry");
+        BandScale { domain, geometry: Bands::Anchored(starts) }
     }
 
     /// Leading-edge pixel position of the band for `value`.
     ///
     /// Returns `None` when `value` is not in the domain.
     pub fn position(&self, value: &str) -> Option<f64> {
-        self.domain.iter().position(|d| d == value).map(|i| self.geometry.edge(i, 0.0))
+        let at = self.domain.iter().position(|d| d == value)?;
+        Some(match &self.geometry {
+            Bands::Uniform(g) => g.edge(at, 0.0),
+            Bands::Anchored(starts) => starts[at],
+        })
     }
 
     /// Bandwidth: the pixel extent available to a mark within its band.
     ///
-    /// Equals `step × (1 − padding_inner)`.
+    /// Equals `step × (1 − padding_inner)`. An anchored scale has none, its bands own their extents.
     pub fn bandwidth(&self) -> f64 {
-        self.geometry.bandwidth()
+        match &self.geometry {
+            Bands::Uniform(g) => g.bandwidth(),
+            Bands::Anchored(_) => unreachable!("an anchored band scale has no shared bandwidth"),
+        }
     }
 }
 
@@ -284,8 +304,8 @@ mod linear_scale_tests {
 /// raw value — `t = (ln(value) − ln(domain_min)) / (ln(domain_max) −
 /// ln(domain_min))`, then the SAME `interpolateNumber` term order
 /// `LinearScale::position` uses (G1). The domain must be strictly positive;
-/// callers refuse non-positive data before constructing one (a log domain
-/// is undefined at and below zero — `nice_log_domain` cannot fix that up).
+/// callers refuse non-positive data before constructing one. The one zero floor
+/// is an area layer's fill baseline joining the shared domain (see `position`).
 pub struct LogScale {
     pub domain_min: f64,
     pub domain_max: f64,
@@ -299,6 +319,11 @@ impl LogScale {
     }
 
     pub fn position(&self, value: f64) -> f64 {
+        // A zero floor makes every position `-Infinity / -Infinity`; Vega
+        // emits that NaN as 0.
+        if self.domain_min == 0.0 {
+            return 0.0;
+        }
         let span = self.domain_max.ln() - self.domain_min.ln();
         if span == 0.0 {
             return self.range_start;
@@ -332,9 +357,10 @@ impl MeasureScale {
 /// Callers must have already rejected non-positive `lo`/`hi` — this has no
 /// defined answer for either.
 pub fn log_nice_domain(lo: f64, hi: f64) -> (f64, f64) {
-    let exp_lo = lo.log10().floor() as i32;
     let exp_hi = hi.log10().ceil() as i32;
-    (10f64.powi(exp_lo), 10f64.powi(exp_hi))
+    // `pows(floor(logs(0)))` is `pow(-Infinity)`: a zero floor stays zero.
+    let lo = if lo == 0.0 { 0.0 } else { 10f64.powi(lo.log10().floor() as i32) };
+    (lo, 10f64.powi(exp_hi))
 }
 
 /// d3-scale log `ticks(count)` over an already-`nice`d domain (so `lo`/`hi`
@@ -352,6 +378,10 @@ pub fn log_nice_domain(lo: f64, hi: f64) -> (f64, f64) {
 /// (`z.length * 2 < count`) falls back to a plain linear `ticks()` over the
 /// domain, as `log.js` does.
 pub fn log_ticks(lo: f64, hi: f64, count: usize) -> Vec<f64> {
+    // `logs(0)` is `-Infinity`, so d3-array's tick step over it is empty.
+    if lo == 0.0 {
+        return Vec::new();
+    }
     let exp_lo = lo.log10().round() as i32;
     let exp_hi = hi.log10().round() as i32;
     let decades = (exp_hi - exp_lo) as f64;
@@ -653,8 +683,6 @@ mod resolve_measure_domain_tests {
 /// and bar rail arms: the widest series name plus the 4px edge gap
 /// (`_endpoint_rail._LABEL_GAP_PX`), capped at a third of the chart width
 /// (`ENDPOINT_LABEL_MAX_WIDTH_FRACTION`).
-/// Returns `(widest_label_w, pane_w)` — line's legacy margins also read the
-/// raw widest width.
 ///
 /// The names are measured at `font_weight` (`series_label.font_weight`, the
 /// weight the labels paint at): `measure_label_pane_width` instances the font
@@ -666,12 +694,12 @@ pub(crate) fn rail_pane_width(
     font_weight: &str,
     fonts: &crate::text::FontBook,
     chart_w: f64,
-) -> Result<(f64, f64), String> {
+) -> Result<f64, String> {
     let widest = series.iter().try_fold(0.0_f64, |acc, s| {
         crate::common::measure_at_css_weight(fonts, s, font_family, font_size, font_weight)
             .map(|w| acc.max(w))
     })?;
-    Ok((widest, (widest + RAIL_LABEL_GAP).min(rail_cap(chart_w))))
+    Ok((widest + RAIL_LABEL_GAP).min(rail_cap(chart_w)))
 }
 
 const RAIL_LABEL_GAP: f64 = 4.0;
@@ -922,17 +950,15 @@ mod rail_weight_tests {
         .expect("shipped fonts load")
     }
 
-    fn pane(weight: &str) -> (f64, f64) {
+    fn pane(weight: &str) -> f64 {
         let names = ["Northeast Territory Revenue".to_string()];
         rail_pane_width(&names, "'Inter Variable', Inter", 14.0, weight, &fonts(), 2000.0).unwrap()
     }
 
     #[test]
     fn the_rail_widens_with_the_weight_the_labels_paint_at() {
-        let (regular_widest, regular_pane) = pane("400");
-        let (bold_widest, bold_pane) = pane("700");
-        assert!(bold_widest - regular_widest > 2.0, "{regular_widest} vs {bold_widest}");
-        assert!(((bold_pane - regular_pane) - (bold_widest - regular_widest)).abs() < 1e-9);
+        let (regular, bold) = (pane("400"), pane("700"));
+        assert!(bold - regular > 2.0, "{regular} vs {bold}");
     }
 
     #[test]

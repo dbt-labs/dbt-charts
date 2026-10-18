@@ -13,7 +13,6 @@ from dbt_charts.agent_api import (
     ProjectSession,
     migrate as _migrate_module,
     query as _query_module,
-    search as _search_module,
 )
 from dbt_charts.agent_api.migrate import MigrateSummary
 from dbt_charts.agent_api.query import BoardQueryLookupResult
@@ -800,32 +799,6 @@ def test_project_injected_registry_with_owns_registry_refresh_leaves_it_untouche
 
     assert project.adapter_registry is registry
     assert close_calls == []
-
-
-def test_project_search_boards_forwards_project_and_limit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """ProjectSession.search_boards() forwards self.project and limit to agent_api.search."""
-    from dbt_charts.agent_api.search import SearchResult
-
-    captured: dict[str, object] = {}
-
-    def fake_search_boards(
-        query: str, project: Project, *, limit: int = 10, **kwargs: object
-    ) -> SearchResult:
-        captured["query"] = query
-        captured["project"] = project
-        captured["limit"] = limit
-        return SearchResult(success=True, errors=[], results=[])
-
-    monkeypatch.setattr(_search_module, "search_boards", fake_search_boards)
-
-    with ProjectSession.open(project_dir=tmp_path) as session:
-        session.search_boards("foo", limit=5)
-
-    assert captured["query"] == "foo"
-    assert captured["project"] is session.project
-    assert captured["limit"] == 5
 
 
 def test_project_emit_board_forwards_project_registry_and_cache(

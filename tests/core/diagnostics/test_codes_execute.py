@@ -48,7 +48,10 @@ class TestCodesExecute:
         from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_NOT_FOUND
 
         msg = ERR_SOURCE_NOT_FOUND.message_template.format(
-            query_name="revenue_by_month", source="prj_production", available="fivetran"
+            query_name="revenue_by_month",
+            source="prj_production",
+            available="fivetran",
+            advice="",
         )
         assert "revenue_by_month" in msg
         assert "prj_production" in msg
@@ -60,7 +63,7 @@ class TestCodesExecute:
         )
 
         msg = ERR_SOURCE_NOT_FOUND_EMPTY.message_template.format(
-            source="prj_production"
+            source="prj_production", advice=""
         )
         assert "dbt_charts.yml" in msg
         assert "sources:" in msg
@@ -84,7 +87,7 @@ class TestCodesExecute:
 
         assert ERR_SOURCE_NOT_FOUND.hint_generator is not None
         hint = ERR_SOURCE_NOT_FOUND.hint_generator(
-            source="fivtran", available=["fivetran"]
+            source="fivtran", available=["fivetran"], advice=""
         )
         assert hint is not None
         assert "fivetran" in hint
@@ -94,6 +97,6 @@ class TestCodesExecute:
 
         assert ERR_SOURCE_NOT_FOUND.hint_generator is not None
         hint = ERR_SOURCE_NOT_FOUND.hint_generator(
-            source="prj_production", available=["fivetran"]
+            source="prj_production", available=["fivetran"], advice=""
         )
         assert hint is None

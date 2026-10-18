@@ -122,7 +122,7 @@ class RenderBoardArgs(BaseModel):
             "Path to dashboard YAML file (use this OR yaml_content). "
             "Board-relative (no charts/ prefix needed, e.g. 'looker/x.yaml') or "
             "root-relative (e.g. 'charts/looker/x.yaml') both resolve. If the "
-            "path came from search_boards, use the hit's board_path."
+            "path came from search_files, use the hit's board_path."
         ),
     )
     yaml_content: str | None = Field(

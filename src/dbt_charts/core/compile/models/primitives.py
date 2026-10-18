@@ -293,7 +293,7 @@ class FormatConfig(BaseModel):
 
     spec: str | None = Field(
         default=None,
-        description="D3 format string (e.g., ',.0f'), preset name (e.g., 'currency'), or Excel pattern.",
+        description="D3 format string (`,.0f`; `.2s` writes 1.2M), preset name (e.g., 'currency'), or Excel pattern. A format is this string alone, or a mapping with `spec`. A date also takes strftime (`%b '%y`).",
     )
     prefix: str | None = Field(
         default=None,
@@ -842,7 +842,8 @@ class SingleLineFontStyle(FontSlotBase):
         ),
     )
     family: Annotated[str | None, FontFamily()] = Field(
-        default=None, description="Font family name (e.g., 'sans-serif', 'Roboto')."
+        default=None,
+        description="Font family or CSS stack; single-quote multiword names: \"'Source Serif 4', serif\".",
     )
     color: Annotated[str | None, Color()] = Field(
         default=None, description="Text color as a CSS color string."
@@ -1508,7 +1509,7 @@ class CategoricalColorStyle(BaseModel):
     # parses and dies at resolve.
     palette: Annotated[StopsPaletteName | list[str] | str | None, Palette()] = Field(
         default=None,
-        description="Categorical color palette: list of stops or a named palette. Expanded to list[str] at validation time.",
+        description="Palette name, or a list of colors, even one: ['#2E6B4F'].",
     )
     # Empty would break the spark cascade and the single-series render path.
     single_series_palette: Annotated[
@@ -1520,7 +1521,7 @@ class CategoricalColorStyle(BaseModel):
         ),
     ] = Field(
         default=None,
-        description="Ordered list of single-series mark inks (must be non-empty when set), or a palette name.",
+        description="Ink without a color column: palette name, or colors list, even one: ['#2E6B4F'].",
     )
     requested_alias_palette: Annotated[
         str | None, Merge(Strategy.OVERRIDE), Absent("no flagged palette alias")
@@ -1594,7 +1595,7 @@ class StaticGradientColorStyle(BaseModel):
 
     static: Annotated[str | None, Color(), Absent("no explicit color")] = Field(
         default=None,
-        description="One explicit color: the marks on most families when no color column is encoded, the cell text on a table.",
+        description="One color for all marks: a hex, CSS name, `rgb()`/`oklch()` or theme token (`category[1]`, `positive.solid`, `dbt-grays.muted`). A token follows the theme, a hex stays put.",
     )
     gradient: Annotated[ScaleTargetConfig | None, Absent("no gradient")] = Field(
         default=None,

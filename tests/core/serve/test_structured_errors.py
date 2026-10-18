@@ -3,7 +3,7 @@
 Pins that:
 - compile/validation errors → 422 with structured HTML
 - internal/unknown errors → 500 with structured HTML
-- chart_errors only → 200 with board HTML; no top-level banner (inline SVG callouts carry the info)
+- chart_errors only → 500 with board HTML; no top-level banner (inline SVG callouts carry the info)
 - HTML is escaped (no XSS)
 - _render_board_file routes through agent_api.render_dashboard
 - inspect template-not-found → 404
@@ -188,14 +188,14 @@ def test_internal_render_failure_returns_500(compile_error_board: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Anchor 4: chart_errors only → 200; board renders; NO top-level banner
+# Anchor 4: chart_errors only → 500; board renders; NO top-level banner
 # ---------------------------------------------------------------------------
 
 
-def test_partial_success_returns_200_without_chart_error_banner(
+def test_chart_errors_return_500_with_board_html_without_banner(
     compile_error_board: Path,
 ) -> None:
-    """chart_errors only (board rendered) → 200; board HTML present; no top-level banner.
+    """chart_errors only (board rendered) → 500; board HTML present; no top-level banner.
 
     The inline SVG callouts already carry the error info so the redundant
     top-level banner must not appear.
@@ -223,7 +223,7 @@ def test_partial_success_returns_200_without_chart_error_banner(
     ):
         resp = client.get(f"/{compile_error_board.stem}")
 
-    assert resp.status_code == 200
+    assert resp.status_code == 500
     body = resp.text
     # Board content still present (inline callouts live here)
     assert "board html here" in body

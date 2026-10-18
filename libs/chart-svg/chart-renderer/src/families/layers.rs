@@ -13,7 +13,7 @@
 //! types/helpers here (`OverlayBarLayer`,
 //! `column_is_nominal`) — only `bar.rs` calls them, but they live alongside
 //! the two-caller machinery rather than in `bar.rs` itself. A layer pinned to
-//! a side of its own (`PinnedLayer`, `LayerAxis`) is also shared: both
+//! a scale of its own (`ScaledLayer`, `LayerAxis`) is also shared: both
 //! families measure, fit and paint its independent axis through this module.
 
 use std::collections::{HashMap, HashSet};
@@ -93,11 +93,11 @@ pub(crate) struct OverlayPointMark {
     pub labels: MarkLabels,
 }
 
-/// A layer's own right axis paints its `labels.format` affix
-/// (`_overlay.py:1583`); every other layer format affix, and an authored
-/// layer `scale.domain`, reaches no painter here and refuses by name instead
-/// of vanishing.
-pub(crate) fn refuse_unpainted_layer_affix(family: &str, raw: &Value) -> Result<(), String> {
+/// A layer's own axis paints its `labels.format` affix (`_overlay.py:1583`);
+/// every other layer format affix, and an authored layer `scale.domain`,
+/// reaches no painter here and refuses by name instead of vanishing.
+/// `own_axis` is whether the chart's layers own their axes (`YSides`).
+pub(crate) fn refuse_unpainted_layer_affix(family: &str, raw: &Value, own_axis: bool) -> Result<(), String> {
     #[derive(Deserialize)]
     struct Labels {
         #[serde(default)]
@@ -105,8 +105,6 @@ pub(crate) fn refuse_unpainted_layer_affix(family: &str, raw: &Value) -> Result<
     }
     #[derive(Deserialize)]
     struct Axis {
-        #[serde(default)]
-        position: Option<String>,
         #[serde(default)]
         scale: Option<Value>,
         #[serde(default)]
@@ -135,7 +133,6 @@ pub(crate) fn refuse_unpainted_layer_affix(family: &str, raw: &Value) -> Result<
     // has no axis to paint it on, an anchor ladder has no layer law, and
     // neither has the tooltip's affix.
     if let Some(slot) = axis.labels.and_then(|labels| labels.format) {
-        let own_axis = axis.position.is_some();
         let anchors = slot.repeat.as_deref() == Some("anchor");
         if let Some(key) = slot.carried().find(|key| !own_axis || (*key == "repeat" && anchors)) {
             let reason = if !own_axis {
@@ -154,8 +151,11 @@ pub(crate) fn refuse_unpainted_layer_affix(family: &str, raw: &Value) -> Result<
 
 /// The opacity of every area layer's legend circle: the last area layer's
 /// (`_overlay.py`'s one `area_opacity`).
-pub(crate) fn shared_area_opacity<'a>(layers: impl DoubleEndedIterator<Item = &'a OverlayLineLayer>) -> Option<f64> {
-    layers.rev().find_map(|l| l.area_mark.as_ref().map(|a| a.opacity))
+pub(crate) fn shared_area_opacity<'a>(layers: impl DoubleEndedIterator<Item = &'a OverlayLayer>) -> Option<f64> {
+    layers.rev().find_map(|l| match l {
+        OverlayLayer::Line(l) => l.area_mark.as_ref().map(|a| a.opacity),
+        OverlayLayer::Bar(_) | OverlayLayer::Scatter(_) => None,
+    })
 }
 
 /// The side a pinned layer's own y axis draws on (`axis_y.position`).
@@ -416,6 +416,18 @@ pub(crate) fn merged_legend_title<'a>(
     fields.join(", ")
 }
 
+/// The title of an axis a layered chart's marks share. Vega-Lite joins the titles
+/// of the encodings the axis holds, each distinct one once, in layer order.
+pub(crate) fn merged_axis_title(titles: impl IntoIterator<Item = String>) -> String {
+    let mut distinct: Vec<String> = Vec::new();
+    for title in titles {
+        if !distinct.contains(&title) {
+            distinct.push(title);
+        }
+    }
+    distinct.join(", ")
+}
+
 /// A layer's color domain: the distinct non-null values of `field`, sorted
 /// (`distinct_series_values`, `_cartesian.py`). A null value is no domain entry:
 /// a row carrying one still draws, as a series the scale has no color for.
@@ -613,18 +625,28 @@ impl LayerStack {
     }
 }
 
-/// How far above its plot the scope groups of a color-grouped line or area layer
-/// reach, `0` when they stay inside: Vega-Lite wraps each series' paths in a scope
-/// group whose stroke-expanded bounds (`boundStroke`, the full width) join the view's
-/// `yBounds`, so a top legend clears them. An area's fill, unstroked, reaches only its
-/// stack top. `y_at` is the layer's own value-to-y scale.
+/// How far above its plot the scope groups of a color-grouped or band-step line or
+/// area layer reach, `0` when they stay inside: Vega-Lite wraps each series' paths in
+/// a scope group whose stroke-expanded bounds (`boundStroke`, the full width) join the
+/// view's `yBounds`, so a top legend clears them. An area's fill, unstroked, reaches
+/// only its stack top. `y_at` is the layer's own value-to-y scale.
 pub(crate) fn scope_group_top(
     l: &OverlayLineLayer,
     rows: &[serde_json::Map<String, Value>],
     x_field: &str,
+    band_step: bool,
     y_at: impl Fn(f64) -> f64,
 ) -> f64 {
-    let Some(color_field) = l.color.as_deref() else { return 0.0 };
+    let Some(color_field) = l.color.as_deref() else {
+        if !band_step {
+            return 0.0;
+        }
+        return rows
+            .iter()
+            .filter_map(|row| row_num(row, &l.y))
+            .map(|v| y_at(v) - l.line_mark.stroke.width)
+            .fold(0.0, f64::min);
+    };
     let ends: Vec<Option<(f64, f64)>> = match &l.area_mark {
         Some(_) => LayerStack::descending(rows, x_field, color_field, &l.y).of_rows(rows),
         None => vec![None; rows.len()],
@@ -663,6 +685,8 @@ pub(crate) struct LayerScale<'a> {
     domain: Vec<String>,
     range: Vec<String>,
     glyphs: HashMap<String, LegendSymbol<'static>>,
+    /// The labels a bar layer drew (`square_datums`): a square stroked in its own fill.
+    squares: HashSet<String>,
 }
 
 impl<'a> LayerScale<'a> {
@@ -692,6 +716,7 @@ impl<'a> LayerScale<'a> {
             domain: base.iter().map(|(label, _)| label.clone()).collect(),
             range: base.iter().map(|(_, fill)| fill.clone()).collect(),
             glyphs: HashMap::new(),
+            squares: HashSet::new(),
         }
     }
 
@@ -776,9 +801,21 @@ impl<'a> LayerScale<'a> {
     }
 
     /// The glyph a layer's entry draws, keyed by label as production's
-    /// `stroke_datums`/`circle_datums`/`square_datums` are.
+    /// `stroke_datums`/`circle_datums` are. A stroke outranks a circle whatever
+    /// the layer order, as the symbolType ternary chain does.
     pub(crate) fn set_glyph(&mut self, label: &str, glyph: LegendSymbol<'static>) {
-        self.glyphs.insert(label.to_string(), glyph);
+        let kept = self.glyphs.get(label).is_some_and(|held| {
+            matches!(held, LegendSymbol::Stroke(_)) && !matches!(glyph, LegendSymbol::Stroke(_))
+        });
+        if !kept {
+            self.glyphs.insert(label.to_string(), glyph);
+        }
+    }
+
+    /// A bar layer's entry draws a square under any stroke or circle glyph
+    /// (`square_datums`, the chain's lowest rung above the base's own).
+    pub(crate) fn set_square(&mut self, label: &str) {
+        self.squares.insert(label.to_string());
     }
 
     /// The color a series paints with: its claimed one, none where the rows have no value.
@@ -836,11 +873,71 @@ impl<'a> LayerScale<'a> {
             .map(|(label, fill)| LegendEntry {
                 label,
                 fill,
-                symbol: Some(self.glyphs.get(label).copied().unwrap_or_else(|| base_glyph(fill))),
+                symbol: Some(match self.glyphs.get(label) {
+                    Some(&glyph) => glyph,
+                    None if self.squares.contains(label) => LegendSymbol::Square(fill),
+                    None => base_glyph(fill),
+                }),
                 series_key: None,
             })
             .collect()
     }
+}
+
+/// What one layer claimed on the shared color scale.
+pub(crate) struct LayerClaim {
+    /// The layer's legend label.
+    pub label: String,
+    /// The color values a layer grouping by its own `color` claimed.
+    pub values: Vec<String>,
+    /// The color a layer with no `color` took for its label, which its marks
+    /// paint as a literal even when the label repeats an earlier entry.
+    pub fill: Option<String>,
+}
+
+/// Every layer's claim on the shared scale, in authored order (`_overlay.py`):
+/// a layer grouping by a `color` field claims each value the scale lacks, any
+/// other claims its label; each entry draws its mark's legend glyph. `layers`
+/// pairs each layer with the rows it reads.
+pub(crate) fn claim_layers(
+    scale: &mut LayerScale,
+    layers: &[(&OverlayLayer, &[serde_json::Map<String, Value>])],
+    field_labels: &crate::common::FieldLabels,
+) -> Result<Vec<LayerClaim>, Diagnostic> {
+    let area_opacity = shared_area_opacity(layers.iter().map(|(l, _)| *l));
+    layers
+        .iter()
+        .map(|&(layer, rows)| {
+            let label = crate::common::axis_title_text(layer.y(), layer.label(), field_labels)?;
+            let (glyph, authored) = match layer {
+                OverlayLayer::Bar(_) => (None, None),
+                OverlayLayer::Line(l) => (Some(l.legend_glyph(area_opacity)), l.authored_series_color()),
+                OverlayLayer::Scatter(l) => {
+                    (l.color.is_some().then(|| LegendSymbol::FadedCircle(area_opacity.unwrap_or(1.0))), l.point_mark.color.as_deref())
+                }
+            };
+            let Some(color_field) = layer.color() else {
+                scale.refuse_repeat(&label)?;
+                let fill = scale.claim(&label, authored)?;
+                if let Some(glyph) = glyph {
+                    scale.set_glyph(&label, glyph);
+                }
+                if matches!(layer, OverlayLayer::Bar(_)) {
+                    scale.set_square(&label);
+                }
+                return Ok(LayerClaim { label, values: Vec::new(), fill: Some(fill) });
+            };
+            let values = layer_color_values(rows, color_field);
+            scale.claim_values(&values)?;
+            if let Some(glyph) = glyph {
+                values.iter().for_each(|value| scale.set_glyph(value, glyph));
+            }
+            if matches!(layer, OverlayLayer::Bar(_)) {
+                values.iter().for_each(|value| scale.set_square(value));
+            }
+            Ok(LayerClaim { label, values, fill: None })
+        })
+        .collect()
 }
 
 /// A band x's step geometry: its bandwidth and the centers of its first and
@@ -878,6 +975,7 @@ pub(crate) fn paint_line_layer_marks(
     l: &OverlayLineLayer,
     rows: &[serde_json::Map<String, Value>],
     x_of: impl Fn(&serde_json::Map<String, Value>) -> Option<f64>,
+    label_x_of: Option<&dyn Fn(&serde_json::Map<String, Value>) -> Option<f64>>,
     y_of: impl Fn(f64) -> f64,
     frame: &AreaFrame,
     horizontal: bool,
@@ -902,6 +1000,7 @@ pub(crate) fn paint_line_layer_marks(
         .map(|ml| LayerLabelStyle::new(ml, l.label_is_house, rows, board_style))
         .transpose()?;
     let mut captions: Vec<(LayerCaption, Option<String>)> = Vec::new();
+    let mut label_points: Vec<(f64, f64)> = Vec::new();
     let stack_spans = stacked.map(|stack| stack.of_rows(rows));
     for (index, row) in rows.iter().enumerate() {
         let Some(x) = x_of(row) else { continue };
@@ -919,7 +1018,11 @@ pub(crate) fn paint_line_layer_marks(
             let band = step_band
                 .filter(|_| l.curve_name() == Some("step"))
                 .map(|sb| ((x - sb.first).abs() < 1e-9, (x - sb.last).abs() < 1e-9));
-            captions.push((style.caption(row, val, band)?, describe_label(row, val)?));
+            // A caption sits at the label x column when the family reads another than the mark's.
+            if let Some(label_x) = label_x_of.map_or(Some(x), |label_x_of| label_x_of(row)) {
+                label_points.push(if horizontal { (y_of(val), label_x) } else { (label_x, y_of(val)) });
+                captions.push((style.caption(row, val, band)?, describe_label(row, val)?));
+            }
         }
     }
     let line_color = l.line_mark.stroke.color.as_deref().unwrap_or(series_color);
@@ -1069,7 +1172,7 @@ pub(crate) fn paint_line_layer_marks(
         crate::contract::mark_group_close(svg);
     }
     if let Some(style) = &label_style {
-        let marks = layer_label_marks(points.iter().zip(captions), step_band, horizontal);
+        let marks = layer_label_marks(label_points.iter().zip(captions), step_band, horizontal);
         paint_layer_value_labels(svg, style, &marks)?;
     }
     Ok(())
@@ -1314,12 +1417,10 @@ impl OverlayScatterLayer {
 /// own `mark-symbol` container holds every point of a `point` mark, unlike
 /// bar's per-datum `mark-rect` wrapper -- probed against the compiled
 /// scenegraph), `N` the scatter layer's own position in production's outer
-/// `layer` list (base is `layer_0`). Scatter layers trail every `type:
-/// "bar"` layer (`validate_layers`' own "bars, then a trailing line or run of
-/// scatter layers" sequencing), so the i-th of them has index `1 +
-/// bar_layers.len() + i` -- `1` for `lollipop` (no bar layers), `2` for a
-/// `[bar, scatter]` combo (probed against `bullet`'s own reference: its bar
-/// layer is `layer_1_marks`, its trailing line layer `layer_2_layer_*`), and
+/// `layer` list (base is `layer_0`), so `layer_index` is `1 +` its authored
+/// position -- `1` for `lollipop` (no layer before it), `2` after a bar layer
+/// (probed against `bullet`'s own reference: its bar layer is `layer_1_marks`,
+/// its line layer `layer_2_layer_*`), and
 /// `1`, `2` for a dumbbell's two scatter layers. `x_of`/`y_of` mirror
 /// `paint_line_layer_marks`'s own laws (a bar base's band CENTER, the
 /// shared/independent linear scale's position); a `horizontal` base swaps the
@@ -1338,6 +1439,7 @@ pub(crate) fn paint_scatter_layer_marks(
     layer_index: usize,
     horizontal: bool,
     x_of: impl Fn(&serde_json::Map<String, Value>) -> Option<f64>,
+    label_x_of: Option<&dyn Fn(&serde_json::Map<String, Value>) -> Option<f64>>,
     y_of: impl Fn(f64) -> f64,
     mut aria_of: impl FnMut(&serde_json::Map<String, Value>, f64) -> Result<Option<String>, String>,
     color: PointColor,
@@ -1349,7 +1451,7 @@ pub(crate) fn paint_scatter_layer_marks(
     crate::contract::mark_group_open(svg, "symbol", &format!("layer_{layer_index}_marks"))?;
     let ml = l.point_mark.labels.visible.then_some(&l.point_mark.labels);
     let label_style = ml.map(|ml| LayerLabelStyle::new(ml, l.label_is_house, rows, board_style)).transpose()?;
-    let mut points: Vec<(f64, f64)> = Vec::with_capacity(rows.len());
+    let mut label_points: Vec<(f64, f64)> = Vec::new();
     let mut captions: Vec<(LayerCaption, Option<String>)> = Vec::new();
     for row in rows {
         let Some(cross) = x_of(row) else { continue };
@@ -1363,22 +1465,23 @@ pub(crate) fn paint_scatter_layer_marks(
             PointColor::Encoded(of_row) => of_row(row),
         };
         paint_overlay_point(svg, &l.point_mark, x, y, r_pt, &point_color, canvas, aria.as_deref())?;
-        points.push((x, y));
         if let Some(style) = &label_style {
-            captions.push((style.caption(row, val, None)?, describe_label(row, val)?));
+            if let Some(label_cross) = label_x_of.map_or(Some(cross), |label_x_of| label_x_of(row)) {
+                label_points.push(if horizontal { (measure, label_cross) } else { (label_cross, measure) });
+                captions.push((style.caption(row, val, None)?, describe_label(row, val)?));
+            }
         }
     }
     crate::contract::mark_group_close(svg);
     if let Some(style) = &label_style {
-        paint_layer_value_labels(svg, style, &layer_label_marks(points.iter().zip(captions), None, horizontal))?;
+        paint_layer_value_labels(svg, style, &layer_label_marks(label_points.iter().zip(captions), None, horizontal))?;
     }
     Ok(())
 }
 
 /// A `type: "bar"` layer's own raw JSON — `bar_mark` is the SAME shape as
 /// the base's own `r.style.mark` (`MarkStyle`), reused verbatim rather than
-/// a near-duplicate struct. Bar-only: no line family admits a bar-type
-/// layer.
+/// a near-duplicate struct.
 #[derive(Deserialize)]
 pub(crate) struct OverlayBarLayer {
     pub bar_mark: crate::families::bar::MarkStyle,
@@ -1400,21 +1503,154 @@ pub(crate) struct OverlayBarLayer {
     pub label_is_house: bool,
 }
 
-/// Either modeled TRAILING overlay layer shape — a `type: "bar"` layer
-/// never trails (`bar.rs::validate_layers` collects those into its own
-/// `Vec<OverlayBarLayer>` directly). Both variants are boxed so neither's
-/// own mark-style fields inflate the size of `Option<OverlayLayer>`, which
-/// `bar::render()` carries by value even on the far more common `None`
-/// case.
+impl OverlayBarLayer {
+    pub(crate) fn parse(raw: &Value, family: &str) -> Result<Self, String> {
+        serde_json::from_value(raw.clone()).map_err(|e| format!("{family}: layer payload: {e}"))
+    }
+}
+
+/// One authored `chart.layers` entry. Every cartesian family holds its layers as one
+/// ordered list, since production paints and claims palette slots in authored
+/// order. Boxed so no mark style inflates the enum.
 pub(crate) enum OverlayLayer {
+    Bar(Box<OverlayBarLayer>),
     Line(Box<OverlayLineLayer>),
     Scatter(Box<OverlayScatterLayer>),
 }
 
-/// A dual-axis layer's own independent y scale — computed once from the
-/// layer's own row values, never from the negotiated plot size.
+/// The mark family of a layer.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LayerType {
+    Line,
+    Area,
+    Scatter,
+    Bar,
+}
+
+impl OverlayLayer {
+    pub(crate) fn axis_y(&self) -> &OverlayAxisY {
+        match self {
+            OverlayLayer::Bar(l) => &l.axis_y,
+            OverlayLayer::Line(l) => &l.axis_y,
+            OverlayLayer::Scatter(l) => &l.axis_y,
+        }
+    }
+
+    pub(crate) fn x(&self) -> Option<&str> {
+        match self {
+            OverlayLayer::Bar(l) => l.x.as_deref(),
+            OverlayLayer::Line(l) => l.x.as_deref(),
+            OverlayLayer::Scatter(l) => l.x.as_deref(),
+        }
+    }
+
+    pub(crate) fn y(&self) -> &str {
+        match self {
+            OverlayLayer::Bar(l) => &l.y,
+            OverlayLayer::Line(l) => &l.y,
+            OverlayLayer::Scatter(l) => &l.y,
+        }
+    }
+
+    pub(crate) fn label(&self) -> Option<&str> {
+        match self {
+            OverlayLayer::Bar(l) => l.label.as_deref(),
+            OverlayLayer::Line(l) => l.label.as_deref(),
+            OverlayLayer::Scatter(l) => l.label.as_deref(),
+        }
+    }
+
+    pub(crate) fn color(&self) -> Option<&str> {
+        match self {
+            OverlayLayer::Bar(l) => l.color.as_deref(),
+            OverlayLayer::Line(l) => l.color.as_deref(),
+            OverlayLayer::Scatter(l) => l.color.as_deref(),
+        }
+    }
+
+    pub(crate) fn query_name(&self) -> Option<&str> {
+        match self {
+            OverlayLayer::Bar(l) => l.query_name.as_deref(),
+            OverlayLayer::Line(l) => l.query_name.as_deref(),
+            OverlayLayer::Scatter(l) => l.query_name.as_deref(),
+        }
+    }
+
+    /// How far the layer's ink reaches from a datum (a bar's border is the
+    /// bar painter's own concern).
+    pub(crate) fn mark_reach(&self) -> f64 {
+        match self {
+            OverlayLayer::Bar(_) => 0.0,
+            OverlayLayer::Line(l) => l.mark_reach(),
+            OverlayLayer::Scatter(l) => {
+                crate::common::symbol_radius(l.size())
+                    + crate::common::symbol_stroke_ink(l.point_mark.filled, l.point_mark.stroke_width)
+            }
+        }
+    }
+
+    /// A line or area layer drawing a literal `step` curve.
+    pub(crate) fn is_step_curve(&self) -> bool {
+        matches!(self, OverlayLayer::Line(l) if l.curve_name() == Some("step"))
+    }
+
+    pub(crate) fn layer_type(&self) -> LayerType {
+        match self {
+            OverlayLayer::Bar(_) => LayerType::Bar,
+            OverlayLayer::Line(l) if l.area_mark.is_some() => LayerType::Area,
+            OverlayLayer::Line(_) => LayerType::Line,
+            OverlayLayer::Scatter(_) => LayerType::Scatter,
+        }
+    }
+}
+
+/// The y-axis plan of a chart whose layers pin a side. Once any layer pins
+/// `axis_y.position`, every layer owns a scale and an axis
+/// (`resolve.scale.y: independent`): a pinned one on its side, the rest on the
+/// free side (left unless every pin is left). The base then takes the right only
+/// when every layer's *resolved* side is left (`_resolved_layer_y_orients`,
+/// `_overlay.py`'s `base_side`).
+pub(crate) struct YSides {
+    pub base: LayerSide,
+    pub layers: Vec<LayerSide>,
+}
+
+impl YSides {
+    /// `None` when no layer pins a side: every layer shares the base's scale.
+    pub(crate) fn of(layers: &[OverlayLayer]) -> Option<YSides> {
+        let pinned: Vec<LayerSide> = layers.iter().filter_map(|l| l.axis_y().position).collect();
+        if pinned.is_empty() {
+            return None;
+        }
+        let free = if pinned.iter().all(|side| *side == LayerSide::Left) { LayerSide::Right } else { LayerSide::Left };
+        let sides: Vec<LayerSide> = layers.iter().map(|l| l.axis_y().position.unwrap_or(free)).collect();
+        let base = if sides.iter().all(|side| *side == LayerSide::Left) { LayerSide::Right } else { LayerSide::Left };
+        Some(YSides { base, layers: sides })
+    }
+
+    /// One `ScaledLayer` and zero-rule width per layer, each reading `rows[i]`.
+    pub(crate) fn scaled<'a>(
+        &self,
+        layers: &'a [OverlayLayer],
+        rows: &[&'a [serde_json::Map<String, Value>]],
+        base_x: &'a str,
+        ax_y: &crate::common::AxisStyle,
+    ) -> (Vec<ScaledLayer<'a>>, Vec<Option<f64>>) {
+        let scaled: Vec<ScaledLayer> = layers
+            .iter()
+            .zip(rows)
+            .zip(&self.layers)
+            .map(|((layer, &rows), &side)| ScaledLayer::new(layer, rows, base_x, side))
+            .collect();
+        let zero_rules = scaled.iter().map(|p| p.zero_rule_width(ax_y, self.base)).collect();
+        (scaled, zero_rules)
+    }
+}
+
+/// A layer's own independent y scale — computed once from the layer's own row
+/// values, never from the negotiated plot size.
 pub(crate) struct LayerAxis {
-    /// The side the layer's axis draws on; the base takes the other.
+    /// The side the layer's axis draws on (`YSides`).
     pub side: LayerSide,
     pub domain_min: f64,
     pub domain_max: f64,
@@ -1494,21 +1730,21 @@ impl LayerAxis {
 /// padding (`_overlay.py`).
 pub(crate) const MOVED_BASE_LABEL_PAD: f64 = 2.0;
 
-/// The y-axis title styles of a chart with a pinned layer. A dual axis needs
+/// The y-axis title styles of a chart whose layers own their axes. A dual axis needs
 /// both sides labeled to tell the scales apart: production restores the base
 /// title when the theme hid it (`_overlay.py`), unless an authored `y_label`
 /// with a hidden title suppressed it, and titles the layer axis
 /// unconditionally. A restored title carries no theme styling.
-pub(crate) struct PinnedTitles {
+pub(crate) struct DualAxisTitles {
     restored: Option<crate::common::AxisTitle>,
     base_suppressed: bool,
 }
 
-impl PinnedTitles {
-    pub(crate) fn new(pinned: bool, ax_y: &crate::common::AxisStyle, y_label: Option<&str>) -> Self {
+impl DualAxisTitles {
+    pub(crate) fn new(dual: bool, ax_y: &crate::common::AxisStyle, y_label: Option<&str>) -> Self {
         let hidden = ax_y.title.visible == Some(false);
-        PinnedTitles {
-            restored: (pinned && hidden)
+        DualAxisTitles {
+            restored: (dual && hidden)
                 .then(|| crate::common::vega_default_axis_title(ax_y.title.font.family.clone())),
             base_suppressed: y_label.is_some_and(|l| !l.is_empty()) && hidden,
         }
@@ -1541,22 +1777,168 @@ pub(crate) fn row_order_stack<'a>(
         .collect()
 }
 
-/// The mark family of a layer pinned to its own axis.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PinnedKind {
-    Line,
-    Area,
-    Scatter,
-    Bar,
+/// Whether the shared value scale pins a domain that excludes the 0 baseline a bar
+/// or area mark paints from (`_baseline_outside_shared_domain`): only a pinned edge
+/// counts, an unpinned one fits the marks.
+pub(crate) fn baseline_outside_shared_domain(ax_y: &crate::common::AxisStyle) -> bool {
+    let (lo, hi) = match ax_y.authored_continuous_domain() {
+        Some((a, b)) => (Some(a.min(b)), Some(a.max(b))),
+        None => (ax_y.domain_min, ax_y.domain_max),
+    };
+    lo.is_some_and(|lo| lo > 0.0) || hi.is_some_and(|hi| hi < 0.0)
 }
 
-/// The one layer pinned to its own side (`axis_y.position`), which gets its
-/// own independent value scale. A bar or area mark paints from the value-0
-/// baseline, so its scale always carries the zero rule (`_overlay.py`'s
+/// Opens the plot-sized clip a layer's marks paint under (`clip: true`); close it
+/// with `</g>`. The id names the plot box, so every chart of one size shares one.
+pub(crate) fn clip_open(svg: &mut String, (plot_w, plot_h): (f64, f64)) {
+    let id = format!("dbt-layer-clip-{plot_w}-{plot_h}");
+    let _ = std::fmt::Write::write_fmt(
+        svg,
+        format_args!(
+            "<clipPath id=\"{id}\"><rect x=\"0\" y=\"0\" width=\"{plot_w}\" height=\"{plot_h}\"/></clipPath>\
+             <g clip-path=\"url(#{id})\">"
+        ),
+    );
+}
+
+/// One rect of a bar layer: spanning `from..to` on the value scale at its row's x.
+#[derive(Clone, Copy)]
+pub(crate) struct BarLayerMark<'a> {
+    pub from: f64,
+    pub to: f64,
+    pub value: f64,
+    pub row: &'a serde_json::Map<String, Value>,
+}
+
+/// A bar layer's rects. A ranged layer spans its two columns; a colorless one
+/// stacks rows sharing an x in row order; one grouped by its own color stacks its
+/// series in Vega-Lite's descending color order (no `order` encoding reaches a
+/// layer). A row whose value is missing refuses by name, except a grouped
+/// layer's, which has no segment.
+pub(crate) fn bar_layer_marks<'a>(
+    bl: &OverlayBarLayer,
+    rows: &'a [serde_json::Map<String, Value>],
+    x_field: &str,
+    family: &str,
+) -> Result<Vec<BarLayerMark<'a>>, String> {
+    let numeric = |row: &serde_json::Map<String, Value>, field: &str| {
+        row_num(row, field).ok_or_else(|| format!("{family}: layer row: missing or non-numeric field {field:?}"))
+    };
+    if let Some(start) = bl.y_start.as_deref() {
+        return rows
+            .iter()
+            .map(|row| {
+                let value = numeric(row, &bl.y)?;
+                Ok(BarLayerMark { from: numeric(row, start)?, to: value, value, row })
+            })
+            .collect();
+    }
+    let spans: Vec<Option<(f64, f64)>> = match bl.color.as_deref() {
+        Some(color) => {
+            let any_null = rows.iter().any(|row| layer_color_of(row, color).is_none());
+            let order = layer_stack_order(&layer_color_values(rows, color), any_null);
+            LayerStack::new(rows, x_field, color, &bl.y, &order).of_rows(rows)
+        }
+        None => {
+            rows.iter().try_for_each(|row| numeric(row, &bl.y).map(|_| ()))?;
+            row_order_stack(rows, x_field, &bl.y).into_iter().map(|(_, from, to)| Some((from, to))).collect()
+        }
+    };
+    Ok(rows
+        .iter()
+        .zip(spans)
+        .filter_map(|(row, span)| {
+            let (from, to) = span?;
+            Some(BarLayerMark { from, to, value: row_num(row, &bl.y)?, row })
+        })
+        .collect())
+}
+
+/// Each layer axis's own grid, over the base axis's theme style: the rungs of its
+/// own ladder, rounded like the base's.
+pub(crate) fn paint_layer_grids(
+    svg: &mut String,
+    layer_axes: &[LayerAxis],
+    ax_y: &crate::common::AxisStyle,
+    (plot_w, plot_h): (f64, f64),
+    family: &str,
+) -> Result<(), String> {
+    for la in layer_axes.iter().filter(|la| la.grid_visible) {
+        let gc = crate::common::required_ink(ax_y.grid.color.as_deref(), family, "axis_y.grid.color")?;
+        let gw = ax_y.grid.width.unwrap_or(1.0);
+        let go = ax_y.grid.opacity.unwrap_or(1.0);
+        let scale = la.scale(plot_h);
+        for &tv in &la.tick_values {
+            let gy = scale.position(tv).round() + 0.5;
+            let _ = std::fmt::Write::write_fmt(
+                svg,
+                format_args!(
+                    "<line x1=\"0.5\" y1=\"{gy:.3}\" x2=\"{:.3}\" y2=\"{gy:.3}\" \
+                     stroke=\"{}\" stroke-width=\"{gw}\" opacity=\"{go}\"/>",
+                    plot_w + 0.5,
+                    xml_escape_attr(gc)
+                ),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A bar layer's rects over the rows `placed` gives a position on the base's x
+/// scale: Vega drops a mark whose x is null or off the scale's domain.
+pub(crate) fn placed_bar_layer_marks<'a>(
+    bl: &OverlayBarLayer,
+    rows: &'a [serde_json::Map<String, Value>],
+    x_field: &str,
+    family: &str,
+    placed: impl Fn(&serde_json::Map<String, Value>) -> bool,
+) -> Result<Vec<BarLayerMark<'a>>, String> {
+    Ok(bar_layer_marks(bl, rows, x_field, family)?.into_iter().filter(|m| placed(m.row)).collect())
+}
+
+/// The value extent the layers on a shared scale add to it: a bar from its
+/// baseline, an area at its pile, a line or scatter at its values.
+pub(crate) fn layers_value_extent(
+    layers: &[(&OverlayLayer, &[serde_json::Map<String, Value>])],
+    base_x: &str,
+    family: &str,
+) -> Result<(f64, f64), String> {
+    let mut extent = (f64::INFINITY, f64::NEG_INFINITY);
+    let mut reach = |v: f64| extent = (extent.0.min(v), extent.1.max(v));
+    for &(overlay, layer_rows) in layers {
+        let layer_x = overlay.x().unwrap_or(base_x);
+        match overlay {
+            OverlayLayer::Bar(bl) => {
+                for m in bar_layer_marks(bl, layer_rows, layer_x, family)? {
+                    reach(m.from);
+                    reach(m.to);
+                }
+            }
+            OverlayLayer::Line(l) if l.area_mark.is_some() => {
+                let piles: Vec<Option<(f64, f64)>> = match l.color.as_deref() {
+                    Some(cf) => LayerStack::descending(layer_rows, layer_x, cf, &l.y).of_rows(layer_rows),
+                    None => row_order_stack(layer_rows, layer_x, &l.y)
+                        .into_iter()
+                        .map(|(_, from, to)| Some((from, to)))
+                        .collect(),
+                };
+                piles.into_iter().flatten().for_each(|(from, to)| {
+                    reach(from);
+                    reach(to);
+                });
+            }
+            _ => layer_rows.iter().filter_map(|row| row_num(row, overlay.y())).for_each(&mut reach),
+        }
+    }
+    Ok(extent)
+}
+
+/// A layer on its own value scale (`YSides`). A bar or area mark paints from the
+/// value-0 baseline, so its scale always carries the zero rule (`_overlay.py`'s
 /// `layer_should_fire`).
-pub(crate) struct PinnedLayer<'a> {
+pub(crate) struct ScaledLayer<'a> {
     pub side: LayerSide,
-    pub kind: PinnedKind,
+    pub layer_type: LayerType,
     /// The layer's x column: its own, else the base's.
     pub x: &'a str,
     pub y: &'a str,
@@ -1581,15 +1963,33 @@ pub(crate) struct LayerAxisFrame<'a> {
     pub field_labels: &'a crate::common::FieldLabels,
 }
 
-impl PinnedLayer<'_> {
-    pub(crate) fn always_rules_zero(&self) -> bool {
-        matches!(self.kind, PinnedKind::Area | PinnedKind::Bar)
+impl<'a> ScaledLayer<'a> {
+    /// `layer` on its own scale at `side`, reading `rows`.
+    pub(crate) fn new(
+        layer: &'a OverlayLayer,
+        rows: &'a [serde_json::Map<String, Value>],
+        base_x: &'a str,
+        side: LayerSide,
+    ) -> Self {
+        ScaledLayer {
+            side,
+            layer_type: layer.layer_type(),
+            x: layer.x().unwrap_or(base_x),
+            y: layer.y(),
+            y_start: match layer {
+                OverlayLayer::Bar(l) => l.y_start.as_deref(),
+                OverlayLayer::Line(_) | OverlayLayer::Scatter(_) => None,
+            },
+            axis_y: layer.axis_y(),
+            label: layer.label(),
+            rows,
+        }
     }
 
-    /// The stroke width of the layer's own zero rule (`_overlay.py` nests it
-    /// into the layer's entry): a bar or area paints from zero, so its scale
-    /// always carries one; a line or scatter only where its values reach
-    /// zero. `None` when the grid or its threshold is hidden.
+    pub(crate) fn always_rules_zero(&self) -> bool {
+        matches!(self.layer_type, LayerType::Area | LayerType::Bar)
+    }
+
     /// The layer's authored `grid.visible`, else the base's.
     fn grid_visible(&self, ax_y: &crate::common::AxisStyle) -> bool {
         let own = self.axis_y.grid.as_ref().and_then(|g| g.visible);
@@ -1600,7 +2000,7 @@ impl PinnedLayer<'_> {
     /// an area's reach is its pile (rows sharing an x stack), anything else's
     /// its values as they stand.
     pub(crate) fn value_extent<'b>(&self, rows: impl Iterator<Item = &'b serde_json::Map<String, Value>>) -> (f64, f64) {
-        let reaches: Vec<f64> = if self.kind == PinnedKind::Area {
+        let reaches: Vec<f64> = if self.layer_type == LayerType::Area {
             row_order_stack(rows, self.x, self.y).into_iter().flat_map(|(_, start, end)| [start, end]).collect()
         } else {
             rows.filter_map(|row| row_num(row, self.y)).collect()
@@ -1608,7 +2008,15 @@ impl PinnedLayer<'_> {
         reaches.into_iter().fold((0.0_f64, 0.0_f64), |(lo, hi), v| (lo.min(v), hi.max(v)))
     }
 
-    pub(crate) fn zero_rule_width(&self, ax_y: &crate::common::AxisStyle) -> Option<f64> {
+    /// The stroke width of the layer's own zero rule (`_overlay.py` nests it
+    /// into the layer's entry): a bar or area paints from zero, so its scale
+    /// always carries one; a line or scatter only where its values reach
+    /// zero. `None` when the grid or its threshold is hidden, and for a layer on
+    /// the base's own side, which relies on the base's rule.
+    pub(crate) fn zero_rule_width(&self, ax_y: &crate::common::AxisStyle, base_side: LayerSide) -> Option<f64> {
+        if self.side == base_side {
+            return None;
+        }
         let values: Vec<f64> = self.rows.iter().filter_map(|row| row_num(row, self.y)).collect();
         let lo = values.iter().copied().fold(f64::INFINITY, f64::min);
         let hi = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
@@ -1624,12 +2032,17 @@ impl PinnedLayer<'_> {
     /// the zero union with the layer's values only, never the base's, then
     /// d3's default nice count.
     pub(crate) fn axis(&self, extent: (f64, f64), frame: &LayerAxisFrame) -> Result<LayerAxis, String> {
+        let layer_count = self.axis_y.ticks.as_ref().and_then(|t| t.count);
+        self.axis_at(extent, frame, layer_count.or(frame.ax_y.ticks.count).unwrap_or(6.0).max(1.0) as usize)
+    }
+
+    /// `axis` with the ladder's tick `count` given: the layer's own authored count, else
+    /// the base axis's baked one, else wherever the caller reads Vega's own default.
+    pub(crate) fn axis_at(&self, extent: (f64, f64), frame: &LayerAxisFrame, count: usize) -> Result<LayerAxis, String> {
         let LayerAxisFrame { family, ax_y, fonts, font_family, font_size, label_limit, tick_size, title_style, field_labels } =
             *frame;
         let (layer_min, layer_max) = (extent.0.min(0.0), extent.1.max(0.0));
         let (domain_min, domain_max) = d3rs::ticks::d3_nice(layer_min, layer_max, 10);
-        let layer_count = self.axis_y.ticks.as_ref().and_then(|t| t.count);
-        let count = layer_count.or(ax_y.ticks.count).unwrap_or(6.0).max(1.0) as usize;
         let tick_values = d3rs::ticks::d3_ticks(domain_min, domain_max, count);
         // No ruler, no `tick_label` bake — `_overlay.py`'s own comment on
         // its `ay_vl = axis_to_vl(axis_y)` seed: "axis_y is the BASE
@@ -1909,6 +2322,40 @@ mod tests {
         }
     }
 
+    fn scatter_at(position: Option<&str>) -> OverlayLayer {
+        OverlayLayer::Scatter(Box::new(
+            OverlayScatterLayer::parse(
+                &serde_json::json!({
+                    "type": "scatter",
+                    "point_mark": {"size": 50.0, "stroke_width": 1.0, "labels": {"visible": false}},
+                    "axis_y": {"position": position},
+                    "x": null, "y": "y", "label": null, "color": null, "query_name": null,
+                }),
+                "test",
+            )
+            .expect("a scatter layer"),
+        ))
+    }
+
+    /// `_resolved_layer_y_orients`: no pin shares the base's scale; a pin puts every
+    /// layer on its own scale, the pinned ones on their side and the rest, with the
+    /// base, on the free one (left, unless every pin is on the left).
+    #[test]
+    fn a_pinned_layer_gives_every_layer_a_scale_on_its_side_or_the_free_one() {
+        assert!(YSides::of(&[scatter_at(None), scatter_at(None)]).is_none());
+        let right = YSides::of(&[scatter_at(None), scatter_at(Some("right"))]).expect("a pin");
+        assert_eq!((right.base, right.layers), (LayerSide::Left, vec![LayerSide::Left, LayerSide::Right]));
+        let left = YSides::of(&[scatter_at(Some("left")), scatter_at(None)]).expect("a pin");
+        assert_eq!((left.base, left.layers), (LayerSide::Left, vec![LayerSide::Left, LayerSide::Right]));
+        let all_left = YSides::of(&[scatter_at(Some("left")), scatter_at(Some("left"))]).expect("pins");
+        assert_eq!((all_left.base, all_left.layers), (LayerSide::Right, vec![LayerSide::Left, LayerSide::Left]));
+        let both = YSides::of(&[scatter_at(Some("right")), scatter_at(Some("left")), scatter_at(None)]).expect("pins");
+        assert_eq!(
+            (both.base, both.layers),
+            (LayerSide::Left, vec![LayerSide::Right, LayerSide::Left, LayerSide::Left])
+        );
+    }
+
     /// A side legend anchors on the extent of every value axis: a right layer
     /// axis pushes the right edge past the plot, a left one the left edge.
     #[test]
@@ -1927,9 +2374,9 @@ mod tests {
             .map(|(x, y)| serde_json::json!({"x": x, "y": y}).as_object().unwrap().clone())
             .collect();
         let axis_y: OverlayAxisY = serde_json::from_value(serde_json::json!({"position": "right"})).unwrap();
-        let pinned = |kind| PinnedLayer {
+        let pinned = |layer_type| ScaledLayer {
             side: LayerSide::Right,
-            kind,
+            layer_type,
             x: "x",
             y: "y",
             y_start: None,
@@ -1937,8 +2384,8 @@ mod tests {
             label: None,
             rows: &rows,
         };
-        assert_eq!(pinned(PinnedKind::Area).value_extent(rows.iter()), (0.0, 180.0));
-        assert_eq!(pinned(PinnedKind::Line).value_extent(rows.iter()), (0.0, 90.0));
+        assert_eq!(pinned(LayerType::Area).value_extent(rows.iter()), (0.0, 180.0));
+        assert_eq!(pinned(LayerType::Line).value_extent(rows.iter()), (0.0, 90.0));
     }
 
     /// Layers widen a domain with their own x columns: a value no earlier column
@@ -2080,11 +2527,11 @@ mod tests {
             .expect("a line layer")
         };
         let data = rows(&[("n", None, 110.0), ("s", Some("a"), 50.0)]);
-        let top = |l: &OverlayLineLayer| scope_group_top(l, &data, "x", |v| 100.0 - v);
+        let top = |l: &OverlayLineLayer| scope_group_top(l, &data, "x", false, |v| 100.0 - v);
         assert_eq!(top(&layer(None)), -10.0, "the null series' top is its datum");
         assert_eq!(top(&layer(Some("#cc0000"))), -14.0, "an authored stroke paints it too");
         let colored = rows(&[("n", Some("a"), 110.0), ("s", Some("b"), 50.0)]);
-        assert_eq!(scope_group_top(&layer(None), &colored, "x", |v| 100.0 - v), -14.0);
+        assert_eq!(scope_group_top(&layer(None), &colored, "x", false, |v| 100.0 - v), -14.0);
     }
 
     /// Rows sharing an x and a color value stack in row order, as bar segments do.
@@ -2098,11 +2545,18 @@ mod tests {
     #[test]
     fn an_authored_layer_domain_refuses_by_name_and_an_unset_one_does_not() {
         let layer = |scale: serde_json::Value| serde_json::json!({"axis_y": {"position": null, "scale": scale}});
-        let err = refuse_unpainted_layer_affix("line", &layer(serde_json::json!({"domain": [230.0, 290.0], "clip": true})))
+        let err = refuse_unpainted_layer_affix("line", &layer(serde_json::json!({"domain": [230.0, 290.0], "clip": true})), false)
             .unwrap_err();
         assert!(err.contains("layer axis_y.scale.domain"), "{err}");
         for unset in [serde_json::Value::Null, serde_json::json!({"domain": null, "clip": true})] {
-            refuse_unpainted_layer_affix("line", &layer(unset)).unwrap();
+            refuse_unpainted_layer_affix("line", &layer(unset), false).unwrap();
         }
+    }
+
+    #[test]
+    fn merged_axis_title_joins_each_distinct_title_once_in_layer_order() {
+        let titles = ["y", "z", "y", "w"].map(String::from);
+        assert_eq!(merged_axis_title(titles), "y, z, w");
+        assert_eq!(merged_axis_title(["y".to_string()]), "y");
     }
 }

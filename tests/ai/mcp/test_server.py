@@ -508,7 +508,7 @@ class TestMCPWireSurface:
         assert advertised == {t["name"]: t["annotations"] for t in ALL_TOOLS}
         assert {n for n, a in advertised.items() if a["openWorldHint"]} == {
             "render_board",
-            "execute_query",
+            "execute_sql",
         }
 
     def test_render_board_schema_includes_as_link(self, mcp_server) -> None:
@@ -565,7 +565,7 @@ class TestMCPInputSchemaShape:
                 None,
             ),
             (
-                "execute_query",
+                "execute_sql",
                 {
                     "sql",
                     "board",
@@ -577,13 +577,13 @@ class TestMCPInputSchemaShape:
                 },
                 None,
             ),
-            ("search_boards", {"query", "tags", "limit", "cursor"}, "query"),
+            ("search_files", {"kind", "path", "text", "tags", "limit", "cursor"}, None),
             ("describe_board", {"path", "chart"}, "path"),
         ],
         ids=[
             "render_board",
-            "execute_query",
-            "search_boards",
+            "execute_sql",
+            "search_files",
             "describe_board",
         ],
     )

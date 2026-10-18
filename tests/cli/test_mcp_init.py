@@ -486,7 +486,7 @@ def test_mcp_serve_stays_uncached_unless_opted_in(
 ) -> None:
     """MCP is the authoring loop: no cache unless `DCT_CACHE_PATH` asks for one.
 
-    An agent rebuilds a dbt model and re-runs `execute_query` in the same
+    An agent rebuilds a dbt model and re-runs `execute_sql` in the same
     process. The cache key folds in the query text and the file version, never
     warehouse table state, so a cache here serves pre-rebuild numbers for the
     life of the process — and the shipped cascade root's ttl is 24h.

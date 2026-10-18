@@ -201,8 +201,8 @@ class TestActorClientRequestDimensions:
     ) -> None:
         """`tool` is per-call: on a pooled connection it would mislabel the next tool."""
         monkeypatch.setattr(attribution_module, "_process_surface", {})
-        with attribute({"tool": "execute_query"}, {}):
-            assert current_attribution()["dbt_charts_tool"] == "execute_query"
+        with attribute({"tool": "execute_sql"}, {}):
+            assert current_attribution()["dbt_charts_tool"] == "execute_sql"
             assert "dbt_charts_tool" not in connection_identity()
 
     def test_actor_never_reaches_process_surface(

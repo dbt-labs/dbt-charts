@@ -21,14 +21,12 @@ from dbt_charts.agent_api.docs import DocsArgs
 from dbt_charts.agent_api.files import (
     DeleteFileArgs,
     EditFileArgs,
-    GlobFilesArgs,
-    GrepFilesArgs,
     MoveFileArgs,
     ReadFileArgs,
     WriteFileArgs,
 )
 from dbt_charts.agent_api.query import ExecuteQueryArgs
-from dbt_charts.agent_api.search import SearchBoardsArgs
+from dbt_charts.agent_api.search import SearchFilesArgs
 from dbt_charts.agent_api.skills import GetSkillArgs
 
 
@@ -42,7 +40,7 @@ def _annotations(
     """MCP ToolAnnotations: hosts auto-approve on ``readOnlyHint``, and Claude's
     connector directory requires a title plus a read-only or destructive hint.
 
-    ``execute_query`` counts as read-only: its SQL runs under a read-only guard.
+    ``execute_sql`` counts as read-only: its SQL runs under a read-only guard.
     ``open_world`` marks tools that run a board's http sources, which can reach
     arbitrary URLs (GET only under a read-only session).
     """
@@ -146,10 +144,8 @@ def _render_board_tool() -> dict[str, Any]:
 
 
 RENDER_BOARD = _render_board_tool()
-EXECUTE_QUERY = _ai_tool(
-    "execute_query", ExecuteQueryArgs, "Run query", open_world=True
-)
-SEARCH_BOARDS = _ai_tool("search_boards", SearchBoardsArgs, "Search boards")
+EXECUTE_SQL = _ai_tool("execute_sql", ExecuteQueryArgs, "Run query", open_world=True)
+SEARCH_FILES = _ai_tool("search_files", SearchFilesArgs, "Search files")
 
 DOCS = _ai_tool("docs", DocsArgs, "Read docs")
 
@@ -178,15 +174,13 @@ GET_SKILL = _ai_tool("get_skill", GetSkillArgs, "Get skill")
 READ_FILE = _ai_tool("read_file", ReadFileArgs, "Read file")
 WRITE_FILE = _ai_tool("write_file", WriteFileArgs, "Write file", **_WRITES)
 EDIT_FILE = _ai_tool("edit_file", EditFileArgs, "Edit file", **_WRITES)
-GLOB_FILES = _ai_tool("glob_files", GlobFilesArgs, "Find files")
-GREP_FILES = _ai_tool("grep_files", GrepFilesArgs, "Search file contents")
 MOVE_FILE = _ai_tool("move_file", MoveFileArgs, "Move file", **_WRITES)
 DELETE_FILE = _ai_tool("delete_file", DeleteFileArgs, "Delete file", **_WRITES)
 
 ALL_TOOLS: list[dict[str, Any]] = [
     RENDER_BOARD,
-    EXECUTE_QUERY,
-    SEARCH_BOARDS,
+    EXECUTE_SQL,
+    SEARCH_FILES,
     DOCS,
     DESCRIBE_BOARD,
     LIST_SKILLS,
@@ -205,8 +199,6 @@ FILE_TOOLS: list[dict[str, Any]] = [
     READ_FILE,
     WRITE_FILE,
     EDIT_FILE,
-    GLOB_FILES,
-    GREP_FILES,
     MOVE_FILE,
     DELETE_FILE,
 ]

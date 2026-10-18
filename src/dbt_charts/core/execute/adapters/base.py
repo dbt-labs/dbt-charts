@@ -32,6 +32,7 @@ from dbt_charts.core.connections import classify_connection_error
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_ADAPTER_UNAVAILABLE,
+    ERR_BINDER_GROUP_BY,
     ERR_BINDER_TYPE_MISMATCH,
     ERR_BINDER_UNKNOWN_COLUMN,
     ERR_BINDER_UNKNOWN_RELATION,
@@ -335,7 +336,17 @@ _SQLSTATE_ERROR_CODES: dict[str, ErrorCode] = {
     "42P01": ERR_BINDER_UNKNOWN_RELATION,  # undefined_table (Postgres, Redshift)
     "42S22": ERR_BINDER_UNKNOWN_COLUMN,  # column not found
     "22018": ERR_BINDER_TYPE_MISMATCH,  # invalid character value for cast
+    "42803": ERR_BINDER_GROUP_BY,  # grouping_error (Postgres, Redshift)
 }
+
+# Message forms of a column that is neither grouped nor aggregated. DuckDB's
+# binder text is matched in duckdb_adapter through the same pattern; Snowflake
+# carries no SQLSTATE through dbt's exception wrapper.
+GROUP_BY_MESSAGE = re.compile(
+    r"must appear in the GROUP BY clause"
+    r"|is neither an aggregate nor in the group by clause"
+    r"|is not a valid group by expression"
+)
 
 
 # BigQuery's REST API error text for an unresolvable column/table/dataset
@@ -403,6 +414,8 @@ def classify_warehouse_error(
         dialect
     ].search(str(error)):
         code = ERR_BINDER_UNKNOWN_RELATION
+    elif dialect == "snowflake" and GROUP_BY_MESSAGE.search(str(error)):
+        code = ERR_BINDER_GROUP_BY
     elif dialect == "bigquery" and "Unrecognized name:" in str(error):
         code = ERR_BINDER_UNKNOWN_COLUMN
     else:

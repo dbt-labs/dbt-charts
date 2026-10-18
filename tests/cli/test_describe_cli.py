@@ -537,3 +537,88 @@ class TestDescribeTemplates:
             "multiple": False,
         }
         assert data["template"]["options"][0]["default"] == 11
+
+
+class TestDescribeProjectOverview:
+    """`dct describe` with no board prints the project overview."""
+
+    def _project(self, tmp_path: Path) -> None:
+        (tmp_path / "dbt_charts.yml").write_text(
+            "sources:\n  analytics:\n    type: duckdb\n    path: wh.duckdb\n"
+        )
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "sales.yml").write_text(_BOARD_YAML)
+        (tmp_path / "charts" / "broken.yml").write_text(
+            "title: Broken\ncharts:\n  x:\n    query: nope\n    type: line\nrows:\n  - x\n"
+        )
+
+    def test_text_overview(self, tmp_path: Path) -> None:
+        self._project(tmp_path)
+        result = runner.invoke(app, ["describe", "--project-dir", str(tmp_path)])
+        assert result.exit_code == 0, result.output
+        out = result.output
+        assert str(tmp_path.resolve()) in out
+        assert "dbt_charts.yml" in out
+        assert "analytics" in out
+        assert "charts/sales.yml" in out
+        assert "/sales/" in out
+        assert "orders" in out
+        assert "incomplete" in out.lower()
+        assert "charts/broken.yml" in out
+        assert "trend" not in out
+
+    def test_no_tables_says_none(self, tmp_path: Path) -> None:
+        (tmp_path / "dbt_charts.yml").write_text("# marker\n")
+        result = runner.invoke(app, ["describe", "--project-dir", str(tmp_path)])
+        assert result.exit_code == 0, result.output
+        assert "Tables read: none" in result.output
+
+    def test_all_lists_charts(self, tmp_path: Path) -> None:
+        self._project(tmp_path)
+        result = runner.invoke(
+            app, ["describe", "--all", "--project-dir", str(tmp_path)]
+        )
+        assert result.exit_code == 0, result.output
+        assert "trend" in result.output
+        assert "line" in result.output
+
+    def test_json(self, tmp_path: Path) -> None:
+        self._project(tmp_path)
+        result = runner.invoke(
+            app, ["describe", "--json", "--all", "--project-dir", str(tmp_path)]
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["config_file"] == "dbt_charts.yml"
+        sales = next(b for b in data["boards"] if b["path"] == "charts/sales.yml")
+        assert sales["charts"][0]["name"] == "trend"
+        assert data["incomplete"][0]["board"] == "charts/broken.yml"
+
+    def test_all_with_a_board_is_rejected(self, tmp_path: Path) -> None:
+        self._project(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "describe",
+                str(tmp_path / "charts" / "sales.yml"),
+                "--all",
+                "--project-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_board_argument_still_describes_the_board(self, tmp_path: Path) -> None:
+        self._project(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "describe",
+                str(tmp_path / "charts" / "sales.yml"),
+                "--project-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Sales Dashboard" in result.output
+        assert "Project" not in result.output

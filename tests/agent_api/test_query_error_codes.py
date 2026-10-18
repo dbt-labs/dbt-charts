@@ -154,3 +154,21 @@ def test_an_absolute_board_path_on_a_hosted_project_is_the_callers_argument(
 
     assert result.error_code == "ERR-TOOL-ARGUMENTS-INVALID"
     assert "charts/orders.yml" in result.errors[0]
+
+
+@pytest.mark.parametrize(
+    ("source", "code", "reason"),
+    [
+        ("../outside.csv", "ERR-UNRESOLVED-REFERENCE", "escape above the project root"),
+        ("data/x.xlsx", "ERR-UNRESOLVED-REFERENCE", "needs one of"),
+    ],
+)
+def test_an_inline_file_source_the_caller_got_wrong_carries_the_compile_code(
+    registry: AdapterRegistry, source: str, code: str, reason: str
+) -> None:
+    result = execute_query("select 1", source=source, adapter_registry=registry)
+
+    assert not result.success
+    assert result.error_code == code
+    assert result.errors[0].startswith(f"Reference {source!r} not found in ")
+    assert reason in result.errors[0]

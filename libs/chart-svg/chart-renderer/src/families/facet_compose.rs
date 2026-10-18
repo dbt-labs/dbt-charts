@@ -374,6 +374,10 @@ pub(crate) struct FacetSpec<'a> {
     pub(crate) row_axis_idx: Option<usize>,
     pub(crate) col_axis_idx: Option<usize>,
     pub(crate) has_mirror: bool,
+    /// The panels paint the mirrored axis themselves, on the edge opposite
+    /// the shared row axis (heatmap's `row_footer` copy), so the composer
+    /// reserves and paints no left ghost.
+    pub(crate) mirror_in_panel: bool,
     /// Every panel paints its own value axis inside its cell and folds it into
     /// the cell's ink (an independent measure scale), so no shared
     /// `row_footer` reserve follows the grid.
@@ -642,9 +646,6 @@ pub(crate) fn compose_facet_full(
     row_axis: Option<&RowAxisSpec<'_>>,
     render_pass: &RenderPass,
 ) -> Result<String, Diagnostic> {
-    if spec.has_mirror && row_axis.is_some() {
-        return Err(format!("{}: a mirrored value axis and a shared row axis cannot share the row header", spec.family).into());
-    }
     const SIZING_CLAMP_PX: f64 = 2.0;
     const MAX_SOLVES: usize = 24;
     let (mut svg, mut canvas_h) = compose_facet_at(payload, fonts, spec, chrome, row_axis, render_pass)?;
@@ -682,6 +683,7 @@ fn compose_facet_at(
     let panel_cols_n = spec.panel_cols_n;
     let panel_rows_n = spec.panel_rows_n;
     let has_mirror = spec.has_mirror;
+    let ghost_left = has_mirror && !spec.mirror_in_panel;
     let bg = spec.background;
     let missing = multiples::empty_leading_cells(spec.panels.len(), panel_rows_n, panel_cols_n)?;
 
@@ -885,7 +887,7 @@ fn compose_facet_at(
     // final pass's labels (`left_edges`, below) once it renders.
     let widest_of = |g: &PanelGeometry| -> Result<f64, String> {
         match &g.mirror_style {
-            Some(style) if has_mirror => g.val_ticks.iter().try_fold(0.0_f64, |acc, (_, label)| {
+            Some(style) if ghost_left => g.val_ticks.iter().try_fold(0.0_f64, |acc, (_, label)| {
                 fonts.measure_shaped(label, &style.val_family, style.val_font_size).map(|w| acc.max(w))
             }),
             _ => Ok(g.widest_val_tick_label_width),
@@ -964,7 +966,7 @@ fn compose_facet_at(
         .map(|(c, edge)| -far_corner(c.stack(edge, panel_w_guess, panel_h_guess).1 .0))
         .fold(0.0, f64::max);
     let left_edges = |widest: f64| -> LeftEdges {
-        let ghost_reserve = if has_mirror { primary_reserve + widest } else { row_axis.map_or(0.0, |a| a.reserve) };
+        let ghost_reserve = if ghost_left { primary_reserve + widest } else { row_axis.map_or(0.0, |a| a.reserve) };
         let row_header_offset = ghost_reserve + left_mark_overhang;
         let frame_left_extent = if spec.row_axis_idx.is_some() {
             HEADER_TITLE_OFFSET + max_row_label_w + row_header_offset
@@ -1324,7 +1326,7 @@ fn compose_facet_at(
     // The paint itself reads the SAME resolved style the primary painted
     // with, carried on `PanelGeometry`, rather than a second, independent
     // read of the axis style.
-    if has_mirror {
+    if ghost_left {
         for row_i in 0..panel_rows_n {
             let slot = row_i * panel_cols_n;
             let (dx, dy) = offsets[slot];

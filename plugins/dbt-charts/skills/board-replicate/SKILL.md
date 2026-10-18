@@ -152,7 +152,7 @@ now, never silently dropped**.
 
 ### 4. Find the real tables
 
-Explore the warehouse vocabulary with `execute_query` against
+Explore the warehouse vocabulary with `execute_sql` against
 INFORMATION_SCHEMA and map each tile's placeholder query to candidate tables
 and columns.
 

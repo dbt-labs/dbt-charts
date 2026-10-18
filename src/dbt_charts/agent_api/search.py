@@ -5,9 +5,9 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Collection, Iterator, Sequence
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from dbt_charts.agent_api.boards import board_declaring_keys
 from dbt_charts.core.diagnostics import Diagnostic
@@ -17,9 +17,14 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.parse.board_text import BoardText
 
 from dbt_charts.core.project import (
+    ALL_FILES_GLOB,
+    CHARTS_SUBDIR,
+    PROJECT_CONFIG_NAME,
     Project,
+    assert_relpath,
     board_roots,
     board_slug,
+    glob_to_regex,
     is_package_relpath,
 )
 
@@ -34,15 +39,27 @@ MAX_PARSED_CANDIDATES = 60
 # Longest notes a hit carries. A hit is for picking a board, not reading one.
 MAX_SUMMARY_CHARS = 140
 
+# Longest matching line a file hit carries; a minified one-liner is not a hit.
+MAX_HIT_TEXT_CHARS = 240
+
+# What each non-board kind searches, as project-relative globs. Models are
+# dbt's default ``models/`` tree; ``all`` is every file the project holds.
+_KIND_GLOBS: dict[str, tuple[str, ...]] = {
+    "meta": (f"{CHARTS_SUBDIR}/**/meta.yml", f"{CHARTS_SUBDIR}/**/meta.yaml"),
+    "models": ("models/**/*.sql", "models/**/*.yml", "models/**/*.yaml"),
+    "config": (PROJECT_CONFIG_NAME, "dbt_project.yml"),
+    "all": (ALL_FILES_GLOB,),
+}
+
 # Maintainer paths that must not appear in agent-facing search summaries.
 _INTERNAL_REF_RE = re.compile(r"\s*;?\s*see\s+ai_notes/\S+", re.IGNORECASE)
 
 
 _T = TypeVar("_T")
 
-# A host's access model: the subset of these project-relative board files its
-# caller may see.
-BoardVisibility = Callable[[list[str]], Collection[str]]
+# A host's access model: the subset of these project-relative files its caller
+# may see.
+PathVisibility = Callable[[list[str]], Collection[str]]
 
 
 def cursor_offset(cursor: str | None) -> int:
@@ -52,7 +69,7 @@ def cursor_offset(cursor: str | None) -> int:
     if not cursor.isdecimal():
         raise ValueError(
             f"{cursor!r} is not a cursor: pass the 'next' value from the "
-            "previous search_boards result unchanged"
+            "previous search_files result unchanged"
         )
     return int(cursor)
 
@@ -86,21 +103,37 @@ def _brief(notes: str) -> str:
     return notes[: MAX_SUMMARY_CHARS - 1].rstrip() + "…"
 
 
-class SearchBoardsArgs(BaseModel):
-    """Search existing dashboards by keyword, or list them all with an empty query. A keyword search returns ranked hits with a match score, the reasons it matched, and `matched_charts`, the ids of the charts whose id or title matched; a listing is unscored, in path order. Both page with `cursor`/`next`. Each hit is compact: title, notes, and two path forms named for the coordinate system they resolve in: board_path (relative to charts/; a package board's carries a `<pkg>/` namespace prefix) for render_board(path=board_path, chart=<chart id>, ...) and describe_board, and file_path (relative to the project root) for read_file/write_file/edit_file. Reuse the matching field's value unchanged; do not convert between the two. A hit carries no chart list, query names or SQL: call describe_board on the board for those. Use to discover relevant dashboards and reuse validated query patterns before creating new ones."""
+class SearchFilesArgs(BaseModel):
+    """Search the project's files: its boards by default, or its folder defaults (`meta.yml`), dbt models, and config. `kind` picks what is searched: `boards` (the default; YAML and markdown boards), `meta` (every `meta.yml`, the folder defaults and themes), `models` (the dbt project's `.sql` and `.yml` model files, where a table's columns are described), `config` (`dbt_charts.yml` and `dbt_project.yml`), or `all` (every file). For `boards`, `text` is a keyword query and omitting it lists every board you can access; a keyword search returns ranked hits with a match score, the reasons it matched, and `matched_charts`, the ids of the charts whose id or title matched, and a listing is unscored, in path order. Each board hit is compact: title, notes, and two path forms named for the coordinate system they resolve in: board_path (relative to charts/; a package board's carries a `<pkg>/` namespace prefix) for render_board(path=board_path, chart=<chart id>, ...) and describe_board, and file_path (relative to the project root) for read_file. Reuse the matching field's value unchanged; do not convert between the two. A board hit carries no chart list, query names or SQL: call describe_board on the board for those. For every other kind, `text` is a case-insensitive substring and the result is the matching lines (`file_path`, `line`, `text`); omit it to list the files. `path` is a glob over project-relative paths (`*` within a folder, `**` across folders) that narrows any kind. All results page with `cursor`/`next`. Use to find existing boards and reuse validated query patterns before creating new ones, and to read a project's conventions with read_file."""
 
     model_config = ConfigDict(extra="forbid")
 
-    query: str = Field(
-        ...,
+    kind: Literal["boards", "meta", "models", "config", "all"] = Field(
+        default="boards",
         description=(
-            "Search query text (keywords to match against dashboard metadata). "
-            "Pass an empty string to list every board you can access instead "
-            "of searching."
+            "What to search: boards (default), meta (meta.yml folder defaults), "
+            "models (dbt model .sql/.yml files), config (dbt_charts.yml, "
+            "dbt_project.yml), or all (every file)."
+        ),
+    )
+    path: str | None = Field(
+        default=None,
+        description=(
+            "Glob over project-relative paths, e.g. 'charts/finance/**'. "
+            "Narrows the kind; omit to search all of it."
+        ),
+    )
+    text: str | None = Field(
+        default=None,
+        description=(
+            "boards: keywords to match against board metadata. Other kinds: a "
+            "case-insensitive substring to find in file contents. Omit (or pass "
+            "an empty string) to list instead of searching."
         ),
     )
     tags: list[str] | None = Field(
-        default=None, description="Filter results to dashboards with ALL of these tags"
+        default=None,
+        description="boards only: filter to boards with ALL of these tags",
     )
     limit: int | None = Field(
         default=None,
@@ -122,6 +155,19 @@ class SearchBoardsArgs(BaseModel):
     def _cursor_is_a_next_value(cls, cursor: str | None) -> str | None:
         cursor_offset(cursor)
         return cursor
+
+    @field_validator("path")
+    @classmethod
+    def _path_stays_in_the_project(cls, path: str | None) -> str | None:
+        if path is not None:
+            assert_relpath(path)
+        return path
+
+    @model_validator(mode="after")
+    def _tags_belong_to_boards(self) -> SearchFilesArgs:
+        if self.tags and self.kind != "boards":
+            raise ValueError("tags only apply to kind 'boards'")
+        return self
 
 
 class BoardListing(BaseModel):
@@ -161,41 +207,112 @@ class BoardMatch(BoardListing):
     )
 
 
+class FileEntry(BaseModel):
+    """A file a non-board search listed."""
+
+    model_config = ConfigDict(frozen=True)
+
+    file_path: str = Field(
+        description="Path relative to the project root. Pass unchanged to read_file."
+    )
+
+
+class FileHit(FileEntry):
+    """A line of a file that matched ``text``."""
+
+    line: int = Field(description="1-based line number.")
+    text: str = Field(description="The matching line.")
+
+
 class SearchResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     success: bool
     errors: list[Diagnostic]
-    results: list[BoardMatch | BoardListing]
+    results: list[BoardMatch | BoardListing | FileHit | FileEntry]
     next: str | None = Field(
         default=None,
         description="Cursor for the next page; absent on the last page.",
     )
 
 
-def search_boards(
-    query: str,
+def search_files(
     project: Project,
     *,
+    kind: str = "boards",
+    path: str | None = None,
+    text: str | None = None,
     tags: list[str] | None = None,
     limit: int = DEFAULT_SEARCH_LIMIT,
     cursor: str | None = None,
 ) -> SearchResult:
-    """Search dashboards by keyword with ranked results, or list them all.
+    """Search a project's boards, or its meta/model/config/other files.
 
-    An empty ``query`` lists every board by path instead of ranking. Searches
-    every board root. Pages of ``limit`` (default ``DEFAULT_SEARCH_LIMIT``, max
-    ``MAX_SEARCH_LIMIT``) resume at ``cursor``. Hosts with a per-principal
-    access model (Cloud) must not truncate before filtering — see
-    ``search_boards_hits``.
+    See ``SearchFilesArgs`` for what each ``kind`` searches. Pages of ``limit``
+    (default ``DEFAULT_SEARCH_LIMIT``, max ``MAX_SEARCH_LIMIT``) resume at
+    ``cursor``. Hosts with a per-principal access model (Cloud) must not
+    truncate before filtering — see ``search_file_hits``.
     """
     limit = max(0, min(limit, MAX_SEARCH_LIMIT))
     if limit == 0:
         return SearchResult(success=True, errors=[], results=[])
-    page, next_cursor = paginate(
-        search_boards_hits(query, project, tags=tags), limit=limit, cursor=cursor
-    )
+    hits = search_file_hits(project, kind=kind, path=path, text=text, tags=tags)
+    page, next_cursor = paginate(hits, limit=limit, cursor=cursor)
     return SearchResult(success=True, errors=[], results=page, next=next_cursor)
+
+
+def search_file_hits(
+    project: Project,
+    *,
+    kind: str = "boards",
+    path: str | None = None,
+    text: str | None = None,
+    tags: list[str] | None = None,
+    visible: PathVisibility | None = None,
+) -> list[BoardMatch | BoardListing | FileHit | FileEntry]:
+    """Every hit for the search, in result order, unlimited.
+
+    ``visible`` is the host's access model, applied to the candidate files
+    BEFORE any cap or candidate cut, so a caller who cannot see the top hits
+    still gets the next ones rather than a false empty result.
+    """
+    if path is not None:
+        in_scope = glob_to_regex(path)
+        host_visible = visible
+
+        def visible_in_scope(paths: list[str]) -> Collection[str]:
+            scoped = [p for p in paths if in_scope.match(p)]
+            return scoped if host_visible is None else host_visible(scoped)
+
+        visible = visible_in_scope
+
+    if kind == "boards":
+        return list(search_boards_hits(text or "", project, tags=tags, visible=visible))
+    if kind not in _KIND_GLOBS:
+        raise ValueError(
+            f"unknown kind {kind!r}: one of boards, {', '.join(_KIND_GLOBS)}"
+        )
+    globs = _KIND_GLOBS[kind]
+    if text is None or not text.strip():
+        listed = sorted({pf.relpath for g in globs for pf in project.files.glob(g)})
+        kept = _keep_visible(listed, visible)
+        return [FileEntry(file_path=p) for p in listed if p in kept]
+    lines = [
+        hit for g in globs for hit in project.files.grep(text, glob=g, ignore_case=True)
+    ]
+    kept = _keep_visible(sorted({hit.relpath for hit in lines}), visible)
+    return [
+        FileHit(file_path=hit.relpath, line=hit.line_number, text=_clip(hit.line))
+        for hit in sorted(lines, key=lambda h: (h.relpath, h.line_number))
+        if hit.relpath in kept
+    ]
+
+
+def _clip(line: str) -> str:
+    line = line.rstrip()
+    if len(line) <= MAX_HIT_TEXT_CHARS:
+        return line
+    return line[: MAX_HIT_TEXT_CHARS - 1].rstrip() + "…"
 
 
 def search_boards_hits(
@@ -203,7 +320,7 @@ def search_boards_hits(
     project: Project,
     *,
     tags: list[str] | None = None,
-    visible: BoardVisibility | None = None,
+    visible: PathVisibility | None = None,
 ) -> list[BoardMatch | BoardListing]:
     """Every board matching ``query``, best-first, unlimited.
 
@@ -272,7 +389,7 @@ def search_boards_hits(
     return [hit for _score, hit in scored]
 
 
-def _keep_visible(paths: list[str], visible: BoardVisibility | None) -> set[str]:
+def _keep_visible(paths: list[str], visible: PathVisibility | None) -> set[str]:
     return set(paths) if visible is None else set(visible(paths))
 
 
@@ -280,7 +397,7 @@ def _parse_candidates(
     project: Project,
     query_tokens: list[str],
     required_tags: set[str],
-    visible: BoardVisibility | None,
+    visible: PathVisibility | None,
 ) -> Iterator[dict[str, Any]]:
     """Index entries for the best-matching board files.
 

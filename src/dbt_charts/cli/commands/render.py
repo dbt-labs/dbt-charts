@@ -106,11 +106,11 @@ def _print_warnings(warnings: list[Diagnostic]) -> None:
 
 
 def _print_cache_use(hit_ats: list[datetime]) -> None:
-    """Tell the user on stderr that this render reused cached query results.
+    """Tell the user on stderr that this render reused cached warehouse results.
 
     A re-render that never reached the warehouse looks identical to one that
-    did, so say how many queries the cache answered, how stale the stalest is,
-    and how to force fresh data.
+    did, so say how many queries the cache answered and how stale the stalest
+    is. Takes only hits whose data can be stale.
     """
     if not hit_ats:
         return
@@ -125,11 +125,7 @@ def _print_cache_use(hit_ats: list[datetime]) -> None:
     else:
         age = "under a minute"
     count = "1 query" if len(hit_ats) == 1 else f"{len(hit_ats)} queries"
-    print(
-        f"{count} served from cache, oldest result {age} old. "
-        "Pass --no-cache to re-query.",
-        file=sys.stderr,
-    )
+    print(f"{count} served from cache, oldest result {age} old.", file=sys.stderr)
 
 
 def _merge_warnings_into_json(
@@ -185,7 +181,7 @@ def _emit_result(
     # stderr carries JSON Lines under --diagnostics-json; a prose line would
     # break its consumers.
     if not diagnostics_json:
-        _print_cache_use(result.cache_hit_ats)
+        _print_cache_use(result.warehouse_cache_hit_ats)
 
     if format in ("json", "data"):
         assert isinstance(result.data, dict)

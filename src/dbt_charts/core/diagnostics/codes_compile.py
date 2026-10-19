@@ -2453,3 +2453,40 @@ ERR_CUSTOM_FIELDS = REGISTRY.register(
         docs_topic="charts",
     )
 )
+
+ERR_MARKDOWN_NOT_BOARD = REGISTRY.register(
+    ErrorCode(
+        code="ERR-MARKDOWN-NOT-BOARD",
+        domain="compile",
+        title="Markdown file is not a board",
+        message_template=(
+            "Not a dbt Charts board file: markdown files outside charts/ must "
+            "declare a top-level 'board:' key in their YAML frontmatter"
+        ),
+        doc=(
+            "Fired when a markdown file outside `charts/` is compiled as a board "
+            "but its frontmatter has no top-level `board:` key. Under `charts/` "
+            "every markdown file is a board by path convention; elsewhere the "
+            "`board:` key opts a page in. Add a `board:` block to the frontmatter "
+            "or move the file under `charts/`."
+        ),
+        docs_topic="board",
+    )
+)
+
+ERR_MARKDOWN_PARSE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-MARKDOWN-PARSE",
+        domain="compile",
+        title="Markdown board cannot be parsed",
+        message_template="Markdown board cannot be parsed: {detail}",
+        doc=(
+            "Fired when a markdown board's frontmatter or body cannot be turned "
+            "into a board: the opening `---` has no closing delimiter, the "
+            "frontmatter is not a YAML mapping, or `board:` is not a mapping. "
+            "YAML syntax errors inside the frontmatter report ERR-YAML-SYNTAX "
+            "instead."
+        ),
+        docs_topic="board",
+    )
+)

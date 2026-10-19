@@ -148,6 +148,8 @@ class TemplateDescription(BaseModel):
 class DescribeBoardArgs(BaseModel):
     """Describe the structure of a board file: queries (with type and source), charts (with query bindings and encoding), variables, and layout. Use this for orientation when picking up an unfamiliar dashboard — it reads the YAML and returns a curated narrative summary without executing any queries."""
 
+    model_config = ConfigDict(extra="forbid")
+
     path: Path = Field(description="Path to the dashboard YAML file to describe")
     chart: str | None = Field(
         None,

@@ -62,16 +62,20 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("core/compile/config.py", 649): (
         "resolve_cache_boot(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/execute/adapters/adapter_registry.py", 238): (
+    ("core/execute/adapters/adapter_registry.py", 240): (
         "isinstance(project, FilesystemProject)-guarded data_dir computation"
-    ),
-    ("core/execute/adapters/adapter_registry.py", 126): (
-        "isinstance(project, FilesystemProject)-guarded linked_dbt_path computation "
-        "(project.dbt_root, linked-dbt-project sibling/external rule)"
     ),
     ("core/execute/adapters/adapter_registry.py", 128): (
         "isinstance(project, FilesystemProject)-guarded linked_dbt_path computation "
+        "(project.dbt_root, linked-dbt-project sibling/external rule)"
+    ),
+    ("core/execute/adapters/adapter_registry.py", 130): (
+        "isinstance(project, FilesystemProject)-guarded linked_dbt_path computation "
         "(project.dbt_project.exists, same narrow as the line above)"
+    ),
+    ("core/execute/adapters/adapter_registry.py", 1158): (
+        "isinstance(project, FilesystemProject)-guarded database_file_version: "
+        "roots a relative DuckDB/SQLite path where the adapters root it"
     ),
     # dct serve is filesystem-only: create_server(project: FilesystemProject)
     # and app.state.project are FilesystemProject throughout server.py — no

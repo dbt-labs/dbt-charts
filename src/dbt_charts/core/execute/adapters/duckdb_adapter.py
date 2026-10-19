@@ -832,6 +832,26 @@ class DuckDBAdapter(BaseAdapter):
             return self._create_duckdb_connection_from_config(source_config, cache_key)
         return self._get_duckdb_connection()
 
+    def reads_only_its_file(self, source_config: DuckDBSourceConfig) -> bool:
+        """Whether a connection for *source_config* reads nothing but its file.
+
+        False when external access is on (``attach``/``extensions``/``secrets``,
+        or an opted-in ``enable_external_access``): SQL can then read other files
+        and remote data, so the database file's version does not cover every
+        input.
+        """
+        raw = source_config.model_dump(by_alias=True, exclude_none=True)
+        return not self._external_access_enabled(
+            self.read_only,
+            self._resolve_duckdb_config(raw) or None,
+            self.allow_external_access_in_readonly,
+            bool(
+                source_config.attach
+                or source_config.extensions
+                or source_config.secrets
+            ),
+        )
+
     def _resolve_duckdb_config(
         self, source_config: dict[str, Any]
     ) -> dict[str, Any] | None:

@@ -556,6 +556,43 @@ class TestValidatePathsConcatenatesArgvOrder:
         }
 
 
+class TestValidatePathsAcceptsMarkdownBoards:
+    """A ``.md`` argv path is a board file, exactly as render and serve treat
+    it — never a directory to walk (which reported ERR-INTERNAL "No board
+    files found" for every markdown page)."""
+
+    def test_markdown_board_under_charts_validates(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate_paths
+
+        charts = tmp_path / "charts"
+        charts.mkdir()
+        page = charts / "page.md"
+        page.write_text("---\nboard:\n  title: Page\n---\nA sentence.\n")
+
+        results = validate_paths([page], project=local_project(tmp_path))
+        assert len(results) == 1
+        assert results[0].path == "charts/page.md"
+        assert results[0].errors == []
+        assert results[0].success is True
+
+    def test_markdown_board_with_bad_frontmatter_is_a_real_error(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate_paths
+
+        charts = tmp_path / "charts"
+        charts.mkdir()
+        page = charts / "broken.md"
+        page.write_text("---\nboard: not-a-mapping\n---\nA sentence.\n")
+
+        results = validate_paths([page], project=local_project(tmp_path))
+        assert len(results) == 1
+        assert results[0].success is False
+        assert [e.code for e in results[0].errors] == ["ERR-MARKDOWN-PARSE"]
+
+
 class TestValidatePathSkipsMetaYaml:
     """validate_paths() skips meta.yml/meta.yaml in directory walk."""
 

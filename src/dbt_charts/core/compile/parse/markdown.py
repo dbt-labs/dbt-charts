@@ -27,11 +27,6 @@ from dbt_charts.core.utils import YAML_LOADER, UniqueKeyLoader
 
 _CHART_EMBED_RE = re.compile(r"^\s*\{\{\s*chart\s+(\w+)\s*\}\}\s*$", re.MULTILINE)
 
-MARKDOWN_NOT_BOARD_MESSAGE = (
-    "Not a dbt charts board file: markdown files outside charts/ must declare a "
-    "top-level 'board:' key in their YAML frontmatter"
-)
-
 
 # Lowest priority: meta.yml, extends and frontmatter all override it.
 _DOCUMENT_STYLE: dict[str, Any] = {  # type-state: explicit_any — board YAML patch

@@ -479,7 +479,7 @@ class TestDetectCompileAgreement:
             "is_markdown_board_content must return True for a .md under charts/"
         )
 
-        # compile must agree — not reject with MARKDOWN_NOT_BOARD_MESSAGE
+        # compile must agree — not reject with ERR_MARKDOWN_NOT_BOARD
         result = compile_file(board_file.read_board())
         assert result.success, (
             f"compile_file rejected a file iter_boards surfaces; errors: {result.errors}"

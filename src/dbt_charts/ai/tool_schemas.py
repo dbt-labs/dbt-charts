@@ -27,7 +27,7 @@ from dbt_charts.agent_api.files import (
 )
 from dbt_charts.agent_api.query import ExecuteQueryArgs
 from dbt_charts.agent_api.search import SearchFilesArgs
-from dbt_charts.agent_api.skills import GetSkillArgs
+from dbt_charts.agent_api.skills import GetSkillArgs, ListSkillsArgs
 
 
 def _annotations(
@@ -158,17 +158,7 @@ GET_DIAGNOSTIC_CODE = _ai_tool(
 
 DESCRIBE_BOARD = _ai_tool("describe_board", DescribeBoardArgs, "Describe board")
 
-LIST_SKILLS: dict[str, Any] = {
-    "name": "list_skills",
-    "annotations": _annotations("List skills"),
-    "description": (
-        "List all agent skills packaged with dct. "
-        "Returns name, description, kind (workflow or pattern), and has_examples "
-        "for each skill. Call this first to discover what patterns are available, "
-        "then use get_skill to read the full guide for the pattern you want."
-    ),
-    "input_schema": {"type": "object", "properties": {}},
-}
+LIST_SKILLS = _ai_tool("list_skills", ListSkillsArgs, "List skills")
 
 GET_SKILL = _ai_tool("get_skill", GetSkillArgs, "Get skill")
 READ_FILE = _ai_tool("read_file", ReadFileArgs, "Read file")

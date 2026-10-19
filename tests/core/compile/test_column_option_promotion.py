@@ -378,6 +378,7 @@ class TestBestEffortColumnOptionDegradation:
 
         registry = Mock()
         registry.execute.side_effect = adapter_execute
+        registry.database_file_version.return_value = ""
 
         executor = Executor(board=result.board, adapter_registry=registry)
 

@@ -13,7 +13,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import (
-    Path,  # noqa: TID251 — names the dbt project directory dbt reads on disk
+    Path,  # noqa: TID251 — names the dbt project directory and DuckDB/SQLite files on disk
 )
 from typing import TYPE_CHECKING, Any, Final
 
@@ -36,6 +36,7 @@ from dbt_charts.core.compile.models.source import (
     DuckDBSourceConfig,
     JsonSourceConfig,
     ParquetSourceConfig,
+    SQLiteSourceConfig,
     is_file_source,
 )
 from dbt_charts.core.compile.sql_guard import sqlglot_dialect
@@ -47,6 +48,7 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 # won).
 from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_NOT_FOUND
 from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_ADAPTER_RELATIVE_PATH_NO_DATA_DIR,
     ERR_SOURCE_NOT_FOUND_EMPTY,
     ERR_SOURCE_NOT_NAMED,
 )
@@ -1114,6 +1116,50 @@ class AdapterRegistry:
         """Version of the dbt manifest ``ref()`` / ``source()`` resolve against
         for *target_path*; ``""`` when none exists."""
         return self._dbt_refs.manifest_version(target_path)
+
+    def database_file_version(
+        self, source_config: DuckDBSourceConfig | SQLiteSourceConfig
+    ) -> str:
+        """Content-version token of a DuckDB/SQLite source's database file.
+
+        ``mtime_ns:size`` of the file the adapter opens, plus that of its
+        write-ahead log when one exists: a write not yet checkpointed lands only
+        there. ``""`` (unversioned) for DuckDB ``:memory:``, for a DuckDB
+        connection that can read beyond its file, and when no adapter here opens
+        the source: a host that cannot open the file never probes the disk for
+        it. Raises OSError when the file cannot be stat'ed.
+        """
+        from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
+        from dbt_charts.core.execute.adapters.sqlite_adapter import SqliteAdapter
+
+        if source_config.path == ":memory:":
+            return ""
+        if isinstance(source_config, DuckDBSourceConfig):
+            opened = any(
+                isinstance(adapter, DuckDBAdapter)
+                and adapter.reads_only_its_file(source_config)
+                for adapter in self._adapters
+            )
+        else:
+            opened = any(
+                isinstance(adapter, SqliteAdapter) for adapter in self._adapters
+            )
+        if not opened:
+            return ""
+        is_duckdb = source_config.type == "duckdb"
+        db_path = Path(source_config.path)
+        if not db_path.is_absolute():
+            if not isinstance(self._project, FilesystemProject):
+                raise DbtChartsError.from_code(
+                    ERR_ADAPTER_RELATIVE_PATH_NO_DATA_DIR,
+                    adapter="DuckDB" if is_duckdb else "SQLite",
+                    path=source_config.path,
+                )
+            db_path = self._project.root / db_path
+        wal_path = db_path.with_name(db_path.name + (".wal" if is_duckdb else "-wal"))
+        paths = [db_path, wal_path] if wal_path.exists() else [db_path]
+        stats = [path.stat() for path in paths]
+        return "|".join(f"{st.st_mtime_ns}:{st.st_size}" for st in stats)
 
     def resolve_query_source(
         self,

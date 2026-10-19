@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from dbt_charts.agent_api.files import (
+    Edit,
     delete_file,
     edit_file,
     move_file,
@@ -98,9 +99,8 @@ class TestEdit:
     def test_edit_unique_replace(self, project: FilesystemProject) -> None:
         e = edit_file(
             "charts/existing.yml",
-            old_string="Existing",
-            new_string="Edited",
-            project=project,
+            [Edit(old_string="Existing", new_string="Edited")],
+            project,
         )
         assert e.success, e.error
         assert e.replacements == 1
@@ -111,18 +111,84 @@ class TestEdit:
     def test_edit_missing_string_errors(self, project: FilesystemProject) -> None:
         e = edit_file(
             "charts/existing.yml",
-            old_string="NotThere",
-            new_string="X",
-            project=project,
+            [Edit(old_string="NotThere", new_string="X")],
+            project,
         )
         assert e.success is False
         assert e.replacements == 0
 
     def test_edit_ambiguous_string_errors(self, project: FilesystemProject) -> None:
         (project.root / "charts" / "dup.yml").write_text("a\na\n", encoding="utf-8")
-        e = edit_file("charts/dup.yml", old_string="a", new_string="b", project=project)
+        e = edit_file("charts/dup.yml", [Edit(old_string="a", new_string="b")], project)
         assert e.success is False
-        assert "uniqu" in (e.error or "").lower() or "ambig" in (e.error or "").lower()
+        assert "uniqu" in (e.error or "").lower()
+
+    def test_edits_apply_in_order_in_one_write(
+        self, project: FilesystemProject
+    ) -> None:
+        e = edit_file(
+            "notes.txt",
+            [
+                Edit(old_string="alpha", new_string="one"),
+                Edit(old_string="gamma", new_string="three"),
+                # Sees the text the earlier edits produced.
+                Edit(old_string="one\nbeta", new_string="one\ntwo"),
+            ],
+            project,
+        )
+        assert e.success, e.error
+        assert e.replacements == 3
+        assert (project.root / "notes.txt").read_text(encoding="utf-8") == (
+            "one\ntwo\nthree\n"
+        )
+
+    def test_a_failing_edit_writes_nothing_and_names_its_index(
+        self, project: FilesystemProject
+    ) -> None:
+        e = edit_file(
+            "notes.txt",
+            [
+                Edit(old_string="alpha", new_string="one"),
+                Edit(old_string="delta", new_string="four"),
+            ],
+            project,
+        )
+        assert e.success is False
+        assert e.replacements == 0
+        assert [f.index for f in e.failures] == [1]
+        assert (project.root / "notes.txt").read_text(encoding="utf-8") == (
+            "alpha\nbeta\ngamma\n"
+        )
+
+    def test_a_failed_batch_reports_every_failure_with_the_closest_text(
+        self, project: FilesystemProject
+    ) -> None:
+        (project.root / "charts" / "kpi.yml").write_text(
+            "charts:\n  total:\n    type: kpi\n    query: headline\n"
+            "    value: total\n  delta:\n    type: kpi\n    value: change\n",
+            encoding="utf-8",
+        )
+        e = edit_file(
+            "charts/kpi.yml",
+            [
+                Edit(old_string="    query: headline\n    type: kpi\n", new_string="x"),
+                Edit(old_string="    value: total\n", new_string="    value: sum\n"),
+                Edit(old_string="    type: kpi\n", new_string="y"),
+            ],
+            project,
+        )
+        assert e.success is False
+        assert [(f.index, f.error) for f in e.failures] == [
+            (0, "old_string not found in file"),
+            (2, "old_string is not unique (2 occurrences) — add surrounding context"),
+        ]
+        assert e.failures[0].closest == "    type: kpi\n    query: headline\n"
+        assert e.failures[1].closest is None
+
+    def test_no_edits_is_an_error(self, project: FilesystemProject) -> None:
+        e = edit_file("notes.txt", [], project)
+        assert e.success is False
+        assert e.error == "edits is empty"
 
 
 class TestMoveFile:
@@ -230,7 +296,7 @@ class TestNonFilesystemProject:
 
     def test_edit_updates_store(self, store: Project) -> None:
         e = edit_file(
-            "charts/report.yml", old_string="alice", new_string="bob", project=store
+            "charts/report.yml", [Edit(old_string="alice", new_string="bob")], store
         )
         assert e.success, e.error
         assert e.replacements == 1

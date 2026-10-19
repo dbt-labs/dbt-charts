@@ -116,6 +116,8 @@ class CompiledBoard(BaseModel):
 class RenderBoardArgs(BaseModel):
     """Validate, compile, and render a dbt charts dashboard, returning resolved chart semantics + executed data for reasoning. Use this to verify YAML is valid, inspect query results, and iterate on a dashboard. When 'path' is provided, the response also includes a localhost URL the user can open in a browser to view the live dashboard (from the embedded HTTP server used by agent sessions). Pass `as_link=true` with a path to skip execution and return only the preview URL."""
 
+    model_config = ConfigDict(extra="forbid")
+
     path: Path | None = Field(
         None,
         description=(
@@ -179,6 +181,13 @@ class RenderBoardArgs(BaseModel):
             "'text-data' server-side — this field only matters for "
             "non-agent callers (the CLI's --format, Cloud's own SVG render "
             "call)."
+        ),
+    )
+    include_raw_data: bool = Field(
+        False,
+        description=(
+            "Agent-facing form of 'format': true renders 'text-data', false "
+            "'text'. A given 'format' takes precedence."
         ),
     )
     as_link: bool = Field(

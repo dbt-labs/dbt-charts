@@ -184,8 +184,16 @@ class SkillList(BaseModel):
 class SkillNotFound(Exception): ...
 
 
+class ListSkillsArgs(BaseModel):
+    """List all agent skills packaged with dct. Returns name, description, kind (workflow or pattern), and has_examples for each skill. Call this first to discover what patterns are available, then use get_skill to read the full guide for the pattern you want."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class GetSkillArgs(BaseModel):
     """Input to get_skill: fetch one skill by name."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(..., description="Skill directory name (kebab-case)")
 

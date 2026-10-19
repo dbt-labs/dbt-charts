@@ -82,11 +82,7 @@ def _handle_render(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, A
         variables=(
             _vars_to_dict(parsed.variables) if parsed.variables is not None else None
         ),
-        # A caller that already resolved include_raw_data->format itself
-        # (A lIe, Cloud chat's by-path arm) sends 'format' directly; this
-        # resolves it too, for a caller that only ever sends 'include_raw_data'.
-        format=parsed.format
-        or resolve_render_format(bool(args.get("include_raw_data", False))),
+        format=parsed.format or resolve_render_format(parsed.include_raw_data),
         as_link=parsed.as_link,
         server_port=ctx.server_port,
         max_rows_per_query=MODEL_MAX_ROWS_PER_QUERY,
@@ -167,6 +163,7 @@ def _handle_describe_board(
 def _handle_list_skills(
     args: dict[str, Any], ctx: DbtChartsAIContext
 ) -> dict[str, Any]:
+    _skills.ListSkillsArgs.model_validate(args)
     return _skills.list_skills(
         surface="tool", project=ctx.project_session.project
     ).model_dump(
@@ -254,10 +251,7 @@ def _handle_edit_file(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str
     # shown nothing. read_file is the only tool
     # that puts the content in front of the model.
     return _files.edit_file(
-        parsed.path,
-        parsed.old_string,
-        parsed.new_string,
-        project=ctx.project_session.project,
+        parsed.path, parsed.edits, ctx.project_session.project
     ).model_dump(mode="json", exclude_none=True)
 
 

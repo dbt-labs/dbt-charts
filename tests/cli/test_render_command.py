@@ -169,7 +169,7 @@ def test_cli_render_command_uses_project_with_block(tmp_path: Path) -> None:
         warnings=[],
         suppressed_warnings=[],
         chart_errors=[],
-        cache_hit_ats=[],
+        warehouse_cache_hit_ats=[],
         validation_errors=None,
         board_error=None,
     )
@@ -507,12 +507,20 @@ rows:
 """
 
 
-def _sql_project(tmp_path: Path) -> list[str]:
-    """A project with one DuckDB-backed SQL query; returns the render args."""
+def _sql_project(tmp_path: Path, db_path: str = ":memory:") -> list[str]:
+    """A project with one DuckDB-backed SQL query; returns the render args.
+
+    *db_path* other than ``:memory:`` is created as a project-relative file.
+    """
     project = tmp_path / "project"
     (project / "charts").mkdir(parents=True)
+    if db_path != ":memory:":
+        import duckdb
+
+        (project / db_path).parent.mkdir(parents=True, exist_ok=True)
+        duckdb.connect(str(project / db_path)).close()
     (project / "dbt_charts.yml").write_text(
-        "sources:\n  mem:\n    type: duckdb\n    path: ':memory:'\n"
+        f"sources:\n  mem:\n    type: duckdb\n    path: '{db_path}'\n"
     )
     (project / "charts" / "board.yml").write_text(_SQL_BOARD)
     return [
@@ -559,7 +567,18 @@ class TestDftRenderDefaultCache:
         assert second.exit_code == 0, second.output + (second.stderr or "")
         assert "1 query served from cache" in second.stderr
         assert "oldest result under a minute old" in second.stderr
-        assert "--no-cache" in second.stderr
+        assert "--no-cache" not in second.stderr
+
+    def test_hits_on_a_database_file_source_need_no_notice(
+        self, tmp_path: Path
+    ) -> None:
+        # The file's content version is in the cache key, so a hit is current.
+        args = _sql_project(tmp_path, db_path="data/shop.duckdb")
+        assert runner.invoke(app, args).exit_code == 0
+
+        second = runner.invoke(app, args)
+        assert second.exit_code == 0, second.output + (second.stderr or "")
+        assert "cache" not in second.stderr
 
     def test_no_cache_re_queries_and_reports_nothing(self, tmp_path: Path) -> None:
         args = _sql_project(tmp_path)
@@ -609,7 +628,7 @@ def test_cache_use_notice_states_count_and_oldest_age(
     # Half a minute of slack keeps a slow test run inside the same minute.
     now = datetime.now(UTC) - timedelta(seconds=30)
     _print_cache_use([now - age for age in ages])
-    assert capsys.readouterr().err == f"{expected} Pass --no-cache to re-query.\n"
+    assert capsys.readouterr().err == f"{expected}\n"
 
 
 class TestDftRenderCacheFlag:
@@ -867,7 +886,7 @@ class TestRenderCommandWalkRootWhenNoProjectDir:
             warnings=[],
             suppressed_warnings=[],
             chart_errors=[],
-            cache_hit_ats=[],
+            warehouse_cache_hit_ats=[],
             validation_errors=None,
             board_error=None,
         )

@@ -150,7 +150,8 @@ _TOOL_GUIDANCE = """## Tool Use
   `render_board(yaml_content=...)` — no file needed.
 - To create or change a *saved* dashboard, write the YAML to a file: `write_file`
   for a new board, `edit_file` for a targeted change to a board the user named
-  (read it first so you don't clobber it). Never silently append a chart to an
+  (read it first so you don't clobber it; put every change to the file in one
+  call's `edits`). Never silently append a chart to an
   existing board the user did not name — write a new board instead. Boards live
   under `charts/`.
 - Once a board is saved, call `render_board(path=...)` to check it

@@ -44,8 +44,7 @@ def _handler_args() -> dict[str, dict[str, Any]]:
         "write_file": {"path": "out.yml", "content": "title: X\n"},
         "edit_file": {
             "path": "nonexistent.yml",
-            "old_string": "a",
-            "new_string": "b",
+            "edits": [{"old_string": "a", "new_string": "b"}],
         },
         "move_file": {"source_path": "nonexistent.yml", "destination_path": "dest.yml"},
         "delete_file": {"path": "nonexistent.yml"},

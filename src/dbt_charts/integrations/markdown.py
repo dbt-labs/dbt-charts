@@ -55,11 +55,13 @@ from dbt_charts.core.board import (
     render_dashboard,
 )
 from dbt_charts.core.compile.parse.markdown import (
-    MARKDOWN_NOT_BOARD_MESSAGE,
     is_markdown_board_content,
     markdown_to_yaml,
 )
-from dbt_charts.core.diagnostics.codes_compile import ERR_UNRESOLVED_REFERENCE
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_MARKDOWN_NOT_BOARD,
+    ERR_UNRESOLVED_REFERENCE,
+)
 from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
 from dbt_charts.core.project import (
     CHARTS_SUBDIR,
@@ -291,7 +293,7 @@ def _render_file_with_fallback(board_path: ProjectPath) -> str:
         # path), not the project's own on-disk location.
         in_boards = CHARTS_SUBDIR in PurePosixPath(board_path.relpath).parts
         if not is_markdown_board_content(yaml_content, in_boards=in_boards):
-            raise ValueError(MARKDOWN_NOT_BOARD_MESSAGE)
+            raise ValueError(ERR_MARKDOWN_NOT_BOARD.message_template)
         yaml_content = markdown_to_yaml(yaml_content)
     return _render_with_fallback(yaml_content, _file_render_contexts(board_path.parent))
 

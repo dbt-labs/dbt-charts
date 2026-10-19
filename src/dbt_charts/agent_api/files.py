@@ -13,6 +13,7 @@ refused — these tools never touch the wider filesystem.
 from __future__ import annotations
 
 from collections.abc import Collection
+from difflib import SequenceMatcher
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -32,6 +33,8 @@ class ReadFileArgs(BaseModel):
     board-relative form. If the path came from search_files, use the hit's
     file_path, not board_path."""
 
+    model_config = ConfigDict(extra="forbid")
+
     path: str = Field(description="File path relative to the project root.")
 
 
@@ -45,23 +48,35 @@ class WriteFileArgs(BaseModel):
     from search_files, use the hit's file_path, not board_path.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     path: str = Field(description="File path relative to the project root.")
     content: str = Field(description="Full file contents to write.")
 
 
-class EditFileArgs(BaseModel):
-    """Replace an exact string in a project file. old_string must occur exactly once.
-
-    Fails (writing nothing) if old_string is absent or appears more than once —
-    include enough surrounding context to make it unique. Path is
-    root-relative (includes the charts/ prefix for a dashboard) and may not
-    escape it. If the path came from search_files, use the hit's
-    file_path, not board_path.
-    """
-
-    path: str = Field(description="File path relative to the project root.")
+class Edit(BaseModel):
     old_string: str = Field(description="Exact text to replace (must be unique).")
     new_string: str = Field(description="Replacement text.")
+
+
+class EditFileArgs(BaseModel):
+    """Replace exact strings in a project file. Put every change you are making to
+    the file in one call: each edit applies in order to the text the earlier
+    ones produced, and the file is written once.
+
+    Each old_string must occur exactly once at the point it applies — include
+    enough surrounding context to make it unique. If any edit fails, nothing is
+    written and every failing edit is listed (edits[i]) with, for an old_string
+    not found, the closest lines in the file: copy from those, then resend the
+    whole batch. Path is root-relative (includes
+    the charts/ prefix for a dashboard) and may not escape it. If the path came
+    from search_files, use the hit's file_path, not board_path.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(description="File path relative to the project root.")
+    edits: list[Edit] = Field(description="Replacements, in order (at least one).")
 
 
 class MoveFileArgs(BaseModel):
@@ -75,6 +90,8 @@ class MoveFileArgs(BaseModel):
     basename is reported as a fuzzy hit, never rewritten.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     source_path: str = Field(
         description="Current file path relative to the project root."
     )
@@ -86,6 +103,8 @@ class MoveFileArgs(BaseModel):
 class DeleteFileArgs(BaseModel):
     """Delete a project file. Fails if it does not exist. Path is relative to
     the project root and may not escape it."""
+
+    model_config = ConfigDict(extra="forbid")
 
     path: str = Field(description="File path relative to the project root.")
 
@@ -108,6 +127,16 @@ class WriteFileResult(BaseModel):
     error: str | None = None
 
 
+class EditFailure(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    index: int
+    error: str
+    # The lines of the file most like a not-found old_string, so a retry can
+    # copy the real text instead of re-recalling it. None for a non-unique one.
+    closest: str | None = None
+
+
 class EditFileResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -115,6 +144,7 @@ class EditFileResult(BaseModel):
     path: str
     replacements: int = 0
     error: str | None = None
+    failures: list[EditFailure] = []
 
 
 class MoveFileResult(BaseModel):
@@ -200,31 +230,67 @@ def write_file(path: str, content: str, project: Project) -> WriteFileResult:
     )
 
 
-def edit_file(
-    path: str, old_string: str, new_string: str, project: Project
-) -> EditFileResult:
+def _closest_lines(text: str, old_string: str) -> str | None:
+    """The run of lines in *text*, as long as *old_string*, that is most like it."""
+    lines = text.splitlines(keepends=True)
+    width = max(1, len(old_string.splitlines()))
+    windows = ["".join(lines[i : i + width]) for i in range(len(lines) - width + 1)]
+    if not windows:
+        return None
+    # Lines in common first: a recalled block most often has the right lines in
+    # the wrong order or with one value changed.
+    wanted = {line.strip() for line in old_string.splitlines()}
+
+    def score(window: str) -> tuple[int, float]:
+        shared = len(wanted & {line.strip() for line in window.splitlines()})
+        return shared, SequenceMatcher(None, window, old_string).ratio()
+
+    return max(windows, key=score)
+
+
+def edit_file(path: str, edits: list[Edit], project: Project) -> EditFileResult:
+    if not edits:
+        return EditFileResult(success=False, path=path, error="edits is empty")
     try:
-        original = project.read_text(path)
+        text = project.read_text(path)
     except FileNotFoundError:
         return EditFileResult(success=False, path=path, error=f"file not found: {path}")
     except (ValueError, IsADirectoryError, *_UNREADABLE_FILE) as exc:
         return EditFileResult(success=False, path=path, error=str(exc))
-    count = original.count(old_string)
-    if count == 0:
-        return EditFileResult(
-            success=False, path=path, error="old_string not found in file"
-        )
-    if count > 1:
+    failures: list[EditFailure] = []
+    for i, edit in enumerate(edits):
+        count = text.count(edit.old_string)
+        if count == 1:
+            text = text.replace(edit.old_string, edit.new_string)
+        elif count == 0:
+            failures.append(
+                EditFailure(
+                    index=i,
+                    error="old_string not found in file",
+                    closest=_closest_lines(text, edit.old_string),
+                )
+            )
+        else:
+            failures.append(
+                EditFailure(
+                    index=i,
+                    error=f"old_string is not unique ({count} occurrences) — add "
+                    "surrounding context",
+                )
+            )
+    if failures:
+        summary = "; ".join(f"edits[{f.index}]: {f.error}" for f in failures)
         return EditFileResult(
             success=False,
             path=path,
-            error=f"old_string is not unique ({count} occurrences) — add surrounding context",
+            error=f"{summary}; nothing was written",
+            failures=failures,
         )
     try:
-        project.write_text(path, original.replace(old_string, new_string))
+        project.write_text(path, text)
     except (ValueError, OSError) as exc:
         return EditFileResult(success=False, path=path, error=str(exc))
-    return EditFileResult(success=True, path=path, replacements=1)
+    return EditFileResult(success=True, path=path, replacements=len(edits))
 
 
 def move_file(

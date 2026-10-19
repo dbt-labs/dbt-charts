@@ -119,7 +119,7 @@ def _validate_one_path(
             )
         ]
 
-    if resolved.is_yaml:
+    if resolved.is_yaml or resolved.is_markdown:
         return [_validate_resolved(resolved, project, adapter_registry)]
 
     # No explicit path -> validate every board root (host + installed

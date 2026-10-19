@@ -150,7 +150,7 @@ class TestFenceDbtCharts:
             )
 
         assert "dbt-charts-error" in result
-        assert "must declare a" in result  # from MARKDOWN_NOT_BOARD_MESSAGE
+        assert "must declare a" in result  # ERR_MARKDOWN_NOT_BOARD
 
     def test_markdown_not_board_when_project_under_charts_ancestor(
         self, tmp_path, monkeypatch
@@ -177,7 +177,7 @@ class TestFenceDbtCharts:
             )
 
         assert "dbt-charts-error" in result
-        assert "must declare a" in result  # from MARKDOWN_NOT_BOARD_MESSAGE
+        assert "must declare a" in result  # ERR_MARKDOWN_NOT_BOARD
 
     def test_retries_file_backed_docs_examples_against_examples_dir(
         self, tmp_path, monkeypatch

@@ -40,8 +40,8 @@ class TestWriteToolsUseBackingStoreNotHost:
     def test_write_file_never_touches_host(
         self, cloud_context: DbtChartsAIContext, tmp_path: Path
     ) -> None:
-        # A prompt-injected project_dir must be ignored: the write goes to the
-        # session's backing store, never the attacker's host directory.
+        # A prompt-injected project_dir is refused, and nothing is written
+        # anywhere, least of all the attacker's host directory.
         attacker_root = tmp_path / "attacker"
         attacker_root.mkdir()
         result = dispatch_tool_call(
@@ -53,20 +53,24 @@ class TestWriteToolsUseBackingStoreNotHost:
             },
             context=cloud_context,
         )
-        assert result["success"] is True
+        assert result["errors"] == [
+            "write_file: project_dir: is not an argument of this tool"
+        ]
         assert not (attacker_root / "charts" / "pwned.yml").exists()
-        # The write landed in the session's backing store.
         read_back = dispatch_tool_call(
             "read_file", {"path": "charts/pwned.yml"}, context=cloud_context
         )
-        assert read_back["content"] == "owned: true\n"
+        assert read_back["success"] is False
 
     def test_edit_file_uses_backing_store(
         self, cloud_context: DbtChartsAIContext
     ) -> None:
         result = dispatch_tool_call(
             "edit_file",
-            {"path": "charts/report.yml", "old_string": "In", "new_string": "Out"},
+            {
+                "path": "charts/report.yml",
+                "edits": [{"old_string": "In", "new_string": "Out"}],
+            },
             context=cloud_context,
         )
         assert result["success"] is True

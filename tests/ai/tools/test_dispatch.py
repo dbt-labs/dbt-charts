@@ -116,6 +116,31 @@ class TestDispatchToolCall:
                 "search_files: project: is not an argument of this tool",
             ),
             (
+                "render_board",
+                {"yaml_content": _INLINE_BOARD_YAML, "include_data": True},
+                "render_board: include_data: is not an argument of this tool",
+            ),
+            (
+                "describe_board",
+                {"path": "b.yml", "vars": []},
+                "describe_board: vars: is not an argument of this tool",
+            ),
+            (
+                "get_skill",
+                {"name": "board-build", "limit": 1},
+                "get_skill: limit: is not an argument of this tool",
+            ),
+            (
+                "list_skills",
+                {"limit": 1},
+                "list_skills: limit: is not an argument of this tool",
+            ),
+            (
+                "read_file",
+                {"path": "charts/b.yml", "limit": 1},
+                "read_file: limit: is not an argument of this tool",
+            ),
+            (
                 "execute_sql",
                 {"sql": "select 1", "variables": [{"name": "r", "value": None}]},
                 "execute_sql: variables.0.value: got null, expected one of "
@@ -590,7 +615,10 @@ _TOOL_HAPPY_PATH_ARGS: dict[str, dict[str, Any]] = {
     # "project_dir" injected at test time (writes stay inside tmp_path).
     "read_file": {"path": "nonexistent.yml"},
     "write_file": {"path": "out.yml", "content": "title: X\n"},
-    "edit_file": {"path": "nonexistent.yml", "old_string": "a", "new_string": "b"},
+    "edit_file": {
+        "path": "nonexistent.yml",
+        "edits": [{"old_string": "a", "new_string": "b"}],
+    },
     "move_file": {"source_path": "nonexistent.yml", "destination_path": "dest.yml"},
     "delete_file": {"path": "nonexistent.yml"},
     "list_skills": {},
@@ -1396,7 +1424,10 @@ class TestWriteFileNeverClobbersUnreadContent:
         (tmp_path / "board.yml").write_text("title: Real board\ncharts: {}\n")
         dispatch_tool_call(
             "edit_file",
-            {"path": "board.yml", "old_string": "Real", "new_string": "Edited"},
+            {
+                "path": "board.yml",
+                "edits": [{"old_string": "Real", "new_string": "Edited"}],
+            },
             context=context,
         )
 

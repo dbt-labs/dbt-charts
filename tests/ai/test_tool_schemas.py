@@ -23,6 +23,13 @@ from dbt_charts.ai.tool_schemas import (
 from .conftest import strict_mode_violations
 
 
+@pytest.mark.parametrize(
+    "tool", [*ALL_TOOLS, *FILE_TOOLS], ids=lambda tool: tool["name"]
+)
+def test_every_tool_schema_refuses_undeclared_arguments(tool: dict[str, Any]) -> None:
+    assert tool["input_schema"]["additionalProperties"] is False
+
+
 class TestOpenAIStrictModeValidity:
     """Schemas emitted by normalize_openai_tools must satisfy all three
     OpenAI strict-mode rules: additionalProperties: false on every object,

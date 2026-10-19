@@ -67,6 +67,11 @@ from dbt_charts.core.compile.models.query.normalized import (
     SqlQuery,
     is_sql_query,
 )
+from dbt_charts.core.compile.models.source import (
+    DuckDBSourceConfig,
+    SQLiteSourceConfig,
+    parse_source_config,
+)
 from dbt_charts.core.compile.sql_guard import sqlglot_dialect
 from dbt_charts.core.compile.template.parameterized import DateRangeFilter
 from dbt_charts.core.compile.template.variables import (
@@ -523,6 +528,7 @@ class Executor:
         # query writes matches the one a later query in the same render reads even
         # if the file's mtime changes mid-render. Keyed by source name.
         self._source_versions: dict[str, str] = {}
+        self._warehouse_hit_ats: list[datetime] = []
         # Same idea for the dbt manifest a ref()/source() resolves against,
         # keyed by the source's authored target_path.
         self._manifest_versions: dict[str | None, str] = {}
@@ -1195,6 +1201,8 @@ class Executor:
         self._query_data_ages.append(
             (query_name, outcome.written_at, query.cache, True)
         )
+        if not self._source_version(query):
+            self._warehouse_hit_ats.append(outcome.written_at)
         return True
 
     def _require_translated_path(self, query: AnyQuery, query_name: str) -> None:
@@ -1349,6 +1357,12 @@ class Executor:
         return [da for _n, da, _p, is_hit in self._query_data_ages if is_hit]
 
     @property
+    def warehouse_cache_hit_ats(self) -> list[datetime]:
+        """The ``cache_hit_ats`` whose cache key folds no content version, so
+        their data may have changed since the write."""
+        return list(self._warehouse_hit_ats)
+
+    @property
     def query_data_ages(self) -> list[tuple[str, datetime, CachePolicy]]:
         """Per-query (name, data_as_of, policy) for every query that completed.
 
@@ -1397,17 +1411,19 @@ class Executor:
         return self._file_materializer
 
     def _source_version(self, query: "AnyQuery") -> str:
-        """Combined ``Project.file_version`` of a file source's files.
+        """Content version of the files a query's source reads.
 
         The single content-version home threaded into every ``compute_cache_key``
-        call for this query. Returns ``""`` for non-file sources (nothing to fold —
-        their config identity is the whole key). Memoized per source name for the
-        executor's lifetime so a file edited mid-render cannot make a later read
-        key differ from the earlier write key.
+        call for this query: the combined ``Project.file_version`` of a file
+        source's files, or the database file version of a DuckDB/SQLite source.
+        Returns ``""`` for warehouse sources (nothing to fold — their config
+        identity is the whole key). Memoized per source name for the executor's
+        lifetime so a file edited mid-render cannot make a later read key differ
+        from the earlier write key.
         """
         file_source = self._resolve_file_source(query)
         if file_source is None:
-            return ""
+            return self._database_file_version(query)
         # _resolve_file_source returns non-None only for a SqlQuery naming a source.
         assert is_sql_query(query) and query.source is not None
         source_name = query.source
@@ -1452,6 +1468,55 @@ class Executor:
         parts.sort()
         version = hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
         self._source_versions[source_name] = version
+        return version
+
+    def _database_file_version(self, query: "AnyQuery") -> str:
+        """``AdapterRegistry.database_file_version`` of a query on a DuckDB/SQLite
+        source, memoized per source name like file-source versions. ``""`` for
+        any other source, and for one whose config does not parse: execution
+        raises that error itself, so nothing is cached under this key.
+
+        Reads the declared ``type`` rather than calling the source resolver: a
+        host's resolver may refuse a warehouse source (an SSRF guard) with its
+        own exception, and that refusal belongs to execution, not a cache probe.
+        """
+        # An incremental query finds its prior rows under an unchanged key and
+        # fetches only the tail (append-only, as on a warehouse); a file version
+        # would turn every append into a full re-query.
+        if (
+            not is_sql_query(query)
+            or query.source is None
+            or isinstance(query.incremental, str)
+        ):
+            return ""
+        cached = self._source_versions.get(query.source)
+        if cached is not None:
+            return cached
+        raw = self.board.sources.get(
+            query.source
+        ) or self.adapter_registry.project_sources.sources.get(query.source)
+        if raw is None or raw.get("type") not in ("duckdb", "sqlite"):
+            self._source_versions[query.source] = ""
+            return ""
+        try:
+            source_config = parse_source_config(raw)
+        except ValueError:
+            self._source_versions[query.source] = ""
+            return ""
+        assert isinstance(source_config, (DuckDBSourceConfig, SQLiteSourceConfig))
+        try:
+            version = self.adapter_registry.database_file_version(source_config)
+        except OSError as exc:
+            # A QueryError, so is_cached reports a miss rather than raising.
+            raise QueryError.from_code(
+                ERR_FILE_SOURCE_NOT_FOUND,
+                source_name=query.source,
+                relpath=str(exc.filename),
+                detail=exc.strerror or str(exc),
+            ) from None
+        except DbtChartsError as exc:
+            raise QueryError(str(exc), code=exc.code) from None
+        self._source_versions[query.source] = version
         return version
 
     def _manifest_version(self, query: "AnyQuery") -> str:

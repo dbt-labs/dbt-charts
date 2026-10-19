@@ -15,6 +15,7 @@ import yaml
 from dbt_charts.agent_api.doctor import run_doctor
 from dbt_charts.agent_api.project_session import ProjectSession
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.board import BoardRenderResult
 from dbt_charts.core.compile.config import load_project_sources
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -155,6 +156,18 @@ def test_doctor_lists_the_implicit_source(tmp_path: Path) -> None:
     assert [c.source for c in adapter_checks] == ["shop_profile"]
 
 
+_SOURCELESS_BOARD = (
+    "title: Numbers\n"
+    "queries:\n"
+    "  numbers: SELECT n FROM numbers\n"
+    "charts:\n"
+    "  big:\n"
+    "    type: kpi\n"
+    "    query: queries.numbers\n"
+    "    value: n\n"
+)
+
+
 def test_board_with_sourceless_sql_renders_in_a_bare_dbt_project(
     tmp_path: Path,
 ) -> None:
@@ -163,16 +176,7 @@ def test_board_with_sourceless_sql_renders_in_a_bare_dbt_project(
 
     root = _dbt_project(tmp_path / "shop")
     (root / "charts").mkdir()
-    (root / "charts" / "board.yml").write_text(
-        "title: Numbers\n"
-        "queries:\n"
-        "  numbers: SELECT n FROM numbers\n"
-        "charts:\n"
-        "  big:\n"
-        "    type: kpi\n"
-        "    query: queries.numbers\n"
-        "    value: n\n"
-    )
+    (root / "charts" / "board.yml").write_text(_SOURCELESS_BOARD)
 
     with ProjectSession.open(root) as session:
         board = resolve_board_or_error(Path("board.yml"), session.project)
@@ -180,6 +184,58 @@ def test_board_with_sourceless_sql_renders_in_a_bare_dbt_project(
         rendered = session.render_board(board=board)
 
     assert rendered.status == "ok", (rendered.validation_errors, rendered.chart_errors)
+
+
+def _render_package_board(root: Path) -> BoardRenderResult:
+    from dbt_charts.agent_api._paths import resolve_board_or_error
+    from dbt_charts.core.diagnostics import Diagnostic
+
+    pkg_charts = root / "dbt_packages" / "pkg_a" / "charts"
+    pkg_charts.mkdir(parents=True)
+    (pkg_charts / "overview.yml").write_text(_SOURCELESS_BOARD)
+
+    with ProjectSession.open(root) as session:
+        board = resolve_board_or_error(
+            Path("dbt_packages/pkg_a/charts/overview.yml"), session.project
+        )
+        assert not isinstance(board, Diagnostic), board
+        return session.render_board(board=board)
+
+
+def test_sourceless_package_board_renders_in_a_bare_dbt_project(
+    tmp_path: Path,
+) -> None:
+    rendered = _render_package_board(_dbt_project(tmp_path / "shop"))
+
+    assert rendered.status == "ok", (rendered.validation_errors, rendered.chart_errors)
+
+
+def test_sourceless_package_board_follows_the_host_meta_source(
+    tmp_path: Path,
+) -> None:
+    root = _dbt_project(
+        tmp_path / "shop",
+        charts_yml="sources:\n  mine:\n    type: dbt_profile\n",
+    )
+    (root / "charts").mkdir()
+    (root / "charts" / "meta.yml").write_text("source: mine\n")
+
+    rendered = _render_package_board(root)
+
+    assert rendered.status == "ok", (rendered.validation_errors, rendered.chart_errors)
+
+
+def test_sourceless_package_board_fails_when_the_host_names_no_default(
+    tmp_path: Path,
+) -> None:
+    root = _dbt_project(
+        tmp_path / "shop",
+        charts_yml="sources:\n  mine:\n    type: dbt_profile\n",
+    )
+
+    rendered = _render_package_board(root)
+
+    assert [d.code for d in rendered.validation_errors] == ["ERR-SOURCE-REQUIRED"]
 
 
 def test_resolve_source_config_follows_the_same_sourceless_rule(

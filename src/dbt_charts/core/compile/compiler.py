@@ -143,6 +143,8 @@ from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_EMPTY_YAML_DOCUMENT,
+    ERR_MARKDOWN_NOT_BOARD,
+    ERR_MARKDOWN_PARSE,
     ERR_TEXT_UNKNOWN_QUERY,
     ERR_UNKNOWN_QUERY,
     ERR_YAML_SYNTAX,
@@ -1048,7 +1050,6 @@ def _compile_file(
 
     # Markdown report files: translate to YAML before compiling.
     from dbt_charts.core.compile.parse.markdown import (
-        MARKDOWN_NOT_BOARD_MESSAGE,
         is_markdown_board_content,
         markdown_to_yaml,
         with_document_style,
@@ -1065,7 +1066,7 @@ def _compile_file(
         if not is_markdown_board_content(raw_text, in_boards=in_boards):
             return CompileResult(
                 errors=[
-                    CompilationError(MARKDOWN_NOT_BOARD_MESSAGE).to_diagnostic(
+                    CompilationError.from_code(ERR_MARKDOWN_NOT_BOARD).to_diagnostic(
                         file=relpath
                     )
                 ]
@@ -1086,9 +1087,9 @@ def _compile_file(
         except (OSError, ValueError) as e:
             return CompileResult(
                 errors=[
-                    CompilationError(f"Markdown parse error: {e}").to_diagnostic(
-                        file=relpath
-                    )
+                    CompilationError.from_code(
+                        ERR_MARKDOWN_PARSE, detail=str(e)
+                    ).to_diagnostic(file=relpath)
                 ]
             )
     else:

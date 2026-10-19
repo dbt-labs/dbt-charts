@@ -160,7 +160,7 @@ jobs:
         with:
           version: "0.12.18"
 
-      - uses: PyO3/maturin-action@fdd104694b233054d6e985e29b3af9f126af7ac6  # v1.9.0
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         with:
           command: build
           target: ${{ matrix.target }}

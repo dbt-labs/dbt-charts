@@ -407,7 +407,7 @@ def test_kpi_conditional_move_still_fires_when_the_chart_gains_a_post_freeze_val
 
     ``KpiChart.link`` was ``str | None`` at the 0.4.0 freeze and gained a
     ``false`` arm since (current schema only: ``link: false`` suppresses the
-    chart's automatic ``auto_link``). The gate must not ask the whole chart
+    chart's automatic ``links.auto``). The gate must not ask the whole chart
     node to validate against the frozen 0.4.0 grammar -- ``link: false`` would
     make it fail, and unlike a genuinely *new key* (which
     ``_strip_post_freeze`` forgives by name), a key both grammars declare

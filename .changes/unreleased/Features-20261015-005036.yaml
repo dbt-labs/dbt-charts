@@ -1,3 +1,0 @@
-kind: Features
-body: 'On a board with independent layer y axes, a layer''s `axis_y.scale.domain` now clips its marks to the plot and warns when data falls outside it; `axis_y.scale.clip: false` lets them run past.'
-time: 2026-10-15T00:50:36.595073-07:00

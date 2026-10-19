@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -24,6 +25,7 @@ from dbt_charts.core.compile.config import (
     get_theme_style,
 )
 from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.resolve import resolve
@@ -42,7 +44,7 @@ _DBT_CHART_CLASS = re.compile(r'class="[^"]*\bdbt-chart\b[^"]*"')
 
 
 def _executor(data: list[dict[str, Any]]) -> Executor:
-    ex = MagicMock(spec=Executor)
+    ex = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     ex.execute_chart.return_value = data
     ex.execute_query.return_value = data
     return ex
@@ -129,7 +131,7 @@ def test_vega_chart_data_error_fallback_has_no_nested_svg() -> None:
     from dbt_charts.core.diagnostics.chart_data import ChartDataError
 
     chart = _chart("line", x="x", y="y", title="Line chart that errors")
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.side_effect = ChartDataError("no data", chart_id="test_line")
     svg, _ = render_chart_item(
         _rc(chart),

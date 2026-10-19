@@ -28,6 +28,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
 from dbt_charts.core.compile.models.primitives import (
     AuthoredFormat,
     FormatTable,
+    LinkOpen,
     ResolvedFormat,
     split_link,
 )
@@ -343,6 +344,7 @@ def _with_resolved_scale_stops(
     defaults_format: AuthoredFormat | None,
     declared: Mapping[str, str] | None,
     filter_variables: frozenset[str],
+    link_open: LinkOpen,
 ) -> dict[str, ResolvedTableColumnConfig] | None:
     """Construct ResolvedTableColumnConfig entries with baked scale stops.
 
@@ -548,7 +550,7 @@ def _with_resolved_scale_stops(
             result[name] = ResolvedTableColumnConfig.model_validate(
                 {
                     **col.model_dump(exclude_none=True),
-                    **_split_column_links(col),
+                    **_split_column_links(col, link_open),
                     **({"format": _col_parts} if _col_parts is not None else {}),
                     **text_link,
                     "decimal_pad_table": pad_table,
@@ -595,7 +597,7 @@ def _with_resolved_scale_stops(
         )
         resolved_scale = ResolvedColumnScaleConfig.model_validate(scale_base)
         col_base = col.model_dump(exclude_none=True)
-        col_base.update(_split_column_links(col))
+        col_base.update(_split_column_links(col, link_open))
         col_base["scale"] = resolved_scale.model_dump(exclude_unset=True)
         if _col_parts is not None:
             col_base["format"] = _col_parts
@@ -606,10 +608,12 @@ def _with_resolved_scale_stops(
     return result
 
 
-def _split_column_links(col: TableColumnConfig) -> dict[str, str | None]:
+def _split_column_links(
+    col: TableColumnConfig, board_open: LinkOpen
+) -> dict[str, str | None]:
     """A column's authored links as the resolved URL strings plus open modes."""
-    link, link_open = split_link(col.link)
-    header_link, header_link_open = split_link(col.header_link)
+    link, link_open = split_link(col.link, board_open)
+    header_link, header_link_open = split_link(col.header_link, board_open)
     return {
         "link": link,
         "link_open": link_open,
@@ -648,6 +652,7 @@ def _resolve_table(
     allow_shared_scale: bool = True,
     *,
     filter_variables: frozenset[str],
+    link_open: LinkOpen,
 ) -> ResolvedTableChart:
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
@@ -711,6 +716,7 @@ def _resolve_table(
         ),
         declared=normalized.query.formats if normalized.query else None,
         filter_variables=filter_variables,
+        link_open=link_open,
     )
     # The prefix lane paints apart from the signed digits (`€  −40`).
     for name, column in resolved_columns.items() if resolved_columns else ():

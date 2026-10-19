@@ -1,3 +1,0 @@
-kind: Fixes
-body: YAML syntax errors report `ERR-YAML-SYNTAX` with the line alongside the other errors in the file, and `theme:` with `extends:` or an unknown color token reports a specific code instead of `ERR-INTERNAL`.
-time: 2026-10-08T17:03:55.454853-07:00

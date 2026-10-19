@@ -351,7 +351,7 @@ pub struct Payload {
     #[serde(default)]
     pub variables: serde_json::Map<String, Value>,
     /// The board's declared variable names: a table cell in a column of the
-    /// same name links to `?col=value` (`auto_link.get_filter_variables_context`).
+    /// same name links to `?col=value` (`automatic_link.get_filter_variables_context`).
     #[serde(default)]
     pub filter_variables: Vec<String>,
     /// The host acts on `data-dbt-page-var` (`dct serve`, Cloud): a paginated

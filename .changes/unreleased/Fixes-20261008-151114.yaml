@@ -1,3 +1,0 @@
-kind: Fixes
-body: Hovering a variable control now highlights charts whose layer query reads the variable, and chart focus keeps that variable.
-time: 2026-10-08T15:11:14.537863-07:00

@@ -1,3 +1,0 @@
-kind: Features
-body: '`dct cloud status` works before login: it reports this checkout, the linked org and project, and the setup steps still needed.'
-time: 2026-09-26T23:38:04.978461-07:00

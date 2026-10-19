@@ -1,3 +1,0 @@
-kind: Features
-body: "A query can set dialect: to the SQL dialect it was written in, and dbt Charts translates it to the source's warehouse, so one board runs on several warehouses."
-time: 2026-10-02T18:56:54.000000-07:00

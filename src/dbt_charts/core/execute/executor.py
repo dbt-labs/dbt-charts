@@ -1805,7 +1805,11 @@ class Executor:
         (whose failures the parallel prefetch records) deliberately lacks.
         """
         from dbt_charts.core.diagnostics.base import DbtChartsError
-        from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_INTERRUPTED
+        from dbt_charts.core.diagnostics.codes_execute import (
+            ERR_QUERY_INTERRUPTED,
+            ERR_WAREHOUSE_AUTH,
+            ERR_WAREHOUSE_CONNECTION,
+        )
         from dbt_charts.core.diagnostics.execution import ExecutionError
 
         if isinstance(exception, DbtChartsError) and not isinstance(
@@ -1813,8 +1817,11 @@ class Executor:
         ):
             return
         # Says nothing about the query: it was stopped, not answered.
+        # Credential and connection failures are fixed outside the board, so
+        # the next render must run the query again rather than replay them.
         if isinstance(exception, DbtChartsError) and (
-            exception.code is ERR_QUERY_INTERRUPTED
+            exception.code
+            in (ERR_QUERY_INTERRUPTED, ERR_WAREHOUSE_AUTH, ERR_WAREHOUSE_CONNECTION)
         ):
             return
         try:

@@ -37,6 +37,7 @@ from dbt_charts.core.project import (
     iter_dir_from_relpaths,
     package_board_roots,
     posix_relpath,
+    unshadowed_boards,
 )
 from dbt_charts.core.utils import IMAGE_SUFFIXES
 
@@ -1277,63 +1278,72 @@ class TestPackageBoardRoots:
         assert [pf.relpath for pf in project.iter_boards()] == ["charts/revenue.yml"]
 
 
-class TestBoardRootsCollision:
-    """Regression: a host `charts/<pkg>` entry colliding with an installed
-    package's own namespace must raise from `board_roots()` itself -- the
-    single function every consumer (iter_boards, resolve_board_relpath,
-    search, the alias index, ...) calls to get the root table. Before this
-    fix, only `dct serve`'s own AliasIndex.build enforced the check, so
-    every other surface silently picked the host board over the package."""
+class TestHostBoardShadowsPackageBoard:
+    """A host board hides the installed-package board with the same slug, per
+    board, in the one place every consumer enumerates boards from."""
 
-    def test_host_directory_collision_raises_from_board_roots(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        (tmp_path / "charts" / "pkg_a").mkdir(parents=True)
-        (tmp_path / "charts" / "pkg_a" / "x.yml").write_text("title: X\n")
-        (tmp_path / "dbt_packages" / "pkg_a" / "charts").mkdir(parents=True)
-        project = local_project(tmp_path)
-        with pytest.raises(ValueError, match="(?i)collision"):
-            board_roots(project)
-
-    def test_host_file_collision_raises_from_board_roots(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        (tmp_path / "charts").mkdir(parents=True)
-        (tmp_path / "charts" / "pkg_a.yml").write_text("title: X\n")
-        (tmp_path / "dbt_packages" / "pkg_a" / "charts").mkdir(parents=True)
-        project = local_project(tmp_path)
-        with pytest.raises(ValueError, match="(?i)collision"):
-            board_roots(project)
-
-    def test_no_collision_stays_silent(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        (tmp_path / "charts").mkdir(parents=True)
-        (tmp_path / "dbt_packages" / "pkg_a" / "charts").mkdir(parents=True)
-        project = local_project(tmp_path)
-        assert board_roots(project) == [
-            BoardRoot("charts", ""),
-            BoardRoot("dbt_packages/pkg_a/charts", "pkg_a"),
-        ]
-
-    def test_non_serve_consumer_now_raises_instead_of_silently_picking_host(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        """A collision must not be silently resolved by a non-serve surface
-        (e.g. resolve_board_relpath, used by validate/render/migrate/Cloud
-        generation) -- it must raise the same way `dct serve` does."""
-        from pathlib import PurePosixPath
-
-        from dbt_charts.agent_api._paths import resolve_board_relpath
-
+    @staticmethod
+    def _project(
+        tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> FilesystemProject:
         (tmp_path / "charts" / "pkg_a").mkdir(parents=True)
         (tmp_path / "charts" / "pkg_a" / "overview.yml").write_text("title: Host\n")
         pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
         pkg_charts.mkdir(parents=True)
         (pkg_charts / "overview.yml").write_text("title: Pkg\n")
-        project = local_project(tmp_path)
-        with pytest.raises(ValueError, match="(?i)collision"):
-            resolve_board_relpath(PurePosixPath("pkg_a/overview"), project)
+        (pkg_charts / "other.yml").write_text("title: Other\n")
+        return local_project(tmp_path)
+
+    def test_host_dir_named_after_package_is_not_an_error(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = self._project(tmp_path, local_project)
+        assert board_roots(project) == [
+            BoardRoot("charts", ""),
+            BoardRoot("dbt_packages/pkg_a/charts", "pkg_a"),
+        ]
+
+    def test_iter_boards_hides_only_the_shadowed_package_board(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = self._project(tmp_path, local_project)
+        assert sorted(pf.relpath for pf in project.iter_boards()) == [
+            "charts/pkg_a/overview.yml",
+            "dbt_packages/pkg_a/charts/other.yml",
+        ]
+
+    def test_shadowing_is_per_slug_across_suffixes(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = self._project(tmp_path, local_project)
+        (tmp_path / "charts" / "pkg_a" / "overview.yml").unlink()
+        (tmp_path / "charts" / "pkg_a" / "overview.md").write_text("# Host\n")
+        assert "dbt_packages/pkg_a/charts/overview.yml" not in [
+            pf.relpath for pf in project.iter_boards()
+        ]
+
+    def test_host_index_shadows_package_index(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = self._project(tmp_path, local_project)
+        (tmp_path / "charts" / "pkg_a" / "index.yml").write_text("title: Host\n")
+        (tmp_path / "dbt_packages" / "pkg_a" / "charts" / "index.yml").write_text(
+            "title: Pkg\n"
+        )
+        relpaths = [pf.relpath for pf in project.iter_boards()]
+        assert "charts/pkg_a/index.yml" in relpaths
+        assert "dbt_packages/pkg_a/charts/index.yml" not in relpaths
+
+    def test_resolve_picks_the_host_board(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from pathlib import PurePosixPath
+
+        from dbt_charts.agent_api._paths import resolve_board_relpath
+
+        project = self._project(tmp_path, local_project)
+        resolved = resolve_board_relpath(PurePosixPath("pkg_a/overview"), project)
+        assert resolved.relpath == "charts/pkg_a/overview.yml"
 
 
 class TestIterBoardsAllRoots:
@@ -1366,3 +1376,18 @@ class TestIterBoardsAllRoots:
             pf.relpath for pf in local_project(tmp_path).iter_boards(under="charts")
         }
         assert relpaths == {"charts/home.yml"}
+
+
+def test_unshadowed_boards_drops_a_package_board_a_host_board_claims() -> None:
+    relpaths = [
+        "charts/zendesk/overview.md",
+        "charts/home.yml",
+        "dbt_packages/zendesk/charts/overview.yml",
+        "dbt_packages/zendesk/charts/sla.yml",
+    ]
+
+    assert list(unshadowed_boards(relpaths)) == [
+        "charts/zendesk/overview.md",
+        "charts/home.yml",
+        "dbt_packages/zendesk/charts/sla.yml",
+    ]

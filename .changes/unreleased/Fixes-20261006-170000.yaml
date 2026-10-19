@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'Table, pivot and KPI data mistakes (an unknown spanner or hidden column, a bad swatch color, an unparseable date, a KPI with no rows) now report a specific error code instead of a generic internal error.'
-time: 2026-10-06T17:00:00.000000-07:00

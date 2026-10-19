@@ -1,5 +1,0 @@
-kind: Features
-body: Board `text:`, board titles, and chart titles, subtitles, KPI labels and callout text read query results inline with `queries.<name>.one.<col>`, `.rows` and `.columns`, formatted with `| format(spec)`.
-time: 2026-10-02T16:08:01.598016-07:00
-custom:
-    DbtChartsIssue: "22"

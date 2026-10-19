@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 import sys
 import types
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -31,6 +32,7 @@ from dbt_charts.core.compile.config import (
     get_theme_style,
     reset_config,
 )
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
@@ -133,7 +135,7 @@ def test_vl_convert_exception_renders_error_tile_not_process_abort(
         chart_converter, "register_vl_convert_fonts", _noop_register_fonts
     )
 
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_chart.return_value = [
         {"month": "Jan", "revenue": 100, "target": 110},
         {"month": "Feb", "revenue": 120, "target": 115},
@@ -251,7 +253,7 @@ def test_full_dashboard_render_produces_output_with_error_block_not_abort(
         chart_converter, "register_vl_convert_fonts", _noop_register_fonts
     )
 
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.render_with_range_filters.return_value = None
     executor._query_errors = {}
     data = [{"cat": "A", "val": 10}, {"cat": "B", "val": 20}]

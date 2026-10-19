@@ -1,3 +1,0 @@
-kind: Features
-body: Table column_defaults no longer accepts label; set label on each column instead.
-time: 2026-10-15T11:01:41.228324-07:00

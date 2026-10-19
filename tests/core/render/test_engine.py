@@ -507,7 +507,7 @@ def test_a_spark_bar_link_is_ignored_as_it_always_was(how: str) -> None:
     chart_def = dict(_SPARK, link="../other") if how == "authored" else _SPARK
     chart = _resolved(chart_def, _SPARK_ROWS)
     if how == "synthesized":
-        # `auto_link` resolves onto the same field an authored `link:` does.
+        # `links.auto` resolves onto the same field an authored `link:` does.
         chart = chart.model_copy(update={"link": "/orders?region=a"})
     assert chart.link
     svg, _ = render_native(

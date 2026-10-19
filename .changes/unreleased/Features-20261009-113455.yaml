@@ -1,3 +1,0 @@
-kind: Features
-body: A dbt column's meta.format prints in every board query that reads it, including after sum() and other aggregates.
-time: 2026-10-09T11:34:55.413969-07:00

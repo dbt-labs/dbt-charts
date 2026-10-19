@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,6 +21,7 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.errors import JinjaError
 from dbt_charts.core.compile.models.chart.normalized import Chart, KpiChart
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
@@ -121,7 +123,7 @@ def _executor_good_bad(good_rows, bad_exc):
     fail the same way: render() now draws the board for every format, not
     just svg, so both call sites run regardless of the requested format.
     """
-    mock = MagicMock(spec=Executor)
+    mock = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
 
     def _execute_chart_side_effect(chart, variables):
         if chart.id == "good":
@@ -160,7 +162,7 @@ def test_render_returns_render_result():
     """render() must return a RenderResult, not raw str/bytes."""
     board = _compile_two_chart_board()
 
-    mock_executor = MagicMock(spec=Executor)
+    mock_executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock_executor.execute_chart.return_value = [{"value": 42}]
     mock_executor.execute_query.return_value = [{"value": 42}]
     mock_executor._query_errors = {}
@@ -323,7 +325,7 @@ def test_chart_internal_exception_isolated():
 def test_render_chart_item_error_collector():
     """render_chart_item appends to error_collector on failure."""
     _chart = _make_chart("c1")
-    mock_exec = MagicMock(spec=Executor)
+    mock_exec = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock_exec.execute_chart.side_effect = ExecutionError("timeout")
 
     rs, ctx = resolve_style_and_context(get_theme_style())
@@ -350,7 +352,7 @@ def test_render_chart_item_error_diagnostic_carries_authored_path():
     vocabulary as the SVG's data-authored-path attribute — the shared
     click-to-source grammar a source map can key into."""
     _chart = _make_chart("c1")
-    mock_exec = MagicMock(spec=Executor)
+    mock_exec = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock_exec.execute_chart.side_effect = ExecutionError("timeout")
 
     rs, ctx = resolve_style_and_context(get_theme_style())
@@ -418,7 +420,7 @@ rows:
     assert board is not None
     chart = board.charts["borrowed"]
 
-    mock_exec = MagicMock(spec=Executor)
+    mock_exec = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock_exec.execute_chart.side_effect = ExecutionError("timeout")
     mock_exec.get_query_provenance.return_value = []
 
@@ -443,7 +445,7 @@ rows:
 def test_render_chart_item_no_collector_still_returns_error_block():
     """Without error_collector, render_chart_item still returns an error SVG."""
     _chart = _make_chart("c1")
-    mock_exec = MagicMock(spec=Executor)
+    mock_exec = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock_exec.execute_chart.side_effect = ExecutionError("timeout")
 
     rs, ctx = resolve_style_and_context(get_theme_style())
@@ -730,7 +732,7 @@ def test_render_dashboard_board_error_preserves_walked_data_payload(
 def test_build_resolved_board_chart_data_error_degrades_to_board_error() -> None:
     """ChartDataError raised from build_resolved_board must degrade to board_error, not escape render()."""
     board = _compile_two_chart_board()
-    mock_executor = MagicMock(spec=Executor)
+    mock_executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock_executor._query_errors = {}
 
     with (
@@ -752,7 +754,7 @@ def test_build_resolved_board_chart_data_error_degrades_to_board_error() -> None
 def test_build_resolved_board_unexpected_exception_degrades_to_board_error() -> None:
     """Bare RuntimeError from build_resolved_board degrades to board_error wrapping ERR_INTERNAL."""
     board = _compile_two_chart_board()
-    mock_executor = MagicMock(spec=Executor)
+    mock_executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock_executor._query_errors = {}
 
     with (
@@ -785,7 +787,7 @@ def test_render_dashboard_survives_build_resolved_board_chart_data_error(
 
     mock_registry = MagicMock(spec=AdapterRegistry)
     project = local_project(tmp_path)
-    mock_executor = MagicMock(spec=Executor)
+    mock_executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock_executor._query_errors = {}
 
     with (
@@ -935,7 +937,7 @@ def _resolve_stage_executor(rows_by_query: dict[str, list[dict[str, object]]]):
     Unlike ``_executor_good_bad``, nothing here raises: the failure must come
     out of chart *resolution*, which is what the sizing pass runs.
     """
-    mock = MagicMock(spec=Executor)
+    mock = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock.execute_query.side_effect = lambda name, variables=None, **_kw: rows_by_query[
         name
     ]

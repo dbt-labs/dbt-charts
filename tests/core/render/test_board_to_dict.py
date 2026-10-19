@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import typing
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from dbt_charts.core.compile.models.board.normalized import Board, Layout, LayoutItem
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.board_to_dict import (
@@ -24,7 +26,7 @@ from .._board_utils import _default_chart_style_context, _default_resolved_style
 
 
 def _make_executor(data: list[dict[str, Any]]) -> MagicMock:
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_chart.return_value = data
     executor.render_with_range_filters.return_value = None
     return executor
@@ -154,7 +156,7 @@ def test_render_chart_item_error_diagnostic_carries_authored_path(
     chart-identity path as the SVG surface (`chart.source_path`), not a
     separately invented convention."""
     chart = make_chart("bar", x="month", y="revenue")
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_chart.side_effect = ExecutionError("timeout")
     collector: list[Any] = []
 
@@ -165,6 +167,7 @@ def test_render_chart_item_error_diagnostic_carries_authored_path(
         _default_chart_style_context(),
         error_collector=collector,
         filter_variables=frozenset(),
+        link_open="page",
     )
 
     assert collector[0].path == f"charts.{chart.id}"
@@ -346,8 +349,6 @@ def test_chart_fields_covers_resolved_surface() -> None:
     ],
 )
 def test_y_range_display_takes_the_standalone_sign_placement(config, expected):
-    from types import SimpleNamespace
-
     from dbt_charts.core.compile.format import resolve_format_parts
     from dbt_charts.core.compile.models.primitives import FormatConfig
     from dbt_charts.core.render.board_to_dict import _cartesian_y_range_display

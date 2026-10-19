@@ -1,3 +1,0 @@
-kind: Features
-body: dct serve --detach starts a background server, checks every board and prints each board's URL; dct serve --stop ends it.
-time: 2026-10-16T05:18:00.95632-07:00

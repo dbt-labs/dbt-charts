@@ -74,6 +74,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
 )
 from dbt_charts.core.compile.models.primitives import (
     DEFAULT_REGIONAL,
+    BoardLinks,
     LanguageCode,
     Regional,
 )
@@ -118,6 +119,7 @@ from dbt_charts.core.compile.normalize.variables import (
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.compile.template.jinja import text_query_references
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_LINKS_NESTED,
     ERR_REGIONAL_NESTED_MISMATCH,
     ERR_TEXT_UNKNOWN_QUERY,
     ERR_VALIDATION_FIELD,
@@ -504,6 +506,20 @@ def _compared(field: str) -> str:
     return "resolved_language" if field == "language" else field
 
 
+def _board_links(board: AuthoredBoard, parent: BoardLinks | None) -> BoardLinks:
+    """Only the root board authors ``links:``; a nested board takes its root's."""
+    if parent is None:
+        return board.links or BoardLinks()
+    if board.links is not None:
+        raise CompilationError.from_code(
+            ERR_LINKS_NESTED,
+            field_path="links",
+            board=board.title
+            or "A nested board",  # type-state: silent_fallback — an untitled nested board has no name to cite
+        )
+    return parent
+
+
 def _regional_text(regional: Regional, fields: list[str]) -> str:
     def _shown(field: str) -> str:
         value = attrgetter(_compared(field))(regional)
@@ -769,6 +785,7 @@ def normalize_board(
         resolve_html_policy_ceiling().value,
     )
     regional = _board_regional(board, parent_context.get("regional"))
+    links = _board_links(board, parent_context.get("links"))
     if base_dir is None:
         base_dir = parent_context.get("base_dir")
 
@@ -962,6 +979,7 @@ def normalize_board(
             board_cache=board_cache,
             written_in=registered.base_dir,
             text_query_keys=registered.text_query_keys,
+            link_open=links.open,
         )
 
     local_charts: dict[str, Chart] = {}
@@ -1099,6 +1117,7 @@ def normalize_board(
         sources=sources,
         html_policy=html_policy,
         regional=regional,
+        links=links,
         cache_root=cache_root,
         path_prefix=path_prefix,
     )
@@ -1157,7 +1176,7 @@ def normalize_board(
         layout=layout,
         variable_defaults=variable_defaults,  # Local variable defaults
         card_gap=board.card_gap,
-        auto_link=board.auto_link,
+        links=links,
         regional=regional,
         authored_style=board_style,
         theme=theme,

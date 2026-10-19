@@ -43,6 +43,7 @@ from dbt_charts.core.compile.models.markers import (
     Strategy,
 )
 from dbt_charts.core.compile.models.primitives import (
+    BoardLinks,
     ErrorHint,
     HtmlPolicy,
     IncrementalValue,
@@ -734,18 +735,12 @@ class AuthoredBoard(ConstrainedModel):
         ),
     )
 
-    # Auto-link: synthesize a detail-page link for table charts when no explicit
-    # link: is set. Default off — opt in at the board level (per-board override).
-    # Explicit link: always wins; link: false suppresses per chart (an explicit
-    # null is indistinguishable from omission, so only false opts out).
-    # dct serve-scoped for Phase 1; project-level opt-in is deferred.
-    auto_link: bool = Field(
-        default=False,
+    links: BoardLinks | None = Field(
+        default=None,
         description=(
-            "When True, table charts with no explicit link: automatically link each "
-            "row to its canonical /data/<source>/<schema>/<table>/detail/ page. "
-            "Default off. An explicit link: always wins; set link: false on a "
-            "chart to suppress its automatic link."
+            "Link behavior for the whole board: links.auto adds detail-page links "
+            "to table charts, links.open sets how links open. Root board "
+            "only; a nested board's links: is an error."
         ),
     )
 

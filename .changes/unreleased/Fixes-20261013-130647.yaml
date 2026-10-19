@@ -1,3 +1,0 @@
-kind: Fixes
-body: A dark layer or board `style.background` now colors bar borders, slice strokes, and point fills with its own canvas.
-time: 2026-10-13T13:06:47.063756-07:00

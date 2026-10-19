@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.validate.authoring_warnings import YamlValue
@@ -45,7 +45,11 @@ from dbt_charts.core.compile.models.chart.normalized import (
     TableChart,
 )
 from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
-from dbt_charts.core.compile.models.primitives import FormatConfig, split_link
+from dbt_charts.core.compile.models.primitives import (
+    FormatConfig,
+    LinkOpen,
+    split_link,
+)
 from dbt_charts.core.compile.models.query.authored import _BaseQueryFields
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.refs import QueryRef
@@ -136,12 +140,14 @@ def normalize_chart(
     written_in: ProjectDirectory | None = None,
     text_query_keys: dict[str, str]
     | None = None,  # type-state: optional — None is a local chart, see RegisteredChart
+    link_open: LinkOpen = "page",
 ) -> Chart:
     """Authored chart dict → discriminated normalized family model.
 
     *base_dir* anchors the chart's refs (the board normalizing it); *written_in*
     is the directory of the file that declares it, which a callout's markdown
-    images resolve against at render.
+    images resolve against at render. *link_open* is the board's ``links.open``,
+    which a chart link that sets no ``open`` of its own takes.
 
     Parses chart_def through the AuthoredChart discriminated union (validation
     is the authored model's job), then resolves query, computes deps, and builds
@@ -316,9 +322,17 @@ def normalize_chart(
     # narrowed off the authored model), same rationale as title/subtitle above.
     conditional_formatting = getattr(authored, "conditional_formatting", None)
 
-    link, link_open = (
-        (False, "page") if authored.link is False else split_link(authored.link)
-    )
+    # An unlinked chart carries the board default too: a link resolve synthesizes
+    # for it (links.auto) opens by that mode.
+    link: str | Literal[False] | None
+    if authored.link is False:
+        link, chart_link_open = False, "page"
+    elif authored.link is None:
+        link, chart_link_open = None, link_open
+    else:
+        link, chart_link_open = split_link(
+            authored.link, link_open, row_template=chart_type == "custom"
+        )
     # --- Common base fields ---
     base: dict[str, Any] = {
         "id": chart_id,
@@ -332,7 +346,7 @@ def normalize_chart(
         "notes": authored.notes
         or "",  # type-state: silent_fallback — as title/subtitle
         "link": link,
-        "link_open": link_open,
+        "link_open": chart_link_open,
         "conditional_formatting": conditional_formatting,
         "warnings_ignore": list(authored.warnings_ignore or []),
     }

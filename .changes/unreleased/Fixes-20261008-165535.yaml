@@ -1,5 +1,0 @@
-kind: Fixes
-body: 'A SQL query that names no source now fails with ERR-SOURCE-NOT-NAMED (was ERR-NO-DEFAULT-SOURCE) and says to set source: on the query or board.'
-time: 2026-10-08T16:55:35.324649-07:00
-custom:
-    DbtChartsIssue: "62"

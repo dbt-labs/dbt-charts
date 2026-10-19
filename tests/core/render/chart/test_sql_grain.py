@@ -2,7 +2,7 @@
 and column-alias tracing, with no adapter/render dependency.
 
 Full-render, end-to-end auto-link integration tests (which exercise
-`sql_grain` indirectly through `auto_link.py`) stay in `test_auto_link.py`.
+`sql_grain` indirectly through `automatic_link.py`) stay in `test_automatic_link.py`.
 """
 
 from __future__ import annotations

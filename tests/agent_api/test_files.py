@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
 from dbt_charts.agent_api.files import (
-    Edit,
+    PatchOperation,
+    PatchResult,
+    apply_patch,
     delete_file,
-    edit_file,
     move_file,
     read_file,
+    refuse_blind_overwrite,
     write_file,
 )
 from dbt_charts.cli.filesystem_project import FilesystemProject
@@ -95,100 +98,110 @@ class TestWriteRead:
         assert r.content is None
 
 
-class TestEdit:
-    def test_edit_unique_replace(self, project: FilesystemProject) -> None:
-        e = edit_file(
-            "charts/existing.yml",
-            [Edit(old_string="Existing", new_string="Edited")],
-            project,
-        )
-        assert e.success, e.error
-        assert e.replacements == 1
-        assert "Edited" in (project.root / "charts" / "existing.yml").read_text(
-            encoding="utf-8"
-        )
+def _patch(
+    project: Project,
+    op_type: Literal["create_file", "update_file", "delete_file"],
+    path: str,
+    diff: str | None = None,
+) -> PatchResult:
+    return apply_patch(PatchOperation(type=op_type, path=path, diff=diff), project)
 
-    def test_edit_missing_string_errors(self, project: FilesystemProject) -> None:
-        e = edit_file(
-            "charts/existing.yml",
-            [Edit(old_string="NotThere", new_string="X")],
-            project,
-        )
-        assert e.success is False
-        assert e.replacements == 0
 
-    def test_edit_ambiguous_string_errors(self, project: FilesystemProject) -> None:
-        (project.root / "charts" / "dup.yml").write_text("a\na\n", encoding="utf-8")
-        e = edit_file("charts/dup.yml", [Edit(old_string="a", new_string="b")], project)
-        assert e.success is False
-        assert "uniqu" in (e.error or "").lower()
+class TestApplyPatch:
+    def _file(self, project: FilesystemProject, text: str) -> Path:
+        path = project.root / "f.txt"
+        path.write_text(text, encoding="utf-8")
+        return path
 
-    def test_edits_apply_in_order_in_one_write(
+    def test_create_update_delete(self, project: FilesystemProject) -> None:
+        assert _patch(project, "create_file", "new.txt", "+a\n+b\n").success
+        assert (project.root / "new.txt").read_text() == "a\nb\n"
+        assert _patch(project, "update_file", "new.txt", "@@\n a\n-b\n+c\n").success
+        assert (project.root / "new.txt").read_text() == "a\nc\n"
+        assert _patch(project, "delete_file", "new.txt").success
+        assert not (project.root / "new.txt").exists()
+
+    def test_create_refuses_an_existing_file(self, project: FilesystemProject) -> None:
+        result = _patch(project, "create_file", "notes.txt", "+x\n")
+        assert result.success is False
+        assert "already exists" in (result.error or "")
+
+    def test_several_hunks_apply_in_one_write(self, project: FilesystemProject) -> None:
+        path = self._file(project, "".join(f"l{i}\n" for i in range(1, 11)))
+        diff = "@@\n-l2\n+L2\n@@\n l5\n-l6\n+L6\n@@ l8\n-l9\n+L9\n"
+        assert _patch(project, "update_file", "f.txt", diff).success
+        assert path.read_text().splitlines()[1::4][:2] == ["L2", "L6"]
+        assert "L9" in path.read_text()
+
+    def test_context_header_anchors_a_repeated_line(
         self, project: FilesystemProject
     ) -> None:
-        e = edit_file(
-            "notes.txt",
-            [
-                Edit(old_string="alpha", new_string="one"),
-                Edit(old_string="gamma", new_string="three"),
-                # Sees the text the earlier edits produced.
-                Edit(old_string="one\nbeta", new_string="one\ntwo"),
-            ],
-            project,
-        )
-        assert e.success, e.error
-        assert e.replacements == 3
-        assert (project.root / "notes.txt").read_text(encoding="utf-8") == (
-            "one\ntwo\nthree\n"
-        )
+        path = self._file(project, "a:\n  x: 1\nb:\n  x: 1\n")
+        assert _patch(
+            project, "update_file", "f.txt", "@@ b:\n-  x: 1\n+  x: 2\n"
+        ).success
+        assert path.read_text() == "a:\n  x: 1\nb:\n  x: 2\n"
 
-    def test_a_failing_edit_writes_nothing_and_names_its_index(
+    def test_trailing_whitespace_is_ignored_when_matching(
         self, project: FilesystemProject
     ) -> None:
-        e = edit_file(
-            "notes.txt",
-            [
-                Edit(old_string="alpha", new_string="one"),
-                Edit(old_string="delta", new_string="four"),
-            ],
-            project,
-        )
-        assert e.success is False
-        assert e.replacements == 0
-        assert [f.index for f in e.failures] == [1]
-        assert (project.root / "notes.txt").read_text(encoding="utf-8") == (
-            "alpha\nbeta\ngamma\n"
-        )
+        path = self._file(project, "a   \nb\t\n")
+        assert _patch(project, "update_file", "f.txt", "@@\n-a\n+A\n").success
+        assert path.read_text() == "A\nb\t\n"
 
-    def test_a_failed_batch_reports_every_failure_with_the_closest_text(
+    def test_all_whitespace_is_ignored_when_matching(
         self, project: FilesystemProject
     ) -> None:
-        (project.root / "charts" / "kpi.yml").write_text(
-            "charts:\n  total:\n    type: kpi\n    query: headline\n"
-            "    value: total\n  delta:\n    type: kpi\n    value: change\n",
-            encoding="utf-8",
-        )
-        e = edit_file(
-            "charts/kpi.yml",
-            [
-                Edit(old_string="    query: headline\n    type: kpi\n", new_string="x"),
-                Edit(old_string="    value: total\n", new_string="    value: sum\n"),
-                Edit(old_string="    type: kpi\n", new_string="y"),
-            ],
-            project,
-        )
-        assert e.success is False
-        assert [(f.index, f.error) for f in e.failures] == [
-            (0, "old_string not found in file"),
-            (2, "old_string is not unique (2 occurrences) — add surrounding context"),
-        ]
-        assert e.failures[0].closest == "    type: kpi\n    query: headline\n"
-        assert e.failures[1].closest is None
+        path = self._file(project, "    key: 1\nother\n")
+        assert _patch(project, "update_file", "f.txt", "@@\n-key: 1\n+key: 2\n").success
+        assert path.read_text() == "key: 2\nother\n"
 
-    def test_no_edits_is_an_error(self, project: FilesystemProject) -> None:
-        e = edit_file("notes.txt", [], project)
-        assert e.success is False
-        assert e.error == "edits is empty"
+    def test_end_of_file_marker_matches_the_last_occurrence(
+        self, project: FilesystemProject
+    ) -> None:
+        path = self._file(project, "x\ny\nx\n")
+        diff = "@@\n-x\n+z\n*** End of File\n"
+        assert _patch(project, "update_file", "f.txt", diff).success
+        assert path.read_text() == "x\ny\nz\n"
+
+    def test_failure_names_the_hunk_and_the_closest_lines_and_writes_nothing(
+        self, project: FilesystemProject
+    ) -> None:
+        path = self._file(project, "alpha\nbeta\ngamma\n")
+        result = _patch(
+            project, "update_file", "f.txt", "@@\n-alpha\n+A\n@@\n-betta\n+B\n"
+        )
+        assert result.success is False
+        assert "hunk 2" in (result.error or "")
+        assert "beta" in (result.error or "")
+        assert path.read_text() == "alpha\nbeta\ngamma\n"
+
+    def test_an_add_only_hunk_appends_after_a_later_hunk_that_grows_the_file(
+        self, project: FilesystemProject
+    ) -> None:
+        path = self._file(project, "a\nb\nc\nd\ne\n")
+        diff = "@@\n+appended\n@@\n b\n-c\n+c1\n+c2\n+c3\n"
+        assert _patch(project, "update_file", "f.txt", diff).success
+        assert path.read_text() == "a\nb\nc1\nc2\nc3\nd\ne\nappended\n"
+
+    def test_punctuation_is_normalized_when_matching(
+        self, project: FilesystemProject
+    ) -> None:
+        path = self._file(project, "title: \u201cSales\u201d \u2013 2026\nother\n")
+        diff = '@@\n-title: "Sales" - 2026\n+title: Sales\n'
+        assert _patch(project, "update_file", "f.txt", diff).success
+        assert path.read_text() == "title: Sales\nother\n"
+
+    def test_a_diff_ending_in_a_blank_context_line_still_applies(
+        self, project: FilesystemProject
+    ) -> None:
+        path = self._file(project, "a\nb\n")
+        assert _patch(project, "update_file", "f.txt", "@@\n a\n-b\n+B\n \n").success
+        assert path.read_text() == "a\nB\n"
+
+    def test_escape_is_refused(self, project: FilesystemProject) -> None:
+        result = _patch(project, "create_file", "../out.txt", "+x\n")
+        assert result.success is False
 
 
 class TestMoveFile:
@@ -294,12 +307,14 @@ class TestNonFilesystemProject:
         # `in_memory_project` was constructed with.
         assert not (tmp_path / "store-root" / "charts" / "new.yml").exists()
 
-    def test_edit_updates_store(self, store: Project) -> None:
-        e = edit_file(
-            "charts/report.yml", [Edit(old_string="alice", new_string="bob")], store
+    def test_apply_patch_updates_store(self, store: Project) -> None:
+        e = _patch(
+            store,
+            "update_file",
+            "charts/report.yml",
+            "@@\n-owner: alice\n+owner: bob\n",
         )
         assert e.success, e.error
-        assert e.replacements == 1
         r = read_file("charts/report.yml", project=store)
         assert r.success
         assert "bob" in (r.content or "")
@@ -312,3 +327,77 @@ class TestNonFilesystemProject:
     def test_read_missing_in_store_is_not_found(self, store: Project) -> None:
         r = read_file("charts/absent.yml", project=store)
         assert r.success is False
+
+
+class TestPackageBoardCopyOnWrite:
+    PKG_BOARD = "dbt_packages/zendesk/charts/overview.yml"
+
+    @pytest.fixture
+    def pkg_project(self, project: FilesystemProject) -> FilesystemProject:
+        pkg = project.root / "dbt_packages" / "zendesk" / "charts"
+        pkg.mkdir(parents=True)
+        (pkg / "overview.yml").write_text("title: Pkg\n", encoding="utf-8")
+        return project
+
+    def test_edit_saves_host_copy_and_slug_resolves_to_it(
+        self, pkg_project: FilesystemProject
+    ) -> None:
+        from pathlib import PurePosixPath
+
+        from dbt_charts.agent_api._paths import resolve_board_relpath
+
+        result = _patch(
+            pkg_project,
+            "update_file",
+            self.PKG_BOARD,
+            "@@\n-title: Pkg\n+title: Mine\n",
+        )
+        assert result.success is True
+        assert result.path == "charts/zendesk/overview.yml"
+        root = pkg_project.root
+        assert (root / "charts/zendesk/overview.yml").read_text() == "title: Mine\n"
+        assert (root / self.PKG_BOARD).read_text() == "title: Pkg\n"
+        resolved = resolve_board_relpath(PurePosixPath("zendesk/overview"), pkg_project)
+        assert resolved.relpath == "charts/zendesk/overview.yml"
+
+        again = _patch(
+            pkg_project,
+            "update_file",
+            self.PKG_BOARD,
+            "@@\n-title: Mine\n+title: Again\n",
+        )
+        assert again.success is True
+        assert (root / "charts/zendesk/overview.yml").read_text() == "title: Again\n"
+
+    def test_create_reports_the_host_path(self, pkg_project: FilesystemProject) -> None:
+        result = _patch(pkg_project, "create_file", self.PKG_BOARD, "+title: New\n")
+        assert result.success is True
+        assert result.path == "charts/zendesk/overview.yml"
+        assert (pkg_project.root / self.PKG_BOARD).read_text() == "title: Pkg\n"
+
+    def test_write_reports_the_host_path(self, pkg_project: FilesystemProject) -> None:
+        result = write_file(self.PKG_BOARD, "title: New\n", project=pkg_project)
+        assert result.success is True
+        assert result.path == "charts/zendesk/overview.yml"
+        assert (pkg_project.root / self.PKG_BOARD).read_text() == "title: Pkg\n"
+
+    def test_read_returns_the_host_copy_and_keeps_the_overwrite_guard_honest(
+        self, pkg_project: FilesystemProject
+    ) -> None:
+        copy = pkg_project.root / "charts/zendesk/overview.yml"
+        copy.parent.mkdir(parents=True)
+        copy.write_text("title: Mine\n", encoding="utf-8")
+
+        assert read_file(self.PKG_BOARD, pkg_project).content == "title: Mine\n"
+        refusal = refuse_blind_overwrite(self.PKG_BOARD, pkg_project, set())
+        assert refusal is not None
+        assert (
+            refuse_blind_overwrite(self.PKG_BOARD, pkg_project, {self.PKG_BOARD})
+            is None
+        )
+
+    def test_non_board_package_files_are_not_redirected(
+        self, pkg_project: FilesystemProject
+    ) -> None:
+        sql = "dbt_packages/zendesk/charts/q.sql"
+        assert write_file(sql, "select 1", pkg_project).success is False

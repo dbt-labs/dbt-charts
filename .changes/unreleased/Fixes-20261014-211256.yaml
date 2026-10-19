@@ -1,3 +1,0 @@
-kind: Fixes
-body: The %P date directive prints am or pm on every platform.
-time: 2026-10-14T21:12:56.068286-07:00

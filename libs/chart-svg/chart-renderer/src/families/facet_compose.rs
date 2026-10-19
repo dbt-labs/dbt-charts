@@ -80,7 +80,7 @@ use std::fmt::Write as _;
 use serde_json::Value;
 
 use crate::common::{AxisStyle, AxisTitle};
-use crate::families::bar::{BandXAxis, ContinuousXAxis};
+use crate::families::bar::{BandXAxis, ContinuousXAxis, HorizontalValueAxis};
 use crate::families::legend::{stack_legends, VEGA_LEGEND_OFFSET};
 use crate::families::facet_layout;
 use crate::families::heatmap::AXIS_TRANSLATE;
@@ -104,6 +104,7 @@ pub(crate) enum PanelXAxis {
     Temporal(TemporalXAxis),
     Plain(PlainXAxis),
     Heat(HeatmapXAxis),
+    Value(HorizontalValueAxis),
 }
 
 impl PanelXAxis {
@@ -118,6 +119,7 @@ impl PanelXAxis {
         match self {
             PanelXAxis::Line(x) => x.label_left_reach(),
             PanelXAxis::Plain(x) => x.label_left_reach(),
+            PanelXAxis::Value(x) => x.left_reach(),
             PanelXAxis::Band(_)
             | PanelXAxis::Continuous(_)
             | PanelXAxis::Temporal(_)
@@ -133,7 +135,7 @@ impl PanelXAxis {
             PanelXAxis::Heat(x) => x.rotated_footer_reach(),
             PanelXAxis::Line(x) => x.rotated_footer_reach(),
             PanelXAxis::Plain(x) => x.rotated_footer_reach(),
-            PanelXAxis::Continuous(_) | PanelXAxis::Temporal(_) => None,
+            PanelXAxis::Continuous(_) | PanelXAxis::Temporal(_) | PanelXAxis::Value(_) => None,
         }
     }
 
@@ -155,6 +157,7 @@ impl PanelXAxis {
             PanelXAxis::Temporal(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom, fonts),
             PanelXAxis::Plain(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom, fonts),
             PanelXAxis::Heat(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom),
+            PanelXAxis::Value(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom),
         }
     }
 }
@@ -478,8 +481,12 @@ pub(crate) struct RowAxisSpec<'a> {
     /// How far left of the plot the header axis reaches: the row titles
     /// stack outside it (`[title][10][axis][cell]`).
     pub(crate) reserve: f64,
-    /// Where a label starts, relative to the plot's left edge.
+    /// Where a label anchors, relative to the cell's ink edge.
     pub(crate) label_x: f64,
+    /// The labels' `text-anchor`: `start` when flip-aligned, else `end`.
+    pub(crate) label_anchor: &'a str,
+    /// The rotated title's label-band edge, relative to the cell's ink edge.
+    pub(crate) title_x: f64,
 }
 
 /// What a family paints above a facet grid — Vega's `title` role and a
@@ -1363,7 +1370,7 @@ fn compose_facet_at(
         }
     }
     // A shared category axis: the labels of column 0's panel in every grid
-    // row, left-anchored `label_x` from the cell's ink edge (`bounds.x1`).
+    // row, anchored `label_anchor` at `label_x` from the cell's ink edge (`bounds.x1`).
     if let Some(axis) = row_axis {
         for row_i in 0..panel_rows_n {
             let slot = row_i * panel_cols_n;
@@ -1385,10 +1392,11 @@ fn compose_facet_at(
             for (abs_y, label) in &geom.val_ticks {
                 let _ = write!(
                     svg,
-                    "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"start\" \
+                    "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"{}\" \
                      font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
                     canvas_x(dx, geom) + axis.label_x,
                     canvas_y(dy, geom) + abs_y,
+                    xml_escape_attr(axis.label_anchor),
                     vega_escape_attr(&style.val_family),
                     style.val_font_size,
                     xml_escape_attr(&style.val_weight),
@@ -1400,7 +1408,7 @@ fn compose_facet_at(
                 &mut svg,
                 axis.title,
                 axis.title_style,
-                canvas_x(dx, geom) + axis.label_x,
+                canvas_x(dx, geom) + axis.title_x,
                 canvas_y(dy, geom) + geom.plot_top + child_height / 2.0,
                 -1.0,
                 None,

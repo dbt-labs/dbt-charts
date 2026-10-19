@@ -17,12 +17,15 @@ from unittest import mock
 import httpx
 import openai
 import pytest
+from pydantic import BaseModel
 
 from dbt_charts.ai.openai_gateway import (
     CONNECT_TIMEOUT_SECONDS,
+    ApplyPatchCall,
     FunctionCall,
     GatewayError,
     OpenAIGateway,
+    ReasoningItems,
     ReasoningSummaryDelta,
     ReasoningSummaryDone,
     ResponsesRequest,
@@ -222,6 +225,55 @@ def test_stream_yields_function_call_with_parsed_arguments(
     assert out == [
         FunctionCall(
             call_id="call_1", name="execute_sql", arguments={"sql": "SELECT 1"}
+        )
+    ]
+
+
+@pytest.mark.parametrize("shape", _WIRE_SHAPES, ids=_WIRE_SHAPE_IDS)
+def test_stream_yields_apply_patch_call_with_its_operation(
+    shape: Callable[[Any], Any],
+) -> None:
+    operation = {"type": "update_file", "path": "a.yml", "diff": "@@\n-a\n+b\n"}
+    events = [
+        shape(
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(
+                    type="apply_patch_call", call_id="call_9", operation=operation
+                ),
+            )
+        )
+    ]
+    gateway, stub = _gateway_with_stub()
+    stub.create = lambda **kwargs: iter(events)
+
+    out = list(gateway.stream(_request(stream=True)))
+
+    assert out == [ApplyPatchCall(call_id="call_9", operation=operation)]
+
+
+def test_stream_apply_patch_operation_from_a_typed_sdk_object() -> None:
+    class _Operation(BaseModel):
+        type: str
+        path: str
+        diff: str | None = None
+
+    events = [
+        SimpleNamespace(
+            type="response.output_item.done",
+            item=SimpleNamespace(
+                type="apply_patch_call",
+                call_id="call_9",
+                operation=_Operation(type="delete_file", path="a.yml"),
+            ),
+        )
+    ]
+    gateway, stub = _gateway_with_stub()
+    stub.create = lambda **kwargs: iter(events)
+
+    assert list(gateway.stream(_request(stream=True))) == [
+        ApplyPatchCall(
+            call_id="call_9", operation={"type": "delete_file", "path": "a.yml"}
         )
     ]
 
@@ -698,3 +750,52 @@ class TestUsageDetailAccumulation:
 
         assert gateway.total_cached_input_tokens == 0
         assert gateway.total_reasoning_output_tokens == 0
+
+
+class _WireReasoning(BaseModel):
+    """Stands in for the SDK's typed ``ResponseReasoningItem``."""
+
+    type: str = "reasoning"
+    id: str
+    encrypted_content: str | None = None
+    summary: list[Any]
+    status: str | None = None
+
+
+_REASONING_DICT: dict[str, Any] = {
+    "type": "reasoning",
+    "id": "rs_1",
+    "encrypted_content": "enc",
+    "summary": [],
+}
+
+
+@pytest.mark.parametrize(
+    "reasoning",
+    [
+        dict(_REASONING_DICT),
+        _WireReasoning(id="rs_1", encrypted_content="enc", summary=[]),
+    ],
+    ids=["dict", "typed"],
+)
+def test_stream_yields_reasoning_items_from_the_completed_response(
+    reasoning: Any,
+) -> None:
+    """Reasoning items come off ``response.completed`` output, so their order
+    relative to the function calls is exactly the provider's."""
+    completed = SimpleNamespace(
+        type="response.completed",
+        response=SimpleNamespace(
+            usage=None,
+            output=[
+                reasoning,
+                SimpleNamespace(type="function_call", call_id="c1", name="t"),
+            ],
+        ),
+    )
+    gateway, stub = _gateway_with_stub()
+    stub.create = lambda **kwargs: iter([completed])
+
+    out = list(gateway.stream(_request(stream=True)))
+
+    assert out == [ReasoningItems(items=[_REASONING_DICT])]

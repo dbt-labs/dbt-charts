@@ -196,8 +196,8 @@ def package_board_roots(project: Project) -> list[BoardRoot]:
     """The board root for every installed package that ships a ``charts/`` dir.
 
     Probes ``Project.exists(DBT_PACKAGES_SUBDIR)`` first and returns early
-    when it is absent -- a Cloud host never has a ``dbt_packages/`` entry
-    (gitignored, never committed), so this keeps discovery off any path that
+    when it is absent -- a project with no installed packages has no
+    ``dbt_packages/`` entry, so this keeps discovery off any path that
     needs more than the minimal ``Project`` surface (``exists``/``iter_dir``)
     every implementation already provides. Only once the directory is known
     to exist does this read ``Project.iter_dir(DBT_PACKAGES_SUBDIR)`` -- one
@@ -221,38 +221,6 @@ def package_board_roots(project: Project) -> list[BoardRoot]:
     return roots
 
 
-def _assert_no_root_namespace_collision(
-    project: Project, roots: Sequence[BoardRoot]
-) -> None:
-    """Raise if a host ``charts/<pkg>`` entry claims a package's own namespace.
-
-    A host ``charts/zendesk/`` directory or ``charts/zendesk.{yml,md}`` file
-    alongside an installed ``zendesk`` package is the same bug class as an
-    alias colliding with a real board file — resolved the same way, as a
-    hard build-time error. Enforced HERE, inside ``board_roots`` itself,
-    rather than by one caller (``dct serve``'s ``AliasIndex.build``) alone —
-    every consumer of the root table (``iter_boards``, ``resolve_board_relpath``,
-    search, the CLI move path, ...) must reject the ambiguous state the same
-    way, not silently pick the host board.
-    """
-    package_namespaces = {root.namespace for root in roots if root.namespace}
-    if not package_namespaces:
-        return
-    for child in project.iter_dir(CHARTS_SUBDIR):
-        if isinstance(child, ProjectDirectory):
-            candidate_name = child.name
-        elif child.is_yaml or child.is_markdown:
-            candidate_name = child.stem
-        else:
-            continue
-        if candidate_name in package_namespaces:
-            raise ValueError(
-                f"Board root collision: host 'charts/{candidate_name}' and the "
-                f"installed package {candidate_name!r} both claim the "
-                f"{candidate_name!r} namespace."
-            )
-
-
 def board_roots(project: Project) -> list[BoardRoot]:
     """The full board-root table: the host root plus every package root.
 
@@ -260,13 +228,10 @@ def board_roots(project: Project) -> list[BoardRoot]:
     doesn't exist yet — enumeration over a missing root simply yields
     nothing), so it wins any ordering tie against a same-named package root.
 
-    Raises ValueError if a package namespace collides with a host
-    ``charts/<namespace>`` directory or board file (see
-    ``_assert_no_root_namespace_collision``).
+    A host board that claims a package board's slug shadows it (see
+    ``Project.iter_boards``).
     """
-    roots = [BoardRoot(CHARTS_SUBDIR, "")] + package_board_roots(project)
-    _assert_no_root_namespace_collision(project, roots)
-    return roots
+    return [BoardRoot(CHARTS_SUBDIR, "")] + package_board_roots(project)
 
 
 def _split_board_root(relpath: str) -> tuple[str, tuple[str, ...]]:
@@ -326,6 +291,23 @@ def board_slug(relpath: str) -> str:
         tail_parts = (*tail_parts[:-1], PurePosixPath(tail_parts[-1]).stem)
     parts = ((namespace,) if namespace else ()) + tail_parts
     return "/".join(parts)
+
+
+def unshadowed_boards(relpaths: Iterable[str]) -> Iterator[str]:
+    """Board relpaths with each shadowed package board dropped.
+
+    *relpaths* come in board-root order, host root first (``board_roots``): a
+    package board whose ``board_slug`` a host board already claimed is hidden,
+    since a host copy replaces the package's.
+    """
+    host_slugs: set[str] = set()
+    for relpath in relpaths:
+        slug = board_slug(relpath)
+        if not is_package_relpath(relpath):
+            host_slugs.add(slug)
+        elif slug in host_slugs:
+            continue
+        yield relpath
 
 
 def board_relpath_candidates(slug: str, roots: Sequence[BoardRoot]) -> list[str]:
@@ -894,18 +876,28 @@ class Project(ABC):
         to scope the scan to one subtree, e.g. a write path that must stay
         host-only.
 
+        A package board whose ``board_slug`` a host board already claims is
+        hidden: the host copy replaces it (this is how a package board is
+        customized), so no consumer ever sees both. This is the one place that
+        rule lives; an explicit *under* scans one subtree and shadows nothing.
+
         Applies board-suffix (BOARD_CANDIDATE_SUFFIXES) and underscore-prefix
         filters so callers only see plausible board files. Skips traversal-noise
         dirs via ``iter_files``. Yields nothing when a subtree does not exist.
 
         ``onerror`` is forwarded to ``iter_files``.
         """
-        roots = [under] if under is not None else [r.relpath for r in board_roots(self)]
-        for root in roots:
-            for relpath in self.iter_files(root, recursive=recursive, onerror=onerror):
-                if not is_board_candidate(relpath):
-                    continue
-                yield ProjectPath(self, relpath)
+        roots = [BoardRoot(under, "")] if under is not None else board_roots(self)
+        relpaths = (
+            relpath
+            for root in roots
+            for relpath in self.iter_files(
+                root.relpath, recursive=recursive, onerror=onerror
+            )
+            if is_board_candidate(relpath)
+        )
+        for relpath in relpaths if under is not None else unshadowed_boards(relpaths):
+            yield ProjectPath(self, relpath)
 
     def board_labels(self) -> list[BoardLabel]:
         """Title and notes of every board file under every board root, by path.

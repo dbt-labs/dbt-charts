@@ -1,3 +1,0 @@
-kind: Fixes
-body: Missing, absolute or out-of-project file references (imports, cross-file refs, `extends:`, file sources) report `ERR-UNRESOLVED-REFERENCE` naming the path instead of `ERR-INTERNAL`.
-time: 2026-09-28T12:01:00-07:00

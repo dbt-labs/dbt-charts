@@ -599,14 +599,12 @@ def _render(
     from dbt_charts.core.render.board_links import (
         set_link_context as _set_link_context,  # noqa: PLC0415
     )
-    from dbt_charts.core.render.chart.auto_link import (  # noqa: PLC0415
-        set_auto_link_context as _set_auto_link_context,
+    from dbt_charts.core.render.chart.automatic_link import (  # noqa: PLC0415
         set_filter_variables_context as _set_filter_variables_context,
     )
 
     _link_context = options.get("link_context")
     _set_link_context(_link_context)
-    _set_auto_link_context(board.auto_link)
     _filter_var_names = (
         frozenset(variable_registry) if variable_registry else frozenset()
     )
@@ -625,7 +623,6 @@ def _render(
 
     def _reset_contexts() -> None:
         _set_link_context(None)
-        _set_auto_link_context(False)
         _set_filter_variables_context(frozenset())
 
     # Narrow first try: only build_resolved_board(). Failures here mean no render

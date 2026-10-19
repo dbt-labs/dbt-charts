@@ -17,11 +17,14 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.serve.embedded import build_embedded_server
 
 
-def test_build_embedded_server_returns_server_and_port(tmp_path: Path) -> None:
-    server, port = build_embedded_server(FilesystemProject(tmp_path), port_hint=18790)
-    assert server.config.host == "localhost"
-    # When the hint is free, resolved port equals the hint.
-    assert port == 18790
+def test_build_embedded_server_returns_server_and_listener(tmp_path: Path) -> None:
+    server, listener = build_embedded_server(
+        FilesystemProject(tmp_path), port_hint=18790
+    )
+    with listener:
+        assert server.config.host == "localhost"
+        # When the hint is free, the listener holds the hint.
+        assert listener.getsockname()[1] == 18790 == server.config.port
 
 
 def test_build_embedded_server_keeps_local_authoring_posture(tmp_path: Path) -> None:
@@ -34,7 +37,10 @@ def test_build_embedded_server_keeps_local_authoring_posture(tmp_path: Path) -> 
     """
     from dbt_charts.core.execute.adapters import LOCAL_AUTHORING_REGISTRY_KWARGS
 
-    server, _port = build_embedded_server(FilesystemProject(tmp_path), port_hint=18795)
+    server, listener = build_embedded_server(
+        FilesystemProject(tmp_path), port_hint=18795
+    )
+    listener.close()
     app_state = server.config.app.state
     assert app_state.read_only is LOCAL_AUTHORING_REGISTRY_KWARGS["read_only"]
     assert app_state.allow_external_access_in_readonly is True
@@ -49,7 +55,10 @@ def test_build_embedded_server_closes_the_watch_on_shutdown(tmp_path: Path) -> N
     """
     from dbt_charts.core.serve.shutdown import GracefulServer
 
-    server, _port = build_embedded_server(FilesystemProject(tmp_path), port_hint=18797)
+    server, listener = build_embedded_server(
+        FilesystemProject(tmp_path), port_hint=18797
+    )
+    listener.close()
 
     assert isinstance(server, GracefulServer)
     assert server.config.app.state.watcher is not None
@@ -62,13 +71,27 @@ def test_build_embedded_server_increments_when_port_taken(tmp_path: Path) -> Non
     s.listen(1)
     try:
         taken = s.getsockname()[1]
-        _server, port = build_embedded_server(
+        _server, listener = build_embedded_server(
             FilesystemProject(tmp_path), port_hint=taken
         )
-        assert port != taken
-        assert port > taken
+        with listener:
+            assert listener.getsockname()[1] > taken
     finally:
         s.close()
+
+
+def test_concurrent_embedded_servers_never_share_a_port(tmp_path: Path) -> None:
+    """Concurrent `dct mcp serve` processes start from the same hint.
+
+    A port that is only probed is still free to the next process, so both picked
+    it and the loser's uvicorn bind failed after its MCP transport was up.
+    """
+    project = FilesystemProject(tmp_path)
+    _first, first = build_embedded_server(project, port_hint=18805)
+    _second, second = build_embedded_server(project, port_hint=18805)
+
+    with first, second:
+        assert first.getsockname()[1] != second.getsockname()[1]
 
 
 def test_build_embedded_server_raises_import_error_on_uvicorn_missing(
@@ -96,18 +119,18 @@ def test_build_embedded_server_raises_runtime_error_on_port_exhaustion(
 ) -> None:
     """Port exhaustion is a runtime resource problem, not a missing-dep problem.
 
-    `find_available_port` already raises `RuntimeError`. The builder must
+    `bind_available_port` already raises `RuntimeError`. The builder must
     let that propagate rather than swallow it into a None return — silent
     None means callers can't tell why preview is unavailable.
     """
     from dbt_charts.core.serve import embedded
 
-    def _exhausted(*args: object, **kwargs: object) -> int:
+    def _exhausted(*args: object, **kwargs: object) -> socket.socket:
         raise RuntimeError(
             "Could not find an available port after 10 attempts (starting from 8765)"
         )
 
-    monkeypatch.setattr(embedded, "find_available_port", _exhausted)
+    monkeypatch.setattr(embedded, "bind_available_port", _exhausted)
 
     with pytest.raises(RuntimeError, match="Could not find an available port"):
         embedded.build_embedded_server(FilesystemProject(tmp_path), port_hint=8765)

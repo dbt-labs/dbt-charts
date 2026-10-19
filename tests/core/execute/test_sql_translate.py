@@ -170,3 +170,51 @@ def test_bound_params_follow_the_translated_argument_order(
 
     assert sql == expected_sql
     assert params == [3, "2024-01-01"]
+
+
+def test_week_truncation_keeps_monday_weeks_on_bigquery() -> None:
+    out = translate_sql("select date_trunc('week', ts) from t", "duckdb", "bigquery")
+    assert "TIMESTAMP_TRUNC(ts, WEEK(MONDAY))" in out
+
+
+@pytest.mark.parametrize(
+    "write", ["postgres", "redshift", "databricks", "trino", "athena"]
+)
+def test_week_truncation_is_unchanged_on_monday_native_targets(write: str) -> None:
+    out = translate_sql("select date_trunc('week', ts) from t", "duckdb", write)
+    assert "WEEK(" not in out
+    assert "'WEEK'" in out
+
+
+def test_week_truncation_on_snowflake_does_not_depend_on_week_start_param() -> None:
+    out = translate_sql("select date_trunc('week', ts) from t", "duckdb", "snowflake")
+    assert "DAYOFWEEKISO(ts)" in out
+    assert "'WEEK'" not in out
+
+
+@pytest.mark.parametrize("write", ["mysql", "sqlite", "sqlserver", "clickhouse"])
+def test_week_truncation_refused_where_monday_weeks_cannot_be_expressed(
+    write: str,
+) -> None:
+    with pytest.raises(ExecutionError) as exc:
+        translate_sql("select date_trunc('week', ts) from t", "duckdb", write)
+    assert exc.value.code is ERR_SQL_DIALECT_UNSUPPORTED
+
+
+def test_week_truncation_refused_from_a_dialect_with_other_week_starts() -> None:
+    with pytest.raises(ExecutionError) as exc:
+        translate_sql("select date_trunc(ts, week) from t", "bigquery", "duckdb")
+    assert exc.value.code is ERR_SQL_DIALECT_UNSUPPORTED
+
+
+@pytest.mark.parametrize("write", ["duckdb", "postgres", "snowflake", "bigquery"])
+def test_explicit_monday_week_from_bigquery_translates(write: str) -> None:
+    out = translate_sql("select date_trunc(ts, week(monday)) from t", "bigquery", write)
+    assert "SUNDAY" not in out.upper()
+
+
+def test_week_truncation_on_snowflake_keeps_a_param_operand() -> None:
+    out = translate_sql(
+        f"select date_trunc('week', {PARAM}) from t", "duckdb", "snowflake"
+    )
+    assert out.count(PARAM) == 2

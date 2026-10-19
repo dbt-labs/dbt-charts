@@ -23,6 +23,7 @@ from dbt_charts.core.compile.models.board.resolved import (
     ResolvedLayoutItem,
 )
 from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.primitives import LinkOpen
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_inputs
@@ -56,7 +57,10 @@ def _resolve_chart_static(
     The skeleton has no data, so ``display_text="raw"`` keeps title, subtitle, label
     and message as authored."""
     return resolve(
-        chart, [], chart_style_context=chart_style_context, display_text="raw"
+        chart,
+        [],
+        chart_style_context=chart_style_context,
+        display_text="raw",
     )
 
 
@@ -68,6 +72,7 @@ def _resolve_chart_data_aware(
     width: float,
     *,
     filter_variables: frozenset[str],
+    link_open: LinkOpen,
 ) -> ResolvedChart:
     """Resolve a chart against its real, already-cached query rows.
 
@@ -114,6 +119,7 @@ def _resolve_chart_data_aware(
         executor,
         variables,
         filter_variables=filter_variables,
+        link_open=link_open,
     )
 
 
@@ -417,6 +423,7 @@ def _build_resolved_board(
         variable_values=variables,
         executor=executor,
         filter_variables=declared_variables,
+        link_open=board.links.open,
         chart_variants=chart_variants,
         resolve_errors=chart_failures,
     )
@@ -460,6 +467,7 @@ def _build_resolved_layout(
     variable_values: VariableValues,
     executor: Executor,
     filter_variables: frozenset[str],
+    link_open: LinkOpen,
     chart_variants: ResolvedChartVariants | EllipsisType = ...,
     resolve_errors: dict[str, ChartResolveFailure],
 ) -> ResolvedLayout:
@@ -480,6 +488,7 @@ def _build_resolved_layout(
             variable_values=variable_values,
             executor=executor,
             filter_variables=filter_variables,
+            link_open=link_open,
             chart_variants=chart_variants,
             resolve_errors=resolve_errors,
         )
@@ -525,6 +534,7 @@ def _resolve_layout_item(
     variable_values: VariableValues,
     executor: Executor,
     filter_variables: frozenset[str],
+    link_open: LinkOpen,
     chart_variants: ResolvedChartVariants | EllipsisType = ...,
     resolve_errors: dict[str, ChartResolveFailure],
 ) -> ResolvedLayoutItem:
@@ -561,6 +571,7 @@ def _resolve_layout_item(
                             variable_values,
                             item.width,
                             filter_variables=filter_variables,
+                            link_open=link_open,
                         )
                     except DbtChartsError as exc:
                         chart_error = ChartResolveFailure(
@@ -578,6 +589,7 @@ def _resolve_layout_item(
             variable_values=variable_values,
             executor=executor,
             filter_variables=filter_variables,
+            link_open=link_open,
             resolve_errors=resolve_errors,
         )
         if item.board
@@ -610,6 +622,7 @@ def _resolve_nested(
     variable_values: VariableValues,
     executor: Executor,
     filter_variables: frozenset[str],
+    link_open: LinkOpen,
     resolve_errors: dict[str, ChartResolveFailure],
 ) -> ResolvedBoard:
     """Resolve a nested board using the pre-resolved charts from the root board.
@@ -631,6 +644,7 @@ def _resolve_nested(
         variable_values=variable_values,
         executor=executor,
         filter_variables=filter_variables,
+        link_open=link_open,
         chart_variants=chart_variants,
         resolve_errors=resolve_errors,
     )

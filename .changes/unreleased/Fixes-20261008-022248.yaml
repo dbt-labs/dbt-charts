@@ -1,3 +1,0 @@
-kind: Fixes
-body: Jinja errors in query SQL now name the template line at fault instead of a misleading cause.
-time: 2026-10-08T02:22:48.636468-07:00

@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -25,6 +26,7 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_yaml
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
@@ -118,7 +120,7 @@ def test_guard_fires_and_routes_through_the_error_card(
 
     data = [{"cat": "A", "val": 10}, {"cat": "B", "val": 20}]
     chart = make_chart("bar", x="cat", y="val")
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
 
     marks_free_svg = (
@@ -198,7 +200,7 @@ def _render_chart(
     **chart_kwargs: Any,
 ) -> str:
     chart = make_chart(chart_type, **chart_kwargs)
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
     svg, _height = render_chart_item(
         resolve(chart, data, chart_style_context=_CHART_CTX),

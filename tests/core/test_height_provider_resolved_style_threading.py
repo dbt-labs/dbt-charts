@@ -12,6 +12,7 @@ The provider then uses the correct nested board's resolved_style for each chart.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,6 +22,7 @@ from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedChart as ResolvedChartV2,
 )
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 
@@ -91,7 +93,7 @@ def test_height_provider_uses_nested_board_resolved_style() -> None:
 
     outer_layout = Layout.model_validate({"type": "cols", "items": [board_item]})
 
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = []
     render_ctx = SizingRenderCtx(
         executor=executor,
@@ -212,7 +214,7 @@ def test_sibling_nested_boards_different_themes_get_correct_resolved_styles() ->
         {"type": "cols", "items": [cream_board_item, stark_board_item]}
     )
 
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = []
     render_ctx = SizingRenderCtx(
         executor=executor,
@@ -313,7 +315,7 @@ def test_height_provider_resolved_style_param_propagated_to_render(
     )
     outer_layout = Layout.model_validate({"type": "cols", "items": [board_item]})
 
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = []
     render_ctx = SizingRenderCtx(
         executor=executor,

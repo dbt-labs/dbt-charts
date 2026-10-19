@@ -1,3 +1,0 @@
-kind: Fixes
-body: A line of pipes that is not a table no longer hangs markdown rendering.
-time: 2026-10-14T23:02:12.32932-07:00

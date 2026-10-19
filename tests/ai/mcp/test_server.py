@@ -9,6 +9,7 @@ and per-resource / per-URI / ResourceTemplate coverage (FR-004, FR-005, FR-013).
 import asyncio
 import json
 import shutil
+import socket
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -319,7 +320,8 @@ class TestRunServerPortPropagation:
         tmp_path: Path,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
-        fixed_port = 18999  # arbitrary non-default
+        listener = socket.create_server(("localhost", 0))
+        fixed_port = listener.getsockname()[1]
 
         captured: dict[str, object] = {}
 
@@ -328,15 +330,18 @@ class TestRunServerPortPropagation:
         # context. Real port resolution (including the taken-port increment
         # against a live socket) is covered by
         # dbt-charts/tests/core/test_serve_embedded.py; serving itself is
-        # `asyncio.create_task(http_server.serve())` in run_server.
+        # `embedded.start_embedded_server` in run_server.
         class _StubServer:
             should_exit = False
+            started = True
 
-            async def serve(self) -> None:
+            async def serve(self, sockets: object = None) -> None:
                 return None
 
-        def _stub_build(*args: object, **kwargs: object) -> tuple[_StubServer, int]:
-            return _StubServer(), fixed_port
+        def _stub_build(
+            *args: object, **kwargs: object
+        ) -> tuple[_StubServer, socket.socket]:
+            return _StubServer(), listener
 
         monkeypatch.setattr(
             "dbt_charts.core.serve.embedded.build_embedded_server", _stub_build
@@ -395,9 +400,81 @@ class TestRunServerPortPropagation:
 
         monkeypatch.setattr(mcp_server, "create_server", _spy_create_server)
 
-        asyncio.run(mcp_server.run_server(local_project(tmp_path), None))
+        with listener:
+            asyncio.run(mcp_server.run_server(local_project(tmp_path), None))
 
         assert captured["server_port"] == fixed_port
+
+
+class TestRunServerPreviewStartupFailure:
+    def test_preview_that_never_listens_is_an_error_not_a_hang(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        """A preview that dies at startup must stop the process, not wedge it.
+
+        Once stdio is open its reader thread blocks on stdin, so the process
+        cannot exit while the client waits on a tool reply. The transport must
+        stay closed until the preview listens.
+        """
+
+        class _NeverListens:
+            should_exit = False
+            started = False
+
+            async def serve(self, sockets: object = None) -> None:
+                return None
+
+        listener = socket.create_server(("localhost", 0))
+
+        def _stub_build(*args: object, **kwargs: object) -> tuple[object, object]:
+            return _NeverListens(), listener
+
+        monkeypatch.setattr(
+            "dbt_charts.core.serve.embedded.build_embedded_server", _stub_build
+        )
+
+        opened: list[bool] = []
+
+        class _ClientWaitsForever:
+            async def __aenter__(self) -> tuple[object, object]:
+                opened.append(True)
+                await asyncio.Event().wait()
+                raise AssertionError("unreachable")
+
+            async def __aexit__(self, *_: object) -> None:
+                return None
+
+        monkeypatch.setattr("mcp.server.stdio.stdio_server", _ClientWaitsForever)
+
+        class _StubProject:
+            project = local_project(tmp_path)
+            adapter_registry = object()
+
+            def __enter__(self) -> "_StubProject":
+                return self
+
+            def __exit__(self, *_: object) -> None: ...
+
+        def _from_project_stub(cls: type, *a: object, **kw: object) -> object:
+            return _StubProject()
+
+        monkeypatch.setattr(
+            ProjectSession, "from_project", classmethod(_from_project_stub)
+        )
+
+        from dbt_charts.ai.mcp import server as mcp_server
+
+        async def _run() -> None:
+            await asyncio.wait_for(
+                mcp_server.run_server(local_project(tmp_path), None), timeout=5
+            )
+
+        with listener, pytest.raises(RuntimeError, match="preview server"):
+            asyncio.run(_run())
+        assert opened == []
 
 
 # ---------------------------------------------------------------------------
@@ -805,12 +882,15 @@ class TestRunServerOwnsProjectSessionWithRefresh:
         # Stub embedded HTTP + stdio so run_server returns immediately.
         class _StubServer:
             should_exit = False
+            started = True
 
-            async def serve(self) -> None:
+            async def serve(self, sockets: object = None) -> None:
                 return None
 
-        def _build_stub_server(*a: object, **kw: object) -> tuple[object, int]:
-            return _StubServer(), 19000
+        listener = socket.create_server(("localhost", 0))
+
+        def _build_stub_server(*a: object, **kw: object) -> tuple[object, object]:
+            return _StubServer(), listener
 
         monkeypatch.setattr(
             "dbt_charts.core.serve.embedded.build_embedded_server",
@@ -842,7 +922,8 @@ class TestRunServerOwnsProjectSessionWithRefresh:
         monkeypatch.setattr(mcp_server, "create_server", _create_spy_server)
 
         injected = local_project(tmp_path)
-        asyncio.run(mcp_server.run_server(injected, None))
+        with listener:
+            asyncio.run(mcp_server.run_server(injected, None))
 
         assert sessions == [injected], (
             f"built {len(sessions)} session(s) — must be exactly one, from the "

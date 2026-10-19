@@ -28,7 +28,7 @@ from dbt_charts.core.compile.models.chart.authored import (
 )
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
-from dbt_charts.core.compile.models.primitives import HtmlPolicy, Regional
+from dbt_charts.core.compile.models.primitives import BoardLinks, HtmlPolicy, Regional
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
@@ -91,6 +91,7 @@ def build_unified_layout(
     sources: dict[str, Any],
     html_policy: HtmlPolicy,
     regional: Regional,
+    links: BoardLinks,
     cache_root: CachePatch | None = None,
     path_prefix: AuthoringPathPrefix = "",
 ) -> Layout:
@@ -145,6 +146,7 @@ def build_unified_layout(
             sources=sources,
             html_policy=html_policy,
             regional=regional,
+            links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
         )
@@ -170,6 +172,7 @@ def build_unified_layout(
             sources=sources,
             html_policy=html_policy,
             regional=regional,
+            links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
         )
@@ -195,6 +198,7 @@ def build_unified_layout(
             sources=sources,
             html_policy=html_policy,
             regional=regional,
+            links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
         )
@@ -223,6 +227,7 @@ def build_unified_layout(
             sources=sources,
             html_policy=html_policy,
             regional=regional,
+            links=links,
             path_prefix=path_prefix,
         )
 
@@ -292,6 +297,7 @@ def build_unified_layout(
             sources=sources,
             html_policy=html_policy,
             regional=regional,
+            links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
         )
@@ -321,6 +327,7 @@ def _resolve_layout_items(
     sources: dict[str, Any],
     html_policy: HtmlPolicy,
     regional: Regional,
+    links: BoardLinks,
     cache_root: CachePatch | None = None,
     local_chart_ids: set[str] | None = None,
     path_prefix: AuthoringPathPrefix = "",
@@ -373,6 +380,7 @@ def _resolve_layout_items(
             sources=sources,
             html_policy=html_policy,
             regional=regional,
+            links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
         )
@@ -400,6 +408,7 @@ def _resolve_single_item(
     sources: dict[str, Any],
     html_policy: HtmlPolicy,
     regional: Regional,
+    links: BoardLinks,
     cache_root: CachePatch | None = None,
     local_chart_ids: set[str] | None = None,
     path_prefix: AuthoringPathPrefix = "",
@@ -445,6 +454,7 @@ def _resolve_single_item(
                 cache_root=cache_root,
                 sources=sources,
                 regional=regional,
+                links=links,
             )
         elif item in charts:
             if chart_registry is None:
@@ -486,6 +496,7 @@ def _resolve_single_item(
             sources=sources,
             board_cache=board_cache,
             written_in=base_dir,
+            link_open=links.open,
         )
         return LayoutItem(
             type="chart",
@@ -520,6 +531,7 @@ def _resolve_single_item(
                 "theme": theme,
                 "html_policy": html_policy,
                 "regional": regional,
+                "links": links,
                 "variables": parent_variables,
             },
             query_registry=query_registry,
@@ -573,6 +585,7 @@ def _resolve_single_item(
             sources=sources,
             board_cache=board_cache,
             written_in=base_dir,
+            link_open=links.open,
         )
         return LayoutItem(
             type="chart", chart=chart, source_path=source_path, visible=item.visible
@@ -630,6 +643,7 @@ def _resolve_board_file_import(
     sources: dict[str, Any],
     cache_root: CachePatch | None = None,
     regional: Regional,
+    links: BoardLinks,
 ) -> LayoutItem:
     """Load and resolve a board file import.
 
@@ -712,6 +726,7 @@ def _resolve_board_file_import(
         "sources": sources,
         "theme": theme,
         "regional": regional,
+        "links": links,
         "variables": parent_variables,  # Pass variables to child
     }
 
@@ -753,6 +768,7 @@ def _resolve_grid_items(
     sources: dict[str, Any],
     html_policy: HtmlPolicy,
     regional: Regional,
+    links: BoardLinks,
     cache_root: CachePatch | None = None,
     local_chart_ids: set[str] | None = None,
     path_prefix: AuthoringPathPrefix = "",
@@ -809,6 +825,7 @@ def _resolve_grid_items(
             sources=sources,
             html_policy=html_policy,
             regional=regional,
+            links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
         )
@@ -863,6 +880,7 @@ def _resolve_tab_items(
     sources: dict[str, Any],
     html_policy: HtmlPolicy,
     regional: Regional,
+    links: BoardLinks,
     cache_root: CachePatch | None = None,
     path_prefix: AuthoringPathPrefix = "",
 ) -> tuple[list[LayoutItem], list[str]]:
@@ -922,6 +940,7 @@ def _resolve_tab_items(
                     "theme": theme,
                     "html_policy": html_policy,
                     "regional": regional,
+                    "links": links,
                 },
                 query_registry=query_registry,
                 chart_registry=chart_registry,
@@ -954,6 +973,7 @@ def _resolve_tab_items(
                 theme=theme,
                 html_policy=html_policy,
                 regional=regional,
+                links=links,
                 authored_style=tab_item.style,
                 resolved_style=resolved_style,
                 chart_style_context=chart_style_context,
@@ -981,6 +1001,7 @@ def _resolve_tab_items(
                 theme=theme,
                 html_policy=html_policy,
                 regional=regional,
+                links=links,
                 authored_style=tab_item.style,
                 resolved_style=resolved_style,
                 chart_style_context=chart_style_context,

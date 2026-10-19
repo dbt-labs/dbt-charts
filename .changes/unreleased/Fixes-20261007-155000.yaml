@@ -1,3 +1,0 @@
-kind: Fixes
-body: Validate's join and re-aggregation warnings stop flagging lookup joins, window functions, single-row joins and SUM-of-SUM, name both functions when they fire, and now cover SQL using `ref()` or `source()`.
-time: 2026-10-07T15:50:00.000000-07:00

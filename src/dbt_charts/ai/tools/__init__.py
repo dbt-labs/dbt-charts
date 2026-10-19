@@ -244,14 +244,13 @@ def _handle_write_file(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[st
     return result.model_dump(mode="json", exclude_none=True)
 
 
-def _handle_edit_file(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, Any]:
-    parsed = _files.EditFileArgs.model_validate(args)
-    # Deliberately does NOT license a later whole-file overwrite: edit_file
-    # reads the file internally but returns no content, so the agent has been
-    # shown nothing. read_file is the only tool
-    # that puts the content in front of the model.
-    return _files.edit_file(
-        parsed.path, parsed.edits, ctx.project_session.project
+def _handle_apply_patch(
+    args: dict[str, Any], ctx: DbtChartsAIContext
+) -> dict[str, Any]:
+    # Like edit, deliberately does NOT license a later whole-file overwrite: the
+    # agent is shown a diff it wrote, not the file.
+    return _files.apply_patch(
+        _files.PatchOperation.model_validate(args), ctx.project_session.project
     ).model_dump(mode="json", exclude_none=True)
 
 
@@ -281,7 +280,7 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "describe_board": _handle_describe_board,
     "read_file": _handle_read_file,
     "write_file": _handle_write_file,
-    "edit_file": _handle_edit_file,
+    "apply_patch": _handle_apply_patch,
     "move_file": _handle_move_file,
     "delete_file": _handle_delete_file,
     "list_skills": _handle_list_skills,

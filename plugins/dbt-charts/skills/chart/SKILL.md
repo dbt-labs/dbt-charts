@@ -40,7 +40,7 @@ These are every tool a board needs.
 - `height` (text|int): Height when nested (e.g., '300px' or an integer in pixels)
 - `style` (mapping): Appearance overrides for this board (background, border, and more)
 - `extends` (text|clarity|neon|paper|stark|vivid): Themes or board files to inherit, low to high priority
-Also exist: `notes`, `tags`, `aliases`, `html_policy`, `cache`, `incremental`, `card_gap`, `chart_focus`, `details`, `id`, `visible`, `auto_link`, `regional`.
+Also exist: `notes`, `tags`, `aliases`, `html_policy`, `cache`, `incremental`, `card_gap`, `chart_focus`, `details`, `id`, `visible`, `links`, `regional`.
 - Board can only have one layout type (rows, cols, grid, or tabs)
 - Board must have at least one layout type, text, title, or chart
 - Quote a text value that holds `: ` or is all digits: `title: "Mix: 2006 vs 2015"`, `label: "2009"`.

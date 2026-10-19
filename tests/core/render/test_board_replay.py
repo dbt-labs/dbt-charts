@@ -13,12 +13,14 @@ import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.compiler import compile as compile_board
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.resolve.chart.label_data import (
     pie_presentation_fingerprint,
 )
@@ -668,7 +670,7 @@ cols: [c1, c2]
     assert result.success, result.errors
     assert result.board is not None
 
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_chart.return_value = []
     executor.cache_hit_ats = []
     executor.rendered_at = PINNED_RENDER_TIME

@@ -1768,7 +1768,7 @@ def test_the_board_offers_no_control_a_design_edit_should_not_reach() -> None:
     - `source` is the warehouse connection. A string parses, nothing in
       `normalize/` validates the name, and `resolve_source_config` raises
       `ERR-SOURCE-NOT-FOUND` at execute for every query on the board.
-    - `auto_link` is a `dct serve` behavior flag.
+    - `links.auto` is a `dct serve` behavior flag.
     - `html_policy` is a security tier Cloud hard-pins below `trusted-raw`, so
       the higher value is written, read back as authored, and downgraded.
     - `id` is identity. A chart's is overwritten from the `charts:` map key
@@ -1783,7 +1783,7 @@ def test_the_board_offers_no_control_a_design_edit_should_not_reach() -> None:
         "    type: kpi\n"
         "    value: m\n"
     )[""]
-    for key in ("source", "auto_link", "html_policy", "id"):
+    for key in ("source", "links", "html_policy", "id"):
         assert key not in _flat(board)
 
 

@@ -1,3 +1,0 @@
-kind: Fixes
-body: Legends, endpoint labels and axis labels in bold or other non-default weights no longer collide with or clip their neighbors.
-time: '2026-09-28T15:41:34.000000-07:00'

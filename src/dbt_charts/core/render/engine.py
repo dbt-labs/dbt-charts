@@ -61,7 +61,7 @@ from dbt_charts.core.render.board_variables import (
     current_board_variables,
     current_root_board_width,
 )
-from dbt_charts.core.render.chart.auto_link import get_filter_variables_context
+from dbt_charts.core.render.chart.automatic_link import get_filter_variables_context
 from dbt_charts.core.render.chart.axis_label_collision import (
     AxisLabelCollision,
     record_axis_label_collision,

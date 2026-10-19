@@ -370,11 +370,11 @@ def test_chartpatch_union_dispatches_already_instantiated_callout():
     assert isinstance(result, CalloutChart)
 
 
-# --- link: false is the per-chart auto_link opt-out ---
+# --- link: false is the per-chart `links.auto` opt-out ---
 
 
 def test_link_false_accepted_on_authored_chart():
-    """link: false is the typed per-chart auto_link opt-out."""
+    """link: false is the typed per-chart `links.auto` opt-out."""
     adapter = TypeAdapter(AuthoredChart)
     result = adapter.validate_python(
         {"type": "table", "query": "orders", "link": False}

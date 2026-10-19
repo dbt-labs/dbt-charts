@@ -1,3 +1,0 @@
-kind: Fixes
-body: A table column with no format prints exact grouped digits when its values do not compact, instead of mixing units like 5, 1.2 K and 77.
-time: 2026-10-15T01:57:29.558601-07:00

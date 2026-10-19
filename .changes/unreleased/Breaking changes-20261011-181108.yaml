@@ -1,3 +1,0 @@
-kind: Breaking changes
-body: The execute_sql tool returns CSV bounded at 25,000 tokens and no longer takes a limit argument.
-time: 2026-10-11T18:11:08.941929-07:00

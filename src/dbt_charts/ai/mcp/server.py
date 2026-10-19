@@ -10,7 +10,6 @@ Tools: all tools from dbt_charts.ai.tool_schemas.ALL_TOOLS (render_board,
 Usage: dct mcp serve
 """
 
-import asyncio
 import json
 import logging
 from pathlib import Path
@@ -275,23 +274,23 @@ async def run_server(project: "Project", cache: "QueryResultCache | None") -> No
 
     from dbt_charts.agent_api import ProjectSession
     from dbt_charts.core.execute.adapters import LOCAL_AUTHORING_REGISTRY_KWARGS
-    from dbt_charts.core.serve.embedded import build_embedded_server
+    from dbt_charts.core.serve import embedded
 
     with ProjectSession.from_project(
         project, cache=cache, **LOCAL_AUTHORING_REGISTRY_KWARGS
     ) as project_session:
-        http_server, resolved_http_port = build_embedded_server(
+        http_server, listener = embedded.build_embedded_server(
             cast("FilesystemProject", project_session.project)
         )
         server = create_server(
             context=DbtChartsAIContext(
                 project_session=project_session,
-                server_port=resolved_http_port,
+                server_port=listener.getsockname()[1],
             )
         )
 
         logger.info("Starting dbt-charts MCP server (stdio mode)")
-        http_task = asyncio.create_task(http_server.serve())
+        http_task = await embedded.start_embedded_server(http_server, listener)
 
         try:
             async with stdio_server() as (read_stream, write_stream):

@@ -1,5 +1,0 @@
-kind: Fixes
-body: Scatter charts with a size column now draw readable bubbles instead of 1-2 px dots.
-time: 2026-10-09T13:09:59.495471-07:00
-custom:
-  DbtChartsIssue: "70"

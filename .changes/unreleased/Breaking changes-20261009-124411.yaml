@@ -1,3 +1,0 @@
-kind: Breaking changes
-body: A chart's `number_format` and `time_format` move to the axis label format; boards update automatically unless the target slot already has a format, which needs a manual move. A query's `formats:` now sets a column's format everywhere.
-time: 2026-10-09T12:44:11.834178-07:00

@@ -204,7 +204,7 @@ _AUDIT_REQUIRED_MENTIONS = [
     "cache",  # board/query cache policy overlay
     "extends",  # board inheritance chain (theme: is sugar for it)
     "html_policy",  # board HTML rendering policy (successor of allow_html)
-    "auto_link",  # board-level table auto-linking
+    "links",  # board-level table auto-linking
     "variant",  # kpi layout variant
     "basemap",  # point_map/bubble_map background layer
     "warnings_ignore",  # per-chart render-warning suppression

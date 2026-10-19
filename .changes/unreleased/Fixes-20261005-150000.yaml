@@ -1,3 +1,0 @@
-kind: Fixes
-body: Tables warn when a column of fractions has no number format, instead of silently showing values like 437m.
-time: 2026-10-05T15:00:00.000000-07:00

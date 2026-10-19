@@ -1,3 +1,7 @@
+from types import SimpleNamespace
+
+from dbt_charts.core.compile.models.primitives import BoardLinks
+
 """Tests for text render output format."""
 
 import dataclasses
@@ -30,7 +34,7 @@ def _make_executor(data: list[dict]) -> MagicMock:
     were a zero-row query result, firing a spurious
     WARN-QUERY-RETURNED-ZERO-ROWS into every test's text output.
     """
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.render_with_range_filters.return_value = None
     executor.execute_chart.return_value = data
     executor.execute_query.return_value = data
@@ -1362,6 +1366,7 @@ def test_kpi_with_no_rows_stamps_no_data_code(make_chart):
         _default_chart_style_context(),
         collected,
         filter_variables=frozenset(),
+        link_open="page",
         include_text_format=True,
     )
     assert [d.code for d in collected] == [ERR_KPI_NO_DATA.code]

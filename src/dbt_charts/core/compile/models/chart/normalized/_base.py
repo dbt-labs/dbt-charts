@@ -82,7 +82,7 @@ class _BaseChartFields(BaseModel):
         default="",
         description="Prose summary of what this chart shows, carried onto the rendered chart for tools to surface.",
     )
-    # False is the authored per-chart auto_link opt-out; resolve clears it to
+    # False is the authored per-chart `links.auto` opt-out; resolve clears it to
     # None at the resolved boundary, so ResolvedChart.link stays str | None.
     link: Annotated[str | Literal[False] | None, Url()] = Field(
         default=None,

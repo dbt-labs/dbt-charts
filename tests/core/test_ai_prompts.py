@@ -380,7 +380,7 @@ class TestSkillsIndexPromptReferencesRealTools:
     def test_skills_index_references_are_real_agent_tools(self) -> None:
         from dbt_charts.ai.tool_schemas import AGENT_TOOLS
 
-        tool_names = {tool["name"] for tool in AGENT_TOOLS}
+        tool_names = {tool["name"] for tool in AGENT_TOOLS if "name" in tool}
         index = build_skills_index()
         for referenced in ("get_skill", "list_skills"):
             assert referenced in tool_names
@@ -389,7 +389,7 @@ class TestSkillsIndexPromptReferencesRealTools:
     def test_docs_pointer_reference_is_a_real_agent_tool(self) -> None:
         from dbt_charts.ai.tool_schemas import AGENT_TOOLS
 
-        tool_names = {tool["name"] for tool in AGENT_TOOLS}
+        tool_names = {tool["name"] for tool in AGENT_TOOLS if "name" in tool}
         assert "docs" in tool_names
         assert "docs" in build_docs_pointer()
 
@@ -427,7 +427,7 @@ class TestDashboardBuildSkill:
         permission question — and this layer has no principal concept, so it
         must not answer it.
 
-        Cloud's `write_file`/`edit_file` are not access-checked per destination
+        Cloud's `write_file`/`apply_patch` are not access-checked per destination
         (unlike `move_file`/`delete_file`, which route through the governed
         relocation service). Host-agnostic prose sanctioning a folder-wide
         sweep would tell every agent that an unchecked bulk write is fine.

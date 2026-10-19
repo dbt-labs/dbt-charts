@@ -727,6 +727,31 @@ ERR_WAREHOUSE_RUNTIME = REGISTRY.register(
     )
 )
 
+ERR_WAREHOUSE_AUTH = REGISTRY.register(
+    ErrorCode(
+        code="ERR-WAREHOUSE-AUTH",
+        domain="execute",
+        title="Warehouse rejected the credentials",
+        message_template=(
+            "Warehouse rejected the credentials: {detail}. "
+            "Refresh or correct the credentials for this source (for BigQuery, "
+            "`gcloud auth application-default login`), then run it again. "
+            "The SQL is not at fault."
+        ),
+        doc=(
+            "Fired when a query reaches the warehouse and fails because the "
+            "credentials are expired, revoked, missing, or wrong: a stale "
+            "BigQuery application-default login (`invalid_grant`, "
+            "reauthentication needed), an expired Snowflake session token or "
+            "wrong password, a rejected Postgres or Redshift password. The "
+            "detail carries the warehouse's original message. Re-authenticate "
+            "and re-run; the failure is never written to the result cache, so "
+            "no `--no-cache` is needed."
+        ),
+        docs_topic="queries",
+    )
+)
+
 ERR_WAREHOUSE_CONNECTION = REGISTRY.register(
     ErrorCode(
         code="ERR-WAREHOUSE-CONNECTION",

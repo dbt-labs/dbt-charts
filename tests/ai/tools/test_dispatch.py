@@ -615,9 +615,10 @@ _TOOL_HAPPY_PATH_ARGS: dict[str, dict[str, Any]] = {
     # "project_dir" injected at test time (writes stay inside tmp_path).
     "read_file": {"path": "nonexistent.yml"},
     "write_file": {"path": "out.yml", "content": "title: X\n"},
-    "edit_file": {
+    "apply_patch": {
+        "type": "update_file",
         "path": "nonexistent.yml",
-        "edits": [{"old_string": "a", "new_string": "b"}],
+        "diff": "@@\n-a\n+b\n",
     },
     "move_file": {"source_path": "nonexistent.yml", "destination_path": "dest.yml"},
     "delete_file": {"path": "nonexistent.yml"},
@@ -1417,16 +1418,17 @@ class TestWriteFileNeverClobbersUnreadContent:
     def test_editing_a_file_does_not_license_rewriting_it(
         self, context: DbtChartsAIContext, tmp_path: Path
     ) -> None:
-        # edit_file reads internally but returns no content, so the agent has
+        # apply_patch reads internally but returns no content, so the agent has
         # been shown nothing. A search hit carries enough chart text to build a
         # unique old_string for a board never opened — licensing a whole-file
         # write off that would widen the gate to the case it exists to stop.
         (tmp_path / "board.yml").write_text("title: Real board\ncharts: {}\n")
         dispatch_tool_call(
-            "edit_file",
+            "apply_patch",
             {
+                "type": "update_file",
                 "path": "board.yml",
-                "edits": [{"old_string": "Real", "new_string": "Edited"}],
+                "diff": "@@\n-title: Real board\n+title: Edited board\n",
             },
             context=context,
         )

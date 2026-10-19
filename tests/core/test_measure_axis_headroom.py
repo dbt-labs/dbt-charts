@@ -177,6 +177,7 @@ def test_layer_query_widens_shared_y_domain() -> None:
         executor,
         {},
         filter_variables=frozenset(),
+        link_open="page",
     )
 
     assert resolved.style.axis_y.domain_max == pytest.approx(250.0 * (1 + _HEADROOM))
@@ -195,6 +196,7 @@ def test_right_axis_layer_query_does_not_widen_primary_y_domain() -> None:
         executor,
         {},
         filter_variables=frozenset(),
+        link_open="page",
     )
 
     assert resolved.style.axis_y.domain_max == pytest.approx(70.5 * (1 + _HEADROOM))

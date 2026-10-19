@@ -1,3 +1,0 @@
-kind: Features
-body: axis_y.mirror now works on a layered chart whose layers share the base's y axis.
-time: 2026-10-14T22:51:57.828228-07:00

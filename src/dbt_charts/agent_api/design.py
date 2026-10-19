@@ -125,10 +125,10 @@ _NOT_DESIGN = frozenset(
         # ERR-SOURCE-NOT-FOUND for every query on the board. The panel commits
         # on blur, so one stray focus repoints the whole board's data.
         "source",
-        # A serving behavior flag — whether rendered links auto-resolve — not
-        # an appearance. A design control that changes navigation is the wrong
-        # affordance for it.
-        "auto_link",
+        # Serving behavior — whether links auto-resolve and how they open —
+        # not an appearance. A design control that changes navigation is the
+        # wrong affordance for it.
+        "links",
         # Query-result cache TTL — the query layer's, on the same footing as
         # `source`. Invisible until the walk recursed fully, because a nested
         # model projected to no control at all.

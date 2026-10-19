@@ -151,13 +151,6 @@ DbtProjectDirOption = Annotated[
 ]
 
 
-# Configure logging for CLI (only if no handlers configured yet)
-if not logging.getLogger().handlers:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(name)s - %(levelname)s - %(message)s",
-    )
-
 # httpx logs one INFO line per request; on `dct cloud` verbs that is a
 # request-log line above every answer the user asked for. The CLI owns what it
 # prints, so it decides this here rather than the client silencing a logger it
@@ -1997,8 +1990,23 @@ def main(
             help="Do not send anonymous usage statistics.",
         ),
     ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-v",
+            help="Print internal log lines to stderr, for debugging dct itself.",
+        ),
+    ] = False,
 ) -> None:
     """dct - Declarative, dbt-native dashboards in YAML."""
+    # Diagnostics are the user-facing channel; library log records repeat them,
+    # so they print only on request.
+    if verbose:
+        logging.basicConfig(
+            level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s"
+        )
+        logging.getLogger("dbt_charts").setLevel(logging.DEBUG)
     _reconfigure_console_encoding()
     _never_fail(_track_invocation, ctx, no_send_anonymous_usage_stats)
     # Runs before any subcommand, so every warehouse query this process sends is

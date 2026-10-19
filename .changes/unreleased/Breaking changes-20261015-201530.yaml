@@ -1,3 +1,0 @@
-kind: Breaking changes
-body: 'search_boards hits are compact: they no longer carry the chart list, query names or SQL sample (use describe_board), and the page limit is now up to 200.'
-time: 2026-10-15T20:15:30.507476-07:00

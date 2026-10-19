@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'A layer `axis_y.title` without a pinned `axis_y.position` now errors instead of being dropped.'
-time: 2026-10-06T13:06:00.000000-07:00

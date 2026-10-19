@@ -760,7 +760,11 @@ def generate_vega_lite_spec(
     # indexes _FAMILY_SLOT by chart.type and KeyErrors on those same types, so it must
     # only run after resolve() has confirmed the type is a real, authorable family.
     resolved = resolve(
-        chart, data, chart_style_context=context, width=width, display_text="raw"
+        chart,
+        data,
+        chart_style_context=context,
+        width=width,
+        display_text="raw",
     )
     if isinstance(resolved, ResolvedPieChart):
         raise RenderError.from_code(

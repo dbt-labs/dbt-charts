@@ -1,3 +1,0 @@
-kind: Breaking changes
-body: 'The validate_board, query_board, search_skills and describe_query agent tools are removed, along with dct query --describe and dct skills --search: render_board validates, execute_sql takes board and query to run a stored board''s named query, and list_skills lists the skills.'
-time: 2026-10-09T15:55:17.391191-07:00

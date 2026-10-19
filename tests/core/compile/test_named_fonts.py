@@ -300,13 +300,11 @@ def test_chart_local_font_name_reaches_the_rendered_chart() -> None:
     assert "#ff0000" in svg
 
 
-def test_chart_local_unknown_font_name_fails_the_chart(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    from .._svg_render import render_board_to_svg
+def test_chart_local_unknown_font_name_fails_the_chart() -> None:
+    from .._svg_render import render_board_svg_result
 
-    render_board_to_svg(_CHART_BOARD.format(font="nope"))
-    assert "Unknown font 'nope' at charts.c1.style.axis.labels.font" in caplog.text
+    [error] = render_board_svg_result(_CHART_BOARD.format(font="nope")).chart_errors
+    assert "Unknown font 'nope' at charts.c1.style.axis.labels.font" in error.message
 
 
 def _theme_bound_font_slots() -> list[tuple[str, dict[str, Any]]]:

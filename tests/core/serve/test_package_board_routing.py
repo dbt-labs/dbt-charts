@@ -97,41 +97,27 @@ class TestPackageDirectoryListing:
         assert 'href="/pkg_a/"' in response.text
 
 
-class TestPackageBoardCollision:
-    def test_host_directory_named_after_package_raises_at_startup(
+class TestHostBoardShadowsPackageBoard:
+    def test_host_board_serves_and_package_sibling_still_appears(
         self, tmp_path: Path
     ) -> None:
-        """A host `charts/pkg_a/` directory alongside an installed `pkg_a`
-        package is a root-level collision — surfaces as a hard build-time
-        error, not silently picking a winner."""
         (tmp_path / "charts" / "pkg_a").mkdir(parents=True)
-        (tmp_path / "charts" / "pkg_a" / "x.yml").write_text("title: X\ntext: hi\n")
+        (tmp_path / "charts" / "pkg_a" / "overview.yml").write_text(
+            "title: Host Overview\ntext: from host\n"
+        )
         pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
         pkg_charts.mkdir(parents=True)
         (pkg_charts / "overview.yml").write_text(_OVERVIEW_BOARD)
+        (pkg_charts / "other.yml").write_text("title: Pkg Other\ntext: from pkg\n")
 
         app = create_server(FilesystemProject(tmp_path))
-        with (
-            pytest.raises(ValueError, match="(?i)collision"),
-            TestClient(app, raise_server_exceptions=True),
-        ):
-            pass  # lifespan runs on TestClient __enter__
-
-    def test_host_file_named_after_package_raises_at_startup(
-        self, tmp_path: Path
-    ) -> None:
-        (tmp_path / "charts").mkdir(parents=True)
-        (tmp_path / "charts" / "pkg_a.yml").write_text("title: X\ntext: hi\n")
-        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
-        pkg_charts.mkdir(parents=True)
-        (pkg_charts / "overview.yml").write_text(_OVERVIEW_BOARD)
-
-        app = create_server(FilesystemProject(tmp_path))
-        with (
-            pytest.raises(ValueError, match="(?i)collision"),
-            TestClient(app, raise_server_exceptions=True),
-        ):
-            pass
+        with TestClient(app, raise_server_exceptions=True) as client:
+            overview = client.get("/pkg_a/overview/")
+            other = client.get("/pkg_a/other/")
+        assert overview.status_code == 200
+        assert "from host" in overview.text
+        assert other.status_code == 200
+        assert "from pkg" in other.text
 
 
 class TestDirectoryCandidates:
@@ -304,3 +290,54 @@ class TestPackageBoardReadOnlyThroughServe:
             response = client.get("/pkg_a/overview.yaml")
         assert response.status_code == 200
         assert "Zendesk Overview" in response.text
+
+
+class TestHostDirectoryMergesWithPackage:
+    @staticmethod
+    def _client(tmp_path: Path, *, host_ns_file: bool = False) -> TestClient:
+        (tmp_path / "charts" / "pkg_a").mkdir(parents=True)
+        (tmp_path / "charts" / "pkg_a" / "overview.yml").write_text(
+            "title: Host\ntext: from host\n"
+        )
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "overview.yml").write_text(_OVERVIEW_BOARD)
+        (pkg_charts / "other.yml").write_text("title: Pkg Other\ntext: x\n")
+        (pkg_charts / "index.yml").write_text("title: Pkg Index\ntext: pkg index\n")
+        if host_ns_file:
+            (tmp_path / "charts" / "pkg_a.yml").write_text(
+                "title: Host Ns\ntext: host namespace board\n"
+            )
+        return TestClient(
+            create_server(FilesystemProject(tmp_path)), raise_server_exceptions=True
+        )
+
+    def test_package_index_renders_when_host_dir_has_none(self, tmp_path: Path) -> None:
+        with self._client(tmp_path) as client:
+            response = client.get("/pkg_a/")
+        assert response.status_code == 200
+        assert "pkg index" in response.text
+
+    def test_directory_listing_merges_host_and_package_per_slug(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "charts" / "pkg_a").mkdir(parents=True)
+        (tmp_path / "charts" / "pkg_a" / "overview.yml").write_text("title: H\n")
+        pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
+        pkg_charts.mkdir(parents=True)
+        (pkg_charts / "overview.yml").write_text(_OVERVIEW_BOARD)
+        (pkg_charts / "other.yml").write_text("title: O\ntext: x\n")
+        client = TestClient(create_server(FilesystemProject(tmp_path)))
+        with client:
+            response = client.get("/pkg_a/")
+            root = client.get("/")
+        assert response.text.count('<a href="/pkg_a/overview">') == 1
+        assert '<a href="/pkg_a/other">' in response.text
+        assert root.text.count('<a href="/pkg_a/">') == 1
+
+    def test_host_namespace_board_shadows_package_index(self, tmp_path: Path) -> None:
+        with self._client(tmp_path, host_ns_file=True) as client:
+            response = client.get("/pkg_a/")
+        assert response.status_code == 200
+        assert "host namespace board" in response.text
+        assert "pkg index" not in response.text

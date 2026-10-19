@@ -1,5 +1,0 @@
-kind: Fixes
-body: A KPI support line wider than its card is now cut with an ellipsis and warns, instead of painting over the next card.
-time: 2026-10-12T10:13:43.470177-07:00
-custom:
-    DbtChartsIssue: "67"

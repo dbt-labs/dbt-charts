@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'Building a warehouse connection no longer redirects other logging handlers to stderr.'
-time: 2026-10-07T09:58:51.000000-07:00

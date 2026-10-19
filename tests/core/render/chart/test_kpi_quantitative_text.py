@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -27,6 +28,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     KpiSupportConfig,
 )
 from dbt_charts.core.compile.models.chart.normalized import KpiChart
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
@@ -1413,7 +1415,9 @@ class TestKpiHref:
             value="revenue",
             link="/region/{{ region }}",
         )
-        mock_executor = MagicMock(spec=Executor)
+        mock_executor = MagicMock(
+            spec=Executor, board=SimpleNamespace(links=BoardLinks())
+        )
         mock_executor.execute_chart.return_value = [{"revenue": 42}]
         svg, _, _ = render_chart_to_svg(
             chart,

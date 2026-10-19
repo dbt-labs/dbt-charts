@@ -1,3 +1,0 @@
-kind: Features
-body: 'A time axis now spans the whole date range selected with `filter_date_range()` when the chart plots the filtered column, instead of shrinking to the dates that have rows.'
-time: 2026-10-04T19:00:00.000000-07:00

@@ -286,35 +286,34 @@ def _resolve_with_runtime_inputs(
     ``_require_resolved`` records it, and a caller that only measures drops it.
     """
     from dbt_charts.core.compile.resolve import (  # noqa: PLC0415
-        auto_link_excludes_x,
+        automatic_link_excludes_x,
         should_fetch_table_fk_links,
-        should_synthesize_auto_link,
+        should_synthesize_automatic_link,
     )
-    from dbt_charts.core.render.chart.auto_link import (  # noqa: PLC0415
-        get_auto_link_context,
+    from dbt_charts.core.render.chart.automatic_link import (  # noqa: PLC0415
         get_filter_variables_context,
-        synthesize_auto_link,
+        synthesize_automatic_link,
     )
 
     qn = chart.query_name
     data = executor.execute_query(qn, variables) if qn else []
 
-    auto_link_enabled = get_auto_link_context()
+    links = executor.board.links
     automatic_link_candidate: AutomaticLinkCandidate = None
-    if should_synthesize_auto_link(chart, data, auto_link_enabled):
-        synthesized = synthesize_auto_link(
+    if should_synthesize_automatic_link(chart, data, links.auto):
+        synthesized = synthesize_automatic_link(
             chart,
             executor,
-            exclude_x=auto_link_excludes_x(chart, data),
+            exclude_x=automatic_link_excludes_x(chart, data),
         )
         if synthesized:
             automatic_link_candidate = synthesized
 
     table_column_links: dict[str, str] = {}
     table_column_rows: list[dict[str, str]] = []
-    if should_fetch_table_fk_links(chart, auto_link_enabled):
+    if should_fetch_table_fk_links(chart, links.auto):
         assert isinstance(chart, TableChart)
-        from dbt_charts.core.render.chart.auto_link import (  # noqa: PLC0415
+        from dbt_charts.core.render.chart.automatic_link import (  # noqa: PLC0415
             fetch_column_rows_for_link,
             fk_column_links_from_executor,
         )
@@ -344,6 +343,7 @@ def _resolve_with_runtime_inputs(
         table_column_rows=table_column_rows,
         pie_title_font=pie_title_font,
         filter_variables=get_filter_variables_context(),
+        link_open=links.open,
         title_width=title_width,
     )
 
@@ -424,7 +424,7 @@ def _require_resolved(
             title_width,
         )
     except DbtChartsError as exc:
-        _log.warning("Chart %r failed to resolve: %s", chart_id, exc)
+        _log.debug("Chart %r failed to resolve: %s", chart_id, exc)
         render_ctx.resolve_errors[chart_id] = ChartResolveFailure(
             diagnostic=stamp_chart_diagnostic(exc, chart_id, chart.source_path),
             identity=ChartIdentity.from_normalized(chart),
@@ -514,7 +514,7 @@ def _make_chart_width_measurer(
                 resolved, executor.execute_chart(chart, variables), resolved_style
             )
         except DbtChartsError as exc:
-            _log.warning("Table width measurement failed for %r: %s", chart.id, exc)
+            _log.debug("Table width measurement failed for %r: %s", chart.id, exc)
             return configured
         if natural is None:
             return configured

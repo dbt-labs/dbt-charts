@@ -1,3 +1,7 @@
+from types import SimpleNamespace
+
+from dbt_charts.core.compile.models.primitives import BoardLinks
+
 """Tests for Vega-Lite chart generation.
 
 Tests the dbt_charts.core.render.vega_lite module for generating
@@ -891,7 +895,7 @@ class TestRenderChart:
             title="Revenue",
             subtitle="Region: {{ region }}",
         )
-        executor = MagicMock(spec=Executor)
+        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
         executor.execute_query.return_value = [{"month": "Jan", "revenue": 100}]
 
         from dbt_charts.core.compile.resolve.style.board import (

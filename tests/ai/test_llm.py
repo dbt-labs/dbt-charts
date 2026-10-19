@@ -22,6 +22,7 @@ import httpx
 import openai
 import pytest
 
+from dbt_charts.ai.events import ReasoningItemsEvent, ToolCallEvent
 from dbt_charts.ai.failures import AITurnFailure
 from dbt_charts.ai.llm import (
     REASONING_EFFORTS,
@@ -40,9 +41,11 @@ from dbt_charts.ai.messages import (
     UserMessage,
 )
 from dbt_charts.ai.openai_gateway import (
+    ApplyPatchCall,
     FunctionCall,
     GatewayError,
     GatewayEvent,
+    ReasoningItems,
     ReasoningSummaryDelta,
     ReasoningSummaryDone,
     ResponsesRequest,
@@ -176,7 +179,11 @@ def test_normalized_openai_tools_satisfy_strict_mode_schema_rules() -> None:
     schemas are excluded on purpose: they are third-party, never
     strict-marked, so OpenAI does not apply these rules to them.
     """
-    tools = normalize_openai_tools([*AGENT_TOOLS, SUGGEST_BOARD_PLACEMENT])
+    tools = [
+        t
+        for t in normalize_openai_tools([*AGENT_TOOLS, SUGGEST_BOARD_PLACEMENT])
+        if t["type"] == "function"
+    ]
     assert tools, "no tools emitted"
     violations: list[str] = []
     for tool in tools:
@@ -192,8 +199,10 @@ def test_normalized_openai_tools_satisfy_strict_mode_schema_rules() -> None:
 def test_normalized_openai_tools_drop_mcp_annotations() -> None:
     """`annotations` is MCP wire metadata; the model-facing function payload
     is built from an explicit key set, so it must never leak into it."""
-    assert all("annotations" in tool for tool in AGENT_TOOLS)
+    assert all("annotations" in tool for tool in AGENT_TOOLS if "name" in tool)
     for tool in normalize_openai_tools(AGENT_TOOLS):
+        if tool["type"] != "function":
+            continue
         assert set(tool) == {"type", "strict", "name", "description", "parameters"}
 
 
@@ -616,3 +625,223 @@ class TestClassifyTurnFailure:
         exception into a return envelope, so nothing can emit it. The
         tool-surface task adds it when it has a producer."""
         assert "tool_error" not in {m.value for m in AITurnFailure}
+
+
+_REASONING_A = {
+    "type": "reasoning",
+    "id": "rs_a",
+    "encrypted_content": "enc_a",
+    "summary": [],
+}
+_REASONING_B = {
+    "type": "reasoning",
+    "id": "rs_b",
+    "encrypted_content": "enc_b",
+    "summary": [],
+}
+
+
+def _opening_request(model: str) -> Any:
+    gateway = _FakeGateway()
+    client = OpenAIAdapter(gateway, model=model)
+    list(
+        client.stream_with_tools(
+            messages=[UserMessage(content="hi")], system_prompt="sys"
+        )
+    )
+    assert gateway.last_request is not None
+    return gateway.last_request
+
+
+@pytest.mark.parametrize("model", ["gpt-5.6-terra", "gpt-6-luna"])
+def test_reasoning_models_get_a_reasoning_block_and_stateless_encrypted_reasoning(
+    model: str,
+) -> None:
+    assert OpenAIAdapter(_FakeGateway(), model=model).effort is not None
+    request = _opening_request(model)
+
+    assert request.reasoning is not None
+    assert request.store is False
+    assert request.include == ["reasoning.encrypted_content"]
+
+
+def test_a_non_reasoning_model_gets_neither_reasoning_nor_encrypted_content() -> None:
+    request = _opening_request("gpt-4.1")
+
+    assert request.reasoning is None
+    assert request.store is None
+    assert request.include is None
+
+
+def test_reasoning_items_precede_the_function_calls_they_preceded() -> None:
+    client, gateway = _make_client()
+    messages: list[AgentMessage] = [
+        UserMessage(content="go"),
+        AssistantMessage(
+            content="let me look",
+            reasoning_items=[_REASONING_A],
+            tool_calls=[ToolCall(id="c1", name="t", arguments={})],
+        ),
+        ToolResultMessage(tool_call_id="c1", name="t", content="r1"),
+        AssistantMessage(
+            reasoning_items=[_REASONING_B],
+            tool_calls=[
+                ToolCall(id="c2", name="t", arguments={}),
+                ToolCall(id="c3", name="t", arguments={}),
+            ],
+        ),
+        ToolResultMessage(tool_call_id="c2", name="t", content="r2"),
+        ToolResultMessage(tool_call_id="c3", name="t", content="r3"),
+    ]
+    list(client.stream_with_tools(messages=messages, system_prompt="sys"))
+
+    assert gateway.last_request is not None
+    items = gateway.last_request.input or []
+    assert [i.get("id") or i.get("call_id") or i.get("role") for i in items] == [
+        "user",
+        "rs_a",
+        "c1",
+        "c1",
+        "rs_b",
+        "c2",
+        "c3",
+        "c2",
+        "c3",
+    ]
+    assert items[1] == _REASONING_A
+    # The preamble text is still never echoed back.
+    assert all(i.get("role") != "assistant" for i in items)
+
+
+def test_history_without_reasoning_items_is_unchanged() -> None:
+    client, gateway = _make_client()
+    messages: list[AgentMessage] = [
+        UserMessage(content="go"),
+        AssistantMessage(tool_calls=[ToolCall(id="c1", name="t", arguments={})]),
+        ToolResultMessage(tool_call_id="c1", name="t", content="r1"),
+    ]
+    list(client.stream_with_tools(messages=messages, system_prompt="sys"))
+
+    assert gateway.last_request is not None
+    assert [
+        i.get("type") or i.get("role") for i in gateway.last_request.input or []
+    ] == [
+        "user",
+        "function_call",
+        "function_call_output",
+    ]
+
+
+def test_gateway_reasoning_items_surface_as_a_stream_event() -> None:
+    gateway = _FakeGateway([ReasoningItems(items=[_REASONING_A])])
+    client = OpenAIAdapter(gateway, model="gpt-test")
+
+    events = list(
+        client.stream_with_tools(
+            messages=[UserMessage(content="hi")], system_prompt="sys"
+        )
+    )
+
+    assert events == [ReasoningItemsEvent(items=[_REASONING_A])]
+
+
+_OPERATION = {"type": "update_file", "path": "charts/a.yml", "diff": "@@\n-a\n+b\n"}
+
+
+def test_request_carries_the_builtin_apply_patch_tool() -> None:
+    client, gateway = _make_client()
+    list(
+        client.stream_with_tools(
+            messages=[UserMessage(content="hi")], system_prompt="sys", tools=AGENT_TOOLS
+        )
+    )
+
+    assert gateway.last_request is not None
+    tools = gateway.last_request.tools or []
+    assert {"type": "apply_patch"} in tools
+    assert "edit_file" not in {t.get("name") for t in tools}
+
+
+def test_apply_patch_call_surfaces_as_a_tool_call_with_the_operation() -> None:
+    gateway = _FakeGateway([ApplyPatchCall(call_id="p1", operation=_OPERATION)])
+    client = OpenAIAdapter(gateway, model="gpt-test")
+
+    events = list(
+        client.stream_with_tools(
+            messages=[UserMessage(content="hi")], system_prompt="sys"
+        )
+    )
+
+    assert events == [ToolCallEvent(id="p1", name="apply_patch", arguments=_OPERATION)]
+
+
+@pytest.mark.parametrize(("failed", "status"), [(False, "completed"), (True, "failed")])
+def test_apply_patch_history_replays_native_items_after_reasoning(
+    failed: bool, status: str
+) -> None:
+    result = "apply_patch result text, not JSON"
+
+    client, gateway = _make_client()
+    messages: list[AgentMessage] = [
+        UserMessage(content="go"),
+        AssistantMessage(
+            reasoning_items=[_REASONING_A],
+            tool_calls=[ToolCall(id="p1", name="apply_patch", arguments=_OPERATION)],
+        ),
+        ToolResultMessage(
+            tool_call_id="p1", name="apply_patch", content=result, failed=failed
+        ),
+    ]
+    list(client.stream_with_tools(messages=messages, system_prompt="sys"))
+
+    assert gateway.last_request is not None
+    items = (gateway.last_request.input or [])[1:]
+    assert [i["type"] for i in items] == [
+        "reasoning",
+        "apply_patch_call",
+        "apply_patch_call_output",
+    ]
+    assert items[1] == {
+        "type": "apply_patch_call",
+        "call_id": "p1",
+        "status": "completed",
+        "operation": _OPERATION,
+    }
+    assert items[2]["call_id"] == "p1"
+    assert items[2]["status"] == status
+    assert items[2]["output"] == result
+
+
+def test_a_stored_edit_file_call_still_replays_as_a_function_call() -> None:
+    """Chat sessions saved before apply_patch hold `edit_file` calls; the tool is
+    no longer offered but its history must stay a valid function_call pair."""
+    client, gateway = _make_client()
+    messages: list[AgentMessage] = [
+        UserMessage(content="go"),
+        AssistantMessage(
+            tool_calls=[
+                ToolCall(
+                    id="e1",
+                    name="edit_file",
+                    arguments={
+                        "path": "charts/a.yml",
+                        "edits": [{"old_string": "a", "new_string": "b"}],
+                    },
+                )
+            ]
+        ),
+        ToolResultMessage(
+            tool_call_id="e1", name="edit_file", content="edit_file succeeded: a"
+        ),
+    ]
+    list(
+        client.stream_with_tools(
+            messages=messages, system_prompt="sys", tools=AGENT_TOOLS
+        )
+    )
+
+    assert gateway.last_request is not None
+    items = (gateway.last_request.input or [])[1:]
+    assert [i["type"] for i in items] == ["function_call", "function_call_output"]
+    assert items[0]["name"] == "edit_file"
+    assert items[1]["call_id"] == "e1"

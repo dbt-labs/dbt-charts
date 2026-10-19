@@ -43,7 +43,18 @@ class ToolCallEvent:
     arguments: dict[str, Any]
 
 
-StreamEvent = ContentDelta | ThinkingStatus | ToolCallEvent
+@dataclass(slots=True)
+class ReasoningItemsEvent:
+    """The provider reasoning items of one response, in output order.
+
+    Consumed by the agent loop (stored on the turn's ``AssistantMessage`` for
+    replay) and never re-yielded to agent-event consumers.
+    """
+
+    items: list[dict[str, Any]]
+
+
+StreamEvent = ContentDelta | ThinkingStatus | ToolCallEvent | ReasoningItemsEvent
 
 # -- Agent-level events (yielded by the agent loop) -------------------------
 
@@ -97,4 +108,12 @@ class AgentError:
     details: str | None = None
 
 
-AgentEvent = StreamEvent | ToolResultEvent | AgentDone | AgentError
+# ReasoningItemsEvent is consumed by the loop and never part of what it yields.
+AgentEvent = (
+    ContentDelta
+    | ThinkingStatus
+    | ToolCallEvent
+    | ToolResultEvent
+    | AgentDone
+    | AgentError
+)

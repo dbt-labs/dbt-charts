@@ -20,7 +20,6 @@ from dbt_charts.agent_api.diagnostics import (
 from dbt_charts.agent_api.docs import DocsArgs
 from dbt_charts.agent_api.files import (
     DeleteFileArgs,
-    EditFileArgs,
     MoveFileArgs,
     ReadFileArgs,
     WriteFileArgs,
@@ -163,7 +162,6 @@ LIST_SKILLS = _ai_tool("list_skills", ListSkillsArgs, "List skills")
 GET_SKILL = _ai_tool("get_skill", GetSkillArgs, "Get skill")
 READ_FILE = _ai_tool("read_file", ReadFileArgs, "Read file")
 WRITE_FILE = _ai_tool("write_file", WriteFileArgs, "Write file", **_WRITES)
-EDIT_FILE = _ai_tool("edit_file", EditFileArgs, "Edit file", **_WRITES)
 MOVE_FILE = _ai_tool("move_file", MoveFileArgs, "Move file", **_WRITES)
 DELETE_FILE = _ai_tool("delete_file", DeleteFileArgs, "Delete file", **_WRITES)
 
@@ -185,10 +183,22 @@ ALL_TOOLS: list[dict[str, Any]] = [
 # their own file tools — duplicating them there is noise. These belong to the
 # in-process agent loop, which has no other way to read/write the project.
 # AGENT_TOOLS is that loop's tool list.
+# Saved boards are changed with the Responses API's built-in apply_patch tool,
+# the editing tool OpenAI models are trained on; it has no schema of ours, so
+# normalize_openai_tools passes it through unchanged.
+APPLY_PATCH_NAME = "apply_patch"
+APPLY_PATCH: dict[str, Any] = {"type": APPLY_PATCH_NAME}
+
+
+def tool_name(tool: dict[str, Any]) -> str:
+    """A tool entry's name: ours carry ``name``, a built-in is identified by its
+    ``type``."""
+    return tool["name"] if "name" in tool else tool["type"]
+
+
 FILE_TOOLS: list[dict[str, Any]] = [
     READ_FILE,
     WRITE_FILE,
-    EDIT_FILE,
     MOVE_FILE,
     DELETE_FILE,
 ]
@@ -229,4 +239,4 @@ SUGGEST_BOARD_PLACEMENT = _ai_tool(
     read_only=False,
 )
 
-AGENT_TOOLS: list[dict[str, Any]] = ALL_TOOLS + FILE_TOOLS
+AGENT_TOOLS: list[dict[str, Any]] = [*ALL_TOOLS, *FILE_TOOLS, APPLY_PATCH]

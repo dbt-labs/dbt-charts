@@ -358,15 +358,15 @@ class TestDetailCompositeKey:
 
 
 # ---------------------------------------------------------------------------
-# table-index template: link synthesis moved to auto_link resolver
+# table-index template: link synthesis moved to the automatic-link resolver
 # ---------------------------------------------------------------------------
 
 
 class TestTableIndexDetailLink:
-    """After consolidation, table-index.yaml sets auto_link=True on the board
-    and carries NO explicit link: on the chart. The auto_link resolver injects
+    """After consolidation, table-index.yaml sets links.auto=True on the board
+    and carries NO explicit link: on the chart. The automatic-link resolver injects
     the detail-page link at render time. Key-selection tests live in
-    test_auto_link.TestPlanLinkKeys and test_auto_link.TestResolveAutoLink.
+    test_automatic_link.TestPlanLinkKeys and test_automatic_link.TestResolveAutoLink.
     """
 
     def _match(self) -> object:
@@ -382,16 +382,16 @@ class TestTableIndexDetailLink:
             )
         }
 
-    def test_expanded_board_has_auto_link_true(self) -> None:
-        """Expanded table-index board must have auto_link=True so the resolver fires."""
+    def test_expanded_board_has_links_auto_true(self) -> None:
+        """Expanded table-index board must have links.auto=True so the resolver fires."""
         board = expand_registered_view(self._match(), query_results=self._col_results())
-        assert getattr(board, "auto_link", False) is True, (
-            f"Expected auto_link=True on expanded board, got: {getattr(board, 'auto_link', 'MISSING')!r}"
+        assert board.links.auto is True, (
+            f"Expected links.auto=True on expanded board, got: {board.links!r}"
         )
 
     def test_expanded_board_chart_has_no_explicit_link(self) -> None:
         """After consolidation the template must not set link: on the chart.
-        The auto_link resolver injects it at render time using plan_link_keys.
+        The automatic-link resolver injects it at render time using plan_link_keys.
         """
         board = expand_registered_view(self._match(), query_results=self._col_results())
         assert board.charts is not None
@@ -400,5 +400,5 @@ class TestTableIndexDetailLink:
         link = getattr(chart, "link", None)
         assert link is None, (
             "After consolidation the template must not set link: on the chart — "
-            f"the auto_link resolver injects it at render time. Got: {link!r}"
+            f"the automatic-link resolver injects it at render time. Got: {link!r}"
         )

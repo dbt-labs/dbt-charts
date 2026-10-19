@@ -115,7 +115,14 @@ def _resolved_y_scale(chart_type: str, chart_style: str, tmp_path: Path) -> Any:
     data = executor.execute_query("leads", {})
     board_style = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
     resolved = resolve_chart_with_runtime_inputs(
-        chart, data, board_style, 600.0, executor, {}, filter_variables=frozenset()
+        chart,
+        data,
+        board_style,
+        600.0,
+        executor,
+        {},
+        filter_variables=frozenset(),
+        link_open="page",
     )
     spec = get_emitter(resolved).emit(
         resolved, RenderBox(width=600.0, height=300.0), regroup((), data)

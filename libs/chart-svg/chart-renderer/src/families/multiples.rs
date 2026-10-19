@@ -263,6 +263,13 @@ pub fn facet_panel_width(
     (usable / panel_cols as f64 - extra_axis_px).max(0.0)
 }
 
+/// `extra_axis_is_affordable`: narrowing a position channel draws one more axis
+/// per column panel, which is worth it only while that leaves a legible panel
+/// (`FACET_MIN_PANEL_PX`). No extra axis is always affordable.
+pub fn extra_axis_is_affordable(unnarrowed_panel_width: f64, extra_axis_px: f64) -> bool {
+    extra_axis_px <= 0.0 || unnarrowed_panel_width - extra_axis_px >= FACET_MIN_PANEL_PX
+}
+
 /// Production resolve rejects a both-edge mirror under an independent scale
 /// (`_axes.py::_apply_multiples_mirror`): each panel owns its scale, so
 /// mirroring a shared one to both edges is meaningless.

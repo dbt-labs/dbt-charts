@@ -1,3 +1,0 @@
-kind: Fixes
-body: Table columns no longer squeeze neighboring columns and wrap their headers when number values have long unformatted digits.
-time: 2026-10-05T16:15:00.000000-07:00

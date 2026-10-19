@@ -36,20 +36,20 @@ from ._kwargs import (
     preferred_chart_width,
 )
 from ._links import (
-    auto_link_excludes_x,
+    automatic_link_excludes_x,
     should_fetch_table_fk_links,
-    should_synthesize_auto_link,
+    should_synthesize_automatic_link,
 )
 from ._table import infer_pivot_measure_names
 
 __all__ = [
     "AutomaticLinkCandidate",
-    "auto_link_excludes_x",
+    "automatic_link_excludes_x",
     "default_chart_width",
     "infer_pivot_measure_names",
     "preferred_chart_width",
     "resolve",
     "resolve_y_zero",
     "should_fetch_table_fk_links",
-    "should_synthesize_auto_link",
+    "should_synthesize_automatic_link",
 ]

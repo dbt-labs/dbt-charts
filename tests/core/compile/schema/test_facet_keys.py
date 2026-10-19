@@ -33,7 +33,7 @@ def test_every_authored_board_field_is_classified() -> None:
     inherits_content = {"extends"}
     configures_only = {
         "aliases",
-        "auto_link",
+        "links",
         "cache",
         "card_gap",
         "chart_focus",

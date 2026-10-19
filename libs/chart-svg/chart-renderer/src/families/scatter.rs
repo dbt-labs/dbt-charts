@@ -2153,7 +2153,7 @@ fn render_facet(
     let y_narrowed = shape.y_nominal
         && !has_mirror
         && crate::families::heatmap_facet::panel_domain_is_proper_subset(&panels, axes, &r.y)
-        && (panel_cols_n == 1 || naive_panel_w - y_extra_axis_px >= crate::constants::layout::FACET_MIN_PANEL_PX);
+        && multiples::extra_axis_is_affordable(naive_panel_w, y_extra_axis_px);
     let extra_axis_px = if y_narrowed { y_extra_axis_px } else { 0.0 };
     let naive_panel_w = multiples::facet_panel_width(payload.width, panel_cols_n, has_mirror, extra_axis_px);
     let embedded_y = independent || y_narrowed;
@@ -4504,7 +4504,7 @@ fn render_fit(
             .iter()
             .map(|(aria, x, y, stroke)| crate::contract::GhostRule { aria: Some(aria), x: *x, y: *y, stroke })
             .collect();
-        crate::contract::mirror_ghost_layer(&mut svg, &rules, plot_h)?;
+        crate::contract::mirror_ghost_layer(&mut svg, &rules, crate::contract::GhostRun::Down(plot_h))?;
     }
 
     // X ticks + labels.

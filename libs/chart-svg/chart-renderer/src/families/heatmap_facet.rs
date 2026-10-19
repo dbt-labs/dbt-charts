@@ -19,7 +19,6 @@
 //!   the left of every grid row.
 
 use crate::diagnostic::Diagnostic;
-use crate::constants::layout::FACET_MIN_PANEL_PX;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
@@ -1075,7 +1074,7 @@ pub(crate) fn render_facet(
     // layer would be instantiated once per panel.
     let y_subset_narrowed = !mirror
         && panel_domain_is_proper_subset(&panels, axes, &r.y)
-        && (mc.columns.is_none() || naive_panel_w - y_axis_px >= FACET_MIN_PANEL_PX);
+        && multiples::extra_axis_is_affordable(naive_panel_w, y_axis_px);
     // An independent scale gives every cell its own y axis, whatever its domain.
     let y_narrowed = independent || y_subset_narrowed;
     let cell_x_axis = x_narrowed;
@@ -1296,6 +1295,8 @@ pub(crate) fn render_facet(
     let row_axis = (!y_narrowed && ax_y.position.as_deref() != Some("right")).then_some(RowAxisSpec {
         reserve: y_label_pad + y_title_extra,
         label_x: AXIS_TRANSLATE - y_label_pad,
+        label_anchor: "start",
+        title_x: AXIS_TRANSLATE - y_label_pad,
         title: &y_title,
         title_style: &ax_y.title,
     });

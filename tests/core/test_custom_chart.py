@@ -808,6 +808,28 @@ class TestLinks:
         assert '<a href="https://x.test/stage/signup?v=1"><rect y="2"/></a>' in svg
         assert '<a href="https://x.test/stage/{{' not in svg
 
+    def test_a_board_default_open_does_not_refuse_a_row_link(
+        self, tmp_path: Path
+    ) -> None:
+        template = HEADER + (
+            '{% for r in rows %}<a href="{{ href(r) }}"><rect/></a>{% endfor %}'
+        )
+        yaml_text = "links:\n  open: modal\n" + _board_yaml().replace(
+            "    template: flow\n",
+            "    template: flow\n    link: https://x.test/stage/{{ x }}\n",
+        )
+        out = _render(_project(tmp_path, template), yaml_text)
+        assert not out.chart_errors
+        assert "data-dbt-link-open" not in out.output
+
+    def test_a_board_default_open_reaches_a_static_link(self, tmp_path: Path) -> None:
+        yaml_text = "links:\n  open: modal\n" + _board_yaml().replace(
+            "    template: flow\n",
+            "    template: flow\n    link: https://x.test/flows\n",
+        )
+        svg = _render(_project(tmp_path), yaml_text).output
+        assert 'data-dbt-link-open="modal"' in svg
+
     def test_template_anchor_scheme_follows_the_link_law(self, tmp_path: Path) -> None:
         template = HEADER + '<a href="javascript:alert(1)"><rect/></a>'
         out = _render(_project(tmp_path, template), _board_yaml())

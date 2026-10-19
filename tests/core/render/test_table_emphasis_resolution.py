@@ -894,6 +894,7 @@ class TestWithResolvedScaleStops:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert result is not None
         bg = result["val"].scale.background
@@ -935,6 +936,7 @@ class TestWithResolvedScaleStops:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert result is not None
         bg = result["val"].scale.background
@@ -965,6 +967,7 @@ class TestWithResolvedScaleStops:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert result is not None
         assert isinstance(result["val"], ResolvedTableColumnConfig)
@@ -989,6 +992,7 @@ class TestWithResolvedScaleStops:
                 defaults_format=None,
                 declared=None,
                 filter_variables=frozenset(),
+                link_open="page",
             )
             is None
         )

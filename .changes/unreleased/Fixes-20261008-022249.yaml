@@ -1,3 +1,0 @@
-kind: Fixes
-body: '`dct validate --strict` honors `warnings.ignore`, so suppressed warnings no longer fail strict validation.'
-time: 2026-10-08T02:22:49.907621-07:00

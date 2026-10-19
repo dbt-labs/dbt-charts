@@ -326,14 +326,14 @@ class TestTableIndexTemplate:
                 f"Variable id {var_id!r} is not a column name from the columns query"
             )
 
-    def test_rows_table_has_auto_link_enabled(self) -> None:
-        """After consolidation, the expanded board has auto_link=True so the
+    def test_rows_table_has_automatic_link_enabled(self) -> None:
+        """After consolidation, the expanded board has links.auto=True so the
         resolver synthesizes the detail link at render time. The template no
         longer hand-builds the link: string on the chart."""
         match = self._match()
         board = expand_registered_view(match, query_results=self._col_results())
-        assert getattr(board, "auto_link", False) is True, (
-            "Expanded table-index board must have auto_link=True so the resolver fires"
+        assert board.links.auto is True, (
+            "Expanded table-index board must have links.auto=True so the resolver fires"
         )
         assert board.charts is not None
         table_charts = [

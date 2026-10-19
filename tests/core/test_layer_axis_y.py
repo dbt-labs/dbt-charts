@@ -1285,6 +1285,7 @@ def test_right_axis_layer_votes_from_its_own_query_at_runtime() -> None:
         executor,
         {},
         filter_variables=frozenset(),
+        link_open="page",
     )
     assert resolved.layers[0].axis_y.tooltip_format.spec == "$,.2f"
     executor.execute_query.assert_called_once_with("goals", {})

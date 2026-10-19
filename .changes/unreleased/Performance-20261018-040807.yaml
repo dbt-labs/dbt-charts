@@ -1,3 +1,0 @@
-kind: Performance
-body: The built-in agent makes all of a request's changes to a file in one edit and sees the file's real text when an edit misses, so it finishes in fewer steps.
-time: 2026-10-18T04:08:07.681032-07:00

@@ -1,3 +1,0 @@
-kind: Fixes
-body: Hovering a link in a table cell keeps the row highlighted and shows a pointer cursor.
-time: 2026-10-16T15:18:29.049459-07:00

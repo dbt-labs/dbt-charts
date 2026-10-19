@@ -1,5 +1,0 @@
-kind: Features
-body: 'dbt Charts can now connect to SQL Server. Install `dbt-charts[sqlserver]` and point a source at a SQL Server target through `type: dbt_profile`. `max_query_duration_seconds` is enforced through the profile''s `query_timeout`, and dbt-sqlserver''s warnings go to stderr so `--json` output stays valid. The host needs Microsoft ODBC Driver 17 or 18.'
-time: 2026-10-02T12:01:00.000000-07:00
-custom:
-    DbtChartsIssue: 53

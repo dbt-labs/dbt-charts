@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'A callout''s tone no longer overwrites the colors its author set. `style.background`, `style.border.color`, `style.title.font.color` and `style.message.font.color`, on the chart or on the board''s `style.charts.callout`, now win over the tone; the tone colors only what is still `by_tone` (the theme''s default for each of those four colors). The runtime error card follows the same rule, so board-level callout colors apply to it too.'
-time: 2026-09-27T13:15:00.000000-07:00

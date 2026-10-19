@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -11,6 +12,7 @@ from pydantic import ValidationError
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.config import get_theme_style, reset_config
 from dbt_charts.core.compile.models.chart.authored import CalloutChart
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.style.authored import CalloutChartStylePatch
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
@@ -355,9 +357,13 @@ def test_error_card_takes_board_callout_colors_and_negative_tone_for_the_rest(
         get_theme_style(), _board({"charts": {"callout": {"background": "#abcdef"}}})
     )
     chart = make_chart("kpi", x=None, y=None, value="value", label="Broken KPI")
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     svg, _height = render_chart_item(
-        resolve(chart, [{"value": 1}, {"value": 2}], chart_style_context=ctx),
+        resolve(
+            chart,
+            [{"value": 1}, {"value": 2}],
+            chart_style_context=ctx,
+        ),
         executor,
         variables={},
         available_width=220,
@@ -411,7 +417,7 @@ def test_callout_skips_query_execution(make_chart) -> None:
         title="No Query",
         message="No query should run",
     )
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_chart.side_effect = AssertionError(
         "callout must not execute queries"
     )
@@ -471,12 +477,16 @@ def test_chart_data_error_fallback_renders_as_callout_negative_tone(make_chart) 
     from dbt_charts.core.compile.config import get_theme_style
 
     chart = make_chart("kpi", x=None, y=None, value="value", label="Broken KPI")
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = [{"value": 1}, {"value": 2}]
 
     rs, ctx = resolve_style_and_context(get_theme_style())
     svg, height = render_chart_item(
-        resolve(chart, [{"value": 1}, {"value": 2}], chart_style_context=ctx),
+        resolve(
+            chart,
+            [{"value": 1}, {"value": 2}],
+            chart_style_context=ctx,
+        ),
         executor,
         variables={},
         available_width=220,
@@ -950,7 +960,7 @@ def _render_board_svg(yaml_src: str) -> str:
     assert result.success, result.errors
     assert result.board is not None
 
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_chart.return_value = []
     executor.cache_hit_ats = []
     executor.rendered_at = PINNED_RENDER_TIME

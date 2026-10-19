@@ -26,6 +26,7 @@ from __future__ import annotations
 import calendar
 import datetime as dt
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -36,6 +37,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     BarChart,
     Chart,
 )
+from dbt_charts.core.compile.models.primitives import BoardLinks
 
 _CHART_ADAPTER: _TA[Chart] = _TA(Chart)
 from dbt_charts.core.compile.resolve import resolve
@@ -358,7 +360,7 @@ def test_ordinal_bucket_key_matches_scaffold_and_renders_real_marks(
     from dbt_charts.core.render.chart.rendering import render_chart_item
 
     chart = make_chart("bar", x="m", y="v")
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = rows
     resolved_chart = resolve(chart, rows, chart_style_context=_BOARD_CTX)
 
@@ -438,7 +440,7 @@ def test_time_unit_auto_renders_marks_for_every_date_shape(
         f"{label}: literal sentinel 'auto' leaked into VL timeUnit: {x_enc!r}"
     )
 
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = rows
     svg, _height = render_chart_item(
         resolved_chart,

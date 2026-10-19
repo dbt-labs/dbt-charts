@@ -1,5 +1,0 @@
-kind: Fixes
-body: "A board's `html_policy` now applies to its inline nested boards, so a `- text:` row or tab under `html_policy: trusted-raw` renders raw HTML instead of escaping it."
-time: 2026-10-05T12:00:00.000000-07:00
-custom:
-  DbtChartsIssue: "55"

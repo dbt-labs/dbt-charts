@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 from dbt_charts.ai.events import (
     ContentDelta,
+    ReasoningItemsEvent,
     StreamEvent,
     ThinkingStatus,
     ToolCallEvent,
@@ -22,10 +23,12 @@ from dbt_charts.ai.messages import (
     UserMessage,
 )
 from dbt_charts.ai.openai_gateway import (
+    ApplyPatchCall,
     CompletedResponse,
     FunctionCall,
     GatewayError,
     OpenAIGateway,
+    ReasoningItems,
     ReasoningSummaryDelta,
     ReasoningSummaryDone,
     ResponsesGateway,
@@ -33,7 +36,7 @@ from dbt_charts.ai.openai_gateway import (
     TextDelta,
     is_connection_fault,
 )
-from dbt_charts.ai.tool_schemas import ALL_TOOLS
+from dbt_charts.ai.tool_schemas import ALL_TOOLS, APPLY_PATCH_NAME
 
 DEFAULT_OPENAI_MODEL = "gpt-5.6-terra"
 
@@ -305,7 +308,7 @@ def _validate_effort(effort: str | None) -> str | None:
 
 def _supports_reasoning_summaries(model: str) -> bool:
     """Return whether this Responses model accepts reasoning summaries."""
-    return model.startswith("gpt-5")
+    return model.startswith(("gpt-5", "gpt-6"))
 
 
 # -- Client protocol and implementation --------------------------------------
@@ -362,8 +365,10 @@ class OpenAIAdapter:
     replaced — it made the model's own tool-call history depend on server
     state we didn't fully control, and a missed shape in the incremental
     converter leaked a raw tool envelope into chat. The trade is losing
-    OpenAI's server-side reasoning-item carryover between tool-loop
-    iterations within one turn, which may degrade multi-step tool reasoning.
+    OpenAI's server-side reasoning-item carryover; that is restored
+    client-side instead: requests set ``store=False`` and ask for
+    ``reasoning.encrypted_content``, and each turn's reasoning items are
+    replayed verbatim ahead of its function calls (never the preamble text).
     Worth reconsidering once the provider-side chaining flakiness
     (community.openai.com thread 1354672) is resolved — re-measure against
     the eval canary before restoring it.
@@ -459,13 +464,25 @@ class OpenAIAdapter:
         # adjacency and degraded the model into writing the tool call as prose.
         if message.tool_calls:
             return [
-                {
-                    "type": "function_call",
-                    "call_id": tc.id,
-                    "name": tc.name,
-                    "arguments": json.dumps(tc.arguments),
-                }
-                for tc in message.tool_calls
+                *message.reasoning_items,
+                *[
+                    (
+                        {
+                            "type": "apply_patch_call",
+                            "call_id": tc.id,
+                            "status": "completed",
+                            "operation": tc.arguments,
+                        }
+                        if tc.name == APPLY_PATCH_NAME
+                        else {
+                            "type": "function_call",
+                            "call_id": tc.id,
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments),
+                        }
+                    )
+                    for tc in message.tool_calls
+                ],
             ]
         if not message.content:
             return []
@@ -481,6 +498,15 @@ class OpenAIAdapter:
                         items.append(user_item)
                 case AssistantMessage():
                     items.extend(self._assistant_message_input(message))
+                case ToolResultMessage() if message.name == APPLY_PATCH_NAME:
+                    items.append(
+                        {
+                            "type": "apply_patch_call_output",
+                            "call_id": message.tool_call_id,
+                            "status": "failed" if message.failed else "completed",
+                            "output": message.content,
+                        }
+                    )
                 case ToolResultMessage():
                     items.append(
                         {
@@ -502,13 +528,19 @@ class OpenAIAdapter:
         if not input_items:
             return
 
+        reasoning = self._reasoning()
         request = ResponsesRequest(
             model=self.model,
             instructions=system_prompt,
             input=input_items,
             tools=normalize_openai_tools(tools),
             stream=True,
-            reasoning=self._reasoning(),
+            reasoning=reasoning,
+            # Stateless reasoning carryover: nothing is stored server-side, so
+            # the encrypted reasoning comes back to us and is replayed by hand.
+            # Only a model that reasons has items to carry.
+            store=False if reasoning is not None else None,
+            include=["reasoning.encrypted_content"] if reasoning is not None else None,
         )
 
         # Accumulation is presentation, and stays here: the gateway hands
@@ -528,11 +560,19 @@ class OpenAIAdapter:
                         reasoning_summaries[event.block] = event.text
                         if event.text:
                             yield ThinkingStatus(status=event.text, block=event.block)
+                    case ReasoningItems():
+                        yield ReasoningItemsEvent(items=event.items)
                     case FunctionCall():
                         yield ToolCallEvent(
                             id=event.call_id,
                             name=event.name,
                             arguments=event.arguments,
+                        )
+                    case ApplyPatchCall():
+                        yield ToolCallEvent(
+                            id=event.call_id,
+                            name=APPLY_PATCH_NAME,
+                            arguments=event.operation,
                         )
         except GatewayError as exc:
             raise LLMClientError(str(exc)) from exc

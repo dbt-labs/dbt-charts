@@ -420,22 +420,34 @@ pub struct GhostRule<'a> {
     pub stroke: &'a str,
 }
 
-/// A column facet's mirrored right-edge y axis rides an invisible rule layer,
-/// one rule per datum from the datum down to the plot floor, appended after the
-/// panel's own marks (`features/mirror_axis.py`). It paints above the real
-/// marks, so the runtime resolves a hit on it and finds the real mark by its
-/// byte-identical label (`resolveSymbolMark`). `floor` is the plot height.
-pub fn mirror_ghost_layer(out: &mut String, rules: &[GhostRule], floor: f64) -> Result<(), String> {
+/// How far a ghost rule runs from its datum.
+#[derive(Clone, Copy)]
+pub enum GhostRun {
+    /// A column chart's rule drops to the plot floor, this far down from the top.
+    Down(f64),
+    /// A horizontal bar's rule runs back to the plot's left edge.
+    ToLeftEdge,
+}
+
+/// A facet's mirrored far-edge axis rides an invisible rule layer, one rule per
+/// datum from the datum to the plot floor, appended after the panel's own marks
+/// (`features/mirror_axis.py`). It paints above the real marks, so the runtime
+/// resolves a hit on it and finds the real mark by its byte-identical label
+/// (`resolveSymbolMark`).
+pub fn mirror_ghost_layer(out: &mut String, rules: &[GhostRule], run: GhostRun) -> Result<(), String> {
     mark_group_open(out, "rule", "ghost_marks")?;
     for rule in rules {
         let label = aria_attr(rule.aria, ItemRole::RuleMark)?;
+        let (x2, y2) = match run {
+            GhostRun::Down(floor) => (0.0, floor - rule.y),
+            GhostRun::ToLeftEdge => (-rule.x, 0.0),
+        };
         let _ = write!(
             out,
-            "<line transform=\"translate({:.3},{:.3})\" x2=\"0\" y2=\"{:.3}\" stroke=\"{}\" \
+            "<line transform=\"translate({:.3},{:.3})\" x2=\"{x2:.3}\" y2=\"{y2:.3}\" stroke=\"{}\" \
              opacity=\"0\"{label}/>",
             rule.x,
             rule.y,
-            floor - rule.y,
             xml_escape_attr(rule.stroke),
         );
     }

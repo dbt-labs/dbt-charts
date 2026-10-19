@@ -1,3 +1,0 @@
-kind: Fixes
-body: A chart that paints no marks now reports its card width, since a too-narrow card is a likely cause.
-time: 2026-10-08T02:22:54.969864-07:00

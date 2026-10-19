@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -25,6 +26,7 @@ from dbt_charts.core.compile.config import (
 from dbt_charts.core.compile.models.board.normalized import NO_TITLE_SHIFT
 from dbt_charts.core.compile.models.board.resolved import ResolvedLayoutItem
 from dbt_charts.core.compile.models.chart.normalized import BarChart
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
@@ -63,7 +65,7 @@ class TestRenderChartItemReturnsActualHeight:
         from dbt_charts.core.render.chart.rendering import render_chart_item
 
         chart = make_chart("bar", x="category", y="value")
-        executor = MagicMock(spec=Executor)
+        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
         executor.execute_chart.return_value = [
             {"category": "A", "value": 10},
             {"category": "B", "value": 20},
@@ -93,7 +95,7 @@ class TestRenderChartItemReturnsActualHeight:
         from dbt_charts.core.render.chart.rendering import render_chart_item
 
         chart = make_chart("bar", x="category", y="value")
-        executor = MagicMock(spec=Executor)
+        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
         executor.execute_chart.return_value = [
             {"category": "A", "value": 10},
             {"category": "B", "value": 20},
@@ -127,7 +129,7 @@ class TestRenderChartItemReturnsActualHeight:
         from dbt_charts.core.render.chart.rendering import render_chart_item
 
         chart = make_chart("kpi", x=None, y=None, value="value")
-        executor = MagicMock(spec=Executor)
+        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
         executor.execute_chart.return_value = [{"value": 42}]
 
         # Use a height comfortably above the KPI fixed-slot minimum so the
@@ -615,7 +617,7 @@ charts:
         resolved_chart = chart_items[0].chart
         assert resolved_chart is not None
 
-        executor = MagicMock(spec=Executor)
+        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
         executor.execute_chart.return_value = [{"category": "A", "value": 10}]
 
         svg, height = render_chart_item(

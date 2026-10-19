@@ -12,6 +12,7 @@ every datum placeholder on any board that declares variables
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -19,6 +20,7 @@ from pydantic import TypeAdapter
 
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
@@ -56,7 +58,7 @@ def _make_ctx() -> SizingRenderCtx:
 
 
 def _make_executor() -> MagicMock:
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.render_with_range_filters.return_value = None
     executor.execute_query.return_value = _ROWS
     return executor

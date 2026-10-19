@@ -1,3 +1,0 @@
-kind: Fixes
-body: A query paginated with FETCH FIRST no longer makes validation fail with an internal error.
-time: 2026-10-08T05:05:00.000000-07:00

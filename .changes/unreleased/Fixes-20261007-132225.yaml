@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'The board JSON Schema follows JSON Schema 2020-12 and matches the compiler, so editors flag the same mistakes `dct validate` does: out-of-range numbers, wrongly typed list items, cross-field rules, and invalid style values, while accepting the compiler''s shorthands. The compiler now also rejects at parse time compiler-owned variable fields, the `in_` and `schema_name` attribute spellings, and out-of-range values in chart and board style overrides.'
-time: 2026-10-07T13:22:25.063868-07:00

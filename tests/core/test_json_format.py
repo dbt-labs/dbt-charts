@@ -1,3 +1,7 @@
+from types import SimpleNamespace
+
+from dbt_charts.core.compile.models.primitives import BoardLinks
+
 """Tests for JSON render output format."""
 
 import json
@@ -19,7 +23,7 @@ def _make_executor(data: list[dict]) -> MagicMock:
     attribute: render() now draws the board for every format (not just svg),
     and the svg footer/timestamp code iterates this attribute directly.
     """
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.render_with_range_filters.return_value = None
     executor.execute_chart.return_value = data
     executor.cache_hit_ats = []

@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'A `total:` on a pie with no hole now errors instead of printing over the wedges.'
-time: 2026-10-06T13:07:00.000000-07:00

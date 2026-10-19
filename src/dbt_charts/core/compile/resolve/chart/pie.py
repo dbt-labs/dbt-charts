@@ -414,6 +414,7 @@ def _resolve_pie(
             # alignment (see _with_resolved_scale_stops's own docstring).
             allow_shared_scale=False,
             filter_variables=frozenset(),
+            link_open="page",
         )
         heading = board_word("pie.too_small_to_label") if mode == "hybrid" else ""
         heading_font = resolve_hybrid_heading_font(attached_table.style.table)

@@ -62,14 +62,15 @@ class TestWriteToolsUseBackingStoreNotHost:
         )
         assert read_back["success"] is False
 
-    def test_edit_file_uses_backing_store(
+    def test_apply_patch_uses_backing_store(
         self, cloud_context: DbtChartsAIContext
     ) -> None:
         result = dispatch_tool_call(
-            "edit_file",
+            "apply_patch",
             {
+                "type": "update_file",
                 "path": "charts/report.yml",
-                "edits": [{"old_string": "In", "new_string": "Out"}],
+                "diff": "@@\n-title: In Store\n+title: Out Store\n",
             },
             context=cloud_context,
         )

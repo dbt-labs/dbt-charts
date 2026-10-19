@@ -18,6 +18,7 @@ from dbt_charts.ai.events import (
     AgentError,
     AgentEvent,
     ContentDelta,
+    ReasoningItemsEvent,
     ToolCallEvent,
     ToolResultEvent,
 )
@@ -149,15 +150,15 @@ _TOOL_GUIDANCE = """## Tool Use
 - To just preview a chart for the user, render it directly with
   `render_board(yaml_content=...)` — no file needed.
 - To create or change a *saved* dashboard, write the YAML to a file: `write_file`
-  for a new board, `edit_file` for a targeted change to a board the user named
-  (read it first so you don't clobber it; put every change to the file in one
-  call's `edits`). Never silently append a chart to an
+  for a new board, `apply_patch` for a targeted change to a board the user named
+  (read it first so you don't clobber it; make every change to the file in one
+  `apply_patch` call). Never silently append a chart to an
   existing board the user did not name — write a new board instead. Boards live
   under `charts/`.
 - Once a board is saved, call `render_board(path=...)` to check it
-  renders (fix every error it reports before continuing), and surface the preview URL (`render_board(path=..., as_link=true)`
-  returns it) so they can open the dashboard in their browser. The preview
-  server is already running — never try to start one.
+  renders (fix every error it reports before continuing). The user sees a
+  successful by-path render as a card linking to the dashboard; there is no
+  separate link to fetch.
 - If a tool returns an error, explain it clearly and fix it — do not proceed on
   assumptions or hide it.
 - If the user asks for a chart shape dbt charts has no chart family for (funnel,
@@ -166,7 +167,7 @@ _TOOL_GUIDANCE = """## Tool Use
   requested name. Say plainly that dbt charts can't draw that shape, name what
   you built instead, and let the user decide whether to proceed. An honest
   substitution is fine; an undisclosed one is not.
-- When you save a board, tell the user the saved file path and the preview URL.
+- When you save a board, tell the user the saved file path.
 """
 
 
@@ -280,6 +281,7 @@ def run_agent(
     for _ in range(max_iterations):
         response_text = ""
         tool_calls: list[ToolCallEvent] = []
+        reasoning_items: list[dict[str, Any]] = []
 
         try:
             for event in client.stream_with_tools(
@@ -291,6 +293,9 @@ def run_agent(
                     response_text += event.delta
                 elif isinstance(event, ToolCallEvent):
                     tool_calls.append(event)
+                elif isinstance(event, ReasoningItemsEvent):
+                    reasoning_items = event.items
+                    continue
                 yield event
         except LLMClientError as exc:
             logger.exception("agent_llm_error")
@@ -304,6 +309,7 @@ def run_agent(
         conversation.append(
             AssistantMessage(
                 content=response_text,
+                reasoning_items=reasoning_items,
                 tool_calls=[
                     ToolCall(id=tc.id, name=tc.name, arguments=tc.arguments)
                     for tc in tool_calls
@@ -353,6 +359,7 @@ def run_agent(
                     tool_call_id=tc.id,
                     name=tc.name,
                     content=model_json(_elide_svg(result)),
+                    failed=tool_call_outcome(result) == "error",
                 )
             )
             yield ToolResultEvent(

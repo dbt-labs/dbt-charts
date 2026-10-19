@@ -3,7 +3,7 @@ whether its output is row-grain over a single base entity, and trace a base
 column to its final output name.
 
 This module owns the sqlglot AST reasoning; it has no dependency on links,
-URLs, or the render context — that half lives in ``auto_link.py``, which
+URLs, or the render context — that half lives in ``automatic_link.py``, which
 consumes ``resolve_cte_spine``, ``resolve_join_spine``, and
 ``build_col_output_alias_map`` as its grain/lineage layer.
 

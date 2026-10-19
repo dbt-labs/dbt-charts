@@ -16,8 +16,10 @@ eight columns, one text and seven narrow numerics with long labels:
 from __future__ import annotations
 
 import re
+from types import SimpleNamespace
 
 from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
@@ -250,7 +252,7 @@ class TestSizerAgreesWithRenderer:
         from dbt_charts.core.render.layout_sizing import _get_table_height_from_data
 
         chart = _chart(make_chart)
-        executor = MagicMock(spec=Executor)
+        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
         executor.execute_chart.return_value = [_NARROW_ROW]
 
         resolved = resolve(chart, [_NARROW_ROW], chart_style_context=_BOARD_CTX)

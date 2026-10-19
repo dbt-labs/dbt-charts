@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dbt_charts.core.compile.models.board.authored import LayoutType
 from dbt_charts.core.compile.models.chart.normalized import Chart
-from dbt_charts.core.compile.models.primitives import HtmlPolicy, Regional
+from dbt_charts.core.compile.models.primitives import BoardLinks, HtmlPolicy, Regional
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -502,13 +502,9 @@ class Board(BaseModel):
         description="When True, adds gap between cards and adjusts page margin.",
     )
 
-    # Auto-link: synthesize detail-page links for table charts with no explicit link:
-    auto_link: bool = Field(
-        default=False,
-        description=(
-            "When True, table charts with no explicit link: automatically link each "
-            "row to its canonical /data/<source>/<schema>/<table>/detail/ page."
-        ),
+    links: BoardLinks = Field(
+        default_factory=BoardLinks,
+        description="Whether table charts link rows automatically and how links open.",
     )
 
     regional: Regional = Field(

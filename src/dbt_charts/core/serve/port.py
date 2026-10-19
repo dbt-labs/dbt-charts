@@ -35,21 +35,31 @@ def _validate_port(port: int, source: str) -> None:
         raise ValueError(f"{source} must be between 1 and 65535, got {port}")
 
 
+def _listen(port: int, host: str) -> socket.socket | None:
+    """A socket listening on *port* at *host*, or None when the port is taken."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if sys.platform != "win32":
+        # The server binds with SO_REUSEADDR, so a port whose last server
+        # just closed (connections in TIME_WAIT) is free to it. Windows has
+        # no TIME_WAIT bind conflict, and there the flag would let a bind
+        # succeed beside a live listener.
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind((host, port))
+        # Linux lets two SO_REUSEADDR sockets bind one port and refuses the
+        # second only at listen(), which is what the server does next.
+        s.listen()
+    except OSError:
+        s.close()
+        return None
+    return s
+
+
 def _can_listen(port: int, host: str) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        if sys.platform != "win32":
-            # The server binds with SO_REUSEADDR, so a port whose last server
-            # just closed (connections in TIME_WAIT) is free to it. Windows has
-            # no TIME_WAIT bind conflict, and there the flag would let a bind
-            # succeed beside a live listener.
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            s.bind((host, port))
-            # Linux lets two SO_REUSEADDR sockets bind one port and refuses the
-            # second only at listen(), which is what the server does next.
-            s.listen(1)
-        except OSError:
-            return False
+    s = _listen(port, host)
+    if s is None:
+        return False
+    s.close()
     return True
 
 
@@ -64,22 +74,41 @@ def is_port_available(port: int, host: str = "localhost") -> bool:
     )  # noqa: S104
 
 
+def bind_available_port(
+    preferred: int,
+    host: str = "localhost",
+    max_attempts: int = PORT_SCAN_ATTEMPTS,
+) -> socket.socket:
+    """Listen on *preferred* if free, otherwise on the next free port above it.
+
+    The returned socket is the server's listener: hand it to the server rather
+    than its port number. A port that is only probed stays free to every other
+    process, so servers starting together all pick it and all but one fail to
+    bind.
+    """
+    for offset in range(max_attempts):
+        candidate = preferred + offset
+        if candidate > 65535:
+            break
+        if not is_port_available(candidate, host):
+            continue
+        listener = _listen(candidate, host)
+        if listener is not None:
+            return listener
+    raise RuntimeError(
+        f"Could not find an available port after {max_attempts} attempts "
+        f"(starting from {preferred})"
+    )
+
+
 def find_available_port(
     preferred: int,
     host: str = "localhost",
     max_attempts: int = PORT_SCAN_ATTEMPTS,
 ) -> int:
     """Return *preferred* if free, otherwise scan upward until a free port is found."""
-    for offset in range(max_attempts):
-        candidate = preferred + offset
-        if candidate > 65535:
-            break
-        if is_port_available(candidate, host):
-            return candidate
-    raise RuntimeError(
-        f"Could not find an available port after {max_attempts} attempts "
-        f"(starting from {preferred})"
-    )
+    with bind_available_port(preferred, host, max_attempts) as listener:
+        return listener.getsockname()[1]
 
 
 def _read_port_from_config(project_dir: Path) -> int | None:

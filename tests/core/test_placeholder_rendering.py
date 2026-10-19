@@ -1,3 +1,7 @@
+from types import SimpleNamespace
+
+from dbt_charts.core.compile.models.primitives import BoardLinks
+
 """Tests for placeholder rendering with overlay and transparency.
 
 These tests verify that placeholder charts are rendered with:
@@ -165,7 +169,7 @@ class TestPlaceholderIntegration:
         chart = make_chart("bar", query=None, query_name=None)
 
         # Mock executor that returns empty data for any query
-        executor = MagicMock(spec=Executor)
+        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
         executor.execute_query.return_value = []
 
         rs, ctx = resolve_style_and_context(get_theme_style())
@@ -201,7 +205,7 @@ class TestPlaceholderIntegration:
         ]
 
         # Mock executor that returns real data
-        executor = MagicMock(spec=Executor)
+        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
         executor.execute_query.return_value = real_data
 
         rs, ctx = resolve_style_and_context(get_theme_style())

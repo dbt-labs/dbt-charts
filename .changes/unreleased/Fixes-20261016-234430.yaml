@@ -1,3 +1,0 @@
-kind: Fixes
-body: Agent tools now refuse an argument they do not declare instead of silently ignoring it.
-time: 2026-10-16T23:44:30.287340459Z

@@ -270,7 +270,7 @@ def _base_kwargs(
         }
     )
     legend = merge_unset(legend, decided_visibility)
-    # link: false = authored auto_link opt-out — resolves to no link at all.
+    # link: false is the authored `links.auto` opt-out: no link at all.
     link = None if normalized.link is False else normalized.link
     if normalized.link is None:
         link = automatic_link_candidate

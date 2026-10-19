@@ -33,6 +33,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
 from dbt_charts.core.compile.models.primitives import (
     AUTHORED_FORMATS,
     FormatTable,
+    LinkOpen,
     ResolvedFormat,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -336,6 +337,7 @@ def _render_chart_item(
     max_rows_per_query: int = NO_ROW_CAP,
     *,
     filter_variables: frozenset[str],
+    link_open: LinkOpen,
     include_text_format: bool = False,
 ) -> dict[str, Any]:
     """Execute, resolve, and serialize a single chart item.
@@ -376,6 +378,7 @@ def _render_chart_item(
             executor,
             variables,
             filter_variables=filter_variables,
+            link_open=link_open,
         )
         rows_truncated: dict[str, int] = {}
         if len(data) > max_rows_per_query:
@@ -462,6 +465,7 @@ def _render_board_items(
     max_rows_per_query: int = NO_ROW_CAP,
     *,
     filter_variables: frozenset[str],
+    link_open: LinkOpen,
     include_text_format: bool = False,
 ) -> list[dict[str, Any]]:
     """Walk layout items and serialize each."""
@@ -477,6 +481,7 @@ def _render_board_items(
                     error_collector,
                     max_rows_per_query,
                     filter_variables=filter_variables,
+                    link_open=link_open,
                     include_text_format=include_text_format,
                 )
             )
@@ -491,6 +496,7 @@ def _render_board_items(
                         error_collector,
                         max_rows_per_query,
                         filter_variables=filter_variables,
+                        link_open=link_open,
                         include_text_format=include_text_format,
                     ),
                 }
@@ -506,6 +512,7 @@ def _board_to_dict(
     max_rows_per_query: int = NO_ROW_CAP,
     *,
     filter_variables: frozenset[str],
+    link_open: LinkOpen,
     include_text_format: bool = False,
 ) -> dict[str, Any]:
     """Convert a board to a JSON-serializable dict.
@@ -542,6 +549,7 @@ def _board_to_dict(
             error_collector,
             max_rows_per_query,
             filter_variables=filter_variables,
+            link_open=link_open,
             include_text_format=include_text_format,
         ),
     }
@@ -579,5 +587,6 @@ def board_to_dict(
         error_collector,
         max_rows_per_query,
         filter_variables=declared_variables,
+        link_open=board.links.open,
         include_text_format=include_text_format,
     )

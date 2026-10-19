@@ -38,6 +38,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BINDER_UNKNOWN_RELATION,
     ERR_QUERY_INTERRUPTED,
     ERR_RESULT_DUPLICATE_COLUMN,
+    ERR_WAREHOUSE_AUTH,
     ERR_WAREHOUSE_CONNECTION,
     ERR_WAREHOUSE_RUNTIME,
     UNKNOWN_RELATION_DIALECT_NOTES,
@@ -375,6 +376,24 @@ _MISSING_RELATION_MESSAGES: dict[str, re.Pattern[str]] = {
     "redshift": re.compile(r'relation ".*" does not exist'),
 }
 
+# Message forms of rejected or expired credentials, by dialect. Substrings of
+# the text dbt's exception wrapper carries: BigQuery's google.auth
+# RefreshError/DefaultCredentialsError wording, Snowflake's 250001 / 390114
+# login errors, and the password rejection Postgres and Redshift both emit.
+_AUTH_MESSAGES: dict[str, re.Pattern[str]] = {
+    "bigquery": re.compile(
+        r"invalid_grant|Reauthentication is needed"
+        r"|default credentials were not found|DefaultCredentialsError"
+        r"|Could not automatically determine credentials|RefreshError"
+    ),
+    "snowflake": re.compile(
+        r"Incorrect username or password|Authentication token has expired"
+    ),
+    "postgres": re.compile(r"password authentication failed"),
+    "postgresql": re.compile(r"password authentication failed"),
+    "redshift": re.compile(r"password authentication failed"),
+}
+
 
 def classify_warehouse_error(
     operation: str, error: Exception, dialect: str
@@ -410,6 +429,8 @@ def classify_warehouse_error(
         # code means the same thing whoever reported it. An unmapped one falls
         # through to the runtime fallback below.
         code = _SQLSTATE_ERROR_CODES[error.sqlstate]
+    elif dialect in _AUTH_MESSAGES and _AUTH_MESSAGES[dialect].search(str(error)):
+        code = ERR_WAREHOUSE_AUTH
     elif dialect in _MISSING_RELATION_MESSAGES and _MISSING_RELATION_MESSAGES[
         dialect
     ].search(str(error)):

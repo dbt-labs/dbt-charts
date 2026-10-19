@@ -86,6 +86,7 @@ use crate::families::bar_hover_band::HoverBand;
 use crate::families::cartesian::{vl_default_tick_count, BandScale, LinearScale};
 use crate::families::facet_compose::{self, GhostStyle, PanelGeometry};
 use crate::families::facet_title;
+use crate::families::heatmap_facet;
 use crate::families::multiples;
 use crate::families::span::{self, RangedBars};
 use crate::families::support_table_columns::{self, ColumnBlock, Side};
@@ -229,8 +230,8 @@ pub(crate) struct BarResolved {
     /// already the baked neutral color or the authored one.
     #[serde(default)]
     support_table_series_ink: Option<bool>,
-    // Chart-root `ResolvedChart.link` (`_base.py:85`) — `auto_link`'s own
-    // filter/entity-drill template (`auto_link.py::synthesize_auto_link`,
+    // Chart-root `ResolvedChart.link` (`_base.py:85`) — `links.auto`'s own
+    // filter/entity-drill template (`automatic_link.py::synthesize_automatic_link`,
     // `resolve_column_set_link(row_detail=False)`), keyed by CHANNEL name
     // placeholders (`{{ x }}`, `{{ color }}` — never a column name; that
     // form is the table row-detail path, ported separately). Only wired on
@@ -1637,7 +1638,8 @@ fn cat_order<'a>(
 /// categories trailing in both directions) is `common::dimension_sort_domain`
 /// — the same law line/area/heatmap share for their own dimension axis, here
 /// called with the aggregate `cat_order` chose. `CatOrder::ValueDesc` folds a
-/// MAX, not a sort field, and keeps its own loop.
+/// SUM (`vl_sort_op`'s unpinned fallback; a facet repeats a category across
+/// its panels), not a sort field, and keeps its own loop.
 fn build_cat_domain(
     rows: &[serde_json::Map<String, Value>],
     cat_field: &str,
@@ -1658,10 +1660,7 @@ fn build_cat_domain(
                 let val = row_num(row, val_field).ok_or_else(|| {
                     format!("bar: row {row_idx}: missing or non-numeric field {val_field:?}")
                 })?;
-                let entry = by_cat.entry(row_str(row, cat_field)).or_insert(f64::NEG_INFINITY);
-                if val > *entry {
-                    *entry = val;
-                }
+                *by_cat.entry(row_str(row, cat_field)).or_insert(0.0) += val;
             }
             // Every row either supplies a numeric `val_field` or the loop
             // above already returned `Err` — so every `domain` entry is a
@@ -2641,9 +2640,14 @@ struct BarChartState {
 /// Build `BarChartState` — same domain helpers `render_vertical`/
 /// `render_horizontal` already called inline, now called once from a shared
 /// site. `sorts_by_value_by_default` is `BarResolved::sorts_by_value_by_default`
-/// (query-order vs value-descending default sort).
+/// (query-order vs value-descending default sort). `rows` are the chart's
+/// whole dataset; `cat_rows` is where the category domain comes from (a narrowed
+/// facet panel's own rows) and `color_one_to_one` a facet's verdict over every
+/// panel (`None` reads it off `rows`).
 fn build_chart_domains(
     rows: &[serde_json::Map<String, Value>],
+    cat_rows: &[serde_json::Map<String, Value>],
+    color_one_to_one: Option<bool>,
     cat_field: &str,
     val_field: &str,
     color_field: Option<&str>,
@@ -2658,7 +2662,7 @@ fn build_chart_domains(
     let is_stacked = is_grouped && stack != "none";
     let normalize = stack == "normalize";
     let order = cat_order(sort, sorts_by_value_by_default, val_field, stack);
-    let cat_domain = build_cat_domain(rows, cat_field, val_field, order)?;
+    let cat_domain = build_cat_domain(cat_rows, cat_field, val_field, order)?;
     let color_domain = if !wide_measures.is_empty() {
         wide_series.to_vec()
     } else {
@@ -2678,7 +2682,9 @@ fn build_chart_domains(
     // Palette slots: alphabetical color domain when color is 1:1 with the
     // category, baseline-first stack order otherwise (see color_1to1_with_cat).
     let palette_domain = if is_stacked
-        && color_1to1_with_cat(rows, cat_field, color_field.expect("is_stacked implies color"))
+        && color_one_to_one.unwrap_or_else(|| {
+            color_1to1_with_cat(rows, cat_field, color_field.expect("is_stacked implies color"))
+        })
     {
         color_domain.clone()
     } else {
@@ -2755,6 +2761,35 @@ fn build_legend_state(
 
 // ── Horizontal bar render ─────────────────────────────────────────────────────
 
+/// The shortest card that gives each of `n_categories` bands room for its label
+/// (`min_height_for_horizontal_bar_categories`).
+fn horizontal_min_height(r: &BarResolved, n_categories: usize) -> Result<f64, String> {
+    let ax_x = &r.style.axis_x;
+    let font_size = ax_x.labels.font.size.ok_or("bar: axis_x.labels.font.size absent (theme required)")?;
+    let pad = ax_x.labels.padding.ok_or("bar: axis_x.labels.padding absent (theme required)")?;
+    let min_gap = ax_x.labels.min_gap.ok_or("bar: axis_x.labels.min_gap absent (theme required)")?;
+    let mark_size = r.style.mark.size.unwrap_or_else(|| continuous_max_size(&r.style.mark));
+    let band_step = mark_size.max(font_size + 2.0 * pad) + min_gap;
+    Ok(CHROME_PX + n_categories as f64 * band_step)
+}
+
+/// Each layer's own rows (`validate_layers` already confirmed a cross-query
+/// dataset exists).
+fn horizontal_layer_rows<'a>(
+    payload: &'a Payload,
+    r: &BarResolved,
+    layers: &'a [OverlayLayer],
+) -> Vec<(&'a OverlayLayer, &'a [serde_json::Map<String, Value>])> {
+    layers
+        .iter()
+        .map(|l| {
+            let rows = resolve_layer_rows(payload, l.query_name(), r.query_name.as_deref(), "bar")
+                .expect("validate_layers already confirmed this dataset exists");
+            (l, rows)
+        })
+        .collect()
+}
+
 /// Thin wrapper: reads the whole-chart box/rows off `payload` and calls
 /// `render_horizontal_panel` — the single-chart path's own "one panel, the
 /// whole card" call. A facet composite calls `render_horizontal_panel`
@@ -2770,16 +2805,7 @@ fn render_horizontal(
 ) -> Result<String, Diagnostic> {
     // The chart's OWN effective background — see `BarResolved::background`.
     let bg = r.background.clone();
-    // Each layer's own rows (`validate_layers` already confirmed a cross-query
-    // dataset exists).
-    let layers: Vec<(&OverlayLayer, &[serde_json::Map<String, Value>])> = layers
-        .iter()
-        .map(|l| {
-            let rows = resolve_layer_rows(payload, l.query_name(), r.query_name.as_deref(), "bar")
-                .expect("validate_layers already confirmed this dataset exists");
-            (l, rows)
-        })
-        .collect();
+    let layers = horizontal_layer_rows(payload, &r, layers);
     render_horizontal_panel(
         payload.chart_id()?,
         payload.authored_height,
@@ -2789,12 +2815,185 @@ fn render_horizontal(
         payload.padding.as_ref(),
         &bg,
         fonts,
-        r,
+        &r,
         wide_series,
         &layers,
         support_table,
         payload.board_style.as_ref(),
+        None,
     )
+    .map(|(svg, _)| svg)
+}
+
+/// Facet-only inputs of one `render_horizontal_panel` call; `None` from the
+/// single-chart wrapper. The facet composer owns the title, the legend, the
+/// category axis (the `row_header` role) and the value axis (`column_footer`),
+/// so a panel paints and reserves cell ink only.
+pub(crate) struct HorizontalFacetPanel {
+    pub(crate) geometry: PanelGeometry,
+    /// `None` when the left edge carries no copy of the category axis.
+    pub(crate) row_axis: Option<RowAxisPlacement>,
+}
+
+/// One edge's copy of the category axis: where its labels anchor from the plot
+/// edge, and how far it reaches outward.
+struct EdgeCopy {
+    dx: f64,
+    anchor: &'static str,
+    reach: f64,
+}
+
+/// Where the category axis paints in the composer's `row_header` role, in the
+/// panel's canvas frame.
+pub(crate) struct RowAxisPlacement {
+    /// How far left of the plot the axis reaches (labels and title).
+    pub(crate) reserve: f64,
+    pub(crate) label_x: f64,
+    pub(crate) label_anchor: &'static str,
+    /// The primary axis carries the title; a mirror's ghost has none.
+    pub(crate) titled: bool,
+    pub(crate) title_x: f64,
+}
+
+pub(crate) struct HorizontalFacetOpts<'a> {
+    /// The whole chart's rows: the color scale, stack order and legend are
+    /// chart-level, as is the value axis' domain under a shared scale.
+    pub(crate) chart_rows: &'a [serde_json::Map<String, Value>],
+    /// Where the category domain comes from: every panel's rows when the
+    /// category scale is shared, this panel's own when it is narrowed.
+    pub(crate) cat_rows: &'a [serde_json::Map<String, Value>],
+    /// `emitters/bar.py::_is_color_1to1_with_x`, folded over the panels.
+    pub(crate) color_one_to_one: bool,
+    /// The rows the value axis' domain reads: every panel's under a shared
+    /// scale, this panel's own under an independent one.
+    pub(crate) value_domain_rows: &'a [serde_json::Map<String, Value>],
+    /// `multiples.scale: "independent"`: no zero rule, and the value axis sits
+    /// in the cell.
+    pub(crate) independent_scale: bool,
+    /// A narrowed category scale: Vega draws the category axis inside each
+    /// cell instead of the shared `row_header` role.
+    pub(crate) cell_cat_axis: bool,
+    /// A `center` stack's tallest pile across every panel, which each panel
+    /// floats its categories against; `None` once the spec is layered.
+    pub(crate) center_stack: Option<CenterStack>,
+    /// The both-signs stack across every panel that a `middle` label centers on.
+    pub(crate) center_label_stack: CenterStack,
+    /// The right edge's copy of the category axis (`axis_y.position: right`, or a mirror's ghost).
+    pub(crate) right_edge: RightEdge,
+}
+
+/// Where a panel stands relative to the category axis' `row_footer` copy.
+pub(crate) struct RightEdge {
+    /// Only the last column of a row paints the copy.
+    pub(crate) paint: bool,
+    /// A rows-only facet folds the copy into the cell's ink; a wider grid reserves it once.
+    pub(crate) fold: bool,
+    /// `ceil(cell x2) - plot_w`: where the `row_footer` anchors past the plot.
+    pub(crate) overhang: f64,
+}
+
+/// A horizontal bar's value axis (labels under the plot, flush-aligned at the
+/// range ends, plus the title), resolved once by `render_horizontal_panel`. The
+/// panel paints it under its own plot; a facet composite paints the same value
+/// at the shared `column_footer`.
+#[derive(Clone)]
+pub(crate) struct HorizontalValueAxis {
+    ticks: Vec<f64>,
+    labels: Vec<String>,
+    /// `labelOverlap: parity`'s verdict per tick; `None` draws every label.
+    visible: Option<Vec<bool>>,
+    domain: (f64, f64),
+    flush_threshold: Option<f64>,
+    pad: f64,
+    font_size: f64,
+    family: String,
+    color: String,
+    weight: String,
+    title: String,
+    /// How far the leftmost drawn label reaches left of the plot origin.
+    left_reach: f64,
+}
+
+impl HorizontalValueAxis {
+    pub(crate) fn left_reach(&self) -> f64 {
+        self.left_reach
+    }
+
+    /// The labels drawn at `plot_w`: each tick's range position, its text and its anchor
+    /// (Vega's own `flush` never sees the +0.5 crispness delta).
+    fn drawn(&self, plot_w: f64) -> Vec<(f64, &str, &'static str)> {
+        let linear = LinearScale::new(self.domain.0, self.domain.1, 0.0, plot_w);
+        self.ticks
+            .iter()
+            .zip(&self.labels)
+            .enumerate()
+            .filter_map(|(i, (&tv, label))| {
+                let x = linear.position(tv);
+                let hidden = x + 0.5 < -1.0 || x + 0.5 > plot_w + 1.0 || self.visible.as_ref().is_some_and(|v| !v[i]);
+                let anchor = match flush_edge(x, plot_w, self.flush_threshold) {
+                    Some(true) => "start",
+                    Some(false) => "end",
+                    None => "middle",
+                };
+                (!hidden).then_some((x, label.as_str(), anchor))
+            })
+            .collect()
+    }
+
+    /// A centered label on a tick near the plot's left end hangs past it: the
+    /// `column-footer` role's bounds, which widen the view's left margin.
+    fn with_left_reach(mut self, plot_w: f64, fonts: &FontBook) -> Result<Self, String> {
+        let mut reach = 0.0_f64;
+        for (x, label, anchor) in self.drawn(plot_w) {
+            if anchor == "middle" {
+                reach = reach.max(fonts.measure_shaped(label, &self.family, self.font_size)? / 2.0 - x);
+            }
+        }
+        self.left_reach = reach;
+        Ok(self)
+    }
+
+    /// Paints at the CALLER's own `plot_left`/`plot_w`/`plot_bottom`: the
+    /// panel's, or a facet composite's footer band.
+    pub(crate) fn paint(
+        &self,
+        svg: &mut String,
+        ax: &AxisStyle,
+        plot_left: f64,
+        plot_w: f64,
+        plot_bottom: f64,
+    ) -> Result<(), String> {
+        // The bottom axis group sits at (0.5, ph + 0.5): Vega's crispness
+        // translate shifts the whole label row half a pixel right and down.
+        let delta = 0.5;
+        crate::contract::axis_group_open(svg, crate::contract::AxisChannel::X, (plot_left + 0.5, plot_bottom + delta))?;
+        // Baseline one `round(0.79·fs)` below the label row's top.
+        let label_y = plot_bottom + delta + self.pad + vega_fit::baseline_shift("top", self.font_size);
+        for (x, label, anchor) in self.drawn(plot_w) {
+            let _ = write!(
+                svg,
+                "<text x=\"{:.2}\" y=\"{label_y:.2}\" text-anchor=\"{anchor}\" \
+                 font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
+                plot_left + x + delta,
+                vega_escape_attr(&self.family),
+                self.font_size,
+                xml_escape_attr(&self.weight),
+                xml_escape_attr(&self.color),
+                xml_escape(label),
+            );
+        }
+        emit_axis_title_bottom(
+            svg,
+            &self.title,
+            &ax.title,
+            plot_left + plot_w / 2.0,
+            label_y,
+            self.font_size,
+            Some(crate::contract::LabelKey::Y),
+        );
+        crate::contract::axis_group_close(svg);
+        Ok(())
+    }
 }
 
 /// One panel's worth of axes + marks + grid + title/legend chrome for a
@@ -2815,12 +3014,13 @@ fn render_horizontal_panel(
     pad: Option<&Padding>,
     bg: &str,
     fonts: &FontBook,
-    r: BarResolved,
+    r: &BarResolved,
     wide_series: &[String],
     layers: &[(&OverlayLayer, &[serde_json::Map<String, Value>])],
     support_table: Option<&support_table_strip::SupportTableConfig>,
     board_style: Option<&crate::BoardStyle>,
-) -> Result<String, Diagnostic> {
+    facet: Option<&HorizontalFacetOpts>,
+) -> Result<(String, Option<HorizontalFacetPanel>), Diagnostic> {
     let eff_title_style = crate::common::effective_title_style(
         r.style.title_font.as_ref(),
         r.title_style.as_ref(),
@@ -2840,7 +3040,9 @@ fn render_horizontal_panel(
     // (production's `apply_legend_entry_order(encoding["color"], order)` —
     // no reversal, see `common::sorted_series_by_stack_order`).
     let state = build_chart_domains(
-        rows,
+        facet.map_or(rows, |f| f.chart_rows),
+        facet.map_or(rows, |f| f.cat_rows),
+        facet.map(|f| f.color_one_to_one),
         cat_field,
         val_field,
         color_field,
@@ -2926,18 +3128,10 @@ fn render_horizontal_panel(
     let cat_pad = ax_x
         .labels.padding
         .ok_or("bar: axis_x.labels.padding absent (theme required)")?;
-    let min_gap = ax_x
-        .labels.min_gap
-        .ok_or("bar: axis_x.labels.min_gap absent (theme required)")?;
-    let mark_size = r
-        .style
-        .mark
-        .size
-        .unwrap_or_else(|| continuous_max_size(&r.style.mark));
-    let band_step = mark_size.max(cat_font_size + 2.0 * cat_pad) + min_gap;
     let n_categories = crate::common::count_horizontal_bar_categories(rows, cat_field);
-    let derived = CHROME_PX + n_categories as f64 * band_step;
-    let h = payload_height.max(derived);
+    let derived = horizontal_min_height(r, n_categories)?;
+    // A facet panel's height is the composer's, which applied the floor to the whole card.
+    let h = if facet.is_some() { payload_height } else { payload_height.max(derived) };
 
     // ── Layout geometry ────────────────────────────────────────────────────
     // r.legend.visible is already the final decision: production folds
@@ -3019,7 +3213,16 @@ fn render_horizontal_panel(
     // Zero rule fires only with a visible grid AND a visible threshold (see
     // `zero_w_for`); a normalize stack's 0%/100% top rules are gated
     // identically, not exempted from `grid.visible`.
-    let rules = baseline_rules(ax_y, r.y_start.is_some(), unity_rule(&r, rows));
+    // An independent-scale panel draws no zero or threshold rule at all
+    // (`BaselineFeature.apply` skips the chart: its pooled verdict would be
+    // wrong for a panel with its own domain).
+    let independent_scale = facet.is_some_and(|f| f.independent_scale);
+    let value_rows = facet.map_or(rows, |f| f.value_domain_rows);
+    let rules = if independent_scale {
+        None
+    } else {
+        baseline_rules(ax_y, r.y_start.is_some(), unity_rule(&r, value_rows))
+    };
     let flush_thr = flush_threshold(ax_y.labels.flush.as_ref())?;
     // A bar between two date columns puts a time scale on the value axis
     // (`validate_span` has confirmed the tick count and the day-number rows).
@@ -3027,7 +3230,7 @@ fn render_horizontal_panel(
     // fitted plot width below.
     let date_axis_at = |count: usize| match (r.measure_type.as_deref(), r.y_start.as_deref()) {
         (Some("temporal"), Some(start_field)) => {
-            span::date_axis(rows, [val_field.as_str(), start_field], count).map(Some)
+            span::date_axis(value_rows, [val_field.as_str(), start_field], count).map(Some)
         }
         _ => Ok(None),
     };
@@ -3035,7 +3238,7 @@ fn render_horizontal_panel(
     let (mut linear_domain_min, mut linear_domain_max, mut tick_values) = match &date_axis {
         Some(axis) => (axis.domain.0, axis.domain.1, axis.ticks.clone()),
         None => value_domain_and_ticks(
-            rows, cat_field, val_field, ax_y, &r.stack, r.stacked_domain_max, false, r.y_start.as_deref(),
+            value_rows, cat_field, val_field, ax_y, &r.stack, r.stacked_domain_max, false, r.y_start.as_deref(),
             false, labels_on_zero_stack(&r),
         )
         .map(|(floor, top, ticks, _)| (floor, top, ticks))?,
@@ -3117,9 +3320,12 @@ fn render_horizontal_panel(
         _ => None,
     };
     let center = r.stack == "center";
-    let center_stack = center.then(|| {
-        let split = CenterStack::splits(r.style.mark.border.radius, rows, val_field);
-        CenterStack::over([rows], cat_field, val_field, split)
+    let center_stack = center.then(|| match facet.and_then(|f| f.center_stack) {
+        Some(whole) => whole,
+        None => {
+            let all_rows = facet.map_or(rows, |f| f.chart_rows);
+            CenterStack::over([rows], cat_field, val_field, CenterStack::splits(r.style.mark.border.radius, all_rows, val_field))
+        }
     });
     let stroke_color = r.style.mark.border.color.as_deref().unwrap_or("none");
     let stroke_w = r.style.mark.border.width.unwrap_or(0.0);
@@ -3161,10 +3367,18 @@ fn render_horizontal_panel(
     } else {
         match r.y_label.as_deref() { Some(l) => crate::common::collapse_title_newlines(l), None => crate::common::wide_measures_title(&r.wide_measures, &r.field_labels)? }
     };
-    let cat_title_paint =
-        crate::common::wrapped_axis_title(&r.id, "x_label", &cat_title_text, &ax_x.title.font, h, fonts)?;
-    let val_title_paint =
-        crate::common::wrapped_axis_title(&r.id, "y_label", &val_title_text, &ax_y.title.font, w, fonts)?;
+    let (cat_title_paint, val_title_paint) = match facet {
+        Some(_) => {
+            let grid = multiples::grid_counts(r.multiples.as_ref(), &r.panel_axes);
+            crate::common::refuse_wrapping_facet_title("bar", &cat_title_text, &ax_x.title, h, grid.0, fonts)?;
+            crate::common::refuse_wrapping_facet_title("bar", &val_title_text, &ax_y.title, w, grid.1, fonts)?;
+            (cat_title_text.clone(), val_title_text.clone())
+        }
+        None => (
+            crate::common::wrapped_axis_title(&r.id, "x_label", &cat_title_text, &ax_x.title.font, h, fonts)?,
+            crate::common::wrapped_axis_title(&r.id, "y_label", &val_title_text, &ax_y.title.font, w, fonts)?,
+        ),
+    };
     // Vega measures the title itself; it reaches past the plot's ends when
     // wider than the plot.
     let cat_title_w = crate::common::widest_title_line(&ax_x.title, &cat_title_paint, fonts)?;
@@ -3210,7 +3424,10 @@ fn render_horizontal_panel(
     // stays plain and each category's one bar takes its own color.
     let one_to_one = is_grouped
         && !is_stacked
-        && color_1to1_with_cat(rows, cat_field, color_field.expect("is_grouped implies color"));
+        && facet.map_or_else(
+            || color_1to1_with_cat(rows, cat_field, color_field.expect("is_grouped implies color")),
+            |f| f.color_one_to_one,
+        );
     let split_columns = is_grouped && !is_stacked && !one_to_one;
     let (band_pi, band_po) = if split_columns {
         (r.style.grouped.padding_inner, r.style.grouped.padding_outer)
@@ -3259,7 +3476,10 @@ fn render_horizontal_panel(
     let label_layers = {
         let plain_rows: Vec<&serde_json::Map<String, Value>> =
             cat_domain.iter().filter_map(|cat| rows.iter().find(|row| row_str(row, cat_field) == *cat)).collect();
-        let label_stack = center.then(|| CenterStack::over([rows], cat_field, val_field, false));
+        let label_stack = center.then(|| match facet {
+            Some(f) => f.center_label_stack,
+            None => CenterStack::over([rows], cat_field, val_field, false),
+        });
         let label_spans =
             stack_label_spans(&r, label_stack.as_ref(), &cat_domain, &stack_order, &data_map, &category_totals_all)?;
         value_label_layers(&LabelBuild {
@@ -3568,7 +3788,10 @@ fn render_horizontal_panel(
         fonts,
     )?;
     title.warn_truncated(&r.id);
-    let (plot_left, plot_top, plot_w, plot_h, vega_title_pos, vega_legend, canvas_w, canvas_h) = {
+    let cat_title_extra = crate::common::y_title_extra(&ax_x.title, &cat_title_paint);
+    let cat_axis_in_panel = facet.map_or(true, |f| f.cell_cat_axis);
+    let val_axis_in_panel = facet.map_or(true, |f| f.independent_scale);
+    let (plot_left, plot_top, plot_w, plot_h, vega_title_pos, vega_legend, canvas_w, canvas_h, cell_ink) = {
         let measure_labels = |labels: &[String]| -> Result<Vec<f64>, String> {
             labels.iter().map(|l| fonts.measure_shaped(l, val_family, val_font_size)).collect()
         };
@@ -3577,7 +3800,6 @@ fn render_horizontal_panel(
         // past its anchor at −(labelPadding + titlePadding); bottom title:
         // one text row (with its own baseline-rounding quirk) below
         // labels + titlePadding.
-        let cat_title_extra = crate::common::y_title_extra(&ax_x.title, &cat_title_paint);
         let val_title_extra = crate::common::x_title_extra(&ax_y.title, &val_title_paint);
         let legend = (legend_shown && !legend_entries_typed.is_empty())
             .then(|| {
@@ -3591,18 +3813,21 @@ fn render_horizontal_panel(
         let ink = |tick_values: &[f64], val_label_ws: &[f64], pw: f64, ph: f64, b: &mut vega_fit::Bounds| {
                 // The category band: the label gutter (flip-aligned or
                 // end-anchored, see `cat_gutter`) and title, shifted out by the
-                // axis offset past the plot edge the axis sits on.
+                // axis offset past the plot edge the axis sits on. A facet's
+                // shared one is the composer's `row_header`.
                 let cat_reach = ax_off + cat_gutter + cat_title_extra;
                 let (band_x1, band_x2) = if cat_on_right { (pw, pw + cat_reach) } else { (-cat_reach, 0.0) };
-                b.union(&vega_fit::Bounds::new(band_x1, 0.0, band_x2, ph));
-                if cat_title_extra > 0.0 {
-                    let x = if cat_on_right { band_x2 } else { band_x1 };
-                    b.union(&vega_fit::Bounds::new(x, ph / 2.0 - cat_title_w / 2.0, x, ph / 2.0 + cat_title_w / 2.0));
+                if cat_axis_in_panel {
+                    b.union(&vega_fit::Bounds::new(band_x1, 0.0, band_x2, ph));
+                    if cat_title_extra > 0.0 {
+                        let x = if cat_on_right { band_x2 } else { band_x1 };
+                        b.union(&vega_fit::Bounds::new(x, ph / 2.0 - cat_title_w / 2.0, x, ph / 2.0 + cat_title_w / 2.0));
+                    }
                 }
                 // The ghost keeps the primary's anchor and label padding on the
                 // opposite edge, so its text reaches past the plot by that much.
                 let (mut axes_x1, mut axes_x2) = (band_x1.min(0.0), band_x2.max(pw));
-                if mirror_active {
+                if mirror_active && facet.is_none() {
                     let align = if ghost_anchor == "start" { "left" } else { "right" };
                     let ghost_x = if cat_on_right { -(ax_off + ghost_gutter) } else { pw + ax_off + ghost_gutter };
                     let ghost = vega_fit::text_ink(ghost_x, ph / 2.0, cat_w, cat_font_size, align, "middle");
@@ -3630,13 +3855,17 @@ fn render_horizontal_panel(
                 let visible = vega_fit::parity_visible(&label_ink, val_separation);
                 let mut x_axis_y2 = ph;
                 for (ink, _) in label_ink.iter().zip(&visible).filter(|(_, &v)| v) {
-                    b.union(ink);
+                    if val_axis_in_panel {
+                        b.union(ink);
+                    }
                     x_axis_y2 = x_axis_y2.max(ink.y2);
                 }
                 val_visible.replace(Some(visible));
                 if val_title_extra > 0.0 {
                     x_axis_y2 += val_title_extra;
-                    b.union(&vega_fit::Bounds::new(pw / 2.0 - val_title_w / 2.0, 0.0, pw / 2.0 + val_title_w / 2.0, x_axis_y2));
+                    if val_axis_in_panel {
+                        b.union(&vega_fit::Bounds::new(pw / 2.0 - val_title_w / 2.0, 0.0, pw / 2.0 + val_title_w / 2.0, x_axis_y2));
+                    }
                 }
                 // The bars' own rects, stroke-expanded (`boundStroke`, full
                 // width): a bar ending on the domain max overhangs the plot's
@@ -3649,7 +3878,7 @@ fn render_horizontal_panel(
                     let (lo, hi) = value_extent;
                     vega_fit::Bounds::spanning(at(lo), ph / 2.0, at(hi), ph / 2.0).expand(drawn_stroke_w)
                 });
-                if let Some(lg) = &legend {
+                if let Some(lg) = legend.as_ref().filter(|_| facet.is_none()) {
                     // `xBounds` is the plot rect ∪ the category band (this arm's
                     // only y axis, and its ghost) ∪ the bars that overhang it;
                     // `yBounds` the plot rect ∪ the bottom value axis. The
@@ -3733,8 +3962,13 @@ fn render_horizontal_panel(
         };
         // A support_table switches the spec to `autosize: pad`: the pane is the
         // spec size verbatim and the block's own ink joins the view bounds the
-        // margins ceil around. Everything else fits the outer card.
+        // margins ceil around. A facet cell is the same `pad` layout: the plot
+        // rect is the composer's `w`x`h` verbatim and ink overflows outward.
+        // Everything else fits the outer card.
         let fit = |tick_values: &[f64], val_label_ws: &[f64]| match (&block, r.effective_support_table_style.as_ref()) {
+            _ if facet.is_some() => {
+                vega_fit::pad_plot(w, h, |pw, ph, b| ink(tick_values, val_label_ws, pw, ph, b), title.ink())
+            }
             (Some(block), Some(style)) if top_rail.is_none() => vega_fit::pad_plot(
                 w,
                 h,
@@ -3808,6 +4042,9 @@ fn render_horizontal_panel(
         if m.plot_w <= 0.0 || m.plot_h <= 0.0 {
             return Err(no_room_for_marks((chart_id, w), rows, val_field, (w, h)));
         }
+        // The cell's own bounds in plot coordinates: what a facet grid lays rows out around.
+        let mut cell_ink = vega_fit::Bounds::new(0.0, 0.0, m.plot_w, m.plot_h);
+        ink(&tick_values, &val_label_ws, m.plot_w, m.plot_h, &mut cell_ink);
         let legend_pos = legend.map(|lg| {
             let (x, y) = legend_xy.get();
             (pad_l + canvas_pad_l + m.left + x, pad_t + m.top + y, lg)
@@ -3820,7 +4057,7 @@ fn render_horizontal_panel(
         } else {
             (w, h)
         };
-        (pad_l + canvas_pad_l + m.left, pad_t + m.top, m.plot_w, m.plot_h, m.title_pos, legend_pos, canvas.0, canvas.1)
+        (pad_l + canvas_pad_l + m.left, pad_t + m.top, m.plot_w, m.plot_h, m.title_pos, legend_pos, canvas.0, canvas.1, cell_ink)
     };
     // The fit arms settle the plot height themselves; the block's cells were
     // centered on the nominal `h`.
@@ -3833,10 +4070,27 @@ fn render_horizontal_panel(
     let linear = LinearScale::new(linear_domain_min, linear_domain_max, 0.0, plot_w);
 
     let corner_r = r.style.mark.border.radius.unwrap_or(0.0);
+    let value_axis = HorizontalValueAxis {
+        ticks: tick_values.clone(),
+        labels: val_tick_labels.clone(),
+        visible: val_visible.take(),
+        domain: (linear_domain_min, linear_domain_max),
+        flush_threshold: flush_thr,
+        pad: val_pad,
+        font_size: val_font_size,
+        family: val_family.to_string(),
+        color: ax_y.labels.font.color.as_deref().unwrap_or("#626366").to_string(),
+        weight: ax_y.labels.font.weight_str(),
+        title: val_title_paint.clone(),
+        left_reach: 0.0,
+    }
+    .with_left_reach(plot_w, fonts)?;
 
     // ── SVG emission ───────────────────────────────────────────────────────
     let mut svg = String::with_capacity(16384);
     ChartFrame::new(canvas_w, canvas_h, (pad_l, pad_r, pad_t, pad_b), bg, num_full).open(&mut svg);
+    // A facet composite splices from here: its own single background rect covers every panel.
+    let content_start = svg.len();
 
     if !title.paint(&mut svg, vega_title_pos, (plot_left, plot_top)) {
         emit_title(&mut svg, r.title.as_deref(), title_ref, pad_l, pad_t);
@@ -3845,9 +4099,18 @@ fn render_horizontal_panel(
     let band = BandScale::new(cat_domain.clone(), 0.0, plot_h, band_pi, band_po);
 
     let swatch_stroke = r.style.mark.border.color.as_deref().unwrap_or("none");
+    // A facet's one legend hangs on the composite (`LegendChrome`), so the
+    // panel hands it over painted at its own origin instead of placing it.
+    let mut facet_legend: Option<facet_compose::FacetLegend> = None;
     if let Some((lx, ly, lg)) = &vega_legend {
-        let (dx, dy) = legend_slide(&r.id, &r.legend.position, lg, (plot_w, plot_h))?;
-        emit_vega_legend(&mut svg, &legend_entries_typed, lg, &r.legend, LegendSymbol::Square(swatch_stroke), *lx + dx, *ly + dy, stamp_legend_series);
+        if facet.is_some() {
+            let mut legend_svg = String::new();
+            emit_vega_legend(&mut legend_svg, &legend_entries_typed, lg, &r.legend, LegendSymbol::Square(swatch_stroke), 0.0, 0.0, stamp_legend_series);
+            facet_legend = Some(facet_compose::FacetLegend { svg: legend_svg, box_w: lg.box_w, box_h: lg.box_h() });
+        } else {
+            let (dx, dy) = legend_slide(&r.id, &r.legend.position, lg, (plot_w, plot_h))?;
+            emit_vega_legend(&mut svg, &legend_entries_typed, lg, &r.legend, LegendSymbol::Square(swatch_stroke), *lx + dx, *ly + dy, stamp_legend_series);
+        }
     }
 
     // Rail: one label per series, centered on that series' segment within the
@@ -3966,7 +4229,15 @@ fn render_horizontal_panel(
     // The bar layers a ranged bar splits into (`direction_layers`): the zero
     // rule and the value labels number after them.
     let mut bar_layers_painted = 1usize;
-    let mut hover_band = hover_band_for(&r, rows, false);
+    let mut hover_band = hover_band_for(&r, rows, facet.is_some());
+    // `(label, x, y, stroke)` of each datum the mirror's ghost rule layer carries.
+    let ghosts_on = facet.is_some() && mirror_active;
+    let mut ghost_points: Vec<(Option<String>, f64, f64, String)> = Vec::new();
+    let ghost_ink = if ghosts_on {
+        ax_y.labels.font.color.clone().ok_or("bar: axis_y.labels.font.color absent (theme required)")?
+    } else {
+        String::new()
+    };
 
     // Bars
     if is_stacked {
@@ -4010,6 +4281,9 @@ fn render_horizontal_panel(
                 let (seg_start, seg_end) = if x1 <= x2 { (x1, x2) } else { (x2, x1) };
                 let seg_w = seg_end - seg_start;
                 let fill = crate::common::series_color(series, &palette_domain, &r.palette, category_scale, "#ccc")?;
+                if ghosts_on {
+                    ghost_points.push((aria.clone(), x2, bar_y + mark_h / 2.0, fill.clone()));
+                }
                 // Corner radius flips with sign (Vega's mixed-sign layer
                 // split — see `emit_bar`'s doc comment and the vertical
                 // arm's mirrored `Rounded::Negative`): a positive segment rounds
@@ -4075,6 +4349,9 @@ fn render_horizontal_panel(
             label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: Some(fill.clone()) });
             if let Some(band) = hover_band.as_mut() {
                 band.push(cat, series, aria.as_deref(), bar_y, mark_h, Some(val));
+            }
+            if ghosts_on {
+                ghost_points.push((aria.clone(), linear.position(val).clamp(0.0, plot_w), bar_y + mark_h / 2.0, fill.clone()));
             }
             emit_bar(&mut svg, bar_x, bar_y, bar_w, mark_h, &fill, stroke_color, stroke_w, corner_r, ends, aria.as_deref(), None)?;
         }
@@ -4148,6 +4425,9 @@ fn render_horizontal_panel(
             }
             if let Some(band) = hover_band.as_mut() {
                 band.push(cat, "", aria.as_deref(), bar_y, mark_h, Some(val));
+            }
+            if ghosts_on {
+                ghost_points.push((aria.clone(), val_x, bar_y + mark_h / 2.0, ghost_ink.clone()));
             }
             let href = r.link.as_deref().map(|tpl| bar_datum_href(tpl, rows, &r.x, &r.y, cat, false)).transpose()?;
             emit_bar(
@@ -4310,6 +4590,14 @@ fn render_horizontal_panel(
         }
     }
 
+    if !ghost_points.is_empty() {
+        let rules: Vec<crate::contract::GhostRule> = ghost_points
+            .iter()
+            .map(|(aria, x, y, stroke)| crate::contract::GhostRule { aria: aria.as_deref(), x: *x, y: *y, stroke })
+            .collect();
+        crate::contract::mirror_ghost_layer(&mut svg, &rules, crate::contract::GhostRun::ToLeftEdge)?;
+    }
+
     let _ = write!(svg, "</g>");
 
     // Authored bar value labels, then the stack-total label: one text layer
@@ -4339,13 +4627,27 @@ fn render_horizontal_panel(
     // Category labels (left axis). Vega-fit path draws them the way the
     // compiled axis does: flip-aligned (anchor start at −labelPadding, the
     // whole gutter shifted by the axis offset) with the middle-baseline
-    // shift Vega rounds (`round(0.30·fs)`); legacy keeps the right-aligned
-    // gutter.
+    // shift Vega rounds (`round(0.30·fs)`). A facet's shared axis is the
+    // composer's `row_header`, or a last-column `row_footer` copy: the panel
+    // reports (or paints) the labels instead.
     let cat_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
     let cat_weight = ax_x.labels.font.weight_str();
+    let paint_cat_label = |svg: &mut String, x: f64, y: f64, anchor: &str, label: &str| {
+        let _ = write!(
+            svg,
+            "<text x=\"{x:.2}\" y=\"{y:.2}\" text-anchor=\"{anchor}\" \
+             font-family=\"{}\" font-size=\"{cat_font_size}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
+            vega_escape_attr(cat_family),
+            xml_escape_attr(&cat_weight),
+            xml_escape_attr(cat_color),
+            xml_escape(label),
+        );
+    };
     let cat_edge_x = if cat_on_right { plot_right + ax_off } else { plot_left - ax_off };
     let cat_side = if cat_on_right { 1.0 } else { -1.0 };
-    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (cat_edge_x + 0.5, plot_top))?;
+    if cat_axis_in_panel {
+        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (cat_edge_x + 0.5, plot_top))?;
+    }
     let mut cat_labels: Vec<(f64, f64, String)> = Vec::new();
     for cat in &cat_domain {
         let Some(band_y) = band.position(cat) else { continue };
@@ -4362,92 +4664,113 @@ fn render_horizontal_panel(
         let drawn =
             crate::common::truncate_label(cat, cat_limit, cat_family, cat_font_size, fonts, false)
                 .map_err(|e| format!("bar: {e}"))?;
-        let _ = write!(
-            svg,
-            "<text x=\"{label_x:.2}\" y=\"{label_y:.2}\" text-anchor=\"{anchor}\" \
-             font-family=\"{}\" font-size=\"{cat_font_size}\" font-weight=\"{cat_weight}\" \
-             fill=\"{cat_color}\">{}</text>",
-            vega_escape_attr(cat_family),
-            xml_escape(&drawn), anchor = xml_escape_attr(anchor), cat_weight = xml_escape_attr(&cat_weight), cat_color = xml_escape_attr(cat_color)
-        );
+        if cat_axis_in_panel {
+            paint_cat_label(&mut svg, label_x, label_y, anchor, &drawn);
+        }
         cat_labels.push((label_y, center_y, drawn));
     }
 
     // Axis titles.
-    emit_axis_title_rotated(
-        &mut svg,
-        &cat_title_paint,
-        &ax_x.title,
-        cat_edge_x + cat_side * cat_gutter,
-        plot_top + plot_h / 2.0,
-        cat_side,
-        Some(crate::contract::LabelKey::X),
-    );
-    crate::contract::axis_group_close(&mut svg);
-    if mirror_active {
+    if cat_axis_in_panel {
+        emit_axis_title_rotated(
+            &mut svg,
+            &cat_title_paint,
+            &ax_x.title,
+            cat_edge_x + cat_side * cat_gutter,
+            plot_top + plot_h / 2.0,
+            cat_side,
+            facet.is_none().then_some(crate::contract::LabelKey::X),
+        );
+        crate::contract::axis_group_close(&mut svg);
+    }
+    if mirror_active && cat_axis_in_panel {
         let ghost_edge_x = if cat_on_right { plot_left - ax_off } else { plot_right + ax_off };
         crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (ghost_edge_x + 0.5, plot_top))?;
         let ghost_x = ghost_edge_x - cat_side * ghost_gutter + 0.5;
         for (label_y, _, drawn) in &cat_labels {
-            let _ = write!(
-                svg,
-                "<text x=\"{ghost_x:.2}\" y=\"{label_y:.2}\" text-anchor=\"{ghost_anchor}\" \
-                 font-family=\"{}\" font-size=\"{cat_font_size}\" font-weight=\"{cat_weight}\" \
-                 fill=\"{cat_color}\">{}</text>",
-                vega_escape_attr(cat_family),
-                xml_escape(drawn), cat_weight = xml_escape_attr(&cat_weight), cat_color = xml_escape_attr(cat_color)
-            );
+            paint_cat_label(&mut svg, ghost_x, *label_y, ghost_anchor, drawn);
         }
         crate::contract::axis_group_close(&mut svg);
     }
-
-    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::X, (plot_left + 0.5, plot_bottom + 0.5))?;
-    // Value-axis labels (below plot), flush-aligned at the range ends the
-    // way Vega's `labelFlush` does, baseline one `round(0.79·fs)` below the
-    // label row's top.
-    let val_color = ax_y.labels.font.color.as_deref().unwrap_or("#626366");
-    let val_weight = ax_y.labels.font.weight_str();
-    // The bottom axis group sits at (0.5, ph + 0.5) — Vega's crispness
-    // translate shifts the whole label row half a pixel right and down.
-    let axis_delta = 0.5;
-    let val_label_y =
-        plot_bottom + axis_delta + val_pad + vega_fit::baseline_shift("top", val_font_size);
-    let val_visible = val_visible.into_inner();
-    for (i, (&tv, label)) in tick_values.iter().zip(val_tick_labels.iter()).enumerate() {
-        let abs_x = plot_left + linear.position(tv) + axis_delta;
-        if abs_x < plot_left - 1.0 || abs_x > plot_right + 1.0 || val_visible.as_ref().is_some_and(|v| !v[i]) {
-            continue;
+    // A facet's axis copies: the primary on `axis_y.position`'s side and the
+    // mirror's ghost opposite. The composer's `row_header` holds the left one;
+    // the last column of each row paints the right one at `row_footer`'s anchor,
+    // `ceil(cell x2)`.
+    let primary_copy = EdgeCopy { dx: cat_side * cat_label_pad + 0.5, anchor: cat_anchor, reach: ax_off + cat_gutter + cat_title_extra };
+    let ghost_copy = (mirror_active && facet.is_some()).then(|| EdgeCopy {
+        dx: -cat_side * ghost_gutter + 0.5,
+        anchor: ghost_anchor,
+        // A ghost anchored outward carries its labels past the gutter.
+        reach: ax_off + ghost_gutter + if ghost_anchor == if cat_on_right { "end" } else { "start" } { cat_w } else { 0.0 },
+    });
+    let (left_copy, right_copy) = if cat_on_right { (ghost_copy, Some(primary_copy)) } else { (Some(primary_copy), ghost_copy) };
+    let right_edge = facet.map(|f| &f.right_edge);
+    if let (Some(copy), Some(edge)) = (&right_copy, right_edge.filter(|e| e.paint && !cat_axis_in_panel)) {
+        let edge_x = plot_left + plot_w + edge.overhang + ax_off;
+        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (edge_x + 0.5, plot_top))?;
+        for (label_y, _, drawn) in &cat_labels {
+            paint_cat_label(&mut svg, edge_x + copy.dx, *label_y, copy.anchor, drawn);
         }
-        // Vega's own `flush` never sees the +0.5 crispness delta — pass
-        // the same delta-free range-space position the fit site used.
-        let anchor = match flush_edge(linear.position(tv), plot_w, flush_thr) {
-            Some(true) => "start",
-            Some(false) => "end",
-            None => "middle",
-        };
-        let _ = write!(
-            svg,
-            "<text x=\"{abs_x:.2}\" y=\"{val_label_y:.2}\" text-anchor=\"{anchor}\" \
-             font-family=\"{}\" font-size=\"{val_font_size}\" font-weight=\"{val_weight}\" \
-             fill=\"{val_color}\">{}</text>",
-            vega_escape_attr(val_family),
-            xml_escape(label), anchor = xml_escape_attr(anchor), val_weight = xml_escape_attr(&val_weight), val_color = xml_escape_attr(val_color)
-        );
+        if cat_on_right {
+            emit_axis_title_rotated(&mut svg, &cat_title_paint, &ax_x.title, edge_x + cat_gutter, plot_top + plot_h / 2.0, 1.0, None);
+        }
+        crate::contract::axis_group_close(&mut svg);
+    }
+    let row_header_labels = if cat_axis_in_panel { Vec::new() } else { cat_labels.iter().map(|(y, _, label)| (*y, label.clone())).collect() };
+
+    if val_axis_in_panel {
+        value_axis.paint(&mut svg, ax_y, plot_left, plot_w, plot_bottom)?;
     }
 
-    emit_axis_title_bottom(
-        &mut svg,
-        &val_title_paint,
-        &ax_y.title,
-        plot_left + plot_w / 2.0,
-        val_label_y,
-        val_font_size,
-        Some(crate::contract::LabelKey::Y),
-    );
-    crate::contract::axis_group_close(&mut svg);
-
+    let svg_end = svg.len();
     svg.push_str("</svg>");
-    Ok(svg)
+    let mut ink = vega_fit::Bounds::new(
+        plot_left + cell_ink.x1,
+        plot_top + cell_ink.y1,
+        plot_left + cell_ink.x2,
+        plot_top + cell_ink.y2,
+    );
+    // The right-edge copy reaches `reach` past the anchor `ceil(x2)`; a rows-only
+    // facet folds it into its cell, a wider grid reserves it once.
+    let right_reach = if cat_axis_in_panel { 0.0 } else { right_copy.as_ref().map_or(0.0, |c| right_edge.map_or(0.0, |e| e.overhang) + c.reach) };
+    if right_edge.is_some_and(|e| e.fold) {
+        ink.union(&vega_fit::Bounds::new(plot_left, plot_top, plot_left + plot_w + right_reach, plot_top + plot_h));
+    }
+    let facet_panel = facet.map(|_| HorizontalFacetPanel {
+        // Under `pad` the panel's own margins are the canvas offsets, so `plot_left`/`plot_top` are `m.left`/`m.top`.
+        geometry: PanelGeometry {
+            content_start,
+            svg_end,
+            ink,
+            axis_w_overhang: plot_left + right_reach,
+            left_mark_overhang: plot_left,
+            plot_top,
+            raw_right_reach: (cell_ink.x2 - plot_w).max(0.0),
+            widest_val_tick_label_width: 0.0,
+            val_gutter: 0.0,
+            val_tick_size: 0.0,
+            val_ticks: row_header_labels,
+            val_tick_marks: Vec::new(),
+            mirror_style: Some(GhostStyle {
+                val_font_size: cat_font_size,
+                val_weight: cat_weight,
+                val_color: cat_color.to_string(),
+                val_family: cat_family.to_string(),
+            }),
+            axis: facet_compose::PanelXAxis::Value(value_axis),
+            top_axis_overhang: 0.0,
+            legend: facet_legend,
+            value_axis: None,
+        },
+        row_axis: left_copy.map(|copy| RowAxisPlacement {
+            reserve: copy.reach,
+            label_x: -ax_off + copy.dx,
+            label_anchor: copy.anchor,
+            titled: !cat_on_right,
+            title_x: -(ax_off + cat_gutter),
+        }),
+    });
+    Ok((svg, facet_panel))
 }
 
 // ── Vertical bar (column chart) render ───────────────────────────────────────
@@ -6063,14 +6386,18 @@ use vega_fit::category_label_layout;
 /// (this crate has no scenegraph to probe), not vl-convert's own probe
 /// render.
 ///
-/// Scope (refuses outside it rather than approximate): vertical orientation,
+/// A horizontal bar composes `render_horizontal_panel` panels instead: cell ink
+/// only, with the category axis in the composer's `row_header` (or `row_footer`)
+/// and the value axis in its `column_footer`.
+///
+/// The vertical arm's scope (refuses outside it rather than approximate):
 /// `multiples.rows` and/or `multiples.columns` (a sparse grid fills the slots
 /// after Vega's empty ones, `multiples::empty_leading_cells`), a color channel
 /// only with the legend on top (`BarFacetPanelOpts`: one chart-level legend,
 /// palette, category domain and `xOffset` verdict), no support_table
 /// (production's `FacetFeature` refuses it alongside `multiples`), layers over
 /// the base query (no dual axis, none on a continuous x), no
-/// `axis_y.position: "left"` on a
+/// `axis_y.position: "left"` on a vertical
 /// multi-column facet (`paint_value_axis` hardcodes the right-side "last
 /// column" law). `axis_y.mirror:
 /// true` is admitted on rows-only, columns-only, and grid shapes with a
@@ -6091,9 +6418,7 @@ fn render_facet(
     mut r: BarResolved,
     wide_series: &[String],
 ) -> Result<String, Diagnostic> {
-    if r.orientation != "vertical" {
-        return Err(format!("bar: multiples on orientation {:?} not supported — only vertical", r.orientation).into());
-    }
+    let horizontal = r.orientation == "horizontal";
     let mc = r.multiples.clone().expect("render's own gate checked r.multiples.is_some()");
     // A facet's color legend sits once beside or above the grid
     // (`_multiples_wants_top_legend` moves it to the top by default).
@@ -6127,7 +6452,7 @@ fn render_facet(
     // independent reason to refuse this shape: `paint_value_axis` hardcodes
     // the right-side law, painting the only ladder in the LAST column,
     // where real Vega's `row_header` sits at the FIRST column instead.
-    if r.style.axis_y.position.as_deref() == Some("left") {
+    if !horizontal && r.style.axis_y.position.as_deref() == Some("left") {
         return Err("bar: multiples requires axis_y.position: right".into());
     }
     // A titled value axis paints once, at the last column of each row.
@@ -6196,7 +6521,7 @@ fn render_facet(
     // `_domain_subset_narrowing_candidates`: x narrows per panel under a
     // columns-only facet (a rows or grid facet never narrows x), and Vega then
     // draws the x axis inside each cell.
-    let x_narrowed = mc.rows.is_none() && multiples::field_is_proper_subset_in_a_panel(&panels, &r.x);
+    let x_narrowed = !horizontal && mc.rows.is_none() && multiples::field_is_proper_subset_in_a_panel(&panels, &r.x);
     let color_one_to_one = r
         .color
         .as_deref()
@@ -6209,6 +6534,45 @@ fn render_facet(
     let whole_chart = CenterStack::over(panels.iter().map(|p| p.rows.as_slice()), &r.x, &r.y, false);
     let center_stack = (r.stack == "center" && !layered).then_some(whole_chart);
     let series = Cell::new(1);
+    // `_domain_subset_narrowing_candidates`: a horizontal bar's category rides VL
+    // `y`, which narrows when some panel holds a proper subset of the categories
+    // (never under a mirror or a layer), and Vega then draws the category axis
+    // inside each cell. A columns facet pays for that extra axis in panel width
+    // and narrows only while the panel stays legible (`extra_axis_is_affordable`).
+    let cat_axis_px = if horizontal && mc.columns.is_some() {
+        heatmap_facet::facet_extra_axis_px(
+            &r.style.axis_x.labels,
+            &heatmap_facet::first_appearance(&payload.rows, &r.x),
+            fonts,
+        )?
+    } else {
+        0.0
+    };
+    let cat_narrowed = horizontal
+        && r.layers.is_empty()
+        && !has_mirror
+        && multiples::field_is_proper_subset_in_a_panel(&panels, &r.x)
+        && multiples::extra_axis_is_affordable(
+            multiples::facet_panel_width(payload.width, panel_cols_n, false, 0.0),
+            cat_axis_px,
+        );
+    let extra_axis_px = if cat_narrowed { cat_axis_px } else { 0.0 };
+    // `effective_height`: every panel needs room for its categories' labels, so
+    // the card grows to hold that many rows of them.
+    let floored;
+    let payload = if horizontal {
+        let n_categories = if cat_narrowed {
+            panels.iter().map(|p| crate::common::count_horizontal_bar_categories(&p.rows, &r.x)).max().unwrap_or(0)
+        } else {
+            crate::common::count_horizontal_bar_categories(&payload.rows, &r.x)
+        };
+        let height = payload.height.max(horizontal_min_height(&r, n_categories)? * panel_rows_n as f64);
+        floored = Payload { height, ..payload.clone() };
+        &floored
+    } else {
+        payload
+    };
+    let row_axis_placement: RefCell<Option<RowAxisPlacement>> = RefCell::new(None);
     let layers = validate_layers(&r, payload)?;
     // Production's own compile fails on a pinned layer inside small multiples
     // (vl-convert: unrecognized scale `child_layer_0_y`).
@@ -6221,6 +6585,44 @@ fn render_facet(
             .iter()
             .enumerate()
             .map(|(panel_i, panel)| {
+                if horizontal {
+                    let layer_rows = horizontal_layer_rows(payload, &r, &layers);
+                    let opts = HorizontalFacetOpts {
+                        chart_rows: &payload.rows,
+                        cat_rows: if cat_narrowed { &panel.rows } else { &payload.rows },
+                        color_one_to_one,
+                        value_domain_rows: if independent { &panel.rows } else { &payload.rows },
+                        independent_scale: independent,
+                        cell_cat_axis: cat_narrowed,
+                        center_stack,
+                        center_label_stack: whole_chart,
+                        right_edge: RightEdge {
+                            paint: (missing + panel_i) % panel_cols_n == panel_cols_n - 1,
+                            fold: panel_cols_n == 1,
+                            overhang: value_axis_right_overhang,
+                        },
+                    };
+                    let (svg, facet_panel) = render_horizontal_panel(
+                        payload.chart_id()?,
+                        None,
+                        &panel.rows,
+                        pw,
+                        ph,
+                        None,
+                        &bg,
+                        fonts,
+                        &r,
+                        wide_series,
+                        &layer_rows,
+                        None,
+                        payload.board_style.as_ref(),
+                        Some(&opts),
+                    )?;
+                    let HorizontalFacetPanel { geometry, row_axis } =
+                        facet_panel.expect("a facet call returns its panel geometry");
+                    row_axis_placement.replace(row_axis);
+                    return Ok((svg, geometry));
+                }
                 // Real Vega's `row_footer`/`row_header` (the shared value
                 // axis) appears ONCE PER ROW, at that row's own LAST
                 // column — see `render_vertical_panel`'s own
@@ -6342,25 +6744,39 @@ fn render_facet(
         row_axis_idx,
         col_axis_idx,
         has_mirror,
-        mirror_in_panel: false,
-        own_value_axes: independent,
-        extra_axis_px: 0.0,
-        cell_x_axis: x_narrowed,
-        axis_x: &r.style.axis_x,
-        axis_y: &r.style.axis_y,
+        // The panels paint a vertical bar's mirror themselves (a heatmap's `row_footer` copy),
+        // and a horizontal bar's: its category axis' ghost on the far edge.
+        mirror_in_panel: horizontal,
+        own_value_axes: independent && !horizontal,
+        extra_axis_px,
+        // A horizontal bar swaps the screen axes: the value axis runs along the
+        // footer, the category axis down the row header.
+        cell_x_axis: if horizontal { independent } else { x_narrowed },
+        axis_x: if horizontal { &r.style.axis_y } else { &r.style.axis_x },
+        axis_y: if horizontal { &r.style.axis_x } else { &r.style.axis_y },
         header_font_family: &header_font_family,
         background: &bg,
     };
     // One chart-level legend: Vega resolves the color scale once for the whole
     // composite, so it hangs above the grid as chrome. Every panel builds the
     // same one (chart-wide domain); the first render at the naive width lifts it.
-    let facet_legend = if r.color.is_some() || !r.layers.is_empty() {
-        let naive_w = multiples::facet_panel_width(payload.width, panel_cols_n, has_mirror, 0.0);
+    let facet_legend = if horizontal || r.color.is_some() || !r.layers.is_empty() {
+        let naive_w = multiples::facet_panel_width(payload.width, panel_cols_n, has_mirror, extra_axis_px);
         let naive_h = payload.height / panel_rows_n as f64;
         render_pass(naive_w, naive_h, 0.0)?.into_iter().next().and_then(|(_, g)| g.legend)
     } else {
         None
     };
+    // The probe above recorded where the shared category axis (`row_header`) paints.
+    let cat_title = crate::common::axis_title_text(&r.x, r.x_label.as_deref(), &r.field_labels)?;
+    let row_axis_spec = row_axis_placement.take().filter(|_| !cat_narrowed).map(|placement| facet_compose::RowAxisSpec {
+        title: if placement.titled { &cat_title } else { "" },
+        title_style: &r.style.axis_x.title,
+        reserve: placement.reserve,
+        label_x: placement.label_x,
+        label_anchor: placement.label_anchor,
+        title_x: placement.title_x,
+    });
     let chrome = facet_compose::FacetChrome {
         title: title_plan.as_ref().map(|plan| facet_compose::TitleChrome {
             ink: plan.ink.clone(),
@@ -6376,7 +6792,10 @@ fn render_facet(
         }).into_iter().collect(),
     };
     let chrome = (chrome.title.is_some() || !chrome.legends.is_empty()).then_some(chrome);
-    let svg = facet_compose::compose_facet_with_chrome(payload, fonts, &spec, chrome.as_ref(), &render_pass)?;
+    let svg = facet_compose::compose_facet_full(payload, fonts, &spec, chrome.as_ref(), row_axis_spec.as_ref(), &render_pass)?;
+    if horizontal {
+        return Ok(svg);
+    }
     warn_vertical_density(
         payload.chart_id()?,
         &r,
@@ -10611,7 +11030,7 @@ pub(crate) fn render_vertical_panel(
             .iter()
             .map(|(aria, x, y, stroke)| crate::contract::GhostRule { aria: aria.as_deref(), x: *x, y: *y, stroke })
             .collect();
-        crate::contract::mirror_ghost_layer(&mut svg, &rules, plot_h)?;
+        crate::contract::mirror_ghost_layer(&mut svg, &rules, crate::contract::GhostRun::Down(plot_h))?;
     }
 
     // Dual-axis paint order: base bar, THEN the zero rule (production nests
@@ -25568,6 +25987,109 @@ mod tests {
             payload_json
         }
 
+        /// A horizontal bar over two panels of the same three categories: the
+        /// category axis is the composer's `row_header`, the value axis its
+        /// `column_footer`.
+        fn horizontal_facet_payload(multiples: serde_json::Value) -> serde_json::Value {
+            let mut payload_json = make_horizontal_payload();
+            payload_json["resolved"]["multiples"] = multiples;
+            payload_json["resolved"]["panel_axes"] =
+                json!([{"field": "panel", "values": ["\"A\"", "\"B\""]}]);
+            payload_json["rows"] = json!([
+                {"product": "North", "panel": "A", "revenue": 800.0},
+                {"product": "South", "panel": "A", "revenue": 600.0},
+                {"product": "East", "panel": "A", "revenue": 400.0},
+                {"product": "North", "panel": "B", "revenue": 700.0},
+                {"product": "South", "panel": "B", "revenue": 500.0},
+                {"product": "East", "panel": "B", "revenue": 300.0},
+            ]);
+            payload_json["width"] = json!(600.0);
+            payload_json["height"] = json!(432.0);
+            payload_json["padding"] = json!(null);
+            payload_json
+        }
+
+        fn text_count(svg: &str, label: &str) -> usize {
+            svg.matches(&format!(">{label}</text>")).count()
+        }
+
+        #[test]
+        fn a_horizontal_rows_facet_draws_one_category_axis_per_row_and_one_shared_value_axis() {
+            let svg = rendered(horizontal_facet_payload(json!({"rows": "panel", "columns": null, "scale": "shared"})));
+            assert_eq!(svg.matches("role-scope cell").count(), 1, "{svg}");
+            for category in ["North", "South", "East"] {
+                assert_eq!(text_count(&svg, category), 2, "{category} once per row header: {svg}");
+            }
+            for tick in ["0", "500", "1,000"] {
+                assert_eq!(text_count(&svg, tick), 1, "tick {tick} once in the shared footer: {svg}");
+            }
+            assert_eq!((text_count(&svg, "A"), text_count(&svg, "B")), (1, 1), "row titles: {svg}");
+        }
+
+        #[test]
+        fn a_horizontal_columns_facet_shares_one_category_axis_and_foots_every_column() {
+            let svg = rendered(horizontal_facet_payload(json!({"rows": null, "columns": "panel", "scale": "shared"})));
+            for category in ["North", "South", "East"] {
+                assert_eq!(text_count(&svg, category), 1, "{category} once in the one row header: {svg}");
+            }
+            assert_eq!(text_count(&svg, "500"), 2, "every column foots its own value axis: {svg}");
+        }
+
+        #[test]
+        fn a_mirrored_horizontal_facet_repeats_the_category_axis_on_the_right_edge() {
+            let mut payload_json = horizontal_facet_payload(json!({"rows": "panel", "columns": null, "scale": "shared"}));
+            payload_json["resolved"]["style"]["axis_y"]["mirror"] = json!(true);
+            let svg = rendered(payload_json);
+            for category in ["North", "South", "East"] {
+                assert_eq!(text_count(&svg, category), 4, "{category} on both edges of both rows: {svg}");
+            }
+            assert!(svg.contains("ghost_marks"), "the mirror's invisible rule layer: {svg}");
+        }
+
+        /// A facet repeats a category across its panels, and production's default
+        /// horizontal sort folds the repeats with a sum (`vl_sort_op`). The data
+        /// ranks differently under sum, min and max.
+        #[test]
+        fn a_horizontal_facets_categories_rank_by_their_summed_value() {
+            let mut payload_json = horizontal_facet_payload(json!({"rows": "panel", "columns": null, "scale": "shared"}));
+            payload_json["rows"] = json!([
+                {"product": "A", "panel": "A", "revenue": 60.0},
+                {"product": "B", "panel": "A", "revenue": 200.0},
+                {"product": "C", "panel": "A", "revenue": 70.0},
+                {"product": "A", "panel": "B", "revenue": 60.0},
+                {"product": "B", "panel": "B", "revenue": -70.0},
+                {"product": "C", "panel": "B", "revenue": 45.0},
+            ]);
+            let svg = rendered(payload_json);
+            let at = |label: &str| svg.find(&format!(">{label}</text>")).unwrap();
+            assert!(at("B") < at("A") && at("A") < at("C"), "sums 130, 120, 115: {svg}");
+        }
+
+        /// Whether a grouped bar's color is 1:1 with its category is decided over
+        /// the whole chart (`_is_color_1to1_with_x`): a panel whose own colors
+        /// happen to be 1:1 still splits its bands like its siblings.
+        #[test]
+        fn a_horizontal_facets_color_split_is_decided_over_every_panel() {
+            let mut payload_json = horizontal_facet_payload(json!({"rows": "panel", "columns": null, "scale": "shared"}));
+            payload_json["resolved"]["color"] = json!("seg");
+            payload_json["rows"] = json!([
+                {"product": "North", "panel": "A", "seg": "a", "revenue": 800.0},
+                {"product": "North", "panel": "A", "seg": "b", "revenue": 700.0},
+                {"product": "South", "panel": "A", "seg": "a", "revenue": 600.0},
+                {"product": "South", "panel": "A", "seg": "b", "revenue": 500.0},
+                {"product": "North", "panel": "B", "seg": "a", "revenue": 300.0},
+                {"product": "South", "panel": "B", "seg": "b", "revenue": 200.0},
+            ]);
+            let svg = rendered(payload_json);
+            let heights: std::collections::BTreeSet<String> = svg
+                .split("<rect ")
+                .skip(2)
+                .filter_map(|rect| rect.split("height=\"").nth(1)?.split('"').next().map(str::to_string))
+                .filter(|h| h != "0.00")
+                .collect();
+            assert_eq!(heights.len(), 1, "every bar is one sub-band tall: {heights:?} {svg}");
+        }
+
         fn layered_facet_payload(mutate_layer: impl FnOnce(&mut serde_json::Value)) -> serde_json::Value {
             let mut payload_json = make_facet_payload("shared");
             for row in payload_json["rows"].as_array_mut().unwrap() {
@@ -27198,11 +27720,11 @@ mod tests {
         }
     }
 
-    /// `ResolvedChart.link` (`auto_link.py`'s filter/entity-drill template) —
+    /// `ResolvedChart.link` (`automatic_link.py`'s filter/entity-drill template) —
     /// wired only on the plain single-series vertical band-scale bar; every
     /// other shape refuses by name (`render()`'s own entry gate, plus the
     /// temporal/continuous-x/multiples gates each fires from).
-    mod auto_link_tests {
+    mod automatic_link_tests {
         use super::*;
         use serde_json::json;
 

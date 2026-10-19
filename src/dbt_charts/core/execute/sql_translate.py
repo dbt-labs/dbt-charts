@@ -55,6 +55,82 @@ def _first_unknown_function(tree: exp.Expr) -> str | None:
     return next((node.name for node in tree.find_all(exp.Anonymous)), None)
 
 
+# Warehouses whose DATE_TRUNC('week') starts on Monday. Others differ (BigQuery
+# Sunday) or depend on a session setting (Snowflake WEEK_START).
+_MONDAY_WEEK_DIALECTS = frozenset(
+    {
+        "duckdb",
+        "postgres",
+        "redshift",
+        "databricks",
+        "spark",
+        "trino",
+        "presto",
+        "athena",
+    }
+)
+
+
+def _keep_monday_weeks(
+    tree: exp.Expr, read: str, write: str
+) -> tuple[exp.Expr, Counter[str]]:
+    """Rewrite `date_trunc('week', x)` so the target buckets weeks as the source does.
+
+    Only Monday weeks are translatable: a source whose `WEEK` starts elsewhere
+    (BigQuery's Sunday) or on a session setting is refused. BigQuery takes `WEEK(MONDAY)`; Snowflake's own `WEEK` follows a
+    session parameter, so Monday is built from `DAYOFWEEKISO`, which repeats the
+    operand; the second return value counts the placeholders that adds.
+
+    Raises:
+        ExecutionError: ERR-SQL-DIALECT-UNSUPPORTED when a week does not start on
+            Monday or the target has no Monday spelling.
+    """
+
+    def week_start(node: exp.Expr) -> str | None:
+        unit = node.args["unit"]
+        if isinstance(unit, exp.WeekStart):
+            return unit.name.upper()
+        if isinstance(unit, exp.Var) and unit.name.upper() == "WEEK":
+            return "MONDAY" if read in _MONDAY_WEEK_DIALECTS else "UNKNOWN"
+        return None
+
+    weeks = [
+        (n, start)
+        for n in tree.find_all(exp.TimestampTrunc, exp.DateTrunc)
+        if (start := week_start(n)) is not None
+    ]
+    duplicated: Counter[str] = Counter()
+    if not weeks or write in _MONDAY_WEEK_DIALECTS and read in _MONDAY_WEEK_DIALECTS:
+        return tree, duplicated
+    if any(start != "MONDAY" for _, start in weeks):
+        raise dialect_unsupported(
+            read, write, "only weeks starting on Monday can be translated"
+        )
+    nodes = [node for node, _ in weeks]
+    if write == "bigquery":
+        for node in nodes:
+            node.set("unit", exp.WeekStart(this=exp.var("MONDAY")))
+    elif write == "snowflake":
+        for node in nodes:
+            operand = node.this
+            duplicated.update(_SENTINEL_RE.findall(operand.sql()))
+            node.replace(
+                exp.DateAdd(
+                    this=exp.TimestampTrunc(this=operand.copy(), unit=exp.var("DAY")),
+                    expression=exp.Sub(
+                        this=exp.Literal.number(1),
+                        expression=exp.DayOfWeekIso(this=operand.copy()),
+                    ),
+                    unit=exp.var("DAY"),
+                )
+            )
+    elif write not in _MONDAY_WEEK_DIALECTS:
+        raise dialect_unsupported(
+            read, write, "the target has no deterministic Monday-week truncation"
+        )
+    return tree, duplicated
+
+
 def translate_sql(sql: str, read: str, write: str) -> str:
     """Return `sql` (written in `read`) as `write` SQL.
 
@@ -92,6 +168,7 @@ def translate_sql(sql: str, read: str, write: str) -> str:
         )
     if tree.find(exp.Command) is not None:
         raise dialect_unsupported(read, write, "this statement kind is not translated")
+    tree, duplicated = _keep_monday_weeks(tree, read, write)
     try:
         out = _emit(tree, write_name)
         emitted = sqlglot.parse_one(out, read=write_name)
@@ -100,7 +177,7 @@ def translate_sql(sql: str, read: str, write: str) -> str:
     # Every sentinel must come out as a bare identifier: sqlglot can move one
     # into a string literal (`INTERVAL {{ n }} DAY` becomes `INTERVAL '<n> DAY'`),
     # where the value inlined later would no longer be data.
-    in_text = Counter(_SENTINEL_RE.findall(sql))
+    in_text = Counter(_SENTINEL_RE.findall(sql)) + duplicated
     as_identifiers = Counter(
         node.name
         for node in emitted.find_all(exp.Identifier)

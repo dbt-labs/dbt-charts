@@ -1,3 +1,0 @@
-kind: Fixes
-body: A query that selects a column without grouping or aggregating it now reports ERR-BINDER-GROUP-BY with GROUP BY advice, and board-path and inline file-source mistakes carry their own error codes on every verb instead of ERR-INTERNAL.
-time: 2026-10-17T10:54:20.674832-07:00

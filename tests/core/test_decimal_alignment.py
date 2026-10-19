@@ -361,6 +361,7 @@ class TestDecimalPadTableFor:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         assert resolved["amount"].decimal_pad_table, (
@@ -819,6 +820,7 @@ class TestDecimalPadForEdgeCases:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         assert resolved["amount"].decimal_pad_table == (), (
@@ -853,6 +855,7 @@ class TestDecimalPadForEdgeCases:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         assert resolved["amount"].decimal_pad_table, (
@@ -891,6 +894,7 @@ class TestDecimalPadForEdgeCases:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         assert resolved["amount"].decimal_pad_table, (

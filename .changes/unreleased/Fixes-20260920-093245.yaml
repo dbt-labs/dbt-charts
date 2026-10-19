@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'A full-width chart is no longer taller than the half-width charts beneath it: the `style.charts.max_height` default drops from 400 to 376.'
-time: 2026-09-20T09:45:00.000000-07:00

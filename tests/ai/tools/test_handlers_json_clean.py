@@ -42,9 +42,10 @@ def _handler_args() -> dict[str, dict[str, Any]]:
         "describe_board": {"path": "nonexistent.yml"},
         "read_file": {"path": "nonexistent.yml"},
         "write_file": {"path": "out.yml", "content": "title: X\n"},
-        "edit_file": {
+        "apply_patch": {
+            "type": "update_file",
             "path": "nonexistent.yml",
-            "edits": [{"old_string": "a", "new_string": "b"}],
+            "diff": "@@\n-a\n+b\n",
         },
         "move_file": {"source_path": "nonexistent.yml", "destination_path": "dest.yml"},
         "delete_file": {"path": "nonexistent.yml"},

@@ -66,7 +66,7 @@ def execute_queries_parallel(
                 fut.result()
                 results[name] = None
             except Exception as exc:  # noqa: BLE001 — arbitrary adapter errors
-                logger.warning("Parallel execution of query '%s' failed: %s", name, exc)
+                logger.debug("Parallel execution of query '%s' failed: %s", name, exc)
                 results[name] = exc
                 executor._query_errors[name] = exc
 

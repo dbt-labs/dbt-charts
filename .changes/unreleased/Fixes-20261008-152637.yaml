@@ -1,3 +1,0 @@
-kind: Fixes
-body: A heatmap's date-valued y axis now reads as calendar labels and thins to fit its height, matching x.
-time: 2026-10-08T15:26:37.332646-07:00

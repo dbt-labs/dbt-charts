@@ -247,9 +247,10 @@ class _BaseChartFields(ConstrainedModel):
             default=None,
             description=(
                 "Click-through URL template for drill-down links, or {url, open} "
-                "to choose how a click opens the target. Set to false "
+                "to choose how a click opens the target (the board's "
+                "links.open when unset). Set to false "
                 "to suppress this chart's automatic link on a board with "
-                "auto_link: true; table column links are unaffected."
+                "links.auto: true; table column links are unaffected."
             ),
         ),
     ]

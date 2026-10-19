@@ -16,7 +16,7 @@ from dbt_charts.core.render.chart.vl_field_maps import compose_axis_format
 from dbt_charts.core.text.format_d3 import format_d3
 from dbt_charts.core.text.predefined_formats import PREDEFINED_NATIVE
 
-from .._svg_render import render_board_to_svg
+from .._svg_render import render_board_svg_result, render_board_to_svg
 
 _NAMES = ("id", "duration", "bytes", "latitude", "longitude", "rating")
 
@@ -417,9 +417,7 @@ _NO_ARM_CHARTS = {
 
 @pytest.mark.parametrize("name", ["duration", "bytes"])
 @pytest.mark.parametrize("slot", sorted(_NO_ARM_CHARTS))
-def test_a_native_is_rejected_where_vega_cannot_paint_it(
-    slot: str, name: str, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_a_native_is_rejected_where_vega_cannot_paint_it(slot: str, name: str) -> None:
     chart = _NO_ARM_CHARTS[slot].replace("NAME", name)
     # These families read the board's tooltip format, not a chart-local one.
     board_style = (
@@ -430,8 +428,8 @@ def test_a_native_is_rejected_where_vega_cannot_paint_it(
     board = (
         f"title: T\n{board_style}{_NO_ARM_QUERIES}charts:\n  c:{chart}rows:\n  - c\n"
     )
-    render_board_to_svg(board)
-    assert "is a native formatter with no Vega arm" in caplog.text
+    [error] = render_board_svg_result(board).chart_errors
+    assert "is a native formatter with no Vega arm" in error.message
 
 
 def test_an_anchored_affix_beside_a_native_keeps_its_name_out_of_vega(

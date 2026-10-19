@@ -1,3 +1,0 @@
-kind: Features
-body: A `cloud:` block in `dbt_charts.yml` can switch off public access and repository agent instructions in dbt Charts Cloud.
-time: 2026-10-12T19:20:04.151196-07:00

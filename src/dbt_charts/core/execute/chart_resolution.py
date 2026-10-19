@@ -17,7 +17,7 @@ from dbt_charts.core.compile.models.chart.normalized.area import AreaChart
 from dbt_charts.core.compile.models.chart.normalized.bar import BarChart
 from dbt_charts.core.compile.models.chart.normalized.line import LineChart
 from dbt_charts.core.compile.models.chart.normalized.scatter import ScatterChart
-from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
+from dbt_charts.core.compile.models.primitives import LinkOpen, ResolvedFontStyle
 from dbt_charts.core.compile.resolve import (
     AutomaticLinkCandidate,
     resolve,
@@ -169,6 +169,7 @@ def resolve_chart_with_runtime_inputs(
     pie_title_font: ResolvedFontStyle | EllipsisType = ...,
     *,
     filter_variables: frozenset[str],
+    link_open: LinkOpen,
     title_width: float | None = None,
 ) -> ResolvedChart:
     """Gather shared-layer datasets, then construct one final chart.
@@ -196,6 +197,7 @@ def resolve_chart_with_runtime_inputs(
         table_column_rows=table_column_rows,
         pie_title_font=pie_title_font,
         filter_variables=filter_variables,
+        link_open=link_open,
         display_text=collect_display_text_inputs(chart, executor, variables),
         x_date_range=chart_x_date_range(chart, executor, variables),
         title_width=title_width,

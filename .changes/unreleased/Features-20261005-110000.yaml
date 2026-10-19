@@ -1,3 +1,0 @@
-kind: Features
-body: 'Separator lines are named `divider` everywhere (was `rule`) and take `visible`, `color`, `width` and `dasharray`; boards update automatically. Table dividers take their color from the theme, so an authored table text color no longer recolors them, and a `support_table.divider` that sets `width` without `continuous` stays hidden until it also sets `visible: true`.'
-time: 2026-10-05T11:00:00.000000-07:00

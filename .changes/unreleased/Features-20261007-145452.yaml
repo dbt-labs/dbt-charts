@@ -1,3 +1,0 @@
-kind: Features
-body: Validate and render say each warning once per board with a count instead of repeating every instance; JSON output is unchanged.
-time: 2026-10-07T14:54:52.041398-07:00

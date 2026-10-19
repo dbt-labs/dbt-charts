@@ -57,10 +57,8 @@ def validate_label_template(value: str | None) -> str | None:
     return value
 
 
-def validate_label_where(value: str | None) -> str | None:
+def validate_label_where(value: str) -> str:
     """Pydantic-validator body: compile a Jinja2 ``where:`` expression."""
-    if value is None:
-        return value
     try:
         label_jinja_env().compile_expression(strip_jinja_braces(value))
     except Exception as exc:

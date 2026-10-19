@@ -86,6 +86,7 @@ from dbt_charts.core.project import (
     ProjectDirectory,
     ProjectPath,
     board_directory_candidates,
+    board_relpath_candidates,
     board_root_for_relpath,
     board_roots,
     board_slug,
@@ -97,7 +98,7 @@ if TYPE_CHECKING:
     from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.registered_views.loader import load_builtin_registry
 from dbt_charts.core.registered_views.router import RouteRouter
-from dbt_charts.core.render.dir_context import lazy_dir_context
+from dbt_charts.core.render.dir_context import DirEntry, lazy_dir_context
 from dbt_charts.core.render.nav import nav_context
 from dbt_charts.core.render.svg_cache import (
     MemorySvgStore,
@@ -327,29 +328,65 @@ def _directory_candidates(
     return candidates
 
 
+def _existing_directories(project: FilesystemProject, clean_path: str) -> list[Path]:
+    """Every directory *clean_path* names, host first, then package roots.
+
+    The root lists even before ``charts/`` exists (``list_dir_entries`` returns
+    ``[]``), so the root URL always names the host directory.
+    """
+    directories: list[Path] = []
+    for dir_path in _directory_candidates(project.charts_dir, clean_path, project):
+        _ensure_within_project(dir_path, project.root)
+        if dir_path.is_dir() or not clean_path:
+            directories.append(dir_path)
+    return directories
+
+
+def _host_namespace_board(
+    project: FilesystemProject, clean_path: str
+) -> ProjectPath | None:
+    """The host board at a package's bare namespace slug (``charts/pkg_a.yml``).
+
+    It shadows the package's own index, which serves at the same ``/pkg_a/``.
+    """
+    if clean_path not in {r.namespace for r in package_board_roots(project)}:
+        return None
+    for relpath in board_relpath_candidates(clean_path, board_roots(project)[:1]):
+        if (
+            relpath.endswith(BOARD_CANDIDATE_SUFFIXES)
+            and project.path(relpath).exists()
+        ):
+            return project.path(relpath)
+    return None
+
+
 def _resolve_directory_url(
     project: FilesystemProject, clean_path: str
 ) -> ProjectPath | Path | None:
     """Resolve a directory-shaped URL: its index board, else the directory to list.
 
-    The root URL prefers the project-root index board. ``None`` means
-    *clean_path* names no directory, so it resolves as a board file.
+    The root URL prefers the project-root index board. A directory URL may name
+    several directories (a host ``charts/pkg_a/`` and the package's own root);
+    the first index board wins, host before package, and a host board at the
+    namespace slug beats the package's index. ``None`` means *clean_path* names
+    no directory, so it resolves as a board file.
     """
     if not clean_path:
         root_index = _resolve_folder_index_board(project.directory())
         if root_index is not None:
             return root_index
-    for dir_path in _directory_candidates(project.charts_dir, clean_path, project):
-        _ensure_within_project(dir_path, project.root)
-        if dir_path.is_dir():
-            index_board = _resolve_folder_index_board(
-                project.directory_for_fspath(dir_path)
-            )
-            return index_board if index_board is not None else dir_path
-        # The root lists even before charts/ exists (list_dir_entries returns []).
-        if not clean_path:
-            return dir_path
-    return None
+    directories = _existing_directories(project, clean_path)
+    namespace_board = _host_namespace_board(project, clean_path)
+    package_dirs = {project.root / r.relpath for r in package_board_roots(project)}
+    for dir_path in directories:
+        if namespace_board is not None and dir_path in package_dirs:
+            return namespace_board
+        index_board = _resolve_folder_index_board(
+            project.directory_for_fspath(dir_path)
+        )
+        if index_board is not None:
+            return index_board
+    return directories[0] if directories else None
 
 
 def _resolve_board_file_path(project: Project, clean_path: str) -> ProjectPath:
@@ -938,7 +975,7 @@ def _handle_inspect_route(
 
 
 def _render_directory_listing(
-    dir_handle: ProjectDirectory,
+    dir_handles: list[ProjectDirectory],
     url_path: str,
     project: Project,
     url_mount_dir: str,
@@ -946,9 +983,16 @@ def _render_directory_listing(
     result_cache: QueryResultCache | None = None,
     include_nav: bool = True,
 ) -> HTMLResponse:
-    """Render a directory listing through a built-in board."""
+    """Render a directory listing through a built-in board.
+
+    *dir_handles* are every directory the URL names (host first); entries merge
+    per URL, the first directory's entry winning, so a host board shadows the
+    package board with the same slug.
+    """
     from dbt_charts.core.compile import compile
     from dbt_charts.core.render.dir_context import list_dir_entries
+
+    dir_handle = dir_handles[0]
 
     # The root directory has an empty name; "/" is how the nav trigger labels it.
     nav_label = dir_handle.name or "/"  # type-state: silent_fallback — root's label
@@ -960,7 +1004,12 @@ def _render_directory_listing(
         listing_lines.append(f"- [../]({parent_url or '/'})")
 
     url_prefix = f"/{url_path}" if url_path else ""
-    for entry in list_dir_entries(dir_handle, url_prefix):
+    merged: dict[str, DirEntry] = {}
+    for handle in dir_handles:
+        for found in list_dir_entries(handle, url_prefix):
+            merged.setdefault(found.url, found)
+    entries = sorted(merged.values(), key=lambda e: (not e.is_dir, e.name.lower()))
+    for entry in entries:
         # /inspect/<template> links require ?model=...&column=... query params;
         # advertising them as bare entries in the root listing 500s on click.
         if entry.name == "inspect" and not url_path:
@@ -977,7 +1026,8 @@ def _render_directory_listing(
     # charts/, not a child directory list_dir_entries can see.
     if not url_path:
         for root in sorted(package_board_roots(project), key=lambda r: r.namespace):
-            listing_lines.append(f"- [{root.namespace}/](/{root.namespace}/)")
+            if f"/{root.namespace}/" not in merged:
+                listing_lines.append(f"- [{root.namespace}/](/{root.namespace}/)")
 
     # ``directory_title``/``listing_markdown`` carry untrusted filenames, so they
     # reach the board only as render-time Jinja variable values below -- never
@@ -1588,7 +1638,10 @@ def create_server(
             )
         if resolved is not None:
             return _render_directory_listing(
-                project.directory_for_fspath(resolved),
+                [
+                    project.directory_for_fspath(d)
+                    for d in _existing_directories(project, clean_path)
+                ],
                 clean_path,
                 project=project,
                 url_mount_dir=_url_mount_dir(resolved, project),

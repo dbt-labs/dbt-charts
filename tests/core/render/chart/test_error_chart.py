@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -19,6 +20,7 @@ from dbt_charts.core.compile.config import (
     reset_config,
 )
 from dbt_charts.core.compile.models.chart.authored import CalloutChart
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
@@ -180,7 +182,7 @@ def test_explicit_callout_chart_skips_query_execution(make_chart) -> None:
         title="Execution Not Needed",
         message="Rendered directly from authored message",
     )
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_chart.side_effect = AssertionError(
         "callout charts should not execute queries"
     )
@@ -224,7 +226,7 @@ def test_explicit_callout_chart_never_shrinks_below_layout_slot_height() -> None
         ),
         query_is_inline=False,
     )
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
 
     rs, ctx = resolve_style_and_context(get_theme_style())
     svg, height = render_chart_item(
@@ -263,7 +265,7 @@ rows:
 
     board = result.board
     assert board is not None
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
 
     pre_resolved = {
         name: resolve(v2, [], chart_style_context=board.chart_style_context)
@@ -292,7 +294,7 @@ rows:
 
 def test_chart_data_error_fallback_wraps_message(make_chart) -> None:
     chart = make_chart("kpi", x=None, y=None, value="value", label="Broken KPI")
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = [{"value": 1}, {"value": 2}]
 
     rs, ctx = resolve_style_and_context(get_theme_style())
@@ -479,7 +481,7 @@ def test_vl_chart_error_tile_renders_through_engine_with_code_hint_and_doc_link(
 
     monkeypatch.setattr(_engine, "render_chart", spy)
     chart = make_chart("bar", x="region", y="revenue")
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.side_effect = ChartDataError.from_code(
         ERR_DBT_MODEL_COLUMN_MISSING,
         query_name="q",

@@ -154,28 +154,66 @@ LinkOpen = Literal["page", "modal", "preview", "new_tab"]
 
 
 class Link(BaseModel):
-    """Object form of a ``link:``; a bare string is the page-mode shorthand."""
+    """Object form of a ``link:``; a bare string takes the board's default open."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # Unfaceted: the owning `link:` slot carries `Url`, so a link stays one key.
     url: str = Field(description="Click-through URL template.")
-    open: LinkOpen = Field(
-        default="page",
+    open: Annotated[LinkOpen | None, Absent("takes the board's links.open")] = Field(
+        default=None,
         description=(
             "How a click opens the target: page navigates the board away; "
             "modal opens the target board in a dialog over this one; preview "
             "shows it small, beside the clicked mark; new_tab opens it in a new "
-            "browser tab."
+            "browser tab. Unset takes the board's links.open."
         ),
     )
 
 
-def split_link(link: str | Link | None) -> tuple[str | None, LinkOpen]:
-    """The URL template and open mode of an authored link."""
-    if isinstance(link, Link):
-        return link.url, link.open
-    return link, "page"
+class BoardLinks(BaseModel):
+    """Board-wide link behavior: automatic links and how links open."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    auto: bool = Field(
+        default=False,
+        description=(
+            "When True, table charts with no explicit link: automatically link each "
+            "row to its canonical /data/<source>/<schema>/<table>/detail/ page. "
+            "Default off. An explicit link: always wins; set link: false on a "
+            "chart to suppress its automatic link."
+        ),
+    )
+    open: LinkOpen = Field(
+        default="page",
+        description=(
+            "How a link that does not author its own open opens: page, modal, "
+            "preview or new_tab. Query-only ?variable= links, a table cell's "
+            "filter link, implied email/url and KPI links, and a custom chart's "
+            "per-row link always open as a page."
+        ),
+    )
+
+
+def split_link(
+    link: str | Link | None, board_open: LinkOpen, *, row_template: bool = False
+) -> tuple[str | None, LinkOpen]:
+    """The URL template and open mode of an authored link.
+
+    An explicit ``open`` wins, then the board default; a missing link and a
+    query-only one (``?var=`` updates the board in place) open as a page.
+    ``row_template`` marks a chart whose per-row ``{{ }}`` link is the template's
+    own anchor, which only navigates: the board default does not reach it.
+    """
+    url = link.url if isinstance(link, Link) else link
+    if url is None:
+        return None, "page"
+    if isinstance(link, Link) and link.open is not None:
+        return url, link.open
+    if url.startswith("?") or (row_template and "{{" in url):
+        return url, "page"
+    return url, board_open
 
 
 @dataclasses.dataclass(frozen=True)

@@ -1,3 +1,0 @@
-kind: Breaking changes
-body: 'Board markdown images (`text:` blocks, titles, tab text, callouts) now resolve against the project and embed in the render instead of being left for the viewer to resolve. A relative path resolves beside the file it is written in; a path starting with `/` resolves from `charts/`. A `charts/`-rooted path written without the `/` (`assets/logo.png` from `charts/cards/`) is not migrated: add the `/`. A template can no longer build a project image path. An image that does not resolve renders as error text and reports `ERR-IMAGE-REF-UNRESOLVED`, so `dct render` exits non-zero unless `--allow-chart-errors` is passed. Board artifacts written by earlier releases no longer load.'
-time: 2026-09-28T15:00:00.000000-00:00

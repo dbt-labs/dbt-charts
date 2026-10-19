@@ -43,7 +43,7 @@ from dbt_charts.agent_api.docs._loader import (
 from dbt_charts.agent_api.doctor import DoctorCheck, DoctorReport
 from dbt_charts.agent_api.file_refs import ExpandedPrompt, FileRef
 from dbt_charts.agent_api.files import (
-    EditFileResult,
+    PatchResult,
     ReadFileResult,
     WriteFileResult,
 )
@@ -78,7 +78,7 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 FROZEN_RESULT_INSTANCES: list[tuple[BaseModel, str]] = [
     (ReadFileResult(success=True, path="x"), "success"),
     (WriteFileResult(success=True, path="x"), "success"),
-    (EditFileResult(success=True, path="x"), "success"),
+    (PatchResult(success=True, path="x"), "success"),
     (ValidateTemplatesResult(success=True), "success"),
     (DescribeBoardResult(success=True, path="x"), "success"),
     (DiagnosticCodeSummary(code="X", summary="s"), "code"),

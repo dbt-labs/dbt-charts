@@ -28,6 +28,7 @@ existence.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -36,6 +37,7 @@ from pydantic import ValidationError
 from dbt_charts.core.compile.config import get_theme_style, reset_config
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.chart.resolved import ResolvedBarChart
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import (
     BarChartStylePatch,
@@ -290,7 +292,7 @@ def test_author_narrowed_compact_columns_is_read_by_the_classifier() -> None:
     assert resolved.legend.visible is False
 
     data = _stacked_data(12)
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
     svg, _height = render_chart_item(
         resolved,
@@ -378,7 +380,7 @@ def test_twenty_five_series_at_narrow_card_draws_marks_with_real_height() -> Non
     """End-to-end: the actual render must not hit ERR-CHART-PAINTED-NO-MARKS."""
     data = _stacked_data(25)
     resolved = _resolved(25, _NARROW_WIDTH)
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
 
     svg, _height = render_chart_item(
@@ -406,7 +408,7 @@ def test_wide_measure_stacked_bar_at_narrow_card_draws_marks_with_real_height() 
     measure_count = 25
     data = _wide_stacked_data(measure_count)
     resolved = _resolved_wide(measure_count, _NARROW_WIDTH)
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
 
     svg, _height = render_chart_item(
@@ -432,7 +434,7 @@ def test_fourteen_series_at_floor_width_draws_marks_with_real_height() -> None:
     data = _stacked_data(14)
     resolved = _resolved(14, _FLOOR_WIDTH)
     assert resolved.legend.visible is False
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
 
     svg, _height = render_chart_item(

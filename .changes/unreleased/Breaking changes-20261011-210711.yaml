@@ -1,3 +1,0 @@
-kind: Breaking changes
-body: 'Trino sources no longer use dbt-trino: TLS certificates are verified unless `cert: false` is set, and a profile target with `keytab:` or an unknown key is an error.'
-time: 2026-10-11T21:07:11.164017-07:00

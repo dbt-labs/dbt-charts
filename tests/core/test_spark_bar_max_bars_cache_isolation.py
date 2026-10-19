@@ -18,11 +18,13 @@ one to wrongly cache onto the other.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.board.normalized import Layout, LayoutItem
 from dbt_charts.core.compile.models.chart.normalized import SparkBarChart
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
@@ -103,7 +105,7 @@ def test_second_placement_not_poisoned_by_first_placements_max_bars_failure() ->
         {"type": "cols", "items": [low_board_item, high_board_item]}
     )
 
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = _ROWS
     render_ctx = SizingRenderCtx(
         executor=executor,

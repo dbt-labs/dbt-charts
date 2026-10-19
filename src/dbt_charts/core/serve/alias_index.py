@@ -280,18 +280,11 @@ class AliasIndex:
             A populated AliasIndex.
 
         Raises:
-            ValueError: If a package root's namespace collides with a host
-                        ``charts/<namespace>`` directory or board file, if any
-                        alias is not absolute, collides with a real file path,
-                        or two boards claim the same alias.
+            ValueError: If any alias is not absolute, collides with a real
+                        file path, or two boards claim the same alias.
         """
         from dbt_charts.core.registered_views.router import compile_route
 
-        # project.iter_boards() below calls board_roots(project) internally
-        # (its under=None default), which raises on a host/package namespace
-        # collision itself (see project.py's _assert_no_root_namespace_collision)
-        # -- the same check every other consumer of the root table gets, not
-        # a second one bolted onto AliasIndex.build alone.
         alias_map: dict[str, str] = {}
         patterns: list[tuple[re.Pattern[str], str]] = []
         # normalized alias URL → board relpath that claimed it (for error messages)

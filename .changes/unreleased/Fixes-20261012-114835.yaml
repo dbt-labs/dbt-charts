@@ -1,3 +1,0 @@
-kind: Fixes
-body: '`dct query data/orders.csv ''SQL''` accepts a CSV/JSON/Parquet file path as its source, with the file stem as the table name.'
-time: 2026-10-12T11:48:35.20901-07:00

@@ -1,3 +1,7 @@
+from types import SimpleNamespace
+
+from dbt_charts.core.compile.models.primitives import BoardLinks
+
 """Regression: a chart that fails only in the data-format walk still reports.
 
 `render()` draws every format, so a chart normally fails twice over — once
@@ -48,7 +52,7 @@ def _render(mock):
 
 def test_walk_only_failure_reaches_chart_errors():
     """The draw succeeds for every chart; only the walk fails one."""
-    mock = MagicMock(spec=Executor)
+    mock = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock.execute_query.side_effect = lambda query_name, variables=None: _GOOD
 
     def _chart(chart, variables):
@@ -65,7 +69,7 @@ def test_walk_only_failure_reaches_chart_errors():
 
 def test_failure_in_both_passes_is_reported_once():
     """The same broken chart fails in draw and walk alike — one diagnostic."""
-    mock = MagicMock(spec=Executor)
+    mock = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
 
     def _query(query_name, variables=None):
         if query_name == "q_good":
@@ -135,7 +139,7 @@ def test_same_id_different_chart_walk_only_failure_is_not_suppressed(
     it must key on (chart_id, code) instead.
     """
     board = _nested_duplicate_id_board(make_chart)
-    mock = MagicMock(spec=Executor)
+    mock = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock._query_errors = {}
     mock.cache_hit_ats = []
     mock.rendered_at = PINNED_RENDER_TIME

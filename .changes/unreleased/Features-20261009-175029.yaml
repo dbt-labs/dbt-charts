@@ -1,3 +1,0 @@
-kind: Features
-body: dct now sends anonymous usage statistics to dbt Labs; opt out with `DO_NOT_TRACK=1` or `--no-send-anonymous-usage-stats`.
-time: 2026-10-09T17:50:29.336109-07:00

@@ -1,3 +1,0 @@
-kind: Fixes
-body: A line chart with a bar or area layer on a zoomed axis, such as a shaded recession band, no longer collapses to a thin strip.
-time: 2026-10-08T18:54:23.225015-07:00

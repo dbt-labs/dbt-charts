@@ -218,6 +218,7 @@ def test_a_table_column_keeps_its_own_options_over_the_declared_spec() -> None:
         None,
         {"revenue": "tagged"},
         filter_variables=frozenset(),
+        link_open="page",
     )
     parts = resolved["revenue"].format
     assert parts is not None

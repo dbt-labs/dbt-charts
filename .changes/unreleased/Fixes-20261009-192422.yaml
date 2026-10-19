@@ -1,3 +1,0 @@
-kind: Fixes
-body: Markdown boards read as a single prose column, and a long board title wraps at the reading width instead of widening the board.
-time: 2026-10-09T19:24:22.243872-07:00

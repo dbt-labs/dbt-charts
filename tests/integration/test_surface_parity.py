@@ -37,7 +37,7 @@ _EXEMPT_TOOLS: set[str] = {
     # author boards directly with these, then `dct validate`/`dct render`.
     "read_file",
     "write_file",
-    "edit_file",
+    "apply_patch",
     "move_file",
     "delete_file",
 }

@@ -1,3 +1,0 @@
-kind: Fixes
-body: Installing an optional extra (as `dct init` does for `mcp`) prints one line instead of the installer's full log, which now appears only on failure.
-time: 2026-10-12T11:48:34.066077-07:00

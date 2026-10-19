@@ -1,3 +1,0 @@
-kind: Fixes
-body: A chart whose style names a color token that doesn't exist now errors in that chart's tile instead of failing the whole board.
-time: 2026-10-08T02:22:53.698862-07:00

@@ -15,10 +15,10 @@ from dbt_charts.core.compile.models.chart.resolved import ResolvedTableChart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.resolve import (
-    auto_link_excludes_x,
+    automatic_link_excludes_x,
     resolve,
     should_fetch_table_fk_links,
-    should_synthesize_auto_link,
+    should_synthesize_automatic_link,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 from dbt_charts.core.compile.template.display_text import DisplayTextInputs
@@ -47,16 +47,18 @@ def _bar(**overrides: Any) -> BarChart:
     return chart
 
 
-def test_auto_link_eligibility_stays_in_compile() -> None:
+def test_automatic_link_eligibility_stays_in_compile() -> None:
     rows = [{"category": 1.5, "amount": 10.0, "region": "west"}]
 
-    assert should_synthesize_auto_link(_bar(color="region"), rows, True)
-    assert auto_link_excludes_x(_bar(color="region"), rows)
-    assert not should_synthesize_auto_link(_bar(link="/authored/{{ x }}"), rows, True)
-    assert not should_synthesize_auto_link(_bar(), rows, False)
+    assert should_synthesize_automatic_link(_bar(color="region"), rows, True)
+    assert automatic_link_excludes_x(_bar(color="region"), rows)
+    assert not should_synthesize_automatic_link(
+        _bar(link="/authored/{{ x }}"), rows, True
+    )
+    assert not should_synthesize_automatic_link(_bar(), rows, False)
 
 
-def test_auto_link_excludes_x_ignores_bar_orientation() -> None:
+def test_automatic_link_excludes_x_ignores_bar_orientation() -> None:
     """An inline `style.orientation: horizontal` must not exclude x — a bar's
     x is always the category/time channel, never the measure, regardless of
     orientation. A plain bar with no style at all was never excluded either;
@@ -67,10 +69,10 @@ def test_auto_link_excludes_x_ignores_bar_orientation() -> None:
         {"category": "south", "amount": 20.0},
     ]
 
-    assert not auto_link_excludes_x(
+    assert not automatic_link_excludes_x(
         _bar(style={"orientation": "horizontal"}), string_x_rows
     )
-    assert not auto_link_excludes_x(_bar(), string_x_rows)
+    assert not automatic_link_excludes_x(_bar(), string_x_rows)
 
 
 def test_table_fk_fact_eligibility_is_independent_of_root_link() -> None:
@@ -82,7 +84,7 @@ def test_table_fk_fact_eligibility_is_independent_of_root_link() -> None:
         link="/authored-row/{{ id }}",
     )
 
-    assert not should_synthesize_auto_link(chart, [{"id": 1}], True)
+    assert not should_synthesize_automatic_link(chart, [{"id": 1}], True)
     assert should_fetch_table_fk_links(chart, True)
 
 
@@ -307,14 +309,16 @@ def test_resolve_constructs_final_kpi_and_callout_text() -> None:
     assert resolved_callout.message == "Loaded through today"
 
 
-def test_link_false_suppresses_auto_link_per_chart() -> None:
-    """link: false opts one chart out of a board-level auto_link: true."""
+def test_link_false_suppresses_automatic_link_per_chart() -> None:
+    """link: false opts one chart out of a board-level links.auto: true."""
     rows = [{"category": "A", "amount": 10.0, "region": "west"}]
 
-    assert not should_synthesize_auto_link(_bar(link=False, color="region"), rows, True)
+    assert not should_synthesize_automatic_link(
+        _bar(link=False, color="region"), rows, True
+    )
     # Explicit null is indistinguishable from omission everywhere in the schema —
     # link: ~ does NOT opt out; the chart still synthesizes.
-    assert should_synthesize_auto_link(_bar(link=None, color="region"), rows, True)
+    assert should_synthesize_automatic_link(_bar(link=None, color="region"), rows, True)
 
     resolved = resolve(
         _bar(link=False),
@@ -331,7 +335,7 @@ def test_link_false_keeps_table_fk_links() -> None:
     query = SqlQuery(sql="select * from main.orders", source="warehouse")
     chart = TableChart(id="orders", type="table", query=query, link=False)
 
-    assert not should_synthesize_auto_link(chart, [{"id": 1}], True)
+    assert not should_synthesize_automatic_link(chart, [{"id": 1}], True)
     assert should_fetch_table_fk_links(chart, True)
 
 
@@ -353,6 +357,9 @@ def test_resolve_without_display_text_keeps_plain_text() -> None:
 def test_resolve_raw_display_text_keeps_jinja_literal() -> None:
     chart = _bar(title="{{ region }} revenue")
     resolved = resolve(
-        chart, [{"category": "a", "amount": 1.0}], _style(), display_text="raw"
+        chart,
+        [{"category": "a", "amount": 1.0}],
+        _style(),
+        display_text="raw",
     )
     assert resolved.title == "{{ region }} revenue"

@@ -1335,6 +1335,26 @@ ERR_REGIONAL_NESTED_MISMATCH = REGISTRY.register(
     )
 )
 
+ERR_LINKS_NESTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LINKS-NESTED",
+        domain="compile",
+        title="A nested board authors links",
+        message_template=(
+            "{board} sets `links:`, but only the root board does. A board and "
+            "everything nested in it link and open links one way; move `links:` "
+            "to the root board."
+        ),
+        doc=(
+            "Fired when a nested board (inline or imported) authors a `links:` "
+            "block. `links.auto` and `links.open` apply to the whole page, so "
+            "they are set once, on the root board or in `charts/meta.yml`."
+        ),
+        summary="Fired when a nested board authors `links:`.",
+        docs_topic="charts",
+    )
+)
+
 ERR_FONT_UNKNOWN = REGISTRY.register(
     ErrorCode(
         code="ERR-FONT-UNKNOWN",

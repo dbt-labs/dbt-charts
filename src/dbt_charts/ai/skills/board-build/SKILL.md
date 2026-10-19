@@ -42,6 +42,8 @@ Build dashboards and reports **incrementally** — one chart at a time, validati
 ### Duplicating a board
 
 Copy a dashboard with `{{ s_read_file }}` then `{{ s_write_file }}` to the new path — there is no copy verb and you don't need one. Never `extends:` (the copy stays coupled to the original) and never a rebuild from a render (inlines result data, loses the SQL).
+
+Editing a package board (`dbt_packages/<pkg>/charts/<path>`) saves your own copy at `charts/<pkg>/<path>`, which replaces the package's board; the result's `path` says where it landed. No manual copy step.
 {{/if_tool}}
 
 ## Companion Skills

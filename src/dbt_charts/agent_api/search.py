@@ -189,7 +189,7 @@ class BoardListing(BaseModel):
     file_path: str = Field(
         description=(
             "Path relative to the project root (charts/ prefix kept). Pass "
-            "unchanged to read_file/write_file/edit_file."
+            "unchanged to read_file/write_file/apply_patch."
         )
     )
 

@@ -16,7 +16,7 @@ boundary ``core/AGENTS.md`` commits to — render as a pure function of
 **Deliberately absent**, because the post-resolve path does not use them:
 
 - ``adapter_registry`` — only the *resolve* path reaches for it
-  (``render/chart/auto_link.py``, ``render/layout_sizing.py::_require_resolved``).
+  (``render/chart/automatic_link.py``, ``render/layout_sizing.py::_require_resolved``).
   Auto-link bakes its result into ``resolved.link`` at resolve time, so a
   replayed board already carries its links. Adding it here would oblige every
   provider to own a live warehouse connection, defeating the point.

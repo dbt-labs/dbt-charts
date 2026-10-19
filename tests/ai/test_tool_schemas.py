@@ -30,6 +30,13 @@ def test_every_tool_schema_refuses_undeclared_arguments(tool: dict[str, Any]) ->
     assert tool["input_schema"]["additionalProperties"] is False
 
 
+def test_agent_tools_offer_the_builtin_apply_patch_and_not_edit_file() -> None:
+    from dbt_charts.ai.llm import normalize_openai_tools
+
+    assert {"type": "apply_patch"} in normalize_openai_tools(AGENT_TOOLS)
+    assert "edit_file" not in {t.get("name") for t in AGENT_TOOLS}
+
+
 class TestOpenAIStrictModeValidity:
     """Schemas emitted by normalize_openai_tools must satisfy all three
     OpenAI strict-mode rules: additionalProperties: false on every object,
@@ -48,7 +55,7 @@ class TestOpenAIStrictModeValidity:
         from dbt_charts.ai.llm import normalize_openai_tools
 
         normalized = normalize_openai_tools([*AGENT_TOOLS, SUGGEST_BOARD_PLACEMENT])
-        for tool in normalized:
+        for tool in (t for t in normalized if t["type"] == "function"):
             violations = strict_mode_violations(tool["parameters"])
             assert not violations, (
                 f"Tool {tool['name']!r} has strict-mode violations in emitted schema:\n"
@@ -224,7 +231,7 @@ class TestToStrictJsonSchema:
         assert set(schema.get("required", [])) == {"a", "b"}
 
 
-_WRITE_TOOLS = {"write_file", "edit_file", "move_file", "delete_file"}
+_WRITE_TOOLS = {"write_file", "apply_patch", "move_file", "delete_file"}
 # Boards can declare http sources, so these reach arbitrary URLs (GET only).
 _OPEN_WORLD_TOOLS = {"render_board", "execute_sql"}
 
@@ -272,7 +279,7 @@ class TestOneSearchTool:
     """One tool finds boards and files; the three it replaced are gone."""
 
     def test_search_files_is_the_only_search_tool(self) -> None:
-        names = [tool["name"] for tool in AGENT_TOOLS]
+        names = [tool.get("name") for tool in AGENT_TOOLS]
 
         assert SEARCH_FILES in ALL_TOOLS
         assert {"search_boards", "glob_files", "grep_files"}.isdisjoint(names)

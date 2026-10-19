@@ -1,3 +1,0 @@
-kind: Features
-body: "KPI content moves to the chart root and its styling under `style:` (`glyph`, `style.variant`, `style.support.format`/`tone`, `style.value.affix`/`glyph`, `style.label.overflow`), every KPI slot font now renders, and old boards migrate automatically except a theme-wide `style.charts.kpi.glyph.character`, which is removed with a warning."
-time: 2026-10-06T18:00:00.000000-00:00

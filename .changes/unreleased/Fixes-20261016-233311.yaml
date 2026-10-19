@@ -1,3 +1,0 @@
-kind: Fixes
-body: '`dct validate` now accepts markdown boards, and a markdown board that cannot be parsed reports `ERR-MARKDOWN-PARSE` instead of `ERR-INTERNAL`.'
-time: 2026-10-16T23:33:11.116467939Z

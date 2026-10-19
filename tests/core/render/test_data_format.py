@@ -7,6 +7,7 @@ import json
 import uuid
 from collections.abc import Callable
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -14,6 +15,7 @@ import pytest
 
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.models.board.normalized import Board, Layout, LayoutItem
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.executor import Executor
@@ -24,7 +26,7 @@ from .._board_utils import _default_chart_style_context, _default_resolved_style
 
 
 def _make_executor(data: list[dict[str, Any]]) -> MagicMock:
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_chart.return_value = data
     executor.render_with_range_filters.return_value = None
     return executor
@@ -183,7 +185,7 @@ def test_errored_chart_is_keyed_by_slug_carrying_its_error(
 ) -> None:
     """A chart that fails to execute is visible as a failure, not a hole."""
     board = _make_board([make_chart("bar", id="revenue_bar", x="month", y="revenue")])
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_chart.side_effect = ExecutionError("boom")
     result = _render(board, executor)
 

@@ -1,3 +1,0 @@
-kind: Fixes
-body: Fractions below 1 in the predefined number and currency formats print as plain digits instead of SI milli (`0.2`, not `200m`).
-time: 2026-10-08T15:36:23.408691-07:00

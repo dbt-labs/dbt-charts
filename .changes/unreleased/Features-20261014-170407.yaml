@@ -1,3 +1,0 @@
-kind: Features
-body: Style null is accepted only where it means no value, such as no link or a solid line; elsewhere boards are migrated and null is rejected.
-time: 2026-10-14T17:04:07.802203-07:00

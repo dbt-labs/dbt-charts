@@ -1,3 +1,0 @@
-kind: Features
-body: dct render and dct serve now keep query results in a per-user cache file by default, so re-rendering a board does not re-run its queries, and several dct processes can share one cache file.
-time: 2026-10-13T02:23:51.294379-07:00

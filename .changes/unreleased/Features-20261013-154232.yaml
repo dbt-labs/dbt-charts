@@ -1,3 +1,0 @@
-kind: Features
-body: 'A board''s own rows, cols, grid, tabs or tags now replace the ones it inherits from meta.yml or extends: instead of being added after them.'
-time: 2026-10-13T15:42:32.981444-07:00

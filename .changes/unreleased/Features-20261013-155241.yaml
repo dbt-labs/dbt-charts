@@ -1,3 +1,0 @@
-kind: Features
-body: '`chart_rendering` and `vega:` in `dbt_charts.yml` are retired: styling values move to the theme (bar grouped padding, step-band width, support-table divider gap, KPI value compaction, stacked-area stroke width, legend row swatch and gap, footer gaps and brand weight, hover dimming), the rest become fixed engine constants. A project that sets a retired key fails with `ERR-CONFIG-KEY-MOVED` naming its new home.'
-time: 2026-10-13T15:52:41.863414-07:00

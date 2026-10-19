@@ -1,5 +1,0 @@
-kind: Fixes
-body: Hovering a variable control highlights charts that read the variable through a composed query.
-time: 2026-10-05T14:00:00.000000-07:00
-custom:
-  DbtChartsIssue: "54"

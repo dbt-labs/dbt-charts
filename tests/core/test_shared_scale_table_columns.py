@@ -88,6 +88,7 @@ class TestResolveSharedScaleForTableColumn:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         return resolved["amount"].shared_scale
@@ -141,6 +142,7 @@ class TestResolveSharedScaleForTableColumn:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         assert resolved["amount"].shared_scale is not None
@@ -240,6 +242,7 @@ class TestFormatKpiPartsSharedScale:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         scale = resolved["amount"].shared_scale
@@ -477,6 +480,7 @@ class TestSubTierPrecisionAndRefusal:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         return resolved["amount"].shared_scale
@@ -598,6 +602,7 @@ class TestPadTableCappedAtObservedDepth:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -635,6 +640,7 @@ class TestPadTableCappedAtObservedDepth:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -665,6 +671,7 @@ class TestSizingFunctionsRegression:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         return resolved["amount"]
@@ -696,6 +703,7 @@ class TestAllowSharedScaleGate:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         return resolved["amount"].shared_scale
@@ -736,6 +744,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -773,6 +782,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -812,6 +822,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -841,6 +852,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -865,6 +877,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -887,6 +900,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         assert len(resolved["amount"].decimal_pad_table) - 2 == 4
@@ -915,6 +929,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -950,6 +965,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         col = resolved["amount"]
@@ -982,6 +998,7 @@ def test_column_alias_to_a_preset_keeps_its_sub_unit_pad() -> None:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         return resolved["amount"].decimal_pad_table
@@ -1011,6 +1028,7 @@ class TestUnformattedColumnThatDoesNotCompact:
             defaults_format=None,
             declared=None,
             filter_variables=frozenset(),
+            link_open="page",
         )
         assert resolved is not None
         return resolved["amount"]

@@ -10,7 +10,7 @@ Per-column cell-link precedence (highest to lowest):
   1. Explicit per-column ``link:`` from column config
   2. Per-column filter link ``?col=value`` (when col is a declared board variable)
 
-A column with neither is not a cell link. The chart-root link (auto_link
+A column with neither is not a cell link. The chart-root link (``links.auto``
 detail URL) is separate: the renderer paints it as a whole-row band beneath
 the cells, so identity/key columns (e.g. ``id``, ``user_id``) — excluded from
 ``plan_variables`` because numerics are not default-selected — are part of the
@@ -44,10 +44,10 @@ if TYPE_CHECKING:
 
 
 class TestResolveFilterCellLink:
-    """Unit tests for the pure filter-link helper in auto_link.py."""
+    """Unit tests for the pure filter-link helper in automatic_link.py."""
 
     def test_dimension_column_in_filter_vars_returns_link(self) -> None:
-        from dbt_charts.core.render.chart.auto_link import resolve_filter_cell_link
+        from dbt_charts.core.render.chart.automatic_link import resolve_filter_cell_link
 
         link = resolve_filter_cell_link(
             "property_industry", "Retail", {"property_industry"}
@@ -55,7 +55,7 @@ class TestResolveFilterCellLink:
         assert link == "?property_industry=Retail"
 
     def test_value_with_spaces_is_percent_encoded(self) -> None:
-        from dbt_charts.core.render.chart.auto_link import resolve_filter_cell_link
+        from dbt_charts.core.render.chart.automatic_link import resolve_filter_cell_link
 
         link = resolve_filter_cell_link(
             "property_industry", "Professional Services", {"property_industry"}
@@ -63,20 +63,20 @@ class TestResolveFilterCellLink:
         assert link == "?property_industry=Professional+Services"
 
     def test_value_with_special_chars_is_encoded(self) -> None:
-        from dbt_charts.core.render.chart.auto_link import resolve_filter_cell_link
+        from dbt_charts.core.render.chart.automatic_link import resolve_filter_cell_link
 
         link = resolve_filter_cell_link("status", "a&b=c", {"status"})
         # urlencode-safe: & → %26, = → %3D (no raw special chars survive)
         assert link == "?status=a%26b%3Dc"
 
     def test_column_not_in_filter_vars_returns_none(self) -> None:
-        from dbt_charts.core.render.chart.auto_link import resolve_filter_cell_link
+        from dbt_charts.core.render.chart.automatic_link import resolve_filter_cell_link
 
         link = resolve_filter_cell_link("id", 42, {"property_industry"})
         assert link is None
 
     def test_null_value_returns_none(self) -> None:
-        from dbt_charts.core.render.chart.auto_link import resolve_filter_cell_link
+        from dbt_charts.core.render.chart.automatic_link import resolve_filter_cell_link
 
         link = resolve_filter_cell_link(
             "property_industry", None, {"property_industry"}
@@ -84,13 +84,13 @@ class TestResolveFilterCellLink:
         assert link is None
 
     def test_empty_filter_vars_returns_none(self) -> None:
-        from dbt_charts.core.render.chart.auto_link import resolve_filter_cell_link
+        from dbt_charts.core.render.chart.automatic_link import resolve_filter_cell_link
 
         link = resolve_filter_cell_link("property_industry", "Retail", frozenset())
         assert link is None
 
     def test_numeric_value_is_encoded_as_string(self) -> None:
-        from dbt_charts.core.render.chart.auto_link import resolve_filter_cell_link
+        from dbt_charts.core.render.chart.automatic_link import resolve_filter_cell_link
 
         # Temporal/boolean variables can also be filtered
         link = resolve_filter_cell_link("year", 2024, {"year"})
@@ -126,7 +126,7 @@ class TestTableFilterCellLinksInSVG:
 
     def test_dimension_cell_has_filter_link(self, make_chart) -> None:
         """A column declared as a board variable gets ?col=value links."""
-        from dbt_charts.core.render.chart.auto_link import (
+        from dbt_charts.core.render.chart.automatic_link import (
             set_filter_variables_context,
         )
 
@@ -143,7 +143,9 @@ class TestTableFilterCellLinksInSVG:
 
     def test_value_with_space_is_percent_encoded_in_svg(self, make_chart) -> None:
         """Multi-word values are percent-encoded so the link is a valid query string."""
-        from dbt_charts.core.render.chart.auto_link import set_filter_variables_context
+        from dbt_charts.core.render.chart.automatic_link import (
+            set_filter_variables_context,
+        )
 
         from .._engine_render import render_table_svg
 
@@ -160,7 +162,9 @@ class TestTableFilterCellLinksInSVG:
 
     def test_column_not_in_filter_vars_has_no_filter_link(self, make_chart) -> None:
         """A column absent from filter vars gets no filter link."""
-        from dbt_charts.core.render.chart.auto_link import set_filter_variables_context
+        from dbt_charts.core.render.chart.automatic_link import (
+            set_filter_variables_context,
+        )
 
         from .._engine_render import render_table_svg
 
@@ -191,7 +195,9 @@ class TestTableFilterCellLinksInSVG:
         """Per-column link: overrides filter link even when column is in filter vars."""
         from dbt_charts.core.compile.config import get_theme_style
         from dbt_charts.core.compile.resolve.style.board import resolve_style
-        from dbt_charts.core.render.chart.auto_link import set_filter_variables_context
+        from dbt_charts.core.render.chart.automatic_link import (
+            set_filter_variables_context,
+        )
 
         from .._engine_render import render_table_svg
 
@@ -234,7 +240,9 @@ class TestTableFilterCellLinksInSVG:
         """
         from dbt_charts.core.compile.config import get_theme_style
         from dbt_charts.core.compile.resolve.style.board import resolve_style
-        from dbt_charts.core.render.chart.auto_link import set_filter_variables_context
+        from dbt_charts.core.render.chart.automatic_link import (
+            set_filter_variables_context,
+        )
 
         from .._engine_render import render_table_svg
 

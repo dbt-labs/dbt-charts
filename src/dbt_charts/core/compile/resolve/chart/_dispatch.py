@@ -19,7 +19,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedChart,
 )
-from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
+from dbt_charts.core.compile.models.primitives import LinkOpen, ResolvedFontStyle
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.resolve.chart._chart_rows import (
     ChartRows,
@@ -76,6 +76,8 @@ def resolve(
     pie_title_font: ResolvedFontStyle | EllipsisType = ...,
     display_text: ChartDisplayText = None,
     filter_variables: frozenset[str] = frozenset(),
+    *,
+    link_open: LinkOpen = "page",
     x_date_range: tuple[date, date] | None = None,
     title_width: float | None = None,
 ) -> ResolvedChart:
@@ -100,6 +102,8 @@ def resolve(
             identity key from receiving a per-column FK link.
         filter_variables: Declared board variable names; a table column named
             by one links to filter by it, which beats an `email`/`url` link.
+        link_open: The board's ``links.open``; a table column link that sets no
+            ``open`` of its own takes it.
         display_text: Variables and query results the chart's title, subtitle,
             label and message read. ``"raw"`` is the explicit no-data mode and keeps
             authored text literal. The default ``None`` is for text without Jinja
@@ -230,6 +234,7 @@ def resolve(
                     table_column_rows,
                     display_text,
                     filter_variables=filter_variables,
+                    link_open=link_open,
                 )
             case "geoshape" | "map":
                 return _resolve_geoshape(

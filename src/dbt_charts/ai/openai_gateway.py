@@ -18,7 +18,7 @@ from collections.abc import Iterator
 from typing import Any, Protocol
 
 import httpx
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ def _is_wire_error(exc: Exception) -> bool:
 class ResponsesRequest(BaseModel):
     """The Responses API request, 80/20-typed.
 
-    Names the six fields every caller in this codebase sets; everything else
+    Names the eight fields every caller in this codebase sets; everything else
     a caller passes (e.g. ``text=`` for structured JSON output) rides along
     as an extra field — `extra="allow"` here is not wire-shape parsing, it's
     a deliberate concession to comprehensiveness-is-not-the-goal: giving the
@@ -105,6 +105,8 @@ class ResponsesRequest(BaseModel):
     tools: list[dict[str, Any]] | None = None
     reasoning: dict[str, Any] | None = None
     stream: bool = False
+    store: bool | None = None
+    include: list[str] | None = None
 
 
 # -- Wire-boundary parsing models ---------------------------------------------
@@ -179,6 +181,8 @@ class _FunctionCallItem(BaseModel):
     call_id: str = ""
     name: str = ""
     arguments: str = ""
+    # An SDK object or a dict, like the other wire items; see _wire_item_to_dict.
+    operation: Any = None
 
 
 class _OutputItemDoneEvent(BaseModel):
@@ -201,6 +205,17 @@ class _UsageBearingResponse(BaseModel):
     usage: TokenUsage | None = None
 
 
+class _OutputItemType(BaseModel):
+    model_config = ConfigDict(extra="ignore", from_attributes=True)
+    type: str = ""
+
+
+class _CompletedResponse(_UsageBearingResponse):
+    # Raw wire items (SDK objects or dicts), kept opaque so a reasoning item
+    # replays exactly as the provider sent it.
+    output: list[Any] = Field(default_factory=list)
+
+
 class _IncompleteResponse(_UsageBearingResponse):
     incomplete_details: _IncompleteDetails | None = None
 
@@ -211,7 +226,7 @@ class _FailedResponse(_UsageBearingResponse):
 
 class _CompletedEvent(BaseModel):
     model_config = ConfigDict(extra="ignore", from_attributes=True)
-    response: _UsageBearingResponse | None = None
+    response: _CompletedResponse | None = None
 
 
 class _IncompleteEvent(BaseModel):
@@ -278,11 +293,38 @@ class FunctionCall(BaseModel):
     arguments: dict[str, Any]
 
 
+class ApplyPatchCall(BaseModel):
+    """A call to the built-in ``apply_patch`` tool: its ``operation``
+    (create_file / update_file / delete_file) rides as the arguments."""
+
+    model_config = ConfigDict(extra="forbid")
+    call_id: str
+    operation: dict[str, Any]
+
+
+class ReasoningItems(BaseModel):
+    """A response's reasoning output items, as the wire returned them.
+
+    Carries ``encrypted_content`` when the request asked for it, so a stateless
+    caller can hand the items back on the next request.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    items: list[dict[str, Any]]
+
+
 #: Every event shape a consumer of `ResponsesGateway.stream()` can see. Wire
 #: events no consumer needs (`response.created`, `response.completed`, ...)
 #: are absorbed as gateway bookkeeping and never reach this union — grow it
 #: only when a consumer needs more.
-GatewayEvent = TextDelta | ReasoningSummaryDelta | ReasoningSummaryDone | FunctionCall
+GatewayEvent = (
+    TextDelta
+    | ReasoningSummaryDelta
+    | ReasoningSummaryDone
+    | FunctionCall
+    | ApplyPatchCall
+    | ReasoningItems
+)
 
 
 class CompletedResponse(BaseModel):
@@ -356,6 +398,13 @@ def _reasoning_block(item_id: str, summary_index: int | str) -> str:
     return f"{item_id}:{summary_index}"
 
 
+def _wire_item_to_dict(item: Any) -> dict[str, Any]:
+    """Plain-dict form of an output item (SDK object or raw dict)."""
+    if isinstance(item, BaseModel):
+        return item.model_dump(exclude_none=True)
+    return item
+
+
 def _parse_stream_event(raw_event: Any) -> GatewayEvent | None:
     """Parse one raw SDK event into a typed :data:`GatewayEvent`, or ``None``
     for a wire event this gateway absorbs rather than yields (unmapped types,
@@ -383,6 +432,12 @@ def _parse_stream_event(raw_event: Any) -> GatewayEvent | None:
 
     if event_type == "response.output_item.done":
         item = _OutputItemDoneEvent.model_validate(raw_event).item
+        if item is not None and item.type == "apply_patch_call":
+            if item.operation is None:
+                raise GatewayError("apply_patch_call item without an operation")
+            return ApplyPatchCall(
+                call_id=item.call_id, operation=_wire_item_to_dict(item.operation)
+            )
         if item is None or item.type != "function_call":
             return None
         try:
@@ -605,9 +660,16 @@ class OpenAIGateway:
 
                 if event_type == "response.completed":
                     completed = _CompletedEvent.model_validate(raw_event)
-                    self._accumulate_usage(
-                        completed.response.usage if completed.response else None
-                    )
+                    if completed.response is None:
+                        continue
+                    self._accumulate_usage(completed.response.usage)
+                    reasoning = [
+                        _wire_item_to_dict(item)
+                        for item in completed.response.output
+                        if _OutputItemType.model_validate(item).type == "reasoning"
+                    ]
+                    if reasoning:
+                        yield ReasoningItems(items=reasoning)
                     continue
 
                 parsed = _parse_stream_event(raw_event)

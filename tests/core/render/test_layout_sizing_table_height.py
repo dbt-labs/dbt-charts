@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from dbt_charts.core.compile import compile
@@ -22,6 +23,7 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.models.chart.normalized import Chart, TableChart
 from dbt_charts.core.compile.models.chart.resolved import ResolvedTableChart
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import (
     ChartStylePatch,
@@ -61,7 +63,7 @@ def _make_table_chart(style_patch: ChartStylePatch | None = None) -> Chart:
 
 def _make_executor(row_count: int) -> MagicMock:
     """Return a mock Executor that yields `row_count` rows for execute_chart."""
-    mock = MagicMock(spec=Executor)
+    mock = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock.execute_chart.return_value = [{"col": i} for i in range(row_count)]
     return mock
 
@@ -991,7 +993,7 @@ class TestSizingProbeRecordsNoWarnings:
         rows = [
             {"col": f"a cell value far too long for forty pixels {i}"} for i in range(6)
         ]
-        executor = MagicMock(spec=Executor)
+        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
         executor.execute_chart.return_value = rows
         with collect_text_truncations() as recorded:
             _call_provider(chart, executor)

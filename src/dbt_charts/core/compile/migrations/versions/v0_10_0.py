@@ -64,6 +64,10 @@ Changes in this release:
   after them. Not mechanically migratable: the inherited items live in another
   file, so no rewrite of the board can restore them. `WARN-INHERITED-LAYOUT-REPLACED`
   marks every board where the old reading differed.
+- **`auto_link` became `links.auto`**: the board key moves into the new `links`
+  block (`Move`, nested boards included). A board that already authors
+  `links.auto` beside it is left unmigrated, and validation rejects the
+  `auto_link` key.
 - **Style `null` is accepted only where it means no value** (no link, solid
   line, no cap, no stroke): a field carrying `Absent`. Elsewhere it rejects, so a
   board that wrote it is migrated: the `null` is dropped, which also lifts a
@@ -111,6 +115,8 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
 THEME_RENAMES: dict[MappedScalar, MappedScalar] = {}
 
 LEGEND_POSITION_TAIL: YamlKeyPath = ("legend", "position")
+
+AUTO_LINK_TAIL: YamlKeyPath = ("links", "auto")
 
 
 LEGEND_POSITION_EXPANSION: dict[str, dict[str, MappedScalar]] = {
@@ -192,6 +198,18 @@ def moves(
         + _kpi_moves(source_schema, target_schema, catalog)
         + _chart_format_moves(source_schema, target_schema, catalog)
         + _style_null_moves(source_schema, target_schema, catalog)
+        + tuple(
+            dataclasses.replace(
+                move, sub_board_prefixes=nesting, conflicts_with=(AUTO_LINK_TAIL,)
+            )
+            for move in suffix_rename_moves(
+                AuthoredBoard,
+                source_schema,
+                target_schema,
+                [(AUTO_LINK_TAIL, ("auto_link",))],
+                catalog=catalog,
+            )
+        )
         + tuple(
             dataclasses.replace(
                 move,

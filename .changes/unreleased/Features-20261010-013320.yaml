@@ -1,3 +1,0 @@
-kind: Features
-body: New `dct artifact schema` command prints the JSON Schema that board artifacts conform to; the installed package no longer includes `dbt_charts/data/schemas/board-resolved/board-resolved.schema.json`, so read the schema from this command instead.
-time: 2026-10-10T01:33:20.749575-07:00

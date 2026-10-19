@@ -128,6 +128,7 @@ def _emit(yaml: str, tmp_path: Path, rng: Any = _MARCH) -> tuple[Any, ChartSpec]
         executor,
         variables,
         filter_variables=frozenset(),
+        link_open="page",
     )
     spec = get_emitter(resolved).emit(
         resolved, RenderBox(width=600.0, height=300.0), regroup((), data)

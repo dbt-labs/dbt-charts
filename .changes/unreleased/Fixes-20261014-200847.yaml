@@ -1,3 +1,0 @@
-kind: Fixes
-body: The layered-chart y-domain error now names axis_y.scale.continuous.domain, the key you actually write.
-time: 2026-10-14T20:08:47.720886-07:00

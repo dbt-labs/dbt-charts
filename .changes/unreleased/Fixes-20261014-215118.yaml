@@ -1,3 +1,0 @@
-kind: Fixes
-body: Table column_defaults set in a board or theme style now apply to the table's columns.
-time: 2026-10-14T21:51:18.55606-07:00

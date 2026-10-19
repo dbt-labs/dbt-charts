@@ -1,3 +1,0 @@
-kind: Breaking changes
-body: A date-only `label.values` entry with a trailing `Z`, such as `2024-01-01Z`, now raises an invalid-date error instead of parsing.
-time: 2026-10-12T16:35:18.924906-04:00

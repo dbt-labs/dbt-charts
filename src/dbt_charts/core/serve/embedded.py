@@ -12,14 +12,18 @@ with them.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import asyncio
+import socket
+from typing import TYPE_CHECKING
 
 from dbt_charts._install_hint import install_hint
 from dbt_charts.core.execute.adapters import LOCAL_AUTHORING_REGISTRY_KWARGS
-from dbt_charts.core.serve.port import find_available_port
+from dbt_charts.core.serve.port import bind_available_port
 from dbt_charts.core.serve.server import create_server
 
 if TYPE_CHECKING:
+    import uvicorn
+
     from dbt_charts.cli.filesystem_project import FilesystemProject
 
 
@@ -30,15 +34,15 @@ def build_embedded_server(
     host: str = "localhost",
     log_level: str = "warning",
     max_attempts: int = 10,
-) -> tuple[Any, int]:
-    """Resolve a free port and build a configured `uvicorn.Server`.
+) -> tuple[uvicorn.Server, socket.socket]:
+    """Listen on a free port and build a configured `uvicorn.Server`.
 
-    Returns ``(server, resolved_port)``. Raises ``ImportError`` (with an
-    install hint) when uvicorn isn't installed, or ``RuntimeError`` from
-    ``find_available_port`` when no free port is available — callers
-    surface those errors with their own context. Callers run the server
-    on whatever asyncio loop fits their lifecycle (one-shot async task,
-    background thread, etc.).
+    Returns ``(server, listener)``; callers run it with
+    ``server.serve(sockets=[listener])`` on whatever asyncio loop fits their
+    lifecycle. Raises ``ImportError`` (with an install hint) when uvicorn
+    isn't installed, or ``RuntimeError`` from ``bind_available_port`` when no
+    free port is available — callers surface those errors with their own
+    context.
     """
     try:
         from dbt_charts.core.serve.shutdown import build_server  # noqa: PLC0415
@@ -52,7 +56,7 @@ def build_embedded_server(
             f"dbt charts runtime dependency. Reinstall dbt charts: {install_hint()}"
         ) from e
 
-    resolved = find_available_port(port_hint, host=host, max_attempts=max_attempts)
+    listener = bind_available_port(port_hint, host=host, max_attempts=max_attempts)
 
     # The embedded preview backs `dct mcp serve`, whose primary
     # session opens with LOCAL_AUTHORING_REGISTRY_KWARGS (read-only + external
@@ -62,7 +66,30 @@ def build_embedded_server(
     server = build_server(
         create_server(project, **LOCAL_AUTHORING_REGISTRY_KWARGS),
         host=host,
-        port=resolved,
+        port=listener.getsockname()[1],
         log_level=log_level,
     )
-    return server, resolved
+    return server, listener
+
+
+async def start_embedded_server(
+    server: uvicorn.Server, listener: socket.socket
+) -> asyncio.Task[None]:
+    """Serve on *listener* in a task, returning once the server is listening.
+
+    Raises ``RuntimeError`` when the server stops before it listens (uvicorn
+    logs why). Await this before opening a stdio transport: its reader thread
+    blocks on stdin and holds the process open until the client hangs up, so a
+    preview that failed after the transport opened would leave the client
+    waiting on a reply forever.
+    """
+    task = asyncio.create_task(server.serve(sockets=[listener]))
+    while not server.started:
+        if task.done():
+            task.result()
+            raise RuntimeError(
+                "The embedded preview server stopped before it started "
+                "listening; its error is logged above."
+            )
+        await asyncio.sleep(0.01)
+    return task

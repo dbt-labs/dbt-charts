@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+)
 
 from dbt_charts.core.compile.models.markers import (
     AUTO,
@@ -18,6 +25,7 @@ from dbt_charts.core.compile.models.markers import (
 from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
     Curve,
+    ErrorHint,
     FontColorStrokeStyle,
     FontStyle,
     FormatConfig,
@@ -30,6 +38,15 @@ from dbt_charts.core.compile.template.labels_env import (
     validate_label_template,
     validate_label_where,
 )
+
+# A character other than whitespace or a brace: a blank, whitespace or `{{ }}`
+# ``where:`` filters nothing and is refused rather than read as unset.
+LabelWhere = Annotated[
+    str,
+    StringConstraints(pattern=r"[^\s{}]"),
+    ErrorHint("where: must be a non-empty expression or be omitted"),
+    AfterValidator(validate_label_where),
+]
 
 
 class TextMarkStyle(BaseModel):
@@ -217,9 +234,7 @@ class SliceLabelsStyle(BaseModel):
         default=None,
         description="Jinja2 label template. Overrides default_template when authored.",
     )
-    where: Annotated[
-        str | None, AfterValidator(validate_label_where), Absent("every row labeled")
-    ] = Field(
+    where: Annotated[LabelWhere | None, Absent("every row labeled")] = Field(
         default=None,
         description="Jinja2 boolean filter; labels only render on rows where this is truthy.",
     )

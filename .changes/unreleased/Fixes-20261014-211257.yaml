@@ -1,3 +1,0 @@
-kind: Fixes
-body: Integer x values from 1700 to 2100 are read as years, so historical series no longer get SI labels such as 1.6k.
-time: 2026-10-14T21:12:57.216999-07:00

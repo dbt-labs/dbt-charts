@@ -1,8 +1,7 @@
 title: [[ (path.source ~ "/" ~ path.schema ~ "/" ~ path.table) | tojson ]]
 
-# The auto_link resolver fires at render time and synthesizes the detail-page
-# link for each row using plan_link_keys — no hand-rolled link: needed here.
-auto_link: true
+links:
+  auto: true
 
 [% set vars = plan_variables(queries.columns.rows) %]
 [% if vars %]

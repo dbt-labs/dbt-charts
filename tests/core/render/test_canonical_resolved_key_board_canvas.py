@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from dbt_charts.core.compile.models.chart.normalized.bar import BarChart
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 from dbt_charts.core.execute.executor import Executor
@@ -74,7 +76,7 @@ def test_two_scopes_with_matching_chart_canvas_but_different_board_canvas_resolv
     assert ctx_a.board_canvas != ctx_b.board_canvas
 
     chart = _translucent_bar_chart()
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.render_with_range_filters.return_value = None
     executor.execute_query.return_value = []
     render_ctx = SizingRenderCtx(

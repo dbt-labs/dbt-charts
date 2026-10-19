@@ -1,3 +1,0 @@
-kind: Fixes
-body: dbt stays lowercase when a subtitle in sentence case starts with it.
-time: 2026-10-14T21:12:52.525378-07:00

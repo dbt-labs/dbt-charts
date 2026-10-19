@@ -1,3 +1,0 @@
-kind: Fixes
-body: Screen readers no longer hear NaN or duplicated values on 100% stacked, area, donut and `y_start` bar charts, and reference lines are hidden from them.
-time: 2026-10-06T12:00:00.000000-07:00

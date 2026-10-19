@@ -1,3 +1,0 @@
-kind: Fixes
-body: A query that returns two columns with the same name now raises a clear error instead of silently dropping one.
-time: 2026-10-12T03:15:50.865478Z

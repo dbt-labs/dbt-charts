@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -12,7 +12,12 @@ import pytest
 
 from dbt_charts.ai.agent import AgentProfile, run_agent
 from dbt_charts.ai.context import DbtChartsAIContext
-from dbt_charts.ai.events import AgentError, ContentDelta, ToolCallEvent
+from dbt_charts.ai.events import (
+    AgentError,
+    ContentDelta,
+    ReasoningItemsEvent,
+    ToolCallEvent,
+)
 from dbt_charts.ai.llm import AITurnFailure, LLMClientError
 from dbt_charts.ai.messages import AgentMessage
 
@@ -622,3 +627,76 @@ def test_tool_result_duration_reflects_only_its_own_dispatch_call(
     assert first == pytest.approx(0.005)
     assert second == pytest.approx(0.08)
     assert third == pytest.approx(0.005)
+
+
+def _dispatch_returning(result: dict[str, Any]) -> Callable[..., dict[str, Any]]:
+    def dispatch(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return result
+
+    return dispatch
+
+
+def test_reasoning_items_are_attached_to_the_assistant_message_not_yielded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The loop stores a response's reasoning items on its AssistantMessage so
+    the next request can replay them; consumers never see the event."""
+    from dbt_charts.ai.messages import AssistantMessage
+
+    monkeypatch.setattr(
+        "dbt_charts.ai.agent.dispatch_tool_call",
+        _dispatch_returning({"ok": True}),
+    )
+    reasoning = {"type": "reasoning", "id": "rs_1", "encrypted_content": "e"}
+    seen: list[list[AgentMessage]] = []
+
+    def _stream(*, messages: list[AgentMessage], **_: Any) -> Iterator[Any]:
+        seen.append(list(messages))
+        if len(seen) == 1:
+            yield ToolCallEvent(id="1", name="render_board", arguments={})
+            yield ReasoningItemsEvent(items=[reasoning])
+        else:
+            yield ContentDelta(delta="done")
+
+    client = MagicMock()
+    client.stream_with_tools.side_effect = _stream
+    context = MagicMock()
+    profile = AgentProfile(
+        name="test", tools=[], build_system_prompt=lambda _ctx: "prompt"
+    )
+
+    events = list(run_agent("hi", client=client, context=context, profile=profile))
+
+    assert not any(isinstance(e, ReasoningItemsEvent) for e in events)
+    carried = [m for m in seen[1] if isinstance(m, AssistantMessage)]
+    assert carried[0].reasoning_items == [reasoning]
+
+
+def test_a_failed_tool_result_is_marked_failed_in_the_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dbt_charts.ai.messages import ToolResultMessage
+
+    monkeypatch.setattr(
+        "dbt_charts.ai.agent.dispatch_tool_call",
+        _dispatch_returning({"success": False, "error": "hunk 1 not found"}),
+    )
+    seen: list[list[AgentMessage]] = []
+
+    def _stream(*, messages: list[AgentMessage], **_: Any) -> Iterator[Any]:
+        seen.append(list(messages))
+        if len(seen) == 1:
+            yield ToolCallEvent(id="1", name="apply_patch", arguments={})
+        else:
+            yield ContentDelta(delta="done")
+
+    client = MagicMock()
+    client.stream_with_tools.side_effect = _stream
+    profile = AgentProfile(
+        name="test", tools=[], build_system_prompt=lambda _ctx: "prompt"
+    )
+
+    list(run_agent("hi", client=client, context=MagicMock(), profile=profile))
+
+    [result] = [m for m in seen[1] if isinstance(m, ToolResultMessage)]
+    assert result.failed is True

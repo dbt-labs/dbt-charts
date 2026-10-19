@@ -1,3 +1,0 @@
-kind: Fixes
-body: The `cloud-setup` skill connects public repositories without a browser step, checks BigQuery auth reliably, and requires warehouse grants to cover every dataset the boards read.
-time: 2026-09-27T06:12:56Z

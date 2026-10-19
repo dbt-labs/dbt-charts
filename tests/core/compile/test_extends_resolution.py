@@ -534,7 +534,7 @@ def test_merged_patch_link_false_survives_extends_in_both_directions(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
     """The merge property that makes false (not an explicit null) the per-chart
-    auto_link opt-out: a child board's link: false suppresses a template chart's
+    `links.auto` opt-out: a child board's link: false suppresses a template chart's
     link, and a child's string link re-links a template's link: false."""
     from dbt_charts.core.compile.merge import merged_patch
 

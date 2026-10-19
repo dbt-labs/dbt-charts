@@ -42,8 +42,7 @@ from dbt_charts.core.render.board_replay import (
     render_board_from_artifact,
 )
 from dbt_charts.core.render.board_resolve import build_resolved_board
-from dbt_charts.core.render.chart.auto_link import (
-    set_auto_link_context,
+from dbt_charts.core.render.chart.automatic_link import (
     set_filter_variables_context,
 )
 
@@ -135,10 +134,8 @@ def emit_board_artifact(
         file_materializer_factory=default_local_materializer_factory(project),
     )
 
-    # Matches render()'s prologue: auto-link resolves (and bakes into
-    # resolved.link) only while this context is set, so an emitted artifact
-    # for a board using auto_link carries the same links a live render would.
-    set_auto_link_context(board.auto_link)
+    # Matches render()'s prologue: the declared variable names are set for the
+    # sizing pass, as a live render sets them.
     set_filter_variables_context(
         frozenset(board.variable_registry) if board.variable_registry else frozenset()
     )
@@ -150,7 +147,6 @@ def emit_board_artifact(
     except DbtChartsError as exc:
         return EmitBoardArtifactResult(success=False, errors=[exc.to_diagnostic()])
     finally:
-        set_auto_link_context(False)
         set_filter_variables_context(frozenset())
 
     # A chart-level resolve failure no longer raises — it leaves a hole in the

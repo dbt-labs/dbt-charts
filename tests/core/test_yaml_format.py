@@ -1,3 +1,7 @@
+from types import SimpleNamespace
+
+from dbt_charts.core.compile.models.primitives import BoardLinks
+
 """Tests for YAML render output format."""
 
 import datetime
@@ -24,7 +28,7 @@ def _make_executor(data: list[dict]) -> MagicMock:
     attribute: render() now draws the board for every format (not just svg),
     and the svg footer/timestamp code iterates this attribute directly.
     """
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.render_with_range_filters.return_value = None
     executor.execute_chart.return_value = data
     executor.cache_hit_ats = []
@@ -405,7 +409,7 @@ rows: [card]
         def _pick_data(chart: Chart, *_args: object, **_kwargs: object) -> list[dict]:
             return data1 if chart.query_name == "q1" else data2
 
-        executor = MagicMock(spec=Executor)
+        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
         executor.render_with_range_filters.return_value = None
         executor.execute_chart.side_effect = _pick_data
         executor.cache_hit_ats = []

@@ -6938,7 +6938,7 @@ pub(crate) fn render_line_panel(
             .iter()
             .map(|(aria, x, y, stroke)| crate::contract::GhostRule { aria: Some(aria), x: *x, y: *y, stroke })
             .collect();
-        crate::contract::mirror_ghost_layer(&mut svg, &rules, plot_h)?;
+        crate::contract::mirror_ghost_layer(&mut svg, &rules, crate::contract::GhostRun::Down(plot_h))?;
     }
 
     // A shared-scale layer paints AFTER the base's own ink (halo, main

@@ -1,3 +1,0 @@
-kind: Fixes
-body: Tool argument mistakes come back as one line naming the field instead of a Pydantic dump, and a board query that needs a variable the board gives no default for names the variable and what to pass.
-time: 2026-10-09T13:39:53.473108-07:00

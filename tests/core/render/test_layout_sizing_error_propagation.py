@@ -30,6 +30,7 @@ to keep the post-fix invariant pinned across all bug-class types.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -39,6 +40,7 @@ from dbt_charts.core.compile.config import (
     get_theme_style,
 )
 from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.compile.resolve.style.board import (
@@ -67,7 +69,7 @@ def _make_chart(chart_type: str = "table") -> Chart:
 
 
 def _executor_raising(exc: Exception) -> MagicMock:
-    mock = MagicMock(spec=Executor)
+    mock = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     mock.execute_chart.side_effect = exc
     return mock
 
@@ -135,7 +137,7 @@ class TestSizingProviderErrorPropagation:
 
         chart = _make_chart("bar")
         item = LayoutItem(type="chart", width=400.0, height=0.0, chart=chart)
-        executor = MagicMock(spec=Executor)
+        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
 
         mock_resolved = MagicMock(spec=ResolvedChart)
         mock_resolved.id = chart.id
@@ -204,7 +206,7 @@ class TestSizingProviderErrorPropagation:
 
         chart = _make_chart("bar")
         item = LayoutItem(type="chart", width=400.0, height=0.0, chart=chart)
-        executor = MagicMock(spec=Executor)
+        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
         executor.execute_query.return_value = []
 
         theme = get_theme_style()
@@ -283,7 +285,7 @@ class TestAlignColsErrorPropagation:
         )
         item_tall = LayoutItem(type="chart", width=400.0, height=0.0, chart=chart_tall)
 
-        executor = MagicMock(spec=Executor)
+        executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
         theme = get_theme_style()
         resolved = resolve_style(theme)
         board_ctx = resolve_chart_style_context(theme)

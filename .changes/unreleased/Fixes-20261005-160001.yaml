@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'A `support_table` strip''s unit suffix now hangs past the column instead of shifting its cell''s digits, a warning fires when cells are wider than their category band, and `label:` on a `per_series:` entry is rejected on strip rows and stacked-bar column sets, where it was silently ignored (it still names a horizontal grouped bar''s column).'
-time: 2026-10-05T16:00:01.000000-07:00

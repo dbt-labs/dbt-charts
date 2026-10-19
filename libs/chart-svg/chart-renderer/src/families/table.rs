@@ -7,7 +7,7 @@
 //! `resolve_conditional_styles`/`interpolate_scale_color` cluster below.
 //! A column's per-cell `link:` (verbatim column name or a `{{ col }}` /
 //! `{{ col | urlencode }}` template) is ported — see `resolve_cell_link`.
-//! chart-root `link` (`auto_link` row detail) paints one `<a href aria-label>`
+//! chart-root `link` (`links.auto` row detail) paints one `<a href aria-label>`
 //! around a transparent `dbt-table-row-link` rect per value row, before that
 //! row's cells (summary/total rows get none); the href is `resolve_cell_link`'s.
 //! In a linked table the body row rules, and in a banded row every cell
@@ -95,8 +95,8 @@ struct Resolved {
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
     subtitle: Option<String>,
     title_style: Option<TableTitleStyle>,
-    // Chart-root `ResolvedChart.link` (`_base.py:85`) — `auto_link`/FK-drill's
-    // own row-detail template (`auto_link.py::_table_row_detail_link`,
+    // Chart-root `ResolvedChart.link` (`_base.py:85`) — `links.auto`/FK-drill's
+    // own row-detail template (`automatic_link.py::_table_row_detail_link`,
     // `row_detail=True`), keyed by column name (never a channel placeholder —
     // that form is the non-table chart-mark path, ported separately). Renders
     // as one whole-row band per value row, not a
@@ -4663,7 +4663,7 @@ struct TableBody<'a> {
     signed_columns: &'a BTreeSet<&'a str>,
     tones: Option<&'a TonesStyle>,
     // Chart-root row-detail link template (`Resolved.link`) — `Some` only
-    // when `auto_link`/FK-drill synthesized one; drives the whole-row band
+    // when `links.auto`/FK-drill synthesized one; drives the whole-row band
     // below.
     link: Option<&'a str>,
     link_open: crate::href::LinkOpen,
@@ -15391,8 +15391,8 @@ mod link_paint_tests {
     }
 }
 
-/// `ResolvedChart.link` — the whole-row detail link `auto_link`/FK-drill
-/// synthesizes on a table chart's own row grain (`auto_link.py::
+/// `ResolvedChart.link` — the whole-row detail link `links.auto`/FK-drill
+/// synthesizes on a table chart's own row grain (`automatic_link.py::
 /// _table_row_detail_link`, `resolve_column_set_link(row_detail=True)`).
 /// Distinct from `link_paint_tests` above, which covers a per-COLUMN
 /// `style.columns.<col>.link` — this is the chart-ROOT `link:`, rendered as
@@ -15457,7 +15457,7 @@ mod row_link_tests {
         assert!(err.contains("font_color"), "{err}");
     }
 
-    /// `auto_link.py::_table_row_detail_link`'s own URL shape: one row-band
+    /// `automatic_link.py::_table_row_detail_link`'s own URL shape: one row-band
     /// anchor per value row, keyed by the row's own `id` column.
     #[test]
     fn a_row_detail_link_emits_one_anchor_per_row() {

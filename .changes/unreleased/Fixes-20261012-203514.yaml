@@ -1,3 +1,0 @@
-kind: Fixes
-body: A `warnings:` block in `dbt_charts.yml` no longer stops `dct serve` from starting.
-time: 2026-10-12T20:35:14.706076-07:00

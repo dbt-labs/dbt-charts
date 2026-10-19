@@ -215,7 +215,9 @@ details: "Click to expand"     # Collapsible section (string, or the object form
 
 cache: 1h                      # Result-cache policy for every query on this board
 extends: base_board            # Inherit from another board / theme (see below)
-auto_link: true                # Table charts auto-link rows to /data/ detail pages
+links:
+  auto: true                   # Table charts auto-link rows to /data/ detail pages
+  open: modal                  # Default for how links open: page | modal | preview | new_tab
 ```
 
 Top-level fields:
@@ -247,7 +249,10 @@ Top-level fields:
 | `visible` | bool \| string \| object | Render condition when nested as a layout item (see [Layout visibility](#layout-visibility-visible)) |
 | `theme` | string | Theme name (e.g. `clarity`, `paper`, `neon`) — sugar for `extends:`; inherited by nested boards |
 | `extends` | string \| list[string] | Board name(s)/path(s) or a built-in theme this board inherits from (see [Inheritance](#inheritance-extends-and-theme) in `dct docs styling`) |
-| `auto_link` | bool | Auto-link table rows to their `/data/…/detail/` pages (default `false`). An explicit chart `link:` always wins; `link: false` on a chart suppresses its automatic link. |
+| `links.auto` | bool | Auto-link table rows to their `/data/…/detail/` pages (default `false`). An explicit chart `link:` always wins; `link: false` on a chart suppresses its automatic link. |
+| `links.open` | `page` \| `modal` \| `preview` \| `new_tab` | How a link opens when it sets no `open:` of its own (default `page`). Precedence: the link's own `open:`, then `links.open`, then `page`. A `?variable=` link, a table cell's filter link, an implied email/url or KPI link, and a custom chart's per-row link always stay `page`. |
+
+`links:` is set on the root board (or `charts/meta.yml`) only; a nested board that authors it is an error (`ERR-LINKS-NESTED`), and nested boards take the root's.
 
 `board:` as a top-level key is rejected. Put board properties (title, rows, queries, …) directly at the YAML root.
 
@@ -789,7 +794,7 @@ All chart types accept the channels and style fields below — but each type rej
 | `longitude` | string | Longitude field (point/bubble map) |
 | `background` | string \| object | Background channel — color, `{value}`, `{field, scale/when}`, or map layer |
 | `sort` | object | `{by, order}` — categorical sort. Horizontal bar charts default to value-descending order when omitted. |
-| `link` | string \| false | Click-through URL template for drill-down links; `false` suppresses the chart's automatic link when the board sets `auto_link: true` (table column links are unaffected) |
+| `link` | string \| false | Click-through URL template for drill-down links; `false` suppresses the chart's automatic link when the board sets `links.auto: true` (table column links are unaffected) |
 | `multiples` | object | Partition into small multiples: `{rows, columns, scale}` — cartesian charts (`bar`/`line`/`area`/`scatter`/`heatmap`) only (see [Small multiples](#small-multiples-multiples)) |
 | `warnings_ignore` | list[string] | Render-warning codes to suppress for this chart only (e.g. `[WARN-AXIS-TITLE-TRUNCATED]`; unknown codes are rejected — list codes with `dct docs warnings`) |
 | `layers` | list | Overlay layers on cartesian charts (`bar`/`line`/`area`/`scatter`) — see [Combo charts](#combo-charts-barlinearea-with-layers) |

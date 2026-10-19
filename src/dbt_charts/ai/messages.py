@@ -58,6 +58,9 @@ class AssistantMessage(BaseModel):
     role: Literal["assistant"] = "assistant"
     content: str = ""
     tool_calls: list[ToolCall] = Field(default_factory=list)
+    # Provider reasoning items (e.g. OpenAI ``encrypted_content``) replayed
+    # verbatim before this turn's tool calls; empty for persisted history.
+    reasoning_items: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ToolResultMessage(BaseModel):
@@ -69,6 +72,9 @@ class ToolResultMessage(BaseModel):
     tool_call_id: str
     name: str
     content: str
+    # The Responses API's built-in apply_patch carries a status on its output
+    # item; every other tool's outcome travels in ``content`` alone.
+    failed: bool = False
 
 
 AgentMessage = Annotated[

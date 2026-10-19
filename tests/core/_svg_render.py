@@ -18,6 +18,7 @@ from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.project import Project
 from dbt_charts.core.render import render
+from dbt_charts.core.render.render_result import RenderResult
 from dbt_charts.core.render_format import RenderFormat
 
 SAMPLE_BOARD_YAML = """
@@ -47,9 +48,9 @@ def pinned_clock() -> datetime:
     return PINNED_RENDER_TIME
 
 
-def render_board_to_svg(
+def render_board_svg_result(
     yaml_content: str = SAMPLE_BOARD_YAML, *, controls: bool = False
-) -> str:
+) -> RenderResult:
     """``controls=True`` renders as a live host would — the board a page binds,
     rather than a static export (which alone still carries the pagination
     script for a multi-page table)."""
@@ -61,7 +62,13 @@ def render_board_to_svg(
         query_registry=result.query_registry,
         clock=pinned_clock,
     )
-    return render(result.board, executor, format="svg", controls=controls).output
+    return render(result.board, executor, format="svg", controls=controls)
+
+
+def render_board_to_svg(
+    yaml_content: str = SAMPLE_BOARD_YAML, *, controls: bool = False
+) -> str:
+    return render_board_svg_result(yaml_content, controls=controls).output
 
 
 def board_with_mark(

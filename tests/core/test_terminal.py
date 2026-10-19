@@ -1,3 +1,7 @@
+from types import SimpleNamespace
+
+from dbt_charts.core.compile.models.primitives import BoardLinks
+
 """Tests for terminal rendering functionality."""
 
 import logging
@@ -348,7 +352,7 @@ def test_render_chart_item_terminal_isolates_a_bare_dbt_charts_error(make_chart)
     from dbt_charts.core.render.terminal import render_chart_item_terminal
 
     chart = make_chart("bar", x="month", y="revenue")
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_chart.side_effect = DbtChartsError.from_code(
         ERR_INTERNAL, message="terminal pipeline blew up"
     )
@@ -369,7 +373,7 @@ def test_render_chart_item_terminal_still_isolates_bug_class_errors(make_chart):
     from dbt_charts.core.render.terminal import render_chart_item_terminal
 
     chart = make_chart("bar", x="month", y="revenue")
-    executor = MagicMock(spec=Executor)
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_chart.side_effect = ValueError("bad value")
 
     output = render_chart_item_terminal(

@@ -94,6 +94,7 @@ def _resolved_domain(chart, executor, variables) -> list | None:
         executor,
         variables,
         filter_variables=frozenset(),
+        link_open="page",
     )
     scale = resolved.style.axis_y.scale
     if scale is None or scale.continuous is None:
@@ -133,6 +134,7 @@ WHERE orbit = '{{ orbit_pick }}'
             executor,
             {"orbit_pick": "LEO"},
             filter_variables=frozenset(),
+            link_open="page",
         )
 
 
@@ -172,6 +174,7 @@ WHERE orbit = '{{ orbit_pick }}'
             executor,
             {"orbit_pick": "LEO"},
             filter_variables=frozenset(),
+            link_open="page",
         )
 
 

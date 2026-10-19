@@ -51,6 +51,7 @@ _PYPI_TO_IMPORT_NAMES: dict[str, list[str]] = {
     "dbt_adapters": ["dbt"],
     "dbt_duckdb": ["dbt"],
     "dbt_core": ["dbt"],
+    "dbt_protos": ["dbtlabs"],
     # pydantic v2 ships a compiled `pydantic_core` companion package alongside
     # the pure-Python `pydantic`. Importing `pydantic_core` is satisfied by
     # declaring `pydantic`; treat them as one PyPI distribution.

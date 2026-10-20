@@ -9,12 +9,16 @@ by both the execute and render stages.
 
 import json
 import math
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Sequence
 from datetime import date, datetime
 from typing import Any
 
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.variable.authored import Variable
+from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_UNKNOWN_VARIABLE_OVERRIDE,
+    ERR_VARIABLE_VALUE_NOT_IN_OPTIONS,
+)
 from dbt_charts.core.diagnostics.execution import ExecutionError
 
 
@@ -221,6 +225,90 @@ def coerce_variable_values(
     return result
 
 
+def static_option_values(var: Variable) -> list[str]:
+    """A variable's authored ``options.static`` as strings; [] when it has none."""
+    static = var.options.static if var.options else None
+    return [str(option) for option in static] if static else []
+
+
+def _is_option(value: _Coercible, options: Sequence[str]) -> bool:
+    """Whether ``value`` is one of ``options``; a number matches by value, so
+    ``--var n=1.0`` selects the option ``1``."""
+    text = str(value)
+    if text in options:
+        return True
+    try:
+        number = float(text)
+    except ValueError:
+        return False
+    return any(_float_or_none(option) == number for option in options)
+
+
+def _float_or_none(text: str) -> float | None:
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def check_option_values(
+    registry: dict[str, Variable],
+    overrides: VariableValues,
+    options_of: Callable[[Variable], Sequence[str]],
+) -> None:
+    """Reject a choice-input value outside the variable's options.
+
+    A value outside a select's options filters every dependent query to
+    nothing, which looks like a healthy empty result. ``options_of`` returns
+    the options the caller can vouch for; an empty sequence means they are
+    unknown and the value is not checked. Unset values (``None``, blank, ``[]``)
+    are legal, and names the registry lacks belong to
+    ``check_variable_overrides``.
+    """
+    for name, value in parse_variable_json_strings(overrides).items():
+        var = registry.get(name)
+        if (
+            var is None
+            or var.input not in (*_CHOICE_INPUTS, "multiselect")
+            or variable_value_is_absent(value)
+        ):
+            continue
+        options = options_of(var)
+        if not options:
+            continue
+        members = coerce_multiselect(value) if var.input == "multiselect" else [value]
+        for member in members:
+            if not _is_option(member, options):
+                raise ExecutionError.from_code(
+                    ERR_VARIABLE_VALUE_NOT_IN_OPTIONS,
+                    variable=name,
+                    value=member,
+                    options=options,
+                )
+
+
+def check_variable_overrides(
+    registry: dict[str, Variable], overrides: VariableValues
+) -> None:
+    """Reject caller-supplied variable values the board cannot have meant.
+
+    Runs at the runtime boundary on the values a caller set (``--var``, API and
+    MCP bindings), before defaults merge in. A name the board does not declare
+    would otherwise run every query as if it were never set, and a value
+    outside a choice input's *static* options (the only options known without
+    running a query) would filter to nothing; both look like a healthy empty
+    result.
+    """
+    for name in overrides:
+        if name not in registry:
+            raise ExecutionError.from_code(
+                ERR_UNKNOWN_VARIABLE_OVERRIDE,
+                variable=name,
+                available=sorted(registry),
+            )
+    check_option_values(registry, overrides, static_option_values)
+
+
 def normalize_multiselect_values(
     values: VariableValues, registry: dict[str, Variable]
 ) -> VariableValues:
@@ -387,6 +475,9 @@ def _coerce_bool(name: str, value: _Coercible) -> bool:
 
 
 __all__ = [
+    "check_option_values",
+    "check_variable_overrides",
+    "static_option_values",
     "UNSET_MULTISELECT",
     "choice_member_type",
     "coerce_multiselect",

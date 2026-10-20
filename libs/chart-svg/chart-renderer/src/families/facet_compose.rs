@@ -115,28 +115,27 @@ impl PanelXAxis {
     /// label's width. Every other arm's first label sits inside the cell: a band
     /// axis centers it half a step in, and a continuous or temporal axis anchors
     /// it flush to the origin.
-    pub(crate) fn label_left_reach(&self) -> f64 {
+    pub(crate) fn label_left_reach(&self, plot_w: f64, fonts: &FontBook) -> Result<f64, String> {
         match self {
-            PanelXAxis::Line(x) => x.label_left_reach(),
-            PanelXAxis::Plain(x) => x.label_left_reach(),
-            PanelXAxis::Value(x) => x.left_reach(),
-            PanelXAxis::Band(_)
-            | PanelXAxis::Continuous(_)
-            | PanelXAxis::Temporal(_)
-            | PanelXAxis::Heat(_) => 0.0,
+            PanelXAxis::Line(x) => Ok(x.label_left_reach()),
+            PanelXAxis::Plain(x) => Ok(x.label_left_reach()),
+            PanelXAxis::Value(x) => Ok(x.left_reach()),
+            PanelXAxis::Temporal(x) => x.label_left_reach(plot_w, fonts),
+            PanelXAxis::Band(_) | PanelXAxis::Continuous(_) | PanelXAxis::Heat(_) => Ok(0.0),
         }
     }
 
     /// The reach of a rotated label column below the plot, which no painted
     /// `y` attribute carries.
-    fn rotated_footer_reach(&self) -> Option<f64> {
-        match self {
+    fn rotated_footer_reach(&self, plot_w: f64, fonts: &FontBook) -> Result<Option<f64>, String> {
+        Ok(match self {
             PanelXAxis::Band(x) => x.rotated_footer_reach(),
             PanelXAxis::Heat(x) => x.rotated_footer_reach(),
             PanelXAxis::Line(x) => x.rotated_footer_reach(),
             PanelXAxis::Plain(x) => x.rotated_footer_reach(),
-            PanelXAxis::Continuous(_) | PanelXAxis::Temporal(_) | PanelXAxis::Value(_) => None,
-        }
+            PanelXAxis::Temporal(x) => x.rotated_footer_reach(plot_w, fonts)?,
+            PanelXAxis::Continuous(_) | PanelXAxis::Value(_) => None,
+        })
     }
 
     /// Paints at the CALLER's own `plot_left`/`plot_w`/`plot_bottom` — the
@@ -951,7 +950,7 @@ fn compose_facet_at(
     // facet has no row title; its band alone can be narrower than the first
     // footer label's half width. The shared x is uniform across panels, so
     // `probe[0]` stands for the composite.
-    let footer_left_reach = probe[0].1.axis.label_left_reach();
+    let footer_left_reach = probe[0].1.axis.label_left_reach(panel_w_guess, fonts)?;
     // The frame's leftmost ink in frame coordinates: a title anchors here, and
     // its own text can be the widest thing in the view (`viewSizeLayout`'s
     // `right`).
@@ -1073,7 +1072,7 @@ fn compose_facet_at(
         0.0
     } else {
         (max_y_attr(&footer_probe) + label_descent - AXIS_TRANSLATE)
-            .max(probe[0].1.axis.rotated_footer_reach().unwrap_or(0.0))
+            .max(probe[0].1.axis.rotated_footer_reach(panel_w, fonts)?.unwrap_or(0.0))
     };
 
     // Vega's own view-level `autosize: {type: "pad"}` arithmetic

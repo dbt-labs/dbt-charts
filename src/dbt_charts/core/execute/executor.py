@@ -84,6 +84,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_QUERY_FORMAT_COLUMN_MISSING,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
+from dbt_charts.core.diagnostics.registry import REGISTRY, ErrorCode
 from dbt_charts.core.execute.adapters.base import (
     apply_row_limit_truncation,
     resolve_effective_row_limit,
@@ -287,6 +288,22 @@ def _merge_incremental_rows(
             query_name,
         ) from exc
     return merged
+
+
+def _replayed_query_error(failure: CachedQueryFailure, query_name: str) -> QueryError:
+    """Rebuild the QueryError a fresh run raised from its cached record."""
+    code = None
+    if failure.error_code is not None:
+        registered = REGISTRY.get(failure.error_code)
+        # _warm_from_cache only replays a failure whose code is a registered error.
+        assert isinstance(registered, ErrorCode)
+        code = registered
+    # The stored message is already the final text, so query_name goes in
+    # fields only — through QueryError's constructor it would be appended again.
+    error = QueryError(failure.error_message, code=code)
+    error.fields = {**failure.error_fields}
+    error.fields.setdefault("query_name", query_name)
+    return error
 
 
 def _memo_key(
@@ -595,7 +612,9 @@ class Executor:
             ExecutionError: If query not found or execution fails, or if the
                 query's ``formats:`` names a column the rows do not carry
                 (a zero-row result carries no columns and passes)
-            CachedQueryFailure: If a cached failure exists within TTL
+            QueryError: If a cached failure exists within its retry window —
+                rebuilt with the code it was first raised with, the
+                ``CachedQueryFailure`` as its ``__cause__``
 
         Example:
             >>> data = executor.execute_query("sales", {"year": 2024})
@@ -729,7 +748,7 @@ class Executor:
                     self._query_data_ages.append(
                         (query_name, exc.failed_at, query.cache, False)
                     )
-                    raise
+                    raise _replayed_query_error(exc, query_name) from exc
                 if hit:
                     if (
                         is_sql_query(query)
@@ -1181,6 +1200,12 @@ class Executor:
             return False
         outcome = self._result_cache.get(*cache_key, ttl=query.cache.ttl_timedelta)
         if isinstance(outcome, CachedQueryFailure):
+            if outcome.error_code is not None and outcome.error_code not in (
+                REGISTRY.codes(level="error")
+            ):
+                # Written under a code this version no longer registers: it
+                # cannot be replayed as it was raised, so the query re-runs.
+                return False
             raise outcome
         if outcome is None:
             return False

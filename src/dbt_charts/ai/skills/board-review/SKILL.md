@@ -2,16 +2,23 @@
 name: board-review
 kind: workflow
 description: >
-  Entry point for reviewing a board: runs the structural pass, adds the visual
-  pass when needed, and merges both into one ranked findings list. Use for
+  Entry point for reviewing a board: runs the structural pass{{#if_surface cli}}, adds the visual
+  pass when needed, and merges both into one ranked findings list{{/if_surface}}{{#if_surface tool}} and
+  returns a ranked findings list{{/if_surface}}. Use for
   'review this dashboard', 'is this dashboard good', or before delivering a board
-  you just built. Do NOT use when one pass is enough — invoke
-  {{ s_skill_structural_review }} or {{ s_skill_visual_review }} directly.
+  you just built.{{#if_surface cli}} Do NOT use when one pass is enough — invoke
+  {{ s_skill_structural_review }} or {{ s_skill_visual_review }} directly.{{/if_surface}}
 metadata:
   author: fivetran
 ---
 
-# Dashboard Review
+{{#if_surface tool}}# Dashboard Review
+
+This host returns no rendered image, so the review is the structural pass alone: run
+`{{ s_skill_structural_review }}` and return its ranked findings list. Judge how
+the board looks from the `{{ s_render_board }}` result and its warnings, not from
+an image.
+{{/if_surface}}{{#if_surface cli}}# Dashboard Review
 
 Orchestrate `{{ s_skill_name_structural_review }}` and `{{ s_skill_name_visual_review }}` into a
 single ranked findings list. This is the default entry point — most "review"
@@ -105,3 +112,4 @@ If a pass was skipped, name it in `**Skipped:**` with a one-phrase reason
 | "User said 'review' — they probably only want a quick check" | Default to thorough. The user can ask for cheap explicitly. |
 | "Visual review is slow, let's skip it" | If a render is fast on this board (most are), do both passes by default. Cost is a real concern only at scale. |
 | "Both passes are saying the same thing, I'll keep both" | Dedupe. Showing the same issue twice erodes trust. |
+{{/if_surface}}

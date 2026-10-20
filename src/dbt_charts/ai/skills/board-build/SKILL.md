@@ -186,7 +186,7 @@ Run the review skill as the final step before declaring the board done:
 
 - {{ s_review_pointer }}
 
-It orchestrates structural and visual (PNG + vision) passes and returns a ranked findings list. Fix each `blocker`, then re-run the review. Rendering and validation are cached — the loop is cheap.
+It runs the structural{{#if_surface cli}} and visual (PNG + vision) passes{{/if_surface}}{{#if_surface tool}} pass{{/if_surface}} and returns a ranked findings list. Fix each `blocker`, then re-run the review. Rendering and validation are cached — the loop is cheap.
 
 ## Data Requirements Per Chart Type
 

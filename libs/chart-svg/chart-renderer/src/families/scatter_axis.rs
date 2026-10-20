@@ -22,7 +22,8 @@ use std::fmt::Write as _;
 
 use crate::common::AxisStyle;
 use crate::families::cartesian::BandGeometry;
-use crate::families::line::{bare_label_anchor, bare_label_layout, flush_align, flush_anchor, tilted_temporal_label};
+use crate::families::line::{bare_label_anchor, bare_label_layout, flush_anchor_px, tilted_temporal_label};
+use crate::families::subday::{SubdayPlan, SubdaySource};
 use crate::families::temporal::{
     authored_tick_count, bare_temporal_ticks, date_text_day, generic_layout, none_tick_labels, part_band_texts, time_part_ticks, AuthoredTickCadence, build_all_temporal_labels, complete_buckets, days_from_civil, interval_tick_days, interval_tick_labels, native_tick_interval,
     build_temporal_labels, parse_authored_time_unit, parse_iso_date, ResolvedVegaLabels, resolve_vega_x_labels, time_unit_floor, tooltip_header_date, TemporalLabel,
@@ -74,7 +75,12 @@ impl Scale {
     /// `pad` pixels inside a range `pw` wide.
     fn domain_at(&self, pw: f64) -> (f64, f64) {
         match *self {
-            Scale::Utc { lo, hi, pad } => vega_fit::pad_domain((lo, hi), pw, pad, vega_fit::Bend::Linear),
+            Scale::Utc { lo, hi, pad } => {
+                // A time scale's domain holds `Date`s, which keep whole milliseconds.
+                let (lo, hi) = vega_fit::pad_domain((lo, hi), pw, pad, vega_fit::Bend::Linear);
+                let whole_ms = |day: f64| (day * 864e5).trunc() / 864e5;
+                (whole_ms(lo), whole_ms(hi))
+            }
             Scale::Point { .. } | Scale::Band { .. } => unreachable!("only a UTC scale has a day domain"),
         }
     }
@@ -131,7 +137,7 @@ enum Ticks {
     },
     /// Vega's own ticks of the domain, which move with the plot width, each
     /// painted through the authored time format where there is one.
-    Bare { cadence: Option<AuthoredTickCadence>, time_format: Option<String> },
+    Bare { cadence: Option<AuthoredTickCadence>, time_format: Option<String>, subday: Option<SubdayPlan> },
     /// Vega's own ticks of a time-part scale (`timeUnit: month`, ...), under
     /// the part's own text.
     Part { part: TimePart, count: Option<usize>, time_format: Option<String> },
@@ -148,6 +154,8 @@ pub(crate) struct TemporalXAxis {
     part: Option<TimePart>,
     /// The grain the structured tooltip names a date at: the data's own.
     tooltip_grain: Option<TimeUnit>,
+    /// The tooltip header of timed values spanning two days at most, which names the time of day instead.
+    tooltip_time: Option<crate::families::subday::Header>,
     /// An authored `labels.align` wins over every derived anchor.
     align: Option<String>,
     angle: f64,
@@ -170,6 +178,9 @@ pub(crate) struct TemporalXAxis {
     axis_offset: f64,
     title_text: String,
     title_key: Option<crate::contract::LabelKey>,
+    /// The data's calendar grain and the grain its labels thinned to, on a bucketed scale: the opener set a
+    /// support-table strip thins its cells to.
+    label_cadence: Option<(TimeUnit, TimeUnit)>,
 }
 
 /// A date column as the axis sees it.
@@ -184,11 +195,18 @@ pub(crate) struct DateColumn<'a> {
     pub(crate) law: XResolution,
     /// A band-needing layer shares the scale, which makes an ordinal one a band scale.
     pub(crate) band_layer: bool,
+    /// Production's `bucket_aligned_temporal`: bar's marks span buckets, which lets a weekly or daily axis
+    /// keep its native day vocabulary on a continuous scale.
+    pub(crate) bucket_aligned: bool,
+    /// The column's own values, read for a time of day: a sub-day axis ticks and labels on the clock.
+    pub(crate) timed: &'a SubdaySource,
+    /// The chart's outer width, which the clock vocabulary reads its tier and tick budget off.
+    pub(crate) chart_width: f64,
 }
 
 /// `scale.continuous.domain` on a date axis: a pair of ISO dates, or of epoch
 /// milliseconds, as days.
-fn authored_day_domain(ax_x: &AxisStyle) -> Result<Option<(f64, f64)>, String> {
+pub(crate) fn authored_day_domain(ax_x: &AxisStyle, family: &str) -> Result<Option<(f64, f64)>, String> {
     let Some(pair) = ax_x
         .scale
         .get("continuous")
@@ -201,19 +219,17 @@ fn authored_day_domain(ax_x: &AxisStyle) -> Result<Option<(f64, f64)>, String> {
     let day = |v: &serde_json::Value| -> Result<f64, String> {
         match v {
             serde_json::Value::Number(n) => Ok(n.as_f64().expect("a JSON number is finite") / 864e5),
-            serde_json::Value::String(s) => parse_iso_date(s)
-                .map(|(y, m, d)| days_from_civil(y, m, d) as f64)
-                .ok_or_else(|| format!("scatter: the authored date domain value {s:?} is not an ISO date")),
-            other => Err(format!("scatter: the authored date domain value {other} is not a date")),
+            serde_json::Value::String(s) => date_text_day(s)
+                .ok_or_else(|| format!("{family}: the authored date domain value {s:?} is not an ISO date")),
+            other => Err(format!("{family}: the authored date domain value {other} is not a date")),
         }
     };
     Ok(Some((day(&pair[0])?, day(&pair[1])?)))
 }
 
-fn day_of(date: &str) -> Result<i64, String> {
-    parse_iso_date(date)
-        .map(|(y, m, d)| days_from_civil(y, m, d))
-        .ok_or_else(|| format!("scatter: x value {date:?} is not an ISO date"))
+/// A date cell as days since the epoch, a clock as the day's fraction.
+fn day_of(date: &str) -> Result<f64, String> {
+    date_text_day(date).ok_or_else(|| format!("scatter: x value {date:?} is not an ISO date"))
 }
 
 impl TemporalXAxis {
@@ -256,6 +272,7 @@ impl TemporalXAxis {
             grain: None,
             part: None,
             tooltip_grain: None,
+            tooltip_time: None,
             align: labels_cfg.align.clone(),
             angle: 0.0,
             parity: false,
@@ -274,6 +291,7 @@ impl TemporalXAxis {
             axis_offset: ticks_cfg.offset.unwrap_or(0.0),
             title_text,
             title_key,
+            label_cadence: None,
         };
         let grain = match col.law.grain {
             Grain::Calendar(tu) => Some(tu),
@@ -292,7 +310,8 @@ impl TemporalXAxis {
             }
             None => grain,
         };
-        let authored_domain = authored_day_domain(ax_x)?;
+        axis.tooltip_time = crate::families::subday::Header::of(col.timed, labels_cfg.clock).filter(|_| axis.tooltip_grain.is_none());
+        let authored_domain = authored_day_domain(ax_x, "scatter")?;
         let pad = ax_x.scale.get("padding").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
         let fiscal = ax_x.fiscal_year_start_month;
         let label_grain = match grain {
@@ -334,6 +353,7 @@ impl TemporalXAxis {
                     labels_cfg.time_unit.as_deref(),
                     usable_width,
                     flushed,
+                    col.bucket_aligned,
                     continuous,
                     fiscal,
                     skip,
@@ -347,7 +367,7 @@ impl TemporalXAxis {
             }
         };
         // The scale spans the kept rows' buckets, each floored to the grain.
-        let floor = |date: &String| -> Result<i64, String> {
+        let floor = |date: &String| -> Result<f64, String> {
             let floored = match grain {
                 Some(tu) => time_unit_floor(date, tu).ok_or_else(|| format!("scatter: x value {date:?} is not an ISO date"))?,
                 None => date.clone(),
@@ -361,7 +381,7 @@ impl TemporalXAxis {
                 Some(part) => date_text_day(date)
                     .map(|day| part.instant(day))
                     .ok_or_else(|| format!("scatter: x value {date:?} is not an ISO date")),
-                None => floor(date).map(|day| day as f64),
+                None => floor(date),
             })
             .collect::<Result<Vec<_>, _>>()?;
         let span = kept_at
@@ -442,10 +462,9 @@ impl TemporalXAxis {
             };
             axis.angle = labels_cfg.angle.unwrap_or(angle);
             axis.parity = if pinned { overlap.is_none() } else { parity };
-            axis.ticks = Ticks::Bare {
-                cadence,
-                time_format: labels_cfg.spec().filter(|f| crate::families::temporal::is_time_format(f)).map(str::to_string),
-            };
+            let time_format = labels_cfg.spec().filter(|f| crate::families::temporal::is_time_format(f)).map(str::to_string);
+            let subday = crate::families::subday::plan_for(col.timed, ax_x, cadence, time_format.is_some(), col.chart_width, col.chart_width);
+            axis.ticks = Ticks::Bare { cadence, time_format, subday };
             return Ok(axis);
         };
 
@@ -460,6 +479,7 @@ impl TemporalXAxis {
         axis.angle = labels_cfg.angle.unwrap_or(resolved.angle);
         axis.parity = if pinned { overlap.is_none() } else { resolved.parity };
         axis.collision = resolved.collision;
+        axis.label_cadence = Some((tu, resolved.visibility_tu));
         // With the label grain at the data grain Vega ticks every calendar
         // boundary of the scale (`tickCount: {interval}`, `type_inference.py:
         // 1049-1052`), an empty bucket included; a thinner ladder injects its
@@ -485,7 +505,7 @@ impl TemporalXAxis {
         let mut labels = Vec::new();
         for tl in &resolved.labels {
             let date = &ladder[tl.domain_idx];
-            let day = if raw { day_of(date)? } else { floor(date)? } as f64;
+            let day = if raw { day_of(date)? } else { floor(date)? };
             labels.push(axis.label(tl, At::Day(day), resolved.format_tu, fonts)?);
         }
         axis.ticks = Ticks::Fixed(labels);
@@ -494,17 +514,20 @@ impl TemporalXAxis {
 
     fn label(&self, tl: &TemporalLabel, at: At, format_tu: TimeUnit, fonts: &FontBook) -> Result<AxisLabel, String> {
         let (text, rows, tilted_align, baseline) = tilted_temporal_label(tl, self.angle, format_tu);
-        let mut width = fonts.measure(&text, &self.family, self.font_size)?;
+        let mut width = fonts.measure_shaped(&text, &self.family, self.font_size)?;
         if rows == 2 {
-            width = width.max(fonts.measure(&tl.row2, &self.family, self.font_size)?);
+            width = width.max(fonts.measure_shaped(&tl.row2, &self.family, self.font_size)?);
         }
         Ok(AxisLabel { at, text, row2: (rows == 2).then(|| tl.row2.clone()), width, tilted_align, baseline })
     }
 
-    fn plain_label(&self, text: String, day: f64, frac: f64, fonts: &FontBook) -> Result<(f64, AxisLabel), String> {
-        let (tilted_align, baseline) = bare_label_anchor(self.angle, frac);
-        let width = fonts.measure(&text, &self.family, self.font_size)?;
-        Ok((frac, AxisLabel { at: At::Day(day), text, row2: None, width, tilted_align, baseline }))
+    fn plain_label(&self, text: String, row2: Option<String>, day: f64, frac: f64, pw: f64, fonts: &FontBook) -> Result<(f64, AxisLabel), String> {
+        let (tilted_align, baseline) = bare_label_anchor(self.angle, frac, pw);
+        let mut width = fonts.measure_shaped(&text, &self.family, self.font_size)?;
+        if let Some(row2) = &row2 {
+            width = width.max(fonts.measure_shaped(row2, &self.family, self.font_size)?);
+        }
+        Ok((frac, AxisLabel { at: At::Day(day), text, row2, width, tilted_align, baseline }))
     }
 
     /// The tick labels at a plot `pw` wide, each with its scale fraction.
@@ -529,7 +552,9 @@ impl TemporalXAxis {
                 .filter(|&(frac, _)| matches!(self.scale, Scale::Point { .. } | Scale::Band { .. }) || in_range(frac))
                 .collect()),
             Ticks::Native { ladder, tu, format_tu, visibility_tu, fiscal, time_format, vl_default_labels, cadence } => {
-                let days = native_tick_days(&self.scale, *tu, *cadence, pw)?;
+                let instants = native_ticks(&self.scale, *tu, *cadence, pw);
+                // A tick's label reads the date it falls on, the half-day ticks of a short span included.
+                let days: Vec<i64> = instants.iter().map(|at| at.floor() as i64).collect();
                 let authored =
                     crate::families::temporal::AuthoredTimeFormat::parse("scatter", time_format.as_deref())?;
                 let ticks = if *vl_default_labels {
@@ -540,17 +565,17 @@ impl TemporalXAxis {
                 ticks
                     .into_iter()
                     .map(|tl| {
-                        let day = days[tl.domain_idx] as f64;
+                        let day = instants[tl.domain_idx];
                         Ok((self.scale.frac(At::Day(day), pw), self.label(&tl, At::Day(day), *format_tu, fonts)?))
                     })
                     .collect()
             }
-            Ticks::Bare { cadence, time_format } => {
+            Ticks::Bare { cadence, time_format, subday } => {
                 let (lo, hi) = self.scale.domain_at(pw);
                 let authored = crate::families::temporal::AuthoredTimeFormat::parse("scatter", time_format.as_deref())?;
-                bare_temporal_ticks((lo, hi), pw, *cadence, authored)?
+                bare_temporal_ticks((lo, hi), pw, *cadence, authored, subday.as_ref())?
                     .into_iter()
-                    .map(|t| self.plain_label(t.text, t.day as f64, t.frac, fonts))
+                    .map(|t| self.plain_label(t.text, t.row2, t.day, t.frac, pw, fonts))
                     .collect()
             }
             Ticks::Part { part, count, time_format } => {
@@ -558,7 +583,7 @@ impl TemporalXAxis {
                 let authored = crate::families::temporal::AuthoredTimeFormat::parse("scatter", time_format.as_deref())?;
                 time_part_ticks((lo, hi), pw, *part, *count, authored)?
                     .into_iter()
-                    .map(|t| self.plain_label(t.text, t.at, t.frac, fonts))
+                    .map(|t| self.plain_label(t.text, None, t.at, t.frac, pw, fonts))
                     .collect()
             }
         }
@@ -570,6 +595,11 @@ impl TemporalXAxis {
         if matches!(self.ticks, Ticks::Fixed(_)) {
             self.ticks_visible = true;
         }
+    }
+
+    /// The data's calendar grain and the grain its labels thinned to; `None` off a bucketed scale.
+    pub(crate) fn label_cadence(&self) -> Option<(TimeUnit, TimeUnit)> {
+        self.label_cadence
     }
 
     /// The scale fraction of one row's `date` (floored to the grain) at plot
@@ -584,7 +614,7 @@ impl TemporalXAxis {
                             Some(tu) => time_unit_floor(date, tu).expect("a kept date parsed at resolve"),
                             None => date.to_string(),
                         };
-                        day_of(&floored).expect("a kept date parsed at resolve") as f64
+                        day_of(&floored).expect("a kept date parsed at resolve")
                     }
                 };
                 self.scale.frac(At::Day(day), pw)
@@ -631,11 +661,38 @@ impl TemporalXAxis {
         Some((at(start), at(end)))
     }
 
+    /// A facet panel's tooltip x value: Vega-Lite's own description of the date.
+    pub(crate) fn native_date(&self, date: &str) -> Result<String, String> {
+        crate::families::temporal::default_time_unit_text(date, self.grain)
+    }
+
     /// A point's tooltip x value: the full bucket at the data grain
     /// (`"Jan 2024"`), the header the structured tooltip formats a date with.
     pub(crate) fn tooltip_date(&self, date: &str) -> Result<String, String> {
+        if let Some(header) = self.tooltip_time {
+            return header.text(day_of(date)?);
+        }
         let (y, m, d) = parse_iso_date(date).expect("a plotted date parsed at resolve");
         tooltip_header_date(y, m, d, self.tooltip_grain)
+    }
+
+    /// How far the first surviving label reaches left of the plot origin at a plot `pw` wide: a tick the
+    /// 1px flush leaves centered puts half its label there.
+    pub(crate) fn label_left_reach(&self, pw: f64, fonts: &FontBook) -> Result<f64, String> {
+        let mut ink = Bounds::empty_new();
+        self.union_label_ink(pw, 0.0, &mut ink, fonts)?;
+        Ok((-ink.x1).max(0.0))
+    }
+
+    /// How far a tilted label column reaches below the plot, which no painted `y` attribute carries; `None` on
+    /// a flat axis.
+    pub(crate) fn rotated_footer_reach(&self, pw: f64, fonts: &FontBook) -> Result<Option<f64>, String> {
+        if self.angle == 0.0 {
+            return Ok(None);
+        }
+        let mut ink = Bounds::empty_new();
+        self.union_label_ink(pw, 0.0, &mut ink, fonts)?;
+        Ok(Some(ink.y2))
     }
 
     /// Plot-width fractions of every tick — the ticks and gridlines, which
@@ -654,18 +711,23 @@ impl TemporalXAxis {
         self.axis_offset + self.tick_eff() + self.label_pad
     }
 
-    fn align(&self, l: &AxisLabel, frac: f64) -> &str {
+    /// `pw` is the plot width `frac` is a share of: `labelFlush` is a pixel test against the range ends.
+    fn align(&self, l: &AxisLabel, frac: f64, pw: f64) -> &str {
         match self.align.as_deref() {
             Some(authored) => authored,
             None if self.angle != 0.0 => l.tilted_align,
             None if matches!(self.scale, Scale::Point { .. } | Scale::Band { .. }) => "center",
-            None => flush_align(frac),
+            None => match flush_anchor_px(frac * pw, pw) {
+                "start" => "left",
+                "end" => "right",
+                _ => "center",
+            },
         }
     }
 
     /// `text-anchor` for [`Self::align`]'s vocabulary.
-    fn anchor(&self, l: &AxisLabel, frac: f64) -> &'static str {
-        match self.align(l, frac) {
+    fn anchor(&self, l: &AxisLabel, frac: f64, pw: f64) -> &'static str {
+        match self.align(l, frac, pw) {
             "left" => "start",
             "right" => "end",
             _ => "middle",
@@ -674,7 +736,7 @@ impl TemporalXAxis {
 
     fn ink(&self, l: &AxisLabel, frac: f64, pw: f64, row_y: f64) -> Bounds {
         let x = pw * frac;
-        let mut ink = vega_fit::text_ink(x, row_y, l.width.min(self.label_limit), self.font_size, self.align(l, frac), l.baseline);
+        let mut ink = vega_fit::text_ink(x, row_y, l.width.min(self.label_limit), self.font_size, self.align(l, frac, pw), l.baseline);
         if l.row2.is_some() {
             ink.y2 += self.font_size + 2.0;
         }
@@ -701,6 +763,12 @@ impl TemporalXAxis {
         for ((frac, l), keep) in labels.iter().zip(self.kept(&labels, pw)) {
             if keep {
                 b.union(&self.ink(l, *frac, pw, row_y));
+            }
+            // A tick is a rule stroked its full width past its own ends (`boundStroke`), whether or not
+            // parity hid its label: one at the plot's edge reaches past it.
+            if self.ticks_visible {
+                let (x, y) = (pw * frac, ph + self.axis_offset);
+                b.union(&Bounds::new(x, y, x, y + self.tick_len).expand(self.tick_width));
             }
         }
         Ok(())
@@ -748,7 +816,7 @@ impl TemporalXAxis {
             reach = reach.max(self.ink(l, *frac, plot_w, 0.0).y2);
             let gx = plot_left + plot_w * frac + 0.5;
             if self.angle != 0.0 {
-                let text_anchor = self.anchor(l, *frac);
+                let text_anchor = self.anchor(l, *frac, plot_w);
                 let rows = match &l.row2 {
                     Some(row2) => format!(
                         "<tspan>{}</tspan><tspan x=\"0\" dy=\"{}\">{}</tspan>",
@@ -772,8 +840,8 @@ impl TemporalXAxis {
                 continue;
             }
             let anchor = match (&self.align, &self.scale) {
-                (Some(_), _) | (None, Scale::Point { .. } | Scale::Band { .. }) => self.anchor(l, *frac),
-                _ => flush_anchor(*frac),
+                (Some(_), _) | (None, Scale::Point { .. } | Scale::Band { .. }) => self.anchor(l, *frac, plot_w),
+                _ => flush_anchor_px(*frac * plot_w, plot_w),
             };
             let mut row = |y: f64, text: &str| {
                 let _ = write!(
@@ -802,17 +870,17 @@ impl TemporalXAxis {
 }
 
 /// Vega's interval ticks of a bucketed scale: every calendar boundary of the
-/// grain inside the (padded) domain.
-fn native_tick_days(scale: &Scale, tu: TimeUnit, cadence: Option<AuthoredTickCadence>, plot_w: f64) -> Result<Vec<i64>, String> {
+/// grain inside the (padded) domain, as instants in days.
+fn native_ticks(scale: &Scale, tu: TimeUnit, cadence: Option<AuthoredTickCadence>, plot_w: f64) -> Vec<f64> {
     let (lo, hi) = scale.domain_at(plot_w);
-    let interval = match cadence {
-        Some(cadence) => cadence.bucketed_interval(tu, (lo, hi))?,
-        None => native_tick_interval(tu),
-    };
-    Ok(interval_tick_days((lo.floor() as i64, hi.ceil() as i64), interval)
-        .into_iter()
-        .filter(|&day| lo <= day as f64 && day as f64 <= hi)
-        .collect())
+    match cadence {
+        Some(cadence) => cadence.bucketed_ticks(tu, (lo, hi)),
+        None => interval_tick_days((lo.floor() as i64, hi.ceil() as i64), native_tick_interval(tu))
+            .into_iter()
+            .map(|day| day as f64)
+            .filter(|&day| lo <= day && day <= hi)
+            .collect(),
+    }
 }
 
 #[cfg(test)]
@@ -825,8 +893,8 @@ mod tests {
     fn a_padded_utc_scale_puts_the_data_ends_pad_pixels_inside_the_range() {
         let scale = Scale::Utc { lo: 100.0, hi: 140.0, pad: 8.0 };
         let pw = 200.0;
-        assert_eq!(scale.frac(At::Day(100.0), pw), 8.0 / pw);
-        assert!((scale.frac(At::Day(140.0), pw) - (pw - 8.0) / pw).abs() < 1e-12);
+        assert!((scale.frac(At::Day(100.0), pw) - 8.0 / pw).abs() < 1e-9);
+        assert!((scale.frac(At::Day(140.0), pw) - (pw - 8.0) / pw).abs() < 1e-9);
     }
 
     /// A degenerate domain (every point floors to one bucket) centers its

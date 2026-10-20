@@ -9,11 +9,11 @@ name: Release to PyPI
 # workflow checked before it was deleted (#7611) when dbt-charts stopped
 # publishing from there — do not recreate a PyPI publish workflow for
 # dbt-charts in the monorepo; this file is now the only one.
-# `.github/scripts/check_published_artifact.py` is a trimmed, standalone copy
-# of the monorepo's own audit (which also runs there, against the same wheel
-# pre-export, on every PR touching dbt-charts/ — test-dataface.yml ::
-# smoke-install) — re-run here, independently, against this workflow's own
-# build output before it's uploaded or published.
+# `.github/scripts/check_published_artifact.py` is the wheel audit the monorepo
+# also runs, through a wrapper, against the same wheel pre-export on every PR
+# touching dbt-charts/ (test-dataface.yml :: smoke-install). It re-runs here,
+# independently, against this workflow's own build output before it's uploaded
+# or published, adding the build-path check the unremapped PR build can't pass.
 #
 # Ownership: this workflow is the sole PyPI publish trigger for dbt-charts.
 # The monorepo it's exported from does not publish dbt-charts to PyPI at

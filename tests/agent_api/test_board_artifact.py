@@ -411,3 +411,55 @@ def test_artifact_keeps_a_filter_link_over_the_text_link_on_every_tab(
     assert result.success, result.errors
     assert result.artifact_path is not None
     assert "mailto" not in result.artifact_path.read_text()
+
+
+_VARIABLE_YAML = """
+title: Emitted Board
+variables:
+  region:
+    input: select
+    default: US
+    options:
+      static: [US, EU]
+queries:
+  q:
+    columns: [region]
+    values:
+      - [US]
+charts:
+  c:
+    query: q
+    type: table
+rows:
+  - c
+"""
+
+
+@pytest.mark.parametrize(
+    ("variables", "code"),
+    [
+        ({"regoin": "US"}, "ERR-UNKNOWN-VARIABLE-OVERRIDE"),
+        ({"region": "APAC"}, "ERR-VARIABLE-VALUE-NOT-IN-OPTIONS"),
+    ],
+)
+def test_emit_board_artifact_rejects_invalid_variable_overrides(
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    variables: dict[str, str],
+    code: str,
+) -> None:
+    (tmp_path / "board.yml").write_text(_VARIABLE_YAML)
+    project = local_project(tmp_path)
+
+    result = emit_board_artifact(
+        tmp_path / "board.yml",
+        tmp_path / "out" / "board.artifact.json",
+        tmp_path / "out" / "board.recording.json",
+        project=project,
+        adapter_registry=build_adapter_registry(project),
+        variables=variables,
+    )
+
+    assert not result.success
+    assert [e.code for e in result.errors] == [code]
+    assert not (tmp_path / "out" / "board.artifact.json").exists()

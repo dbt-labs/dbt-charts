@@ -19,6 +19,9 @@ from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.normalize.queries import is_file_source_ref
 from dbt_charts.core.compile.sql_guard import source_dialect
 from dbt_charts.core.compile.template.jinja import extract_sql_variable_dependencies
+from dbt_charts.core.compile.template.variables import (
+    check_variable_overrides,
+)
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FILE_NOT_FOUND,
@@ -30,6 +33,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
 )
 from dbt_charts.core.diagnostics.codes_unknown import ERR_INTERNAL
 from dbt_charts.core.diagnostics.diagnostic import Diagnostic
+from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.inspect.query_validator import QueryDiagnostic, validate_query
 from dbt_charts.core.project import InMemoryBoard, Project
@@ -643,6 +647,11 @@ def query_board(
         loaded.compile_result,
         loaded.path,
     )
+
+    try:
+        check_variable_overrides(board.variable_registry or {}, vars or {})
+    except ExecutionError as exc:
+        return _fail(name, resolved_display, [str(exc)], error_code_of(exc))
 
     merged_vars = {**board.variable_defaults, **(vars or {})}
     query = board.queries[name].model_copy(update={"limit": limit + 1})

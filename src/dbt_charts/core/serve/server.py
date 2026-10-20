@@ -719,6 +719,7 @@ def _render_board_file(
         result = render_dashboard(
             board=board,
             variables=variables,
+            strict_variables=False,
             project=project,
             adapter_registry=adapter_registry,
             format="html",
@@ -787,6 +788,7 @@ def _render_board_download(
     result = render_dashboard(
         board=file_path.read_board(),
         variables=variables,
+        strict_variables=False,
         project=project,
         adapter_registry=adapter_registry,
         format=fmt,

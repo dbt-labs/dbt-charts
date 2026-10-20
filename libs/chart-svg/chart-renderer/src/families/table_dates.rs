@@ -111,6 +111,11 @@ impl Moment {
         Moment { year, month, day, hour: 0, minute: 0, second: 0, micro: 0, utc: false }
     }
 
+    /// A naive date at a wall-clock time of day.
+    pub(super) fn at_clock(year: u32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> Self {
+        Moment { hour, minute, second, ..Moment::midnight(year, month, day) }
+    }
+
     /// Milliseconds since 1970-01-01T00:00:00Z; a naive moment reads as UTC.
     fn epoch_millis(self) -> i64 {
         let days = days_from_epoch(self.year, self.month, self.day)

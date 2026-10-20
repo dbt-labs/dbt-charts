@@ -16,9 +16,7 @@ from dbt_charts.agent_api._paths import (
 )
 from dbt_charts.core.board import partition_compile_warnings
 from dbt_charts.core.compile.format import missing_format_columns
-from dbt_charts.core.compile.normalize.charts import _FIELD_CHANNEL_KEYS
 from dbt_charts.core.diagnostics import (
-    ERR_CHART_COLUMN_NOT_IN_RESULT,
     ERR_FILE_NOT_FOUND,
     ERR_INTERNAL,
     ERR_QUERY_FORMAT_COLUMN_MISSING,
@@ -28,6 +26,10 @@ from dbt_charts.core.diagnostics import (
     Diagnostic,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.execute.chart_columns import (
+    chart_column_refs,
+    missing_column_error,
+)
 from dbt_charts.core.project import (
     CHARTS_SUBDIR,
     PROJECT_CONFIG_NAME,
@@ -37,7 +39,6 @@ from dbt_charts.core.project import (
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.compiler import CompileResult
-    from dbt_charts.core.compile.models.chart.normalized import Chart
     from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 
 
@@ -299,54 +300,6 @@ def annotate_with_data_lint(
     return annotated
 
 
-# Channel fields that may reference query result columns. Every one is authored
-# as a bare column name (str or list[str]), so a miss is unambiguously an error
-# and not a value the renderer would interpret some other way.
-#
-# `geo` is a named boundary source ("us-states"), not a column. `sort` is a
-# sort-order field reference, not a display channel. Both are excluded so a new
-# channel added to _FIELD_CHANNEL_KEYS is automatically checked here too.
-_CHANNEL_FIELDS: frozenset[str] = _FIELD_CHANNEL_KEYS - {"geo", "sort"}
-
-
-def _chart_column_refs(chart: Chart) -> list[tuple[str, str, str]]:
-    """Return (query_name, channel_label, column_name) for every column channel.
-
-    Walks the chart's own channels plus each cartesian ``layer``, which carries
-    its own ``x``/``y``/``color`` and is where a mistyped column hides most
-    easily — the chart-level channels look fine and the layer silently plots
-    nothing. A layer's ``query:`` overrides the chart's, so each ref carries the
-    query whose result actually has to contain it: checking a layer's columns
-    against the chart-level query rejects a board that renders fine.
-    """
-    refs: list[tuple[str, str, str]] = []
-
-    def collect(source: object, prefix: str, query_name: str | None) -> None:
-        if query_name is None:
-            return
-        for field_name in _CHANNEL_FIELDS:
-            val = getattr(source, field_name, None)
-            if isinstance(val, str):
-                refs.append((query_name, f"{prefix}{field_name}", val))
-            elif isinstance(val, list):
-                for i, item in enumerate(val):
-                    if isinstance(item, str):
-                        refs.append((query_name, f"{prefix}{field_name}[{i}]", item))
-        # TableChart.columns: list[str] | None
-        table_cols = getattr(source, "columns", None)
-        if isinstance(table_cols, list):
-            for i, col in enumerate(table_cols):
-                if isinstance(col, str):
-                    refs.append((query_name, f"{prefix}columns[{i}]", col))
-
-    collect(chart, "", chart.query_name)
-    layers = getattr(chart, "layers", None)
-    if isinstance(layers, list):
-        for i, layer in enumerate(layers):
-            collect(layer, f"layers[{i}].", layer.query or chart.query_name)
-    return refs
-
-
 def _warehouse_findings(
     compile_result: CompileResult,
     relpath: str,
@@ -369,7 +322,7 @@ def _warehouse_findings(
     # query name -> [(chart name, channel label, column name)] it must contain.
     refs_by_query: dict[str, list[tuple[str, str, str]]] = {}
     for chart_name, chart in board.charts.items():
-        for query_name, label, column in _chart_column_refs(chart):
+        for query_name, label, column in chart_column_refs(chart):
             refs_by_query.setdefault(query_name, []).append((chart_name, label, column))
 
     errors: list[Diagnostic] = []
@@ -462,13 +415,10 @@ def _warehouse_findings(
         for chart_name, channel_label, column_name in refs_by_query.get(query_name, []):
             if column_name not in result_columns:
                 errors.append(
-                    DbtChartsError.from_code(
-                        ERR_CHART_COLUMN_NOT_IN_RESULT,
-                        chart=chart_name,
-                        channel=channel_label,
-                        column=column_name,
-                        name=query_name,
-                        columns=sorted(result_columns),
+                    missing_column_error(
+                        chart_name,
+                        (query_name, channel_label, column_name),
+                        result_columns,
                     ).to_diagnostic(file=relpath)
                 )
 

@@ -395,7 +395,7 @@ pub fn time_part_ticks(
     // Vega asks d3 for ten ticks when no `tickCount` reaches the axis.
     let count = authored.or_else(|| part.default_tick_count(plot_w)).unwrap_or(10);
     let count = part.min_step_days().map_or(count, |step| count.min(min_step_ticks(hi - lo, step)));
-    utc_instants(lo, hi, count)?
+    utc_instants(lo, hi, count)
         .into_iter()
         .map(|at| Ok(PartTick { at, frac: (at - lo) / (hi - lo), text: text(at)? }))
         .collect()
@@ -2313,6 +2313,7 @@ pub fn resolve_vega_label_layout(
     label_auto: bool,
     usable_width: f64,
     edge_labels_flushed: bool,
+    bucket_aligned: bool,
     continuous_temporal: bool,
     fiscal_start: u8,
     skip: bool,
@@ -2339,8 +2340,15 @@ pub fn resolve_vega_label_layout(
             collision: None,
         });
     }
-    if continuous_temporal && data_tu == TimeUnit::YearMonthDate && label_auto && authored.is_none() {
-        for candidate in [TimeUnit::YearMonthDate, TimeUnit::YearWeek] {
+    if continuous_temporal
+        && (bucket_aligned || data_tu == TimeUnit::YearMonthDate)
+        && matches!(data_tu, TimeUnit::YearWeek | TimeUnit::YearMonthDate)
+        && label_auto
+        && authored.is_none()
+    {
+        let candidates: &[TimeUnit] =
+            if data_tu == TimeUnit::YearMonthDate { &[TimeUnit::YearMonthDate, TimeUnit::YearWeek] } else { &[TimeUnit::YearWeek] };
+        for &candidate in candidates {
             if submonth_candidate_fits(dates, data_tu, candidate, fiscal_start, usable_width, measure)? {
                 return Ok(VegaLabelLayout {
                     format_tu: candidate,
@@ -2695,6 +2703,7 @@ pub fn resolve_vega_x_labels(
     authored_label_tu_str: Option<&str>,
     usable_width: f64,
     edge_labels_flushed: bool,
+    bucket_aligned: bool,
     continuous_temporal: bool,
     fiscal_start: u8,
     skip: bool,
@@ -2778,6 +2787,7 @@ pub fn resolve_vega_x_labels(
         label_auto,
         usable_width,
         edge_labels_flushed,
+        bucket_aligned,
         continuous_temporal,
         fiscal_start,
         skip,
@@ -3384,16 +3394,13 @@ pub fn utc_position_fractions(domain: &[String]) -> Option<Vec<f64>> {
 /// extent, not their own). `None` on the same guards as
 /// `utc_position_fractions` (fewer than 2 entries, a parse failure, or a
 /// degenerate span).
-pub fn utc_domain_extent(domain: &[String]) -> Option<(i64, i64)> {
+pub fn utc_domain_extent(domain: &[String]) -> Option<(f64, f64)> {
     if domain.len() < 2 {
         return None;
     }
-    let days: Vec<i64> = domain
-        .iter()
-        .map(|s| parse_iso_date(s).map(|(y, m, d)| days_from_civil(y, m, d)))
-        .collect::<Option<_>>()?;
-    let d0 = *days.iter().min().unwrap();
-    let dn = *days.iter().max().unwrap();
+    let days: Vec<f64> = domain.iter().map(|s| date_text_day(s)).collect::<Option<_>>()?;
+    let d0 = days.iter().copied().fold(f64::INFINITY, f64::min);
+    let dn = days.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     if dn <= d0 {
         return None;
     }
@@ -3406,10 +3413,8 @@ pub fn utc_domain_extent(domain: &[String]) -> Option<(i64, i64)> {
 /// when it doesn't (Vega drops an axis label whose scale position lands
 /// outside the range, which is production's actual behavior for a raw
 /// weekly opener past the floored domain's own end).
-pub fn utc_fraction_at(date: &str, extent: (i64, i64)) -> Option<f64> {
-    let (y, m, d) = parse_iso_date(date)?;
-    let days = days_from_civil(y, m, d);
-    Some((days - extent.0) as f64 / (extent.1 - extent.0) as f64)
+pub fn utc_fraction_at(date: &str, extent: (f64, f64)) -> Option<f64> {
+    Some((date_text_day(date)? - extent.0) / (extent.1 - extent.0))
 }
 
 /// Floors an ISO date to its containing week's Sunday — d3's
@@ -3426,25 +3431,25 @@ pub fn week_floor(date: &str) -> Option<String> {
     Some(format!("{fy:04}-{fm:02}-{fd:02}"))
 }
 
-/// How Vega-Lite's default description prints a `timeUnit`-grained x value
-/// (`%Y W%U` for a week, `%b %Y` for a month): the text a support-table cell
-/// carries beside the mark's own structured tooltip. Only the grains the
-/// corpus exercises are modeled.
-pub fn default_time_unit_text(date: &str, unit: TimeUnit) -> Result<String, String> {
-    let (spec, bucket) = match unit {
-        TimeUnit::YearWeek => ("%Y W%U", week_floor(date)),
-        TimeUnit::YearMonth => ("%b %Y", Some(date.to_string())),
-        TimeUnit::Year | TimeUnit::YearQuarter | TimeUnit::YearMonthDate => {
-            return Err(format!("time unit {unit:?} has no modeled default description"));
-        }
+/// How Vega-Lite's default description prints an x value: through its `timeUnit`'s format (`%Y W%U` for a week,
+/// `%b %Y` for a month, `%Y Q%q` for a quarter, `%Y` for a year), a bare date or timestamp as `%b %d, %Y`. The
+/// text a facet panel's or a support-table cell's mark carries in place of the structured tooltip.
+pub fn default_time_unit_text(date: &str, unit: Option<TimeUnit>) -> Result<String, String> {
+    let unparsed = || format!("unparsed date {date:?}");
+    let bucket = match unit {
+        Some(TimeUnit::YearWeek) => week_floor(date).ok_or_else(unparsed)?,
+        _ => date.to_string(),
     };
-    let bucket = bucket.ok_or_else(|| format!("unparsed date {date:?}"))?;
-    let (y, m, d) = parse_iso_date(&bucket).ok_or_else(|| format!("unparsed date {date:?}"))?;
+    let (y, m, d) = parse_iso_date(&bucket).ok_or_else(unparsed)?;
     let year = u32::try_from(y).map_err(|_| format!("year {y} out of range"))?;
-    super::table_dates::strftime(
-        super::table_dates::Moment::midnight(year, u32::from(m), u32::from(d)),
-        spec,
-    )
+    let moment = super::table_dates::Moment::midnight(year, u32::from(m), u32::from(d));
+    match unit {
+        Some(TimeUnit::Year) => super::table_dates::strftime(moment, "%Y"),
+        Some(TimeUnit::YearQuarter) => Ok(format!("{y:04} Q{}", (m - 1) / 3 + 1)),
+        Some(TimeUnit::YearMonth) => super::table_dates::strftime(moment, "%b %Y"),
+        Some(TimeUnit::YearWeek) => super::table_dates::strftime(moment, "%Y W%U"),
+        Some(TimeUnit::YearMonthDate) | None => super::table_dates::strftime(moment, "%b %d, %Y"),
+    }
 }
 
 /// The instant Vega-Lite's `timeUnit` transform puts a row at: its date
@@ -3483,12 +3488,14 @@ pub fn time_unit_floor(date: &str, tu: TimeUnit) -> Option<String> {
 /// One tick of Vega's bare temporal axis.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct BareTick {
-    /// The tick's day number.
-    pub day: i64,
+    /// The tick's instant, in days since the epoch.
+    pub day: f64,
     /// Position as a fraction of the scale domain ([`utc_fraction_at`]).
     pub frac: f64,
-    /// The tick's label under d3's multi-scale UTC format.
+    /// The tick's label under d3's multi-scale UTC format, or the clock vocabulary of a sub-day axis.
     pub text: String,
+    /// The date row a sub-day axis stacks under a midnight's label.
+    pub row2: Option<String>,
 }
 
 const MS_PER_DAY: f64 = 864e5;
@@ -3529,7 +3536,7 @@ pub enum UtcTickInterval {
 
 /// d3-time `utcTickInterval(start, stop, count)`: bisect the ladder on the
 /// target span, then keep whichever neighbor is the smaller stretch of it.
-fn utc_tick_interval(lo: f64, hi: f64, count: usize) -> Result<UtcTickInterval, String> {
+fn utc_tick_interval(lo: f64, hi: f64, count: usize) -> Option<UtcTickInterval> {
     let rung = utc_tick_rung(lo, hi, count);
     if rung == D3_TICK_INTERVAL_MS.len() {
         let lo_years = lo * MS_PER_DAY / MS_PER_YEAR;
@@ -3539,21 +3546,19 @@ fn utc_tick_interval(lo: f64, hi: f64, count: usize) -> Result<UtcTickInterval, 
         // rung is only reached when `target >= 31536e6`, i.e. the span is
         // already at least `count` years, so `tickStep`'s own
         // `(hi - lo) / count` is >= 1 and its 10^n·{1,2,5} result with it.
-        return Ok(UtcTickInterval::Year(
+        return Some(UtcTickInterval::Year(
             d3rs::ticks::d3_tick_step(lo_years, hi_years, count).floor() as i64,
         ));
     }
     match rung {
-        12 => Ok(UtcTickInterval::Day(1)),
-        13 => Ok(UtcTickInterval::Day(2)),
-        14 => Ok(UtcTickInterval::Week(1)),
-        15 => Ok(UtcTickInterval::Month(1)),
-        16 => Ok(UtcTickInterval::Month(3)),
-        17 => Ok(UtcTickInterval::Year(1)),
-        _ => Err(
-            "line: a bare temporal axis whose d3 tick interval is finer than a day is unmodeled"
-                .into(),
-        ),
+        12 => Some(UtcTickInterval::Day(1)),
+        13 => Some(UtcTickInterval::Day(2)),
+        14 => Some(UtcTickInterval::Week(1)),
+        15 => Some(UtcTickInterval::Month(1)),
+        16 => Some(UtcTickInterval::Month(3)),
+        17 => Some(UtcTickInterval::Year(1)),
+        // A second, minute or hour rung: [`clock_instants`].
+        _ => None,
     }
 }
 
@@ -3569,35 +3574,65 @@ fn utc_tick_rung(lo: f64, hi: f64, count: usize) -> usize {
     if i > 0 && target / D3_TICK_INTERVAL_MS[i - 1] < D3_TICK_INTERVAL_MS[i] / target { i - 1 } else { i }
 }
 
-/// [`utc_ticks_exact`] in fractional days, with the sub-day rungs the day
-/// ladder refuses: a second, minute or hour interval keeps the instants of
-/// `[lo, hi]` whose UTC field divides its step (d3-time `second`, `minute`
-/// and `hour` `every`).
-pub fn utc_instants(lo: f64, hi: f64, count: usize) -> Result<Vec<f64>, String> {
-    const STEPS: [(f64, i64); 12] = [
-        (1.0 / 86_400.0, 1),
-        (1.0 / 86_400.0, 5),
-        (1.0 / 86_400.0, 15),
-        (1.0 / 86_400.0, 30),
-        (1.0 / 1_440.0, 1),
-        (1.0 / 1_440.0, 5),
-        (1.0 / 1_440.0, 15),
-        (1.0 / 1_440.0, 30),
-        (1.0 / 24.0, 1),
-        (1.0 / 24.0, 3),
-        (1.0 / 24.0, 6),
-        (1.0 / 24.0, 12),
+/// d3-time's ticks of the local time scale (`timeTicks`, which under `TZ=UTC` differs from `utcTicks` only in
+/// the day rung's calendar-field filter) for `count` ticks, in fractional days, every aligned instant of
+/// `[lo, hi]`. A second, minute or hour interval keeps the instants whose UTC field divides its step (d3-time
+/// `second`, `minute` and `hour` `every`), a span finer than the ladder the milliseconds `tickStep` divides.
+pub fn utc_instants(lo: f64, hi: f64, count: usize) -> Vec<f64> {
+    clock_instants(lo, hi, count).unwrap_or_else(|| {
+        let interval = utc_tick_interval(lo, hi, count).expect("a rung that is not a clock one is a calendar one");
+        day_instants(interval, lo, hi)
+    })
+}
+
+/// Every day tick of `interval` inside `[lo, hi]`, as instants.
+fn day_instants(interval: UtcTickInterval, lo: f64, hi: f64) -> Vec<f64> {
+    utc_tick_days(interval, lo.floor() as i64, hi.ceil() as i64).into_iter().map(|day| day as f64).filter(|&day| lo <= day && day <= hi).collect()
+}
+
+/// The instants of a second, minute, hour or millisecond rung; `None` for a calendar one.
+fn clock_instants(lo: f64, hi: f64, count: usize) -> Option<Vec<f64>> {
+    const SECOND: i64 = 1_000;
+    const STEPS: [(i64, i64, i64); 12] = [
+        (SECOND, 60, 1),
+        (SECOND, 60, 5),
+        (SECOND, 60, 15),
+        (SECOND, 60, 30),
+        (60 * SECOND, 60, 1),
+        (60 * SECOND, 60, 5),
+        (60 * SECOND, 60, 15),
+        (60 * SECOND, 60, 30),
+        (3_600 * SECOND, 24, 1),
+        (3_600 * SECOND, 24, 3),
+        (3_600 * SECOND, 24, 6),
+        (3_600 * SECOND, 24, 12),
     ];
+    // Below the ladder's first rung d3 ticks the milliseconds that divide `tickStep` (`millisecond.every`).
+    if (hi - lo) * MS_PER_DAY / (count.max(1) as f64) < D3_TICK_INTERVAL_MS[0] {
+        let step = d3rs::ticks::d3_tick_step(lo * MS_PER_DAY, hi * MS_PER_DAY, count).max(1.0).floor() as i64;
+        // Vega keys an axis tick by its `Date`, whose string stops at the second, so the ticks of one second
+        // collapse into the last of them.
+        let ms = clock_ticks_ms(lo, hi, step, 1, 1);
+        let kept = ms.iter().enumerate().filter(|&(i, &at)| ms.get(i + 1).is_none_or(|&next| next.div_euclid(1000) != at.div_euclid(1000)));
+        return Some(kept.map(|(_, &at)| at as f64 / MS_PER_DAY).collect());
+    }
     let rung = utc_tick_rung(lo, hi, count);
-    let Some(&(unit, step)) = STEPS.get(rung) else {
-        return Ok(utc_ticks_exact(lo, hi, count)?.into_iter().map(|d| d as f64).collect());
-    };
-    // The unit's field is its count within the next larger one: seconds in a
-    // minute, minutes in an hour, hours in a day.
-    let per_parent = if unit == 1.0 / 86_400.0 || unit == 1.0 / 1_440.0 { 60 } else { 24 };
-    let first = (lo / unit).ceil() as i64;
-    let last = (hi / unit).floor() as i64;
-    Ok((first..=last).filter(|n| n.rem_euclid(per_parent) % step == 0).map(|n| n as f64 * unit).collect())
+    let &(unit_ms, parent, step) = STEPS.get(rung)?;
+    Some(clock_instants_at(lo, hi, unit_ms, parent, step))
+}
+
+/// Every instant of `[lo, hi]` (fractional days) that sits on a multiple of `unit_ms` whose field, the count
+/// within its `parent` (seconds in a minute, hours in a day), divides `step`: d3-time's `interval.every(step)`.
+/// The ends are rounded to whole milliseconds once, as d3's dates are, so a tick on an end is never lost to
+/// float division.
+pub(crate) fn clock_instants_at(lo: f64, hi: f64, unit_ms: i64, parent: i64, step: i64) -> Vec<f64> {
+    clock_ticks_ms(lo, hi, unit_ms, parent, step).into_iter().map(|at| at as f64 / MS_PER_DAY).collect()
+}
+
+fn clock_ticks_ms(lo: f64, hi: f64, unit_ms: i64, parent: i64, step: i64) -> Vec<i64> {
+    let (lo_ms, hi_ms) = ((lo * MS_PER_DAY).round() as i64, (hi * MS_PER_DAY).round() as i64);
+    let (first, last) = ((-(-lo_ms).div_euclid(unit_ms)), hi_ms.div_euclid(unit_ms));
+    (first..=last).filter(|n| n.rem_euclid(parent) % step == 0).map(|n| n * unit_ms).collect()
 }
 
 /// `interval.range(start, +stop + 1)` in day numbers — every aligned instant
@@ -3680,26 +3715,6 @@ fn d3_multi_format(y: i32, m: u8, d: u8) -> String {
     } else {
         format!("{y}")
     }
-}
-
-/// d3-time's ticks of the local time scale (`timeTicks`, which under `TZ=UTC`
-/// differs from `utcTicks` only in the day rung's calendar-field filter) for
-/// `count` ticks, in day numbers — every aligned calendar boundary in
-/// `extent`, the end included. Refuses an interval finer than a
-/// day, this module's finest grain.
-pub fn utc_ticks(extent: (i64, i64), count: usize) -> Result<Vec<i64>, String> {
-    let interval = utc_tick_interval(extent.0 as f64, extent.1 as f64, count)?;
-    Ok(utc_tick_days(interval, extent.0, extent.1))
-}
-
-/// [`utc_ticks`] over a fractional-day extent: the interval comes from the exact
-/// span, and only ticks inside `[lo, hi]` survive.
-pub fn utc_ticks_exact(lo: f64, hi: f64, count: usize) -> Result<Vec<i64>, String> {
-    let interval = utc_tick_interval(lo, hi, count)?;
-    Ok(utc_tick_days(interval, lo.floor() as i64, hi.ceil() as i64)
-        .into_iter()
-        .filter(|&t| (t as f64) >= lo && (t as f64) <= hi)
-        .collect())
 }
 
 /// Production's `_TEMPORAL_TICK_INTERVAL` (`type_inference.py:132-138`): the
@@ -3914,27 +3929,23 @@ pub enum AuthoredTickCadence {
 }
 
 impl AuthoredTickCadence {
-    /// The d3 interval the cadence names over a scale domain: an authored
-    /// interval is its own, a count is the rung `utcTickInterval` picks for
-    /// that many ticks across `extent`.
-    pub fn interval(self, extent: (f64, f64)) -> Result<UtcTickInterval, String> {
+    /// The ticks of the cadence on a bucketed axis, as instants in days: the scale is UTC and Vega-Lite gives the
+    /// axis the grain's `tickMinStep`, so a number `tickCount` is capped at `floor(span / minStep) + 1`
+    /// (vega-scale `tickCount`), the ladder's 2-day rung strides epoch days ([`UtcTickInterval::EpochDay`]) and
+    /// a span of a couple of days ticks the hours.
+    pub fn bucketed_ticks(self, grain: TimeUnit, extent: (f64, f64)) -> Vec<f64> {
+        let (lo, hi) = extent;
         match self {
-            Self::Interval(interval) => Ok(interval),
-            Self::Count(count) => utc_tick_interval(extent.0, extent.1, count),
+            Self::Interval(interval) => day_instants(interval, lo, hi),
+            Self::Count(count) => {
+                let capped = count.min(min_step_ticks(hi - lo, tick_min_step_days(grain)));
+                match utc_tick_interval(lo, hi, capped) {
+                    Some(UtcTickInterval::Day(2)) => day_instants(UtcTickInterval::EpochDay(2), lo, hi),
+                    Some(interval) => day_instants(interval, lo, hi),
+                    None => clock_instants(lo, hi, capped).expect("a rung that is not a calendar one is a clock one"),
+                }
+            }
         }
-    }
-
-    /// [`Self::interval`] on a bucketed axis, whose scale is UTC and whose
-    /// axis Vega-Lite gives the grain's `tickMinStep`: a number `tickCount` is
-    /// capped at `floor(span / minStep) + 1` (vega-scale `tickCount`), and the
-    /// ladder's 2-day rung strides epoch days ([`UtcTickInterval::EpochDay`]).
-    pub fn bucketed_interval(self, grain: TimeUnit, extent: (f64, f64)) -> Result<UtcTickInterval, String> {
-        let Self::Count(count) = self else { return self.interval(extent) };
-        let capped = count.min(min_step_ticks(extent.1 - extent.0, tick_min_step_days(grain)));
-        Ok(match utc_tick_interval(extent.0, extent.1, capped)? {
-            UtcTickInterval::Day(2) => UtcTickInterval::EpochDay(2),
-            interval => interval,
-        })
     }
 }
 
@@ -3982,38 +3993,63 @@ pub fn bare_temporal_ticks(
     plot_w: f64,
     authored: Option<AuthoredTickCadence>,
     format: Option<AuthoredTimeFormat>,
+    subday: Option<&super::subday::SubdayPlan>,
 ) -> Result<Vec<BareTick>, String> {
     let (lo, hi) = domain;
+    let tick = |at: f64, index: usize, frac: f64| -> Result<BareTick, String> {
+        let (y, m, d) = civil_from_days(at.floor() as i64);
+        let (text, row2) = match (format, subday) {
+            (Some(f), _) => (f.text(y, m, d)?, None),
+            (None, Some(plan)) => match plan.label(at, index)? {
+                Some((text, row2)) => (text, row2),
+                None => (multi_format_at(at)?, None),
+            },
+            (None, None) => (multi_format_at(at)?, None),
+        };
+        Ok(BareTick { day: at, frac, text, row2 })
+    };
     // A one-instant domain ticks that instant, the finest interval d3 tries.
     if lo == hi {
-        let day = lo as i64;
-        let (y, m, d) = civil_from_days(day);
-        let text = match format {
-            Some(f) => f.text(y, m, d)?,
-            None => d3_multi_format(y, m, d),
-        };
-        return Ok(vec![BareTick { day, frac: 0.5, text }]);
+        return Ok(vec![tick(lo, 0, 0.5)?]);
     }
-    let (first, last) = (lo.floor() as i64, hi.ceil() as i64);
-    let interval = match authored {
-        Some(cadence) => cadence.interval((lo, hi))?,
-        None => {
-            let count = crate::families::cartesian::vl_default_tick_count(plot_w).max(1);
-            utc_tick_interval(lo, hi, count)?
-        }
+    let instants: Vec<f64> = match (subday.and_then(|plan| plan.ladder), authored) {
+        (Some(step), _) => step.instants(lo, hi),
+        (None, Some(AuthoredTickCadence::Interval(interval))) => day_instants(interval, lo, hi),
+        (None, Some(AuthoredTickCadence::Count(count))) => utc_instants(lo, hi, count),
+        (None, None) => utc_instants(lo, hi, crate::families::cartesian::vl_default_tick_count(plot_w).max(1)),
     };
-    utc_tick_days(interval, first, last)
-        .into_iter()
-        .filter(|&day| lo <= day as f64 && day as f64 <= hi)
-        .map(|day| {
-            let (y, m, d) = civil_from_days(day);
-            let text = match format {
-                Some(f) => f.text(y, m, d)?,
-                None => d3_multi_format(y, m, d),
-            };
-            Ok(BareTick { day, frac: (day as f64 - lo) / (hi - lo), text })
-        })
-        .collect()
+    instants.into_iter().enumerate().map(|(index, at)| tick(at, index, (at - lo) / (hi - lo))).collect()
+}
+
+/// d3's multi-scale format of a tick instant (`d3-scale`'s `calendar`): the finest unit the tick is not whole in
+/// picks the specifier.
+fn multi_format_at(at: f64) -> Result<String, String> {
+    let ms = (at * MS_PER_DAY).round() as i64;
+    let clock = ms.rem_euclid(864_00_000);
+    let (y, m, d) = civil_from_days(ms.div_euclid(864_00_000));
+    if clock == 0 {
+        return Ok(d3_multi_format(y, m, d));
+    }
+    if clock % 1000 != 0 {
+        return Ok(format!(".{:03}", clock % 1000));
+    }
+    let spec = if clock % 60_000 != 0 {
+        ":%S"
+    } else if clock % 3_600_000 != 0 {
+        "%I:%M"
+    } else {
+        "%I %p"
+    };
+    strftime(clock_moment(at)?, spec)
+}
+
+/// The naive wall-clock moment of an instant in fractional days, to the second.
+pub(super) fn clock_moment(at: f64) -> Result<Moment, String> {
+    let total = (at * MS_PER_DAY).round() as i64;
+    let (y, m, d) = civil_from_days(total.div_euclid(864_00_000));
+    let year = u32::try_from(y).map_err(|_| format!("year {y} out of range"))?;
+    let ms = total.rem_euclid(864_00_000);
+    Ok(Moment::at_clock(year, m.into(), d.into(), (ms / 3_600_000) as u32, (ms / 60_000 % 60) as u32, (ms / 1000 % 60) as u32))
 }
 
 /// Rendered half-width (px) of a temporal label's wider row: the max of
@@ -5303,6 +5339,7 @@ mod tests {
             true,
             900.0,
             true,
+            false,
             true,
             1,
             true,
@@ -5317,6 +5354,49 @@ mod tests {
         assert!(!layout.parity && layout.angle == 0.0);
     }
 
+    /// A bar's continuous weekly axis is bucket-aligned: a short series keeps the week day numbers
+    /// (`bucket_aligned_temporal`), where a line's goes straight to the month openers.
+    #[test]
+    fn a_bucket_aligned_continuous_weekly_axis_keeps_its_week_vocabulary_when_it_fits() {
+        let dates = parse_domain_dates(&iso_range((2024, 1, 1), 7, 14));
+        let layout = |bucket_aligned: bool| {
+            resolve_vega_label_layout(
+                &dates,
+                TimeUnit::YearWeek,
+                TimeUnit::YearWeek,
+                true,
+                540.0,
+                true,
+                bucket_aligned,
+                true,
+                1,
+                true,
+                true,
+                Some(&TILT_LADDER),
+                11.0,
+                None,
+                &mut char_measure,
+            )
+            .unwrap()
+        };
+        assert_eq!((layout(true).format_tu, layout(true).visibility_tu), (TimeUnit::YearWeek, TimeUnit::YearWeek));
+        assert_eq!(layout(false).format_tu, TimeUnit::YearMonth);
+    }
+
+    /// Vega-Lite's own description of a date, by `timeUnit`.
+    #[test]
+    fn the_default_description_names_a_date_through_its_time_unit_format() {
+        let _locale = crate::time_locale::en_us_scope();
+        let text = |unit| default_time_unit_text("2024-01-01", unit).unwrap();
+        assert_eq!(text(Some(TimeUnit::Year)), "2024");
+        assert_eq!(text(Some(TimeUnit::YearQuarter)), "2024 Q1");
+        assert_eq!(text(Some(TimeUnit::YearMonth)), "Jan 2024");
+        assert_eq!(text(Some(TimeUnit::YearWeek)), "2023 W53", "the Sunday the week floors to");
+        assert_eq!(text(Some(TimeUnit::YearMonthDate)), "Jan 01, 2024");
+        assert_eq!(text(None), "Jan 01, 2024");
+        assert_eq!(default_time_unit_text("2024-01-01T10:30:00", None).unwrap(), "Jan 01, 2024");
+    }
+
     /// Without `continuous_temporal` the same domain goes native-misfit to the
     /// month-opener ladder: the Monday rung is a continuous-axis law.
     #[test]
@@ -5329,6 +5409,7 @@ mod tests {
             true,
             900.0,
             true,
+            false,
             false,
             1,
             true,
@@ -5359,6 +5440,7 @@ mod tests {
             true,
             40.0,
             true,
+            false,
             true,
             1,
             true,
@@ -5389,6 +5471,7 @@ mod tests {
                 true,
                 900.0,
                 true,
+                false,
                 true,
                 1,
                 true,
@@ -5423,6 +5506,7 @@ mod tests {
                 TimeUnit::YearMonth,
                 true,
                 480.0,
+                false,
                 false,
                 continuous_temporal,
                 1,
@@ -5463,6 +5547,7 @@ mod tests {
             // its neighbor 4 indices away (`_pair_clears`'s flush rule).
             true,
             false,
+            false,
             1,
             true,
             true,
@@ -5494,6 +5579,7 @@ mod tests {
             300.0, // usable_width / 30 dates = 10px band
             true,
             false,
+            false,
             1,
             true,
             true,
@@ -5522,6 +5608,7 @@ mod tests {
             true,
             10_000.0,
             true,
+            false,
             false,
             1,
             true,
@@ -5556,6 +5643,7 @@ mod tests {
             false,              // NOT auto — explicitly authored
             208.0,              // usable_width / 52 dates = 4px band
             true,
+            false,
             false,
             1,
             true,
@@ -5623,6 +5711,7 @@ mod tests {
                 Some(tu),
                 1000.0,
                 true,
+                false,
                 false,
                 1,
                 true,
@@ -5724,12 +5813,12 @@ mod tests {
         ];
         for &(lo, hi, plot_w, want) in cases {
             let extent = utc_domain_extent(&[lo.to_string(), hi.to_string()]).unwrap();
-            let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), plot_w, None, None).expect("ticks");
+            let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), plot_w, None, None, None).expect("ticks");
             let got: Vec<&str> = ticks.iter().map(|t| t.text.as_str()).collect();
             assert_eq!(got, want, "{lo}..{hi} at {plot_w}px");
             let span = (extent.1 - extent.0) as f64;
             for t in &ticks {
-                let day = extent.0 + (t.frac * span).round() as i64;
+                let day = extent.0 as i64 + (t.frac * span).round() as i64;
                 assert!(
                     (0.0..=1.0).contains(&t.frac) && utc_fraction_at(
                         &{ let (y, m, d) = civil_from_days(day); format!("{y:04}-{m:02}-{d:02}") },
@@ -5776,7 +5865,7 @@ mod tests {
                     (extent.0 as f64, extent.1 as f64),
                     plot_w,
                     Some(AuthoredTickCadence::Count(count)),
-                    None,
+                    None, None,
                 )
                 .expect("ticks");
                 let got: Vec<&str> = ticks.iter().map(|t| t.text.as_str()).collect();
@@ -5798,7 +5887,7 @@ mod tests {
         let extent = utc_domain_extent(&[lo.to_string(), hi.to_string()]).unwrap();
         let interval = authored_tick_interval(unit, step).expect("modeled interval");
         let authored = Some(AuthoredTickCadence::Interval(interval));
-        let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), 600.0, authored, None).expect("ticks");
+        let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), 600.0, authored, None, None).expect("ticks");
         ticks.into_iter().map(|t| t.text).collect()
     }
 
@@ -5907,7 +5996,7 @@ mod tests {
         let floored: Vec<String> =
             mondays.iter().map(|d| week_floor(d).expect("a date")).collect();
         let extent = utc_domain_extent(&floored).unwrap();
-        let ticks = interval_tick_days(extent, UtcTickInterval::Month(1));
+        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Month(1));
         let labels = interval_tick_labels(
             &ticks,
             &mondays,
@@ -5935,7 +6024,7 @@ mod tests {
         let months: Vec<String> =
             (0..24).map(|i| format!("{}-{:02}-01", 2024 + i / 12, i % 12 + 1)).collect();
         let extent = utc_domain_extent(&months).unwrap();
-        let ticks = interval_tick_days(extent, UtcTickInterval::Week(1));
+        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Week(1));
         let labels = interval_tick_labels(
             &ticks,
             &months,
@@ -5962,7 +6051,7 @@ mod tests {
         dates.extend(["2024-12-01", "2025-01-01", "2025-06-01", "2025-12-01"]);
         let domain = domain_of(&dates);
         let extent = utc_domain_extent(&domain).unwrap();
-        let ticks = interval_tick_days(extent, UtcTickInterval::Month(1));
+        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Month(1));
         let labels = interval_tick_labels(
             &ticks,
             &domain,
@@ -6000,7 +6089,7 @@ mod tests {
         let floored: Vec<String> =
             mondays.iter().map(|d| week_floor(d).expect("a date")).collect();
         let extent = utc_domain_extent(&floored).unwrap();
-        let ticks = interval_tick_days(extent, UtcTickInterval::Week(1));
+        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Week(1));
         let labels = interval_tick_labels(
             &ticks,
             &mondays,
@@ -6036,7 +6125,7 @@ mod tests {
         let floored: Vec<String> =
             mondays.iter().map(|d| week_floor(d).expect("a date")).collect();
         let extent = utc_domain_extent(&floored).unwrap();
-        let ticks = interval_tick_days(extent, UtcTickInterval::Week(1));
+        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Week(1));
         assert_eq!(ticks.len(), 4);
         let labels = interval_tick_labels(
             &ticks, &mondays, TimeUnit::YearWeek, TimeUnit::YearWeek, TimeUnit::YearWeek, 1, None,
@@ -6054,7 +6143,7 @@ mod tests {
     fn interval_ticks_in_the_day_vocabulary_read_the_tick_date() {
         let days = domain_of(&["2024-03-30", "2024-04-02"]);
         let extent = utc_domain_extent(&days).unwrap();
-        let ticks = interval_tick_days(extent, UtcTickInterval::Day(1));
+        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Day(1));
         let labels = interval_tick_labels(
             &ticks,
             &days,
@@ -6084,14 +6173,47 @@ mod tests {
         assert_eq!(native_tick_interval(TimeUnit::YearMonthDate), UtcTickInterval::Day(1));
     }
 
-    /// The day is this module's finest temporal grain, so a domain narrow
-    /// enough for d3 to pick an hourly rung refuses rather than inventing
-    /// a ladder it cannot format.
+    /// A domain narrow enough for d3 to pick an hourly rung ticks the hours, each under the finest unit it is not whole in.
     #[test]
-    fn a_sub_day_tick_interval_refuses() {
-        let extent = utc_domain_extent(&["2024-01-03".into(), "2024-01-05".into()]).unwrap();
-        let err = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), 1200.0, None, None).expect_err("sub-day rung is unmodeled");
-        assert!(err.contains("finer than a day"), "{err}");
+    fn a_sub_day_domain_ticks_its_hours_under_the_multi_scale_format() {
+        let _locale = crate::time_locale::en_us_scope();
+        let lo = days_from_civil(2024, 1, 3) as f64;
+        let ticks = bare_temporal_ticks((lo, lo + 2.0), 1200.0, None, None, None).expect("ticks");
+        assert_eq!(ticks.len(), 49, "an hourly rung over two days");
+        assert_eq!(ticks[0].text, "Wed 03");
+        assert_eq!(ticks[1].text, "01 AM");
+        assert_eq!(ticks[12].text, "12 PM");
+        let tight = bare_temporal_ticks((lo + 0.40, lo + 0.45), 600.0, None, None, None).expect("ticks");
+        assert_eq!(tight[0].text, "09:40");
+    }
+
+    /// The period of a clock tick comes from the board's time locale, not a hardcoded `AM`.
+    #[test]
+    fn a_clock_tick_names_its_period_in_the_board_locale() {
+        let mut locale = crate::time_locale::en_us();
+        locale.periods = ["vorm.".into(), "nachm.".into()];
+        let lo = days_from_civil(2024, 3, 5) as f64 + 9.0 / 24.0;
+        let ticks = crate::time_locale::with_time_locale(&locale, || {
+            bare_temporal_ticks((lo, lo + 3.0 / 24.0), 600.0, None, None, None).expect("ticks")
+        });
+        assert_eq!(ticks[0].text, "09 vorm.", "{ticks:?}");
+    }
+
+    /// A tick on either end of the span is drawn: the ends are whole milliseconds, not float quotients.
+    #[test]
+    fn hourly_ticks_keep_both_ends_of_a_span_that_float_division_would_clip() {
+        let day = days_from_civil(2024, 1, 3) as f64;
+        let ticks = clock_instants_at(day + 10.0 / 24.0, day + 20.0 / 24.0, 3_600_000, 24, 1);
+        assert_eq!(ticks.len(), 11, "{ticks:?}");
+    }
+
+    /// Vega keys an axis tick by its `Date`, which prints to the second: ticks of one second collapse into the
+    /// last of them, so a one-second domain keeps its final tenth and the second itself.
+    #[test]
+    fn ticks_within_one_second_collapse_to_the_last_of_each_second() {
+        let lo = days_from_civil(2024, 3, 5) as f64 + (10.0 * 3600.0 + 3.0 * 60.0 + 10.0) / 86_400.0;
+        let ticks = bare_temporal_ticks((lo, lo + 1.005 / 86_400.0), 460.0, None, None, None).expect("ticks");
+        assert_eq!(ticks.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(), [".900", ":11"]);
     }
 
     // ── AuthoredTimeFormat ──────────────────────────────────────────────────
@@ -6202,7 +6324,7 @@ mod tests {
         let layout = |authored| {
             let mut measure = |s: &str| Ok(s.len() as f64 * 6.0);
             resolve_vega_x_labels(
-                &domain, TimeUnit::YearMonth, Some("none"), 300.0, false, true, 1, true, false, None, 11.0, authored, None,
+                &domain, TimeUnit::YearMonth, Some("none"), 300.0, false, false, true, 1, true, false, None, 11.0, authored, None,
                 &mut measure,
             )
             .unwrap()
@@ -6402,12 +6524,18 @@ mod tests {
     #[test]
     fn a_bucketed_count_is_capped_by_the_grain_min_step_and_strides_epoch_days() {
         let lo = days_from_civil(2024, 1, 1) as f64;
-        let monthly = AuthoredTickCadence::Count(12).bucketed_interval(TimeUnit::YearMonth, (lo, lo + 152.0)).unwrap();
-        assert_eq!(monthly, UtcTickInterval::Month(1));
-        let daily = AuthoredTickCadence::Count(5).bucketed_interval(TimeUnit::YearMonthDate, (lo, lo + 9.0)).unwrap();
-        assert_eq!(daily, UtcTickInterval::EpochDay(2));
-        let days = interval_tick_days((lo as i64, lo as i64 + 9), daily);
-        assert_eq!(days, [lo as i64 + 1, lo as i64 + 3, lo as i64 + 5, lo as i64 + 7, lo as i64 + 9]);
+        let monthly = AuthoredTickCadence::Count(12).bucketed_ticks(TimeUnit::YearMonth, (lo, lo + 152.0));
+        assert_eq!(monthly, [lo, lo + 31.0, lo + 60.0, lo + 91.0, lo + 121.0, lo + 152.0]);
+        let daily = AuthoredTickCadence::Count(5).bucketed_ticks(TimeUnit::YearMonthDate, (lo, lo + 9.0));
+        assert_eq!(daily, [lo + 1.0, lo + 3.0, lo + 5.0, lo + 7.0, lo + 9.0]);
+    }
+
+    /// A day-grained span of a couple of days, capped to its few ticks, falls on the hour rungs: the half-days tick.
+    #[test]
+    fn a_short_bucketed_span_ticks_its_half_days() {
+        let lo = days_from_civil(2024, 3, 5) as f64;
+        let ticks = AuthoredTickCadence::Count(5).bucketed_ticks(TimeUnit::YearMonthDate, (lo, lo + 2.0));
+        assert_eq!(ticks, [lo, lo + 0.5, lo + 1.0, lo + 1.5, lo + 2.0]);
     }
 
     /// The crowding test measures one text per band of the part's vocabulary:

@@ -149,10 +149,41 @@ def test_self_token_in_a_keyed_collection_resolves() -> None:
     assert columns["rev"].background == DARK
 
 
+@pytest.mark.parametrize(
+    ("family", "leaf"),
+    [
+        ("bar", "marks.bar.border.color"),
+        ("pie", "marks.slice.stroke.color"),
+        ("scatter", "marks.point.fill"),
+    ],
+)
+def test_chart_own_background_drives_its_knockouts(family: str, leaf: str) -> None:
+    from pydantic import TypeAdapter
+
+    from dbt_charts.core.compile.models.chart.normalized import Chart
+    from dbt_charts.core.compile.resolve.style.chart_context import (
+        build_chart_style_context,
+    )
+
+    board = compile_board(f"extends: clarity\n{_ROWS}")
+    assert board.success, board.errors
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "c",
+            "type": family,
+            "style": {"background": DARK},
+            **({"theta": "n"} if family == "pie" else {}),
+        }
+    )
+    ctx = build_chart_style_context(board.board.chart_style_context, chart)
+    assert ctx.ink_canvas == DARK
+    assert _leaf(getattr(ctx, family), leaf) == DARK
+
+
 def test_palette_token_in_a_keyed_collection_resolves_on_a_board_patch() -> None:
     result = compile_board(
         "extends: clarity\nstyle:\n  charts:\n    table:\n      columns:\n"
-        f"        rev:\n          background: dbt-grays.accent\n{_ROWS}"
+        f"        rev:\n          background: info.solid-hover\n{_ROWS}"
     )
     assert result.success, result.errors
     columns = result.board.chart_style_context.table.columns

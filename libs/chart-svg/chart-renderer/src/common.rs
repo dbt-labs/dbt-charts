@@ -2283,6 +2283,9 @@ pub struct AxisLabels {
     /// flushing off.
     #[serde(default)]
     pub flush: Option<Value>,
+    /// The clock a sub-day axis reads (`24` or `12`; `None` reads the 12-hour one).
+    #[serde(default)]
+    pub clock: Option<i64>,
     /// Authored VL `labelExpr` (B5) — production compiles it from
     /// `axis_x.labels.expr` and rewrites every category label BEFORE it is
     /// measured and drawn. `parse_labels_expr_slice_n`/`apply_labels_expr`

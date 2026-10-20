@@ -2,7 +2,7 @@
 
 Verifies that Executor.execute_query:
 - Caches failures to DuckDB when result_cache is configured
-- Returns CachedQueryFailure on repeat calls within TTL
+- Replays a cached failure as a QueryError carrying its original code
 - Respects force_refresh=True to clear and re-run
 """
 
@@ -12,7 +12,12 @@ from unittest.mock import Mock
 import pytest
 
 from dbt_charts.core.compile import compile
+from dbt_charts.core.diagnostics import (
+    ERR_BINDER_UNKNOWN_COLUMN,
+    ERR_INTERNAL,
+)
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.codes_execute import ERR_DBT_REF_UNKNOWN_NODE
 from dbt_charts.core.execute import Executor, QueryError
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure
 from dbt_charts.core.execute.duckdb_cache import compute_cache_key
@@ -87,8 +92,112 @@ class TestQueryErrorCachedViaIsSuccessFalsePath:
                 executor.execute_query("good_query")
 
             # Second call must replay from cache, not hit the adapter again
-            with pytest.raises(CachedQueryFailure):
+            with pytest.raises(QueryError) as exc_info:
                 executor.execute_query("good_query")
+            assert isinstance(exc_info.value.__cause__, CachedQueryFailure)
+        finally:
+            cache.close()
+
+
+def _failed_result(error: QueryError) -> Mock:
+    failed = Mock()
+    failed.is_success = False
+    failed.error = error
+    failed.column_descriptions = None
+    failed.resolved_relations = None
+    failed.truncated_reason = None
+    return failed
+
+
+class TestCachedFailureKeepsItsCode:
+    """A failure replayed from the persistent cache carries the code it was raised with.
+
+    Regression for: the cached replay surfaced as ERR-INTERNAL, so a second
+    `dct render` of a board with a bad column reported a bug instead of
+    ERR-BINDER-UNKNOWN-COLUMN.
+    """
+
+    def test_replayed_failure_has_the_original_code(self):
+        cache = TrivialDuckDBCache(failure_ttl_seconds=900)
+        try:
+            error = QueryError.from_code(ERR_BINDER_UNKNOWN_COLUMN, detail="no col")
+            fresh = _make_executor(
+                result_cache=cache, adapter_result=_failed_result(error)
+            )
+            with pytest.raises(QueryError) as first:
+                fresh.execute_query("good_query")
+
+            replay = _make_executor(result_cache=cache)
+            with pytest.raises(QueryError) as second:
+                replay.execute_query("good_query")
+
+            replay.adapter_registry.execute.assert_not_called()
+            assert second.value.code is ERR_BINDER_UNKNOWN_COLUMN
+            assert str(second.value) == str(first.value)
+            assert second.value.fields["query_name"] == "good_query"
+        finally:
+            cache.close()
+
+    def test_replayed_failure_keeps_the_fields_its_hint_needs(self):
+        cache = TrivialDuckDBCache(failure_ttl_seconds=900)
+        try:
+            error = QueryError.from_code(
+                ERR_DBT_REF_UNKNOWN_NODE,
+                ref_name="ordrs",
+                available=["orders", "customers"],
+            )
+            fresh = _make_executor(
+                result_cache=cache, adapter_result=_failed_result(error)
+            )
+            with pytest.raises(QueryError) as first:
+                fresh.execute_query("good_query")
+
+            replay = _make_executor(result_cache=cache)
+            with pytest.raises(QueryError) as second:
+                replay.execute_query("good_query")
+
+            fresh_hint = first.value.to_diagnostic().hint
+            assert fresh_hint
+            assert second.value.to_diagnostic().hint == fresh_hint
+            assert second.value.fields == first.value.fields
+        finally:
+            cache.close()
+
+    def test_untyped_failure_replays_as_internal_like_a_fresh_one(self):
+        cache = TrivialDuckDBCache(failure_ttl_seconds=900)
+        try:
+            fresh = _make_executor(
+                result_cache=cache, adapter_side_effect=RuntimeError("boom")
+            )
+            with pytest.raises(QueryError) as first:
+                fresh.execute_query("good_query")
+
+            replay = _make_executor(result_cache=cache)
+            with pytest.raises(QueryError) as second:
+                replay.execute_query("good_query")
+
+            assert first.value.code is ERR_INTERNAL
+            assert second.value.code is ERR_INTERNAL
+        finally:
+            cache.close()
+
+    def test_unregistered_code_is_a_miss_and_reruns(self):
+        """A code this version does not know (renamed or retired since the
+        write) cannot be replayed faithfully, so the query runs again."""
+        cache = TrivialDuckDBCache(failure_ttl_seconds=900)
+        try:
+            error = QueryError.from_code(ERR_BINDER_UNKNOWN_COLUMN, detail="x")
+            fresh = _make_executor(
+                result_cache=cache, adapter_result=_failed_result(error)
+            )
+            with pytest.raises(QueryError):
+                fresh.execute_query("good_query")
+            with cache._connection() as conn:
+                conn.execute("UPDATE _query_outcomes SET error_code = 'ERR-GONE'")
+
+            replay = _make_executor(result_cache=cache)
+            assert replay.execute_query("good_query") == [{"value": 1}]
+            replay.adapter_registry.execute.assert_called_once()
         finally:
             cache.close()
 
@@ -150,6 +259,8 @@ class TestCachedQueryFailureMessage:
         exc = CachedQueryFailure(
             error_class="RuntimeError",
             error_message="table not found",
+            error_code=None,
+            error_fields={},
             traceback="",
             failed_at=datetime.now(UTC),
         )
@@ -181,12 +292,14 @@ class TestExecutorCachesFailureToDuckDB:
 
             assert call_count == 1
 
-            # Second call: should raise CachedQueryFailure without hitting adapter
-            with pytest.raises(CachedQueryFailure) as exc_info:
+            # Second call: replays the cached failure without hitting adapter
+            with pytest.raises(QueryError) as exc_info:
                 executor.execute_query("good_query")
 
-            assert exc_info.value.error_class == "RuntimeError"
-            assert "table not found" in exc_info.value.error_message
+            cached = exc_info.value.__cause__
+            assert isinstance(cached, CachedQueryFailure)
+            assert cached.error_class == "RuntimeError"
+            assert "table not found" in cached.error_message
             # Adapter was only called once (first time)
             assert call_count == 1
         finally:

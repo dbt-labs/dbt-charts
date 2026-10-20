@@ -1,0 +1,3 @@
+kind: Fixes
+body: A right-side y axis now decimal aligns its tick labels for a literal d3 format such as $.2s, as it already did for named formats.
+time: 2026-10-15T07:29:32.792543-07:00

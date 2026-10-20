@@ -69,7 +69,11 @@ from dbt_charts.core.compile.resolve.style.scale import (
 )
 from dbt_charts.core.constants.axis import AUTO_TICK_TARGET
 from dbt_charts.core.font_measure import compose_decimal_units
-from dbt_charts.core.text.format_d3 import is_d3_fixed_decimal_spec, is_d3_si_spec
+from dbt_charts.core.text.format_d3 import (
+    is_d3_fixed_decimal_spec,
+    is_d3_number_spec,
+    is_d3_si_spec,
+)
 from dbt_charts.core.text.numeral_scale import (
     build_decimal_pad_table,
     non_compacting_tick_format,
@@ -432,11 +436,12 @@ def build_resolved_axis(
             {f: getattr(axis.labels, f) for f in _ELEM_X_LABEL_PASSTHROUGH}
         )
 
-    # House-rule format aliases (e.g. "percent", "currency") force
-    # label.align = "right" on right-edge quantitative axes so digits share a
-    # right edge regardless of what the author set.  Left-edge axes already
-    # get "right" from VL's own default.  Bottom/top axes (edge=None, e.g.
-    # horizontal bar measure) are excluded.
+    # Right-edge quantitative axes decimal-align: a house-rule format alias
+    # (e.g. "percent", "currency") forces label.align = "right" over whatever
+    # the author set, and a literal d3 number spec gets it unless the author
+    # set an align (an explicit override).  Left-edge axes already get "right" from
+    # VL's own default.  Bottom/top axes (edge=None, e.g. horizontal bar
+    # measure) are excluded.
     # Guard: forced end-anchoring triggers the trailing-reservation device
     # (_build_ruler's reserve path) which requires a tabular font.  Boards
     # with a non-tabular axis label font keep the old start-anchored behavior
@@ -450,9 +455,12 @@ def build_resolved_axis(
         if quantitative_for_alignment is None
         else quantitative_for_alignment
     )
+    # A literal spec must be d3 number grammar: a strftime or unknown spec on a
+    # numeric axis cannot be measured for the gutter, so it stays unaligned.
+    _literal_number_spec = format is not None and is_d3_number_spec(format.spec)
     _force_right = (
         _quantitative_for_alignment
-        and format_is_house
+        and (format_is_house or (axis.labels.align is None and _literal_number_spec))
         and edge == "right"
         and (not column_forming or _resolved_font.tabular_figures)
     )
@@ -489,11 +497,17 @@ def build_resolved_axis(
     start_anchored = _render_align(resolved_label_align, edge, fallback_fires) == "left"
     # One SI-shape verdict, computed here and handed to both _build_ruler calls
     # and the tick_label branch below, so none of them re-derives it. The axis's
-    # resolved format when SI-shaped, else None. This does NOT feed _force_right:
-    # the alignment force is scoped to house-rule format *aliases* only -- a raw
-    # d3 spec renders as literal d3, not the house register.
+    # resolved format when SI-shaped, else None. A raw d3 spec that was only
+    # right-aligned by _force_right (no house alias, no authored align) renders
+    # literal d3 per tick -- every suffix stacks and the digits line up -- so
+    # it never reaches the anchored-magnitude ruler.
+    _literal_forced_right = _force_right and not format_is_house
     _si_format = (
-        format.spec if format is not None and is_d3_si_spec(format.spec) else None
+        format.spec
+        if format is not None
+        and is_d3_si_spec(format.spec)
+        and not _literal_forced_right
+        else None
     )
     # A decimal-carrying fixed-point house format (percent, currency_full, ...)
     # never compacts, so the ruler never reaches it; the tick_label branch

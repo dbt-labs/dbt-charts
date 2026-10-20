@@ -27,6 +27,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
 )
 from dbt_charts.core.compile.resolve.style.palette import (
+    UnknownColorError,
     color as resolve_palette_color,
     palette as resolve_palette,
     variant as category_variant,
@@ -355,28 +356,36 @@ class TestNeonChromeFromScaffold:
 
 
 # =============================================================================
-# Chrome accents track a named scaffold/cream token, not a bare literal
+# Chrome accents track the semantic info tone; the scaffolds hold only steps
 # =============================================================================
 
 
 class TestChromeAccentTokens:
-    def test_structural_root_accent_tracks_dbt_grays_accent(self) -> None:
-        assert get_theme_style("stark").accent == resolve_palette_color(
-            "dbt-grays.accent"
-        )
+    @pytest.mark.parametrize(
+        ("theme", "token"),
+        [
+            ("stark", "info.solid-hover"),
+            ("clarity", "info.solid-hover"),
+            ("paper", "info.solid-hover"),
+            ("vivid", "info.solid-hover"),
+            ("neon", "info.border"),
+        ],
+    )
+    def test_accent_is_a_semantic_info_blue(self, theme: str, token: str) -> None:
+        assert get_theme_style(theme).accent == resolve_palette_color(token)
 
-    def test_clarity_accent_tracks_dbt_creams_accent(self) -> None:
-        assert get_theme_style("clarity").accent == resolve_palette_color(
-            "dbt-creams.accent"
-        )
+    @pytest.mark.parametrize("palette", ["dbt-grays", "dbt-creams"])
+    @pytest.mark.parametrize(
+        "alias", ["accent", "separator", "fill-muted", "spark-empty", "placeholder"]
+    )
+    def test_scaffold_palettes_retired_the_stray_aliases(
+        self, palette: str, alias: str
+    ) -> None:
+        with pytest.raises(UnknownColorError):
+            resolve_palette_color(f"{palette}.{alias}")
 
 
 class TestVividFourTierAnchorsTrackScaffold:
-    def test_accent_tracks_heading(self) -> None:
-        assert get_theme_style("vivid").accent == resolve_palette_color(
-            "dbt-grays.heading"
-        )
-
     def test_muted_tracks_muted_step(self) -> None:
         assert get_theme_style("vivid").muted == resolve_palette_color(
             "dbt-grays.muted"

@@ -175,7 +175,7 @@ Run the review skill as the final step before declaring the board done:
 
 - Run `get_skill('board-review')` before declaring a board done.
 
-It orchestrates structural and visual (PNG + vision) passes and returns a ranked findings list. Fix each `blocker`, then re-run the review. Rendering and validation are cached — the loop is cheap.
+It runs the structural pass and returns a ranked findings list. Fix each `blocker`, then re-run the review. Rendering and validation are cached — the loop is cheap.
 
 ## Data Requirements Per Chart Type
 

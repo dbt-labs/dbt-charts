@@ -265,6 +265,15 @@ def suggest_close_source(
     return _suggest_close_match(source, available)
 
 
+def suggest_close_variable(
+    variable: str,
+    available: Sequence[str] = (),
+    **_kwargs: object,  # type-state: object_annotation — hint_generator is called with every field of the code; the rest are heterogeneous and unread
+) -> str | None:
+    """Return a 'Did you mean X?' hint for a variable name the board does not declare."""
+    return _suggest_close_match(variable, available)
+
+
 def suggest_close_theme(
     theme: str,
     available: Sequence[str] = (),

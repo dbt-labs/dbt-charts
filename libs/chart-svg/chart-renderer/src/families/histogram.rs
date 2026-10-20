@@ -1827,6 +1827,17 @@ mod tests {
         assert_eq!(tilted(true), 2 * tilted(false));
     }
 
+    /// A right-edge count axis resolves `labels.align: right` (the forced
+    /// decimal alignment); with no measurable label padding Vega-Lite drops it,
+    /// so the mirror renders instead of refusing.
+    #[test]
+    fn mirror_renders_a_forced_own_side_align_that_vega_drops() {
+        let rows = serde_json::json!([{"amount": 1.0}, {"amount": 2.0}]);
+        let mut resolved = with_axis_y_mirror(minimal_valid_json(None, None, Some("right")), serde_json::json!(true));
+        resolved["style"]["axis_y"]["labels"]["align"] = serde_json::json!("right");
+        render_ok(resolved, rows);
+    }
+
     fn with_axis_y_labels_align_and_domain(
         mut resolved: serde_json::Value,
         align: &str,

@@ -815,14 +815,9 @@ class TestAxisYLabelAlignInvasion:
         spec = generate_vega_lite_spec(chart, data)
         assert spec["encoding"]["y"]["axis"]["labelAlign"] == "right"
 
-    def test_default_align_unset_never_rejected(self, make_chart):
-        """No explicit align — VL's own per-orient default — is always safe.
-
-        Uses an explicit RAW (non-predefined) format: the theme's own
-        unauthored default format is a predefined name (number),
-        which now gets an explicit forced labelAlign regardless of whether
-        anything was authored -- that's this task's own deliberate feature,
-        not the "no override at all" case this test means to check.
+    def test_unset_align_on_a_raw_format_decimal_aligns(self, make_chart):
+        """No explicit align on a right-edge quantitative axis is filled with
+        "right" for a literal d3 spec as for a predefined name.
         """
         chart = make_chart(
             "line",
@@ -836,7 +831,7 @@ class TestAxisYLabelAlignInvasion:
         )
         data = [{"month": "Jan", "revenue": 100}]
         spec = generate_vega_lite_spec(chart, data)
-        assert "labelAlign" not in spec["encoding"]["y"].get("axis", {})
+        assert spec["encoding"]["y"]["axis"]["labelAlign"] == "right"
 
     def test_horizontal_bar_measure_axis_align_not_rejected(self, make_chart):
         """Horizontal bar's measure axis renders on VL x (orient stripped) — the

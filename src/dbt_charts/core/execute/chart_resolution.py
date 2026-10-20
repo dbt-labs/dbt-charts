@@ -25,6 +25,7 @@ from dbt_charts.core.compile.resolve import (
 from dbt_charts.core.compile.template.display_text import DisplayTextInputs
 from dbt_charts.core.compile.template.query_result import QueryResult
 from dbt_charts.core.execute.cache_backend import CacheRows
+from dbt_charts.core.execute.chart_columns import raise_missing_chart_column
 from dbt_charts.core.execute.column_formats import raise_column_format_error
 from dbt_charts.core.execute.date_range_axis import proven_range
 from dbt_charts.core.execute.executor import Executor
@@ -186,7 +187,7 @@ def resolve_chart_with_runtime_inputs(
     """
     raise_column_format_error(chart, executor)
     layer_datasets = collect_layer_datasets(chart, data, executor, variables)
-    return resolve(
+    resolved = resolve(
         chart,
         data,
         chart_style_context=chart_style_context,
@@ -202,3 +203,7 @@ def resolve_chart_with_runtime_inputs(
         x_date_range=chart_x_date_range(chart, executor, variables),
         title_width=title_width,
     )
+    # After resolve, so a channel resolve diagnoses more specifically (a literal
+    # color where a column belongs) keeps that message.
+    raise_missing_chart_column(chart, data, layer_datasets)
+    return resolved

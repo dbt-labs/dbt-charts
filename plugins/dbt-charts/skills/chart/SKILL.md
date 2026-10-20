@@ -197,7 +197,7 @@ Keep canvas and ink colors out of the base board, and make the variant a second 
 - Sequential: `dbt-seq-amber`, `dbt-seq-blue`, `dbt-seq-brown`, `dbt-seq-gray`, `dbt-seq-green`, `dbt-seq-purple`, `dbt-seq-rust`, `dbt-seq-teal` (each also as `<name>-dark`).
 - Diverging: `dbt-div-blue-red`, `dbt-div-coolwarm`, `dbt-div-crimson-green`, `dbt-div-orange-teal`, `dbt-div-sunset` (each also as `<name>-dark`).
 - Tones: `info`, `negative`, `positive`, `warning`.
-- Scaffolds `dbt-creams`, `dbt-grays`; aliases of `dbt-grays`: `canvas`, `surface-subtle`, `grid`, `border`, `grid-emphasis`, `disabled`, `subtitle`, `muted`, `inactive`, `heading`, `ink`, `void`, `white`, `black`, `fill-muted`, `separator`, `spark-empty`, `accent`, `placeholder`.
+- Scaffolds `dbt-creams`, `dbt-grays`; aliases of `dbt-grays`: `canvas`, `surface-subtle`, `grid`, `border`, `grid-emphasis`, `disabled`, `subtitle`, `muted`, `inactive`, `heading`, `ink`, `void`, `white`, `black`.
 
 `style`:
 - `palettes` (map of name): Theme palette role assignments: role name to a built-in palette name, never a color. Custom colors go in ``charts.color.categorical.palette: [hex, ...]``. Default seed: chrome, info, negative, positive, warning, category, sequence, diverge

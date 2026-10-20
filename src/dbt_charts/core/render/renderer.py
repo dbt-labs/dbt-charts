@@ -34,6 +34,7 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.models.board.normalized import (
     Board,
+    Layout,
     VariableValues,
 )
 from dbt_charts.core.compile.models.board.resolved import (
@@ -43,6 +44,7 @@ from dbt_charts.core.compile.models.board.resolved import (
 from dbt_charts.core.compile.models.chart.normalized import NON_ASPECT_RATIO_TYPES
 from dbt_charts.core.compile.models.chart.resolved._layer import LayeredResolvedChart
 from dbt_charts.core.compile.template.variables import (
+    check_option_values,
     normalize_multiselect_values,
     parse_variable_json_strings,
     variable_value_is_absent,
@@ -117,6 +119,7 @@ from dbt_charts.core.render.render_result import RenderResult
 from dbt_charts.core.render.sizing import resolve_active_tab_index
 from dbt_charts.core.render.svg_utils import strip_pagination_chrome
 from dbt_charts.core.render.thumbnail import cartoonize
+from dbt_charts.core.render.variables_resolve import resolve_option_values
 from dbt_charts.core.render.warnings import (
     WarningContext,
     registry as _warnings_registry,
@@ -215,6 +218,15 @@ def _collect_active_layout_charts(
 
     _walk(board.layout)
     return charts
+
+
+def _tab_variables(layout: Layout) -> set[str]:
+    """Every tab variable in ``layout`` and the boards nested in it."""
+    names = {layout.tab_variable} if layout.tab_variable else set()
+    for item in layout.items:
+        if item.board is not None:
+            names |= _tab_variables(item.board.layout)
+    return names
 
 
 def _collect_render_warnings(
@@ -431,6 +443,7 @@ def render(
     max_workers: int | None = None,
     warnings_ignore: frozenset[str] = frozenset(),
     max_rows_per_query: int = NO_ROW_CAP,
+    strict_variables: bool = True,
     **options: Any,
 ) -> RenderResult:
     with regional_scope(
@@ -449,6 +462,7 @@ def render(
             max_workers,
             warnings_ignore,
             max_rows_per_query,
+            strict_variables,
             **options,
         )
 
@@ -463,6 +477,7 @@ def _render(
     max_workers: int | None,
     warnings_ignore: frozenset[str],
     max_rows_per_query: int,
+    strict_variables: bool,
     **options: Any,  # type-state: explicit_any — render()'s own pass-through options
 ) -> RenderResult:
     """Render a compiled board.
@@ -587,6 +602,21 @@ def _render(
     execute_queries_parallel(
         executor, cache_miss_names, merged_variables, resolved_max_workers
     )
+    # Option queries have run for the board's own controls, so their rows cost
+    # nothing more to check a query-backed select against. A tab
+    # variable's options are its tabs: an unknown tab is ERR-TAB-UNKNOWN, raised
+    # by the tabs layout with the slugs.
+    if strict_variables:
+        tab_variables = _tab_variables(board.layout)
+        check_option_values(
+            {
+                name: var
+                for name, var in variable_registry.items()
+                if name not in tab_variables
+            },
+            parsed_variables,
+            lambda var: resolve_option_values(var, executor, merged_variables),
+        )
 
     # board.resolved_style is trusted here. Compile populated it; if a caller
     # mutated board.theme they must have gone through Board.set_theme(), which

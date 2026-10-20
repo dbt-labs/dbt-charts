@@ -136,8 +136,8 @@ class TestJsonFormat:
     def test_multiple_charts(self, make_chart):
         """Multiple charts in a board all appear in items."""
         data = [{"x": 1, "y": 2}]
-        chart1 = make_chart("bar", id="chart1", title="Chart 1")
-        chart2 = make_chart("line", id="chart2", title="Chart 2")
+        chart1 = make_chart("bar", id="chart1", title="Chart 1", x="x", y="y")
+        chart2 = make_chart("line", id="chart2", title="Chart 2", x="x", y="y")
         board = _make_board([chart1, chart2])
         executor = _make_executor(data)
 

@@ -532,6 +532,9 @@ def _retired_categorical_token_needs_recheck(mapping: Mapping[str, JsonValue]) -
         RETIRED_PALETTE_ROLE_KEYS,
         RETIRED_TOKEN_VALUE_MAP,
     )
+    from dbt_charts.core.compile.migrations.versions.v0_11_0 import (
+        SCAFFOLD_ALIAS_RESPELL,
+    )
 
     def scan(node: JsonValue) -> bool:
         if isinstance(node, str):
@@ -541,10 +544,13 @@ def _retired_categorical_token_needs_recheck(mapping: Mapping[str, JsonValue]) -
             # retired token too, so this only fires on an entry the map
             # actually *changes*.
             return (
-                RETIRED_TOKEN_VALUE_MAP.get(
-                    node, node
-                )  # type-state: silent_fallback — absent-from-map means "not a retired spelling at all", the same as a self-mapped current entry; both compare equal to node and correctly report False
-                != node
+                node in SCAFFOLD_ALIAS_RESPELL
+                or (
+                    RETIRED_TOKEN_VALUE_MAP.get(
+                        node, node
+                    )  # type-state: silent_fallback — absent-from-map means "not a retired spelling at all", the same as a self-mapped current entry; both compare equal to node and correctly report False
+                    != node
+                )
             )
         if isinstance(node, dict):
             palettes = node.get("palettes")

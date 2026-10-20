@@ -31,6 +31,7 @@ from dbt_charts.core.compile.resolve.style.tokens import (
     _EMOJI_MODE_TO_FAMILY,
     _append_emoji_family,
     _resolve_color_tokens,
+    _resolve_self_tokens,
 )
 
 # Family sub-patch keys in author-precedence order.  The cascade reads global
@@ -253,8 +254,26 @@ def merge_chart_style(
             if _dt_patch is not None:
                 charts_family_patch["support_table"] = _dt_patch
 
+    # A chart's own background is the canvas its knockouts sit on, so they
+    # are substituted here from the token-bearing tree, not inherited from
+    # the board's substitution.
+    _background = getattr(
+        primary, "background", None
+    )  # type-state: silent_fallback — the patch is a per-family union; families without the slot legitimately lack the attribute
+    if _background is None:
+        _background = _family_background
+    # Composite over board_canvas, not ink_canvas (the CHART canvas) --
+    # see ChartStyleContext.board_canvas's own comment for why.
+    own_canvas = (
+        None
+        if _background is None
+        else ink_canvas(_background, base_charts.board_canvas)
+    )
+
     if charts_family_patch:
         pre = base_charts.pre_style
+        if own_canvas is not None:
+            pre = pre.model_copy(update={"charts": base_charts.canvas_token_charts})
         merged_charts = pre.charts
         for _key, _fam_patch in charts_family_patch.items():
             _pre_inherit_patch, _, _ = defer_base_none_children(
@@ -305,6 +324,8 @@ def merge_chart_style(
             _fam = getattr(cascaded_pre.charts, _key)
             if emoji_family is not None:
                 _fam = _append_emoji_family(_fam, emoji_family)
+            if own_canvas is not None:
+                _fam = _resolve_self_tokens(_fam, own_canvas)
             overrides[_key] = _fam
 
     # --- Palette + Color ---
@@ -353,16 +374,9 @@ def merge_chart_style(
         # _color.gradient is consumed by channel.py; not stored in resolved cascade.
 
     # --- Top-level Vega-facing ---
-    _background = getattr(
-        primary, "background", None
-    )  # type-state: silent_fallback — the patch is a per-family union; families without the slot legitimately lack the attribute
-    if _background is None:
-        _background = _family_background
     if _background is not None:
         overrides["background"] = _background
-        # Composite over board_canvas, not ink_canvas (the CHART canvas) --
-        # see ChartStyleContext.board_canvas's own comment for why.
-        overrides["ink_canvas"] = ink_canvas(_background, base_charts.board_canvas)
+        overrides["ink_canvas"] = own_canvas
 
     # --- Chart-local axis overrides ---
     # Stored as typed axis-variant patch sentinels on resolved_chart_style

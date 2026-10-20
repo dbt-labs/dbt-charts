@@ -28,9 +28,13 @@ from dbt_charts.core.compile.models.board.resolved import ChartResolveFailure
 from dbt_charts.core.compile.schema.renderers.board_resolved import (
     render_board_resolved_schema,
 )
-from dbt_charts.core.compile.template.variables import normalize_multiselect_values
+from dbt_charts.core.compile.template.variables import (
+    check_variable_overrides,
+    normalize_multiselect_values,
+)
 from dbt_charts.core.diagnostics import ERR_FILE_NOT_FOUND, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.execute.file_source_materializer import (
     default_local_materializer_factory,
@@ -117,6 +121,10 @@ def emit_board_artifact(
     # values are always strings, so a scalar is the only shape a caller can
     # supply for a multiselect here; unnarrowed, a bare `| join` would iterate
     # it character by character.
+    try:
+        check_variable_overrides(board.variable_registry or {}, variables or {})
+    except ExecutionError as exc:
+        return EmitBoardArtifactResult(success=False, errors=[exc.to_diagnostic()])
     merged_variables: dict[str, Any] = normalize_multiselect_values(
         {**board.variable_defaults, **(variables or {})},
         board.variable_registry or {},

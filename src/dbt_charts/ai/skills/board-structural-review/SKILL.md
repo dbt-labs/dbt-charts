@@ -8,8 +8,8 @@ description: >
   descriptive naming, anti-patterns). Use when asked to 'review this
   dashboard', 'check this board', 'is this YAML well-shaped', 'find problems in
   this dashboard', or after editing a board before delivery. Cheap — no
-  rendering, no PNG, no LLM judge in the loop. Do NOT use for visual problems
-  that need to be seen (use {{ s_skill_name_visual_review }}). Do NOT use as a YAML
+  rendering, no LLM judge in the loop. {{#if_surface cli}}Do NOT use for visual problems
+  that need to be seen (use {{ s_skill_name_visual_review }}). {{/if_surface}}Do NOT use as a YAML
   linter substitute — schema validation already covers that.
 metadata:
   author: fivetran
@@ -30,9 +30,9 @@ this is the cheap pass.
 
 ## When NOT to use
 
-- Visual problems ("the legend is overlapping the title") — use
+{{#if_surface cli}}- Visual problems ("the legend is overlapping the title") — use
   `{{ s_skill_name_visual_review }}`
-- Comparing two versions of a board — out of scope for this skill
+{{/if_surface}}- Comparing two versions of a board — out of scope for this skill
 
 ## Protocol
 

@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::common::FormatSlot;
 use crate::contract::{self, SpanRow};
 use crate::families::temporal::{
-    civil_from_days, date_text_day, utc_ticks_exact, AuthoredTimeFormat, TimeUnit, MONTH_ABBR,
+    civil_from_days, date_text_day, utc_instants, AuthoredTimeFormat, TimeUnit, MONTH_ABBR,
 };
 use crate::Payload;
 
@@ -348,12 +348,8 @@ pub(crate) fn date_axis(rows: &[Row], fields: [&str; 2], tick_count: usize) -> R
     if !(hi > lo) {
         return Err("bar: a date measure whose dates span no time has no scale".into());
     }
-    let ticks = utc_ticks_exact(lo, hi, tick_count)?;
-    Ok(DateAxis {
-        domain: (lo, hi),
-        labels: ticks.iter().map(|&t| date_tick_label(t)).collect(),
-        ticks: ticks.into_iter().map(|t| t as f64).collect(),
-    })
+    let ticks = utc_instants(lo, hi, tick_count);
+    Ok(DateAxis { domain: (lo, hi), labels: ticks.iter().map(|&t| date_tick_label(t.floor() as i64)).collect(), ticks })
 }
 
 /// `payload` with each row's date columns as day numbers (a time of day as the

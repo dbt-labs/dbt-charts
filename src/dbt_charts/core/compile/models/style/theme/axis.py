@@ -404,8 +404,11 @@ class AxisLabelStyle(BaseModel):
             "absolute. 'inward' hugs the plot (own-side: left on a left axis, "
             "right on a right axis); 'outward' hugs away from the plot "
             "(Vega-Lite's default growth direction). inward/outward are a "
-            "no-op on an axis with no left/right edge. 'auto' uses Vega-Lite's "
-            "default."
+            "no-op on an axis with no left/right edge. 'auto' uses "
+            "Vega-Lite's default, except that a right-edge quantitative "
+            "axis with a number format and a tabular label font "
+            "decimal-aligns its labels; a house format alias does so even "
+            "over an align set here."
         ),
     )
     # Two-bool struct enabling/disabling each overlap strategy.

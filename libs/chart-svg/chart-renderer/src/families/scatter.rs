@@ -1738,8 +1738,9 @@ fn date_axis(
         dates.sort();
         dates.dedup();
     }
+    let timed = crate::families::subday::SubdaySource::of(&ladder.iter().map(String::as_str).collect::<Vec<_>>());
     crate::families::scatter_axis::TemporalXAxis::resolve(
-        &crate::families::scatter_axis::DateColumn { ladder: &ladder, kept: &kept, law, band_layer: layers.band },
+        &crate::families::scatter_axis::DateColumn { ladder: &ladder, kept: &kept, law, band_layer: layers.band, bucket_aligned: false, timed: &timed, chart_width: slot_w },
         &r.style.axis_x,
         slot_w * usable_ratio,
         title_text,
@@ -4226,7 +4227,7 @@ fn render_fit(
             // structured tooltip does not apply under `multiples`): x, y, then
             // the color channel, each as `title: value`.
             let x_value = match &temporal_x {
-                Some(axis) => axis.tooltip_date(&row_str(row, &r.x))?,
+                Some(axis) => axis.native_date(&row_str(row, &r.x))?,
                 None => row_str(row, &r.x),
             };
             let y_value = if y_nominal {

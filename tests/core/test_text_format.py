@@ -295,8 +295,8 @@ class TestTextFormat:
 
         result = render(outer, executor, format="text").output
 
-        assert "\n## row1\n" not in result
-        assert "### row1_col0" in result
+        assert "row1" not in result
+        assert "\n## test_bar (bar)\n" in result
 
     def test_nested_board(self, make_chart):
         """Nested boards use deeper heading levels."""
@@ -340,8 +340,8 @@ class TestTextFormat:
     def test_multiple_charts(self, make_chart):
         """Multiple charts in a board all appear."""
         data = [{"x": 1, "y": 2}]
-        chart1 = make_chart("bar", id="chart1", title="Chart One")
-        chart2 = make_chart("line", id="chart2", title="Chart Two")
+        chart1 = make_chart("bar", id="chart1", title="Chart One", x="x", y="y")
+        chart2 = make_chart("line", id="chart2", title="Chart Two", x="x", y="y")
         board = _make_board([chart1, chart2])
         executor = _make_executor(data)
 
@@ -1351,6 +1351,233 @@ class TestTextDataFormat:
 
         assert "0.0 " not in data_section
         assert "4e-05" in data_section
+
+
+def _render_yaml_text(board_yaml: str, data: list[dict], **kwargs) -> str:
+    from dbt_charts.core.compile import compile as compile_board
+
+    result = compile_board(board_yaml)
+    assert result.success and result.board is not None, result.errors
+    executor = _make_compiled_executor(result, data)
+    return render(result.board, executor, format="text", **kwargs).output
+
+
+_ONE_QUERY = """\
+queries:
+  q:
+    sql: SELECT 1
+    source: s
+"""
+
+
+def _data_summary_for_bar(data: list[dict]) -> str:
+    from dbt_charts.core.render.text_format import _data_summary
+
+    return _data_summary({"x": "x", "y": "y"}, data, {})
+
+
+class TestTextSummaryFidelity:
+    def test_kpi_heading_uses_authored_label(self) -> None:
+        output = _render_yaml_text(
+            f"""\
+title: T
+{_ONE_QUERY}
+charts:
+  hit_rate_kpi:
+    query: q
+    type: kpi
+    value: v
+    label: Hit rate
+rows:
+  - hit_rate_kpi
+""",
+            [{"v": 5}],
+        )
+
+        assert "Hit rate (kpi)" in output
+        assert "hit_rate_kpi" not in output
+
+    def test_decimal_measure_shows_y_range(self) -> None:
+        from decimal import Decimal
+
+        output = _render_yaml_text(
+            f"""\
+title: T
+style:
+  charts:
+    axis_quantitative:
+      labels:
+        format: currency_whole
+{_ONE_QUERY}
+charts:
+  c:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+rows:
+  - c
+""",
+            [
+                {"month": "Jan", "revenue": Decimal("80.00")},
+                {"month": "Feb", "revenue": Decimal("120.00")},
+            ],
+        )
+
+        assert "revenue: $80–$120" in output
+
+    def test_decimal_measure_without_axis_format_shows_plain_range(self) -> None:
+        from decimal import Decimal
+
+        data = [{"x": 1, "y": Decimal("2.50")}, {"x": 2, "y": Decimal("7.25")}]
+
+        assert "y: 2.50–7.25" in _data_summary_for_bar(data)
+
+    def test_bool_measure_has_no_range(self) -> None:
+        data = [{"x": 1, "y": True}, {"x": 2, "y": False}]
+
+        assert "y:" not in _data_summary_for_bar(data)
+
+    def test_board_text_and_text_blocks_are_in_the_summary(self) -> None:
+        output = _render_yaml_text(
+            f"""\
+title: Report
+text: |
+  Intro paragraph.
+{_ONE_QUERY}
+charts:
+  c:
+    query: q
+    type: bar
+    x: x
+    y: y
+rows:
+  - c
+  - text: |
+      Definition of a hit.
+""",
+            [{"x": 1, "y": 2}],
+        )
+
+        assert "Intro paragraph." in output
+        assert "Definition of a hit." in output
+
+    def test_markdown_only_board_returns_its_text(self) -> None:
+        output = _render_yaml_text(
+            """\
+title: Strategy
+text: |
+  The conclusion is to ship work.
+""",
+            [],
+        )
+
+        assert output.startswith("# Strategy")
+        assert "The conclusion is to ship work." in output
+
+    def test_long_text_is_cut_with_an_explicit_note(self) -> None:
+        from dbt_charts.core.render.text_format import TEXT_EXCERPT_CHARS
+
+        body = "word " * TEXT_EXCERPT_CHARS
+        output = _render_yaml_text(f"title: Report\ntext: |\n  {body}\n", [])
+
+        assert body[: TEXT_EXCERPT_CHARS - 1] in output
+        assert body not in output
+        assert (
+            f"[text cut: showing the first {TEXT_EXCERPT_CHARS} of "
+            f"{len(body.strip())} characters]"
+        ) in output
+
+    def test_table_states_one_consistent_total(self) -> None:
+        data = [{"account": f"Acct{i}", "n": i} for i in range(60)]
+        output = _render_yaml_text(
+            f"""\
+title: T
+{_ONE_QUERY}
+charts:
+  t:
+    query: q
+    type: table
+    style:
+      pagination:
+        enabled: true
+        page_rows: 20
+rows:
+  - t
+""",
+            data,
+            max_rows_per_query=10,
+        )
+
+        assert "60 rows, 20 a page, 3 pages" in output
+        assert "showing first 3 of 60 rows" in output
+        assert "of 10 rows" not in output
+
+    def test_small_table_states_its_row_count_once(self) -> None:
+        data = [{"account": f"Acct{i}", "n": i} for i in range(6)]
+        output = _render_yaml_text(
+            f"""\
+title: T
+{_ONE_QUERY}
+charts:
+  t:
+    query: q
+    type: table
+rows:
+  - t
+""",
+            data,
+        )
+
+        assert output.count("6 rows") == 1
+
+    def test_untitled_containers_have_no_synthetic_heading(self) -> None:
+        output = _render_yaml_text(
+            f"""\
+title: Board
+{_ONE_QUERY}
+charts:
+  a:
+    query: q
+    type: bar
+    x: x
+    y: y
+  b:
+    query: q
+    type: bar
+    x: x
+    y: y
+rows:
+  - cols:
+      - a
+      - b
+""",
+            [{"x": 1, "y": 2}],
+        )
+
+        assert "_row" not in output
+        assert "_col" not in output
+
+    def test_authored_container_title_is_kept(self) -> None:
+        output = _render_yaml_text(
+            f"""\
+title: Board
+{_ONE_QUERY}
+charts:
+  a:
+    query: q
+    type: bar
+    x: x
+    y: y
+rows:
+  - title: Revenue drivers
+    rows:
+      - a
+""",
+            [{"x": 1, "y": 2}],
+        )
+
+        assert "## Revenue drivers" in output
 
 
 def test_kpi_with_no_rows_stamps_no_data_code(make_chart):

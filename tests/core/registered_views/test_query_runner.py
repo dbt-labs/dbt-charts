@@ -535,6 +535,8 @@ class _FakeCache:
                 return CachedQueryFailure(
                     error_class=type(error).__name__,
                     error_message=str(error),
+                    error_code=None,
+                    error_fields={},
                     traceback="",
                     failed_at=error_at,
                 )

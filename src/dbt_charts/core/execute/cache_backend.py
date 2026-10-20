@@ -128,6 +128,11 @@ class CachedQueryFailure(Exception):
 
     error_class: str
     error_message: str
+    # The registry code (``ERR-...``) the failure was raised with, and the
+    # structured fields its hint and message were built from, so a replay
+    # reports what a fresh run would. None and {} for an exception with neither.
+    error_code: str | None
+    error_fields: dict[str, Any]  # type-state: explicit_any — as DbtChartsError.fields
     # "" when unavailable — traceback extraction can fail for C-level
     # exceptions, and that is what both backends already store.
     traceback: str

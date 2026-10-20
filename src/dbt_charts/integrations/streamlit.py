@@ -126,6 +126,8 @@ def st_board(
         result = ps.render_board(
             project.path_for_fspath((project.root / board).resolve()).read_board(),
             variables={**picked, **(variables or {})},
+            # Picked values persist across reruns of an edited board.
+            strict_variables=False,
             format="html",
             standalone=True,
             controls=True,

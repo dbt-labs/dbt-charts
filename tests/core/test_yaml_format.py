@@ -396,8 +396,8 @@ rows: [card]
 
     def test_multiple_charts_unique_queries(self, make_chart):
         """Multiple charts with same query_name get distinct resolved queries."""
-        data1 = [{"a": 1}]
-        data2 = [{"b": 2}]
+        data1 = [{"x_field": "a", "y_field": 1}]
+        data2 = [{"x_field": "b", "y_field": 2}]
         chart1 = make_chart("bar", id="c1", query_name="q1")
         chart2 = make_chart("line", id="c2", query_name="q2")
         board = _make_board([chart1, chart2])

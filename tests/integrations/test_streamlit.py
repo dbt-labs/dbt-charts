@@ -252,6 +252,26 @@ class TestLiveControls:
 
         assert "2025" in session.received_sql[0]
 
+    def test_a_stale_pick_for_a_dropped_variable_still_renders(
+        self, tmp_path: Path, frame: _FrameRecorder
+    ) -> None:
+        """A viewer's persisted pick can outlive the variable it named once the
+        board changes; the board still renders instead of erroring."""
+        from dbt_charts.integrations import streamlit as st_integration
+
+        session = _FakeSession(rows=[{"MONTH": "Jan", "REVENUE": 100}])
+        frame.session_state["sales"] = {"variables": {"no_longer_declared": "x"}}
+
+        st_integration.st_board(
+            "charts/board.yml",
+            project_dir=_make_project(tmp_path),
+            session=session,
+            key="sales",
+        )
+
+        assert session.received_sql
+        assert "ERR-UNKNOWN-VARIABLE-OVERRIDE" not in frame.calls[0]["html"]
+
     def test_values_the_app_passes_win_over_the_viewers(
         self, tmp_path: Path, frame: _FrameRecorder
     ) -> None:

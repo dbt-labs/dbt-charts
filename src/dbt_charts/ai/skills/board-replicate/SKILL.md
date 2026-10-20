@@ -135,9 +135,10 @@ theme's business — leave them alone.
 
 Render after every tile (`{{ s_skill_build }}` owns the build-validate loop —
 one tile at a time, never one-shot). When all tiles are in, render the whole
-board to PNG and compare side by side with the source:
+board{{#if_surface cli}} to PNG and compare side by side with the source:
 
-{{ s_render_png_example }}
+{{ s_render_png_example }}{{/if_surface}}{{#if_surface tool}} with `{{ s_render_board }}` and compare its chart list with the
+source's tiles{{/if_surface}}.
 
 Judge structure parity — sections, tile count, chart types, options from the
 checklist — not colors or fonts; those are intentionally dbt charts' own.

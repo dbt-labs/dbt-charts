@@ -113,11 +113,16 @@ def _build_ruler(
 
     A start-anchored axis (``_effective_align(...) == "left"``) gets no
     ruler at all: it falls back to plain VL formatting, unaligned.
-    ``build_resolved_axis`` forces ``align: "right"`` for a format-alias axis
-    only when it is quantitative, on the right edge, and its label font has
-    tabular figures -- so the branch is reached by a raw/literal SI spec, and
-    also by an alias axis that misses one of those conditions (a non-tabular
-    label font, e.g.) or carries an explicitly authored start-anchoring align.
+    ``build_resolved_axis`` forces ``align: "right"`` for a quantitative,
+    right-edge axis (with a tabular label font when column-forming) whose
+    format is a house alias, or whose format is a raw d3 number spec with no
+    authored align. A raw SI spec forced this way renders literal d3 per
+    tick and never reaches this function (the caller passes
+    ``si_format=None``). The start-anchored branch is reached by an alias axis
+    that misses one of those conditions (a non-tabular label font, e.g.) or
+    carries an explicitly authored start-anchoring align, and by a raw SI spec
+    that is not forced (a non-right edge, a horizontal bar's measure axis, or
+    an authored align).
 
     ``build_resolved_axis`` calls this once for the primary edge and, when
     ``style.axis_y.mirror`` is set, once more for the mirrored edge: same
@@ -126,10 +131,10 @@ def _build_ruler(
     ``labels.align`` can make either edge either anchoring) the opposite of
     the primary's.
 
-    ``si_format`` is the axis's resolved label format when it is SI-shaped,
-    else ``None`` -- the caller runs ``is_d3_si_spec`` once and hands the
-    verdict down, so this function does not re-derive it (both call sites
-    share the one decision).
+    ``si_format`` is the axis's resolved label format when it is SI-shaped
+    and was not right-forced as a literal spec, else ``None`` -- the caller
+    runs ``is_d3_si_spec`` once and hands the verdict down, so this function
+    does not re-derive it (both call sites share the one decision).
 
     ``notation`` is the authored register override; it replaces the
     mode-derived one and is baked into ``register``. ``repeat`` likewise

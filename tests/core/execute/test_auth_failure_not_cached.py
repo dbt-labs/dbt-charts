@@ -96,8 +96,10 @@ def test_ordinary_query_failure_is_still_cached() -> None:
         _executor(registry, cache).execute_query("q")
     assert raised.value.code is ERR_WAREHOUSE_RUNTIME
 
-    with pytest.raises(CachedQueryFailure, match="Resources exceeded"):
+    with pytest.raises(QueryError, match="Resources exceeded") as replayed:
         _executor(registry, cache).execute_query("q")
+    assert isinstance(replayed.value.__cause__, CachedQueryFailure)
+    assert replayed.value.code is ERR_WAREHOUSE_RUNTIME
     assert registry.calls == 1
 
 

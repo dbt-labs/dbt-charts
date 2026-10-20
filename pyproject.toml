@@ -362,15 +362,13 @@ include = [
     { path = "libs/d3-format/src/d3_format/**/*", format = "sdist" },
 ]
 
-# Artifact-audit policy consumed by `.github/scripts/check_published_artifact.py`
-# (wired into the smoke-install job by T2).
+# Artifact-audit policy consumed by `.github/scripts/check_published_artifact.py`.
 [tool.dbt_charts_boundary]
 allowed_roots = ["src/dbt_charts", "libs/markdown-svg/src/mdsvg", "libs/d3-format/src/d3_format"]
 native_extension = "dbt_charts/_engine"
 forbidden_name_substrings = ["us-west1-python.pkg.dev", "internal-eng@", "tasks/workstreams/", "ai_notes/"]
-forbidden_fixture_path_roots = ["tasks/", "apps/", "ai_notes/", ".claude/", ".agents/", ".cursor/"]
 forbidden_token_prefixes = ["ghp_", "github_pat_", "sk-", "sk-ant-", "AKIA", "BEGIN PRIVATE KEY"]
-# Regex patterns that must not match wheel/sdist content. Use single-quoted
+# Regex patterns that must not match wheel content. Use single-quoted
 # TOML literal strings so backslashes (\b, \() survive verbatim. Enforces
 # dbt-charts/AGENTS.md's "no internal decision identifiers in shipped artifacts"
 # rule and the parallel ban on personal-name and internal-repo-path comments.

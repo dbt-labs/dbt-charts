@@ -407,12 +407,13 @@ pub fn legend_grid(
         || symbols
             .iter()
             .any(|s| matches!(s, Some(LegendSymbol::Stroke(_) | LegendSymbol::StrokedCircle(_))));
+    let stroke_w = if symbols.iter().any(|s| matches!(s, Some(LegendSymbol::ThinCircle))) { 1.0 } else { VEGA_SYMBOL_STROKE_WIDTH };
     let size = if symbols.iter().any(|s| matches!(s, Some(LegendSymbol::Dash(_)))) {
         (VEGA_DASH_SYMBOL_SIZE.sqrt() + VEGA_SYMBOL_STROKE_WIDTH).ceil().max(font_size)
     } else if mixed {
         font_size
     } else {
-        (VEGA_SYMBOL_SIZE.sqrt() + VEGA_SYMBOL_STROKE_WIDTH).ceil().max(font_size)
+        (VEGA_SYMBOL_SIZE.sqrt() + stroke_w).ceil().max(font_size)
     };
     let c = size / 2.0;
     // Each entry's own half-extent beyond `c`, per axis: a square/circle
@@ -432,7 +433,7 @@ pub fn legend_grid(
         Some(LegendSymbol::FilledCircle | LegendSymbol::FilledGlyph(_) | LegendSymbol::FilledSquare) => {
             VEGA_SYMBOL_SIZE.sqrt() / 2.0
         }
-        _ => VEGA_SYMBOL_SIZE.sqrt() / 2.0 + VEGA_SYMBOL_STROKE_WIDTH,
+        _ => VEGA_SYMBOL_SIZE.sqrt() / 2.0 + stroke_w,
     };
     let half_extent_y = |i: usize| match symbols.get(i).copied().flatten() {
         Some(LegendSymbol::Glyph(_, y) | LegendSymbol::Ring(.., (_, y))) => y + VEGA_SYMBOL_STROKE_WIDTH,
@@ -442,7 +443,7 @@ pub fn legend_grid(
         Some(LegendSymbol::FilledCircle | LegendSymbol::FilledGlyph(_) | LegendSymbol::FilledSquare) => {
             VEGA_SYMBOL_SIZE.sqrt() / 2.0
         }
-        _ => VEGA_SYMBOL_SIZE.sqrt() / 2.0 + VEGA_SYMBOL_STROKE_WIDTH,
+        _ => VEGA_SYMBOL_SIZE.sqrt() / 2.0 + stroke_w,
     };
     let text_y1 = c + (0.3 * font_size).round() - (0.8 * font_size).round();
     let y1 = |i: usize| (c - half_extent_y(i)).min(text_y1);
@@ -1048,7 +1049,12 @@ pub fn legend_from_widths(
 #[derive(Clone, Copy)]
 pub enum LegendSymbol<'a> {
     Square(&'a str),
+    /// A [`LegendSymbol::Square`] stroked in its own fill.
+    SquareInFill,
     Circle,
+    /// [`LegendSymbol::Circle`] with a 1px stroke: a line's legend under a columns facet with shared scales,
+    /// where Vega-Lite drops the mark's own symbol stroke width.
+    ThinCircle,
     /// A circle stroked in the mark's own constant `stroke` color: a filled
     /// `arc` mark's legend symbol takes the mark's `stroke` and keeps
     /// Vega's `symbolStrokeWidth` 1.5 (`symbols` in Vega-Lite's
@@ -1181,7 +1187,11 @@ pub fn emit_vega_legend(
         let fill = entry.fill;
         crate::contract::legend_symbol_open(out);
         match entry.symbol.unwrap_or(default_symbol) {
-            LegendSymbol::Square(stroke) => {
+            symbol @ (LegendSymbol::Square(_) | LegendSymbol::SquareInFill) => {
+                let stroke = match symbol {
+                    LegendSymbol::Square(stroke) => stroke,
+                    _ => fill,
+                };
                 let _ = write!(
                     out,
                     "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"10\" height=\"10\" \
@@ -1190,12 +1200,13 @@ pub fn emit_vega_legend(
                     y + c - 5.0, fill = xml_escape_attr(fill), stroke = xml_escape_attr(stroke)
                 );
             }
-            LegendSymbol::Circle => {
+            circle @ (LegendSymbol::Circle | LegendSymbol::ThinCircle) => {
+                let stroke_w = if matches!(circle, LegendSymbol::Circle) { "1.5" } else { "1" };
                 let _ = write!(
                     out,
                     "<path transform=\"translate({:.2},{:.2})\" \
                      d=\"M5,0A5,5,0,1,1,-5,0A5,5,0,1,1,5,0\" \
-                     fill=\"{fill}\" stroke=\"{fill}\" stroke-width=\"1.5\"/>",
+                     fill=\"{fill}\" stroke=\"{fill}\" stroke-width=\"{stroke_w}\"/>",
                     x + c,
                     y + c, fill = xml_escape_attr(fill)
                 );
@@ -1920,5 +1931,20 @@ mod tests {
         let mut svg = String::new();
         emit_vega_legend(&mut svg, &entries, &legend, &cfg, LegendSymbol::Circle, 0.0, 0.0, false);
         assert_vega_legend_roles(&svg, &["Enterprise", "SMB"]);
+    }
+
+    /// Under a shared-scale columns facet a line's legend circles stroke at 1px and lay out 11 wide, a pixel
+    /// short of the default 12.
+    #[test]
+    fn a_thin_circle_strokes_at_one_pixel_and_lays_out_eleven_wide() {
+        let thin = legend_grid(&[7.0, 7.0], &[Some(LegendSymbol::ThinCircle); 2], false, 11.0, 0, 8.0);
+        let plain = legend_grid(&[7.0, 7.0], &[Some(LegendSymbol::Circle); 2], false, 11.0, 0, 8.0);
+        assert_eq!((thin.size, plain.size), (11.0, 12.0));
+        let cfg = legend_cfg("vertical", None);
+        let entries = titled_entries();
+        let legend = vega_legend(&entries, false, "Segment", &cfg, &test_fonts()).unwrap();
+        let mut svg = String::new();
+        emit_vega_legend(&mut svg, &entries, &legend, &cfg, LegendSymbol::ThinCircle, 0.0, 0.0, false);
+        assert!(svg.contains("stroke-width=\"1\"/>") && !svg.contains("stroke-width=\"1.5\""), "{svg}");
     }
 }

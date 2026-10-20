@@ -815,8 +815,9 @@ class TestQueryDataAgesOnFailure:
                 result_cache=cache,
             )
 
-            with pytest.raises(CachedQueryFailure):
+            with pytest.raises(QueryError) as exc_info:
                 executor.execute_query("q")
+            assert isinstance(exc_info.value.__cause__, CachedQueryFailure)
 
             names = [name for name, _da, _p in executor.query_data_ages]
             assert "q" in names, (

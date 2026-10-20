@@ -1325,7 +1325,7 @@ fn date_ticks(min: f64, max: f64, count: usize) -> Result<Vec<f64>, String> {
     if min == max {
         return Ok(vec![min]);
     }
-    Ok(crate::families::temporal::utc_ticks_exact(min, max, count)?.into_iter().map(|d| d as f64).collect())
+    Ok(crate::families::temporal::utc_instants(min, max, count))
 }
 
 /// The labeled dates of a time-scale legend over a gradient `length` px long:

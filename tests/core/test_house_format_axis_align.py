@@ -7,7 +7,9 @@ Forcing is scoped to right-edge axes only:
 
 An authored axis_y.labels.align on such an axis is silently discarded; the compiler
 emits WARN_AXIS_ALIGN_DISCARDED so the user sees it in dct validate output.
-Raw d3 specs and non-quantitative axes are NOT affected.
+A literal d3 number spec decimal-aligns the same way unless the author sets an
+align. Non-number formats (strftime specs, unknown names) and non-quantitative
+axes are NOT affected.
 """
 
 from __future__ import annotations
@@ -107,8 +109,70 @@ def test_quantitative_alias_format_no_force_on_no_edge():
     assert resolved.labels.align is None
 
 
-def test_raw_d3_format_does_not_force_right_align():
-    """A literal d3 spec (not a predefined name) does not force right-align."""
+@pytest.mark.parametrize("spec", ["$.2s", ".2s", ",.0f"])
+def test_raw_d3_format_right_aligns_when_align_is_unauthored(spec: str):
+    """A literal d3 spec decimal-aligns on a right-edge axis like an alias does."""
+    ay, ay_band_pos = _merged_ay()
+    resolved = build_resolved_axis(
+        ay,
+        format=baked_format(
+            ay.model_copy(
+                update={"labels": ay.labels.model_copy(update={"format": spec})}
+            ),
+            raw=spec,
+        ),
+        band_position=ay_band_pos,
+        edge="right",
+        is_quantitative=True,
+        chart_id="test_raw_unauthored",
+        formats=None,
+    )
+    assert resolved.labels.align == "right"
+
+
+def test_no_format_stays_unaligned_on_a_right_edge_axis():
+    """With no format there is nothing to measure, so no decimal alignment."""
+    ay, ay_band_pos = _merged_ay()
+    resolved = build_resolved_axis(
+        ay,
+        format=None,
+        band_position=ay_band_pos,
+        edge="right",
+        is_quantitative=True,
+        chart_id="test_no_format",
+        formats=None,
+    )
+    assert resolved.labels.align is None
+
+
+@pytest.mark.parametrize("spec", ["$.2s", ".2s"])
+def test_raw_d3_format_right_aligns_through_full_resolve(spec: str):
+    ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
+    patch = LineChartStylePatch(
+        axis_y=AxisYStylePatch(
+            position="right", labels=AxisLabelStylePatch(format=spec)
+        )
+    )
+    data = [{"m": 1, "v": 12000}, {"m": 2, "v": 90000}, {"m": 3, "v": 150000}]
+    chart = LineChart(id="raw_wire", type="line", x="m", y="v", style=patch)
+    resolved = _resolve_line(
+        chart,
+        partition(None, data),
+        chart_style_context=ctx,
+        width=800.0,
+        title_width=800.0,
+        datasets={},
+        automatic_link_candidate=None,
+        x_date_range=None,
+    )
+    assert resolved.style.axis_y.labels.align == "right"
+    # Alignment only: the literal spec keeps per-tick d3 text (every suffix
+    # stacks), so no anchored-magnitude ruler is baked.
+    assert resolved.style.axis_y.ruler is None
+
+
+def test_raw_d3_format_keeps_an_authored_align():
+    """An authored align is an explicit override; only an unauthored one is filled."""
     ay, ay_band_pos = _merged_ay()
     ay_with_align = ay.model_copy(
         update={"labels": ay.labels.model_copy(update={"align": "center"})}
@@ -122,8 +186,63 @@ def test_raw_d3_format_does_not_force_right_align():
         chart_id="test_raw",
         formats=None,
     )
-    # No forced right -- the authored "center" passes through.
     assert resolved.labels.align == "center"
+
+
+_NON_NUMBER_FORMATS = ["%Y", "date_short", "currncy"]
+
+
+@pytest.mark.parametrize("spec", _NON_NUMBER_FORMATS)
+def test_non_number_format_does_not_right_align_a_right_edge_axis(spec: str):
+    """A strftime spec or unknown name on a numeric right-edge axis is not
+    d3 number grammar; baking ``right`` would send it into gutter measurement.
+    """
+    ay, ay_band_pos = _merged_ay()
+    resolved = build_resolved_axis(
+        ay,
+        format=baked_format(
+            ay.model_copy(
+                update={"labels": ay.labels.model_copy(update={"format": spec})}
+            ),
+            raw=spec,
+        ),
+        band_position=ay_band_pos,
+        edge="right",
+        is_quantitative=True,
+        chart_id="test_non_number",
+        formats=None,
+    )
+    assert resolved.labels.align is None
+
+
+@pytest.mark.parametrize("spec", _NON_NUMBER_FORMATS)
+def test_non_number_format_on_right_edge_renders_without_crashing(spec: str):
+    from dbt_charts.core.compile.models.chart.normalized import LineChart as _Line
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_style_and_context,
+    )
+    from dbt_charts.core.render.chart.session import BoardRenderSession
+    from dbt_charts.core.render.chart.spec import RenderBox
+
+    data = [{"m": 1, "v": 12000}, {"m": 2, "v": 90000}, {"m": 3, "v": 150000}]
+    chart = _Line.model_validate(
+        {
+            "id": "t",
+            "type": "line",
+            "x": "m",
+            "y": "v",
+            "style": {"axis_y": {"position": "right", "labels": {"format": spec}}},
+        }
+    )
+    board_rs, ctx = resolve_style_and_context(get_theme_style("clarity"))
+    resolved = resolve(chart, data, chart_style_context=ctx)
+    session = BoardRenderSession.create(board_rs)
+    session.finalize_vl(
+        session.emit_chart(
+            resolved, RenderBox(width=600.0, height=300.0), {resolved.query_name: data}
+        )
+    )
 
 
 def test_non_quantitative_axis_alias_format_does_not_force_right_align():

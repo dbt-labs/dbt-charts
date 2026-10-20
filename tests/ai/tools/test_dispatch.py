@@ -1254,7 +1254,25 @@ class TestVariableBindingsWireShape:
     def test_render_board_with_variable_bindings(
         self, context: DbtChartsAIContext
     ) -> None:
-        """render_board with array-of-pairs variables doesn't crash."""
+        """render_board with array-of-pairs variables binds declared variables."""
+        yaml_content = (
+            "title: T\nvariables:\n  foo:\n    input: text\nqueries:\n  q:\n    columns: [v]\n    values:\n      - [1]\n"
+            "charts:\n  c:\n    query: q\n    type: kpi\n    value: v\nrows:\n  - c\n"
+        )
+        result = dispatch_tool_call(
+            "render_board",
+            {
+                "yaml_content": yaml_content,
+                "variables": [{"name": "foo", "value": "bar"}],
+            },
+            context=context,
+        )
+        assert isinstance(result, dict)
+        assert result.get("status") == "ok"
+
+    def test_render_board_rejects_undeclared_variable_binding(
+        self, context: DbtChartsAIContext
+    ) -> None:
         yaml_content = (
             "title: T\nqueries:\n  q:\n    columns: [v]\n    values:\n      - [1]\n"
             "charts:\n  c:\n    query: q\n    type: kpi\n    value: v\nrows:\n  - c\n"
@@ -1267,9 +1285,8 @@ class TestVariableBindingsWireShape:
             },
             context=context,
         )
-        assert isinstance(result, dict)
-        # variables don't apply to this board (no {{ foo }}) — still renders ok
-        assert result.get("status") == "ok"
+        assert result.get("status") == "failed"
+        assert result["board_error"]["code"] == "ERR-UNKNOWN-VARIABLE-OVERRIDE"
 
 
 def test_render_board_caps_rows_in_model_facing_data(

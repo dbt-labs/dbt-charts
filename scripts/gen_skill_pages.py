@@ -562,7 +562,7 @@ def _palette(name: str) -> dict[str, Any]:
         parent = _palette(data["extends"])
         data = {
             "colors": data.get("colors") or parent["colors"],
-            "aliases": {**parent["aliases"], **data["aliases"]},
+            "aliases": {**parent["aliases"], **data.get("aliases", {})},
         }
     return data
 

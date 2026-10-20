@@ -52,10 +52,3 @@ aliases:
   # neutral near-blacks; black is the true #000000 endpoint.
   white: "#FFFFFF"
   black: "#000000"
-
-  # Extended UI aliases — terminal hex (themes themselves contain no hex)
-  fill-muted: "#e5e7eb"
-  separator: "#e0e0e0"
-  spark-empty: "#d1d5db"
-  accent: "#3b82f6"
-  placeholder: "#666666"

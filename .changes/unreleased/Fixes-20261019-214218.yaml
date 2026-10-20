@@ -1,0 +1,5 @@
+kind: Fixes
+body: Skills no longer send tool-call agents to render a PNG that render_board cannot produce.
+time: 2026-10-19T21:42:18.013439603Z
+custom:
+    DbtChartsIssue: "0"

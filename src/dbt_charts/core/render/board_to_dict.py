@@ -219,6 +219,14 @@ def chart_to_dict(item: dict[str, Any], query_name: str | None) -> dict[str, Any
     return d
 
 
+def is_numeric_cell(
+    value: Any,  # type-state: explicit_any — a query cell, dynamically typed
+) -> bool:
+    """Whether a query cell is a number: warehouses return ``Decimal`` for
+    DECIMAL/NUMERIC measures (revenue, spend); ``bool`` is not one."""
+    return isinstance(value, (int, float, Decimal)) and not isinstance(value, bool)
+
+
 def kept_rows_phrase(truncated: dict[str, int]) -> str:
     """Phrase a ``rows_truncated`` record: which rows survived, out of how many."""
     if truncated["tail"]:
@@ -247,7 +255,7 @@ def _cartesian_y_range_display(
     from dbt_charts.core.compile.format_value import format_value
 
     values = [row[chart.y] for row in data if row.get(chart.y) is not None]
-    if not values or not all(isinstance(v, (int, float)) for v in values):
+    if not values or not all(is_numeric_cell(v) for v in values):
         return None
     lo, hi = min(values), max(values)
     return (
@@ -553,6 +561,10 @@ def _board_to_dict(
             include_text_format=include_text_format,
         ),
     }
+    if include_text_format and board.text:
+        result["text"] = resolve_display_text_via(
+            executor, board.text, variables, resolved_style=board.resolved_style
+        )
     if board.variables:
         result["variables"] = {
             name: var.model_dump(

@@ -16,7 +16,7 @@ style:
   palettes:
     sequence: dbt-seq-gray
   background: dbt-grays.white
-  accent: dbt-grays.accent
+  accent: info.solid-hover
   # Secondary text (KPI support rows, table more-rows/empty-state lines —
   # table subtitles read title.subtitle.font.color instead, the same source
   # chart-family subtitles use). Stark is single-tier — every text slot is
@@ -99,9 +99,9 @@ style:
       spark:
         empty:
           stroke:
-            color: dbt-grays.spark-empty
+            color: dbt-grays.grid-emphasis
         bar:
-          background: dbt-grays.fill-muted
+          background: dbt-grays.grid
       row:
         divider:
           color: *color_ink
@@ -115,7 +115,7 @@ style:
 
     spark_bar:
       bar:
-        background: dbt-grays.fill-muted
+        background: dbt-grays.grid
 
     marks:
       bar:
@@ -251,10 +251,10 @@ style:
         width: 2
         radius: 0
     divider:
-      color: dbt-grays.separator
+      color: dbt-grays.border
     column:
       divider:
-        color: dbt-grays.separator
+        color: dbt-grays.border
 
   variables:
     font:
@@ -266,4 +266,4 @@ style:
     overlay:
       background: 'rgba(255, 255, 255, 0.5)'
       font:
-        color: dbt-grays.placeholder
+        color: dbt-grays.muted

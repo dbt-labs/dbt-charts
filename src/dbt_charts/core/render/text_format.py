@@ -17,10 +17,15 @@ from dbt_charts.core.render.board_to_dict import (
     NO_ROW_CAP,
     TABLE_PREVIEW_ROW_CAP,
     board_to_dict,
+    is_numeric_cell,
     kept_rows_phrase,
 )
 from dbt_charts.core.render.chart.table_static_pagination import StaticPagination
 from dbt_charts.core.text.row_table import row_table
+
+#: Longest board text block the summary quotes verbatim; a longer one is cut
+#: with an explicit note, because the summary is agent context, not a document.
+TEXT_EXCERPT_CHARS = 2000
 
 
 def render_board_text(
@@ -131,35 +136,49 @@ def _render_board(
 ) -> bool:
     """Render a board dict to markdown lines at the given heading depth.
 
-    Returns whether anything was appended. A titleless layout container with
-    no direct chart/KPI/table child (a pure row/col grouping, e.g. a
-    two-column row whose children are themselves containers) contributes no
-    heading of its own — it exists only to lay out its children, which
-    render at their own depth regardless. A titled container, or one with at
-    least one direct chart child, still gets its heading (falling back to its
-    id when titleless).
+    Returns whether anything was appended. Only an authored title makes a
+    heading: a titleless container is a row/col grouping with a synthetic id,
+    so it renders its text and children in place under its parent's heading.
     """
     # A board wire dict always carries "items" (board_to_dict always sets it,
     # even to []); [] only guards a layout with no children, the genuine
     # empty case.
     items = board.get("items", [])  # type-state: silent_fallback — see above
     title = board.get("title")
-    has_direct_content = any(item["type"] == "chart" for item in items)
     start_len = len(lines)
-    if title or has_direct_content:
-        # The id fallback is the documented "untitled container" display
-        # name, not a shape guard.
-        heading = f"{'#' * depth} {title or board.get('id', 'Untitled')}"  # type-state: silent_fallback — see above
-        lines.append(heading)
+    if title:
+        lines.append(f"{'#' * depth} {title}")
+    # A titleless container takes no heading level, so its children sit at
+    # its own depth rather than skipping one.
+    child_depth = depth + 1 if title else depth
+    if text := board.get("text"):
+        if title:
+            lines.append("")
+        lines.extend(_text_excerpt(text))
     for item in items:
         if item["type"] == "chart":
-            _render_chart(item, lines, depth + 1, static_paginations)
+            _render_chart(item, lines, child_depth, static_paginations)
         elif item["type"] == "board":
             child_lines: list[str] = []
-            if _render_board(item["board"], child_lines, depth + 1, static_paginations):
-                lines.append("")
+            if _render_board(
+                item["board"], child_lines, child_depth, static_paginations
+            ):
+                # A chart block opens with its own blank line.
+                if child_lines[0]:
+                    lines.append("")
                 lines.extend(child_lines)
     return len(lines) > start_len
+
+
+def _text_excerpt(text: str) -> list[str]:
+    """The board's text, cut to ``TEXT_EXCERPT_CHARS`` with a note saying so."""
+    body = text.strip()
+    if len(body) <= TEXT_EXCERPT_CHARS:
+        return body.split("\n")
+    return [
+        *body[:TEXT_EXCERPT_CHARS].split("\n"),
+        f"[text cut: showing the first {TEXT_EXCERPT_CHARS} of {len(body)} characters]",
+    ]
 
 
 def _render_chart(
@@ -182,7 +201,7 @@ def _render_chart(
     data = item.get("data", [])
 
     chart_type = chart.get("chart_type", "unknown")
-    title = chart.get("title") or chart.get("id", "chart")
+    title = chart.get("title") or chart.get("label") or chart["id"]
     lines.append("")
     lines.append(f"{'#' * depth} {title} ({chart_type})")
 
@@ -211,8 +230,8 @@ def _render_chart(
     if fields:
         lines.append(f"- {', '.join(fields)}")
 
-    # Data summary
-    if data:
+    # Data summary (a table's row count is in its preview, above)
+    if data and chart_type != "table":
         summary = _data_summary(
             chart,
             data,
@@ -305,14 +324,20 @@ def _table_row_preview(
     item: dict[str, Any],  # type-state: explicit_any — wire dict
     data: list[dict[str, Any]],  # type-state: explicit_any — wire rows
 ) -> list[str]:
-    """Build the table chart's unconditional row preview: first few rows, each
-    cell as the column's format paints it (``board_to_dict._table_text_rows``,
-    which also drops hidden columns and caps wide tables), with an explicit
-    note when more rows exist — never a silent truncation.
+    """Build the table chart's unconditional row preview: the table's one row
+    count, then the first few rows, each cell as the column's format paints it
+    (``board_to_dict._table_text_rows``, which also drops hidden columns and
+    caps wide tables), with an explicit note when more rows exist — never a
+    silent truncation.
     """
-    lines: list[str] = []
-    if len(data) > TABLE_PREVIEW_ROW_CAP:
-        lines.append(f"- showing first {TABLE_PREVIEW_ROW_CAP} of {len(data)} rows")
+    # ``data`` is already capped by ``max_rows_per_query``; the total is the
+    # query's, so every count on a table agrees with the pagination line.
+    total = item["rows_truncated"]["total"] if "rows_truncated" in item else len(data)
+    lines = [
+        f"- showing first {TABLE_PREVIEW_ROW_CAP} of {total} rows"
+        if total > TABLE_PREVIEW_ROW_CAP
+        else f"- {total} rows"
+    ]
     lines.extend(_markdown_table(item["table_text"]))
     return lines
 
@@ -407,7 +432,7 @@ def _data_summary(
         values: list[Any] = [row[col] for row in data if row.get(col) is not None]
         if not values:
             continue
-        if all(isinstance(v, (int, float)) for v in values) and role in (
+        if all(is_numeric_cell(v) for v in values) and role in (
             "y",
             "size",
             "theta",
@@ -417,7 +442,7 @@ def _data_summary(
             else:
                 lo, hi = min(values), max(values)
                 parts.append(f"{col}: {lo}–{hi}")
-        elif all(isinstance(v, (int, float)) for v in values) and role in (
+        elif all(is_numeric_cell(v) for v in values) and role in (
             "x",
             "color",
         ):

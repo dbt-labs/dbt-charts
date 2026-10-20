@@ -1,0 +1,3 @@
+kind: Fixes
+body: A chart that sets its own style.background now recolors its theme.background knockouts (bar borders, slice and area strokes, point fills) to match.
+time: 2026-10-14T23:54:12.598499-07:00

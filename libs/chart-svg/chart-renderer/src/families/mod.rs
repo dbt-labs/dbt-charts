@@ -17,6 +17,7 @@ pub mod scatter_axis;
 pub mod scatter_shape;
 pub mod spark_bar;
 pub mod span;
+pub mod subday;
 pub mod table;
 mod table_dates;
 

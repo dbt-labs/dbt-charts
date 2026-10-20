@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from dbt_charts.agent_api.skills import get_skill
+from dbt_charts.agent_api.skills import SkillNotFound, get_skill, list_skills
 
 REVIEW_SKILLS = (
     "board-structural-review",
@@ -57,7 +57,7 @@ class TestReviewSkillsParseAsValidSkills:
     """
 
     def test_description_has_negative_boundary(self, name: str) -> None:
-        skill = get_skill(name)
+        skill = get_skill(name, surface="cli")
         assert "Do NOT use" in skill.description, (
             f"{name}: description must include a 'Do NOT use' boundary"
         )
@@ -121,10 +121,29 @@ class TestVisualReviewChecklist:
             "shipped skill must use bare `dct`; in-repo guidance lives in AGENTS.md"
         )
 
-    def test_renders_to_png_first_on_tool_surface(self, tool_body: str) -> None:
-        """Tool-rendered body must use the function-call name, not the CLI command."""
-        assert "render_board" in tool_body
-        assert "dct render" not in tool_body
+    def test_is_cli_only_because_tool_render_board_has_no_png(self) -> None:
+        """No tool-call host can render PNG (render_board has no 'format'), so
+        the skill, and every pointer to it, exists on the CLI surface only."""
+        tool_names = {s.name for s in list_skills(surface="tool").skills}
+        assert self.SKILL not in tool_names
+        with pytest.raises(SkillNotFound):
+            get_skill(self.SKILL, surface="tool")
+
+    @pytest.mark.parametrize(
+        "name", ["board-review", "board-structural-review", "board-build"]
+    )
+    def test_tool_surface_skills_never_point_at_visual_review(self, name: str) -> None:
+        skill = get_skill(name, surface="tool")
+        text = f"{skill.description}\n{skill.body}"
+        assert "visual-review" not in text
+        assert "PNG" not in text
+
+    def test_no_tool_surface_skill_sends_the_agent_to_render_a_png(self) -> None:
+        """render_board has no 'format' on the tool surface, so no served skill
+        may tell the agent to call it with one."""
+        for listed in list_skills(surface="tool").skills:
+            body = get_skill(listed.name, surface="tool").body
+            assert 'format="png"' not in body, listed.name
 
     def test_visual_hierarchy_section(self, body: str) -> None:
         assert "visual hierarchy" in body.lower()
@@ -183,8 +202,6 @@ class TestReviewSkillsDiscoverable:
     `dct skills` and the shared list_skills tool."""
 
     def test_all_three_load_via_registry(self) -> None:
-        from dbt_charts.agent_api.skills import list_skills
-
-        names = {s.name for s in list_skills().skills}
+        names = {s.name for s in list_skills(surface="cli").skills}
         for name in REVIEW_SKILLS:
             assert name in names, f"Registry missing {name}; got {sorted(names)}"

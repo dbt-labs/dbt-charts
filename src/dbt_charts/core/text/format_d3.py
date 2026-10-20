@@ -849,6 +849,22 @@ def is_d3_fixed_decimal_spec(spec: str) -> bool:
     return parsed.type in ("f", "%") and bool(parsed.precision)
 
 
+def is_d3_number_spec(spec: str) -> bool:
+    """True when spec parses as d3-format number grammar. Never raises.
+
+    A strftime directive, an unresolved alias, or a typo answers False, the
+    same totality contract as ``is_d3_si_spec``: callers that bake a measured
+    number layout from the spec use it to leave non-number formats alone.
+    """
+    if spec in PREDEFINED_NUMBER_NAMES or is_time_format(spec):
+        return False
+    try:
+        _d3_parse(spec)
+    except D3FormatError:
+        return False
+    return True
+
+
 def round_aware_spec(format_spec: str) -> str:
     """Inject d3's trim (``~``) flag into an SI spec that doesn't already have it.
 

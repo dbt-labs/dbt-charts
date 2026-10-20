@@ -116,6 +116,7 @@ _SCALAR_TOKEN_FIELD_NAMES: tuple[str, ...] = (
     "accent",
     "muted",
     "background",
+    "neutral_color",
 )
 _SCALAR_TOKEN_FIELD_TAILS: tuple[YamlKeyPath, ...] = tuple(
     (name,) for name in _SCALAR_TOKEN_FIELD_NAMES

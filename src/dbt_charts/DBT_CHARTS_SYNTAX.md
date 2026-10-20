@@ -388,7 +388,7 @@ style:
       divider:
         visible: true
         width: 1
-        color: dbt-grays.separator
+        color: dbt-grays.border
 ```
 
 CSS-only keys like `border-radius`, `border-left`, `margin-top` are not board-style fields and are rejected.
@@ -1469,7 +1469,7 @@ Colors are palette tokens, not hex — the theme resolves a token, so a board re
 | A series slot | `category[1]`, `category.blue`, `category[2].dark` (any categorical palette derives dark/light/pale/deep live, no companion file) |
 | The theme's plain single-series fill (the color a lone-series bar/line gets with no `color:` channel) | `single_series[1]` |
 | Good / bad / attention | `positive.solid`, `negative.solid`, `warning.solid`, `info.solid` — also `.bg`, `.subtle`, `.border`, `.text` |
-| Chrome — text, grid, borders | `dbt-grays.ink`, `dbt-grays.muted`, `dbt-grays.border`, `dbt-grays.separator`, `dbt-grays.canvas` |
+| Chrome — text, grid, borders | `dbt-grays.ink`, `dbt-grays.muted`, `dbt-grays.border`, `dbt-grays.canvas` |
 | A ramp for a continuous scale | `dbt-seq-blue`, `dbt-div-blue-red`; `:N` stops and `_r` reversed — `dbt-seq-blue:5_r` |
 | A pin that must survive a theme switch | `vivid-10.1`, `dbt-seq-blue.3` |
 

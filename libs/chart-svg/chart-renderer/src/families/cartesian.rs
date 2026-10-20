@@ -32,8 +32,9 @@ pub struct BandScale {
 #[derive(Clone)]
 enum Bands {
     Uniform(BandGeometry),
-    /// Bands that sit where their data does (a time axis): one leading edge per domain entry, no shared width.
-    Anchored(Vec<f64>),
+    /// Bands that sit where their data does (a time axis): one leading edge and one point-mark position per
+    /// domain entry, no shared width.
+    Anchored { starts: Vec<f64>, anchors: Vec<f64> },
 }
 
 /// d3's band layout for `n` bands over a pixel range: the one place the
@@ -85,10 +86,10 @@ impl BandScale {
         BandScale { domain, geometry }
     }
 
-    /// A band scale whose entry `i` leads at `starts[i]` pixels.
-    pub fn anchored(domain: Vec<String>, starts: Vec<f64>) -> Self {
-        assert_eq!(domain.len(), starts.len(), "an anchored band scale places every domain entry");
-        BandScale { domain, geometry: Bands::Anchored(starts) }
+    /// A band scale whose entry `i` leads at `starts[i]` pixels and whose point marks sit at `anchors[i]`.
+    pub fn anchored(domain: Vec<String>, starts: Vec<f64>, anchors: Vec<f64>) -> Self {
+        assert!(domain.len() == starts.len() && domain.len() == anchors.len(), "an anchored band scale places every domain entry");
+        BandScale { domain, geometry: Bands::Anchored { starts, anchors } }
     }
 
     /// Leading-edge pixel position of the band for `value`.
@@ -98,7 +99,17 @@ impl BandScale {
         let at = self.domain.iter().position(|d| d == value)?;
         Some(match &self.geometry {
             Bands::Uniform(g) => g.edge(at, 0.0),
-            Bands::Anchored(starts) => starts[at],
+            Bands::Anchored { starts, .. } => starts[at],
+        })
+    }
+
+    /// Where a point mark of `value`'s datum sits: its band's center, or on an anchored scale where its data
+    /// does.
+    pub fn center(&self, value: &str) -> Option<f64> {
+        let at = self.domain.iter().position(|d| d == value)?;
+        Some(match &self.geometry {
+            Bands::Uniform(g) => g.edge(at, 0.5),
+            Bands::Anchored { anchors, .. } => anchors[at],
         })
     }
 
@@ -108,7 +119,7 @@ impl BandScale {
     pub fn bandwidth(&self) -> f64 {
         match &self.geometry {
             Bands::Uniform(g) => g.bandwidth(),
-            Bands::Anchored(_) => unreachable!("an anchored band scale has no shared bandwidth"),
+            Bands::Anchored { .. } => unreachable!("an anchored band scale has no shared bandwidth"),
         }
     }
 }

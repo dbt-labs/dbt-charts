@@ -13,6 +13,7 @@ from __future__ import annotations
 from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
 from dbt_charts.core.compile.resolve.style.inherit_graph import get_inherit_graph
 from dbt_charts.core.compile.resolve.style.inherit_resolver import apply_inherit
+from dbt_charts.core.compile.resolve.style.palette import color as resolve_palette_color
 
 # =============================================================================
 # Cascade: accent/muted propagate via apply_inherit(..., get_inherit_graph())
@@ -75,11 +76,13 @@ def test_cascade_fills_spark_bar_color_from_single_series_palette():
     assert ctx.table.spark.bar.color == "#3b82f6"
 
 
-def test_cascade_fills_spark_bar_background_from_muted():
-    """cascade fills charts.table.spark.bar.background from muted when None."""
-    base = get_theme_style().model_copy(update={"muted": "#e5e7eb"})
+def test_cascade_keeps_the_theme_pinned_spark_bar_track():
+    """stark pins the spark-bar track on the grid step; muted does not override it."""
+    base = get_theme_style().model_copy(update={"muted": "#123456"})
     cascaded = apply_inherit(base, get_inherit_graph())
-    assert cascaded.charts.table.spark.bar.background == "#e5e7eb"
+    assert cascaded.charts.table.spark.bar.background == resolve_palette_color(
+        "dbt-grays.grid"
+    )
 
 
 def test_cascade_respects_explicit_spark_color():

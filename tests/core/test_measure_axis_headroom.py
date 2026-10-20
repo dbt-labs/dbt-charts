@@ -200,7 +200,7 @@ def test_right_axis_layer_query_does_not_widen_primary_y_domain() -> None:
     )
 
     assert resolved.style.axis_y.domain_max == pytest.approx(70.5 * (1 + _HEADROOM))
-    executor.execute_query.assert_not_called()
+    executor.execute_query.assert_called_once_with("goal_query", {})
 
 
 def test_supplied_datasets_must_cover_shared_layer_queries() -> None:

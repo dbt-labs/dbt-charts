@@ -63,6 +63,7 @@ from dbt_charts.core.compile.models.style.theme import (
     BarChartStyle,
     BaseAxisStyle,
     CalloutChartStyle,
+    ChartsStyle,
     ChartTitleStyle,
     GeoshapeChartStyle,
     GlobalMarksStyle,
@@ -238,6 +239,11 @@ class ChartStyleContext:
     # Per-chart style patches use this to re-run the full inherit graph
     # against a chart-local override without touching board-global state.
     pre_style: Style
+
+    # `pre_style.charts` before theme-self tokens (`theme.background`) were
+    # substituted with the board canvas, so a chart that paints its own
+    # background can re-substitute them with the canvas it actually sits on.
+    canvas_token_charts: ChartsStyle
 
     # The post-`apply_inherit` Style tree: what a `type: custom` template
     # reads as `style`.

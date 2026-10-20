@@ -125,7 +125,7 @@ style:
     # cool-gray fill, which would sit as a cool cast on the cream canvas.
     spark_bar:
       bar:
-        background: dbt-creams.fill-muted
+        background: dbt-creams.grid
     table:
       header:
         divider:

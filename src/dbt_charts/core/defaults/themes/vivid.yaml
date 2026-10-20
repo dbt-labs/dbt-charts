@@ -18,10 +18,10 @@ style:
   palettes:
     sequence: dbt-seq-blue
   background: dbt-grays.white
-  accent: &high dbt-grays.heading   # grayscale accent (no hue)
+  accent: info.solid-hover
   muted: &mid dbt-grays.muted
   font:
-    color: *high                   # body prose = content
+    color: &high dbt-grays.heading   # body prose = content
   border:
     color: &faint dbt-grays.grid-emphasis
   title:
@@ -148,7 +148,7 @@ style:
           color: dbt-grays.surface-subtle   # subtle cool zebra (one step off white)
       spark:
         # Light progress-bar track on the FAINT chrome tier so the fill pops.
-        # Track fills are theme-pinned (stark pins dbt-grays.fill-muted); this
+        # Track fills are theme-pinned (stark pins dbt-grays.grid); this
         # override keeps vivid's track on its own 4-tier ladder instead
         # (paper sets its track the same way, under table.spark).
         bar:

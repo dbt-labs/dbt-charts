@@ -27,10 +27,10 @@
 extends: stark
 style:
   background: dbt-grays.void
-  accent: &high dbt-grays.grid
+  accent: info.border
   muted: &mid dbt-grays.subtitle
   font:
-    color: *high
+    color: &high dbt-grays.grid
   palettes:
     sequence: dbt-seq-blue-dark
   # Lighter tone stops for the dark canvas — the default positive/negative

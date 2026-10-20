@@ -973,7 +973,7 @@ impl LineXAxis {
                             continue;
                         }
                         if *angle != 0.0 {
-                            let (align, baseline) = bare_label_anchor(*angle, t.frac);
+                            let (align, baseline) = bare_label_anchor(*angle, t.frac, plot_w);
                             let anchor_y = plot_bottom + self.x_axis_drop + self.x_tick_eff + self.x_label_pad;
                             let _ = write!(
                                 svg,
@@ -995,10 +995,23 @@ impl LineXAxis {
                              font-family=\"{}\" font-size=\"{xsz}\" font-weight=\"{xwt}\" \
                              fill=\"{xcol}\">{}</text>",
                             plot_left + x + self.ad,
-                            xml_escape_attr(flush_anchor(t.frac)),
+                            xml_escape_attr(flush_anchor_px(t.frac * plot_w, plot_w)),
                             vega_escape_attr(xfam),
                             xml_escape(&t.text), xwt = xml_escape_attr(&xwt), xcol = xml_escape_attr(xcol)
                         );
+                        if let Some(row2) = t.row2.as_deref().filter(|row| !row.is_empty()) {
+                            let _ = write!(
+                                svg,
+                                "<text x=\"{:.3}\" y=\"{:.3}\" text-anchor=\"{}\" \
+                                 font-family=\"{}\" font-size=\"{xsz}\" font-weight=\"{xwt}\" \
+                                 fill=\"{xcol}\">{}</text>",
+                                plot_left + x + self.ad,
+                                label_y + xsz + 2.0,
+                                xml_escape_attr(flush_anchor_px(t.frac * plot_w, plot_w)),
+                                vega_escape_attr(xfam),
+                                xml_escape(row2), xwt = xml_escape_attr(&xwt), xcol = xml_escape_attr(xcol)
+                            );
+                        }
                     }
                 }
                 LineXAxisBody::Tilted { labels, xs, angle, format_tu, align } => {
@@ -1913,6 +1926,7 @@ pub(crate) fn render_line_panel(
     // Temporal label cadence — detect grain from x domain ISO dates.
     // `None` means non-temporal (raw string labels used as-is).
     let domain_strs: Vec<&str> = x_domain_unsorted.iter().map(String::as_str).collect();
+    let timed = crate::families::subday::SubdaySource::of(&domain_strs);
     // production's `infer_vega_type_from_data` classifies the x field's raw
     // STRING SHAPE before `detect_time_unit`'s own semantic parser ever
     // runs — a bare 4-digit year parses fine but has no date-like
@@ -1991,6 +2005,14 @@ pub(crate) fn render_line_panel(
     let header_tu = match law.fill_grain {
         crate::families::x_type::Grain::Calendar(tu) if !labeled_rewrite => Some(tu),
         _ => detected_data_tu,
+    };
+    // Timed values within two days head their tooltip with the time of day (`subday_header_for`).
+    let subday_header = crate::families::subday::Header::of(&timed, r.style.axis_x.labels.clock).filter(|_| header_tu.is_none());
+    let header_text = |date: &str, x_is_standard_date: bool, grain_format: Option<AuthoredTimeFormat>| -> Result<String, String> {
+        match (&subday_header, crate::families::temporal::date_text_day(date)) {
+            (Some(header), Some(at)) => header.text(at),
+            _ => crate::contract::tooltip_header_text(date, header_tu, x_is_standard_date, grain_format),
+        }
     };
     // `axis_y.mirror` on a GENUINELY NOMINAL x (not quantitative, not
     // calendar-bucketed temporal) hits the point-to-band scale flip:
@@ -3292,13 +3314,6 @@ pub(crate) fn render_line_panel(
         None => {
             ax_x.refuse_bare_x_tick_step(fam)?;
             match ax_x.ticks.count {
-                Some(_) if detected_data_tu == Some(TimeUnit::YearMonthDate) => {
-                    return Err(format!(
-                        "{fam}: axis_x.ticks.count on a day-grained bucketed x axis is unmodeled \
-                         — production draws no x labels there and its UTC scale strides the \
-                         2-day rung over uniform days"
-                    ).into());
-                }
                 Some(count) if bare_temporal || detected_data_tu.is_some() => {
                     Some(AuthoredTickCadence::Count(
                         authored_tick_count(count).map_err(|e| format!("{fam}: {e}"))?,
@@ -3329,6 +3344,19 @@ pub(crate) fn render_line_panel(
         }
     };
 
+    // A bare axis over timed values ticks and labels on the clock.
+    let subday_plan = if bare_temporal {
+        crate::families::subday::plan_for(
+            &timed,
+            ax_x,
+            x_tick_cadence,
+            authored_time_format.is_some(),
+            if shape == Shape::RailConcat { svg_w - (rail_pane_w + el.label_offset) } else { svg_w },
+            svg_w,
+        )
+    } else {
+        None
+    };
     // L6: production's one `value_labels` feature (`features/value_labels.py`)
     // compiles a VL `text` layer over the same data the marks draw, and
     // `autosize: fit` unions its ink like any other mark's — the label
@@ -3632,7 +3660,13 @@ pub(crate) fn render_line_panel(
     };
     let facet_legend = if facet_legend_wanted {
         let lt = limit_legend_text(legend_entries.iter().map(|e| e.label), &legend_title, &r.legend, fonts)?;
-        let symbols: Vec<Option<LegendSymbol>> = legend_entries.iter().map(|e| e.symbol).collect();
+        // Under a columns facet with shared scales Vega-Lite drops the line's own symbol stroke width.
+        let default_circle = if !has_layers && !dashed && r.multiples.as_ref().is_some_and(|m| m.columns.is_some() && m.scale != "independent") && fam == "line" {
+            LegendSymbol::ThinCircle
+        } else {
+            LegendSymbol::Circle
+        };
+        let symbols: Vec<Option<LegendSymbol>> = legend_entries.iter().map(|e| e.symbol.or(Some(default_circle))).collect();
         let lg = legend_from_widths(&lt.label_ws, &symbols, false, &lt.title, lt.title_w, &r.legend)?;
         let drawn: Vec<LegendEntry> = legend_entries
             .iter()
@@ -3640,7 +3674,7 @@ pub(crate) fn render_line_panel(
             .map(|(e, label)| LegendEntry { label, fill: e.fill, symbol: e.symbol, series_key: None })
             .collect();
         let mut legend_svg = String::new();
-        emit_vega_legend(&mut legend_svg, &drawn, &lg, &r.legend, LegendSymbol::Circle, 0.0, 0.0, false);
+        emit_vega_legend(&mut legend_svg, &drawn, &lg, &r.legend, default_circle, 0.0, 0.0, false);
         Some(facet_compose::FacetLegend { svg: legend_svg, box_w: lg.box_w, box_h: lg.box_h() })
     } else {
         None
@@ -3704,7 +3738,7 @@ pub(crate) fn render_line_panel(
         None => x_domain_dates,
     };
     let color_title = match color_field {
-        Some(cf) => crate::families::legend::color_channel_title(cf, &r.legend, &r.field_labels)?,
+        Some(cf) => description_color_title(fam, cf, &r.legend, &r.field_labels)?,
         None => String::new(),
     };
     let strip_aria = support_table_strip::CellAria {
@@ -3713,7 +3747,7 @@ pub(crate) fn render_line_panel(
                 .iter()
                 .map(|x| {
                     let text = match detected_data_tu {
-                        Some(tu) => crate::families::temporal::default_time_unit_text(x, tu)
+                        Some(tu) => crate::families::temporal::default_time_unit_text(x, Some(tu))
                             .map_err(|e| format!("line: support_table cell description: {e}"))?,
                         None => x.clone(),
                     };
@@ -3783,15 +3817,24 @@ pub(crate) fn render_line_panel(
     } else {
         (0..label_domain.len()).collect()
     };
+    let x_is_continuous_date = (detected_data_tu.is_some() || bare_temporal) && !x_ordinal_calendar;
     let utc_fracs: Option<Vec<f64>> = if (detected_data_tu.is_some() || bare_temporal) && !x_ordinal_calendar {
         crate::families::temporal::utc_position_fractions(&x_domain_floored)
     } else {
         None
     };
-    let label_extent: Option<(i64, i64)> = if (detected_data_tu.is_some() || bare_temporal) && !x_ordinal_calendar {
-        crate::families::temporal::utc_domain_extent(&x_domain_floored)
+    // An authored scale domain is the extent the continuous axis spans.
+    let authored_extent = crate::families::scatter_axis::authored_day_domain(ax_x, fam)?;
+    let label_extent: Option<(f64, f64)> = if (detected_data_tu.is_some() || bare_temporal) && !x_ordinal_calendar {
+        crate::families::temporal::utc_domain_extent(&x_domain_floored).map(|data| authored_extent.unwrap_or(data))
     } else {
         None
+    };
+    let utc_fracs: Option<Vec<f64>> = match (utc_fracs, label_extent, authored_extent) {
+        (Some(_), Some(extent), Some(_)) => {
+            x_domain_floored.iter().map(|d| crate::families::temporal::utc_fraction_at(d, extent)).collect()
+        }
+        (fracs, ..) => fracs,
     };
     // The Vega arms' L1-L5 x labels. They depend on the slot width, never on
     // the fitted plot, so one resolution serves every fit candidate; the rail
@@ -3819,6 +3862,7 @@ pub(crate) fn render_line_panel(
                 ax_x.labels.time_unit.as_deref(),
                 slot_w * label_usable_ratio,
                 edge_labels_flushed,
+                false,
                 !x_ordinal_calendar, // continuous_temporal
                 ax_x.fiscal_year_start_month,
                 x_overlap_skip,
@@ -3907,7 +3951,7 @@ pub(crate) fn render_line_panel(
                             .map(|(y, m, d)| days_from_civil(y, m, d))
                             .collect();
                         row_days.sort_unstable();
-                        if interval_tick_days(extent, interval) != row_days {
+                        if interval_tick_days((extent.0 as i64, extent.1 as i64), interval) != row_days {
                             return Err(format!(
                                 "{fam}: a bucketed temporal x axis with a bucket no row fills is \
                                  unmodeled {why} — Vega ticks the empty bucket \
@@ -3923,29 +3967,24 @@ pub(crate) fn render_line_panel(
     // The interval's ticks on a bucketed axis, in day numbers and as
     // fractions of the label extent. The bare axis takes the cadence inside
     // `bare_temporal_ticks` instead.
-    let x_tick_days: Option<Vec<i64>> = if bare_temporal {
+    let x_tick_days: Option<Vec<f64>> = if bare_temporal {
         None
     } else {
-        let bucketed_interval = match x_tick_cadence {
-            Some(cadence) => {
-                let extent = label_extent.ok_or_else(|| {
-                    format!("{fam}: axis_x.ticks.time_unit needs a parseable UTC x domain")
-                })?;
+        match (x_tick_cadence, label_extent) {
+            (Some(cadence), Some(extent)) => {
                 let grain = detected_data_tu.expect("a bucketed cadence needs the detected grain");
-                Some(
-                    cadence
-                        .bucketed_interval(grain, (extent.0 as f64, extent.1 as f64))
-                        .map_err(|e| format!("{fam}: {e}"))?,
-                )
+                Some(cadence.bucketed_ticks(grain, extent))
             }
-            None => native_candidate,
-        };
-        bucketed_interval
-            .zip(label_extent)
-            .map(|(interval, extent)| interval_tick_days(extent, interval))
+            (Some(_), None) => {
+                return Err(format!("{fam}: axis_x.ticks.time_unit needs a parseable UTC x domain").into());
+            }
+            (None, extent) => native_candidate
+                .zip(extent)
+                .map(|(interval, extent)| interval_tick_days((extent.0 as i64, extent.1 as i64), interval).into_iter().map(|day| day as f64).collect()),
+        }
     };
     let x_tick_fracs: Option<Vec<f64>> = x_tick_days.as_ref().zip(label_extent).map(|(days, e)| {
-        days.iter().map(|&day| (day - e.0) as f64 / (e.1 - e.0) as f64).collect()
+        days.iter().map(|&day| (day - e.0) / (e.1 - e.0)).collect()
     });
     // L9 gate: production only positions openers at their RAW dates when it
     // emits an explicit opener `values` array. An authored `labels.time_unit`
@@ -4007,12 +4046,12 @@ pub(crate) fn render_line_panel(
     // exactly at a range end, not on its domain index — on a floored weekly
     // domain with RAW opener dates, the raw first opener sits off the range
     // start, so it centers instead of flushing left.
-    let temporal_edge_anchor = |idx: usize, raw: bool| -> &'static str {
+    let temporal_edge_anchor = |idx: usize, raw: bool, pw: f64| -> &'static str {
         // A band axis flushes no edge label (`labelFlush` is a continuous-axis rule).
         if x_ordinal_calendar {
             return "middle";
         }
-        flush_anchor(label_frac_at(idx, raw))
+        flush_anchor_px(label_frac_at(idx, raw) * pw, pw)
     };
 
 
@@ -4546,7 +4585,7 @@ pub(crate) fn render_line_panel(
                                 // their date opens a label period; their
                                 // positions are the ticks' (`label_frac_at`).
                                 Some(days) => interval_tick_labels(
-                                    days,
+                                    &days.iter().map(|at| at.floor() as i64).collect::<Vec<_>>(),
                                     x_domain_for_temporal,
                                     data_tu,
                                     resolved.format_tu,
@@ -4584,7 +4623,7 @@ pub(crate) fn render_line_panel(
                                 let align = match x_label_align {
                                     Some(a) => a,
                                     None if angle != 0.0 => angle_align,
-                                    None => match temporal_edge_anchor(tl.domain_idx, fit_raw_openers) {
+                                    None => match temporal_edge_anchor(tl.domain_idx, fit_raw_openers, pw) {
                                         "start" => "left",
                                         "end" => "right",
                                         _ => "center",
@@ -4658,16 +4697,22 @@ pub(crate) fn render_line_panel(
                                 (extent.0 as f64, extent.1 as f64),
                                 pw,
                                 x_tick_cadence,
-                                authored_time_format,
+                                authored_time_format, subday_plan.as_ref(),
                             )?;
                             let (angle, parity) = bare_label_layout(vega_x_labels.as_ref(), x_overlap_skip);
                             let mut ink_all = Vec::with_capacity(ticks.len());
                             for t in &ticks {
-                                let w = fonts.measure(&t.text, x_family, x_font_size)?;
+                                let mut w = fonts.measure_shaped(&t.text, x_family, x_font_size)?;
+                                if let Some(row2) = &t.row2 {
+                                    w = w.max(fonts.measure_shaped(row2, x_family, x_font_size)?);
+                                }
                                 let x = frac_pos(t.frac);
-                                let (align, baseline) = bare_label_anchor(angle, t.frac);
-                                let ink =
+                                let (align, baseline) = bare_label_anchor(angle, t.frac, pw);
+                                let mut ink =
                                     vega_fit::text_ink(x, row_y, w.min(x_limit), x_font_size, align, baseline);
+                                if t.row2.is_some() {
+                                    ink.y2 += x_font_size + 2.0;
+                                }
                                 ink_all.push(if angle != 0.0 { ink.rotate(angle, x, row_y) } else { ink });
                             }
                             let visible = if parity {
@@ -4769,7 +4814,12 @@ pub(crate) fn render_line_panel(
                         // draws with above.
                         (x_band_geometry(pw).edge(0, 0.5), x_band_geometry(pw).edge(last_band, 0.5))
                     } else {
-                        (x_scale_pad, (pw - x_scale_pad).max(x_scale_pad))
+                        // The first and last datum sit at the range ends unless an authored domain frames them.
+                        let (first, last) = utc_fracs
+                            .as_ref()
+                            .map_or((0.0, 1.0), |fr| (fr.iter().copied().fold(f64::INFINITY, f64::min), fr.iter().copied().fold(f64::NEG_INFINITY, f64::max)));
+                        let inner = (pw - 2.0 * x_scale_pad).max(0.0);
+                        (x_scale_pad + inner * first, (x_scale_pad + inner * last).max(x_scale_pad))
                     };
                     b.union(
                         &vega_fit::Bounds::new(datum_x0, ph * frac_hi, datum_x1, ph * frac_lo)
@@ -5028,7 +5078,7 @@ pub(crate) fn render_line_panel(
         if y_away {
             y_gutter = away_gutter(&y_label_ws);
         }
-        if m.plot_w <= 0.0 || m.plot_h <= 0.0 {
+        if m.plot_w < 0.0 || m.plot_h <= 0.0 {
             return Err(format!("line: plot box too small ({}×{})", m.plot_w, m.plot_h).into());
         }
         // See `top_overhang`'s own doc comment above — `0.0` whenever no
@@ -5241,8 +5291,8 @@ pub(crate) fn render_line_panel(
                 rail_tilt_extent = rail_tilt_extent.max(ti.y2);
             }
         }
-        let has_two_row =
-            temporal_labels.as_ref().is_some_and(|tls| tls.iter().any(|tl| !tl.row2.is_empty()));
+        let has_two_row = temporal_labels.as_ref().is_some_and(|tls| tls.iter().any(|tl| !tl.row2.is_empty()))
+            || subday_plan.as_ref().is_some_and(crate::families::subday::SubdayPlan::stacked);
         // The value labels' ink in pane-local coordinates for a pane `pw` x `ph`:
         // text marks are unclipped, so the captions join pane 0's bounds like
         // any mark. `None` with no labels drawn.
@@ -5742,7 +5792,7 @@ pub(crate) fn render_line_panel(
                 (extent.0 as f64, extent.1 as f64),
                 plot_w,
                 x_tick_cadence,
-                authored_time_format,
+                authored_time_format, subday_plan.as_ref(),
             )?;
             let (angle, parity) = bare_label_layout(vega_x_labels.as_ref(), x_overlap_skip);
             if angle != 0.0 {
@@ -5759,7 +5809,7 @@ pub(crate) fn render_line_panel(
                     0.0,
                     w.min(x_limit),
                     x_font_size,
-                    flush_align(t.frac),
+                    flush_align(t.frac * plot_w, plot_w),
                     "top",
                 ));
             }
@@ -6074,7 +6124,8 @@ pub(crate) fn render_line_panel(
     // Does any emitted label carry a non-empty context row?
     let has_two_row_labels = temporal_labels
         .as_ref()
-        .is_some_and(|ls| ls.iter().any(|l| !l.row2.is_empty()));
+        .is_some_and(|ls| ls.iter().any(|l| !l.row2.is_empty()))
+        || bare_axis.as_ref().is_some_and(|(ticks, _)| ticks.iter().any(|t| t.row2.is_some()));
     // Axis groups carry Vega's +0.5 crispness translate on the fit path;
     // the bottom axis additionally sits below the VL x.axis.offset.
     let ad = 0.5;
@@ -6655,8 +6706,13 @@ pub(crate) fn render_line_panel(
         // `title: value` row per channel (`StructuredTooltipFeature` does not
         // apply under `multiples`).
         if facet.is_some() {
+            let x_text = if x_is_continuous_date {
+                crate::families::temporal::default_time_unit_text(&x_domain[i], detected_data_tu)?
+            } else {
+                x_domain[i].clone()
+            };
             let mut rows = vec![
-                (x_title_text.as_str(), x_domain[i].clone()),
+                (x_title_text.as_str(), x_text),
                 (y_title_text.as_str(), r.style.tooltip_format.paint(yv)?),
             ];
             if is_multi && spatial_domain.len() > 1 {
@@ -6664,12 +6720,7 @@ pub(crate) fn render_line_panel(
             }
             return Ok(crate::contract::native_label(&rows));
         }
-        let header = crate::contract::tooltip_header_text(
-            &x_domain_for_temporal[i],
-            header_tu,
-            x_is_standard_date,
-            grain_header_format,
-        )?;
+        let header = header_text(&x_domain_for_temporal[i], x_is_standard_date, grain_header_format)?;
         // A wide fold names its series by the measure's display label.
         let series_label = display_label(data_key);
         // A combo's single-series base names itself (`structured_tooltip.py`:
@@ -6964,12 +7015,7 @@ pub(crate) fn render_line_panel(
                 return Ok(None);
             }
             let i = x_domain.iter().position(|d| *d == row_str(row, layer_x)).expect("x_of placed this row");
-            let header = crate::contract::tooltip_header_text(
-                &x_domain_for_temporal[i],
-                header_tu,
-                x_is_standard_date,
-                grain_header_format,
-            )?;
+            let header = header_text(&x_domain_for_temporal[i], x_is_standard_date, grain_header_format)?;
             let tooltip = crate::contract::BarTooltip {
                 header: &header,
                 series: Some(series),
@@ -7276,7 +7322,7 @@ pub(crate) fn render_line_panel(
                         Some("left") => "start",
                         Some("right") => "end",
                         Some("center") => "middle",
-                        _ => temporal_edge_anchor(tl.domain_idx, raw_openers),
+                        _ => temporal_edge_anchor(tl.domain_idx, raw_openers, plot_w),
                     })
                     .collect();
                 let xs: Vec<f64> = tlabels.iter().map(|tl| temporal_label_x_at(tl.domain_idx)).collect();
@@ -7785,10 +7831,14 @@ fn y_font_size(ax_y: &AxisStyle) -> f64 {
 /// exactly at a range end, never on its domain index — which is the only
 /// test available for the bare temporal axis, whose ticks are dates rather
 /// than domain members.
-pub(crate) fn flush_anchor(frac: f64) -> &'static str {
-    if frac <= 0.0 {
+/// Vega's `labelFlush` (`flush(range, pos, 1, ...)`), the one law for a label's edge anchor: a label within 1px
+/// of a range end flushes to it, the nearer end winning a tie, so a collapsed plot ends every label. `span` is
+/// the range width and `pos` the tick's own position in it.
+pub(crate) fn flush_anchor_px(pos: f64, span: f64) -> &'static str {
+    let (near_start, near_end) = (pos.abs(), (span - pos).abs());
+    if near_start < near_end && near_start <= 1.0 {
         "start"
-    } else if frac >= 1.0 {
+    } else if near_end <= 1.0 {
         "end"
     } else {
         "middle"
@@ -7807,9 +7857,9 @@ pub(crate) fn bare_label_layout(layout: Option<&ResolvedVegaLabels>, skip: bool)
 
 /// A bare tick label's align and baseline: Vega-Lite's rotated-axis anchor
 /// under a tilt, else the flat axis's edge flush.
-pub(crate) fn bare_label_anchor(angle: f64, frac: f64) -> (&'static str, &'static str) {
+pub(crate) fn bare_label_anchor(angle: f64, frac: f64, plot_w: f64) -> (&'static str, &'static str) {
     if angle == 0.0 {
-        (flush_align(frac), "top")
+        (flush_align(frac * plot_w, plot_w), "top")
     } else {
         vega_fit::vl_x_label_anchor(vega_fit::normalize_angle(angle), true)
     }
@@ -7819,8 +7869,8 @@ fn nominal_label_anchor(angle: f64) -> (&'static str, &'static str) {
     vega_fit::vl_x_label_anchor(vega_fit::normalize_angle(angle), true)
 }
 
-pub(crate) fn flush_align(frac: f64) -> &'static str {
-    match flush_anchor(frac) {
+pub(crate) fn flush_align(pos: f64, span: f64) -> &'static str {
+    match flush_anchor_px(pos, span) {
         "start" => "left",
         "end" => "right",
         _ => "center",
@@ -7842,6 +7892,15 @@ fn series_fill(
         return Ok(series.to_string()); // single_series_fill was stored as the "series" key
     }
     crate::common::series_color(series, palette_domain, palette, scale, "#ccc")
+}
+
+/// The color channel's title in Vega-Lite's own description of a mark: an area names the field as it is written
+/// (or its authored label), where a line's is cased as a title.
+fn description_color_title(fam: &str, color_field: &str, legend: &crate::families::legend::LegendConfig, field_labels: &crate::common::FieldLabels) -> Result<String, String> {
+    match fam {
+        "area" => Ok(field_labels.get(color_field).cloned().unwrap_or_else(|| color_field.to_string())),
+        _ => crate::families::legend::color_channel_title(color_field, legend, field_labels),
+    }
 }
 
 #[cfg(test)]
@@ -7872,6 +7931,17 @@ mod tests {
     /// `render_fitted` shrinks the width and re-renders; the dump must
     /// describe THAT render. Deletion counterfactual: dumping the caller's
     /// own payload instead of the fitted one reports the probe's rect.
+    /// `labelFlush` is a pixel test against the range ends: a tick within 1px flushes, the nearer end wins a
+    /// tie, a collapsed range flushes right.
+    #[test]
+    fn a_label_within_a_pixel_of_a_range_end_flushes_to_it() {
+        assert_eq!(crate::families::line::flush_anchor_px(0.0, 400.0), "start");
+        assert_eq!(crate::families::line::flush_anchor_px(0.35, 400.0), "start");
+        assert_eq!(crate::families::line::flush_anchor_px(1.5, 400.0), "middle");
+        assert_eq!(crate::families::line::flush_anchor_px(399.4, 400.0), "end");
+        assert_eq!(crate::families::line::flush_anchor_px(0.0, 0.0), "end");
+    }
+
     #[test]
     fn the_layout_dump_describes_the_width_corrected_render_of_a_composed_strip_chart() {
         let mut payload_json = make_line_payload(true, false);
@@ -8624,6 +8694,7 @@ mod tests {
 
     #[test]
     fn line_authored_sort_x_value_shapes() {
+        let _locale = crate::time_locale::en_us_scope();
         fn s(v: &str) -> serde_json::Value {
             serde_json::json!(v)
         }
@@ -17625,6 +17696,25 @@ mod tests {
         serde_json::from_value(json).unwrap()
     }
 
+    /// An authored domain narrower than the data leaves a zero-width plot: every
+    /// label sits on the one pixel and Vega's flush tie goes to the end, so each
+    /// text is end-anchored.
+    #[test]
+    fn labels_on_a_zero_width_plot_all_end_anchor() {
+        let _locale = crate::time_locale::en_us_scope();
+        let rows: Vec<_> = (0..24)
+            .map(|h| serde_json::json!({"week": format!("2024-03-05T{h:02}:00:00"), "signups": 100.0 + h as f64}))
+            .collect();
+        let mut json = make_line_payload(true, false);
+        json["rows"] = serde_json::Value::Array(rows);
+        json["resolved"]["style"]["axis_x"]["scale"] =
+            serde_json::json!({"continuous": {"domain": ["2024-03-05T06:00:00", "2024-03-05T15:00:00"]}});
+        let svg = render(&serde_json::from_value(json).unwrap(), &test_fonts()).expect("renders");
+        let labels: Vec<&str> = svg.split("<text ").filter(|t| t.contains(">6am<") || t.contains(">2pm<")).collect();
+        assert_eq!(labels.len(), 2, "{svg}");
+        assert!(labels.iter().all(|t| t.contains("text-anchor=\"end\"")), "{labels:?}");
+    }
+
     /// Three Mondays three weeks apart have no calendar cadence, so the axis
     /// is Vega's bare time scale and an authored `ticks.count` is its
     /// `tickCount: N` — the 2-day rung at 12 (22 ticks over the 42 days), the
@@ -17651,18 +17741,16 @@ mod tests {
         assert_eq!(x_tick_xs(&svg).len(), 6, "{svg}");
     }
 
-    /// A day-grained bucketed axis under `ticks.count` draws no x labels at
-    /// all in production, and its UTC scale strides the 2-day rung over
-    /// uniform days (even dates) where the local scale's field filter keeps
-    /// odd ones: neither is modeled, so it refuses by name.
+    /// A day-grained bucketed axis under `ticks.count` ticks the d3 ladder
+    /// over its span: a couple of days fall on the half-days.
     #[test]
-    fn an_authored_tick_count_on_a_day_grained_bucketed_axis_refuses_by_name() {
-        let err = render(
-            &count_tick_payload(weekly_rows("2024-01-01", 1, 21), 12.0),
+    fn an_authored_tick_count_on_a_day_grained_bucketed_axis_ticks_its_half_days() {
+        let svg = render(
+            &count_tick_payload(weekly_rows("2024-03-05", 1, 2), 5.0),
             &test_fonts(),
         )
-        .expect_err("production draws no labels there");
-        assert!(err.contains("axis_x.ticks.count") && err.contains("day"), "{err}");
+        .expect("renders");
+        assert_eq!(x_tick_xs(&svg).len(), 3, "{svg}");
     }
 
     #[test]
@@ -21044,5 +21132,20 @@ mod tests {
         p["resolved"]["layers"][0]["axis_y"] = serde_json::json!({"labels": {"format": {"spec": ",.0f", "suffix": " orders"}}});
         let err = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).unwrap_err();
         assert!(err.contains("line: layer axis_y.labels.format") && err.contains("base's scale"), "{err}");
+    }
+
+    /// A facet panel's description names an area's color field as written and a line's cased as a title.
+    #[test]
+    fn a_description_names_the_color_field_as_the_family_cases_it() {
+        let legend: crate::families::legend::LegendConfig = serde_json::from_value(serde_json::json!({
+            "visible": true, "position": {"edge": "right", "align": "start", "overlay": false},
+            "direction": "vertical", "columns": null,
+            "label": {"font": {"size": 11.0}, "padding": 8.0},
+            "title": {"font": {}, "visible": false},
+        }))
+        .unwrap();
+        let labels = crate::common::FieldLabels::default();
+        assert_eq!(crate::families::line::description_color_title("area", "my_seg", &legend, &labels).unwrap(), "my_seg");
+        assert_eq!(crate::families::line::description_color_title("line", "my_seg", &legend, &labels).unwrap(), "My Seg");
     }
 }

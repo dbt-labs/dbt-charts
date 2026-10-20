@@ -273,6 +273,7 @@ def _build_chart_style_context(
     roles: dict[str, str],
     tones: KpiTonesStyle,
     pre_style: Style,
+    canvas_token_charts: ChartsStyle,
     cascaded: Style,
     card_padding: float,
     heading_sizes: list[float],
@@ -307,6 +308,7 @@ def _build_chart_style_context(
         "roles",
         "tones",
         "pre_style",
+        "canvas_token_charts",
         "cascaded",
         "card_padding",
         "heading_sizes",
@@ -413,6 +415,7 @@ def _build_chart_style_context(
         roles=roles,
         tones=tones,
         pre_style=pre_style,
+        canvas_token_charts=canvas_token_charts,
         cascaded=cascaded,
         card_padding=card_padding,
         heading_sizes=heading_sizes,
@@ -531,6 +534,7 @@ def _resolve_canvas_tokens(
 def _finalize_chart_style_context(
     cascaded: Style,
     pre_style: Style,
+    canvas_token_charts: ChartsStyle,
     base_background: str,
     currency: CurrencyCode | None,
 ) -> ChartStyleContext:
@@ -564,6 +568,7 @@ def _finalize_chart_style_context(
         roles=settled(cascaded.roles),
         tones=cascaded.tones,
         pre_style=pre_style,
+        canvas_token_charts=canvas_token_charts,
         cascaded=cascaded,
         formats=_format_table(cascaded, currency),
         card_padding=cascaded.frame.card_padding,
@@ -720,6 +725,7 @@ def _bake_theme_words(cascaded: Style, language: LanguageCode) -> Style:
 
 
 def _finalize_style(
+    base: Style,
     merged: Style,
     base_background: str,
     currency: CurrencyCode | None,
@@ -730,14 +736,17 @@ def _finalize_style(
     One apply_inherit call over the full graph fills all InheritSlot links in one
     pass. The pre-inherit Style feeds ``ChartStyleContext.pre_style`` so per-chart
     style patches can re-run the full graph against a chart-local override
-    without touching board-global state.
+    without touching board-global state. Theme-self tokens are substituted here
+    with the board's canvas; ``canvas_token_charts`` keeps the charts subtree
+    before that, so a chart that paints its own background can re-substitute.
     """
     registry = merged.fonts
     assert registry is not None, "Style._validate_fonts requires style.fonts"
     registry = resolve_registry(registry)
-    pre_style = expand_named_fonts(
+    token_style = expand_named_fonts(
         merged.model_copy(update={"fonts": registry}), registry
     )
+    pre_style = _resolve_canvas_tokens(base, token_style, base_background)
     cascaded = apply_inherit(pre_style, get_inherit_graph())
     cascaded = _seed_spark_colors(cascaded)
     cascaded = _bake_theme_words(cascaded, language)
@@ -749,6 +758,7 @@ def _finalize_style(
     chart_context = _finalize_chart_style_context(
         cascaded,
         pre_style,
+        token_style.charts,
         base_background,
         currency,
     )
@@ -856,10 +866,7 @@ def resolve_style_and_context(
     background = base.background if base_background is None else base_background
     if patch is not None:
         return _finalize_style(
-            _resolve_canvas_tokens(base, merge_style(base, patch), background),
-            background,
-            currency,
-            language,
+            base, merge_style(base, patch), background, currency, language
         )
 
     # Reached only with base_background unset (a nested board with a cascade
@@ -870,10 +877,7 @@ def resolve_style_and_context(
         return cached[1], cached[2]
 
     resolved, chart_context = _finalize_style(
-        _resolve_canvas_tokens(base, merge_style(base), background),
-        background,
-        currency,
-        language,
+        base, merge_style(base), background, currency, language
     )
     _RESOLVED_STYLE_CACHE[cache_key] = (base, resolved, chart_context)
     return resolved, chart_context

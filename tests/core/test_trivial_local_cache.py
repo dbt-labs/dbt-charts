@@ -2,6 +2,8 @@
 
 import pytest
 
+from dbt_charts.core.diagnostics import ERR_BINDER_UNKNOWN_COLUMN
+from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure, CacheHit
 from dbt_charts.core.execute.duckdb_cache import (
     compute_query_hash,
@@ -175,6 +177,29 @@ class TestFailuresProtocol:
             assert isinstance(failure, CachedQueryFailure)
             assert failure.error_class == "ValueError"
             assert "boom" in failure.error_message
+        finally:
+            cache.close()
+
+    def test_typed_error_keeps_its_code(self) -> None:
+        cache = TrivialDuckDBCache()
+        try:
+            error = QueryError.from_code(ERR_BINDER_UNKNOWN_COLUMN, detail="no col")
+            cache.put(_SH, _QH, _VH, error, board_slug="f", query_name="q")
+            failure = cache.get(_SH, _QH, _VH)
+            assert isinstance(failure, CachedQueryFailure)
+            assert failure.error_code == ERR_BINDER_UNKNOWN_COLUMN.code
+            assert failure.error_fields == error.fields
+        finally:
+            cache.close()
+
+    def test_untyped_error_has_no_code(self) -> None:
+        cache = TrivialDuckDBCache()
+        try:
+            cache.put(_SH, _QH, _VH, ValueError("x"), board_slug="f", query_name="q")
+            failure = cache.get(_SH, _QH, _VH)
+            assert isinstance(failure, CachedQueryFailure)
+            assert failure.error_code is None
+            assert failure.error_fields == {}
         finally:
             cache.close()
 

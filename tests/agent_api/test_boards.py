@@ -1063,6 +1063,9 @@ rows:
         dashboard.write_text(
             """
 title: URL Test
+variables:
+  region:
+    input: text
 queries:
   q:
     columns: [value]
@@ -1107,6 +1110,9 @@ rows:
         dashboard.write_text(
             """
 title: Sales
+variables:
+  region:
+    input: text
 queries:
   q:
     columns: [value]

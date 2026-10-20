@@ -173,7 +173,7 @@ def test_two_distinct_queries_are_both_emitted(
             "q2": SqlQuery(sql="SELECT 2", source="test_profile"),
         },
     )
-    result = _render(board, _make_executor([{"month": "jan", "revenue": 5}]))
+    result = _render(board, _make_executor([{"month": "jan", "revenue": 5, "cost": 3}]))
 
     assert set(result["queries"]) == {"q", "q2"}
     assert result["charts"]["rev"]["query"] == "q"

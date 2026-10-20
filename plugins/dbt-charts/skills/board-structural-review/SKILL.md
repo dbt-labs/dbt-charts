@@ -5,8 +5,7 @@ description: Review a dbt charts board's YAML structure and content choices with
   against a design checklist (chart-data shape match, layout intent, variable wiring,
   descriptive naming, anti-patterns). Use when asked to 'review this dashboard', 'check
   this board', 'is this YAML well-shaped', 'find problems in this dashboard', or after
-  editing a board before delivery. Cheap — no rendering, no PNG, no LLM judge in the
-  loop. Do NOT use for visual problems that need to be seen (use board-visual-review).
+  editing a board before delivery. Cheap — no rendering, no LLM judge in the loop.
   Do NOT use as a YAML linter substitute — schema validation already covers that.
 metadata:
   author: fivetran
@@ -26,8 +25,6 @@ this is the cheap pass.
 
 ## When NOT to use
 
-- Visual problems ("the legend is overlapping the title") — use
-  `board-visual-review`
 - Comparing two versions of a board — out of scope for this skill
 
 ## Protocol

@@ -41,6 +41,7 @@ from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.cache import CachePolicy
 from dbt_charts.core.compile.parse.source_map import stamp_diagnostics
 from dbt_charts.core.compile.template.output_budget import template_output_budget
+from dbt_charts.core.compile.template.variables import check_variable_overrides
 from dbt_charts.core.diagnostics import (
     ERR_FORMAT_UNSUPPORTED,
     ERR_INPUT_INVALID,
@@ -307,6 +308,7 @@ def render_dashboard(
     builtin_variables: VariableValues | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
     clock: Callable[[], datetime] = utc_now,
+    strict_variables: bool = True,
     **render_options: Any,
 ) -> BoardRenderResult:
     """Validate, compile, and render a dbt charts dashboard.
@@ -327,6 +329,10 @@ def render_dashboard(
     otherwise derives from ``board.path`` — pass it when the caller's anchor has its
     own directory-listing semantics.
     ``clock`` is the render's time source, handed to its ``Executor``.
+    ``strict_variables`` rejects a variable the board does not declare, and a
+    choice value outside its static options, instead of running the queries as
+    if it were never set. A host whose variables are a browser's query string,
+    where unrelated parameters are normal, passes ``False``.
     """
     _warnings_ignore = project.warnings_ignore
 
@@ -459,6 +465,15 @@ def render_dashboard(
 
     render_result: _RenderResult
     try:
+        if strict_variables and result.board is not None:
+            # The full board's registry, not the focused one: a focused chart
+            # render still accepts every variable the board declares.
+            check_variable_overrides(
+                result.board.variable_registry
+                or {},  # type-state: silent_fallback — a board without variables has an empty registry
+                variables
+                or {},  # type-state: silent_fallback — no values is an empty mapping, not masked bad input
+            )
         # Use the caller-supplied materializer when provided (e.g. Cloud with Postgres
         # cache). For local `dct serve` / CLI, hand the executor a lazy factory so the
         # in-process DuckDB-backed materializer is built only when a file-source query
@@ -501,6 +516,7 @@ def render_dashboard(
                 max_workers=max_workers,
                 warnings_ignore=_warnings_ignore,
                 max_rows_per_query=max_rows_per_query,
+                strict_variables=strict_variables,
                 **render_options,
             )
         _t_done = time.perf_counter()

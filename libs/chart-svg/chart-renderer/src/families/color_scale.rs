@@ -168,7 +168,7 @@ impl ContinuousColor {
     ) -> Result<(Vec<f64>, Vec<String>), String> {
         let count = gradient_tick_count(length);
         if self.dates {
-            let values = gradient_labeled_values(crate::families::temporal::utc_instants(self.lo, self.hi, count)?, self.lo, self.hi);
+            let values = gradient_labeled_values(crate::families::temporal::utc_instants(self.lo, self.hi, count), self.lo, self.hi);
             let labels = values.iter().map(|&d| crate::families::heatmap::legend_date_label(d)).collect::<Result<_, _>>()?;
             return Ok((values, labels));
         }
@@ -196,7 +196,7 @@ impl ContinuousColor {
     /// ends: the scale's own ticks at `GRADIENT_STOP_TICKS`.
     pub(crate) fn stop_ticks(&self) -> Result<Vec<f64>, String> {
         if self.dates {
-            return crate::families::temporal::utc_instants(self.lo, self.hi, GRADIENT_STOP_TICKS);
+            return Ok(crate::families::temporal::utc_instants(self.lo, self.hi, GRADIENT_STOP_TICKS));
         }
         Ok(d3rs::ticks::d3_ticks(self.lo, self.hi, GRADIENT_STOP_TICKS))
     }

@@ -9,6 +9,7 @@ from dbt_charts.core.diagnostics.hints import (
     suggest_close_column,
     suggest_close_ref,
     suggest_close_source_table,
+    suggest_close_variable,
 )
 from dbt_charts.core.diagnostics.registry import REGISTRY, ErrorCode, WarningCode
 
@@ -1269,9 +1270,12 @@ ERR_CHART_COLUMN_NOT_IN_RESULT = REGISTRY.register(
             "Available columns: {columns}"
         ),
         doc=(
-            "Fired during `dct validate --warehouse` when a chart's channel "
-            "(x, y, color, value, etc.) names a column that the backing query "
-            "does not return. Rename the channel to match a returned column, "
+            "Fired when a chart's channel (x, y, color, value, a table's "
+            "`columns`, etc.) names a column that the backing query does not "
+            "return: by `dct validate --warehouse` against the warehouse's "
+            "schema, and at render against the rows the chart is about to draw "
+            "(where it fails that chart; a zero-row result carries no columns "
+            "and passes). Rename the channel to match a returned column, "
             "or update the query to return the expected column."
         ),
         docs_topic="queries",
@@ -1386,6 +1390,51 @@ ERR_VARIABLE_UNBOUND = REGISTRY.register(
             "without a default and the caller supplied no binding. Pass a value "
             "for each variable named."
         ),
+        docs_topic="variables",
+    )
+)
+
+ERR_UNKNOWN_VARIABLE_OVERRIDE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-UNKNOWN-VARIABLE-OVERRIDE",
+        domain="execute",
+        title="Caller set a variable the board does not declare",
+        message_template=(
+            "Variable {variable!r} is not declared by this board. "
+            "Declared variables: {available}."
+        ),
+        doc=(
+            "Fired when a render or named-query run is given a value (`--var`, "
+            "an API or MCP `variables` binding) for a name the board does not "
+            "declare under `variables:`. The queries would run as if the value "
+            "was never set, so a typo returns plausible-looking results for the "
+            "wrong filter. Fix the name, or declare the variable on the board."
+        ),
+        summary="Fired when a caller sets a variable the board does not declare.",
+        docs_topic="variables",
+        hint_generator=suggest_close_variable,
+    )
+)
+
+ERR_VARIABLE_VALUE_NOT_IN_OPTIONS = REGISTRY.register(
+    ErrorCode(
+        code="ERR-VARIABLE-VALUE-NOT-IN-OPTIONS",
+        domain="execute",
+        title="Variable value is not one of the variable's options",
+        message_template=(
+            "Variable {variable!r} was set to {value!r}, which is not one of its "
+            "options. Valid options: {options}."
+        ),
+        doc=(
+            "Fired when a select, radio, or multiselect variable is given a value "
+            "outside its options. A static `options:` list is checked on every "
+            "render and named-query run. Options that come from a query are "
+            "checked on render only, against the rows that render already ran "
+            "for the control; a named-query run does not execute the option "
+            "query just to validate, and a query that returned no rows (or "
+            "failed) is not checked. Pick one of the listed options."
+        ),
+        summary="Fired when a choice variable is set to a value outside its options.",
         docs_topic="variables",
     )
 )

@@ -1,0 +1,5 @@
+kind: Fixes
+body: The text render summary now shows KPI labels, Decimal measure ranges, and board text, with consistent table row counts and no synthetic layout ids as headings.
+time: 2026-10-19T21:40:15.686852173Z
+custom:
+    DbtChartsIssue: "0"

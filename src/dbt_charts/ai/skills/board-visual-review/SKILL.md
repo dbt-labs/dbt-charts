@@ -1,6 +1,7 @@
 ---
 name: board-visual-review
 kind: workflow
+surfaces: [cli]
 description: >
   Render a dbt charts board to PNG and review the image against a visual-design
   checklist using vision. Catches problems YAML inspection can't see —

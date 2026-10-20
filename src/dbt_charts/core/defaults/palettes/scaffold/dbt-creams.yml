@@ -7,7 +7,6 @@
 # Inherits the full alias graph from dbt-grays via `extends:`. Integer
 # aliases (canvas: 1, ink: 11, etc.) resolve against this palette's own
 # colors array at resolve time — so chrome.ink → cream #2A2725, not gray #222222.
-# Only cream-specific hex overrides are listed below.
 
 name: dbt-creams
 extends: dbt-grays
@@ -32,10 +31,3 @@ colors:
   - "#403B37"    # 10 heading
   - "#2A2725"    # 11 ink
   - "#1A1714"    # 12 void  (warm near-black; mirrors dbt-grays.void, one tier below ink)
-
-aliases:
-  # Cream-specific terminal hex overrides — inherited integer ladder from dbt-grays
-  fill-muted: "#e8e0d4"
-  separator: "#ddd3bf"
-  spark-empty: "#d9cebf"
-  accent: "#2d74b3"

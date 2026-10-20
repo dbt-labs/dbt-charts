@@ -1,0 +1,5 @@
+kind: Fixes
+body: A chart naming a column its query does not return, and a variable name or select value the board does not accept, now fail with an error instead of rendering an empty result.
+time: 2026-10-19T22:07:52.604213242Z
+custom:
+    DbtChartsIssue: "0"

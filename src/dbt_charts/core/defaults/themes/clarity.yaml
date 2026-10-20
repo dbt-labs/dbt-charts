@@ -1,16 +1,14 @@
 # Unified theme: clarity
 # The shipped dbt charts default. Serif-forward titles, multi-step gray scaffold
-# ladder, steel-blue accent — a refined editorial voice applied on top of the
+# ladder — a refined editorial voice applied on top of the
 # `stark` structural root. Pick `stark` directly to opt out of the refined
 # hierarchy; pick `paper` for the same voice on a warm canvas.
 
 extends: stark
 style:
   background: dbt-grays.white
-  # Clarity palette — gray scaffold + steel-blue accent in place of
-  # the brighter stark accent/muted.
+  # Clarity palette — gray scaffold muted step in place of the stark muted.
   muted: dbt-grays.muted
-  accent: dbt-creams.accent
   # Rebind the categorical role to the editorial-10 family. `_base` binds
   # category to vivid-10; without this rebind, theme-portable refs like
   # `category[2]` or `category[2].dark` keep resolving to stark's palette
@@ -18,7 +16,7 @@ style:
   # design.
   palettes:
     category: editorial-10
-    # Editorial's steel-blue accent, extended to sequential color. Bound as a
+    # The blue sequential ramp. Bound as a
     # role so the heatmap/geoshape gradients below and any `sequence[N]` token
     # read the same palette.
     sequence: dbt-seq-blue

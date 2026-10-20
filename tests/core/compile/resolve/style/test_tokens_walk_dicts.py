@@ -22,16 +22,16 @@ import pytest
 from dbt_charts.agent_api import ProjectSession
 from dbt_charts.core.project import InMemoryBoard
 
-# `dbt-grays.separator` and `negative.text` are dotted tokens; `category[1]` is
+# `dbt-grays.border` and `negative.text` are dotted tokens; `category[1]` is
 # a bracket role token. All three go through the same walk.
 _TOKENS = {
-    "background": "dbt-grays.separator",
+    "background": "dbt-grays.border",
     "font_color": "negative.text",
     "spark_color": "category[1]",
     "glyph_color": "warning.solid",
 }
 _HEXES = {
-    "background": "#e0e0e0",
+    "background": "#DFE1E5",
     "font_color": "#4b000a",
     "glyph_color": "#e69812",
 }

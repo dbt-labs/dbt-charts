@@ -50,13 +50,21 @@ def test_get_placeholder_config_getter_is_removed():
 
 
 def test_add_placeholder_overlay_uses_style_placeholder():
-    """Renderer reads the new path; overlay still emits the default 'add data'."""
+    """Renderer reads style.placeholder.overlay.font.color, not the muted tone."""
+    import dataclasses
+
     from dbt_charts.core.compile.models.primitives import FontStyle
     from dbt_charts.core.compile.resolve.style.board import resolve_style
     from dbt_charts.core.render.placeholder import add_placeholder_overlay
 
     svg = '<svg width="100" height="100"><rect width="100" height="100"/></svg>'
     style = resolve_style(get_theme_style())
+    overlay = style.placeholder.overlay
+    pinned_font = overlay.font.model_copy(update={"color": "#123456"})
+    pinned = style.placeholder.model_copy(
+        update={"overlay": overlay.model_copy(update={"font": pinned_font})}
+    )
+    style = dataclasses.replace(style, placeholder=pinned)
     result = add_placeholder_overlay(
         svg,
         width=100,
@@ -65,5 +73,4 @@ def test_add_placeholder_overlay_uses_style_placeholder():
         resolved_style=style,
     )
     assert "add data" in result
-    assert "rgba(255, 255, 255, 0.5)" in result
-    assert "#666666" in result
+    assert "#123456" in result

@@ -132,12 +132,8 @@ theme's business — leave them alone.
 
 Render after every tile (`get_skill('board-build')` owns the build-validate loop —
 one tile at a time, never one-shot). When all tiles are in, render the whole
-board to PNG and compare side by side with the source:
-
-```text
-render_board(path="charts/finance/revenue-overview.yml", format="png")
-```
-
+board with `render_board` and compare its chart list with the
+source's tiles.
 
 Judge structure parity — sections, tile count, chart types, options from the
 checklist — not colors or fonts; those are intentionally dbt charts' own.

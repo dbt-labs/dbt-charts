@@ -2217,16 +2217,17 @@ def test_zero_decimal_fixed_aliases_are_left_alone():
         assert ay.labels.format.spec == _HOUSE_SPECS[name]
 
 
-def test_end_to_end_theme_literal_format_is_not_baked_and_not_forced_right():
+def test_end_to_end_theme_literal_format_is_not_baked_but_decimal_aligned():
     """A literal axis format authored at the THEME tier itself (simulating a
     custom theme that hand-writes a d3 spec instead of a predefined name at
     ``axis_quantitative.labels.format``, layers 1-3 of the cascade -- not a
     board/chart-authored override) is honored verbatim: house-vs-literal is
     the only distinction that matters, never which tier wrote it or whether
     any tier did. Proves both consequences of "literal" at once: no
-    plain-digit tick-label bake (the non-compacting ladder guard), and no
-    forced right-align (_force_right) -- on the same non-compacting
-    axis/data shape a predefined name gets both for (see
+    plain-digit tick-label bake (the non-compacting ladder guard), while the
+    right-edge axis still decimal-aligns (an unauthored align is filled for a
+    literal spec too) -- a predefined name on the same non-compacting
+    axis/data shape gets both (see
     ``test_end_to_end_bare_axis_default_format_bakes_and_forces_right_align``
     below).
     """
@@ -2258,7 +2259,7 @@ def test_end_to_end_theme_literal_format_is_not_baked_and_not_forced_right():
     assert ay.labels.format.spec == ".3~s"
     assert ay.ruler is None
     assert ay.tick_label is None
-    assert ay.labels.align is None
+    assert ay.labels.align == "right"
 
 
 def test_end_to_end_bare_axis_default_format_bakes_and_forces_right_align():

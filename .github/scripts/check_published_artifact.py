@@ -17,11 +17,12 @@ Finding categories:
   dep_missing           — package imports something not declared as a runtime dep
   dep_unused            — declared runtime dep never imported
   dev_context_leaked    — wheel ships an AGENTS.md or CLAUDE.md file
+  native_extension      — policy declares a compiled extension the wheel lacks, the
+                          wheel is not a platform wheel, or (release only) the
+                          extension embeds build-machine paths
 
-This is a trimmed, standalone-adapted copy of the wheel/sdist audit that also
-runs in this project's private development repo. The sdist, cross-package
-workspace, and vendored-example checks that copy carries don't apply to a
-single-package, wheel-only release, so they aren't ported here.
+Stdlib-only, so it runs standalone in a release checkout. A wrapper in the
+development repo imports these checks and adds its workspace-only ones.
 
 Exits 0 on clean, 1 on any finding, 2 on configuration error (missing policy file).
 """
@@ -51,10 +52,13 @@ _PYPI_TO_IMPORT_NAMES: dict[str, list[str]] = {
     "dbt_adapters": ["dbt"],
     "dbt_duckdb": ["dbt"],
     "dbt_core": ["dbt"],
+    "dbt_protos": ["dbtlabs"],
+    "beautifulsoup4": ["bs4"],
     # pydantic v2 ships a compiled `pydantic_core` companion package alongside
     # the pure-Python `pydantic`. Importing `pydantic_core` is satisfied by
     # declaring `pydantic`; treat them as one PyPI distribution.
     "pydantic": ["pydantic", "pydantic_core"],
+    "python_dotenv": ["dotenv"],
     # Pillow ships its module under the `PIL` import name for historical
     # compatibility with the original Python Imaging Library.
     "pillow": ["PIL"],
@@ -213,10 +217,10 @@ _BUILD_PATH = re.compile(
 def _check_native_extension(
     wheel: list[tuple[str, bytes]], policy: Policy
 ) -> list[Finding]:
-    """Assert the wheel is a platform wheel carrying exactly one clean extension.
+    """Assert the wheel is a platform wheel carrying exactly one compiled extension.
 
     The extension is binary, so `_check_content_scans` skips it; its raw bytes
-    are scanned for forbidden name substrings and build-machine paths here.
+    are scanned for forbidden name substrings here instead.
     """
     if policy.native_extension is None:
         return []
@@ -252,16 +256,31 @@ def _check_native_extension(
                     member, "name_substring", f"contains forbidden substring `{sub}`"
                 )
             )
-    build_path = _BUILD_PATH.search(blob)
-    if build_path:
-        findings.append(
-            Finding(
-                member,
-                "native_extension",
-                f"embeds a build-machine path `{build_path.group().decode()}`; "
-                "build with --remap-path-prefix",
+    return findings
+
+
+def _check_build_paths(wheel: list[tuple[str, bytes]], policy: Policy) -> list[Finding]:
+    """Reject a compiled extension that embeds build-machine paths.
+
+    Release-only: development CI builds without --remap-path-prefix.
+    """
+    if policy.native_extension is None:
+        return []
+    stem = policy.native_extension
+    findings: list[Finding] = []
+    for member, blob in wheel:
+        if not (member.startswith(f"{stem}.") and member.endswith((".so", ".pyd"))):
+            continue
+        build_path = _BUILD_PATH.search(blob)
+        if build_path:
+            findings.append(
+                Finding(
+                    member,
+                    "native_extension",
+                    f"embeds a build-machine path `{build_path.group().decode()}`; "
+                    "build with --remap-path-prefix",
+                )
             )
-        )
     return findings
 
 
@@ -445,9 +464,7 @@ def _check_dep_parity(
     return findings
 
 
-def _audit(*, wheel_path: Path, policy: Policy) -> list[Finding]:
-    wheel = _walk_wheel(wheel_path)
-
+def _audit(*, wheel: list[tuple[str, bytes]], policy: Policy) -> list[Finding]:
     wheel_names = [m for m, _ in wheel]
     wheel_members = [(m, b) for m, b in wheel if not _is_metadata_entry(m)]
 
@@ -499,7 +516,8 @@ def main() -> int:
         return 2
 
     policy = _load_policy(args.pyproject)
-    findings = _audit(wheel_path=args.wheel, policy=policy)
+    wheel = _walk_wheel(args.wheel)
+    findings = _audit(wheel=wheel, policy=policy) + _check_build_paths(wheel, policy)
     if not findings:
         return 0
     for f in findings:

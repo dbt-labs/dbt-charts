@@ -26,6 +26,7 @@ Dependencies:
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -51,6 +52,7 @@ else:
         HAS_DUCKDB = False
 
 from dbt_charts._install_hint import install_hint
+from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import ERR_CACHE_FILE_UNAVAILABLE
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.cache_backend import (
@@ -80,6 +82,8 @@ _OUTCOME_COLUMNS = {
     "payload": "BLOB",
     "error_class": "TEXT",
     "error_message": "TEXT",
+    "error_code": "TEXT",
+    "error_fields": "TEXT",
     "traceback": "TEXT",
     "error_written_at_utc": "TIMESTAMP",
 }
@@ -236,7 +240,8 @@ class _DuckDBResultCacheBase:
         row = conn.execute(
             """
             SELECT written_at_utc, truncated_reason, payload,
-                   error_class, error_message, traceback, error_written_at_utc
+                   error_class, error_message, error_code, error_fields,
+                   traceback, error_written_at_utc
             FROM _query_outcomes
             WHERE source_hash = ? AND query_hash = ? AND variables_hash = ?
             """,
@@ -250,6 +255,8 @@ class _DuckDBResultCacheBase:
             payload,
             err_class,
             err_message,
+            err_code,
+            err_fields,
             traceback,
             err_written_at,
         ) = row
@@ -273,6 +280,8 @@ class _DuckDBResultCacheBase:
                 error = CachedQueryFailure(
                     error_class=err_class,
                     error_message=err_message,
+                    error_code=err_code,
+                    error_fields=json.loads(err_fields),
                     traceback=traceback,
                     failed_at=err_written_at,
                 )
@@ -309,8 +318,9 @@ class _DuckDBResultCacheBase:
             INSERT INTO _query_outcomes
                 (source_hash, query_hash, variables_hash, board_slug, query_name,
                  written_at_utc, truncated_reason, payload,
-                 error_class, error_message, traceback, error_written_at_utc)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
+                 error_class, error_message, error_code, error_fields,
+                 traceback, error_written_at_utc)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL)
             ON CONFLICT (source_hash, query_hash, variables_hash) DO UPDATE SET
                 board_slug = excluded.board_slug,
                 query_name = excluded.query_name,
@@ -319,6 +329,8 @@ class _DuckDBResultCacheBase:
                 payload = excluded.payload,
                 error_class = NULL,
                 error_message = NULL,
+                error_code = NULL,
+                error_fields = NULL,
                 traceback = NULL,
                 error_written_at_utc = NULL
             """,
@@ -354,13 +366,16 @@ class _DuckDBResultCacheBase:
             """
             INSERT INTO _query_outcomes
                 (source_hash, query_hash, variables_hash, board_slug, query_name,
-                 error_class, error_message, traceback, error_written_at_utc)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 error_class, error_message, error_code, error_fields,
+                 traceback, error_written_at_utc)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (source_hash, query_hash, variables_hash) DO UPDATE SET
                 board_slug = excluded.board_slug,
                 query_name = excluded.query_name,
                 error_class = excluded.error_class,
                 error_message = excluded.error_message,
+                error_code = excluded.error_code,
+                error_fields = excluded.error_fields,
                 traceback = excluded.traceback,
                 error_written_at_utc = excluded.error_written_at_utc
             """,
@@ -372,6 +387,12 @@ class _DuckDBResultCacheBase:
                 query_name,
                 type(exception).__name__,
                 str(exception),
+                exception.code.code
+                if isinstance(exception, DbtChartsError) and exception.code is not None
+                else None,
+                json.dumps(
+                    exception.fields if isinstance(exception, DbtChartsError) else {}
+                ),
                 "".join(tb_mod.format_exception(exception)),
                 _utc_wall_clock(),
             ],

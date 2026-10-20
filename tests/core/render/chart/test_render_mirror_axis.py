@@ -1022,21 +1022,15 @@ def _compacting_data() -> list[dict[str, Any]]:
 
 
 class TestV2MirrorAxisRulerMechanism:
-    """Regression: a single ``ResolvedRulerAxis`` bakes the mechanism for
-    the PRIMARY axis's own resolved anchoring, and a start-anchored axis
-    (VL's own per-orient default for whichever edge doesn't get an
-    authored/away-side align) now bakes no ruler at all -- neither the
-    primary nor the ghost paints a special labelExpr in that state.
-    Regression for the old ghost-inherits-the-primary's-mechanism bug: a
-    ``position: right`` primary (start-anchored) mirrored a ghost that
-    rendered left/end-anchored but still painted the leading-pad JS built
-    for the primary, silently losing its suffix-tick alignment -- the fix
-    is that BOTH edges compute their own mechanism independently, and here
-    that independent computation is "none" on both, not a wrongly-inherited
-    one.
+    """Each edge of a mirrored axis takes its ruler from its own resolved
+    format and anchoring, never the primary's labelExpr verbatim. A literal d3
+    spec on a right-edge axis is only right-aligned (per-tick literal text, no
+    ruler); a house alias bakes the end-anchored ruler, and the ghost bakes one
+    only when its own format needs it.
     """
 
-    def test_right_primary_default_bakes_no_ruler_on_either_edge(self):
+    @staticmethod
+    def _labelexprs(position: str, labels: dict[str, Any], mirror: Any) -> Any:
         chart = AreaChart.model_validate(
             {
                 "id": "t",
@@ -1044,21 +1038,33 @@ class TestV2MirrorAxisRulerMechanism:
                 "x": "month",
                 "y": "value",
                 "style": {
-                    "axis_y": {
-                        "position": "right",
-                        "labels": {"format": "$.3~s"},
-                        "mirror": True,
-                    },
+                    "axis_y": {"position": position, "labels": labels, "mirror": mirror}
                 },
             }
         )
-        spec = _v2_vl(chart, _compacting_data())
-        exprs = _y_axis_key_by_orient(spec, "labelExpr")
+        return _y_axis_key_by_orient(_v2_vl(chart, _compacting_data()), "labelExpr")
+
+    @pytest.mark.parametrize(
+        ("position", "ghost"), [("right", "left"), ("left", "right")]
+    )
+    def test_ghost_without_its_own_ruler_does_not_inherit_the_primarys(
+        self, position: str, ghost: str
+    ):
+        """A compacting primary keeps its ruler while a ghost relabeled to a
+        spec that never compacts paints plain ticks -- the ghost's expr is
+        computed from the ghost, not copied from the primary.
+        """
+        exprs = self._labelexprs(position, {"format": "currency"}, {"format": ",.0f"})
+        assert exprs[position] is not None
+        assert exprs[ghost] is None
+
+    def test_right_primary_default_bakes_no_ruler_on_either_edge(self):
         # The primary (right, start-anchored by VL's own default) bakes no
         # ruler, only the bare-zero labelExpr. The mirror block that would
         # build the ghost's own ruler only fires when the primary has one, so
         # the ghost (left) gets none either -- not the primary's mechanism
         # inherited verbatim.
+        exprs = self._labelexprs("right", {"format": "$.3~s"}, True)
         assert exprs == {"right": _BARE_ZERO_SI, "left": _BARE_ZERO_SI}
 
     def test_left_primary_default_bakes_no_ruler_on_either_edge(self):
@@ -1072,9 +1078,7 @@ class TestV2MirrorAxisRulerMechanism:
                 "type": "area",
                 "x": "month",
                 "y": "value",
-                "style": {
-                    "axis_y": {"labels": {"format": "$.3~s"}, "mirror": True},
-                },
+                "style": {"axis_y": {"labels": {"format": "$.3~s"}, "mirror": True}},
             }
         )
         spec = _v2_vl(chart, _compacting_data())

@@ -80,20 +80,6 @@ class TestCreamsInheritsGraysAliases:
         result = color_from_theme("chrome.ink", palettes={"chrome": "dbt-grays"})
         assert result.lower() == "#222222"
 
-    def test_child_fill_muted_overrides_parent(self):
-        """dbt-creams has its own fill-muted hex that must override dbt-grays."""
-        result = color_from_theme(
-            "chrome.fill-muted", palettes={"chrome": "dbt-creams"}
-        )
-        # dbt-creams fill-muted = #e8e0d4 (not dbt-grays #e5e7eb)
-        assert result.lower() == "#e8e0d4"
-        assert result.lower() != "#e5e7eb"
-
-    def test_parent_fill_muted_unchanged(self):
-        """dbt-grays fill-muted must remain its own value."""
-        result = color_from_theme("chrome.fill-muted", palettes={"chrome": "dbt-grays"})
-        assert result.lower() == "#e5e7eb"
-
 
 # ---------------------------------------------------------------------------
 # 3. Transitive extends: gamma extends beta extends alpha
@@ -134,7 +120,7 @@ def transitive_palette_dir(tmp_path: Path) -> Path:
           - "#222222"
           - "#333333"
         aliases:
-          shallow: 3
+          shallow: 1
         """
         ),
         encoding="utf-8",
@@ -182,13 +168,13 @@ class TestTransitiveExtends:
     def test_beta_shallow_resolves_against_beta_colors(
         self, transitive_palette_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """beta.shallow = 3 → beta.colors[2] = #333333 (beta overrides alpha)."""
+        """beta.shallow = 1 → beta.colors[0] = #111111 (beta overrides alpha's 3)."""
         monkeypatch.setattr(
             pal_mod, "_PALETTES_DIR", transitive_palette_dir / "palettes"
         )
         _reset_caches()
         result = color_from_theme("role.shallow", palettes={"role": "beta"})
-        assert result.lower() == "#333333"
+        assert result.lower() == "#111111"
 
 
 # ---------------------------------------------------------------------------

@@ -163,7 +163,7 @@ def test_mismatch_warns_on_stderr_without_failing_the_command(
     stale = _version_info_for(tmp_path / "stale" / "dbt_charts", editable=False)
 
     with patch.object(version_info, "collect", return_value=stale):
-        result = runner.invoke(app, ["docs"])
+        result = runner.invoke(app, ["skills"])
 
     assert result.exit_code == 0
     assert "Warning" in result.stderr
@@ -186,7 +186,7 @@ def test_bracketed_checkout_path_survives_rich_markup(
     stale = _version_info_for(tmp_path / "stale" / "dbt_charts", editable=False)
 
     with patch.object(version_info, "collect", return_value=stale):
-        result = runner.invoke(app, ["docs"])
+        result = runner.invoke(app, ["skills"])
 
     assert result.exit_code == 0
     assert "[archive]" in result.stderr
@@ -200,7 +200,7 @@ def test_env_opt_out_silences_the_warning(
     stale = _version_info_for(tmp_path / "stale" / "dbt_charts", editable=False)
 
     with patch.object(version_info, "collect", return_value=stale):
-        result = runner.invoke(app, ["docs"], env={"DCT_NO_WORKSPACE_GUARD": "1"})
+        result = runner.invoke(app, ["skills"], env={"DCT_NO_WORKSPACE_GUARD": "1"})
 
     assert result.exit_code == 0
     assert "Warning" not in result.stderr
@@ -214,6 +214,6 @@ def test_env_opt_out_rejects_garbage(
     stale = _version_info_for(tmp_path / "stale" / "dbt_charts", editable=False)
 
     with patch.object(version_info, "collect", return_value=stale):
-        result = runner.invoke(app, ["docs"], env={"DCT_NO_WORKSPACE_GUARD": "maybe"})
+        result = runner.invoke(app, ["skills"], env={"DCT_NO_WORKSPACE_GUARD": "maybe"})
 
     assert result.exit_code == 2

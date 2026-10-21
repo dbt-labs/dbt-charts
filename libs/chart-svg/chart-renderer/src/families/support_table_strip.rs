@@ -29,12 +29,13 @@
 use crate::constants::layout::SUPPORT_TABLE_MAX_X_TICKS;
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use crate::codes;
 use crate::diagnostic::Diagnostic;
 use crate::common::{row_str, slug_to_display, Divider, FormatSlot, GappedDivider, Font, SignPlacement};
+use crate::number_locale::active_number_locale;
 use crate::families::temporal::TimeUnit;
 use crate::svg::{xml_escape, xml_escape_attr, vega_escape_attr};
 use crate::text::FontBook;
@@ -329,21 +330,25 @@ pub enum CellValue {
     Text(String),
 }
 
-/// `float(raw)`-equivalent coercion: a JSON number as-is, a JSON string
-/// parsed as a float (mirrors Python's `float(str)`, which happily parses
-/// `"5"`). `None` for anything else (including a non-numeric string), so the
-/// caller can distinguish "no value" (skip) from "value that failed to
-/// coerce" (error). Aggregate-path only — production's `_aggregate_by_x`
-/// deliberately calls `float()` on every matching value. This is a fail-closed
-/// approximation of Python's `float()`, not an exact port: `Value::Bool`
-/// refuses here where `float(True)` succeeds in Python, and `"1_0"`/`" 5 "`
-/// (both valid to Python's `float()`) are rejected by Rust's `str::parse`.
-/// Never used on the bare-`source` path — see `entry_values`'s doc comment
-/// for why that path coerces only a JSON number, never a string.
+/// Python's `float(raw)`: a JSON number as-is, a bool as 0 or 1, a string
+/// parsed with the whitespace and digit-separating underscores `float()`
+/// accepts. `None` for anything else, so the caller can tell "no value" (skip)
+/// from "value that failed to coerce" (error). `_numeric_column` and
+/// `_aggregate_by_x` both call `float()`, so a numeric-looking text cell
+/// counts toward a column's measured width.
 fn coerce_numeric(v: &Value) -> Option<f64> {
     match v {
         Value::Number(_) => v.as_f64(),
-        Value::String(s) => s.parse::<f64>().ok(),
+        Value::Bool(b) => Some(f64::from(u8::from(*b))),
+        Value::String(s) => {
+            let text = s.trim();
+            let separated = text.as_bytes().windows(3).all(|w| w[1] != b'_' || (w[0].is_ascii_digit() && w[2].is_ascii_digit()));
+            let edge = text.starts_with('_') || text.ends_with('_');
+            if edge || !separated {
+                return None;
+            }
+            text.replace('_', "").parse::<f64>().ok()
+        }
         _ => None,
     }
 }
@@ -451,21 +456,13 @@ fn entry_values(
                 // `_vl_format_calc` with `format_spec is None` — a string is
                 // *valid* and painted as-is, never coerced or dashed.
                 _ if entry.format.is_none() => CellValue::Text(row_str(row, field)),
-                // A baked format is only ever set when `entry.source ==
-                // y_field` (`compile/support_table.py`), which should always be
-                // numeric — reaching this arm means that invariant broke.
-                // Production would still run its d3-format calc on the raw
-                // string (Vega-Lite's `isValid`/`isNumber` guard lets a
-                // non-numeric value through unformatted-but-`isValid`, so the
-                // format function receives it anyway), producing a nonsense
-                // number-formatted string rather than erroring — not a
-                // behavior worth reproducing. Fail loudly instead of
-                // guessing a number or silently ignoring the baked format.
+                // A baked format over a non-number: production raises
+                // `ERR-SUPPORT-TABLE-FORMAT-NOT-NUMERIC` (`_require_numeric_source`)
+                // before any payload reaches here, so the cell has no painting.
                 other => {
-                    return Err(format!(
-                        "support_table: source {field:?} has a baked format ({:?}) but its \
-                         value {other:?} is not numeric — a format is only baked when \
-                         source is the chart's own y field, which should always be numeric",
+                    return Err(crate::refuse!(
+                        "support_table: source {field:?} with a baked format ({:?}) over the non-numeric \
+                         value {other:?} is not supported: production number-formats it into nonsense",
                         entry.format
                     ));
                 }
@@ -574,7 +571,8 @@ fn reduce(op: &str, vals: &[f64]) -> Result<Option<f64>, String> {
 /// paints the author's spec in full.
 pub struct StripNumerals {
     pub(crate) digit_spec: String,
-    prefix: bool,
+    /// The currency the anchor cell declares, spelled the board's way.
+    prefix: String,
     suffix: String,
     divisor: f64,
     suffix_is_magnitude: bool,
@@ -601,7 +599,7 @@ impl StripNumerals {
         StripNumerals {
             decimal_pad: Vec::new(),
             digit_spec: spec.to_string(),
-            prefix: false,
+            prefix: String::new(),
             suffix: String::new(),
             divisor: 1.0,
             suffix_is_magnitude: false,
@@ -650,10 +648,6 @@ impl StripNumerals {
         field_path: &str,
     ) -> Result<StripNumerals, Diagnostic> {
         let spec = &slot.spec;
-        let parts = d3rs::format::parse_parts(spec).map_err(|e| format!("support_table: format {spec:?}: {e}"))?;
-        if parts.symbol {
-            return Err(format!("support_table: an authored affix on the `$` spec {spec:?} is not painted").into());
-        }
         let declares_once = anchored
             && (!slot.prefix.is_empty() || !slot.suffix.is_empty())
             && match slot.repeat.as_deref() {
@@ -716,18 +710,19 @@ impl StripNumerals {
             let text = if !self.declares_once || is_anchor {
                 slot.paint_anchored(&self.digit_spec, v, self.declares_once, &self.decimal_pad)
             } else {
-                slot.bare_digits(&self.digit_spec, v, &self.decimal_pad)
+                d3rs::format::without_symbol(&self.digit_spec)
+                    .and_then(|bare_spec| slot.bare_digits(&bare_spec, v, &self.decimal_pad))
             };
             return text.map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec));
         }
-        if !self.prefix && self.suffix.is_empty() {
+        if self.prefix.is_empty() && self.suffix.is_empty() {
             let text = crate::number_locale::d3_format(&self.digit_spec, v)
                 .map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec))?;
             return self.padded(text);
         }
-        if !self.suffix_is_magnitude {
+        if !self.suffix_is_magnitude && self.prefix.is_empty() {
             // Trimmed: format through the author's spec, then remove the
-            // repeated affix from the cell — rebuilding the spec is what would
+            // repeated suffix from the cell — rebuilding the spec is what would
             // silently drop a sign or zero pad. A left-axis (`hang_right`)
             // anchor puts the suffix back after the stripped text, so a padded
             // spec keeps its digits on the shared left edge.
@@ -737,9 +732,6 @@ impl StripNumerals {
                 return Ok(full);
             }
             let mut bare = full;
-            if self.prefix {
-                bare = bare.replacen('$', "", 1);
-            }
             if !self.suffix.is_empty() {
                 bare = bare.replacen(self.suffix.as_str(), "", 1);
             }
@@ -748,14 +740,15 @@ impl StripNumerals {
             }
             return Ok(bare);
         }
-        // Composed: one shared magnitude; the sign leads the `$` (d3 renders a
-        // negative currency as "-$448").
+        // Composed: the sign leads the currency ("−$448"); a magnitude suffix
+        // never shows on zero, a unit suffix does.
         let digits = crate::number_locale::d3_format(&self.digit_spec, v.abs() / self.divisor)
             .map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec))?;
         let digits = self.padded(digits)?;
-        let sign = if v < 0.0 { "\u{2212}" } else { "" };
-        let prefix = if self.prefix && (is_anchor || self.prefix_repeats) { "$" } else { "" };
-        let suffix_on = v != 0.0 && (self.repeat_suffix || is_anchor);
+        let locale = active_number_locale();
+        let sign = if v < 0.0 { locale.locale.minus.as_str() } else { "" };
+        let prefix = if is_anchor || self.prefix_repeats { self.prefix.as_str() } else { "" };
+        let suffix_on = (!self.suffix_is_magnitude || v != 0.0) && (self.repeat_suffix || is_anchor);
         let suffix = if suffix_on { self.suffix.as_str() } else { "" };
         Ok(format!("{sign}{prefix}{digits}{suffix}"))
     }
@@ -879,24 +872,20 @@ pub(crate) fn strip_numerals_for_values(
 ) -> Result<StripNumerals, String> {
     let parts = d3rs::format::parse_parts(resolved)
         .map_err(|e| format!("support_table: format {resolved:?}: {e}"))?;
-    crate::number_locale::require_en_us_affixes("support_table", resolved)?;
     if parts.type_ != 's' {
-        if (hang_right && parts.symbol) || (!parts.symbol && parts.type_ != '%') {
+        // A left-aligned strip repeats a leading currency, so its anchor
+        // cannot carry one: every cell keeps the author's spec.
+        if hang_right && parts.symbol {
             return Ok(StripNumerals::plain(resolved));
         }
-        return Ok(StripNumerals {
-            digit_spec: resolved.to_string(),
-            prefix: parts.symbol,
-            suffix: if parts.type_ == '%' { "%".to_string() } else { String::new() },
-            divisor: 1.0,
-            suffix_is_magnitude: false,
-            repeat_suffix: false,
-            hang_right,
-            prefix_repeats: false,
-            authored: None,
-            declares_once: false,
-            decimal_pad: Vec::new(),
-        });
+        let locale = active_number_locale();
+        let suffix = if parts.type_ == '%' { locale.locale.percent.clone() } else { String::new() };
+        let (lead, trail) = currency_affixes(parts.symbol, false);
+        if !trail.is_empty() {
+            return Ok(StripNumerals { suffix, hang_right, ..StripNumerals::plain(resolved) });
+        }
+        let digit_spec = if lead.is_empty() { resolved.to_string() } else { d3rs::format::without_symbol(resolved)? };
+        return Ok(StripNumerals { digit_spec, prefix: lead, suffix, hang_right, ..StripNumerals::plain(resolved) });
     }
 
     // Composed (`s` type): majority-vote tier over non-zero finite values;
@@ -961,19 +950,35 @@ pub(crate) fn strip_numerals_for_values(
     let pow = 10f64.powi(decimals);
     let printed_extreme = (extreme / magnitude * pow).round() / pow;
     let repeat = mode_repeat || integer_digit_count(printed_extreme) >= 4;
+    let (lead, trail) = currency_affixes(parts.symbol, hang_right);
     Ok(StripNumerals {
         digit_spec,
-        prefix: parts.symbol,
-        suffix: crate::common::suffix_at_register(majority, vertical && !repeat)?,
+        prefix_repeats: hang_right && !lead.is_empty(),
+        prefix: lead,
+        suffix: format!("{}{trail}", crate::common::suffix_at_register(majority, vertical && !repeat)?),
         divisor: magnitude,
         suffix_is_magnitude: true,
         repeat_suffix: repeat,
         hang_right,
-        prefix_repeats: hang_right && parts.symbol,
         authored: None,
         declares_once: false,
         decimal_pad,
     })
+}
+
+/// `_currency_affixes`: a `$` spec's currency as `(lead, trail)` around the
+/// digits and a magnitude suffix. Declared once it leads; on every cell
+/// (`repeats`) it keeps the locale's side.
+fn currency_affixes(has_symbol: bool, repeats: bool) -> (String, String) {
+    if !has_symbol {
+        return (String::new(), String::new());
+    }
+    let locale = active_number_locale();
+    let (lead, trail) = locale.composed_currency("$", repeats);
+    if lead.is_empty() && trail.is_empty() {
+        return (locale.locale.currency[0].clone(), String::new());
+    }
+    (lead, trail)
 }
 
 pub(crate) fn format_cell(v: Option<&CellValue>, spec: Option<&str>) -> Result<String, String> {
@@ -982,7 +987,7 @@ pub(crate) fn format_cell(v: Option<&CellValue>, spec: Option<&str>) -> Result<S
         (Some(CellValue::Num(v)), _) if !v.is_finite() => Ok("-".to_string()),
         // No baked format (production only bakes one when entry.source ==
         // y_field) — render the plain number, matching production.
-        (Some(CellValue::Num(v)), None) => Ok(v.to_string()),
+        (Some(CellValue::Num(v)), None) => Ok(crate::families::color_scale::js_number_string(*v)),
         (Some(CellValue::Num(v)), Some(spec)) => {
             crate::number_locale::d3_format(spec, *v).map_err(|e| format!("support_table: format {spec:?}: {e}"))
         }
@@ -1032,6 +1037,8 @@ pub struct ComposedCell {
     pub hang: f64,
     /// Production's description of the cell, set by `describe`; empty until then.
     pub aria: String,
+    /// The chart's link around the cell, when it has one (`link_cells`).
+    pub href: Option<String>,
 }
 
 /// One composed-layout row. The cells' aligned edge sits on the parent's x
@@ -1065,6 +1072,28 @@ pub struct ComposedRow {
     /// Each cell paints once per entry, shifted along the category axis: a wide
     /// chart carries one entry per measure, every other row a single `0.0`.
     pub copy_dx: Vec<f64>,
+}
+
+/// The links a chart's `link` puts on an entry's cells, one per category of
+/// `domain`: a plain source entry reads its category's datum, while an
+/// aggregate or per-series entry reads an aggregate row whose link Vega
+/// writes as `undefined`. `links` is the chart's hrefs by `(category, series)`,
+/// `None` on a chart with no link.
+pub(crate) fn link_cells(
+    cells: &mut [ComposedCell],
+    entry: &SupportTableEntry,
+    domain: &[String],
+    links: Option<&HashMap<(String, String), String>>,
+) {
+    let Some(links) = links else { return };
+    let aggregated = entry.aggregate.is_some() || entry.per_series.is_some();
+    for (cell, cat) in cells.iter_mut().zip(domain) {
+        cell.href = Some(if aggregated {
+            crate::href::UNDEFINED_HREF.to_string()
+        } else {
+            links.get(&(cat.clone(), String::new())).cloned().unwrap_or_else(|| crate::href::UNDEFINED_HREF.to_string())
+        });
+    }
 }
 
 /// Cells + the pooled bare-cell width (dx input) for one row's own values —
@@ -1122,7 +1151,7 @@ pub(crate) fn build_cells(
         };
         let w = fonts.measure_shaped(&text, font_family, font_size)?;
         let x = if hang_along_x { x + hang } else { x };
-        cells.push(ComposedCell { x, text, w, hang, aria: String::new() });
+        cells.push(ComposedCell { x, text, w, hang, aria: String::new(), href: None });
     }
     Ok((cells, max_bare_w))
 }
@@ -1227,7 +1256,8 @@ pub(crate) fn entry_lines<'a>(
         .flatten()
         .filter_map(|v| match v {
             Some(CellValue::Num(n)) => Some(*n),
-            _ => None,
+            Some(CellValue::Text(text)) => coerce_numeric(&Value::String(text.clone())),
+            None => None,
         })
         .collect();
     let numerals = match (&entry.format, spec) {
@@ -1239,12 +1269,6 @@ pub(crate) fn entry_lines<'a>(
                 pad,
                 &format!("charts.{chart_id}.support_table.entries[{entry_index}].format"),
             )?)
-        }
-        (Some(slot), _) if slot.repeat.is_some() || slot.sign_placement.is_some() => {
-            return Err(format!(
-                "support_table: format {:?} on a format with no authored affix is not painted",
-                slot.carried().next().unwrap_or_default()
-            ).into());
         }
         (_, Some(s)) if !anchored => Some(StripNumerals::undeclared(&nums, s, pad)?),
         (_, Some(s)) if !predefined => Some(StripNumerals::literal(s, pad)?),
@@ -1293,6 +1317,7 @@ pub fn build_rows_composed(
     color_field: Option<&str>,
     series_order: &[String],
     series_ink: &[String],
+    links: Option<&HashMap<(String, String), String>>,
 ) -> Result<Vec<ComposedRow>, Diagnostic> {
     if domain.len() != x_positions.len() {
         return Err("support_table: domain/x_positions length mismatch".into());
@@ -1340,8 +1365,9 @@ pub fn build_rows_composed(
             let mut max_bare_w = 0.0_f64;
             let mut cells_by_series: Vec<Vec<ComposedCell>> = Vec::with_capacity(lines.len());
             for values in &lines {
-                let (cells, row_bare_w) =
+                let (mut cells, row_bare_w) =
                     build_cells(values, x_positions, &numerals, spec, fonts, font_family, font_size, true)?;
+                link_cells(&mut cells, entry, domain, links);
                 max_bare_w = max_bare_w.max(row_bare_w);
                 cells_by_series.push(cells);
             }
@@ -1366,8 +1392,9 @@ pub fn build_rows_composed(
             continue;
         }
 
-        let (cells, max_bare_w) =
+        let (mut cells, max_bare_w) =
             build_cells(&lines[0], x_positions, &numerals, spec, fonts, font_family, font_size, true)?;
+        link_cells(&mut cells, entry, domain, links);
         let label = match entry.label.clone() {
             Some(l) => l,
             None => slug_to_display(
@@ -1707,7 +1734,10 @@ pub fn render_rows_composed(
     origin_y: f64,
     axis_on_right: bool,
     axis_offset: f64,
+    link_open: Option<crate::href::LinkOpen>,
 ) -> Result<(), String> {
+    // The row labels and dividers read no datum: on a linked chart each carries an undefined link.
+    let undefined = link_open.and_then(|open| open.anchor(Some(crate::href::UNDEFINED_HREF)));
     let font_family = style.font.family_or("sans-serif");
     let font_size = style.font.size_or(11.0);
     let font_color = style.font.color.as_deref().unwrap_or("#333");
@@ -1719,7 +1749,9 @@ pub fn render_rows_composed(
 
     if style.divider.line.visible {
         let y = origin_y + divider_y_base(style, axis_offset);
+        out.push_str(&crate::href::anchor_open(undefined));
         out.push_str(&divider_line(origin_x, y, origin_x + plot_w, y, &style.divider.line));
+        out.push_str(crate::href::anchor_close(undefined));
     }
     let (cell_anchor, stub_anchor) =
         if axis_on_right { ("end", "start") } else { ("start", "end") };
@@ -1733,6 +1765,8 @@ pub fn render_rows_composed(
         let dx = if axis_on_right { row.dx } else { -row.dx };
         crate::contract::mark_group_open(out, "text", "strip")?;
         for (cell, copy_dx) in row.cells.iter().flat_map(|cell| row.copy_dx.iter().map(move |dx| (cell, dx))) {
+            let anchor = link_open.and_then(|open| open.anchor(cell.href.as_deref()));
+            out.push_str(&crate::href::anchor_open(anchor));
             let _ = write!(
                 out,
                 "<text{} x=\"{:.2}\" y=\"{row_y:.2}\" text-anchor=\"{cell_anchor}\" \
@@ -1743,9 +1777,11 @@ pub fn render_rows_composed(
                 vega_escape_attr(font_family),
                 xml_escape(&cell.text), cell_anchor = xml_escape_attr(cell_anchor), font_weight = xml_escape_attr(&font_weight), font_color = xml_escape_attr(font_color)
             );
+            out.push_str(crate::href::anchor_close(anchor));
         }
         crate::contract::mark_group_close(out);
         let row_label_color = row.label_color.as_deref().unwrap_or(label_color);
+        out.push_str(&crate::href::anchor_open(undefined));
         let _ = write!(
             out,
             "<text x=\"{:.2}\" y=\"{row_y:.2}\" text-anchor=\"{stub_anchor}\" \
@@ -1755,9 +1791,12 @@ pub fn render_rows_composed(
             vega_escape_attr(label_family),
             xml_escape(&row.label), stub_anchor = xml_escape_attr(stub_anchor), label_weight = xml_escape_attr(&label_weight), row_label_color = xml_escape_attr(row_label_color)
         );
+        out.push_str(crate::href::anchor_close(undefined));
         if style.row.divider.visible && i + 1 < rows.len() {
             let y = origin_y + inter_row_y_base(i, style, axis_offset);
+            out.push_str(&crate::href::anchor_open(undefined));
             out.push_str(&divider_line(origin_x, y, origin_x + plot_w, y, &style.row.divider));
+            out.push_str(crate::href::anchor_close(undefined));
         }
     }
     Ok(())
@@ -2008,11 +2047,11 @@ mod numerals_tests {
         assert_eq!(glued.cell_text(-10.0, true).unwrap(), "\u{2212}US$10");
     }
 
-    /// A `repeat` or `sign_placement` on a format with no authored affix would
-    /// switch production to `StripAnchor.everywhere()`/a placement this strip
-    /// does not model, so `entry_lines` refuses it rather than paint the spec.
+    /// A `repeat` or `sign_placement` on a format with no authored affix
+    /// changes nothing (`_authored_affix_numerals` returns `None`): the strip
+    /// paints the spec.
     #[test]
-    fn a_repeat_or_sign_placement_without_an_authored_affix_refuses() {
+    fn a_repeat_or_sign_placement_without_an_authored_affix_paints_the_spec() {
         for slot in [
             FormatSlot { repeat: Some("every".into()), ..FormatSlot::from(",.0f") },
             FormatSlot { sign_placement: Some(SignPlacement::AfterPrefix), ..FormatSlot::from(",.0f") },
@@ -2026,13 +2065,12 @@ mod numerals_tests {
                 by_measure: false,
             };
             let rows: Vec<serde_json::Map<String, Value>> =
-                vec![serde_json::json!({"week": "2024-01-01", "units": 150.0}).as_object().unwrap().clone()];
+                vec![serde_json::json!({"week": "2024-01-01", "units": 1500.0}).as_object().unwrap().clone()];
             let domain = vec!["2024-01-01".to_string()];
-            let err = entry_lines(&entry, &rows, "week", &domain, true, true, false, None, &[], &pad(), "c", 0).err().unwrap();
-            assert!(err.contains("no authored affix"), "{err}");
+            let lines = entry_lines(&entry, &rows, "week", &domain, true, true, false, None, &[], &pad(), "c", 0).unwrap();
+            assert_eq!(lines.numerals.expect("a spec paints").cell_text(1500.0, true).unwrap(), "1,500");
         }
     }
-
 
     /// A house format's default anchors its affix, but a leading prefix on a
     /// left-aligned strip would push the anchor's digits off the shared edge,
@@ -2061,8 +2099,11 @@ mod numerals_tests {
         let padded = FormatSlot { spec: ",.2~f".into(), ..slot.clone() };
         let aligned = StripNumerals::authored(&padded, true, false, &pad(), "p").unwrap();
         assert_eq!(aligned.cell_text(1.5, true).unwrap(), "US$1.5\u{2007}\u{200b}", "an authored affix keeps the trim spec's decimal pad");
-        let symbol = FormatSlot { spec: "$,.0f".into(), ..slot };
-        assert!(StripNumerals::authored(&symbol, true, false, &pad(), "p").err().unwrap().contains("`$` spec"));
+        // A `$` spec keeps its symbol on the declaring cell and drops it from the rest.
+        let symbol = FormatSlot { spec: "$,.0f".into(), ..affixed("", " pts", Some("anchor")) };
+        let symbol = StripNumerals::authored(&symbol, true, false, &pad(), "p").unwrap();
+        assert_eq!(symbol.cell_text(1500.0, true).unwrap(), "$1,500 pts");
+        assert_eq!(symbol.cell_text(900.0, false).unwrap(), "900");
     }
 
     /// A fill-and-align format is just a spec: the anchor machinery reads its
@@ -2175,18 +2216,19 @@ mod numerals_tests {
         });
     }
 
-    /// The anchored strip lifts a literal `$` out of d3's digits; de-DE writes
-    /// its currency after them (`["", "\u{a0}€"]`), so the strip refuses.
+    /// de-DE writes its currency after the digits (`["", "\u{a0}€"]`), so the
+    /// anchor declares it once, leading, and no other cell repeats it
+    /// (`_currency_affixes`).
     #[test]
-    fn an_anchored_dollar_strip_refuses_under_a_suffix_currency_locale() {
+    fn an_anchored_dollar_strip_leads_the_board_currency_under_a_suffix_currency_locale() {
         let vals = [1_200_000.0, 3_400_000.0, 5_600_000.0];
-        let err = crate::number_locale::with_number_locale(&crate::number_locale::de_de(), || {
-            strip_numerals_for_values(&vals, "$.3~s", false, false, &pad())
-        })
-        .err()
-        .expect("refuses");
-        assert!(err.contains("paints the board's currency"), "{err}");
-        assert!(strip_numerals_for_values(&vals, "$.3~s", false, false, &pad()).is_ok());
+        crate::number_locale::with_number_locale(&crate::number_locale::de_de(), || {
+            let n = strip_numerals_for_values(&vals, "$.3~s", false, false, &pad()).unwrap();
+            assert!(n.cell_text(1_200_000.0, true).unwrap().starts_with('€'));
+            assert!(!n.cell_text(3_400_000.0, false).unwrap().contains('€'));
+        });
+        let n = strip_numerals_for_values(&vals, "$.3~s", false, false, &pad()).unwrap();
+        assert!(n.cell_text(1_200_000.0, true).unwrap().starts_with('$'));
     }
 
     /// A suffix every cell paints (`SuffixMode.REPEAT`: the extreme scales to
@@ -2283,7 +2325,7 @@ mod tests {
     ) -> Result<Vec<TestRow>, Diagnostic> {
         build_rows_composed(
             "test", config, rows, x_field, domain, x_positions, fonts, style, false, false, false, color_field,
-            series_order, series_ink,
+            series_order, series_ink, None,
         )
         .map(|rows| {
             rows.into_iter()
@@ -2694,6 +2736,25 @@ mod tests {
         assert_eq!(strip_rows[1].painted(), vec![(10.0, "2".to_string())]);
     }
 
+    /// `float(raw)` accepts surrounding whitespace and single underscores
+    /// between digits, and a bool is 0 or 1; a column measures a text cell
+    /// that parses.
+    #[test]
+    fn coerce_numeric_reads_what_python_float_reads() {
+        for (raw, want) in [("1e20", Some(1e20)), (" 12 ", Some(12.0)), ("1_0", Some(10.0)), ("1__0", None), ("_1", None), ("n/a", None), ("", None)] {
+            assert_eq!(coerce_numeric(&Value::String(raw.to_string())), want, "{raw:?}");
+        }
+        assert_eq!(coerce_numeric(&serde_json::json!(true)), Some(1.0));
+    }
+
+    /// A bare number cell paints the way JavaScript spells it, exponent form
+    /// past `1e21` and below `1e-6`.
+    #[test]
+    fn an_unformatted_number_cell_paints_as_javascript_spells_it() {
+        assert_eq!(format_cell(Some(&CellValue::Num(2.5e-7)), None).unwrap(), "2.5e-7");
+        assert_eq!(format_cell(Some(&CellValue::Num(1.5e20)), None).unwrap(), "150000000000000000000");
+    }
+
     /// Deletion counterfactual: without the fix, `format_cell` swallows a
     /// d3rs format error into `"-"`, indistinguishable from missing data.
     #[test]
@@ -2976,7 +3037,7 @@ mod tests {
         let rows = vec![ComposedRow {
             label: "Revenue".into(),
             label_w: 40.0,
-            cells: vec![ComposedCell { x: 50.0, text: "$1".into(), w: 12.0, hang: 0.0, aria: String::new() }],
+            cells: vec![ComposedCell { x: 50.0, text: "$1".into(), w: 12.0, hang: 0.0, aria: String::new(), href: None }],
             dx: 7.0,
             label_color: None,
             stub_dx: 0.0,
@@ -2991,14 +3052,14 @@ mod tests {
         };
 
         let mut right = String::new();
-        render_rows_composed(&mut right, &rows, &s, 6.0, 100.0, 200.0, 300.0, true, 0.0).unwrap();
+        render_rows_composed(&mut right, &rows, &s, 6.0, 100.0, 200.0, 300.0, true, 0.0, None).unwrap();
         assert_eq!(attr(&right, "$1", "text-anchor"), "end");
         assert_eq!(attr(&right, "$1", "x"), "257.00", "cell right-aligned at center + dx");
         assert_eq!(attr(&right, "Revenue", "text-anchor"), "start");
         assert_eq!(attr(&right, "Revenue", "x"), "306.00", "stub past plot_w + padding");
 
         let mut left = String::new();
-        render_rows_composed(&mut left, &rows, &s, 6.0, 100.0, 200.0, 300.0, false, 0.0).unwrap();
+        render_rows_composed(&mut left, &rows, &s, 6.0, 100.0, 200.0, 300.0, false, 0.0, None).unwrap();
         assert_eq!(attr(&left, "$1", "text-anchor"), "start");
         assert_eq!(attr(&left, "$1", "x"), "243.00", "cell left-aligned at center - dx");
         assert_eq!(attr(&left, "Revenue", "text-anchor"), "end");
@@ -3062,8 +3123,7 @@ mod tests {
             false,
             Some("category"),
             &series_order,
-            &series_ink,
-        )
+            &series_ink, None)
         .unwrap();
         assert_eq!(out.len(), 2, "one row per series, not one row per entry");
         assert_eq!(out[0].label, "A");
@@ -3107,8 +3167,7 @@ mod tests {
             false,
             Some("category"),
             &series_order,
-            &series_ink,
-        )
+            &series_ink, None)
         .unwrap();
         let expected_max_bare = ["100", "20", "50"]
             .iter()
@@ -3170,12 +3229,11 @@ mod tests {
             false,
             Some("category"),
             &series_order,
-            &series_ink,
-        )
+            &series_ink, None)
         .unwrap();
         assert_eq!(out.len(), 4, "3 series rows + 1 aggregate row");
         let mut svg = String::new();
-        render_rows_composed(&mut svg, &out, &s, 6.0, 100.0, 0.0, 0.0, false, 0.0).unwrap();
+        render_rows_composed(&mut svg, &out, &s, 6.0, 100.0, 0.0, 0.0, false, 0.0, None).unwrap();
         assert_eq!(
             svg.matches("<line").count(),
             3,
@@ -3201,8 +3259,7 @@ mod tests {
             false,
             None,
             &[],
-            &[],
-        )
+            &[], None)
         .unwrap_err();
         assert!(err.contains("color"), "names the missing input: {err}");
     }
@@ -3225,8 +3282,7 @@ mod tests {
             false,
             Some("category"),
             &[],
-            &[],
-        )
+            &[], None)
         .unwrap_err();
         assert!(err.contains("series_order"), "names the missing input: {err}");
     }
@@ -3272,8 +3328,7 @@ mod tests {
             axis_on_right,
             None,
             &[],
-            &[],
-        )
+            &[], None)
         .unwrap()
     }
 

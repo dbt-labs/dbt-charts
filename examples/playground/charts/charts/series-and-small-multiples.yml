@@ -6,6 +6,7 @@
 # product, customer, and pipeline data.
 
 title: Series and small multiples
+source: examples_db
 notes: |
   Series-count, small-multiples, raggedness, null-gap, label-length, density, and
   temporal-cadence idioms, each shown with real business data instead of synthetic
@@ -21,7 +22,6 @@ text: |
   product, customer, and pipeline data.
 queries:
   docs_created_completed:
-    source: examples_db
     sql: |
       WITH bounds AS (
         SELECT
@@ -46,7 +46,6 @@ queries:
         AND month < (SELECT last_month FROM bounds)
       ORDER BY 1, 2
   daily_revenue_top6:
-    source: examples_db
     sql: |
       SELECT date, product, SUM(revenue) AS revenue
       FROM main.ecommerce_orders
@@ -55,7 +54,6 @@ queries:
       GROUP BY 1, 2
       ORDER BY 1, 2
   daily_revenue_by_region_category:
-    source: examples_db
     sql: |
       SELECT date, region || ' · ' || category AS segment, SUM(revenue) AS revenue
       FROM main.ecommerce_orders
@@ -63,7 +61,6 @@ queries:
       GROUP BY 1, 2
       ORDER BY 1, 2
   daily_revenue_top5:
-    source: examples_db
     sql: |
       SELECT date, product, SUM(revenue) AS revenue
       FROM main.ecommerce_orders
@@ -72,7 +69,6 @@ queries:
       GROUP BY 1, 2
       ORDER BY 1, 2
   ragged_weekly_revenue:
-    source: examples_db
     sql: |
       SELECT date_trunc('week', date)::DATE AS week, product, SUM(revenue) AS revenue
       FROM main.ecommerce_orders
@@ -80,7 +76,6 @@ queries:
       GROUP BY 1, 2
       ORDER BY 1, 2
   gapped_revenue:
-    source: examples_db
     sql: |
       WITH cal AS (
         SELECT (DATE '2024-06-01' + INTERVAL (d) DAY)::DATE AS date
@@ -103,14 +98,12 @@ queries:
       LEFT JOIN actual USING (date, product)
       ORDER BY grid.product, grid.date
   weekly_revenue_by_category:
-    source: examples_db
     sql: |
       SELECT date_trunc('week', date)::DATE AS week, category, SUM(revenue) AS revenue
       FROM main.ecommerce_orders
       GROUP BY 1, 2
       ORDER BY 1, 2
   daily_revenue_by_region:
-    source: examples_db
     sql: |
       SELECT date, region, SUM(revenue) AS revenue
       FROM main.ecommerce_orders
@@ -118,7 +111,6 @@ queries:
       GROUP BY 1, 2
       ORDER BY 1, 2
   template_usage_top8:
-    source: examples_db
     sql: |
       SELECT name, SUM(usage_count) AS total_uses
       FROM dundersign.templates
@@ -126,14 +118,12 @@ queries:
       ORDER BY total_uses DESC
       LIMIT 8
   country_gdp_top25:
-    source: examples_db
     sql: |
       SELECT name, gdp * 1000000 AS gdp
       FROM main.world_countries
       ORDER BY gdp DESC
       LIMIT 25
   docs_daily:
-    source: examples_db
     sql: |
       SELECT date_trunc('day', created_at)::DATE AS day, count(*) AS documents
       FROM dundersign.documents
@@ -141,7 +131,6 @@ queries:
       GROUP BY 1
       ORDER BY 1
   docs_weekly:
-    source: examples_db
     sql: |
       SELECT date_trunc('week', created_at)::DATE AS week, count(*) AS documents
       FROM dundersign.documents
@@ -152,7 +141,6 @@ queries:
       GROUP BY 1
       ORDER BY 1
   docs_monthly:
-    source: examples_db
     sql: |
       SELECT date_trunc('month', created_at)::DATE AS month, count(*) AS documents
       FROM dundersign.documents
@@ -163,7 +151,6 @@ queries:
       GROUP BY 1
       ORDER BY 1
   single_point_stack:
-    source: examples_db
     sql: |
       WITH weekly AS (
         SELECT date_trunc('week', date)::DATE AS week, product AS series, SUM(revenue) AS value
@@ -299,7 +286,6 @@ charts:
     x: name
     y: gdp
     style:
-      orientation: horizontal
       axis_y:
         labels:
           format: currency

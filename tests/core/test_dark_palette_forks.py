@@ -20,7 +20,7 @@ import pytest
 palette = importlib.import_module("dbt_charts.core.compile.resolve.style.palette")
 config = importlib.import_module("dbt_charts.core.compile.config")
 
-_VOID = "#161616"  # neon canvas (dbt-grays.void)
+_VOID = "#161616"  # neon canvas (dbt-grays.12)
 
 SEQ_DARK = [
     f"dbt-seq-{h}-dark"

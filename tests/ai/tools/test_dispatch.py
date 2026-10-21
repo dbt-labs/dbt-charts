@@ -39,10 +39,10 @@ class TestDispatchToolCall:
 
         monkeypatch.setattr("dbt_charts.ai.tools.dispatch_tool_call", fake_dispatch)
 
-        result = json.loads(handle_tool_call("docs", {}, context=context))
+        result = json.loads(handle_tool_call("list_skills", {}, context=context))
 
         assert result == {"success": True}
-        assert captured["function_name"] == "docs"
+        assert captured["function_name"] == "list_skills"
         assert captured["function_args"] == {}
         assert captured["context"] is context
 
@@ -610,7 +610,6 @@ _TOOL_HAPPY_PATH_ARGS: dict[str, dict[str, Any]] = {
     "render_board": {"yaml_content": _INLINE_BOARD_YAML},
     "execute_sql": {"sql": "SELECT 1 AS x"},
     "search_files": {"text": "overview"},
-    "docs": {"topic": "board"},
     "describe_board": {"path": "nonexistent.yml"},
     # "project_dir" injected at test time (writes stay inside tmp_path).
     "read_file": {"path": "nonexistent.yml"},
@@ -623,7 +622,7 @@ _TOOL_HAPPY_PATH_ARGS: dict[str, dict[str, Any]] = {
     "move_file": {"source_path": "nonexistent.yml", "destination_path": "dest.yml"},
     "delete_file": {"path": "nonexistent.yml"},
     "list_skills": {},
-    "get_skill": {"name": "kpi-row"},
+    "get_skill": {"name": "chart"},
     "list_diagnostic_codes": {},
     "get_diagnostic_code": {"code": "WARN-REDUNDANT-ENCODING"},
 }
@@ -942,7 +941,7 @@ class TestToolCallOutcome:
             ({"status": "partial", "chart_errors": [{"code": "Y"}]}, "partial"),
             ({"success": True, "data": []}, "ok"),
             ({"status": "ok", "data": {}}, "ok"),
-            # Read-only tools (docs, get_skill) declare neither convention.
+            # Read-only tools (get_skill) declare neither convention.
             ({"content": "..."}, "ok"),
         ],
     )
@@ -1329,12 +1328,10 @@ class TestToolResultSuccessContract:
     def test_get_skill_success_payload_states_success(
         self, context: DbtChartsAIContext
     ) -> None:
-        payload = dispatch_tool_call(
-            "get_skill", {"name": "board-build"}, context=context
-        )
+        payload = dispatch_tool_call("get_skill", {"name": "chart"}, context=context)
 
         assert payload["success"] is True
-        assert payload["name"] == "board-build"
+        assert payload["name"] == "chart"
         assert payload["body"]
 
     def test_get_skill_unknown_payload_states_failure(

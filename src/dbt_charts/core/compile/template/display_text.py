@@ -18,6 +18,7 @@ from dbt_charts.core.compile.format_value import (
 )
 from dbt_charts.core.compile.models.primitives import FormatConfig, FormatTable
 from dbt_charts.core.compile.template.jinja import resolve_jinja_template
+from dbt_charts.core.compile.template.listings import TextListings
 from dbt_charts.core.compile.template.markdown_fence import resolve_outside_fences
 from dbt_charts.core.compile.template.query_result import QueryResult
 from dbt_charts.core.diagnostics import ERR_TEXT_FORMAT_USAGE
@@ -112,6 +113,9 @@ def resolve_display_text(
     variables: Mapping[str, Any],  # type-state: explicit_any — board variable values
     query_results: Mapping[str, QueryResult],
     formats: FormatTable | None,
+    *,
+    listings: TextListings
+    | None = None,  # type-state: optional — only board text lists boards
 ) -> str:
     """Resolve display-text Jinja leniently; fenced code passes through."""
     format_cell = _text_format_filter(formats)
@@ -123,5 +127,6 @@ def resolve_display_text(
             strict=False,
             query_results=query_results,
             format_cell=format_cell,
+            listings=listings,
         ),
     )

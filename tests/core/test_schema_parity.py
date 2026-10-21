@@ -17,20 +17,3 @@ def test_dialect_aliases_in_config():
             raise AssertionError(
                 f"Dialect alias '{key}' → '{value}' is not a valid sqlglot dialect"
             ) from exc
-
-
-def test_variable_defaults_parity():
-    """_VARIABLE_DEFAULTS keys/values match Variable.model_fields defaults."""
-    from pydantic_core import PydanticUndefinedType
-
-    from dbt_charts.core.compile.models.variable.authored import Variable
-    from dbt_charts.core.compile.validate.authoring_warnings import _VARIABLE_DEFAULTS
-
-    model_defaults = {
-        name: field.default
-        for name, field in Variable.model_fields.items()
-        if not isinstance(field.default, PydanticUndefinedType)
-        and field.default is not None
-        and not field.exclude
-    }
-    assert model_defaults == _VARIABLE_DEFAULTS

@@ -45,15 +45,14 @@ class FakeLLMClient:
         yield ContentDelta(delta="Done.")
 
 
-def test_build_agent_system_prompt_composes_skills_index_and_docs_pointer(
+def test_build_agent_system_prompt_composes_skills_index_before_tool_guidance(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """Prompt composes the skills index and the docs pointer, in that order —
-    not full skill bodies or the inlined syntax reference."""
+    """Prompt composes the skills index ahead of the tool guidance — not full
+    skill bodies or the inlined syntax reference."""
     from dbt_charts.ai import agent
 
     monkeypatch.setattr(agent, "build_skills_index", lambda: "SKILL_INDEX")
-    monkeypatch.setattr(agent, "build_docs_pointer", lambda: "DOCS_POINTER")
 
     context = DbtChartsAIContext(
         project_session=ProjectSession.open(tmp_path, read_only=False)
@@ -61,8 +60,7 @@ def test_build_agent_system_prompt_composes_skills_index_and_docs_pointer(
     prompt = agent.build_agent_system_prompt(context)
 
     assert "SKILL_INDEX" in prompt
-    assert "DOCS_POINTER" in prompt
-    assert prompt.index("SKILL_INDEX") < prompt.index("DOCS_POINTER")
+    assert prompt.index("SKILL_INDEX") < prompt.index(agent._TOOL_GUIDANCE)
 
 
 def test_build_agent_system_prompt_opens_with_the_american_english_rule(
@@ -92,13 +90,13 @@ def test_build_agent_system_prompt_uses_descriptions_not_full_bodies(
     )
     prompt = agent.build_agent_system_prompt(context)
 
-    # board-build's live frontmatter description is present...
-    assert skill_description("board-build") in prompt
+    # chart's live frontmatter description is present...
+    assert skill_description("chart") in prompt
     # ...but its body text is not.
-    assert "is how you deliver a dashboard" not in prompt
-    # The syntax reference is pointed at via `docs`, not pasted in full.
+    assert "# dbt Charts" not in prompt
+    # The syntax reference is not pasted in full, and no `docs` tool is offered.
     assert "Unknown chart fields are rejected." not in prompt
-    assert "docs(" in prompt
+    assert "docs(" not in prompt
 
 
 def test_build_agent_system_prompt_lists_sources_and_exploration_guidance(
@@ -112,7 +110,6 @@ def test_build_agent_system_prompt_lists_sources_and_exploration_guidance(
     from dbt_charts.ai import agent
 
     monkeypatch.setattr(agent, "build_skills_index", lambda: "")
-    monkeypatch.setattr(agent, "build_docs_pointer", lambda: "")
 
     project_session = ProjectSession.open(tmp_path, read_only=False)
     monkeypatch.setattr(
@@ -151,7 +148,6 @@ def test_build_agent_system_prompt_omits_sources_block_when_unconfigured(
     from dbt_charts.ai import agent
 
     monkeypatch.setattr(agent, "build_skills_index", lambda: "")
-    monkeypatch.setattr(agent, "build_docs_pointer", lambda: "SYNTAX")
 
     project_session = ProjectSession.open(tmp_path, read_only=False)
     monkeypatch.setattr(project_session.adapter_registry, "list_sql_sources", list)
@@ -178,7 +174,6 @@ memories:
     )
 
     monkeypatch.setattr(agent, "build_skills_index", lambda: "")
-    monkeypatch.setattr(agent, "build_docs_pointer", lambda: "")
 
     prompt = agent.build_agent_system_prompt(
         DbtChartsAIContext(
@@ -269,7 +264,6 @@ def test_build_agent_system_prompt_is_a_no_op_without_project_files(
         for part in (
             "Write in American English.",
             agent.build_skills_index(),
-            agent.build_docs_pointer(),
             agent.build_sources_context(project_session.adapter_registry),
             agent._TOOL_GUIDANCE,
         )

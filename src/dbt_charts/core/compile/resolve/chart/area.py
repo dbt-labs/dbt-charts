@@ -43,6 +43,7 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _CartesianTickResolution,
     _check_bar_layer_spans,
     _numeric_y_values,
+    _reject_non_positive_log_layer_data,
     _reject_non_positive_log_scale_data,
     _resolve_cartesian_ticks,
     _resolve_stacked_bar_ticks,
@@ -389,6 +390,7 @@ def _resolve_area(
     # The layer ambiguity check must see the pre-workaround domain state: it is
     # about an authored chart-level domain, not the synthetic area-log domain.
     _reject_non_positive_log_scale_data(normalized.id, ay_merged, _log_y_fields, data)
+    _reject_non_positive_log_layer_data(normalized, ay_merged, data, datasets)
     _ay_cont_log = ay_merged.scale.continuous if ay_merged.scale is not None else None
     if (
         _ay_cont_log is not None
@@ -692,6 +694,7 @@ def _resolve_area(
         data,
         datasets,
         normalized.id,
+        normalized.query.formats if normalized.query else None,
     )
     if authored_y_domain is not None:
         _check_layers_y_domain(normalized.id, resolved_layers, authored_y_domain)

@@ -6,17 +6,17 @@ style:
     axis:
       labels:
         font:
-          color: dbt-grays.muted
+          color: chrome[8]
       title:
         font:
-          color: dbt-grays.heading
+          color: chrome[10]
     legend:
       label:
         font:
-          color: dbt-grays.muted
+          color: chrome[8]
       title:
         font:
-          color: dbt-grays.heading
+          color: chrome[10]
   title:
     font:
       color: '#00a651'

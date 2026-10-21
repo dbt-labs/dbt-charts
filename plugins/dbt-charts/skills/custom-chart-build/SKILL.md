@@ -6,8 +6,8 @@ description: 'Draw a chart shape no built-in type has with `type: custom`: an SV
   helpers), links, fonts, where the drawing lands, the allowed SVG, and the template
   dialect. Use when the user asks for a shape by name that no built-in type or composed
   recipe draws: a Sankey, funnel, gauge, radar, XmR chart, isotype pictogram, waffle.
-  Do NOT use when a built-in type answers the question (see board-design), or for
-  styling an existing chart.'
+  Do NOT use when a built-in type answers the question (see chart), or for styling
+  an existing chart.'
 metadata:
   author: fivetran
 ---

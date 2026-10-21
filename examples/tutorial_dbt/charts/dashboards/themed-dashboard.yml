@@ -60,11 +60,6 @@ charts:
     color: region
 
   category_pie:
-    style:
-      marks:
-        slice:
-          labels:
-            template: "{{ '{:.0%}'.format(percent) }} {{ category }}"
     title: "Sales by Category"
     type: pie
     query: category_breakdown

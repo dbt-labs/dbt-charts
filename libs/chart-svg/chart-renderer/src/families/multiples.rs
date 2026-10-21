@@ -263,6 +263,42 @@ pub fn facet_panel_width(
     (usable / panel_cols as f64 - extra_axis_px).max(0.0)
 }
 
+/// `(extent, panels)` for the x title (the panel width) and for the rotated y title (the card
+/// height divided across the rows): what an axis title wraps against in a facet chart.
+pub type FacetTitleBoxes = ((f64, f64), (f64, f64));
+
+/// The [`FacetTitleBoxes`] of a facet chart (`RenderBox`).
+pub fn facet_title_boxes(
+    (width, height): (f64, f64),
+    (panel_cols, panel_rows): (usize, usize),
+    has_mirror: bool,
+    extra_axis_px: f64,
+) -> FacetTitleBoxes {
+    (
+        (facet_panel_width(width, panel_cols, has_mirror, extra_axis_px), panel_cols as f64),
+        (height / panel_rows as f64, panel_rows as f64),
+    )
+}
+
+/// The width each panel draws at: [`facet_panel_width`] while it is positive.
+/// A zero width, like no width at all, reads as unset in the spec
+/// (`_apply_facet_layout` stamps `unit["width"]` for `width > 0`, and Vega-Lite
+/// treats a falsy one as absent), which leaves each panel the theme's default
+/// view width for its x scale.
+pub fn panel_width(
+    payload: &crate::Payload,
+    panel_cols: usize,
+    has_mirror: bool,
+    extra_axis_px: f64,
+    x_scale: crate::ViewScale,
+) -> Result<f64, String> {
+    let declared = facet_panel_width(payload.width, panel_cols, has_mirror, extra_axis_px);
+    if declared > 0.0 {
+        return Ok(declared);
+    }
+    crate::view_width(0.0, payload.board_style.as_ref(), x_scale)
+}
+
 /// `extra_axis_is_affordable`: narrowing a position channel draws one more axis
 /// per column panel, which is worth it only while that leaves a legible panel
 /// (`FACET_MIN_PANEL_PX`). No extra axis is always affordable.
@@ -300,6 +336,15 @@ pub fn warn_panel_below_minimum(chart_id: &str, panel_cols: usize, panel_width: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The x title wraps against a panel's width over the columns, the y title against the card
+    /// height over the rows.
+    #[test]
+    fn facet_title_boxes_divide_the_card_across_the_grid() {
+        let ((x_extent, x_panels), (y_extent, y_panels)) = facet_title_boxes((900.0, 400.0), (3, 2), false, 0.0);
+        assert_eq!((x_panels, y_panels, y_extent), (3.0, 2.0, 200.0));
+        assert_eq!(x_extent, facet_panel_width(900.0, 3, false, 0.0));
+    }
 
     fn row(pairs: &[(&str, Value)]) -> Map<String, Value> {
         pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()

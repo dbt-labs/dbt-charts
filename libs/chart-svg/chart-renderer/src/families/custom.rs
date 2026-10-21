@@ -898,9 +898,11 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         fonts,
     )?;
     // Too small a box is the chart's sizing, not an engine gap.
-    let m = frame
-        .fit("custom", &title, |_, _, _| {})
-        .map_err(|reason| diagnostic(&codes::ERR_CUSTOM_RENDER, &r.id, reason))?;
+    let m = frame.fit(&title, |_, _, _| {});
+    if m.plot_w <= 0.0 || m.plot_h <= 0.0 {
+        let reason = format!("a chart box {}×{} too small for its content", frame.w, frame.h);
+        return Err(diagnostic(&codes::ERR_CUSTOM_RENDER, &r.id, reason));
+    }
     let origin = frame.origin(&m);
     let anchor = chart_anchor(&r, payload)?;
     let family = payload

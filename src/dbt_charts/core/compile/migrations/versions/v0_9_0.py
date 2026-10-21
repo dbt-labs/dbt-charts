@@ -80,7 +80,7 @@ from dbt_charts.core.compile.migrations.migrations import (
     MapKeyDeletion,
     MappedScalar,
     Move,
-    YamlKeyPath,
+    token_respell_moves,
 )
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
@@ -93,44 +93,6 @@ from dbt_charts.core.diagnostics.hints import (
 )
 
 THEME_RENAMES: dict[MappedScalar, MappedScalar] = {}
-
-# Every scalar leaf field that may hold a color TOKEN (not just a literal hex
-# or rgb()/rgba() string) -- every `Color()`-annotated field in
-# `compile/models` (grepped, not guessed: `rg -n -B2 "Color\(\)" src/.../models`).
-_SCALAR_TOKEN_FIELD_NAMES: tuple[str, ...] = (
-    "color",
-    "fill",
-    "stroke",
-    "null_color",
-    "glyph_color",
-    "static",
-    "positive",
-    "negative",
-    "warning",
-    "info",
-    "color_active",
-    "color_inactive",
-    "color_disabled",
-    "focus_color",
-    "drop_line_color",
-    "accent",
-    "muted",
-    "background",
-    "neutral_color",
-)
-_SCALAR_TOKEN_FIELD_TAILS: tuple[YamlKeyPath, ...] = tuple(
-    (name,) for name in _SCALAR_TOKEN_FIELD_NAMES
-)
-
-# Whole-list palette-name fields -- authored either as a bare scalar
-# (`palette: vivid-10-dark`) or as a list (`single_series_palette:
-# [category_dark.blue]`); both are declared below, the bare form as an
-# ordinary field-path Move, the list form via a trailing-wildcard Move over
-# the same path (`(*path, "*")`) that reaches each item.
-_PALETTE_NAME_FIELD_TAILS: tuple[YamlKeyPath, ...] = (
-    ("palette",),
-    ("single_series_palette",),
-)
 
 # The alias vocabulary every shipped categorical palette shares (vivid-10.yml:
 # "This vocabulary is identical in editorial-10.yml"). A role-indirected
@@ -256,94 +218,14 @@ def _map_key_deletion_message(role: str, variant: str) -> str:
 def moves(
     source_schema: str, target_schema: str, *, catalog: YamlSchemaCatalog
 ) -> tuple[Move, ...]:
-    """Return the TokenRespell Move objects for the 0.7.0 -> 0.9.0 boundary.
-
-    Every Move here is identity-path (``old_path == new_path``) -- a
-    value-only rewrite on a field that never disappears from the grammar. The
-    field *paths* are resolved mechanically from the model tree
-    (``_relative_field_paths``, the same walk ``suffix_rename_moves`` uses),
-    never hand-listed: that is what reaches every chart family's own style
-    block and every nested board under rows/cols/grid/tabs without naming
-    each one. Only the *tails* (leaf field names) are hand-declared, because
-    that is the one thing the model tree cannot answer on its own -- see
-    ``_SCALAR_TOKEN_FIELD_NAMES``'s docstring for how they were derived.
-    """
-    from dbt_charts.core.compile.migrations.migrations import (
-        _relative_field_paths,
-        _schema_path_exists,
+    """Return the TokenRespell Move objects for the 0.7.0 -> 0.9.0 boundary."""
+    return token_respell_moves(
+        source_schema,
+        target_schema,
+        RETIRED_TOKEN_VALUE_MAP,
+        catalog=catalog,
+        category_pins=False,
     )
-    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
-
-    tails = frozenset(_SCALAR_TOKEN_FIELD_TAILS + _PALETTE_NAME_FIELD_TAILS)
-    list_tails = frozenset(_PALETTE_NAME_FIELD_TAILS)
-    try:
-        paths = list(
-            dict.fromkeys(_relative_field_paths(AuthoredBoard, frozenset(), tails))
-        )
-    finally:
-        # Not persisted across calls -- see suffix_rename_moves's docstring
-        # for why an uncleared memo pins hundreds of megabytes per process.
-        _relative_field_paths.cache_clear()
-
-    source_schema_obj = catalog.grammar_for(source_schema)
-    target_schema_obj = catalog.grammar_for(target_schema)
-    result: list[Move] = []
-    for path in paths:
-        tail = path[-1:]
-        if tail not in tails:
-            continue
-        # Fields added after the source boundary (style.fonts.*) hold no
-        # retired spellings -- nothing authored under 0.7.0 can reach them.
-        if not _schema_path_exists(source_schema_obj, path):
-            continue
-        result.append(
-            Move(source_schema, target_schema, path, path, RETIRED_TOKEN_VALUE_MAP)
-        )
-        # A palette-name field may also be authored as a list
-        # (`single_series_palette: [category_dark.blue]`, `palette:
-        # [category_dark[2], "#abc"]`) -- a *separate* trailing-wildcard Move
-        # reaches each item. Not every "palette"-named field is list-typed
-        # (the gradient/scale `palette:` on some models is a bare
-        # `ScalePaletteName | str`, no list arm) -- `_relative_field_paths`
-        # only knows field *names*, not types, so existence in both schemas
-        # is checked explicitly here, the same guard
-        # `suffix_rename_moves` applies before trusting a candidate.
-        # `move_source_locations`'s `_identity_value_would_change` gate
-        # skips this Move when the field is authored as a scalar (a list
-        # index never matches) and skips the bare Move above when it is
-        # authored as a list (a non-scalar value never matches
-        # `_mapped_value`'s domain), so the two coexist without
-        # double-firing on either shape.
-        if (
-            tail in list_tails
-            and _schema_path_exists(source_schema_obj, (*path, "*"))
-            and _schema_path_exists(target_schema_obj, (*path, "*"))
-        ):
-            result.append(
-                Move(
-                    source_schema,
-                    target_schema,
-                    (*path, "*"),
-                    (*path, "*"),
-                    RETIRED_TOKEN_VALUE_MAP,
-                )
-            )
-
-    # style.palettes.* -- every role's *value* may itself be a retired
-    # whole-name spelling, regardless of which role holds it. A trailing
-    # wildcard is ungated (`_source_locations`) -- exactly what an open map's
-    # own values need, since `_declares_tail` cannot answer "declared
-    # property?" for a key the schema never names.
-    result.append(
-        Move(
-            source_schema,
-            target_schema,
-            ("style", "palettes", "*"),
-            ("style", "palettes", "*"),
-            RETIRED_TOKEN_VALUE_MAP,
-        )
-    )
-    return tuple(result)
 
 
 def map_key_deletions(

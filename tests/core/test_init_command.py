@@ -42,13 +42,9 @@ class TestFilesCreated:
         init_command(project_dir=dbt_repo)
         assert (dbt_repo / "charts" / "partials").is_dir()
 
-    def test_creates_starter_board(self, dbt_repo: Path) -> None:
+    def test_creates_no_starter_board(self, dbt_repo: Path) -> None:
         init_command(project_dir=dbt_repo)
-        guide = dbt_repo / "charts" / "guide.yml"
-        assert guide.exists(), "init must scaffold charts/guide.yml"
-        content = guide.read_text()
-        assert "title:" in content
-        assert "queries:" in content
+        assert not (dbt_repo / "charts" / "guide.yml").exists()
 
     def test_does_not_create_index_md(self, dbt_repo: Path) -> None:
         """charts/index.md must not be created — it would hijack the root URL."""
@@ -90,19 +86,19 @@ class TestFilesCreated:
 class TestIdempotency:
     def test_rerun_does_not_clobber_existing_files(self, dbt_repo: Path) -> None:
         init_command(project_dir=dbt_repo)
-        guide = dbt_repo / "charts" / "guide.yml"
+        guide = dbt_repo / "charts" / "meta.yml"
         guide.write_text("custom content\n")
 
         result = init_command(project_dir=dbt_repo)
         assert guide.read_text() == "custom content\n"
-        assert Path("charts/guide.yml") in result.skipped_files
+        assert Path("charts/meta.yml") in result.skipped_files
 
     def test_rerun_creates_missing_files(self, dbt_repo: Path) -> None:
-        """If charts/ exists but guide.yml was deleted, re-create it."""
+        """If charts/ exists but meta.yml was deleted, re-create it."""
         (dbt_repo / "charts").mkdir()
         result = init_command(project_dir=dbt_repo)
-        assert (dbt_repo / "charts" / "guide.yml").exists()
-        assert Path("charts/guide.yml") in result.created_files
+        assert (dbt_repo / "charts" / "meta.yml").exists()
+        assert Path("charts/meta.yml") in result.created_files
 
     def test_existing_gitignore_is_appended_not_clobbered(self, dbt_repo: Path) -> None:
         gitignore = dbt_repo / ".gitignore"
@@ -118,14 +114,14 @@ class TestIdempotency:
 
     def test_force_overwrites_existing(self, dbt_repo: Path) -> None:
         init_command(project_dir=dbt_repo)
-        guide = dbt_repo / "charts" / "guide.yml"
+        guide = dbt_repo / "charts" / "meta.yml"
         guide.write_text("custom content\n")
 
         result = init_command(project_dir=dbt_repo, force=True)
         assert guide.read_text() != "custom content\n"
         # Force-overwritten files report as refreshed (matches AGENTS.md branch).
-        assert Path("charts/guide.yml") in result.refreshed_files
-        assert Path("charts/guide.yml") not in result.created_files
+        assert Path("charts/meta.yml") in result.refreshed_files
+        assert Path("charts/meta.yml") not in result.created_files
 
 
 class TestProjectDirOverride:
@@ -149,8 +145,3 @@ class TestInitHints:
     def test_no_inspect_hints(self, dbt_repo: Path) -> None:
         result = init_command(project_dir=dbt_repo)
         assert result.hints == [], f"unexpected hints: {result.hints}"
-
-    def test_guide_yaml_does_not_mention_inspect(self, dbt_repo: Path) -> None:
-        init_command(project_dir=dbt_repo)
-        content = (dbt_repo / "charts" / "guide.yml").read_text()
-        assert "dct inspect" not in content

@@ -1610,8 +1610,8 @@ def test_cartesian_resolved_wide_measures_accepted(bar_style: ResolvedBarStyle) 
     assert resolved.wide_measures == ("rev", "cost")
     assert resolved.y == WIDE_VALUE_FIELD
     assert wide_measure_labels_for(resolved.wide_measures, resolved.field_labels) == {
-        "rev": "rev",
-        "cost": "cost",
+        "rev": "Rev",
+        "cost": "Cost",
     }
 
 

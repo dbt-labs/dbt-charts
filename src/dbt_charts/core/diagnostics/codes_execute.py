@@ -652,12 +652,14 @@ ERR_BINDER_QUERY_SHAPE = REGISTRY.register(
         message_template="Warehouse rejected the shape of the query: {detail}",
         fix_template=(
             "For UNION, give every SELECT the same number of columns in the "
-            "same order. ORDER BY positions must be within the select list."
+            "same order. ORDER BY positions must be within the select list. "
+            "To ORDER BY an expression over a UNION, wrap the UNION in a "
+            "subquery and ORDER BY in the outer SELECT."
         ),
         doc=(
             "Fired when the warehouse's binder rejects a UNION whose branches "
-            "differ in column count, or an ORDER BY position outside the "
-            "select list. The column and table names resolved fine. A selected "
+            "differ in column count, an ORDER BY position outside the "
+            "select list, or an ORDER BY expression over a UNION. The column and table names resolved fine. A selected "
             "column missing from GROUP BY is ERR-BINDER-GROUP-BY."
         ),
         docs_topic="queries",
@@ -723,6 +725,29 @@ ERR_WAREHOUSE_RUNTIME = REGISTRY.register(
         doc=(
             "Fired when the warehouse rejects a query for an unclassified runtime "
             "error. The detail carries the warehouse's original error message."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_WAREHOUSE_BYTES_CAP_EXCEEDED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-WAREHOUSE-BYTES-CAP-EXCEEDED",
+        domain="execute",
+        title="Query would scan more than the source's byte cap",
+        message_template=(
+            "BigQuery refused the query before running it: it would scan at "
+            "least {required}, over this source's {cap} per-query cap "
+            "(maximum_bytes_billed). Narrow the query, then run it again: "
+            "filter on a partition or date column, select only the columns you "
+            "need, or aggregate. LIMIT does not reduce bytes scanned."
+        ),
+        doc=(
+            "Fired when BigQuery rejects a job because its estimated bytes "
+            "scanned exceed the source's `maximum_bytes_billed`. Nothing was "
+            "billed. The cap is the source's own setting; the fix is a narrower "
+            "query (partition or date filter, fewer columns, aggregation), "
+            "since `LIMIT` bounds rows returned, not bytes scanned."
         ),
         docs_topic="queries",
     )
@@ -1394,6 +1419,30 @@ ERR_VARIABLE_UNBOUND = REGISTRY.register(
     )
 )
 
+ERR_VARIABLE_OPTIONS_FAILED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-VARIABLE-OPTIONS-FAILED",
+        domain="execute",
+        title="Variable options query failed",
+        message_template=(
+            "Variable {variable!r} could not load its options (query "
+            "{query_name!r}): {cause}"
+        ),
+        fix_template=(
+            "Make the variable's `column:` or `options.query` name a table the "
+            "board's source can read. A table outside the source's own project "
+            "or database needs its fully qualified name."
+        ),
+        doc=(
+            "Fired when the query behind a select or multiselect variable's "
+            "options fails, including the query generated from `column:`. The "
+            "render stops rather than drawing an empty dropdown, which would "
+            "look like a table with no rows."
+        ),
+        docs_topic="variables",
+    )
+)
+
 ERR_UNKNOWN_VARIABLE_OVERRIDE = REGISTRY.register(
     ErrorCode(
         code="ERR-UNKNOWN-VARIABLE-OVERRIDE",
@@ -1431,8 +1480,9 @@ ERR_VARIABLE_VALUE_NOT_IN_OPTIONS = REGISTRY.register(
             "render and named-query run. Options that come from a query are "
             "checked on render only, against the rows that render already ran "
             "for the control; a named-query run does not execute the option "
-            "query just to validate, and a query that returned no rows (or "
-            "failed) is not checked. Pick one of the listed options."
+            "query just to validate, and a query that returned no rows is not "
+            "checked (a failed one is ERR-VARIABLE-OPTIONS-FAILED). Pick one of "
+            "the listed options."
         ),
         summary="Fired when a choice variable is set to a value outside its options.",
         docs_topic="variables",

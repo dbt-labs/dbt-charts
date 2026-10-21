@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>No boards yet</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 40px 20px;
+        background: {{ palette.panel_bg }};
+        color: {{ palette.text }};
+        font-family: {{ palette.font_family | safe }};
+      }
+      main { max-width: 640px; margin: 0 auto; line-height: 1.5; }
+      h1 { color: {{ palette.accent }}; font-size: 1.8rem; }
+      pre {
+        padding: 14px 18px;
+        border: 1px solid {{ palette.border }};
+        border-radius: 8px;
+        overflow-x: auto;
+      }
+      a { color: {{ palette.accent }}; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>No boards yet</h1>
+      <p>
+        A board is one YAML file: some queries, and the charts that draw them.
+        This page lists every board in the project, and it stays here until
+        there is one.
+      </p>
+      <p>
+        Add a <code>.yml</code> file under <code>charts/</code>, for example
+        <code>charts/sales.yml</code>, and reload:
+      </p>
+      <pre>title: Sales
+queries:
+  by_month:
+    type: values
+    columns: [month, revenue]
+    values:
+      - [Jan, 120]
+      - [Feb, 150]
+      - [Mar, 190]
+charts:
+  revenue:
+    type: bar
+    query: by_month
+    x: month
+    y: revenue</pre>
+      <p>
+        A query can also be <code>sql:</code> against a warehouse instead of <code>type: values</code>;
+        see the <a href="{{ docs_url }}">docs</a>.
+      </p>
+    </main>
+  </body>
+</html>

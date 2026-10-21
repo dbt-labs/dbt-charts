@@ -45,7 +45,7 @@ _DATA: list[dict[str, Any]] = [
     {"date": "2024-02-01", "list": "bugs", "messages": 300, "fixes": 100},
     {"date": "2024-02-01", "list": "hackers", "messages": 2400, "fixes": 950},
 ]
-_SERIES = ["bugs - fixes", "bugs - messages", "hackers - fixes", "hackers - messages"]
+_SERIES = ["bugs - Fixes", "bugs - Messages", "hackers - Fixes", "hackers - Messages"]
 
 
 def _color_domains(node: Any) -> list[list[str]]:
@@ -262,7 +262,7 @@ class TestCompositeSeries:
         chart = make_chart("line", x="date", y=["messages"], color="list")
         _, spec = _render(chart, _DATA)
         for domain in _color_domains(spec):
-            assert sorted(domain) == ["bugs - messages", "hackers - messages"]
+            assert sorted(domain) == ["bugs - Messages", "hackers - Messages"]
 
     def test_null_dimension_is_rejected_whatever_its_dtype(self, make_chart):
         """A null dimension names no series in Python but VL's fold still

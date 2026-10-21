@@ -165,8 +165,9 @@ class Move:
     drop_notes: Mapping[str, str] = dataclasses.field(default_factory=dict, hash=False)
     # Where a board holds another board (`board_nesting_prefixes`): the move
     # follows these in the document, since `_relative_field_paths` stops at the
-    # first self-nesting. A nested board's locations lead their bindings with
-    # that board's concrete path (`_move_path`).
+    # first self-nesting. `suffix_rename_moves` sets it on every Move it yields.
+    # A nested board's locations lead their bindings with that board's concrete
+    # path (`_move_path`).
     sub_board_prefixes: tuple[YamlKeyPath, ...] = ()
     # Rebuilds the moved value from the old one, for shapes a rename plus a
     # scalar map cannot say. An identity-path Move fires only where the rewrite
@@ -355,6 +356,143 @@ class MigrationRegistry:
         return self._map_key_deletions_by_source[identifier]
 
 
+# Every scalar leaf field that may hold a color TOKEN (not just a literal hex):
+# every `Color()`-annotated field in `compile/models` (walk the models for
+# fields carrying the `Color` marker; do not guess).
+COLOR_TOKEN_FIELD_TAILS: tuple[YamlKeyPath, ...] = tuple(
+    (name,)
+    for name in (
+        "color",
+        "fill",
+        "stroke",
+        "null_color",
+        "neutral_color",
+        "glyph_color",
+        "static",
+        "positive",
+        "negative",
+        "warning",
+        "info",
+        "color_active",
+        "color_inactive",
+        "color_disabled",
+        "focus_color",
+        "drop_line_color",
+        "accent",
+        "muted",
+        "background",
+    )
+)
+
+# Whole-list palette-name fields: authored as a bare scalar or as a list, so
+# each also gets a trailing-wildcard Move over its items.
+PALETTE_NAME_FIELD_TAILS: tuple[YamlKeyPath, ...] = (
+    ("palette",),
+    ("single_series_palette",),
+)
+
+
+def token_respell_moves(
+    source_schema: str,
+    target_schema: str,
+    value_map: Mapping[MappedScalar, MappedScalar],
+    *,
+    catalog: YamlSchemaCatalog,
+    category_pins: bool,
+    open_map_values: tuple[YamlKeyPath, ...] = (("style", "palettes", "*"),),
+) -> tuple[Move, ...]:
+    """Identity-path Moves respelling *value_map*'s keys wherever a color token or
+    palette name is authored.
+
+    Every Move here is identity-path (``old_path == new_path``) -- a
+    value-only rewrite on a field that never disappears from the grammar. The
+    field *paths* are resolved mechanically from the model tree
+    (``_relative_field_paths``, the same walk ``suffix_rename_moves`` uses),
+    never hand-listed: that is what reaches every chart family's own style
+    block and every nested board under rows/cols/grid/tabs without naming
+    each one. Only the *tails* (leaf field names) are hand-declared, because
+    that is the one thing the model tree cannot answer on its own -- see
+    ``COLOR_TOKEN_FIELD_TAILS``'s comment for how they were derived.
+    *category_pins* adds ``style.charts.category_colors.*.values.*``, an open
+    map of open maps whose leaves are color tokens. *open_map_values* are the
+    open-map value paths to respell.
+    """
+    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+
+    tails = frozenset(COLOR_TOKEN_FIELD_TAILS + PALETTE_NAME_FIELD_TAILS)
+    list_tails = frozenset(PALETTE_NAME_FIELD_TAILS)
+    try:
+        paths = list(
+            dict.fromkeys(_relative_field_paths(AuthoredBoard, frozenset(), tails))
+        )
+    finally:
+        # Not persisted across calls -- see suffix_rename_moves's docstring
+        # for why an uncleared memo pins hundreds of megabytes per process.
+        _relative_field_paths.cache_clear()
+
+    source_schema_obj = catalog.grammar_for(source_schema)
+    target_schema_obj = catalog.grammar_for(target_schema)
+    result: list[Move] = []
+    for path in paths:
+        tail = path[-1:]
+        if tail not in tails:
+            continue
+        # Fields added after the source boundary (style.fonts.*) hold no
+        # retired spellings -- nothing authored under 0.7.0 can reach them.
+        if not _schema_path_exists(source_schema_obj, path):
+            continue
+        result.append(Move(source_schema, target_schema, path, path, value_map))
+        # A palette-name field may also be authored as a list
+        # (`single_series_palette: [category_dark.blue]`, `palette:
+        # [category_dark[2], "#abc"]`) -- a *separate* trailing-wildcard Move
+        # reaches each item. Not every "palette"-named field is list-typed
+        # (the gradient/scale `palette:` on some models is a bare
+        # `ScalePaletteName | str`, no list arm) -- `_relative_field_paths`
+        # only knows field *names*, not types, so existence in both schemas
+        # is checked explicitly here, the same guard
+        # `suffix_rename_moves` applies before trusting a candidate.
+        # `move_source_locations`'s `_identity_value_would_change` gate
+        # skips this Move when the field is authored as a scalar (a list
+        # index never matches) and skips the bare Move above when it is
+        # authored as a list (a non-scalar value never matches
+        # `_mapped_value`'s domain), so the two coexist without
+        # double-firing on either shape.
+        if (
+            tail in list_tails
+            and _schema_path_exists(source_schema_obj, (*path, "*"))
+            and _schema_path_exists(target_schema_obj, (*path, "*"))
+        ):
+            result.append(
+                Move(
+                    source_schema,
+                    target_schema,
+                    (*path, "*"),
+                    (*path, "*"),
+                    value_map,
+                )
+            )
+
+    if category_pins:
+        category_pin = ("style", "charts", "category_colors", "*", "values", "*")
+        if _schema_path_exists(source_schema_obj, category_pin):
+            result.append(
+                Move(
+                    source_schema, target_schema, category_pin, category_pin, value_map
+                )
+            )
+
+    # Open maps whose every *value* may hold a retired spelling: `style.palettes.*`
+    # (role -> palette name) and `style.roles.*` (bare name -> role address). A
+    # trailing wildcard is ungated (`_source_locations`) -- exactly what an open
+    # map's own values need, since `_declares_tail` cannot answer "declared
+    # property?" for a key the schema never names.
+    result.extend(
+        Move(source_schema, target_schema, path, path, value_map)
+        for path in open_map_values
+    )
+    return tuple(result)
+
+
 def suffix_rename_moves(
     root_model: type[BaseModel],
     source_schema: str,
@@ -400,6 +538,7 @@ def suffix_rename_moves(
         paths = list(
             dict.fromkeys(_relative_field_paths(root_model, frozenset(), tails))
         )
+        nesting = board_nesting_prefixes(root_model)
         seen: set[tuple[YamlKeyPath, YamlKeyPath]] = set()
         result: list[Move] = []
         for new_tail, old_tail in renames:
@@ -422,6 +561,7 @@ def suffix_rename_moves(
                             old_path,
                             path,
                             value_map,
+                            sub_board_prefixes=nesting,
                             chart_type=chart_type,
                         )
                     )
@@ -514,7 +654,7 @@ def _theme_value_needs_recheck(mapping: Mapping[str, JsonValue]) -> bool:
 
 def _retired_categorical_token_needs_recheck(mapping: Mapping[str, JsonValue]) -> bool:
     """Cheap pre-filter: does *mapping* carry a retired categorical-variant
-    token, palette name, or ``style.palettes`` role key, without building the
+    token, scaffold step name, palette name, or ``style.palettes`` role key, without building the
     migration registry to find out?
 
     Plays the same role for ``TokenRespell``/``MapKeyDeletion`` that
@@ -524,7 +664,7 @@ def _retired_categorical_token_needs_recheck(mapping: Mapping[str, JsonValue]) -
     key. So this is a whole-document walk instead — still registry-free
     (no catalog, no schema, no ``@cache``d ``_board_migration_context()``
     build), just a value-shape check against the frozen, closed data
-    ``versions.v0_9_0`` declares. Over-triggering here only costs one extra
+    ``versions.v0_9_0`` and ``versions.v0_11_0`` declare. Over-triggering here only costs one extra
     registry build; under-triggering would leave a retired spelling
     unmigrated, which is the actual bug to avoid.
     """
@@ -533,24 +673,23 @@ def _retired_categorical_token_needs_recheck(mapping: Mapping[str, JsonValue]) -
         RETIRED_TOKEN_VALUE_MAP,
     )
     from dbt_charts.core.compile.migrations.versions.v0_11_0 import (
-        SCAFFOLD_ALIAS_RESPELL,
+        RETIRED_SCAFFOLD_TOKEN_MAP,
     )
+
+    retired_values = {**RETIRED_TOKEN_VALUE_MAP, **RETIRED_SCAFFOLD_TOKEN_MAP}
 
     def scan(node: JsonValue) -> bool:
         if isinstance(node, str):
-            # `RETIRED_TOKEN_VALUE_MAP` also carries a handful of current
+            # The retired-value maps also carry a handful of current
             # spellings mapped to themselves (see its own docstring) -- a
             # plain membership check would treat every one of those as a
             # retired token too, so this only fires on an entry the map
             # actually *changes*.
             return (
-                node in SCAFFOLD_ALIAS_RESPELL
-                or (
-                    RETIRED_TOKEN_VALUE_MAP.get(
-                        node, node
-                    )  # type-state: silent_fallback — absent-from-map means "not a retired spelling at all", the same as a self-mapped current entry; both compare equal to node and correctly report False
-                    != node
-                )
+                retired_values.get(
+                    node, node
+                )  # type-state: silent_fallback — absent-from-map means "not a retired spelling at all", the same as a self-mapped current entry; both compare equal to node and correctly report False
+                != node
             )
         if isinstance(node, dict):
             palettes = node.get("palettes")
@@ -759,12 +898,7 @@ def _board_migration_context() -> tuple[YamlSchemaCatalog, MigrationRegistry]:
 
     The ``finally`` clause drops only what this build left in
     ``_schema_branches_cached`` (~1.7k entries, reached through the version
-    modules' own ``moves()`` via ``suffix_rename_moves``). It does not bound
-    that cache. Document migration re-enters it through the callers listed on
-    ``_schema_branches`` and never clears it, and one of them
-    (``_plausible_positions`` → ``_without_composition``) hands it a fresh
-    dict per call, so those entries accumulate per board migrated -- measured
-    at ~+59 each. That is a separate leak, untouched here.
+    modules' own ``moves()`` via ``suffix_rename_moves``).
     """
     try:
         return _build_board_migration_context()
@@ -933,7 +1067,7 @@ def migrate_mapping(
         drop_warnings.extend(
             _apply_map_key_deletions(result, map_key_deletions, catalog)[0]
         )
-        for move in moves:
+        for move in _moves_that_may_fire(result, moves):
             drop_warnings.extend(_apply_move(result, move, catalog))
         drop_warnings.extend(_apply_deletions(result, deletions, catalog)[0])
         for cond_move in cond_moves:
@@ -1055,7 +1189,7 @@ def _verify_reachable_via_moves_and_deletions(
         # this verification reach a different result than the path it is
         # supposed to be checking.
         _apply_map_key_deletions(result, map_key_deletions, catalog)
-        for move in moves:
+        for move in _moves_that_may_fire(result, moves):
             _apply_move(result, move, catalog)
         _apply_deletions(result, deletions, catalog)
         identifier = (moves or deletions or map_key_deletions)[0].target_schema
@@ -1151,7 +1285,7 @@ def migrate_yaml_text(
         )
         deletion_reasons.extend(map_key_reasons)
         yaml_text = _delete_paths_in_yaml_text(yaml_text, map_key_struck_paths)
-        for move in moves:
+        for move in _moves_that_may_fire(staged, moves):
             if move.expansion is not None:
                 for at, node, _parent, _key, bindings in list(
                     expansion_locations(staged, move, catalog)
@@ -1420,10 +1554,11 @@ def _recognize(
     # `migrations/AGENTS.md`) would never be reached by `dct migrate`.
     if not current_errors and not _retired_categorical_token_needs_recheck(mapping):
         return catalog.dev.version
+    keys = _document_keys(mapping)
     for identifier in reversed(catalog.versions):
         if identifier == catalog.dev.version:
             continue
-        if _transition_applies(mapping, identifier, catalog, registry):
+        if _transition_applies(mapping, identifier, catalog, registry, keys):
             return identifier
     if not current_errors:
         # The schema was already current; only the token/role-key presence
@@ -1440,6 +1575,7 @@ def _transition_applies(
     identifier: str,
     catalog: YamlSchemaCatalog,
     registry: MigrationRegistry,
+    keys: frozenset[str],
 ) -> bool:
     """Whether *identifier*'s declared transition would find anything to rewrite.
 
@@ -1487,7 +1623,9 @@ def _transition_applies(
     # which narrow the same way on isinstance(node, dict).
     document = cast(JsonObject, mapping)  # type-state: cast — always a dict here
     for move in registry.transition_from(identifier):
-        if any(move_source_locations(document, move, catalog)):
+        if _old_path_keys_present(move, keys) and any(
+            move_source_locations(document, move, catalog)
+        ):
             return True
     if next(_deletions_that_fire(document, identifier, catalog, registry), None):
         return True
@@ -1503,6 +1641,35 @@ def _transition_applies(
         ):
             return True
     return False
+
+
+def _old_path_keys_present(move: Move, keys: frozenset[str]) -> bool:
+    """Whether every key *move*'s old path names is among *keys*: a Move that
+    cannot fire skips every schema walk."""
+    return all(part == "*" or part in keys for part in move.old_path)
+
+
+def _moves_that_may_fire(document: JsonObject, moves: Sequence[Move]) -> Iterator[Move]:
+    """Rechecks keys after each yield because applying a Move can add keys."""
+    keys = _document_keys(document)
+    for move in moves:
+        if _old_path_keys_present(move, keys):
+            yield move
+            keys = _document_keys(document)
+
+
+def _document_keys(document: Mapping[str, JsonValue]) -> frozenset[str]:
+    """Every mapping key at every depth of *document*."""
+    keys: set[str] = set(document)
+    pending = list(document.values())
+    while pending:
+        current = pending.pop()
+        if isinstance(current, dict):
+            keys.update(current)
+            pending.extend(current.values())
+        elif isinstance(current, list):
+            pending.extend(current)
+    return frozenset(keys)
 
 
 def _deletions_that_fire(
@@ -1666,10 +1833,11 @@ def retired_keys(
     and ``MapKeyDeletion`` keys are legal open-map entries; neither is a retired key.
     """
     document = cast(JsonObject, mapping)  # type-state: cast — always a dict here
+    keys = _document_keys(document)
     found: dict[tuple[str, ...], RetiredKey] = {}
     for identifier in reversed(catalog.versions):
         for move in registry.transition_from(identifier):
-            if move.old_path == move.new_path:
+            if move.old_path == move.new_path or not _old_path_keys_present(move, keys):
                 continue
             for _parent, _key, bindings in move_source_locations(
                 document, move, catalog
@@ -2417,17 +2585,23 @@ def _declares_tail(
     return True
 
 
+_COMPOSITION_KEYWORDS = frozenset({"anyOf", "oneOf", "allOf", "if", "then", "else"})
+
+
 def _without_composition(node: JsonObject) -> JsonObject | None:
     """*node*'s own declarations, with every composition keyword removed.
 
     ``None`` when nothing is left — a pure wrapper declares nothing itself and
     contributes no position.
     """
-    stripped = {
-        key: value
-        for key, value in node.items()
-        if key not in ("anyOf", "oneOf", "allOf", "if", "then", "else")
-    }
+    if _COMPOSITION_KEYWORDS.isdisjoint(node):
+        stripped = node
+    else:
+        stripped = {
+            key: value
+            for key, value in node.items()
+            if key not in _COMPOSITION_KEYWORDS
+        }
     return stripped if stripped.keys() - {"description", "title"} else None
 
 
@@ -2718,24 +2892,26 @@ def _value_at(document: JsonValue, path: Sequence[str]) -> JsonValue:
     return node
 
 
-def _live_positions_along(
-    document: JsonObject, path: Sequence[str], live: JsonObject
+def _positions_along(
+    node: JsonValue,
+    path: Sequence[str],
+    schema: JsonObject,
+    positions: list[JsonObject],
 ) -> list[JsonObject]:
-    """Live-grammar schema nodes for the value at *path*, narrowed by each ancestor.
+    """Schema nodes of *schema* for the value at *path* below *node*, which sits
+    at *positions*, narrowed by each ancestor.
 
     Narrowing at every mapping on the way down is what lets a chart's own
     ``type:`` pick its family's style grammar, so a field one family declares
     and another does not reads differently at the same dotted position.
     """
-    node: JsonValue = document
-    positions: list[JsonObject] = [live]
     for part in path:
         if isinstance(node, dict):
-            positions = _plausible_positions(live, positions, node)
-            positions = _child_positions(live, positions, part)
+            positions = _plausible_positions(schema, positions, node)
+            positions = _child_positions(schema, positions, part)
             node = node[part]
         elif isinstance(node, list):
-            positions = _item_positions(live, positions)
+            positions = _item_positions(schema, positions)
             node = node[int(part)]
         else:
             break
@@ -2757,7 +2933,7 @@ def _expanded_value(
     value = _value_at(document, destination)
     assert isinstance(value, str)
     target = catalog.grammar_for(move.target_schema)
-    positions = _live_positions_along(document, destination, target)
+    positions = _positions_along(document, destination, target, [target])
     expanded: dict[str, JsonValue] = {}
     notes: list[str] = []
     for leaf, leaf_value in move.expansion[value].items():
@@ -2820,14 +2996,48 @@ def _follow(
 
 
 def _board_nodes(
-    node: JsonObject, prefixes: tuple[YamlKeyPath, ...], at: YamlKeyPath = ()
-) -> Iterable[tuple[YamlKeyPath, JsonObject]]:
-    """*node* and every board mapping nested inside it, with concrete paths."""
-    yield at, node
-    for prefix in prefixes:
-        for path, child in _follow(node, prefix):
-            if isinstance(child, dict):
-                yield from _board_nodes(child, prefixes, (*at, *path))
+    document: JsonObject,
+    prefixes: tuple[YamlKeyPath, ...],
+    lead: str,
+    schema: JsonObject,
+    live: JsonObject,
+) -> Iterable[tuple[YamlKeyPath, JsonObject, list[JsonObject], list[JsonObject]]]:
+    """*document* and every board mapping nested inside it that holds *lead*
+    (``*``: every board), with concrete paths and the positions each sits at in
+    *schema* and *live*.
+
+    Positions are seated lazily, only for a yielded board or an ancestor of one:
+    eager seating costs most of a recognition pass. A nested board's positions
+    come from where it sits, not the root, since ``_open_map_claims`` needs the
+    open-map arm of a ``rows:`` item.
+    """
+    seats: dict[YamlKeyPath, tuple[list[JsonObject], list[JsonObject]]] = {
+        (): ([schema], [live])
+    }
+    parents: dict[YamlKeyPath, tuple[YamlKeyPath, JsonObject, YamlKeyPath]] = {}
+
+    def seat(at: YamlKeyPath) -> tuple[list[JsonObject], list[JsonObject]]:
+        if at not in seats:
+            parent_at, parent, path = parents[at]
+            positions, live_positions = seat(parent_at)
+            seats[at] = (
+                _positions_along(parent, path, schema, positions),
+                _positions_along(parent, path, live, live_positions),
+            )
+        return seats[at]
+
+    boards: list[tuple[YamlKeyPath, JsonObject]] = [((), document)]
+    while boards:
+        at, node = boards.pop()
+        if lead == "*" or lead in node:
+            yield at, node, *seat(at)
+        children: list[tuple[YamlKeyPath, JsonObject]] = []
+        for prefix in prefixes:
+            for path, child in _follow(node, prefix):
+                if isinstance(child, dict):
+                    parents[(*at, *path)] = (at, node, path)
+                    children.append(((*at, *path), child))
+        boards.extend(reversed(children))
 
 
 def expansion_locations(
@@ -2850,9 +3060,15 @@ def expansion_locations(
     source_schema = catalog.grammar_for(move.source_schema)
     live = catalog.current_grammar
     seen: set[tuple[int, str | int]] = set()
-    for at, node in _board_nodes(document, move.sub_board_prefixes):
+    for at, node, positions, live_positions in _board_nodes(
+        document,
+        move.sub_board_prefixes,
+        move.old_path[0],
+        source_schema,
+        live,
+    ):
         for parent, key, bindings in _source_locations(
-            node, move.old_path, source_schema, [source_schema], live, [live]
+            node, move.old_path, source_schema, positions, live, live_positions
         ):
             if isinstance(parent, dict):
                 assert isinstance(key, str)
@@ -2920,9 +3136,15 @@ def move_source_locations(
         move.value_map is not None or move.rewrite is not None
     )
     seen: set[tuple[int, str | int]] = set()
-    for at, board in _board_nodes(document, move.sub_board_prefixes):
+    for at, board, positions, live_positions in _board_nodes(
+        document,
+        move.sub_board_prefixes,
+        move.old_path[0],
+        source_schema,
+        live,
+    ):
         for parent, key, inner in _source_locations(
-            board, move.old_path, source_schema, [source_schema], live, [live]
+            board, move.old_path, source_schema, positions, live, live_positions
         ):
             if (id(parent), key) in seen:
                 continue
@@ -3401,6 +3623,8 @@ def _schema_branches(
     same board/chart/style nodes, over and over), so the same
     ``(schema, node, seen)`` triple recurs constantly.
     """
+    if "$ref" not in node and _COMPOSITION_KEYWORDS.isdisjoint(node):
+        return [node]
     return _schema_branches_cached(_ById(schema), _ById(node), seen)
 
 

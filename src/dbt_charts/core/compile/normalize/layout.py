@@ -38,6 +38,7 @@ from dbt_charts.core.compile.normalize.charts import (
     generate_inline_chart_id,
     normalize_chart,
 )
+from dbt_charts.core.compile.template.listings import check_listing_calls
 from dbt_charts.core.diagnostics.codes_compile import ERR_TAB_DEFAULT_UNKNOWN
 
 # The enclosing board's own authoring path, threaded down so each item can name
@@ -959,6 +960,7 @@ def _resolve_tab_items(
             )
 
         elif tab_item.text:
+            check_listing_calls(tab_item.title, tab_item.text)
             # Content-only tab. resolved_style/chart_style_context here are the
             # parent's — a transient placeholder that normalize_board's later
             # _propagate_resolved_style pass overwrites from authored_style,

@@ -127,18 +127,9 @@ EXPECTED_AXIS_Y_LABEL_MOVES = (
 )
 
 
-def test_sub_board_charts_map_strands_layer_axis_y_label() -> None:
-    """The one shape this rename does not repair, same ``_relative_field_paths``
-    self-nesting gap as ``TONES_RENAMES``/``SUPPORT_TABLE_RENAMES``/``NOTES_RENAMES``.
-
-    A sub-board that declares its own ``charts:`` map is opaque to the walk,
-    so ``rows.*.charts.*.layers.*.axis_y.label`` is not among the resolved
-    moves. Unlike ``support_table``/``notes``, the stranded position also
-    gets no ``Did you mean`` hint: ``_allowed_keys_at_path`` is empty for a
-    discriminated per-family layer union at this depth, so the author is told
-    nothing about the replacement. Pinned so this is a recorded cost, not a
-    surprise.
-    """
+def test_sub_board_charts_map_layer_axis_y_label_migrates() -> None:
+    """A sub-board that declares its own ``charts:`` map is a board like any
+    other: its layers' ``axis_y.label`` migrates to ``labels``."""
     from dbt_charts.core.compile import compile
 
     yaml_content = """title: T
@@ -162,22 +153,11 @@ rows:
     rows: [c1]
 """
 
-    result = compile(yaml_content)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SchemaMigrationWarning)
+        result = compile(yaml_content)
 
-    assert not any(
-        d.message for d in result.warnings if d.code == "WARN-SCHEMA-MIGRATED"
-    ), "an unreachable move should not claim to have migrated anything"
-    label_errors = [
-        e
-        for e in result.errors
-        if e.code == "ERR-EXTRA-FIELD" and e.message.startswith("Unknown field 'label'")
-    ]
-    assert label_errors, (
-        f"expected a stranded axis_y.label error: {[e.message for e in result.errors]}"
-    )
-    assert all("Did you mean 'labels'?" in (e.hint or "") for e in label_errors), (
-        "the layer path lists its allowed keys, so the typo gets the nearest one"
-    )
+    assert result.success, [f"{e.code}: {e.message}" for e in result.errors]
 
 
 def test_resolved_move_set_is_exactly_the_documented_positions(
@@ -186,8 +166,7 @@ def test_resolved_move_set_is_exactly_the_documented_positions(
     """The ``axis_y.label`` tail resolves to these 11 positions and no others.
 
     Pins the position set itself (missing one strands a board that authored
-    the field there — see ``test_sub_board_charts_map_strands_layer_axis_y_label``
-    above; gaining one means the tail matched somewhere unintended) — not a
+    the field there; gaining one means the tail matched somewhere unintended) — not a
     claim about the anchor's necessity, which the module docstring in
     ``v0_6_0.py`` addresses separately."""
     from dbt_charts.core.compile.migrations.versions.v0_6_0 import moves

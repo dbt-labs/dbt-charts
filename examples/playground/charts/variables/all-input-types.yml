@@ -19,14 +19,12 @@ variables:
 
   # multiselect — checkable listbox, commits a list. Unset means "all".
   regions:
-    input: multiselect
     options:
       static: [North, South, East, West]
     default: [North, East]
 
   # select — single-choice listbox. No default, so "All" stays reachable.
   category:
-    input: select
     options:
       static: [Electronics, Accessories, Tools]
 
@@ -38,12 +36,10 @@ variables:
   # text — free-form, matched with LIKE below.
   product_like:
     label: Product name
-    input: text
     placeholder: e.g. Widget
 
   # number — stepped numeric field.
   min_revenue:
-    label: Min revenue
     input: number
     min: 0
     max: 5000
@@ -53,7 +49,6 @@ variables:
   # slider — bounded value with a track and a thumb.
   top_n:
     label: Top N products
-    input: slider
     min: 3
     max: 8
     step: 1
@@ -62,7 +57,6 @@ variables:
   # checkbox — boolean toggle.
   units_only:
     label: Rank by units
-    input: checkbox
     default: false
 
 queries:
@@ -127,8 +121,6 @@ charts:
     title: "Top {{ top_n }} Products by {{ 'Units' if units_only else 'Revenue' }}"
     type: bar
     query: top_products
-    style:
-      orientation: horizontal
     x: product
     y: measure
 

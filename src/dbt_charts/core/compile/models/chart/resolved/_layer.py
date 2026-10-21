@@ -8,6 +8,7 @@ normalized chart package.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Literal, Protocol, runtime_checkable
 
@@ -39,6 +40,17 @@ class _WithResolvedChannels(Protocol):
 
     @property
     def resolved_channels(self) -> dict[str, ResolvedStyleChannel]: ...
+
+
+def layers_share_date_axis(sides: Iterable[str | None]) -> bool:
+    """Whether layers over a date-measure bar plot on the bar's own date axis.
+
+    ``sides`` is each layer's pinned ``axis_y.position``. A pinned layer owns a
+    numeric scale, which turns every layer's scale independent, so only a chart
+    with no pinned layer keeps one shared date scale. Resolve and render both
+    read this answer.
+    """
+    return not any(side is not None for side in sides)
 
 
 def effective_color_field(chart: _WithResolvedChannels) -> str | None:

@@ -70,12 +70,6 @@ if TYPE_CHECKING:
         build_design_target as build_design_target,
         design_target as design_target,
     )
-    from dbt_charts.agent_api.docs import (
-        DocsArgs as DocsArgs,
-        DocsResult as DocsResult,
-        DocsSearchHit as DocsSearchHit,
-        Topic as Topic,
-    )
     from dbt_charts.agent_api.doctor import (
         DoctorCheck as DoctorCheck,
         DoctorReport as DoctorReport,
@@ -154,11 +148,8 @@ __all__ = [
     "DescribeBoardArgs",
     "DescribeBoardResult",
     "Diagnostic",
-    "DocsArgs",
     "DoctorCheck",
     "DoctorReport",
-    "DocsResult",
-    "DocsSearchHit",
     "BoardFile",
     "InMemoryBoard",
     "InitResult",
@@ -178,7 +169,6 @@ __all__ = [
     "RenderError",
     "RenderFormat",
     "SchemaHints",
-    "Topic",
     "ValidateResult",
     # Execution extension seams
     "AllowlistedSourceResolver",
@@ -248,10 +238,6 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "build_design": ("dbt_charts.agent_api.design", "build_design"),
     "build_design_target": ("dbt_charts.agent_api.design", "build_design_target"),
     "design_target": ("dbt_charts.agent_api.design", "design_target"),
-    "DocsArgs": ("dbt_charts.agent_api.docs", "DocsArgs"),
-    "DocsResult": ("dbt_charts.agent_api.docs", "DocsResult"),
-    "DocsSearchHit": ("dbt_charts.agent_api.docs", "DocsSearchHit"),
-    "Topic": ("dbt_charts.agent_api.docs", "Topic"),
     "DoctorCheck": ("dbt_charts.agent_api.doctor", "DoctorCheck"),
     "DoctorReport": ("dbt_charts.agent_api.doctor", "DoctorReport"),
     "run_doctor": ("dbt_charts.agent_api.doctor", "run_doctor"),

@@ -33,27 +33,167 @@ pub fn parse_hex(hex: &str) -> Option<Rgb> {
     Some((channel(0..2)?, channel(2..4)?, channel(4..6)?))
 }
 
-/// What `d3.color(text)` reads as an sRGB color: `#rgb`, `#rrggbb`, a CSS
-/// keyword, or `rgb(r, g, b)` over integers; `None` for any other spelling.
-pub fn parse_color(text: &str) -> Option<Rgb> {
-    let text = text.trim();
-    if let Some(digits) = text.strip_prefix('#').filter(|d| d.len() == 3 && d.is_ascii()) {
-        let channel = |i: usize| u8::from_str_radix(&digits[i..=i], 16).ok().map(|v| v * 17);
-        return Some((channel(0)?, channel(1)?, channel(2)?));
+/// A color as d3-color holds it: unclamped sRGB channels (NaN for the
+/// transparent black) and an opacity.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Color {
+    pub r: f64,
+    pub g: f64,
+    pub b: f64,
+    pub a: f64,
+}
+
+impl Color {
+    /// What d3 makes of text it cannot read (`color` returns null, `hcl(null)` is a
+    /// color of NaN channels): an interpolation borrows the other end's color.
+    pub const UNDEFINED: Color = Color { r: f64::NAN, g: f64::NAN, b: f64::NAN, a: f64::NAN };
+
+    fn rgba(r: f64, g: f64, b: f64, a: f64) -> Color {
+        // d3-color's `rgba`: a fully transparent color has no channels.
+        if a <= 0.0 { Color { r: f64::NAN, g: f64::NAN, b: f64::NAN, a } } else { Color { r, g, b, a } }
+    }
+
+    /// An opaque byte color.
+    pub fn opaque((r, g, b): Rgb) -> Color {
+        Color { r: f64::from(r), g: f64::from(g), b: f64::from(b), a: 1.0 }
+    }
+
+    /// d3-color's `hsla(h, s, l, a)` read back as RGB (`Hsl.rgb`).
+    fn hsla(h: f64, s: f64, l: f64, a: f64) -> Color {
+        let (mut h, mut s, mut l) = (h, s, l);
+        if a <= 0.0 {
+            h = f64::NAN;
+            s = f64::NAN;
+            l = f64::NAN;
+        } else if l <= 0.0 || l >= 1.0 {
+            h = f64::NAN;
+            s = f64::NAN;
+        } else if s <= 0.0 {
+            h = f64::NAN;
+        }
+        let h = h % 360.0 + if h < 0.0 { 360.0 } else { 0.0 };
+        let s = if h.is_nan() || s.is_nan() { 0.0 } else { s };
+        let m2 = l + (if l < 0.5 { l } else { 1.0 - l }) * s;
+        let m1 = 2.0 * l - m2;
+        let channel = |h: f64| {
+            (if h < 60.0 {
+                m1 + (m2 - m1) * h / 60.0
+            } else if h < 180.0 {
+                m2
+            } else if h < 240.0 {
+                m1 + (m2 - m1) * (240.0 - h) / 60.0
+            } else {
+                m1
+            }) * 255.0
+        };
+        Color {
+            r: channel(if h >= 240.0 { h - 240.0 } else { h + 120.0 }),
+            g: channel(h),
+            b: channel(if h < 120.0 { h + 240.0 } else { h - 120.0 }),
+            a,
+        }
+    }
+}
+
+/// d3-color's `color(text)`: `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`,
+/// `rgb(i, i, i)`, `rgb(p%, p%, p%)`, `rgba(...)`, `hsl(h, s%, l%)`,
+/// `hsla(...)`, a CSS keyword or `transparent`, case and edge whitespace
+/// ignored; `None` for any other spelling.
+pub fn parse_color(text: &str) -> Option<Color> {
+    let text = text.trim().to_ascii_lowercase();
+    if let Some(digits) = text.strip_prefix('#').filter(|d| d.is_ascii() && d.bytes().all(|c| c.is_ascii_hexdigit())) {
+        let value = u32::from_str_radix(digits, 16).ok()?;
+        let byte_at = |shift: u32| f64::from((value >> shift) & 0xff);
+        let nibble = |shift: u32| f64::from((value >> shift) & 0xf);
+        return match digits.len() {
+            6 => Some(Color::opaque((byte_at(16) as u8, byte_at(8) as u8, byte_at(0) as u8))),
+            3 => Some(Color { r: nibble(8) * 17.0, g: nibble(4) * 17.0, b: nibble(0) * 17.0, a: 1.0 }),
+            8 => Some(Color::rgba(byte_at(24), byte_at(16), byte_at(8), byte_at(0) / 255.0)),
+            4 => Some(Color::rgba(nibble(12) * 17.0, nibble(8) * 17.0, nibble(4) * 17.0, nibble(0) * 17.0 / 255.0)),
+            _ => None,
+        };
     }
     if text.starts_with('#') {
-        return parse_hex(text);
+        return None;
     }
-    if let Some(args) = text.strip_prefix("rgb(").and_then(|rest| rest.strip_suffix(')')) {
-        let mut parts = args.split(',').map(|p| p.trim().parse::<u8>().ok());
-        let color = (parts.next()??, parts.next()??, parts.next()??);
-        return parts.next().is_none().then_some(color);
+    let call = |name: &str| -> Option<Vec<&str>> {
+        let args = text.strip_prefix(name)?.strip_prefix('(')?.strip_suffix(')')?;
+        Some(args.split(',').collect())
+    };
+    let number = |s: &str| -> Option<f64> {
+        let t = s.trim();
+        // d3-color's `reN`: an optional sign, digits with an optional point, an optional exponent.
+        let body = t.strip_prefix(['+', '-']).unwrap_or(t);
+        let (mantissa, exponent) = match body.find('e') {
+            Some(i) => (&body[..i], Some(&body[i + 1..])),
+            None => (body, None),
+        };
+        let mantissa_ok = !mantissa.is_empty()
+            && mantissa.bytes().all(|c| c.is_ascii_digit() || c == b'.')
+            && mantissa.matches('.').count() <= 1
+            && mantissa.bytes().any(|c| c.is_ascii_digit())
+            && !mantissa.ends_with('.');
+        let exponent_ok = exponent.is_none_or(|e| {
+            let digits = e.strip_prefix(['+', '-']).unwrap_or(e);
+            !digits.is_empty() && digits.bytes().all(|c| c.is_ascii_digit())
+        });
+        (mantissa_ok && exponent_ok).then(|| t.parse().ok()).flatten()
+    };
+    let integer = |s: &str| -> Option<f64> {
+        let t = s.trim();
+        let digits = t.strip_prefix(['+', '-']).unwrap_or(t);
+        (!digits.is_empty() && digits.bytes().all(|c| c.is_ascii_digit())).then(|| t.parse().ok()).flatten()
+    };
+    // d3's `reP`: the number touches its `%`.
+    let percent = |s: &str| -> Option<f64> {
+        let body = s.trim().strip_suffix('%')?;
+        if body.ends_with(char::is_whitespace) {
+            return None;
+        }
+        number(body)
+    };
+    if let Some(p) = call("rgb") {
+        if let [r, g, b] = p[..] {
+            if let (Some(r), Some(g), Some(b)) = (integer(r), integer(g), integer(b)) {
+                return Some(Color { r, g, b, a: 1.0 });
+            }
+            if let (Some(r), Some(g), Some(b)) = (percent(r), percent(g), percent(b)) {
+                return Some(Color { r: r * 255.0 / 100.0, g: g * 255.0 / 100.0, b: b * 255.0 / 100.0, a: 1.0 });
+            }
+        }
+        return None;
     }
-    crate::css_colors::named(&text.to_ascii_lowercase())
+    if let Some(p) = call("rgba") {
+        if let [r, g, b, a] = p[..] {
+            if let (Some(r), Some(g), Some(b), Some(a)) = (integer(r), integer(g), integer(b), number(a)) {
+                return Some(Color::rgba(r, g, b, a));
+            }
+            if let (Some(r), Some(g), Some(b), Some(a)) = (percent(r), percent(g), percent(b), number(a)) {
+                return Some(Color::rgba(r * 255.0 / 100.0, g * 255.0 / 100.0, b * 255.0 / 100.0, a));
+            }
+        }
+        return None;
+    }
+    if let Some(p) = call("hsl") {
+        if let [h, s, l] = p[..] {
+            return Some(Color::hsla(number(h)?, percent(s)? / 100.0, percent(l)? / 100.0, 1.0));
+        }
+        return None;
+    }
+    if let Some(p) = call("hsla") {
+        if let [h, s, l, a] = p[..] {
+            return Some(Color::hsla(number(h)?, percent(s)? / 100.0, percent(l)? / 100.0, number(a)?));
+        }
+        return None;
+    }
+    if text == "transparent" {
+        return Some(Color { r: f64::NAN, g: f64::NAN, b: f64::NAN, a: 0.0 });
+    }
+    crate::css_colors::named(&text).map(Color::opaque)
 }
 
 /// d3's `formatRgb` byte: `Math.round`, clamped, NaN printing as 0.
-fn byte(v: f64) -> u8 {
+pub fn byte(v: f64) -> u8 {
     let rounded = crate::js_math::js_round(v);
     if rounded.is_nan() {
         0
@@ -83,8 +223,8 @@ const T1: f64 = 6.0 / 29.0;
 const T2: f64 = 3.0 * T1 * T1;
 const T3: f64 = T1 * T1 * T1;
 
-fn rgb_to_linear(channel: u8) -> f64 {
-    let x = f64::from(channel) / 255.0;
+fn rgb_to_linear(channel: f64) -> f64 {
+    let x = channel / 255.0;
     if x <= 0.04045 { x / 12.92 } else { ((x + 0.055) / 1.055).powf(2.4) }
 }
 
@@ -101,7 +241,7 @@ fn lab_to_xyz(t: f64) -> f64 {
 }
 
 /// d3-color's `hcl(rgb)`: hue in degrees `[0, 360)`, chroma, lightness.
-fn rgb_to_hcl((r, g, b): Rgb) -> (f64, f64, f64) {
+fn rgb_to_hcl(r: f64, g: f64, b: f64) -> (f64, f64, f64) {
     let (r, g, b) = (rgb_to_linear(r), rgb_to_linear(g), rgb_to_linear(b));
     let y = xyz_to_lab((0.2225045 * r + 0.7168786 * g + 0.0606169 * b) / YN);
     let (x, z) = if r == g && g == b {
@@ -120,23 +260,25 @@ fn rgb_to_hcl((r, g, b): Rgb) -> (f64, f64, f64) {
     (if h < 0.0 { h + 360.0 } else { h }, a.hypot(bb), l)
 }
 
-fn hcl_to_rgb((h, c, l): (f64, f64, f64)) -> Rgb {
+/// The unrounded channels of an HCL color back in sRGB (`Hcl.rgb`).
+fn hcl_to_rgb_channels((h, c, l): (f64, f64, f64)) -> (f64, f64, f64) {
     let (a, b) = if h.is_nan() { (0.0, 0.0) } else { (h.to_radians().cos() * c, h.to_radians().sin() * c) };
     let y = (l + 16.0) / 116.0;
     let (x, z) = (y + a / 500.0, y - b / 200.0);
     let (x, y, z) = (XN * lab_to_xyz(x), YN * lab_to_xyz(y), ZN * lab_to_xyz(z));
     (
-        byte(linear_to_rgb(3.1338561 * x - 1.6168667 * y - 0.4906146 * z)),
-        byte(linear_to_rgb(-0.9787684 * x + 1.9161415 * y + 0.0334540 * z)),
-        byte(linear_to_rgb(0.0719453 * x - 0.2289914 * y + 1.4052427 * z)),
+        linear_to_rgb(3.1338561 * x - 1.6168667 * y - 0.4906146 * z),
+        linear_to_rgb(-0.9787684 * x + 1.9161415 * y + 0.0334540 * z),
+        linear_to_rgb(0.0719453 * x - 0.2289914 * y + 1.4052427 * z),
     )
 }
 
-/// d3-interpolate `hcl.js`: `hue` takes the shorter way around, chroma and
-/// lightness are linear, an undefined hue borrows the other end's.
-pub fn interpolate_hcl(start: Rgb, end: Rgb, t: f64) -> Rgb {
-    let (h0, c0, l0) = rgb_to_hcl(start);
-    let (h1, c1, l1) = rgb_to_hcl(end);
+/// d3-interpolate `hcl.js` over d3 colors: `hue` takes the shorter way
+/// around, chroma, lightness and opacity are linear (`nogamma`), an undefined
+/// channel borrows the other end's.
+pub fn interpolate_hcl_color(start: Color, end: Color, t: f64) -> Color {
+    let (h0, c0, l0) = rgb_to_hcl(start.r, start.g, start.b);
+    let (h1, c1, l1) = rgb_to_hcl(end.r, end.g, end.b);
     let differs = |d: f64| d != 0.0 && !d.is_nan();
     let linear = |a: f64, b: f64| if differs(b - a) { a + t * (b - a) } else if a.is_nan() { b } else { a };
     let h = {
@@ -150,7 +292,14 @@ pub fn interpolate_hcl(start: Rgb, end: Rgb, t: f64) -> Rgb {
             h0
         }
     };
-    hcl_to_rgb((h, linear(c0, c1), linear(l0, l1)))
+    let (r, g, b) = hcl_to_rgb_channels((h, linear(c0, c1), linear(l0, l1)));
+    Color { r, g, b, a: linear(start.a, end.a) }
+}
+
+/// [`interpolate_hcl_color`] over opaque byte colors.
+pub fn interpolate_hcl(start: Rgb, end: Rgb, t: f64) -> Rgb {
+    let mixed = interpolate_hcl_color(Color::opaque(start), Color::opaque(end), t);
+    (byte(mixed.r), byte(mixed.g), byte(mixed.b))
 }
 
 #[cfg(test)]
@@ -235,14 +384,25 @@ mod tests {
     }
 
     #[test]
-    fn parse_color_reads_hex_keywords_and_integer_rgb() {
-        assert_eq!(parse_color("#f00"), Some((255, 0, 0)));
-        assert_eq!(parse_color("#0a4a90"), Some((10, 74, 144)));
-        assert_eq!(parse_color("Blue"), Some((0, 0, 255)));
+    fn parse_color_reads_what_d3_color_reads() {
+        assert_eq!(parse_color("#f00"), Some(Color::opaque((255, 0, 0))));
+        assert_eq!(parse_color("#0a4a90"), Some(Color::opaque((10, 74, 144))));
+        assert_eq!(parse_color("Blue"), Some(Color::opaque((0, 0, 255))));
         assert_eq!(parse_color(concat!("dark", "gre", "y")), parse_color("darkgray"));
-        assert_eq!(parse_color("rgb(0, 255,0)"), Some((0, 255, 0)));
-        for bad in ["", "#ff", "#gggggg", "rgb(1, 2)", "rgb(1, 2, 3, 4)", "rgb(300, 0, 0)", "notacolor"] {
+        assert_eq!(parse_color("rgb(0, 255,0)"), Some(Color::opaque((0, 255, 0))));
+        assert_eq!(parse_color("rgb(100%, 0%, 50%)"), Some(Color { r: 255.0, g: 0.0, b: 127.5, a: 1.0 }));
+        assert_eq!(parse_color("rgba(0, 0, 255, 0.5)"), Some(Color { r: 0.0, g: 0.0, b: 255.0, a: 0.5 }));
+        assert_eq!(parse_color("hsl(0, 100%, 50%)"), Some(Color::opaque((255, 0, 0))));
+        assert_eq!(parse_color("#ff000080").map(|c| (c.r, c.a > 0.5)), Some((255.0, true)));
+        assert!(parse_color("transparent").is_some_and(|c| c.r.is_nan() && c.a == 0.0));
+        for bad in ["", "#ff", "#gggggg", "rgb(1, 2)", "rgb(1, 2, 3, 4)", "notacolor", "hsl(0, 100 %, 50%)"] {
             assert_eq!(parse_color(bad), None, "{bad}");
         }
+    }
+
+    /// d3's `hsla`: a fully transparent color has no channels at all.
+    #[test]
+    fn a_transparent_hsla_has_no_channels() {
+        assert!(parse_color("hsla(0, 100%, 50%, 0)").is_some_and(|c| c.r.is_nan() && c.g.is_nan() && c.b.is_nan() && c.a == 0.0));
     }
 }

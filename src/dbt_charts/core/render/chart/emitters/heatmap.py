@@ -13,6 +13,7 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset
 from dbt_charts.core.compile.resolve.chart._wide_fields import wide_measure_labels_for
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
+    ERR_HEATMAP_COLOR_NO_VALUES,
     ERR_LABEL_FORMAT_AXIS_MISMATCH,
 )
 from dbt_charts.core.render.chart._types import VLDict
@@ -53,6 +54,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
 )
 from dbt_charts.core.render.utils import normalize_data_types
 from dbt_charts.core.text.case import field_display_text
+from dbt_charts.core.utils import is_vega_numeric_value
 
 
 def _write_dimension_sort(
@@ -367,6 +369,14 @@ class HeatmapEmitter:
                         enc["scale"] = spatial_color_scale(
                             series, chart.palette, series, scale
                         )
+            if enc.get("type") == "quantitative" and not any(
+                is_vega_numeric_value(row[enc["field"]])
+                for row in data
+                if row.get(enc["field"]) is not None
+            ):
+                raise ChartDataError.from_code(
+                    ERR_HEATMAP_COLOR_NO_VALUES, field=enc["field"]
+                )
             # color_gradient is the cascade-complete gradient (theme/board
             # defaults merged with any chart-local style.color.gradient
             # override) — strictly more complete than a "gradient" mode

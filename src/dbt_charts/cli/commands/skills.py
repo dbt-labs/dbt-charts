@@ -44,34 +44,16 @@ def _print_skills_table(result: _api.SkillList) -> None:
 
     console = dct_console()
 
-    workflows = [s for s in result.skills if s.kind == "workflow"]
-    patterns = [s for s in result.skills if s.kind == "pattern"]
-
-    typer.echo(
-        "Agent skills — workflows and layout patterns for building dbt charts dashboards."
-    )
-    typer.echo("YAML field reference is `dct docs`, not skills.")
-    typer.echo("Start here: `dct skills intro`.\n")
+    typer.echo("Agent skills for building dbt Charts boards.")
+    typer.echo("Start here: `dct skills chart`.\n")
 
     name_width = max(len(s.name) for s in result.skills)
 
-    if workflows:
-        console.print("[bold]Workflows[/bold]")
-        console.print(Padding(_skill_table(workflows, name_width), (0, 0, 0, 2)))
-        console.print()
-
-    if patterns:
-        console.print("[bold]Patterns[/bold]")
-        console.print(Padding(_skill_table(patterns, name_width), (0, 0, 0, 2)))
-        console.print()
+    console.print(Padding(_skill_table(result.skills, name_width), (0, 0, 0, 2)))
+    console.print()
 
     typer.echo("Next steps")
-    typer.echo(
-        "  dct skills <name>  Read the full skill body and copy the example YAML"
-    )
-    typer.echo("  dct docs           YAML syntax reference")
-    typer.echo("")
-    typer.echo('YAML syntax:  dct docs -s "<query>"')
+    typer.echo("  dct skills <name>  Read the full skill body")
 
 
 def _skill_table(skills: list[_api.Skill], name_width: int) -> Table:

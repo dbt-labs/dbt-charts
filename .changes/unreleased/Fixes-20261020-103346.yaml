@@ -1,0 +1,3 @@
+kind: Fixes
+body: BigQuery queries over a source's `maximum_bytes_billed` now fail with `ERR-WAREHOUSE-BYTES-CAP-EXCEEDED`, naming the cap in GB and how to narrow the query.
+time: 2026-10-20T10:33:46.93384-07:00

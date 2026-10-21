@@ -2,9 +2,9 @@
 
 cli/ and the LSP server may not import dbt_charts.core.* directly (tach
 enforces this). This module is the authorized boundary for reading the
-registry and its types, plus the list/get lookups both the CLI (`dct docs
-errors`/`dct docs warnings`) and MCP (`list_diagnostic_codes`/
-`get_diagnostic_code`) call — no lookup logic lives in either wrapper.
+registry and its types, plus the list/get lookups the MCP tools
+(`list_diagnostic_codes`/`get_diagnostic_code`) call — no lookup logic lives
+in the wrapper.
 No test may depend on the import order of this module.
 """
 

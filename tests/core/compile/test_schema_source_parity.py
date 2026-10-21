@@ -184,18 +184,6 @@ def test_valid_query_types_matches_authored_query_literal():
 # ---------------------------------------------------------------------------
 
 
-def test_docs_tool_schema_matches_docs_args_model():
-    """DOCS input_schema must equal DocsArgs.model_json_schema()."""
-    from dbt_charts.agent_api.docs import DocsArgs
-    from dbt_charts.ai.tool_schemas import DOCS
-
-    expected = DocsArgs.model_json_schema(by_alias=True)
-    assert DOCS["input_schema"] == expected, (
-        "DOCS input_schema diverges from DocsArgs.model_json_schema().\n"
-        "After fix: DOCS = _ai_tool('docs', DocsArgs) should be used."
-    )
-
-
 def test_execute_query_args_rejects_missing_sql():
     """ExecuteQueryArgs.model_validate raises when sql is absent.
 

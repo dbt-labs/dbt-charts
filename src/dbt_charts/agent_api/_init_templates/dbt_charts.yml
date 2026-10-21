@@ -6,7 +6,7 @@
 #
 # sources: is the registry of named connections your boards read from.
 # A board picks one with `source: <name>`; it never defines a connection
-# inline. Full list of types and fields: `dct docs sources`.
+# inline. Full list of types and fields: https://docs.dbtcharts.com/sources/
 #
 # Inside a dbt project, leaving sources: out is fine: SQL queries then run
 # against the connection of the profile named in dbt_project.yml. Declaring

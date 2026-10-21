@@ -1,0 +1,3 @@
+kind: Breaking changes
+body: '`dct docs` and the agents'' `docs` tool are removed; agents read `dct skills chart`, people read the docs site.'
+time: 2026-10-18T00:11:40.352386-07:00

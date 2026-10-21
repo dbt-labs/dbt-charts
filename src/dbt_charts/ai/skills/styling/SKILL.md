@@ -161,7 +161,7 @@ Also exist: `connect`, `disconnected_cap`, `disconnected_width`, `halo_multiplie
 Also exist: `direction`, `columns`, `compact_columns`, `row`, `label`, `title`, `symbol_limit`, `symbol_shape`, `symbol_fill`.
 
 `color`:
-- `static`: One color for all marks: a hex, CSS name, `rgb()`/`oklch()` or theme token (`category[1]`, `positive.solid`, `dbt-grays.muted`). A token follows the theme, a hex stays put
+- `static`: One color for all marks: a hex, CSS name, `rgb()`/`oklch()` or theme token (`category[1]`, `positive.solid`, `dbt-grays.8`). A token follows the theme, a hex stays put
 - `categorical` ({palette, single_series_palette}): Palettes used when color encodes distinct categories, or a lone series
 - `gradient` (mapping): Continuous gradient scale for the color encoding
 
@@ -170,6 +170,16 @@ Also exist: `direction`, `columns`, `compact_columns`, `row`, `label`, `title`, 
 - `single_series_palette` (name|list of text|text): Ink without a color column: palette name, or colors list, even one: ['#2E6B4F']
 
 `color.gradient`: `palette`, `domain`, `min`, `max`, `nice`, `null_color`, `hinge`, `arm_mode`.
+
+### Palettes
+
+A palette is named, never spelled as colors.
+
+- Categorical, with how many colors each holds (more categories on one chart than that is `ERR-CATEGORY-COLOR-PALETTE-EXHAUSTED`): `category-6-tonal-blue` (6), `category-6-tonal-brown` (6), `category-6-tonal-green` (6), `category-6-tonal-orange` (6), `category-6-tonal-purple` (6), `editorial-10` (10), `hero-6` (6), `tableau` (10), `vivid-10` (10).
+- Sequential: `dbt-seq-amber`, `dbt-seq-blue`, `dbt-seq-brown`, `dbt-seq-gray`, `dbt-seq-green`, `dbt-seq-purple`, `dbt-seq-rust`, `dbt-seq-teal` (each also as `<name>-dark`).
+- Diverging: `dbt-div-blue-red`, `dbt-div-coolwarm`, `dbt-div-crimson-green`, `dbt-div-orange-teal`, `dbt-div-sunset` (each also as `<name>-dark`).
+- Tones: `info`, `negative`, `positive`, `warning`.
+- Scaffolds `dbt-creams`, `dbt-grays`, addressed by step number from lightest to darkest (`dbt-grays.8`, or `chrome[8]` to follow the theme's scaffold); stops of `dbt-grays`: `0`, `1-12`, `100`. `white` and `black` name the endpoints.
 
 ## KPI
 
@@ -211,7 +221,7 @@ Also exist: `divider`, `roles`.
 
 `table style.columns.<column>`:
 - `visible` (bool): Whether this column renders
-- `label`: Display header label (defaults to column name)
+- `label`: Header, default the prettified column name (`first_year` reads "First year")
 - `format` (name|text|{spec, prefix, suffix, notation, sign_placement, repeat}): How the number is written
 - `align` (left|center|right): Text alignment in cells (left, center, right)
 - `width` (int|text): Column width (integer pixels or CSS string like '10%')
@@ -227,11 +237,18 @@ Also exist: `swatch`, `max_width`, `header_overflow`, `header_link`, `glyph_colo
 - ConditionalRule requires exactly one condition operator
 - ConditionalRule glyph_color requires glyph to be set
 
-## Errors
+Layouts with `grid:` (rare; a chart spanning rows):
 
-- `ERR-WRONG-SHAPE`: A board YAML field that expects a mapping (nested object) receives a plain scalar value instead.
-- `ERR-LEGEND-ALIGN-UNSUPPORTED`: A centered or end-aligned legend has no plot to align in or is larger than the plot.
-- `ERR-AXIS-COLUMN-REQUIRES-TABULAR-FONT`: A compacting quantitative axis that forms a column resolves to a non-tabular label font. Fix: Put the body typeface on `style.fonts.body` (and `style.fonts.heading`), and leave `style.fonts.label` and `style.fonts.numeral` on a tabular family (e.g. 'dbt Sans Tabular'). To keep a different family on the axis itself, set a tabular one on `style.axis_y.labels.font.family` for this chart, or on `style.charts.axis_quantitative.labels.font.family` to cover every chart.
-- `ERR-GAP-FILL-BUCKET-COLLISION`: Two rows collapse to the same gap-fill bucket.
+`grid`:
+- `columns` (int, default 24): Grid columns, 24 unless set; write it only when it differs
+- `items` (list of mapping): Cells of this grid, each pairing content with its placement
+
+`grid.items[]`:
+- `item` (text|mapping|map of mapping): Chart name or inline chart/board definition to place in this grid cell
+- `col` (int): Column position (0-indexed)
+- `row` (int): Row position (0-indexed)
+- `col_span` (int): Number of columns to span (width in grid units)
+- `row_span` (int): Number of rows to span (height in grid units)
+Also exist: `width`, `height`, `notes`.
 
 After any edit, {{ s_style_recheck }}

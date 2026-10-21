@@ -105,6 +105,17 @@ pub struct BoardStyle {
     /// it is absent rather than assuming a theme value.
     #[serde(default)]
     pub continuous_height: Option<f64>,
+    /// `chart_defaults.view.continuous_width` / `discrete_width`: the width a
+    /// card with no room leaves Vega-Lite to choose (`view_width`).
+    /// Optional in the envelope; that card errors when the one it needs is absent.
+    #[serde(default)]
+    pub continuous_width: Option<f64>,
+    #[serde(default)]
+    pub discrete_width: Option<f64>,
+    /// The theme's categorical range (`config.range.category`), which a chart
+    /// with no palette of its own colors its series from. Empty when the theme sets none.
+    #[serde(default)]
+    pub palette: Vec<String>,
     /// The theme's VL `config.font` — the family Vega-Lite compiles into the
     /// `guide-title` and `guide-label` styles (`config.ts:505-512`), which a
     /// legend with no legend config (a shape channel's own) draws in. Optional
@@ -434,10 +445,52 @@ impl Payload {
             .ok_or_else(|| "payload.resolved.id missing".to_string())
     }
 
+    /// [`view_width`] over this payload's card.
+    pub fn view_width(&self, x_scale: ViewScale) -> Result<f64, String> {
+        view_width(self.width, self.board_style.as_ref(), x_scale)
+    }
+
+    /// The palette a series color reads: the chart's own, else the board's
+    /// `config.range.category`, else Vega's default `tableau10` scheme. Never empty.
+    pub fn series_palette(&self, chart_palette: &[String]) -> Vec<String> {
+        let board = self.board_style.as_ref().map_or(&[][..], |s| s.palette.as_slice());
+        [chart_palette, board]
+            .into_iter()
+            .find(|palette| !palette.is_empty())
+            .map_or_else(|| VEGA_TABLEAU10.iter().map(|c| (*c).to_string()).collect(), <[String]>::to_vec)
+    }
+
     /// `ERR-CHART-PAINTED-NO-MARKS` for this payload's chart.
     pub(crate) fn painted_no_marks(&self) -> Diagnostic {
         painted_no_marks(self.width, self.resolved["id"].clone(), self.rows.len())
     }
+}
+
+/// The width Vega-Lite fits the view to. A card with no room (`card_w <= 0`)
+/// leaves `width` out of the spec (`vega_lite.py`), so the view takes the
+/// theme's `view.continuousWidth` (a linear or time x scale) or
+/// `discreteWidth` (a band or point one) instead. Everything the Python
+/// emitters decide off the card keeps reading the card's width.
+pub fn view_width(card_w: f64, board_style: Option<&BoardStyle>, x_scale: ViewScale) -> Result<f64, String> {
+    if card_w > 0.0 {
+        return Ok(card_w);
+    }
+    let (width, name) = match x_scale {
+        ViewScale::Continuous => (board_style.and_then(|s| s.continuous_width), "continuous_width"),
+        ViewScale::Discrete => (board_style.and_then(|s| s.discrete_width), "discrete_width"),
+    };
+    width.ok_or_else(|| format!("a card with no width needs board_style.{name}"))
+}
+
+/// Vega's default categorical range (`tableau10`, `vega-scale`'s `scheme`).
+const VEGA_TABLEAU10: [&str; 10] =
+    ["#4c78a8", "#f58518", "#e45756", "#72b7b2", "#54a24b", "#eeca3b", "#b279a2", "#ff9da6", "#9d755d", "#bab0ac"];
+
+/// Which of the theme's default view widths a chart's x scale takes.
+#[derive(Clone, Copy)]
+pub enum ViewScale {
+    Continuous,
+    Discrete,
 }
 
 /// `ERR-CHART-PAINTED-NO-MARKS`: production's guard for a chart whose every mark
@@ -503,22 +556,6 @@ fn render_in_scope(
         .get("chart_type")
         .and_then(Value::as_str)
         .ok_or("payload.resolved.chart_type missing")?;
-    // A chart-root `link` (`ResolvedChart.link`) is painted by bar and pie (a
-    // per-datum `<a>`), table (a per-row band), kpi (the value's `<a>`) and
-    // custom (the body's `<a>`, or the template's own via `href(row)`); every
-    // other family would draw its marks with no href, so it refuses by name
-    // instead.
-    let has_link = payload
-        .resolved
-        .get("link")
-        .and_then(Value::as_str)
-        .is_some_and(|l| !l.is_empty());
-    if has_link && !matches!(chart_type, "bar" | "pie" | "table" | "kpi" | "custom") {
-        return Err(format!(
-            "{chart_type}: chart-root link not supported — only bar, pie, table, kpi and custom"
-        )
-        .into());
-    }
     families::legend::refuse_unmodeled_slide(chart_type, &payload.resolved)?;
     let shifted = title_shift::for_family(payload, chart_type)?;
     let payload: &Payload = &shifted;
@@ -531,7 +568,13 @@ fn render_in_scope(
     if chart_type == "custom" {
         return families::custom::render(payload, fonts).map(|svg| (svg, None));
     }
-    if payload.rows.is_empty() && chart_type != "callout" {
+    let every_dataset_empty = payload.rows.is_empty()
+        && payload.datasets.as_ref().is_none_or(|sets| sets.values().all(Vec::is_empty));
+    if every_dataset_empty && chart_type != "callout" {
+        // The empty chart still raises what production raises of its resolved model.
+        if matches!(chart_type, "bar" | "line" | "area" | "scatter" | "heatmap") {
+            families::cartesian_errors::check(payload, chart_type)?;
+        }
         return families::empty::render(chart_type, payload, fonts).map(|svg| (svg, None));
     }
     families::cartesian_errors::check(payload, chart_type)?;
@@ -622,7 +665,7 @@ pub(crate) fn is_support_table_arm(payload: &Payload) -> Result<bool, String> {
         .get("chart_type")
         .and_then(Value::as_str)
         .ok_or("payload.resolved.chart_type missing")?;
-    if !matches!(chart_type, "bar" | "line" | "area") {
+    if !matches!(chart_type, "bar" | "line" | "area" | "histogram") {
         return Ok(false);
     }
     Ok(payload.resolved.get("support_table").is_some_and(|v| !v.is_null()))
@@ -823,41 +866,4 @@ fn layout_in_scope(payload: &Payload, fonts: &text::FontBook) -> Result<Value, D
             .into());
     }
     Ok(serde_json::to_value(plot).map_err(|e| format!("layout dump: {e}"))?)
-}
-
-#[cfg(test)]
-mod link_gate_tests {
-    use super::*;
-
-    /// A family that paints no href refuses a chart-root `link` by name
-    /// rather than draw its marks unlinked.
-    #[test]
-    fn a_family_with_no_link_arm_refuses_a_chart_root_link() {
-        for family in [
-            "line", "area", "scatter", "heatmap", "histogram", "spark_bar", "callout", "geoshape",
-        ] {
-            let payload: Payload = serde_json::from_value(serde_json::json!({
-                "resolved": {"chart_type": family, "link": "/d/?x={{ x }}"},
-                "rows": [], "width": 400.0, "height": 300.0,
-            }))
-            .unwrap();
-            let err = render(&payload, &text::FontBook::empty()).unwrap_err().to_string();
-            assert!(err.contains("chart-root link"), "{family}: {err}");
-        }
-    }
-
-    /// The families that paint a link pass the gate: their own (here,
-    /// deliberately malformed) payload error surfaces, never the refusal.
-    #[test]
-    fn bar_pie_table_and_kpi_pass_the_link_gate() {
-        for family in ["bar", "pie", "table", "kpi"] {
-            let payload: Payload = serde_json::from_value(serde_json::json!({
-                "resolved": {"chart_type": family, "link": "/d/?x={{ x }}"},
-                "rows": [], "width": 400.0, "height": 300.0,
-            }))
-            .unwrap();
-            let err = render(&payload, &text::FontBook::empty()).unwrap_err().to_string();
-            assert!(!err.contains("chart-root link"), "{family}: {err}");
-        }
-    }
 }

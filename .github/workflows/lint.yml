@@ -31,13 +31,13 @@ jobs:
 
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
-          version: "0.12.18"
+          version: "0.13.4"
           enable-cache: true
           cache-dependency-glob: uv.lock
 
       - uses: ./.github/actions/setup-rust
 
-      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5  # v2.87.19
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283  # v2.87.29
         with:
           tool: just
 

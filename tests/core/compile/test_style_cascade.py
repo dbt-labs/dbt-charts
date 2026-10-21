@@ -1013,12 +1013,12 @@ class TestPatchIntroducedTokenIsResolved:
     """A board style: patch that introduces a color token must resolve to hex."""
 
     def test_patch_direct_palette_token_resolves_to_hex(self) -> None:
-        # dbt-grays.canvas is a valid direct palette.slot token → #FAFAFA
+        # dbt-grays.1 is a valid direct palette.slot token → #FAFAFA
         from dbt_charts.core.colors import is_color_token
         from dbt_charts.core.compile.models.style.authored import StylePatch
 
         base = get_theme_style()
-        patch = StylePatch.model_validate({"background": "dbt-grays.canvas"})
+        patch = StylePatch.model_validate({"background": "dbt-grays.1"})
         resolved = resolve_style(base, patch)
         assert not is_color_token(resolved.background), (
             f"patch-introduced token was not resolved: {resolved.background!r}"
@@ -1064,7 +1064,7 @@ class TestEmojiInResolvedStyle:
         from dbt_charts.core.fonts import NOTO_EMOJI_FONT_FAMILY
 
         base = get_theme_style()
-        patch = StylePatch.model_validate({"background": "dbt-grays.canvas"})
+        patch = StylePatch.model_validate({"background": "dbt-grays.1"})
         resolved = resolve_style(base, patch)
         family = resolved.font.family
         assert NOTO_EMOJI_FONT_FAMILY in family, (

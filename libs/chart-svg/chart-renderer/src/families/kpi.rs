@@ -639,6 +639,9 @@ struct SupportRow {
     glyph_fill: String,
 }
 
+/// The predefined formats that write a signed change.
+const DELTA_FORMATS: [&str; 4] = ["delta", "percent_delta", "percent_number_delta", "percentage_points_delta"];
+
 fn resolve_support_row(
     support: &Option<SupportCfg>,
     row: &serde_json::Map<String, Value>,
@@ -684,11 +687,29 @@ fn resolve_support_row(
     if value_str.is_empty() && explainer.is_empty() && glyph.is_empty() {
         return Ok(None);
     }
-    let tone_color = match kpi.support.tone.as_deref() {
-        None => None,
-        Some(tone) => Some(
-            tones
-                .ok_or("kpi: support tone with no board tones")?
+    let board_tones = || tones.ok_or("kpi: support tone with no board tones");
+    let is_delta = support
+        .format
+        .as_ref()
+        .and_then(|f| f.raw.as_deref())
+        .is_some_and(|raw| DELTA_FORMATS.contains(&raw));
+    // A delta value is colored by its sign and `tone` is the direction
+    // (positive: up is good, negative: up is bad; unset reads as positive);
+    // zero and a non-number stay un-toned. warning/info are fixed colors.
+    let tone_color = match (kpi.support.tone.as_deref(), is_delta) {
+        (None, false) => None,
+        (None | Some("positive" | "negative"), true) => {
+            let up_is_good = kpi.support.tone.as_deref() != Some("negative");
+            match cell.as_f64() {
+                Some(v) if v != 0.0 => {
+                    let name = if (v > 0.0) == up_is_good { "positive" } else { "negative" };
+                    board_tones()?.resolve(name)
+                }
+                _ => None,
+            }
+        }
+        (Some(tone), _) => Some(
+            board_tones()?
                 .resolve(tone)
                 .ok_or_else(|| format!("kpi: unknown support tone {tone:?}"))?,
         ),
@@ -1802,7 +1823,7 @@ mod render_tests {
         p.resolved["support"] = json!({
             "value": "growth_pct",
             "label": "growth",
-            "format": {"spec": "+.1%", "raw": "percent_delta"},
+            "format": {"spec": "+.1%", "raw": null},
             "glyph": "▲",
             "rules": null
         });
@@ -2266,6 +2287,44 @@ mod render_tests {
         assert!(svg.contains("fill=\"#00884d\">▲ </tspan>"), "{svg}");
         assert!(svg.contains("fill=\"#00884d\">+12.5%</tspan>"), "{svg}");
         assert!(svg.contains("fill=\"#626366\"> growth</tspan>"), "{svg}");
+    }
+
+    /// A delta-format support value is colored by its sign; `tone` is the
+    /// direction (positive: up is good, negative: up is bad); warning and
+    /// info stay fixed colors; a non-delta format keeps tone as a fixed color.
+    #[test]
+    fn delta_support_is_colored_by_sign_and_tone_is_directionality() {
+        let paint = |raw: Option<&str>, tone: Option<&str>, growth: f64| {
+            let mut p = with_support(kpi_payload("stacked", 300.0));
+            set(&mut p, "/support/format/raw", json!(raw));
+            set(&mut p, "/style/kpi/support/tone", json!(tone));
+            p.rows = vec![json!({"revenue": 1234.0, "growth_pct": growth}).as_object().unwrap().clone()];
+            svg_of(&p)
+        };
+        let (good, bad, muted) = ("#00884d", "#b3261e", "#626366");
+        for (tone, up, down) in [
+            (None, good, bad),
+            (Some("positive"), good, bad),
+            (Some("negative"), bad, good),
+        ] {
+            let svg = paint(Some("percent_delta"), tone, 0.125);
+            assert!(svg.contains(&format!("fill=\"{up}\">+12.5%")), "{tone:?} up: {svg}");
+            assert!(svg.contains(&format!("fill=\"{up}\">▲ ")), "{tone:?} up glyph: {svg}");
+            let svg = paint(Some("percent_delta"), tone, -0.125);
+            assert!(svg.contains(&format!("fill=\"{down}\">−12.5%")), "{tone:?} down: {svg}");
+            let svg = paint(Some("percent_delta"), tone, 0.0);
+            assert!(svg.contains(&format!("fill=\"{muted}\">+0.0%")), "{tone:?} zero: {svg}");
+        }
+        let svg = paint(Some("percent_delta"), Some("warning"), -0.125);
+        assert!(svg.contains("fill=\"#8a6d00\">−12.5%"), "warning is fixed: {svg}");
+        let svg = paint(Some("percent_number_delta"), Some("info"), 0.125);
+        assert!(svg.contains("fill=\"#0b57d0\">"), "info is fixed: {svg}");
+        let svg = paint(Some("percent_number_delta"), None, -0.125);
+        assert!(svg.contains(&format!("fill=\"{bad}\">")), "native delta format: {svg}");
+        let svg = paint(Some("percent"), Some("positive"), -0.125);
+        assert!(svg.contains(&format!("fill=\"{good}\">−12.5%")), "non-delta keeps a fixed tone: {svg}");
+        let svg = paint(None, None, -0.125);
+        assert!(svg.contains(&format!("fill=\"{muted}\">−12.5%")), "non-delta without tone is muted: {svg}");
     }
 
     #[test]

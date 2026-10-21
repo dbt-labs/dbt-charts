@@ -409,6 +409,69 @@ def test_area_log_scale_with_zero_value_raises() -> None:
     assert exc_info.value.code.code == "ERR-LOG-SCALE-REQUIRES-POSITIVE-DATA"
 
 
+def test_line_log_scale_with_zero_in_a_shared_scale_layer_raises() -> None:
+    from dbt_charts.core.compile.errors import CompilationError
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+    from dbt_charts.core.compile.models.style.authored import LineChartStylePatch
+    from dbt_charts.core.compile.resolve import resolve
+
+    chart = _line_normalized(
+        layers=[LineLayer(type="line", y="target")],
+        style=LineChartStylePatch.model_validate(
+            {"axis_y": {"scale": {"continuous": {"type": "log"}}}}
+        ),
+    )
+    data = [
+        {"month": "Jan", "revenue": 100.0, "target": 0.0},
+        {"month": "Feb", "revenue": 200.0, "target": 50.0},
+    ]
+    with pytest.raises(CompilationError) as exc_info:
+        resolve(chart, data, _default_board_style())
+    assert exc_info.value.code is not None
+    assert exc_info.value.code.code == "ERR-LOG-SCALE-REQUIRES-POSITIVE-DATA"
+    assert "target" in str(exc_info.value)
+
+
+def test_line_log_scale_with_zero_in_a_right_pinned_layer_does_not_raise() -> None:
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+    from dbt_charts.core.compile.models.style.authored import LineChartStylePatch
+    from dbt_charts.core.compile.resolve import resolve
+
+    chart = _line_normalized(
+        layers=[LineLayer(type="line", y="target", axis_y={"position": "right"})],
+        style=LineChartStylePatch.model_validate(
+            {"axis_y": {"scale": {"continuous": {"type": "log"}}}}
+        ),
+    )
+    data = [
+        {"month": "Jan", "revenue": 100.0, "target": 0.0},
+        {"month": "Feb", "revenue": 200.0, "target": 50.0},
+    ]
+    resolve(chart, data, _default_board_style())  # must not raise
+
+
+def test_area_log_scale_with_zero_in_a_shared_scale_layer_raises() -> None:
+    from dbt_charts.core.compile.errors import CompilationError
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+    from dbt_charts.core.compile.models.style.authored import AreaChartStylePatch
+    from dbt_charts.core.compile.resolve import resolve
+
+    chart = _area_normalized(
+        layers=[LineLayer(type="line", y="target")],
+        style=AreaChartStylePatch.model_validate(
+            {"axis_y": {"scale": {"continuous": {"type": "log"}}}}
+        ),
+    )
+    data = [
+        {"month": "Jan", "revenue": 100.0, "target": 0.0},
+        {"month": "Feb", "revenue": 200.0, "target": 50.0},
+    ]
+    with pytest.raises(CompilationError) as exc_info:
+        resolve(chart, data, _default_board_style())
+    assert exc_info.value.code is not None
+    assert exc_info.value.code.code == "ERR-LOG-SCALE-REQUIRES-POSITIVE-DATA"
+
+
 def test_scatter_log_scale_with_negative_value_raises() -> None:
     from dbt_charts.core.compile.errors import CompilationError
     from dbt_charts.core.compile.models.style.authored import ScatterChartStylePatch
@@ -427,6 +490,27 @@ def test_scatter_log_scale_with_negative_value_raises() -> None:
         resolve(chart, data, _default_board_style())
     assert exc_info.value.code is not None
     assert exc_info.value.code.code == "ERR-LOG-SCALE-REQUIRES-POSITIVE-DATA"
+
+
+@pytest.mark.parametrize("x", [0.0, -1.0])
+def test_scatter_log_x_scale_with_a_non_positive_value_raises(x: float) -> None:
+    from dbt_charts.core.compile.errors import CompilationError
+    from dbt_charts.core.compile.models.style.authored import ScatterChartStylePatch
+    from dbt_charts.core.compile.resolve import resolve
+
+    data = [
+        {"month_index": x, "revenue": 5.0},
+        {"month_index": 2.0, "revenue": 200.0},
+    ]
+    chart = _scatter_normalized(
+        style=ScatterChartStylePatch.model_validate(
+            {"axis_x": {"scale": {"continuous": {"type": "log"}}}}
+        )
+    )
+    with pytest.raises(CompilationError) as exc_info:
+        resolve(chart, data, _default_board_style())
+    assert exc_info.value.code is not None
+    assert exc_info.value.code.code == "ERR-LOG-SCALE-REQUIRES-POSITIVE-X-DATA"
 
 
 def test_line_log_scale_with_all_positive_data_does_not_raise() -> None:

@@ -220,6 +220,7 @@ def normalize_chart(
             query_is_inline=False,
             style=authored.style,
             warnings_ignore=list(authored.warnings_ignore or []),
+            authored_fields=frozenset(authored.model_fields_set),
         )
 
     # --- Resolve query ---
@@ -349,6 +350,7 @@ def normalize_chart(
         "link_open": chart_link_open,
         "conditional_formatting": conditional_formatting,
         "warnings_ignore": list(authored.warnings_ignore or []),
+        "authored_fields": frozenset(authored.model_fields_set),
     }
     shared: dict[str, Any] = {
         "title": title or "",

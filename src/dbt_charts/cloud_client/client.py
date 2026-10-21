@@ -13,7 +13,7 @@ the CLI's side of the wire, where neither exists.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 from urllib.parse import quote
 
@@ -78,6 +78,7 @@ from dbt_charts.cloud_client.errors import (
     PickTimedOut,
     SessionExpired,
     SkewDirection,
+    SourcesNotBindable,
     TransportFailed,
     UnexpectedResponse,
 )
@@ -506,19 +507,31 @@ class CloudClient:
         return self._request("GET", f"/orgs/{_seg(org)}/connections", ConnectionList)
 
     def create_connection(
-        self, org: str, connection_type: str, fields: dict[str, str]
+        self,
+        org: str,
+        connection_type: str,
+        fields: dict[str, str],
+        binding: tuple[str, Sequence[str]] | None = None,
     ) -> ConnectionTestResult:
         """Create a connection and run its credential check in one call.
 
         ``fields`` is the warehouse type's own vocabulary — the server's
         per-type form owns which keys are required and says so field by field,
         so there is no second copy of that table here to drift from it.
+
+        ``binding`` is a project slug and the source names to bind to the new
+        connection in the same request; take the names from
+        ``bindable_sources``, since the server drops any it cannot bind.
         """
+        bound: dict[str, object] = {}
+        if binding is not None:
+            project, names = binding
+            bound = {"project_slug": project, "map_sources": list(names)}
         return self._request(
             "POST",
             f"/orgs/{_seg(org)}/connections",
             ConnectionTestResult,
-            payload={"connection_type": connection_type, **fields},
+            payload={"connection_type": connection_type, **fields, **bound},
         )
 
     def test_connection(self, org: str, connection: str) -> ConnectionTestResult:
@@ -546,6 +559,31 @@ class CloudClient:
         return self._request(
             "GET", f"/orgs/{_seg(org)}/projects/{_seg(project)}/sources", SourceList
         )
+
+    def bindable_sources(
+        self, org: str, project: str, names: Sequence[str] | None
+    ) -> list[str]:
+        """The names a new connection can bind: ``names`` once each is
+        confirmed an unmapped source of ``project``, or every unmapped source
+        when ``names`` is None. Raises ``SourcesNotBindable`` otherwise."""
+        unmapped = [
+            source.name
+            for source in self.list_sources(org, project).sources
+            if source.connection_slug is None
+        ]
+        if not unmapped:
+            raise SourcesNotBindable(
+                f"{project} has no unmapped warehouse sources to bind."
+            )
+        if names is None:
+            return unmapped
+        unknown = [name for name in names if name not in unmapped]
+        if unknown:
+            raise SourcesNotBindable(
+                f"{', '.join(unknown)} is not an unmapped source of {project}."
+                f" Unmapped: {', '.join(unmapped)}."
+            )
+        return list(dict.fromkeys(names))
 
     def map_source(
         self,

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from dbt_charts.core.compile.format import column_format
+from dbt_charts.core.compile.format import column_format, declared_column_format
 from dbt_charts.core.compile.merge import to_padding_style
 from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -49,7 +49,6 @@ from dbt_charts.core.compile.resolve.chart._channels import _column_numeric_valu
 from dbt_charts.core.compile.resolve.style.category_colors import (
     categorical_channel_fields,
 )
-from dbt_charts.core.compile.resolve.style.chart_context import declared_column_format
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.legend_position import (
     decide_legend_direction,
@@ -356,10 +355,18 @@ def _color_column_format(
     paints no numbers, so the emitter keeps the engine default.
     """
     values = _column_numeric_values(data, color_field)
-    declared = declared_column_format(normalized, color_field, formats, time=False)
-    if declared is None or not values:
+    query_formats = normalized.query.formats if normalized.query else None
+    if not values or (
+        declared_column_format(query_formats, color_field, formats, time=False) is None
+    ):
         return None
-    return column_format("number", formats, column=declared, values=values)
+    return column_format(
+        "number",
+        formats,
+        query_formats=query_formats,
+        columns=color_field,
+        values=values,
+    )
 
 
 def _shared_kwargs(
@@ -500,6 +507,7 @@ def _resolved_support_table(
     y: str | list[str] | None,
     data: list[dict[str, Any]],
     formats: FormatTable | None,
+    query_formats: Mapping[str, str] | None,
 ) -> ResolvedSupportTable | None:
     """Bake the final support_table, entry formats included.
 
@@ -522,6 +530,7 @@ def _resolved_support_table(
         formats,
         data,
         y,
+        query_formats,
         stamp_number=isinstance(y, str) and _column_is_numeric(data, y),
     )
 
@@ -621,7 +630,11 @@ def _cartesian_kwargs(
     ``axis_y.position``.
     """
     resolved_support_table = _resolved_support_table(
-        normalized.support_table, normalized.y, data, chart_style_context.formats
+        normalized.support_table,
+        normalized.y,
+        data,
+        chart_style_context.formats,
+        normalized.query.formats if normalized.query else None,
     )
     (
         effective_support_table_style,

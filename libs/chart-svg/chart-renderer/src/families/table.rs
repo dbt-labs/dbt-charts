@@ -16007,7 +16007,7 @@ mod background_and_font_family_tests {
         payload.resolved["columns"] = json!({"col_a": {"label": "Alpha", "link_open": "page", "header_link_open": "page"}, "col_b": {"link_open": "page", "header_link_open": "page"}});
         payload.rows = vec![json!({"col_a": 10, "col_b": 20}).as_object().unwrap().clone()];
         let svg = render(&payload, &test_fonts()).unwrap();
-        for text in [">Metric</text>", ">Value</text>", ">Alpha</text>", ">col b</text>"] {
+        for text in [">Metric</text>", ">Value</text>", ">Alpha</text>", ">Col b</text>"] {
             assert!(svg.contains(text), "{text} missing:\n{svg}");
         }
         payload.rows.push(payload.rows[0].clone());

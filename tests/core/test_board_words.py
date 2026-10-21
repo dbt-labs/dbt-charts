@@ -55,7 +55,7 @@ def test_humanized_names_speak_the_board_language() -> None:
     assert slug_to_text("avg_orders_cnt") == "Avg orders (Count)"
     with language_scope("de"):
         assert slug_to_text("avg_orders_cnt") == "Ø orders (Anzahl)"
-        assert slug_to_text("revenue_usd") == "revenue ($)"
+        assert slug_to_text("revenue_usd") == "Revenue ($)"
 
 
 @pytest.mark.parametrize(
@@ -295,9 +295,9 @@ def test_the_footer_brand_has_no_gap_where_the_text_has_no_space() -> None:
 def test_wide_measure_titles_join_with_the_languages_list_separator() -> None:
     from dbt_charts.core.render.chart.emitters._cartesian import wide_measures_title
 
-    assert wide_measures_title(("rev", "cost"), {}) == "rev, cost"
+    assert wide_measures_title(("rev", "cost"), {}) == "Rev, Cost"
     with language_scope("ja"):
-        assert wide_measures_title(("rev", "cost"), {}) == "rev、cost"
+        assert wide_measures_title(("rev", "cost"), {}) == "Rev、Cost"
 
 
 _DONUT = "type: pie\n{pad}query: q\n{pad}theta: val\n{pad}color: cat\n{pad}style:\n{pad}  inner_radius: 0.6\n"
@@ -502,8 +502,8 @@ def test_placeholder_names_read_in_the_board_language() -> None:
 
 def test_humanized_ratio_and_quantity_read_in_the_board_language() -> None:
     with language_scope("de"):
-        assert slug_to_text("win_ratio") == "win (Verhältnis)"
-        assert slug_to_text("order_qty") == "order (Menge)"
+        assert slug_to_text("win_ratio") == "Win (Verhältnis)"
+        assert slug_to_text("order_qty") == "Order (Menge)"
 
 
 def test_a_date_range_variable_reads_its_open_ends_in_the_board_language() -> None:

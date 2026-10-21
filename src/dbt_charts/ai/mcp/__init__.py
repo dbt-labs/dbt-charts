@@ -8,19 +8,14 @@ Architecture:
     Resources (read-only context):
         - dct://boards - List of dashboards in project
         - dct://board/{path} - Dashboard content and structure
-        - dct://docs/all - Syntax guide + generated field reference, unsliced
-        - dct://docs/{topic} - One H2 section of the YAML reference
-        - dct://guide/board-design - Dashboard design principles
+        - dct://guide/chart - Board and chart grammar, build-render-fix loop
         - dct://guide/report-design - Report design principles
-        - dct://guide/board-build - Build-test-iterate workflow
-        - dct://guide/board-review - Dashboard review (structural + visual)
 
     Tools (actions):
         - render_board - Validate + render; pass as_link=true for URL-only (folds view_dashboard)
         - execute_sql - Run SQL, or one named query from a board YAML, and return columns + rows
         - schema - Drill the data hierarchy: source → schema → table → column
         - search_files - Search boards by keyword, or the project's meta, model, and config files
-        - docs - Browse dbt charts YAML reference docs offline
 
 Usage:
     # Configure MCP for your AI client

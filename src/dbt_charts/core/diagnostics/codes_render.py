@@ -1103,6 +1103,25 @@ ERR_CHART_PAINTED_NO_MARKS = REGISTRY.register(
     )
 )
 
+ERR_LAYER_COLOR_ALL_NULL = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LAYER-COLOR-ALL-NULL",
+        domain="render",
+        title="A layer's color column holds no values",
+        message_template=(
+            "Chart {chart_id!r}: layer {layer_index} is colored by {color_field!r}, "
+            "which is null in every row, so there is nothing to color by. Fill the "
+            "column, or drop `color:` from the layer."
+        ),
+        doc=(
+            "A layer colored by a column with no values has an empty color scale. "
+            "Vega-Lite builds a legend of NaN ticks or collapses the whole chart, "
+            "so the layer is refused by name."
+        ),
+        docs_topic="charts",
+    )
+)
+
 ERR_MULTIPLES_ENDPOINT_LABELS = REGISTRY.register(
     ErrorCode(
         code="ERR-MULTIPLES-ENDPOINT-LABELS",
@@ -1378,6 +1397,29 @@ ERR_LAYER_STEP_ORIENTATION = REGISTRY.register(
             "no bands to measure."
         ),
         summary=("Fired when a layer sets `curve: step` on a horizontal base."),
+        docs_topic="charts",
+    )
+)
+
+ERR_LAYER_AREA_SPLIT_HORIZONTAL_BASE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LAYER-AREA-SPLIT-HORIZONTAL-BASE",
+        domain="render",
+        title="an area layer needs a single-series or vertical base chart",
+        message_template=(
+            "Chart {chart_id!r}: an area layer over a horizontal bar that is "
+            "split by color or stacked has no meaningful shape: the area's "
+            "stack runs along the bar's category axis. Use a line layer, or "
+            "set `style.orientation: vertical`."
+        ),
+        doc=(
+            "Fired when a chart with `style.orientation: horizontal` and a "
+            "color-split or stacked base authors an `area` layer. The "
+            "layer's stack groups by the color the base shares, along the "
+            "axis the horizontal base uses for its categories, so the area "
+            "paints as a skewed ribbon over the wrong axis."
+        ),
+        summary="Fired when an area layer sits on a split horizontal bar.",
         docs_topic="charts",
     )
 )
@@ -2030,54 +2072,6 @@ WARN_LOCAL_TIME_LABEL_EXPR_ON_BUCKETED_AXIS = REGISTRY.register(
             "bucketed temporal axis; static rendering resolves it as UTC "
             "regardless, so the accessor's name misleadingly implies a "
             "local-time read that never happens."
-        ),
-        docs_topic="charts",
-    )
-)
-
-WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER = REGISTRY.register(
-    WarningCode(
-        code="WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER",
-        summary="A field named like money or a percentage has no fitting format.",
-        domain="render",
-        title="Field looks like money, a percentage or a fraction but has no fitting format",
-        message_template=(
-            "Chart {chart_id!r}: field {field!r} looks like {kind} "
-            "but the {surface} {format_state}."
-        ),
-        fix_template=(
-            "Set `{format_key}` to {suggestion} to match the field's meaning. "
-            "If the name only resembles money or a ratio (peak_value, "
-            "index_value), silence it with `warnings_ignore: "
-            "[WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER]` on the chart."
-        ),
-        doc=(
-            "Fires when a chart's y-encoding field, a KPI's headline or "
-            "support value, or a table column looks like money or a percentage "
-            "but its resolved format is unfit to render that kind (a KPI or "
-            "table column warns only when its values are numbers). Detection is name-based: fields ending in _usd, _revenue, "
-            "_amount, _pct, _rate, etc. (or bare names like `share`, `mrr`) "
-            "trigger when the resolved y-axis format is unfit for that kind. A "
-            "percent-classified field needs a `%` in the resolved format or in an "
-            "authored FormatConfig prefix/suffix (a column already in percent "
-            "points, `suffix: '%'`, is labeled); any other affix does not "
-            "satisfy it. A currency-classified field is "
-            "satisfied either by a `$` in the resolved format OR by an "
-            "authored FormatConfig prefix/suffix (e.g. `€`, `EUR `) with no "
-            "`$` anywhere: d3's grammar admits only `$`/`#` as a spec's own "
-            "symbol character, so a non-dollar currency can only ever reach "
-            "the axis through that authored affix. The fix suggests the "
-            "dollar spec (`$,.2f`), except for a currency-classified field "
-            "whose trailing `_<code>` names a currency dbt Charts recognizes "
-            "(`_eur`, `_gbp`): it suggests `,.2f` with `prefix: '€'` (that "
-            "currency's own symbol). A visible table column warns when it has no "
-            "number format and its name looks like money or a percentage, "
-            "or, whatever its name, its non-null values are all numbers between "
-            "0 and 1 and not all exactly 0 or 1 (a flag): left unformatted it "
-            "renders as a bare fraction (0.4367 shows as `0.4367`, not a percentage). The fix is to set "
-            "`style.columns.<name>.format`, e.g. `.1%`; a KPI takes "
-            "`style.value.format` or `style.support.format`. Pivot measure columns "
-            "are not checked."
         ),
         docs_topic="charts",
     )
@@ -3912,6 +3906,28 @@ ERR_SUPPORT_TABLE_NO_Y_ENCODING = REGISTRY.register(
         title="support_table column attachment has no category y-encoding",
         message_template="support_table column attachment requires a category y-encoding on the chart spec; none found.",
         doc="Fired when a support_table column block cannot find a category y-encoding.",
+        docs_topic="charts",
+    )
+)
+
+ERR_HEATMAP_COLOR_NO_VALUES = REGISTRY.register(
+    ErrorCode(
+        code="ERR-HEATMAP-COLOR-NO-VALUES",
+        domain="render",
+        title="heatmap color field holds no numbers",
+        message_template="The heatmap color field {field!r} holds no numeric value, so its gradient has nothing to span. To fix: color by a column that holds numbers, or by a category column.",
+        doc="Fired when a heatmap's gradient color field has no numeric value in any row; the legend would otherwise label NaN and no cell would be filled.",
+        docs_topic="charts",
+    )
+)
+
+ERR_SUPPORT_TABLE_FORMAT_NOT_NUMERIC = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SUPPORT-TABLE-FORMAT-NOT-NUMERIC",
+        domain="render",
+        title="support_table entry formats a non-numeric column",
+        message_template="support_table source {source!r} carries the number format {format_spec!r} but holds the non-numeric value {value!r}. To fix: drop the format, or source a numeric column.",
+        doc="Fired when a support_table source entry with a number format reads a column that holds a value other than a number; the strip would otherwise paint NaN.",
         docs_topic="charts",
     )
 )

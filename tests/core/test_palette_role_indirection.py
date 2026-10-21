@@ -25,25 +25,25 @@ from dbt_charts.core.compile.resolve.style.palette import (
 # ---------------------------------------------------------------------------
 
 
-class TestAliasChainResolution:
-    def test_ink_resolves_via_integer_alias(self):
-        """dbt-grays: ink → 11 (1-indexed) → colors[10] = #222222."""
-        result = color_from_theme("chrome.ink", palettes={"chrome": "dbt-grays"})
-        assert result.lower() == "#222222"
+class TestAliasAndStopResolution:
+    def test_alias_chain_resolves_to_the_declared_endpoint(self):
+        """black → "0" → #000000: an alias chain ending in a declared stop."""
+        result = color_from_theme("chrome.black", palettes={"chrome": "dbt-grays"})
+        assert result.lower() == "#000000"
 
     def test_direct_hex_alias_resolves(self):
         """Aliases that hold a terminal hex return it directly."""
         result = color_from_theme("chrome.white", palettes={"chrome": "dbt-grays"})
         assert result.lower() == "#ffffff"
 
-    def test_integer_alias_resolves_via_colors_array(self):
-        """ink: 11 → colors[10] in dbt-grays (1-indexed)."""
-        result = color_from_theme("chrome.ink", palettes={"chrome": "dbt-grays"})
+    def test_a_stop_resolves_via_the_colors_array(self):
+        """Stop 2 is colors[1] of dbt-grays (1-indexed)."""
+        result = color_from_theme("chrome[11]", palettes={"chrome": "dbt-grays"})
         assert result.lower() == "#222222"
 
-    def test_canvas_resolves_to_first_color(self):
-        """canvas: 1 → colors[0] = #FAFAFA."""
-        result = color_from_theme("chrome.canvas", palettes={"chrome": "dbt-grays"})
+    def test_the_lightest_stop_is_the_last_color(self):
+        """Stop 12 is colors[11] = #FAFAFA."""
+        result = color_from_theme("chrome[1]", palettes={"chrome": "dbt-grays"})
         assert result.lower() == "#fafafa"
 
 
@@ -96,12 +96,12 @@ class TestBracketForm:
         assert result.lower() == second.lower()
 
     def test_bracket_out_of_range_raises(self):
-        with pytest.raises(UnknownColorError, match="slot"):
+        with pytest.raises(UnknownColorError, match="no stop 999"):
             color_from_theme("category[999]", palettes={"category": "vivid-10"})
 
     def test_bracket_zero_raises(self):
-        """0 is not a valid 1-indexed slot."""
-        with pytest.raises(UnknownColorError, match="1-indexed"):
+        """A data palette's stops start at 1."""
+        with pytest.raises(UnknownColorError, match="no stop 0"):
             color_from_theme("category[0]", palettes={"category": "vivid-10"})
 
 
@@ -196,12 +196,12 @@ class TestCategoricalDottedInteger:
         assert color(f"vivid-10.{len(stops)}").lower() == stops[-1].lower()
 
     def test_dot_zero_raises_one_indexed(self) -> None:
-        """0 is not a valid 1-indexed slot."""
-        with pytest.raises(UnknownColorError, match="1-indexed"):
+        """A data palette's stops start at 1."""
+        with pytest.raises(UnknownColorError, match="no stop 0"):
             color("vivid-10.0")
 
     def test_dot_out_of_range_raises(self) -> None:
-        with pytest.raises(UnknownColorError, match="out of range"):
+        with pytest.raises(UnknownColorError, match="no stop 999"):
             color("vivid-10.999")
 
 
@@ -307,20 +307,20 @@ class TestCategoricalNamedHueRoles:
 
 class TestThemeRoles:
     def test_theme_role_resolves_via_palette(self):
-        """roles.ink: chrome.heading means color('ink') → chrome.heading → #313233."""
+        """roles.ink: chrome[10] means color('ink') → chrome[10] → #313233."""
         result = color_from_theme(
             "ink",
             palettes={"chrome": "dbt-grays"},
-            roles={"ink": "chrome.heading"},
+            roles={"ink": "chrome[10]"},
         )
         assert result.lower() == "#313233"
 
     def test_theme_role_chain_two_hops(self):
-        """roles.text → chrome.ink → gray-90 → 11 → #222222."""
+        """roles.text → chrome[11] → gray-90 → 11 → #222222."""
         result = color_from_theme(
             "text",
             palettes={"chrome": "dbt-grays"},
-            roles={"text": "chrome.ink"},
+            roles={"text": "chrome[11]"},
         )
         assert result.lower() == "#222222"
 
@@ -389,7 +389,7 @@ class TestColorDirectPaletteAccess:
 
     def test_dbt_grays_ink_via_color(self):
         """Scaffold palette resolved via color() using semantic alias."""
-        assert color("dbt-grays.ink").lower() == "#222222"
+        assert color("dbt-grays.11").lower() == "#222222"
 
 
 # ---------------------------------------------------------------------------
@@ -445,7 +445,7 @@ class TestStylePalettesAndRolesFields:
             reset_config()
 
     def test_default_theme_has_roles_ink(self):
-        """stark.yaml seeds roles.ink: chrome.heading."""
+        """stark.yaml seeds roles.ink: chrome[10]."""
         from dbt_charts.core.compile.config import (
             reset_config,
         )
@@ -454,6 +454,6 @@ class TestStylePalettesAndRolesFields:
         try:
             theme = get_theme_style()
             assert theme.roles is not None
-            assert theme.roles.get("ink") == "chrome.heading"
+            assert theme.roles.get("ink") == "chrome[10]"
         finally:
             reset_config()

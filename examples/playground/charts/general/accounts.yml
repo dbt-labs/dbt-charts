@@ -6,9 +6,6 @@ notes: |
 
 source: dundersign_db
 
-style:
-  variables:
-    position: title-inline
 
 variables:
   company:

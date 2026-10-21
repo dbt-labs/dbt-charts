@@ -42,7 +42,7 @@ charts:
     options:
       highlight: at_war
       note: event
-      symbol_color: chrome.heading
+      symbol_color: chrome[10]
       column_count: 2
       group_every: 10
       key: Each figure represents one unemployed person among a hundred

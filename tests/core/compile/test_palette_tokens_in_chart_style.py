@@ -1,8 +1,8 @@
 """Regression tests: palette tokens resolve in chart-level style and conditional_formatting.
 
 Chart-local style overrides (ChartStylePatch) and conditional_formatting rules can
-reference palette tokens like ``dbt-creams.subtitle``. Before the fix, those tokens
-leaked through to the renderer as literal strings (e.g. stroke="dbt-creams.subtitle").
+reference palette tokens like ``dbt-creams.7``. Before the fix, those tokens
+leaked through to the renderer as literal strings (e.g. stroke="dbt-creams.7").
 
 Coverage:
 - Axis: axis_x.ticks.color, axis_y.grid.color, axis_quantitative.label.font.color
@@ -38,7 +38,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
 
-TOKEN = "dbt-creams.subtitle"
+TOKEN = "dbt-creams.7"
 HEX = "#918878"
 UNKNOWN = "dbt-creams.does-not-exist"
 

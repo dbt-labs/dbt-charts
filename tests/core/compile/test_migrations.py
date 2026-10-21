@@ -2827,7 +2827,11 @@ def test_recognize_never_probes_the_dev_version_as_a_candidate_source(
     registry = MigrationRegistry([], catalog=catalog)
 
     def _fatal_on_dev(
-        mapping: object, identifier: str, catalog: YamlSchemaCatalog, registry: object
+        mapping: object,
+        identifier: str,
+        catalog: YamlSchemaCatalog,
+        registry: object,
+        keys: frozenset[str],
     ) -> bool:
         if identifier == catalog.dev.version:
             raise AssertionError("probed the DEV version as a transition source")

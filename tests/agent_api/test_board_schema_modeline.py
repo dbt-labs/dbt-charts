@@ -6,7 +6,6 @@ import pytest
 import yaml
 from jsonschema import Draft202012Validator
 
-from dbt_charts.agent_api.init import init_project
 from dbt_charts.core.compile.schema.introspection import introspect
 from dbt_charts.core.compile.schema.renderers.json_schema import render_yaml_schema
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
@@ -54,9 +53,3 @@ def test_the_file_set_is_not_empty() -> None:
 def test_project_config_template_has_no_board_modeline() -> None:
     template = SHIPPED / "agent_api" / "_init_templates" / "dbt_charts.yml"
     assert "yaml-language-server" not in template.read_text(encoding="utf-8")
-
-
-def test_init_scaffolds_the_guide_board_with_the_modeline(tmp_path: Path) -> None:
-    init_project(tmp_path)
-    guide = (tmp_path / "charts" / "guide.yml").read_text(encoding="utf-8")
-    assert guide.splitlines()[0] == MODELINE

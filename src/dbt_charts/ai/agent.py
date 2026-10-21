@@ -32,7 +32,6 @@ from dbt_charts.ai.messages import (
     UserMessage,
 )
 from dbt_charts.ai.prompts import (
-    build_docs_pointer,
     build_skills_index,
     load_project_instructions,
 )
@@ -162,7 +161,7 @@ _TOOL_GUIDANCE = """## Tool Use
 - If a tool returns an error, explain it clearly and fix it — do not proceed on
   assumptions or hide it.
 - If the user asks for a chart shape dbt charts has no chart family for (funnel,
-  gauge, sunburst, chord, and others — check `docs(topic="charts")` when
+  gauge, sunburst, chord, and others — check `get_skill(name="chart")` when
   unsure), never silently build a different shape and label it with the
   requested name. Say plainly that dbt charts can't draw that shape, name what
   you built instead, and let the user decide whether to proceed. An honest
@@ -176,7 +175,6 @@ def build_agent_system_prompt(context: DbtChartsAIContext) -> str:
     parts = [
         "Write in American English.",
         build_skills_index(),
-        build_docs_pointer(),
         build_sources_context(context.project_session.adapter_registry),
     ]
 

@@ -185,12 +185,9 @@ charts:
           label: Category
         units_sold:
           label: Units
-          format: integer
         revenue:
-          label: Revenue
           format: currency_full
         price:
-          label: Price
           format: currency_full
         unique_buyers:
           label: Buyers

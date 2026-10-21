@@ -140,7 +140,14 @@ class KpiSupportStyle(BaseModel):
     # None = no semantic color; the support row paints in muted ink.
     tone: Annotated[ToneLiteral | None, Absent("muted ink")] = Field(
         default=None,
-        description="Semantic color for the support value and glyph.",
+        description=(
+            "Semantic color for the support value and glyph. On a delta format "
+            "(delta, percent_delta, percent_number_delta, percentage_points_delta) "
+            "the color follows the sign and tone is the direction: positive "
+            "(the default) means up is good, negative means up is bad; zero is "
+            "muted. warning and info are fixed colors, as is any tone on a "
+            "non-delta format."
+        ),
     )
     glyph: KpiSupportGlyphStyle = Field(
         default_factory=KpiSupportGlyphStyle,

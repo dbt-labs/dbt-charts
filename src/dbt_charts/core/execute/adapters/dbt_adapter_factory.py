@@ -260,9 +260,15 @@ def build_adapter(
 
     # Strip 'type' and 'attribution' (dbt charts cost metadata, not a dbt credential),
     # translate profile-style aliases (e.g. BigQuery project→database), then use
-    # from_dict so extras like threads are silently dropped.
+    # from_dict so extras like threads are silently dropped. A compiled source dumps
+    # every unset optional as None; drop those so dbt sees the profile the author
+    # wrote — credential hooks default on key *absence* (dbt-bigquery fills
+    # execution_project from project only when the key is missing, and an explicit
+    # None otherwise runs every job in the ADC default project).
     creds_kwargs = {
-        k: v for k, v in source_config.items() if k not in ("type", "attribution")
+        k: v
+        for k, v in source_config.items()
+        if k not in ("type", "attribution") and v is not None
     }
     if adapter_type_lower == "duckdb":
         if "duckdb_config" in creds_kwargs:
@@ -324,8 +330,7 @@ def build_adapter(
     # After translate_aliases so the field lands under the name the credentials class
     # reads. Fills the warehouse's own identity field so "is this dbt charts" is a
     # column rather than a regex over the query text — but only where the author left
-    # it unset, since these fields can drive real monitoring or governance rules. An
-    # unset optional arrives as an explicit None, not a missing key.
+    # it unset, since these fields can drive real monitoring or governance rules.
     for field, value in native_attribution_credential(adapter_type_lower).items():
         if creds_kwargs.get(field) is None:
             creds_kwargs[field] = value

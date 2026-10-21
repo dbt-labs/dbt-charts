@@ -25,7 +25,6 @@ from dbt_charts.core.compile.resolve.style.typography import (
 )
 from dbt_charts.core.compile.template.display_text import resolve_display_text
 from dbt_charts.core.compile.template.jinja import (
-    resolve_jinja_template,
     template_literal_text,
     text_needs_render_data,
 )
@@ -445,15 +444,17 @@ def prose_content_widths(
     from mdsvg.renderer import SVGRenderer
 
     needs_data = text_needs_render_data(text)
-    # Query values exist only at render: measure the template without its Jinja,
-    # and ask for the readable-width cap as the one-line width.
-    resolved = resolve_outside_fences(
-        text,
-        template_literal_text
+    # Query values and listings exist only at render: measure the template without
+    # its Jinja, and ask for the readable-width cap as the one-line width.
+    resolved = (
+        resolve_outside_fences(text, template_literal_text)
         if needs_data
-        else (
-            lambda masked: resolve_jinja_template(masked, variable_values, strict=False)
-        ),
+        else resolve_display_text(
+            text,
+            variable_values,
+            {},
+            resolved_style.chart_defaults.formats,
+        )
     )
     blocks = rewrite_board_markdown_images(
         list(parse_markdown(resolved)), text, resolved, base_dir, None

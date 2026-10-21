@@ -4,7 +4,7 @@ description: Reproduce a dashboard the user supplies as a screenshot, image, or 
   — its structure and data, in dbt charts' own styling. Use for 'replicate', 'recreate',
   'rebuild this in dbt charts', 'migrate from Looker', or when an image of a dashboard
   is attached. Do NOT use for building from scratch, or for copying a board already
-  in this project (board-build).
+  in this project (chart).
 metadata:
   author: fivetran
 ---
@@ -13,7 +13,7 @@ metadata:
 The user handed you an existing dashboard — a screenshot, an export, a page
 from another tool — and wants *that* in dbt charts. This is a copy/migration,
 not a redesign. **Set your design opinions aside for the whole job**: the
-one-screen/≤8-visualization guidance in `get_skill('board-design')` does
+one-screen/≤8-visualization guidance in `get_skill('chart')` does
 not apply, chart-choice preferences do not apply, "this would be cleaner
 as…" does not apply. The source is the spec. A 40-tile source means a 40-tile
 replica — sectioned and scrolling if the source is.
@@ -130,7 +130,7 @@ theme's business — leave them alone.
 
 ### 3. Iterate until it looks right
 
-Render after every tile (`get_skill('board-build')` owns the build-validate loop —
+Render after every tile (`get_skill('chart')` owns the build-validate loop —
 one tile at a time, never one-shot). When all tiles are in, render the whole
 board with `render_board` and compare its chart list with the
 source's tiles.
@@ -189,7 +189,7 @@ X, Y. Source image shows data through June; live data runs through July."
 | Wiring real queries before the replica looks right | Phase 1 first: the recorded values are what phase 2 verifies against |
 | Chasing stale numbers | Check the image's axis dates first — phase offset is expected |
 | Silently dropping hard tiles | Blocked tiles go in the delivery note, not down a memory hole |
-| One-shotting the whole board | Build per tile via `get_skill('board-build')`, validating each step |
+| One-shotting the whole board | Build per tile via `get_skill('chart')`, validating each step |
 
 ## Rationalizations to Resist
 

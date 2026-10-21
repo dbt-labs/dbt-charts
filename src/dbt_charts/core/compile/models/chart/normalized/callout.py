@@ -52,6 +52,10 @@ class CalloutChart(BaseModel):
             "its markdown images resolve against. Never serialized."
         ),
     )
+    authored_fields: frozenset[str] = Field(
+        default=frozenset(),
+        description="Fields the author wrote, before normalization filled in the rest.",
+    )
     variable_dependencies: VariableDependencies = Field(
         default_factory=frozenset,
         description="Variable names this chart depends on.",

@@ -1884,15 +1884,14 @@ class TestDefaultAxisTitleCasing:
     axis-title font's ``case`` (title-case by default).
     """
 
-    def test_default_axis_titles_lowercase_snake_case_fields(self, make_chart):
-        """order_month / total_revenue → lowercase 'order month' / 'total revenue',
-        matching the bound column names rather than a title-cased headline."""
+    def test_default_axis_titles_sentence_case_snake_case_fields(self, make_chart):
+        """order_month / total_revenue → sentence-case 'Order month' / 'Total revenue'."""
         chart = make_chart("line", x="order_month", y="total_revenue")
         data = [{"order_month": "2026-01", "total_revenue": 123}]
         _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
         spec = generate_vega_lite_spec(chart, data)
-        assert spec["encoding"]["x"]["title"] == "order month"
-        assert spec["encoding"]["y"]["title"] == "total revenue"
+        assert spec["encoding"]["x"]["title"] == "Order month"
+        assert spec["encoding"]["y"]["title"] == "Total revenue"
 
     def test_default_axis_titles_preserve_casing_after_orientation_routing(
         self, make_chart
@@ -1907,8 +1906,8 @@ class TestDefaultAxisTitleCasing:
         ]
         _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
         spec = generate_vega_lite_spec(chart, data)
-        assert spec["encoding"]["x"]["title"] == "user count"
-        assert spec["encoding"]["y"]["title"] == "department"
+        assert spec["encoding"]["x"]["title"] == "User count"
+        assert spec["encoding"]["y"]["title"] == "Department"
 
     def test_authored_labels_pass_through_unchanged(self, make_chart):
         """An authored x_label/y_label is never touched by the default-axis-title

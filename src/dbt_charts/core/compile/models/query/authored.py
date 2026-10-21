@@ -131,10 +131,10 @@ class _BaseQueryFields(BaseModel):
     formats: Annotated[dict[str, FormatAlias | str] | None, Format()] = Field(
         default=None,
         description=(
-            "How the query's columns print, as column: format name. A name is "
-            "an engine format (`currency`, `percent`, `year`, ...) or one the "
-            "board defines in `style.formats`; a d3 spec is rejected. Every "
-            "chart showing the column uses the format unless it sets its own."
+            "A column's format, set once on its query, only where the default "
+            "would misread (currency, percent, a unit); counts and plain numbers "
+            "need none. Every chart showing the column follows it; a chart sets "
+            "its own only to differ. A d3 spec is rejected."
         ),
     )
     incremental: IncrementalValue = Field(

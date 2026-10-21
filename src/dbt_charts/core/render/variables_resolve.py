@@ -17,23 +17,28 @@ the result is passed along rather than recomputed.
 from __future__ import annotations
 
 import datetime
-import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.compile.models.variable.authored import VariableInputType
+from dbt_charts.core.compile.normalize.variable_input_refinement import (
+    RefinedType,
+    refine_input_type_from_data,
+)
 from dbt_charts.core.compile.resolve.style.board import resolve_cascaded_font
+from dbt_charts.core.compile.template.daterange import (
+    DATERANGE_PRESETS,
+    resolve_daterange_preset_iso,
+)
 from dbt_charts.core.compile.template.variables import (
     UNSET_MULTISELECT,
     coerce_multiselect,
     variable_value_is_absent,
 )
+from dbt_charts.core.diagnostics.codes_execute import ERR_VARIABLE_OPTIONS_FAILED
 from dbt_charts.core.diagnostics.execution import QueryError
+from dbt_charts.core.render.board_variables import current_daterange_presets
 from dbt_charts.core.render.conditions import eval_bool_condition
-from dbt_charts.core.render.variable_input_refinement import (
-    RefinedType,
-    refine_input_type_from_data,
-)
 from dbt_charts.core.render.variables_layout import ControlSpec
 from dbt_charts.core.text.case import inferred_display_name
 from dbt_charts.core.text.format_d3 import active_time_locale, board_word
@@ -44,7 +49,6 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.variable.authored import Variable
     from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 
-logger = logging.getLogger(__name__)
 
 UNSET_SELECT_MESSAGE = "controls.all"
 UNSET_DATERANGE_MESSAGE = "controls.all_dates"
@@ -108,6 +112,8 @@ class ResolvedControl:
     # None when the field holds a value or has no hint. The one place that
     # decides whether the drawn text is a hint.
     placeholder: str | None = None
+    # The preset id a daterange commits; `current` then holds its dates.
+    preset: str | None = None
 
     @property
     def spec(self) -> ControlSpec:
@@ -136,14 +142,22 @@ def resolve_controls(
     for name, var_def in variable_defs.items():
         if not var_def.visible:
             continue
-        option_values = resolve_option_values(var_def, executor, current_values)
+        option_values = resolve_option_values(name, var_def, executor, current_values)
         refined = _refine(var_def, option_values)
         low, high, step = _slider_bounds(var_def, refined, variables_style)
         current = current_values.get(name, var_def.default)
+        preset: str | None = None
         if refined.input_type in ("slider", "range") and current is None:
             # A slider always shows a position; with nothing committed that is
             # the low end, which is where the mounted control shows it too.
             current = low
+        elif refined.input_type == "daterange":
+            preset = current_daterange_presets().get(name)
+            if isinstance(current, str) and current in DATERANGE_PRESETS:
+                # The fallback above is the raw `default:`, which no render
+                # narrowing has seen.
+                preset = current
+                current = resolve_daterange_preset_iso(current, datetime.date.today())
         elif refined.input_type == "multiselect":
             # One selection, narrowed once. A multiselect legitimately arrives
             # as a list, as a bare scalar from a URL param written before it was
@@ -177,6 +191,7 @@ def resolve_controls(
                 slider_step=step,
                 can_unset=not var_def.required,
                 enabled=_is_enabled(var_def, current_values, executor),
+                preset=preset,
                 placeholder=(
                     var_def.placeholder
                     if refined.input_type in FREE_ENTRY_INPUTS
@@ -244,6 +259,7 @@ def _refine(var_def: Variable, option_values: list[str]) -> RefinedType:
 
 
 def resolve_option_values(
+    name: str,
     var_def: Variable,
     executor: ChartDataProvider | None,
     current_values: VariableValues,
@@ -258,62 +274,57 @@ def resolve_option_values(
         values = [str(opt) for opt in var_def.options.static]
     elif var_def.options and var_def.options.query and executor:
         values = resolve_query_options(
-            var_def.options.query, executor, dict(current_values)
+            name, var_def.options.query, executor, dict(current_values)
         )
     elif isinstance(var_def.query, str) and executor:
-        values = resolve_query_options(var_def.query, executor, dict(current_values))
+        values = resolve_query_options(
+            name, var_def.query, executor, dict(current_values)
+        )
     else:
         return []
     return list(dict.fromkeys(values))
 
 
 def resolve_query_options(
-    query_ref: str, executor: ChartDataProvider, variables: dict[str, Any]
+    name: str,
+    query_ref: str,
+    executor: ChartDataProvider,
+    variables: VariableValues,
 ) -> list[str]:
-    """Resolve a select's options from a named query.
+    """Resolve variable `name`'s select options from a named query.
 
-    Best-effort: a failed or absent option query degrades the dropdown to empty
-    rather than aborting the render. This includes pre-execution failures stored
-    on the executor (raised as ``QueryError`` by ``execute_query``).
+    A failed options query raises rather than drawing an empty dropdown: an
+    empty list is indistinguishable from a table with no rows, so a missing
+    table would otherwise ship as a control that silently filters nothing.
 
     Args:
+        name: The variable whose options these are, named in the error.
         query_ref: Query name reference (e.g., "queries.city_options" or "city_options")
         executor: ChartDataProvider for running queries
         variables: Current variable values for query execution
 
-    Returns:
-        List of option values from the query, or [] when the query failed/is absent.
+    Raises:
+        QueryError: ERR-VARIABLE-OPTIONS-FAILED when the options query fails.
     """
+    query_name = query_ref.replace("queries.", "")
     try:
-        query_name = query_ref.replace("queries.", "")
         result = executor.execute_query(query_name, variables)
-
-        if result and len(result) > 0:
-            # Look for 'value' column first, then 'label', then first column
-            first_row = result[0]
-            value_key = None
-            for key in ["value", "label", "name", "id"]:
-                if key in first_row:
-                    value_key = key
-                    break
-            if value_key is None:
-                value_key = list(first_row.keys())[0]
-
-            return [
-                str(row[value_key]) for row in result if row.get(value_key) is not None
-            ]
-
+    except QueryError as e:
+        raise QueryError.from_code(
+            ERR_VARIABLE_OPTIONS_FAILED,
+            variable=name,
+            query_name=query_name,
+            cause=str(e),
+        ) from e
+    if not result:
         return []
-    except (ValueError, KeyError, TypeError, RuntimeError, QueryError):
-        # Log as warning with context to make failures visible for debugging.
-        # Best-effort policy: a failed option query renders the control empty,
-        # not an error page. QueryError covers pre-execution failures stored in
-        # the executor (e.g. a column-option query that hit a missing table).
-        logger.warning(
-            "Failed to resolve query options for a variable control",
-            exc_info=True,
-        )
-        return []
+    # Look for 'value' column first, then 'label', then first column
+    first_row = result[0]
+    value_key = next(
+        (key for key in ("value", "label", "name", "id") if key in first_row),
+        next(iter(first_row)),
+    )
+    return [str(row[value_key]) for row in result if row.get(value_key) is not None]
 
 
 def read_only_unset_label(var_def: Variable, default_id: str) -> str:

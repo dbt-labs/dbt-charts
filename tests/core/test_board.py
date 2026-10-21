@@ -29,7 +29,12 @@ queries:
   orders:
     sql: "SELECT * FROM {{ ref('fct_orders') }}"
     source: dbt_duckdb
-rows: []
+charts:
+  orders_table:
+    query: orders
+    type: table
+rows:
+  - orders_table
 """
 
 

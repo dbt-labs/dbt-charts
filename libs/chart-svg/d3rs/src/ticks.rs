@@ -71,7 +71,13 @@ const E2: f64 = std::f64::consts::SQRT_2;
 /// (unlike `nice_tick_values`, production's cover-ladder, whose ticks
 /// extend to enclose it).
 pub fn d3_ticks(start: f64, stop: f64, count: usize) -> Vec<f64> {
-    if count == 0 {
+    d3_ticks_fractional(start, stop, count as f64)
+}
+
+/// [`d3_ticks`] over a count that need not be whole: d3-scale's log ticks ask
+/// for `min(logs(hi) - logs(lo), count)` exponents.
+pub fn d3_ticks_fractional(start: f64, stop: f64, count: f64) -> Vec<f64> {
+    if !(count > 0.0) {
         return vec![];
     }
     if start == stop {
@@ -126,13 +132,13 @@ pub fn vega_tick_count(start: f64, stop: f64, count: usize, min_step: Option<f64
     (count as f64).min(quotient.floor() + 1.0).max(0.0) as usize
 }
 
-fn tick_spec(start: f64, stop: f64, count: usize) -> (i64, i64, f64) {
+fn tick_spec(start: f64, stop: f64, count: f64) -> (i64, i64, f64) {
     let spec = tick_spec_once(start, stop, count);
     // d3's tickSpec retries at count*2 when a count of 1 yields an empty
     // ladder (`if (i2 < i1 && 0.5 <= count && count < 2)`), so a domain too
     // narrow for one round tick still gets a ladder instead of nothing.
-    if spec.1 < spec.0 && count == 1 {
-        return tick_spec_once(start, stop, 2);
+    if spec.1 < spec.0 && (0.5..2.0).contains(&count) {
+        return tick_spec(start, stop, count * 2.0);
     }
     spec
 }
@@ -199,8 +205,8 @@ pub fn d3_nice(mut start: f64, mut stop: f64, count: usize) -> (f64, f64) {
     }
 }
 
-fn tick_spec_once(start: f64, stop: f64, count: usize) -> (i64, i64, f64) {
-    let step = (stop - start) / count.max(1) as f64;
+fn tick_spec_once(start: f64, stop: f64, count: f64) -> (i64, i64, f64) {
+    let step = (stop - start) / count.max(0.0);
     let power = step.log10().floor();
     let error = step / 10f64.powf(power);
     let factor = if error >= E10 {
@@ -257,6 +263,14 @@ mod tests {
 
     fn approx_eq(a: &[f64], b: &[f64]) -> bool {
         a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-9)
+    }
+
+    /// d3-array `ticks(5.03, 5.6, 0.57)`: a count under 1 retries at double.
+    #[test]
+    fn a_fractional_count_retries_at_double_and_a_non_positive_one_is_empty() {
+        assert!(approx_eq(&d3_ticks_fractional(5.03, 5.6, 0.57), &[5.5]));
+        assert!(d3_ticks_fractional(5.0, 6.0, -0.4).is_empty());
+        assert!(d3_ticks_fractional(5.0, 6.0, f64::NAN).is_empty());
     }
 
     #[test]

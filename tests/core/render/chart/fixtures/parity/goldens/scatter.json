@@ -75,7 +75,7 @@
   "encoding": {
     "description": {
       "value": {
-        "expr": "\"revenue: \" + (format(datum[\"revenue\"], \",.2~f\")) + '; ' + \"cost: \" + (format(datum[\"cost\"], \",.2~f\"))"
+        "expr": "\"Revenue: \" + (format(datum[\"revenue\"], \",.2~f\")) + '; ' + \"Cost: \" + (format(datum[\"cost\"], \",.2~f\"))"
       }
     },
     "x": {
@@ -112,7 +112,7 @@
       "scale": {
         "padding": 0.0
       },
-      "title": "cost",
+      "title": "Cost",
       "type": "quantitative"
     },
     "y": {
@@ -159,7 +159,7 @@
         "domainMin": 166.4,
         "zero": false
       },
-      "title": "revenue",
+      "title": "Revenue",
       "type": "quantitative"
     }
   },

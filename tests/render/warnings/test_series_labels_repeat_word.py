@@ -51,7 +51,7 @@ def test_fires_on_wide_measures_sharing_a_word() -> None:
     assert w.code == WARN_SERIES_LABELS_REPEAT_WORD.code
     assert w.chart == "c1"
     assert w.path == "charts.c1.y"
-    assert "documents" in w.message
+    assert "Documents" in w.message
     assert w.fix is not None
     assert "'created'" in w.fix and "completed" in w.fix
 
@@ -91,7 +91,7 @@ def test_fires_on_a_trailing_shared_word() -> None:
     assert len(warnings) == 1
     fix = warnings[0].fix
     assert fix is not None
-    assert "'created'" in fix and "completed" in fix
+    assert "'Created'" in fix and "Completed" in fix
 
 
 def test_silent_on_a_single_series() -> None:
@@ -177,7 +177,7 @@ def test_a_short_leading_word_does_not_hide_the_repeat_behind_it() -> None:
     )
     assert len(warnings) == 1
     assert warnings[0].fix is not None
-    assert "'us created'" in warnings[0].fix
+    assert "'Us created'" in warnings[0].fix
 
 
 def test_a_repeat_at_both_ends_is_dropped_from_both() -> None:

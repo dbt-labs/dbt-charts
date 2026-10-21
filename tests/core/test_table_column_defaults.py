@@ -346,7 +346,7 @@ class TestColumnDefaultsMaterializedAtResolve:
         svg = render_table_svg(
             resolved, data, board_style=resolve_style(get_theme_style())
         )
-        assert "Row Sort" in svg
+        assert "Row sort" in svg
 
     def test_pivot_row_dimension_visible_false_hides_it(self) -> None:
         """`visible: false` is the explicit way to hide a `rows:` dimension
@@ -370,7 +370,7 @@ class TestColumnDefaultsMaterializedAtResolve:
             resolved, data, board_style=resolve_style(get_theme_style())
         )
         assert ">x<" in svg
-        assert "Row Sort" not in svg
+        assert "Row sort" not in svg
 
     def test_spark_shorthand_normalized_at_resolve(self) -> None:
         """`spark: <type>` shorthand is normalized to SparkConfig by the time
@@ -448,8 +448,8 @@ class TestHeaderVisibleFalse:
         )
 
     def test_hidden_header_renders_no_header_text(self) -> None:
-        assert ">Alpha Col<" in self._svg({})
-        assert "Alpha Col" not in self._svg({"header": {"visible": False}})
+        assert ">Alpha col<" in self._svg({})
+        assert "Alpha col" not in self._svg({"header": {"visible": False}})
 
 
 class TestBoardLevelColumnDefaults:

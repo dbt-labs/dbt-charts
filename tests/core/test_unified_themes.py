@@ -221,3 +221,18 @@ def test_title_color_matches_prose_color_in_every_built_in_theme(
     resolved_style = resolve_style(get_theme_style(theme_name))
 
     assert resolved_style.title.font.color == resolved_style.font.color
+
+
+def test_built_in_themes_describe_themselves_without_leaking_into_boards():
+    """Each user-facing theme carries a one-line `notes:` for the skill page; a
+    board extending it keeps its own (empty) notes."""
+    import yaml
+
+    from dbt_charts.core.compile import compile
+
+    for name in user_facing_theme_names():
+        notes = yaml.safe_load((_THEMES_DIR / f"{name}.yaml").read_text())["notes"]
+        assert notes and "\n" not in notes, name
+    result = compile("extends: stark\ntext: hi\n")
+    assert result.board is not None
+    assert not result.board.notes

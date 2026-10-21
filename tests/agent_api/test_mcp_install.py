@@ -36,8 +36,8 @@ def test_list_clients_all_have_valid_formats() -> None:
 
 def test_all_skill_names_includes_packaged_workflows() -> None:
     names = all_skill_names()
-    assert "board-build" in names
-    assert "kpi-row" in names
+    assert "chart" in names
+    assert "styling" in names
 
 
 def test_install_cursor_writes_valid_json(tmp_path: Path) -> None:

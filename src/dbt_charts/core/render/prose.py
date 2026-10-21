@@ -444,7 +444,7 @@ def _run_grid(
         pad = float(rs.frame.card_padding)
         grid = min(grid, choose_grid(board_width, gap, pad, char_px))
         text = resolve_display_text_from_provider(
-            block.text, variable_values, resolved_style=rs
+            block.text, variable_values, resolved_style=rs, base_dir=block.base_dir
         )
         list_items = _list_items(text)
         if not list_items:
@@ -566,7 +566,7 @@ def _goes_multi_column(
         allow_raw_html=block.html_policy == "trusted-raw",
     )
     text = resolve_display_text_from_provider(
-        block.text, variable_values, resolved_style=rs
+        block.text, variable_values, resolved_style=rs, base_dir=block.base_dir
     )
     # The same degradation the sizing pass applies: a bad image becomes its error.
     blocks = rewrite_board_markdown_images(

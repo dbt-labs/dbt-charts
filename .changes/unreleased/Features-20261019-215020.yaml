@@ -1,0 +1,3 @@
+kind: Features
+body: A table prints integer columns whole and year columns without a thousands separator.
+time: 2026-10-19T21:50:20.452205-07:00

@@ -27,6 +27,7 @@ enum Gate {
 
 struct Row {
     aria: Option<String>,
+    href: Option<String>,
     start: f64,
     size: f64,
     value: Option<f64>,
@@ -89,6 +90,7 @@ impl HoverBand {
         cat: &str,
         series: &str,
         aria: Option<&str>,
+        href: Option<&str>,
         start: f64,
         size: f64,
         value: Option<f64>,
@@ -97,12 +99,12 @@ impl HoverBand {
             Gate::Each => false,
             Gate::Carriers(carriers) => carriers.get(cat).is_some_and(|s| s == series),
         };
-        self.rows.push(Row { aria: aria.map(str::to_owned), start, size, value, carrier });
+        self.rows.push(Row { aria: aria.map(str::to_owned), href: href.map(str::to_owned), start, size, value, carrier });
     }
 
     /// Paint the layer. `vertical` bars grow up from the baseline; `extent` is
     /// the plot's pixel size along the measure axis.
-    pub(crate) fn emit(&self, out: &mut String, vertical: bool, scale: &LinearScale, extent: f64) -> Result<(), String> {
+    pub(crate) fn emit(&self, out: &mut String, vertical: bool, scale: &LinearScale, extent: f64, link_open: crate::href::LinkOpen) -> Result<(), String> {
         let baseline = scale.position(0.0);
         let band = extent * HOVER_BAND_EXTEND_FRACTION;
         let trigger = extent * HOVER_BAND_TRIGGER_FRACTION;
@@ -123,7 +125,10 @@ impl HoverBand {
             } else {
                 format!("M{lo:.2},{:.2}h{len:.2}v{:.2}h-{len:.2}Z", row.start, row.size)
             };
+            let anchor = link_open.anchor(row.href.as_deref());
+            out.push_str(&crate::href::anchor_open(anchor));
             let _ = write!(out, "<path d=\"{d}\" fill=\"{FILL}\" opacity=\"0\"{label}/>");
+            out.push_str(crate::href::anchor_close(anchor));
         }
         mark_group_close(out);
         Ok(())

@@ -276,15 +276,15 @@ _WIDE_STACK_DATA = [
 ]
 # The long-form "series" values are spelled with a space, not an underscore,
 # on purpose: a wide chart's legend/scale domain is now the HUMANIZED measure
-# name (field_title("non_named") == "non named"), so this is what a
+# name (field_title("non_named") == "Non named"), so this is what a
 # long-form color: chart's raw data would have to say to render byte-identical
 # legend text -- the geometry-parity tests below compare rendered SVG paths,
 # which shift a hair when the legend text (and thus its pixel width) differs.
 _LONG_STACK_DATA = [
-    {"month": "Jan", "series": "named", "amount": 10},
-    {"month": "Jan", "series": "non named", "amount": 30},
-    {"month": "Feb", "series": "named", "amount": 20},
-    {"month": "Feb", "series": "non named", "amount": 40},
+    {"month": "Jan", "series": "Named", "amount": 10},
+    {"month": "Jan", "series": "Non named", "amount": 30},
+    {"month": "Feb", "series": "Named", "amount": 20},
+    {"month": "Feb", "series": "Non named", "amount": 40},
 ]
 
 
@@ -368,8 +368,8 @@ class TestLayersStackNormalize:
         spec = generate_vega_lite_spec(wide, _WIDE_STACK_DATA, width=400, height=300)
 
         assert spec["encoding"]["color"]["scale"]["domain"] == [
-            "non named",
-            "named",
+            "Non named",
+            "Named",
         ]
 
 

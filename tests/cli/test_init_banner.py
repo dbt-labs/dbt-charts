@@ -77,7 +77,7 @@ def test_banner_names_skills_intro_as_where_to_start(
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0, result.output
-    assert "dct skills intro" in _strip_ansi(result.output)
+    assert "dct skills chart" in _strip_ansi(result.output)
 
 
 def test_banner_hidden_when_boards_dir_in_cwd(
@@ -132,4 +132,4 @@ def test_banner_absent_on_subcommand_help(
 
 
 def test_rich_banner_names_skills_intro_as_where_to_start() -> None:
-    assert "dct skills intro" in _strip_ansi(_render_banner_to_string(plain=False))
+    assert "dct skills chart" in _strip_ansi(_render_banner_to_string(plain=False))

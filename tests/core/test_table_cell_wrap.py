@@ -432,7 +432,7 @@ class TestNumericCellsNotWrapped:
         """A numeric value should appear verbatim (comma-formatted) in the
         SVG — never split by wrapping across tspans."""
         chart = _make_table(make_chart)
-        svg = _render(chart, [{"amount": 1234567890}], 200)
+        svg = _render(chart, [{"amount": 1234567890.0}], 200)
 
         # The formatted number renders as a single contiguous value tspan (the
         # theme SI default: 1234567890 -> "1.23" + "B"). Wrapping would split

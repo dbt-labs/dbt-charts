@@ -226,12 +226,12 @@ def test_installed_dbt_charts_resolves_outside_repo(smoke_venv: Path) -> None:
     )
 
 
-def test_docs_reference_topic_in_clean_venv(smoke_venv: Path) -> None:
-    """`docs(topic="reference")` succeeds from the installed wheel."""
+def test_syntax_guide_ships_in_clean_venv(smoke_venv: Path) -> None:
+    """The authoring prompts' syntax guide loads from the installed wheel."""
     result = _run(
         smoke_venv,
         "-c",
-        "from dbt_charts.agent_api.docs import docs; r = docs(topic='reference'); assert r.success, r.errors",
+        "from dbt_charts.ai.prompts import read_syntax_guide; assert read_syntax_guide()",
     )
     assert result.returncode == 0, result.stderr
 

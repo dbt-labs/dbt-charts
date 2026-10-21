@@ -39,6 +39,7 @@ from dbt_charts.core.execute.cache_backend import CacheRows
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import VariableValues
+    from dbt_charts.core.compile.template.listings import ListingCall, TextListings
 
 
 # Not @runtime_checkable: `cache_hit_ats` is a property, so this is a data
@@ -46,7 +47,8 @@ if TYPE_CHECKING:
 # check attribute presence, not signatures. Conformance is a type-checker
 # concern, asserted at the seam in test_chart_data_provider.py.
 class ChartDataProvider(Protocol):
-    """Supplies query results to the post-resolve render path."""
+    """Supplies query results and board-text listings to the post-resolve render
+    path."""
 
     def execute_query(self, query_name: str, variables: VariableValues) -> CacheRows:
         """Return the rows for ``query_name`` under ``variables``.
@@ -58,6 +60,12 @@ class ChartDataProvider(Protocol):
         accept more than the Protocol promises. Declaring only what the seam uses
         keeps a provider from modeling cache control it has no concept of.
         """
+        ...
+
+    def text_listings(
+        self, base_dir: str, calls: frozenset[ListingCall]
+    ) -> TextListings:
+        """What the listing *calls* in text written under *base_dir* return."""
         ...
 
     @property

@@ -133,7 +133,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::common::{
-    axis_title_text, emit_axis_title_bottom,
+    axis_title_text,
     emit_axis_title_rotated, format_y_label, row_num, AxisStyle, Font, TitleStyle,
 };
 use crate::families::legend;
@@ -167,10 +167,19 @@ struct Resolved {
     /// Legal and reachable on histogram (unlike `chart.layers`) — see the
     /// module doc.
     color: Option<String>,
+    /// Chart-root `ResolvedChart.link`: a channel-placeholder template painted
+    /// as an `<a>` around each stack segment.
+    #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
+    link: Option<String>,
+    #[serde(default)]
+    link_open: crate::href::LinkOpen,
     /// How the query formats a numeric color column: its gradient legend's labels.
     #[serde(default)]
     color_format: Option<crate::common::FormatSlot>,
     palette: Vec<String>,
+    /// The palette a series color reads: the chart's own, else the board's, else Vega's default.
+    #[serde(skip)]
+    series_palette: Vec<String>,
     #[serde(default)]
     resolved_channels: std::collections::HashMap<String, crate::common::StyleChannel>,
     legend: crate::families::legend::LegendConfig,
@@ -200,22 +209,12 @@ struct HistogramBorder {
     color: Option<String>,
 }
 
-/// Vega's built-in bar-mark constants for a binned field's `{band: f}`
-/// width (module doc's "bar geometry" bullet) — never authored, never
-/// touched by `bar_mark_to_vl`, so these are the JS defaults themselves,
-/// not resolved-payload fields.
-const BIN_SPACING: f64 = 1.0;
-const AXIS_TRANSLATE: f64 = 0.5;
-
-/// `(left_edge_px, right_edge_px)` for one bin, given its pixel span
-/// `[bin_start_px, bin_end_px]` (bin_start_px < bin_end_px) — see the
-/// module doc's "bar geometry" bullet.
+/// `(left_edge_px, right_edge_px)` of the rect Vega draws for one bin, given
+/// its pixel span `[bin_start_px, bin_end_px]` — the module doc's "bar
+/// geometry" bullet, which is the time bucket's bar law.
 fn bar_edges(bin_start_px: f64, bin_end_px: f64, band_width: f64) -> (f64, f64) {
-    let bin_width_px = bin_end_px - bin_start_px;
-    let pos = (1.0 - band_width) / 2.0;
-    let right = bin_start_px + (1.0 - pos) * bin_width_px + (AXIS_TRANSLATE - BIN_SPACING / 2.0);
-    let left = bin_start_px + pos * bin_width_px + (AXIS_TRANSLATE + BIN_SPACING / 2.0);
-    (left, right)
+    let (left, width) = crate::families::bar::bucket_bar_extent(bin_start_px, bin_end_px, band_width);
+    (left, left + width)
 }
 
 /// One stack segment, `(top, bottom)` px at `(x, width)`. A bin's stack is
@@ -235,7 +234,7 @@ fn emit_stack_segment(
     if r <= 0.0 || top >= stack_top + r {
         let _ = write!(
             out,
-            "<rect x=\"{x:.2}\" y=\"{top:.2}\" width=\"{w:.2}\" height=\"{h:.2}\"{fill} stroke-width=\"0\"{aria}/>"
+            "<rect x=\"{x:.4}\" y=\"{top:.4}\" width=\"{w:.4}\" height=\"{h:.4}\"{fill} stroke-width=\"0\"{aria}/>"
         );
         return;
     }
@@ -246,12 +245,12 @@ fn emit_stack_segment(
     let side = |y: f64| r - (r * r - (stack_top + r - y).powi(2)).max(0.0).sqrt();
     let x2 = x + w;
     let (start, down) = if bottom > arc_end {
-        (format!("M {x:.2},{bottom:.2} V {arc_end:.2}"), format!(" V {bottom:.2}"))
+        (format!("M {x:.4},{bottom:.4} V {arc_end:.4}"), format!(" V {bottom:.4}"))
     } else {
-        (format!("M {:.2},{arc_end:.2}", x + side(arc_end)), String::new())
+        (format!("M {:.4},{arc_end:.4}", x + side(arc_end)), String::new())
     };
     let d = format!(
-        "{start} A {r:.2},{r:.2} 0 0,1 {:.2},{top:.2} H {:.2} A {r:.2},{r:.2} 0 0,1 {:.2},{arc_end:.2}{down} Z",
+        "{start} A {r:.4},{r:.4} 0 0,1 {:.4},{top:.4} H {:.4} A {r:.4},{r:.4} 0 0,1 {:.4},{arc_end:.4}{down} Z",
         x + side(top),
         x2 - side(top),
         x2 - side(arc_end),
@@ -283,6 +282,8 @@ struct StackColor {
     /// Series in stack order, base first.
     series: Vec<Series>,
     legend: LegendPaint,
+    /// The color field holds dates, which a link prints through `timeFormat`.
+    dated: bool,
 }
 
 /// Production's `_emit_histogram` color encoding over `binned_rows` (every
@@ -339,7 +340,7 @@ fn stack_color(
                 None => Some(null_at),
             })
             .collect();
-        Ok((StackColor { title: title.clone(), series, legend: LegendPaint::Gradient(scale) }, row_series))
+        Ok((StackColor { title: title.clone(), series, legend: LegendPaint::Gradient(scale), dated: false }, row_series))
     };
     // A numeric color's tooltip prints through the query's format when the
     // visible legend carries it as its own `format`, else a gradient scale's
@@ -379,7 +380,9 @@ fn stack_color(
                 })
                 .collect::<Vec<Option<f64>>>();
             let (lo, hi) = extent(&values);
-            continuous(values, ContinuousColor::dates(lo, hi), &crate::families::heatmap::legend_date_label)?
+            let (dated, row_series) =
+                continuous(values, ContinuousColor::dates(&d3rs::vega_schemes::BLUES, lo, hi), &crate::families::heatmap::legend_date_label)?;
+            (StackColor { dated: true, ..dated }, row_series)
         }
         VegaType::Ordinal => ordinal_color(cf, title, &r.legend, binned_rows),
         VegaType::Nominal => nominal_color(r, cf, title, rows, binned_rows)?,
@@ -400,9 +403,6 @@ fn nominal_color(
     rows: &[serde_json::Map<String, Value>],
     binned_rows: &[&serde_json::Map<String, Value>],
 ) -> Result<(StackColor, Vec<Option<usize>>), String> {
-    if r.palette.is_empty() {
-        return Err("histogram: a color channel needs a non-empty palette".into());
-    }
     let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     for row in rows.iter().filter(|row| row.get(cf).is_some_and(|v| !v.is_null())) {
         *counts.entry(crate::common::row_str(row, cf)).or_default() += 1;
@@ -411,7 +411,16 @@ fn nominal_color(
     ranked.sort_by(|(a, na), (b, nb)| nb.cmp(na).then_with(|| a.cmp(b)));
     let has_null = binned_rows.iter().any(|row| row.get(cf).is_none_or(Value::is_null));
     let base = usize::from(has_null);
-    let fills: Vec<String> = (0..ranked.len()).map(|i| r.palette[i % r.palette.len()].clone()).collect();
+    // A chart with no palette of its own sets no color domain: Vega-Lite's default sorts it alphabetically,
+    // where an authored palette's slots follow the ranked order.
+    let mut color_domain: Vec<String> = ranked.iter().map(|(name, _)| name.clone()).collect();
+    if r.palette.is_empty() {
+        color_domain.sort_unstable();
+    }
+    let fills: Vec<String> = ranked
+        .iter()
+        .map(|(name, _)| crate::common::series_color(name, &color_domain, &r.series_palette, None))
+        .collect::<Result<_, _>>()?;
     let mut series: Vec<Series> = Vec::new();
     if has_null {
         series.push(Series { fill: None, text: "null".into(), drawn: true });
@@ -435,7 +444,7 @@ fn nominal_color(
         let rank = ranked.iter().position(|(n, _)| n == name).expect("a legend name is a series");
         fills[rank].clone()
     });
-    Ok((StackColor { title, series, legend: LegendPaint::Symbols(entries) }, row_series))
+    Ok((StackColor { title, series, legend: LegendPaint::Symbols(entries), dated: false }, row_series))
 }
 
 /// An ordinal (date-like text) color: a `blues` ramp over the sorted values,
@@ -476,7 +485,7 @@ fn ordinal_color(
     let entries = legend_entries(legend, &name_refs, |name| {
         fill_of(names.iter().position(|v| v == name).expect("a legend name is a value"))
     });
-    (StackColor { title, series, legend: LegendPaint::Symbols(entries) }, row_series)
+    (StackColor { title, series, legend: LegendPaint::Symbols(entries), dated: false }, row_series)
 }
 
 /// The legend entries a symbol legend lists: `names` in display order, or the
@@ -496,14 +505,15 @@ fn legend_entries(
 }
 
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
-    let r: Resolved = serde_json::from_value(payload.resolved.clone())
+    let mut r: Resolved = serde_json::from_value(payload.resolved.clone())
         .map_err(|e| format!("histogram: payload.resolved: {e}"))?;
+    r.series_palette = payload.series_palette(&r.palette);
     let ax_x = &r.style.axis_x;
     let ax_y = &r.style.axis_y;
-    ax_x.refuse_unpainted_affix("histogram", "axis_x", false)?;
+    ax_x.refuse_unpainted_affix("histogram", "axis_x", None)?;
     ax_x.refuse_x_tick_cadence("histogram")?;
-    ax_x.refuse_top_x_axis("histogram")?;
-    ax_y.refuse_unpainted_affix("histogram", "axis_y", false)?;
+    let x_edge = ax_x.x_edge();
+    ax_y.refuse_unpainted_affix("histogram", "axis_y", None)?;
     // `_emit_histogram` bakes `orient` from the resolved `axis_y.position`
     // via `measure_axis_to_vl` (`emitters/bar.py:480-484`) — this arm models
     // both left and right; any other position (the theme resolves an
@@ -516,8 +526,10 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         None => return Err("histogram: axis_y.position absent (theme required)".into()),
     };
     // `axis_y.mirror: true` repeats the labels and ticks on the opposite edge at
-    // the primary's own offset (`mirror_axis.py`); a ghost `format` refuses.
-    let mirror_active = ax_y.mirror_ghost("histogram", false)?.is_some();
+    // the primary's own offset (`mirror_axis.py`), relabeled by the ghost's own `format`.
+    let ghost = ax_y.mirror_ghost("histogram")?;
+    let mirror_active = ghost.is_some();
+    let measure_ghost = |label: &str| fonts.measure_shaped(label, ax_y.labels.font.family_or("sans-serif"), ax_y.labels.font.size_or(11.0));
     // `measure_axis_to_vl` bakes a measured `labelPadding` only for an
     // own-side `labelAlign` (`vl_field_maps.py:457-461`) on an axis whose
     // tick labels it can reconstruct: no `labelExpr` (an authored
@@ -551,26 +563,44 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         .zip(&row_series)
         .map(|(row, series)| (row_num(row, &r.x).expect("filtered to numeric x"), *series))
         .collect();
-    let bins = histogram_bins_by(&binned, series_count.max(1))?;
-    let bin_start = bins.first().expect("histogram_bins never returns empty").start;
-    let bin_stop = bins.last().expect("histogram_bins never returns empty").end;
-    if bin_stop <= bin_start {
+    let link = r.link.as_deref().map(|template| crate::href::DatumLink {
+        template,
+        open: r.link_open,
+        x: crate::href::LinkField::raw(&r.x),
+        y: None,
+        color: r.color.as_deref().map(|name| crate::href::LinkField {
+            name,
+            text: if stack_color.as_ref().is_some_and(|c| c.dated) { crate::href::LinkText::Date } else { crate::href::LinkText::Raw },
+        }),
+    });
+    let row_hrefs: Vec<Option<String>> = match &link {
+        Some(link) => binned_rows.iter().map(|row| link.href(row).map(Some)).collect::<Result<_, _>>()?,
+        None => Vec::new(),
+    };
+    let bins = histogram_bins_by(&binned, series_count.max(1), &row_hrefs)?;
+    // No numeric x leaves the x scale with a NaN domain: no bin, tick or label.
+    let (bin_start, bin_stop) =
+        bins.first().zip(bins.last()).map_or((f64::NAN, f64::NAN), |(first, last)| (first.start, last.end));
+    if !bins.is_empty() && bin_stop <= bin_start {
         return Err("histogram: x domain is degenerate (max ≤ min)".into());
     }
     // Vega-Lite's invalid filter can leave no mark at all, which production
-    // raises as a chart that painted nothing.
+    // raises as a chart that painted nothing. A plain chart with no bin has
+    // an empty mark group, which is no mark to measure; a color channel
+    // splits it into per-series groups that each hold an empty mark.
     let paints_a_mark = bins.iter().any(|bin| {
         bin.counts.iter().enumerate().any(|(i, &n)| n > 0 && stack_color.as_ref().is_none_or(|c| c.series[i].drawn))
     });
-    if !paints_a_mark {
+    if !paints_a_mark && (!bins.is_empty() || stack_color.is_some()) {
         return Err(payload.painted_no_marks());
     }
-    let max_count = bins.iter().map(Bin::count).max().unwrap_or(0) as f64;
-    if max_count <= 0.0 {
-        return Err("histogram: every bin is empty — nothing to draw".into());
-    }
+    // Every row with no numeric x aggregates into a group of its own, whatever its
+    // color: it draws no bar but still sets the count domain's top.
+    let null_x_group = payload.rows.iter().filter(|row| row_num(row, &r.x).is_none()).count();
+    let max_count = bins.iter().map(Bin::count).max().unwrap_or(0).max(null_x_group) as f64;
 
     let svg_w = payload.width;
+    let view_w = payload.view_width(crate::ViewScale::Continuous)?;
     let svg_h = payload.height;
     let pad = payload.padding.as_ref();
     let pad_l = pad.map(|p| p.left).unwrap_or(0.0);
@@ -583,15 +613,24 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     // ── X: a binned scale ticks every bin edge. Vega's `tickCount` lifts any
     // count to `scale.bins.length` (`vega-scale` `tickCount`), so the
     // authored or themed `ticks.count` thins nothing.
-    let x_fmt = ax_x
-        .labels
-        .spec()
-        .ok_or("histogram: axis_x.labels.format missing (theme required)")?;
-    let x_ticks_domain: Vec<f64> = bins.iter().map(|bin| bin.start).chain([bin_stop]).collect();
-    let x_tick_labels: Vec<String> = x_ticks_domain
-        .iter()
-        .map(|&tv| crate::number_locale::d3_format(x_fmt, tv).map_err(|e| format!("histogram x label format: {e}")))
-        .collect::<Result<_, _>>()?;
+    // With no bin there is no label, so the format a populated axis bakes may be absent.
+    let x_slot = ax_x.labels.format.as_ref();
+    let x_fmt = x_slot.map(|slot| slot.spec.as_str());
+    let x_ticks_domain: Vec<f64> =
+        if bins.is_empty() { Vec::new() } else { bins.iter().map(|bin| bin.start).chain([bin_stop]).collect() };
+    let x_tick_labels: Vec<String> = if x_ticks_domain.is_empty() {
+        Vec::new()
+    } else {
+        let slot = x_slot.ok_or("histogram: axis_x.labels.format missing (theme required)")?;
+        x_ticks_domain
+            .iter()
+            .enumerate()
+            .map(|(i, &tv)| {
+                format_y_label(tv, ax_x.ruler.as_ref(), ax_x.tick_label.as_ref(), Some(slot), i, x_ticks_domain.len())
+                    .map_err(|e| format!("histogram x label format: {e}"))
+            })
+            .collect::<Result<_, _>>()?
+    };
 
     // ── Y: never baked (count aggregate has no static column) — the
     // "unbaked, uncounted value axis" law (module doc), re-derived at the
@@ -743,7 +782,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         .filter(|s| !s.is_empty())
         .map_or_else(|| "#".to_string(), crate::common::collapse_title_newlines);
     let x_title_paint =
-        crate::common::wrapped_axis_title(&r.id, "x_label", &x_title_text, &ax_x.title.font, svg_w, fonts)?;
+        crate::common::wrapped_axis_title(&r.id, "x_label", &x_title_text, &ax_x.title.font, svg_w, 1.0, fonts)?;
     let y_title_paint = y_title_text.clone();
     let y_title_extra = crate::common::y_title_extra(&ax_y.title, &y_title_paint);
     let x_title_extra = crate::common::x_title_extra(&ax_x.title, &x_title_paint);
@@ -758,7 +797,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     // ── Fit ──────────────────────────────────────────────────────────────
     let mut fit_err: Option<String> = None;
     let m = vega_fit::fit_plot(
-        svg_w,
+        view_w,
         svg_h,
         (pad_l, pad_r, pad_t, pad_b),
         |pw, ph, b| {
@@ -777,6 +816,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                     .map(|lbl| fonts.measure_shaped(lbl, y_family, y_font_size))
                     .collect::<Result<_, _>>()?;
                 let y_gutter = y_ink_gutter(&y_label_ws, &y_ticks, ph);
+                let ghost_ws = ghost.as_ref().map_or(Ok(Vec::new()), |g| g.widths(&y_ticks, &y_label_ws, measure_ghost))?;
                 // The FREE edge (no value axis) still keeps a minimum
                 // breathing room past the plot (`AXIS_FREE_EDGE_PAD`, same
                 // small reservation `bar.rs`'s own axis-free edge uses) —
@@ -807,7 +847,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                 }
                 if mirror_active {
                     let x = if val_on_right { -(y_tick_eff + y_label_gap) } else { pw + y_tick_eff + y_label_gap };
-                    for (&lw, &tv) in y_label_ws.iter().zip(&y_ticks) {
+                    for (&lw, &tv) in ghost_ws.iter().zip(&y_ticks) {
                         let y = ph * (1.0 - tv / y_domain_max);
                         let ink = vega_fit::text_ink(x, y, lw.min(y_limit), y_font_size, ghost_align, ghost_baseline);
                         b.union(&if y_angle == 0.0 { ink } else { ink.rotate(y_angle, x, y) });
@@ -819,32 +859,32 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                     } else {
                         -(y_tick_eff + y_label_gap)
                     };
+                    let y = ph * (1.0 - tv / y_domain_max);
                     if y_angle == 0.0 {
-                        b.union(&vega_fit::text_ink(x, 0.0, lw.min(y_limit), y_font_size, y_align, "middle"));
+                        b.union(&vega_fit::text_ink(x, y, lw.min(y_limit), y_font_size, y_align, "middle"));
                     } else {
-                        let y = ph * (1.0 - tv / y_domain_max);
                         let ink = vega_fit::text_ink(x, y, lw.min(y_limit), y_font_size, y_align, y_baseline);
                         b.union(&ink.rotate(y_angle, x, y));
                     }
                 }
-                let row_y = ph + x_axis_offset + x_tick_eff + x_label_pad;
+                let row_y = x_edge.at(ph, x_axis_offset + x_tick_eff + x_label_pad);
                 let pass_x_scale = LinearScale::new(bin_start, bin_stop, 0.0, pw);
                 for (&tv, &lw) in x_ticks_domain.iter().zip(x_label_ws.iter()) {
                     let pos = pass_x_scale.position(tv);
-                    let align = if pos <= 1.0 {
-                        "left"
-                    } else if pos >= pw - 1.0 {
-                        "right"
-                    } else {
-                        "center"
-                    };
-                    b.union(&vega_fit::text_ink(pos, row_y, lw.min(x_limit), x_font_size, align, "top"));
+                    let align = crate::families::line::flush_align(pos, pw);
+                    b.union(&vega_fit::text_ink(pos, row_y, lw.min(x_limit), x_font_size, align, x_edge.baseline()));
                 }
-                let mut x_axis_y2 = b.y2.max(ph);
+                // The x axis's own vertical extent, plot rect included.
+                let (mut x_axis_y1, mut x_axis_y2) = match x_edge {
+                    crate::common::XEdge::Bottom => (0.0, b.y2.max(ph)),
+                    crate::common::XEdge::Top => (b.y1.min(0.0), ph),
+                };
                 if x_title_extra > 0.0 {
-                    let ext = (b.y2 - ph).max(0.0);
-                    x_axis_y2 = ph + ext + x_title_extra;
-                    b.union(&vega_fit::Bounds::new(pw / 2.0 - x_title_w / 2.0, 0.0, pw / 2.0 + x_title_w / 2.0, x_axis_y2));
+                    match x_edge {
+                        crate::common::XEdge::Bottom => x_axis_y2 = ph + (b.y2 - ph).max(0.0) + x_title_extra,
+                        crate::common::XEdge::Top => x_axis_y1 = -((-b.y1).max(0.0) + x_title_extra),
+                    }
+                    b.union(&vega_fit::Bounds::new(pw / 2.0 - x_title_w / 2.0, x_axis_y1, pw / 2.0 + x_title_w / 2.0, x_axis_y2));
                 }
                 // The legend anchors on Vega's `xBounds`/`yBounds`: the plot
                 // rect and its axes of that orientation.
@@ -861,10 +901,10 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                     let mut x_bounds = if val_on_right { (0.0, pw + gutter_reserve) } else { (-gutter_reserve, pw) };
                     if mirror_active {
                         let far = if val_on_right { -(y_tick_eff + y_label_gap) } else { pw + y_tick_eff + y_label_gap };
-                        let reach = y_label_ws.iter().fold(0.0_f64, |w, &lw| w.max(lw.min(y_limit)));
+                        let reach = ghost_ws.iter().fold(0.0_f64, |w, &lw| w.max(lw.min(y_limit)));
                         x_bounds = if val_on_right { (far - reach, x_bounds.1) } else { (x_bounds.0, far + reach) };
                     }
-                    let origin = legend::legend_origin(&r.legend.position, x_bounds, (0.0, x_axis_y2), (pw, ph), size);
+                    let origin = legend::legend_origin(&r.legend.position, x_bounds, (x_axis_y1, x_axis_y2), (pw, ph), size);
                     legend_xy.set(origin);
                     if let Some(reach) = legend::legend_fit_bounds(&r.legend.position, origin, size) {
                         b.union(&reach);
@@ -890,9 +930,6 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     if let Some(e) = fit_err {
         return Err(e.into());
     }
-    if m.plot_w <= 0.0 || m.plot_h <= 0.0 {
-        return Err(format!("histogram: plot box too small ({}×{})", m.plot_w, m.plot_h).into());
-    }
     let (plot_w, plot_h) = (m.plot_w, m.plot_h);
     let x_scale = LinearScale::new(bin_start, bin_stop, 0.0, plot_w);
     let y_ticks = unbaked_y_ticks(plot_h);
@@ -910,7 +947,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
 
     // ── Emission ─────────────────────────────────────────────────────────
     let mut svg = String::with_capacity(16384);
-    ChartFrame::new(svg_w, svg_h, (pad_l, pad_r, pad_t, pad_b), bg, crate::svg::num_full).open(&mut svg);
+    ChartFrame::new(view_w, svg_h, (pad_l, pad_r, pad_t, pad_b), bg, crate::svg::num_full).open(&mut svg);
     title.paint(&mut svg, m.title_pos, (pad_l + m.left, pad_t + m.top));
     let group_x = pad_l + m.left;
     let group_y = pad_t + m.top;
@@ -939,19 +976,41 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     // own label formats.
     let y_fmt_spec = ax_y.labels.spec();
     crate::contract::mark_group_open(&mut svg, "rect", "marks")?;
+    // The mirror's invisible rule layer carries each segment's label at its own count (the rules do not stack).
+    let mut ghosts: Vec<(String, f64, f64, String, Option<String>)> = Vec::new();
     for bin in bins.iter().filter(|b| b.count() > 0) {
         let (left, right) = bar_edges(x_scale.position(bin.start), x_scale.position(bin.end), band_width);
         let fmt = |spec: &str, v: f64| {
             crate::number_locale::d3_format(spec, v).map_err(|e| format!("histogram tooltip format: {e}"))
         };
-        let span = format!("{} \u{2013} {}", fmt(x_fmt, bin.start)?, fmt(x_fmt, bin.end)?);
+        let x_spec = x_fmt.ok_or("histogram: axis_x.labels.format missing (theme required)")?;
+        let span = format!("{} \u{2013} {}", fmt(x_spec, bin.start)?, fmt(x_spec, bin.end)?);
         // One rounded clip over the whole stack: it rounds the stack's top
         // corners, and a segment inside the curve follows it.
         let stack_h = plot_h - y_pos(bin.count() as f64);
         let corner = corner_r.min((right - left) / 2.0).min(stack_h / 2.0);
         let stack_top = y_pos(bin.count() as f64);
         let mut below = 0;
-        for (series_idx, &n) in bin.counts.iter().enumerate().filter(|(_, n)| **n > 0) {
+        // A link splits a series' rows into one segment per distinct link: a colored stack keeps
+        // them in the order they appear, a colorless one stacks its links in descending order.
+        let segments: Vec<(usize, usize, Option<&str>)> = bin
+            .counts
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| **n > 0)
+            .flat_map(|(series_idx, &n)| {
+                let groups = &bin.hrefs[series_idx];
+                if groups.is_empty() {
+                    return vec![(series_idx, n, None)];
+                }
+                let mut groups: Vec<(usize, Option<&str>)> = groups.iter().map(|(href, n)| (*n, Some(href.as_str()))).collect();
+                if stack_color.is_none() {
+                    groups.sort_by(|a, b| b.1.cmp(&a.1));
+                }
+                groups.into_iter().map(|(n, href)| (series_idx, n, href)).collect()
+            })
+            .collect();
+        for (series_idx, n, href) in segments {
             let bottom = y_pos(below as f64);
             below += n;
             let top = y_pos(below as f64);
@@ -974,10 +1033,33 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                 Some(series) => series.fill.as_deref(),
                 None => Some(r.style.single_series_fill.as_str()),
             };
+            let anchor = r.link_open.anchor(href);
+            svg.push_str(&crate::href::anchor_open(anchor));
             emit_stack_segment(&mut svg, (left, right - left), (top, bottom), (stack_top, corner), fill, &aria);
+            svg.push_str(crate::href::anchor_close(anchor));
+            if mirror_active {
+                let ink = match fill {
+                    Some(fill) if stack_color.is_some() => fill,
+                    _ => crate::common::required_ink(ax_y.labels.font.color.as_deref(), "histogram", "axis_y.labels.font.color")?,
+                };
+                ghosts.push((label, (x_scale.position(bin.start) + x_scale.position(bin.end)) / 2.0, y_pos(n as f64), ink.to_string(), href.map(str::to_string)));
+            }
         }
     }
     crate::contract::mark_group_close(&mut svg);
+    if mirror_active {
+        let rules: Vec<crate::contract::GhostRule> = ghosts
+            .iter()
+            .map(|(label, x, y, stroke, href)| crate::contract::GhostRule {
+                aria: Some(label),
+                x: *x,
+                y: *y,
+                stroke,
+                anchor: r.link_open.anchor(href.as_deref()),
+            })
+            .collect();
+        crate::contract::mirror_ghost_layer(&mut svg, &rules, crate::contract::GhostRun::Down(plot_h))?;
+    }
 
     let (lx, ly) = legend_xy.get();
     if let Some(lg) = &symbol_legend {
@@ -992,8 +1074,9 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     }
 
     // X ticks + labels.
-    let x_axis_drop = x_axis_offset + 0.5;
-    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::X, (0.5, plot_h + x_axis_drop))?;
+    // Vega's crisp half pixel shifts the axis group down on either edge.
+    let x_group_y = x_edge.at(plot_h, x_axis_offset) + 0.5;
+    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::X, (0.5, x_group_y))?;
     if x_ticks_visible {
         let tc = crate::common::required_ink(ax_x.ticks.color.as_deref(), "histogram", "axis_x.ticks.color")?;
         let tw = ax_x.ticks.width.unwrap_or(1.0);
@@ -1003,27 +1086,21 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                 svg,
                 "<line x1=\"{gx:.3}\" y1=\"{:.3}\" x2=\"{gx:.3}\" y2=\"{:.3}\" \
                  stroke=\"{tc}\" stroke-width=\"{tw}\"/>",
-                plot_h + x_axis_drop,
-                plot_h + x_axis_drop + x_tick_len, tc = xml_escape_attr(tc)
+                x_group_y,
+                x_group_y + x_edge.sign() * x_tick_len, tc = xml_escape_attr(tc)
             );
         }
     }
     let x_label_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
     let x_label_weight = ax_x.labels.font.weight_str();
     let x_label_y =
-        plot_h + x_axis_drop + x_tick_eff + x_label_pad + vega_fit::baseline_shift("top", x_font_size);
+        x_group_y + x_edge.sign() * (x_tick_eff + x_label_pad) + vega_fit::baseline_shift(x_edge.baseline(), x_font_size);
     for (&tv, lbl) in x_ticks_domain.iter().zip(x_tick_labels.iter()) {
         let pos = x_scale.position(tv);
         // labelOverlap: allow (module doc) — every tick always draws; the
         // edges still flush-anchor (VL's default labelFlush on a
         // continuous scale).
-        let anchor = if pos <= 1.0 {
-            "start"
-        } else if pos >= plot_w - 1.0 {
-            "end"
-        } else {
-            "middle"
-        };
+        let anchor = crate::families::line::flush_anchor_px(pos, plot_w);
         // Vega's x-axis group crisp-shifts by +0.5 in both directions
         // (`tickRound`, `docs/laws-shared.md#tickround`); `x_label_y` above
         // already carries it on the constant axis-perpendicular coordinate,
@@ -1039,7 +1116,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         );
     }
 
-    emit_axis_title_bottom(
+    crate::common::emit_axis_title_flat(
         &mut svg,
         &x_title_paint,
         &ax_x.title,
@@ -1047,6 +1124,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         x_label_y,
         x_font_size,
         Some(crate::contract::LabelKey::X),
+        x_edge,
     );
     crate::contract::axis_group_close(&mut svg);
 
@@ -1145,7 +1223,8 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             }
         }
         let ghost_x = if val_on_right { -(y_tick_eff + y_label_gap) + 0.5 } else { plot_w + y_tick_eff + y_label_gap + 0.5 };
-        for (&tv, lbl) in y_ticks.iter().zip(y_labels.iter()) {
+        let ghost_texts = ghost.as_ref().map_or(Ok(Vec::new()), |g| g.texts(&y_ticks, &y_labels))?;
+        for (&tv, lbl) in y_ticks.iter().zip(ghost_texts.iter()) {
             paint_y_label(&mut svg, ghost_x, (ghost_align, ghost_baseline), tv, lbl);
         }
         crate::contract::axis_group_close(&mut svg);
@@ -1221,6 +1300,9 @@ pub struct Bin {
     pub end: f64,
     /// Rows per series, in series order (one entry without a color channel).
     pub counts: Vec<usize>,
+    /// Each series' rows grouped by their link, in the order the groups first
+    /// appear; empty without a `link`.
+    pub hrefs: Vec<Vec<(String, usize)>>,
 }
 
 impl Bin {
@@ -1241,19 +1323,19 @@ impl Bin {
 /// board-authored value to pass, so this takes no `maxbins` parameter.
 pub fn histogram_bins(values: &[f64]) -> Result<Vec<Bin>, String> {
     let rows: Vec<(f64, Option<usize>)> = values.iter().map(|&v| (v, Some(0))).collect();
-    histogram_bins_by(&rows, 1)
+    histogram_bins_by(&rows, 1, &[])
 }
 
 /// [`histogram_bins`] over `(value, series index)` rows: each bin counts its
 /// rows per series. A row with no series (a color Vega-Lite's invalid filter
 /// drops) still sets the extent the bins span, but is counted nowhere.
-pub fn histogram_bins_by(values: &[(f64, Option<usize>)], series: usize) -> Result<Vec<Bin>, String> {
-    let finite: Vec<(f64, Option<usize>)> = values.iter().copied().filter(|(v, _)| v.is_finite()).collect();
+pub fn histogram_bins_by(values: &[(f64, Option<usize>)], series: usize, hrefs: &[Option<String>]) -> Result<Vec<Bin>, String> {
+    let finite: Vec<(usize, (f64, Option<usize>))> = values.iter().copied().enumerate().filter(|(_, (v, _))| v.is_finite()).collect();
     if finite.is_empty() {
-        return Err("histogram: no numeric x values to bin".into());
+        return Ok(Vec::new());
     }
-    let min = finite.iter().map(|(v, _)| *v).fold(f64::INFINITY, f64::min);
-    let max = finite.iter().map(|(v, _)| *v).fold(f64::NEG_INFINITY, f64::max);
+    let min = finite.iter().map(|(_, (v, _))| *v).fold(f64::INFINITY, f64::min);
+    let max = finite.iter().map(|(_, (v, _))| *v).fold(f64::NEG_INFINITY, f64::max);
     let (raw_start, raw_stop, step) = vega_bin_step(min, max, 10.0);
     // `_bins`'s own stop re-nice: `start + ceil((bins.stop - start) / step) * step`
     // — belt-and-braces against the float error `vega_bin_step`'s own nice
@@ -1269,9 +1351,10 @@ pub fn histogram_bins_by(values: &[(f64, Option<usize>)], series: usize) -> Resu
             start: start + step * i as f64,
             end: start + step * (i as f64 + 1.0),
             counts: vec![0; series],
+            hrefs: vec![Vec::new(); series],
         })
         .collect();
-    for &(v, series_idx) in &finite {
+    for &(row, (v, series_idx)) in &finite {
         let Some(series_idx) = series_idx else { continue };
         // Vega's own clamp: outside [start, stop] would be ±Infinity (no
         // row is dropped from the domain the bin: true spec computed this
@@ -1280,6 +1363,13 @@ pub fn histogram_bins_by(values: &[(f64, Option<usize>)], series: usize) -> Resu
         let idx = (EPSILON + (clamped - start) / step).floor();
         let idx = idx.clamp(0.0, (n_bins - 1) as f64) as usize;
         bins[idx].counts[series_idx] += 1;
+        if let Some(href) = hrefs.get(row).and_then(Option::as_deref) {
+            let groups = &mut bins[idx].hrefs[series_idx];
+            match groups.iter_mut().find(|(group, _)| group == href) {
+                Some((_, n)) => *n += 1,
+                None => groups.push((href.to_string(), 1)),
+            }
+        }
     }
     Ok(bins)
 }
@@ -1347,7 +1437,7 @@ mod tests {
 
     #[test]
     fn empty_input_refuses() {
-        assert!(histogram_bins(&[]).is_err());
+        assert!(histogram_bins(&[]).unwrap().is_empty());
     }
 
     #[test]
@@ -1549,8 +1639,8 @@ mod tests {
         let base = svg.find("Bucket: B").expect("series B segment");
         let top = svg.find("Bucket: A").expect("series A segment");
         assert!(base < top, "the most frequent series is the base: {svg}");
-        assert!(svg.contains("height=\"270.00\" fill=\"#3164a3\""), "B: slot 0, square, y 90..360: {svg}");
-        assert!(svg.contains("V 2.00 A 2.00,2.00") && svg.contains("fill=\"#779bc9\""), "A: slot 1, rounded top: {svg}");
+        assert!(svg.contains("height=\"270.0000\" fill=\"#3164a3\""), "B: slot 0, square, y 90..360: {svg}");
+        assert!(svg.contains("V 2.0000 A 2.0000,2.0000") && svg.contains("fill=\"#779bc9\""), "A: slot 1, rounded top: {svg}");
         assert_eq!(svg.matches("aria-roledescription=\"bar\"").count(), 3, "{svg}");
     }
 
@@ -1576,11 +1666,12 @@ mod tests {
     }
 
     #[test]
-    fn a_stack_without_a_palette_refuses_and_a_short_top_segment_keeps_its_rounding() {
+    fn a_stack_without_a_palette_takes_vegas_default_and_a_short_top_segment_keeps_its_rounding() {
         let rows = serde_json::json!([{"amount": 1.0, "bucket": "A"}, {"amount": 2.0, "bucket": "B"}]);
         let mut no_palette = minimal_valid_json(Some("bucket"), None, None);
         no_palette["palette"] = serde_json::json!([]);
-        assert!(render_err(no_palette, rows).contains("a non-empty palette"));
+        let svg = render_ok(no_palette, rows);
+        assert!(svg.contains(r##"fill="#4c78a8""##) && svg.contains(r##"fill="#f58518""##), "{svg}");
         // 200 rows of A under one of B: B's top segment is under a pixel tall.
         let mut tall: Vec<serde_json::Value> = (0..200).map(|_| serde_json::json!({"amount": 1.0, "bucket": "A"})).collect();
         tall.push(serde_json::json!({"amount": 1.0, "bucket": "B"}));
@@ -1661,10 +1752,11 @@ mod tests {
         assert_eq!(fills(&bad), fills(&null), "the same marks paint as for a null cell");
     }
 
+    /// Vega paints an empty color range black.
     #[test]
-    fn an_empty_gradient_palette_refuses_instead_of_panicking() {
-        let err = render_err(gradient_json(serde_json::json!([])), scored_rows());
-        assert!(err.contains("gradient palette has no colors"), "{err}");
+    fn an_empty_gradient_palette_paints_black() {
+        let svg = render_ok(gradient_json(serde_json::json!([])), scored_rows());
+        assert!(svg.contains("fill=\"rgb(0, 0, 0)\""), "{svg}");
     }
 
     /// A centered legend taller than its plot keeps production's own coded

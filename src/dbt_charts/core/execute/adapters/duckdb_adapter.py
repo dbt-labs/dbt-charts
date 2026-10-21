@@ -219,8 +219,12 @@ _DUCKDB_MISSING_RELATION = re.compile(
 
 
 # Binder rejections of how a UNION or ORDER BY is assembled, not of a name in
-# it. GROUP BY is ERR-BINDER-GROUP-BY, checked first.
-_BINDER_SHAPE_RE = re.compile(r"Set operations can only apply|ORDER term out of range")
+# it. GROUP BY is ERR-BINDER-GROUP-BY, checked first. "Could not ORDER BY
+# column" counts only for an expression (a bare name there is a typo).
+_BINDER_SHAPE_RE = re.compile(
+    r"Set operations can only apply|ORDER term out of range"
+    r'|Could not ORDER BY column "\w*[^\w"][^"]*"'
+)
 
 
 def duckdb_error_code(exc: Exception) -> ErrorCode:

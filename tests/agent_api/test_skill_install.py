@@ -33,11 +33,10 @@ def install_root(tmp_path: Path) -> Path:
     return root
 
 
-def test_skills_for_file_install_excludes_patterns() -> None:
+def test_skills_for_file_install_lists_workflow_skills() -> None:
     names = {s.name for s in skills_for_file_install()}
-    assert "board-build" in names
+    assert "chart" in names
     assert "mcp-setup" in names
-    assert "kpi-row" not in names
     assert all(s.kind == "workflow" for s in skills_for_file_install())
 
 
@@ -45,8 +44,8 @@ def test_install_renders_cli_surface(install_root: Path) -> None:
     target = install_root / ".agents/skills"
     result = install_skills(target_dir=target, project_root=install_root)
 
-    assert "dct-board-build" in result.installed
-    skill_md = target / "dct-board-build" / "SKILL.md"
+    assert "dct-chart" in result.installed
+    skill_md = target / "dct-chart" / "SKILL.md"
     assert skill_md.exists()
     text = skill_md.read_text(encoding="utf-8")
     assert "{{ s_" not in text
@@ -54,16 +53,15 @@ def test_install_renders_cli_surface(install_root: Path) -> None:
 
 
 def test_install_renders_sibling_names_dct_prefixed(install_root: Path) -> None:
-    """board-build's frontmatter description names board-design and
-    troubleshooting as siblings via the `{{ s_skill_name_* }}` macro. The
-    file-installed copy must render the on-disk, dct-prefixed name a local
-    agent will actually find next to it, not the bare registry name."""
+    """custom-chart-build's frontmatter description names chart as a sibling
+    via the `{{ s_skill_name_* }}` macro. The file-installed copy must render
+    the on-disk, dct-prefixed name a local agent will actually find next to it,
+    not the bare registry name."""
     target = install_root / ".agents/skills"
     install_skills(target_dir=target, project_root=install_root)
 
-    text = (target / "dct-board-build" / "SKILL.md").read_text(encoding="utf-8")
-    assert "dct-board-design" in text
-    assert "dct-troubleshooting" in text
+    text = (target / "dct-custom-chart-build" / "SKILL.md").read_text(encoding="utf-8")
+    assert "dct-chart" in text
 
 
 def test_install_keeps_folded_description_block_scalar(install_root: Path) -> None:
@@ -73,7 +71,7 @@ def test_install_keeps_folded_description_block_scalar(install_root: Path) -> No
     target = install_root / ".agents/skills"
     install_skills(target_dir=target, project_root=install_root)
 
-    text = (target / "dct-board-build" / "SKILL.md").read_text(encoding="utf-8")
+    text = (target / "dct-chart" / "SKILL.md").read_text(encoding="utf-8")
     frontmatter = text.split("---", 2)[1]
     assert "description: >" in frontmatter
     assert "''" not in frontmatter
@@ -90,7 +88,7 @@ def test_installed_skill_md_carries_the_literal_ownership_marker(
     target = install_root / ".agents/skills"
     install_skills(target_dir=target, project_root=install_root)
 
-    text = (target / "dct-board-build" / "SKILL.md").read_text(encoding="utf-8")
+    text = (target / "dct-chart" / "SKILL.md").read_text(encoding="utf-8")
     assert "author: fivetran" in text
 
 
@@ -102,7 +100,7 @@ def test_install_removes_pre_namespace_bare_skill_dirs(install_root: Path) -> No
     stale = PRE_NAMESPACE_SKILL_NAMES[0]
     (target / stale).mkdir(parents=True)
     (target / stale / "SKILL.md").write_text(
-        "---\nname: kpi-row\nmetadata:\n  author: fivetran\n---\nstale\n"
+        "---\nname: analyst-runbook\nmetadata:\n  author: fivetran\n---\nstale\n"
     )
 
     result = install_skills(target_dir=target, project_root=install_root)
@@ -117,14 +115,14 @@ def test_install_keeps_a_user_authored_dir_that_shares_a_pre_namespace_name(
     target = install_root / ".agents/skills"
     stale = PRE_NAMESPACE_SKILL_NAMES[0]
     (target / stale).mkdir(parents=True)
-    (target / stale / "SKILL.md").write_text("---\nname: kpi-row\n---\nmine\n")
+    (target / stale / "SKILL.md").write_text("---\nname: analyst-runbook\n---\nmine\n")
 
     result = install_skills(target_dir=target, project_root=install_root)
 
     assert result.retired_removed == []
     assert (
         target / stale / "SKILL.md"
-    ).read_text() == "---\nname: kpi-row\n---\nmine\n"
+    ).read_text() == "---\nname: analyst-runbook\n---\nmine\n"
 
 
 def test_install_removes_stale_wheel_authored_dct_dir(install_root: Path) -> None:
@@ -183,7 +181,7 @@ def test_install_check_reports_retired_removed_without_deleting(
     stale = PRE_NAMESPACE_SKILL_NAMES[0]
     (target / stale).mkdir(parents=True)
     (target / stale / "SKILL.md").write_text(
-        "---\nname: kpi-row\nmetadata:\n  author: fivetran\n---\nstale\n"
+        "---\nname: analyst-runbook\nmetadata:\n  author: fivetran\n---\nstale\n"
     )
 
     result = install_skills(target_dir=target, project_root=install_root, check=True)
@@ -207,18 +205,34 @@ def test_install_keeps_a_non_wheel_authored_dct_dir(install_root: Path) -> None:
     assert (target / "dct-someone-elses-thing").exists()
 
 
-def test_install_does_not_sweep_mcp_setup_or_troubleshooting_as_stale(
-    install_root: Path,
-) -> None:
-    """dct-mcp-setup and dct-troubleshooting are current install names — the
-    sweep must not treat them as leftover."""
+def test_install_does_not_sweep_mcp_setup_as_stale(install_root: Path) -> None:
+    """dct-mcp-setup is a current install name — the sweep must not treat it
+    as leftover."""
     target = install_root / ".agents/skills"
     result = install_skills(target_dir=target, project_root=install_root)
 
     assert "dct-mcp-setup" not in result.retired_removed
-    assert "dct-troubleshooting" not in result.retired_removed
     assert (target / "dct-mcp-setup" / "SKILL.md").exists()
-    assert (target / "dct-troubleshooting" / "SKILL.md").exists()
+
+
+def test_install_sweeps_a_retired_wheel_skill_installed_by_an_earlier_release(
+    install_root: Path,
+) -> None:
+    """A skill the wheel stopped shipping (`board-build`, `troubleshooting`) is
+    removed from a project that installed it, not left to contradict `chart`."""
+    target = install_root / ".agents/skills"
+    for retired in ("dct-board-build", "dct-troubleshooting"):
+        (target / retired).mkdir(parents=True)
+        (target / retired / "SKILL.md").write_text(
+            f"---\nname: {retired}\nmetadata:\n  author: fivetran\n---\nstale\n"
+        )
+
+    result = install_skills(target_dir=target, project_root=install_root)
+
+    assert {"dct-board-build", "dct-troubleshooting"} <= set(result.retired_removed)
+    assert not (target / "dct-board-build").exists()
+    assert not (target / "dct-troubleshooting").exists()
+    assert (target / "dct-chart" / "SKILL.md").exists()
 
 
 def test_install_preserves_user_authored_skill(install_root: Path) -> None:
@@ -251,11 +265,11 @@ def test_install_writes_prefixed_directory_and_frontmatter_name(
     target = install_root / ".agents/skills"
     result = install_skills(target_dir=target, project_root=install_root)
 
-    assert "dct-board-build" in result.installed
-    assert "board-build" not in result.installed
-    skill_md = target / "dct-board-build" / "SKILL.md"
+    assert "dct-chart" in result.installed
+    assert "chart" not in result.installed
+    skill_md = target / "dct-chart" / "SKILL.md"
     assert skill_md.is_file()
-    assert "name: dct-board-build" in skill_md.read_text(encoding="utf-8")
+    assert "name: dct-chart" in skill_md.read_text(encoding="utf-8")
 
 
 def test_install_check_reports_same_names_as_real_install(install_root: Path) -> None:
@@ -273,11 +287,11 @@ def test_install_overwrites_existing_with_no_flag(install_root: Path) -> None:
     `--force` flag: there is none."""
     target = install_root / ".agents/skills"
     install_skills(target_dir=target, project_root=install_root)
-    skill_md = target / "dct-board-build" / "SKILL.md"
+    skill_md = target / "dct-chart" / "SKILL.md"
     skill_md.write_text("corrupt\n")
 
     result = install_skills(target_dir=target, project_root=install_root)
-    assert "dct-board-build" in result.installed
+    assert "dct-chart" in result.installed
     assert "{{ s_" not in skill_md.read_text(encoding="utf-8")
 
 
@@ -289,7 +303,7 @@ def test_detect_skill_targets_agents_and_claude(install_root: Path) -> None:
 
 def test_detect_legacy_skill_dirs(install_root: Path) -> None:
     wheel_names = all_skill_names()
-    legacy_dir = install_root / ".cursor/skills" / "board-build"
+    legacy_dir = install_root / ".cursor/skills" / "chart"
     legacy_dir.mkdir(parents=True)
     (legacy_dir / "SKILL.md").write_text("old\n")
 

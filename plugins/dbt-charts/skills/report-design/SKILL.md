@@ -5,8 +5,7 @@ description: Design principles for dbt charts narrative reports — data-driven 
   reports, or when the user says 'write a report', 'analyze this data', 'create an
   analysis', 'narrative report'. Covers narrative structure, chart selection for reports,
   content writing, and the executive-summary-first pattern. Do NOT use for at-a-glance
-  monitoring dashboards (use board-design). Do NOT use for the build-test-iterate
-  workflow (use board-build).
+  monitoring dashboards or for the build-test-iterate workflow (use chart).
 metadata:
   author: fivetran
 ---
@@ -14,7 +13,7 @@ metadata:
 
 Reports are narrative-driven documents that tell a story with data and answer specific questions. They are NOT dashboards.
 
-> Implementing in YAML? Switch to `get_skill('board-build')` for the build-test-iterate workflow.
+> Implementing in YAML? Switch to `get_skill('chart')` for the build-test-iterate workflow.
 
 ## Report vs. Dashboard
 
@@ -26,7 +25,7 @@ Reports are narrative-driven documents that tell a story with data and answer sp
 | **Structure** | Executive summary → analysis → conclusions | KPIs → trends → breakdowns |
 | **Interaction** | Read in minutes | Scan in seconds |
 
-If the user needs at-a-glance monitoring, use the `board-design` skill instead.
+If the user needs at-a-glance monitoring, use the `chart` skill instead.
 
 ## Core Principles
 

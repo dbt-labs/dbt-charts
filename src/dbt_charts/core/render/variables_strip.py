@@ -28,6 +28,10 @@ import json
 from typing import TYPE_CHECKING, Literal
 
 from dbt_charts.core.compile.models.style.theme import font_weight_as_css
+from dbt_charts.core.compile.template.daterange import (
+    DATERANGE_PRESET_GROUPS,
+    resolve_daterange_preset_iso,
+)
 from dbt_charts.core.font_measure import centered_baseline_offset
 from dbt_charts.core.render.controls import controls_are_interactive, controls_language
 from dbt_charts.core.render.svg_utils import (
@@ -300,6 +304,19 @@ def _draw_control(
             "weekStart": active_week_start(),
         }
         time_locale = f' data-dbt-time-locale="{escape_attr(json.dumps(names))}"'
+    # Each preset with the window it resolves to today: the runtime does no
+    # date math.
+    presets = ""
+    if box.input == "daterange" and controls_are_interactive():
+        today = datetime.date.today()
+        groups = [
+            [
+                {"id": preset, "range": resolve_daterange_preset_iso(preset, today)}
+                for preset, _ in group
+            ]
+            for group in DATERANGE_PRESET_GROUPS
+        ]
+        presets = f' data-dbt-presets="{escape_attr(json.dumps(groups))}"'
     # The chrome draws the committed value; the options a host opens travel
     # with it, so a live board needs no second round trip for something the
     # render already resolved. Only a live board: the full domain of a filter is
@@ -312,7 +329,7 @@ def _draw_control(
     )
     return (
         f'<g data-dbt-variable="{escape_attr(box.name)}"{handle} '
-        f'data-dbt-input="{escape_attr(box.input)}"{checked}{disabled}{value_attr}{bounds}{unset}{time_locale}{options} '
+        f'data-dbt-input="{escape_attr(box.input)}"{checked}{disabled}{value_attr}{bounds}{unset}{time_locale}{presets}{options} '
         f'data-dbt-x="{px(x)}" data-dbt-y="{px(box.y)}" '
         f'data-dbt-width="{px(box.width)}" data-dbt-height="{px(box.height)}">'
         f"{''.join(parts)}</g>"
@@ -336,6 +353,8 @@ def _committed_value(control: ResolvedControl) -> str:
     current = control.current
     if current is None:
         return ""
+    if control.preset is not None:
+        return control.preset
     if isinstance(current, (list, tuple)):
         return json.dumps(
             [

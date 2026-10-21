@@ -8,6 +8,7 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import get_config, reset_config
+from dbt_charts.core.compile.resolve.style.palette import color
 from dbt_charts.core.execute.adapters import build_adapter_registry
 
 from .._svg_normalize import normalize_same_run_svg
@@ -53,25 +54,20 @@ class TestTonalFoundationDefaults:
         svg = render(result.board, executor, format="svg").output
         assert "#cc1122" in svg
 
-    def test_dbt_gray_scale_has_expected_slots(self):
-        grays = get_config().dbt_grays
-        assert "canvas" in grays
-        assert "ink" in grays
-        # creams uses the same D-025 vocabulary
-        assert "canvas" in get_config().dbt_creams
-        assert "ink" in get_config().dbt_creams
+    def test_scaffold_endpoints_are_white_and_black(self):
+        for scaffold in ("dbt-grays", "dbt-creams"):
+            assert color(f"{scaffold}.white") == color(f"{scaffold}.0") == "#FFFFFF"
+            assert color(f"{scaffold}.black") == color(f"{scaffold}.100") == "#000000"
 
     def test_editorial_cream_theme_neutrals_match_dbt_creams_scale(self):
         from dbt_charts.core.compile.config import get_theme_style
         from dbt_charts.core.compile.resolve.style.board import resolve_style
 
-        config = get_config()
-        creams = config.dbt_creams
         theme = get_theme_style("paper")
-        assert theme.background == creams["canvas"]
-        assert theme.font.color == creams["ink"]
-        assert theme.variables.font.color == creams["muted"]
-        assert theme.border.color == creams["border"]
+        assert theme.background == color("dbt-creams.1")
+        assert theme.font.color == color("dbt-creams.11")
+        assert theme.variables.font.color == color("dbt-creams.8")
+        assert theme.border.color == color("dbt-creams.4")
         # Title color inherits from font.color (InheritSlot) — titles, headings,
         # and prose share one ink. Resolve the cascade to see the inherited
         # value; the raw theme's slot is unset (None) until resolved.

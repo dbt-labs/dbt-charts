@@ -2,7 +2,7 @@
 
 Deterministic — reads the rendered SKILL.md body and asserts the guidance that
 stops the four onboarding failures seen in the wild. No LLM is invoked; this is
-the same pattern as `test_review_skills.py`.
+the same pattern as `test_gen_skill_pages.py`.
 
 The skill is CLI-only (`surfaces: [cli]`), so every read passes `surface="cli"`.
 """
@@ -61,12 +61,9 @@ def test_owns_repo_folder_decision(body: str) -> None:
 
 
 def test_step3_gates_on_authored_boards(body: str) -> None:
-    """Step 3 must key the board-build handoff off user-authored boards, not the
-    mere presence of `charts/` — else the `dct init` starter board gets connected
-    and rendered as the user's own."""
-    lowered = body.lower()
-    assert "starter board" in lowered
-    assert "authored" in lowered
+    """Step 3 must key the chart handoff off user-authored boards, not the
+    mere presence of `charts/`."""
+    assert "authored" in body.lower()
 
 
 def test_no_destructive_verb(body: str) -> None:
@@ -422,3 +419,13 @@ def test_sync_still_reads_unsynced_briefly(body: str) -> None:
     step8 = body[body.index("## Step 8") :]
     assert "is queued, not skipped" in step8
     assert "Re-run `status` after a few seconds" in step8
+
+
+def test_connection_create_binds_sources_in_the_same_call(body: str) -> None:
+    """Between a bare create and a later `source map`, the boards sit
+    unrendered; the skill binds in the create and leaves Step 6 the leftovers."""
+    step5 = body[body.index("## Step 5") : body.index("## Step 6")]
+    assert "--map-all-sources" in step5
+    assert "--map-source <name>" in step5
+    step6 = body[body.index("## Step 6") : body.index("## Step 7")]
+    assert "dct cloud source map <source> <connection>" in step6

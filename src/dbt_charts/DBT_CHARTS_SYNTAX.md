@@ -2,7 +2,7 @@
 
 Authoring reference for dbt charts board YAML. Every option in this file is enforced by the compiler (`extra="forbid"` is set on every model — unknown keys are schema errors).
 
-Browse with `dct docs` (run with no args for the topic catalog, `dct docs <topic>` for one section, `dct docs all` for the whole file).
+The same reference is published at https://docs.dbtcharts.com/reference/yaml-reference/.
 
 ## Getting Started
 
@@ -76,11 +76,11 @@ dct serve
 
 Opens a live-preview server. Edit the YAML and reload the browser to see changes.
 
-**See also:** `dct docs cheatsheet` (minimal examples), `dct docs queries`, `dct docs charts`, `dct docs variables`.
+**See also:** the Cheatsheet section (minimal examples), the Queries section, the Charts section, the Variables section.
 
 ## Cheatsheet
 
-One screen of essentials. Each topic below has a dedicated H2 (`dct docs board`, `dct docs queries`, …) for full coverage.
+One screen of essentials. Each topic below has a dedicated H2 (Board, Queries, …) for full coverage.
 
 ### Minimal board
 
@@ -116,7 +116,6 @@ rows:
 ```yaml
 variables:
   region:
-    input: select
     options:
       static: [US, EU, APAC]
 
@@ -141,8 +140,7 @@ queries:
 
 ```yaml
 variables:
-  region:
-    input: select                  # See `dct docs variables` for all 14 input types
+  region:   # input is inferred (select); see Variables for all 14 input types
     options: { static: [US, EU, APAC] }
     default: US
 ```
@@ -155,7 +153,7 @@ Reference variables inside queries with bare `{{ region }}` — no `variables.` 
 charts:
   revenue_trend:
     query: revenue                 # Named query reference
-    type: line                     # See `dct docs charts` for all 16 authorable chart types
+    type: line                     # See the Charts section for all 16 authorable chart types
     x: month
     y: total
     color: segment
@@ -176,9 +174,9 @@ Pick exactly one of:
 - `grid: { columns: 24, items: [...] }` — CSS-grid placement
 - `tabs: { items: [{title: ..., rows: [...]}] }` — tabbed navigation
 
-**See also:** `dct docs board` (full top-level reference),
-`dct docs queries`, `dct docs charts`, `dct docs variables`, `dct docs layout`,
-`dct docs errors` (common error codes), `dct docs all` (whole reference).
+**See also:** the Board section (full top-level reference),
+the Queries section, the Charts section, the Variables section, the Layout section,
+the Errors section (common error codes).
 
 ## Board
 
@@ -200,7 +198,7 @@ theme: neon                    # Theme name — sugar for `extends: neon`; inher
 
 # Nesting / layout primitives (mostly for nested boards inside rows/cols)
 id: my_board                    # Auto-generated from filename if omitted
-style: { padding: 16, background: dbt-grays.canvas }
+style: { padding: 16, background: dbt-grays.1 }
 width: 400                     # Pixels or "50%" when nested
 height: 300
 
@@ -243,12 +241,12 @@ Top-level fields:
 | `chart_focus` | string | Render only this chart (with its variables) |
 | `details` | string \| object | Collapsible section: a bare summary string, or `{summary, expanded_title, expanded}` |
 | `id` | string | Explicit board ID (auto-generated from filename) |
-| `style` | object | Board-style block (see [Board style](#board-style) in `dct docs styling`) |
+| `style` | object | Board-style block (see [Board style](#board-style) in the Styling section) |
 | `width` | string \| int | Width when nested (`"50%"` or pixels) |
 | `height` | string \| int | Height when nested |
 | `visible` | bool \| string \| object | Render condition when nested as a layout item (see [Layout visibility](#layout-visibility-visible)) |
 | `theme` | string | Theme name (e.g. `clarity`, `paper`, `neon`) — sugar for `extends:`; inherited by nested boards |
-| `extends` | string \| list[string] | Board name(s)/path(s) or a built-in theme this board inherits from (see [Inheritance](#inheritance-extends-and-theme) in `dct docs styling`) |
+| `extends` | string \| list[string] | Board name(s)/path(s) or a built-in theme this board inherits from (see [Inheritance](#inheritance-extends-and-theme) in the Styling section) |
 | `links.auto` | bool | Auto-link table rows to their `/data/…/detail/` pages (default `false`). An explicit chart `link:` always wins; `link: false` on a chart suppresses its automatic link. |
 | `links.open` | `page` \| `modal` \| `preview` \| `new_tab` | How a link opens when it sets no `open:` of its own (default `page`). Precedence: the link's own `open:`, then `links.open`, then `page`. A `?variable=` link, a table cell's filter link, an implied email/url or KPI link, and a custom chart's per-row link always stay `page`. |
 
@@ -323,9 +321,9 @@ There are two ways to override a data/inspector route for a given path:
 
 Both approaches work.  A board file wins without a redirect round-trip; an alias lets a board live anywhere and still capture a system-view URL.
 
-**See also:** `dct docs queries` (data layer), `dct docs charts` (display layer),
-`dct docs layout` (composition), `dct docs styling` (themes and `style:`),
-`dct docs cheatsheet` (one-page essentials).
+**See also:** the Queries section (data layer), the Charts section (display layer),
+the Layout section (composition), the Styling section (themes and `style:`),
+the Cheatsheet section (one-page essentials).
 
 ## Styling
 
@@ -373,22 +371,22 @@ error; use one or the other.
 style:
   padding: "16px"
   margin: "0 0 12px 0"
-  background: dbt-grays.canvas
+  background: dbt-grays.1
   font:
-    color: dbt-grays.ink
+    color: dbt-grays.11
   gap: 12
   border:
     width: 1
-    color: dbt-grays.border
+    color: dbt-grays.4
     radius: 8
   text:
-    align: left
+    align: center
     column:
       max_number: 2
       divider:
         visible: true
-        width: 1
-        color: dbt-grays.border
+        width: 2
+        color: dbt-grays.4
 ```
 
 CSS-only keys like `border-radius`, `border-left`, `margin-top` are not board-style fields and are rejected.
@@ -603,7 +601,7 @@ Queries are Jinja-rendered before execution. Reference variables as bare names �
 
 ```yaml
 variables:
-  region: { input: select, options: { static: [US, EU, APAC] } }
+  region: { options: { static: [US, EU, APAC] } }
   period: { input: daterange }
 
 queries:
@@ -663,9 +661,9 @@ The bare-string shorthand works whenever the value contains a SQL keyword (`SELE
 
 Inline queries are not reusable. Prefer named queries when more than one chart consumes the data.
 
-**See also:** `dct docs variables` (use `{{ var }}` in SQL),
-`dct docs charts` (charts reference queries by name),
-`dct docs errors` (query-execution error codes).
+**See also:** the Variables section (use `{{ var }}` in SQL),
+the Charts section (charts reference queries by name),
+the Errors section (query-execution error codes).
 
 ## Charts
 
@@ -796,7 +794,7 @@ All chart types accept the channels and style fields below — but each type rej
 | `sort` | object | `{by, order}` — categorical sort. Horizontal bar charts default to value-descending order when omitted. |
 | `link` | string \| false | Click-through URL template for drill-down links; `false` suppresses the chart's automatic link when the board sets `links.auto: true` (table column links are unaffected) |
 | `multiples` | object | Partition into small multiples: `{rows, columns, scale}` — cartesian charts (`bar`/`line`/`area`/`scatter`/`heatmap`) only (see [Small multiples](#small-multiples-multiples)) |
-| `warnings_ignore` | list[string] | Render-warning codes to suppress for this chart only (e.g. `[WARN-AXIS-TITLE-TRUNCATED]`; unknown codes are rejected — list codes with `dct docs warnings`) |
+| `warnings_ignore` | list[string] | Render-warning codes to suppress for this chart only (e.g. `[WARN-AXIS-TITLE-TRUNCATED]`; unknown codes are rejected — every code is listed at https://docs.dbtcharts.com/reference/warnings/) |
 | `layers` | list | Overlay layers on cartesian charts (`bar`/`line`/`area`/`scatter`) — see [Combo charts](#combo-charts-barlinearea-with-layers) |
 | `conditional_formatting` | object | Discrete style rules by column — `table`/`kpi` only (see [Conditional formatting](#conditional-formatting)) |
 | `support_table` | list | Attached mini-table on bar/line/area charts, above the plot by default (including those with `layers:`) — see [Composition](#composition) |
@@ -1053,15 +1051,15 @@ style:
       header_overflow: wrap-two          # clip | truncate | wrap-two (default) | wrap
       header_link: "/columns/amount"
       link: "/orders?id={{ order_id }}"
-      background: dbt-grays.canvas
-      font: { color: dbt-grays.ink, weight: "600" }
+      background: dbt-grays.1
+      font: { color: dbt-grays.11, weight: "600" }
       scale:
         background:
           palette: dbt-seq-blue                # palette name, or an explicit stop list
           domain: data                   # currently only "data"
           min: 0
           max: 1000000
-          null_color: dbt-grays.surface-subtle
+          null_color: dbt-grays.2
           hinge: auto                    # number | "auto"
           arm_mode: asymmetric           # asymmetric | symmetric
       spark:
@@ -1102,8 +1100,8 @@ latitude: lat
 longitude: lng
 basemap:                # Optional styled background layer (point_map + bubble_map)
   source: us-states     # named boundary source
-  fill: dbt-grays.surface-subtle
-  stroke: dbt-grays.border
+  fill: dbt-grays.2
+  stroke: dbt-grays.4
 
 type: bubble_map
 latitude: lat
@@ -1237,7 +1235,7 @@ charts:
     multiples:
       columns: region        # one panel per region, side by side
       # rows: product        # and/or: one panel row per product (grid when both set)
-      scale: shared          # shared (default; panels comparable) | independent
+      # scale: independent   # default shared keeps panels comparable
 ```
 
 Panels share one measure scale by default (`scale: shared`) so values are
@@ -1283,7 +1281,7 @@ charts:
             glyph: "!"
             glyph_color: warning.solid
           - default: true                  # must be LAST in the list when present
-            font: { color: dbt-grays.ink }
+            font: { color: dbt-grays.11 }
 ```
 
 Predicates (exactly one per rule): `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `between` (`[low, high]`), `in` (non-empty list), `is_null` (bool), `default` (`true` only — terminal fallback).
@@ -1425,10 +1423,10 @@ dbt charts composes charts in three ways:
 
 Non-goals (not part of the authored chart surface): Vega-Lite `encoding`, `mark`, `spec`, `config`, `transform`, `params`, `resolve`, `hconcat`, `vconcat`, `concat`, `repeat`. These keys are rejected at compile time. Use the typed channels (`x`, `y`, `color`, …) and `style:` instead; use the layout primitives for visual composition.
 
-**See also:** `dct docs queries` (charts reference queries by name),
-`dct docs variables` (use `{{ var }}` in chart queries),
-`dct docs layout` (compose charts on the page),
-`dct docs cheatsheet` (one-page essentials).
+**See also:** the Queries section (charts reference queries by name),
+the Variables section (use `{{ var }}` in chart queries),
+the Layout section (compose charts on the page),
+the Cheatsheet section (one-page essentials).
 
 ### Category colors (board-wide)
 
@@ -1447,7 +1445,7 @@ style:
       category:
         values:
           Electronics: category[1]      # a series slot — re-skins with the theme
-          Accessories: dbt-grays.muted  # chrome — text, grid, borders
+          Accessories: dbt-grays.8  # chrome — text, grid, borders
           Tools: negative.solid         # good / bad / attention
 ```
 
@@ -1469,7 +1467,7 @@ Colors are palette tokens, not hex — the theme resolves a token, so a board re
 | A series slot | `category[1]`, `category.blue`, `category[2].dark` (any categorical palette derives dark/light/pale/deep live, no companion file) |
 | The theme's plain single-series fill (the color a lone-series bar/line gets with no `color:` channel) | `single_series[1]` |
 | Good / bad / attention | `positive.solid`, `negative.solid`, `warning.solid`, `info.solid` — also `.bg`, `.subtle`, `.border`, `.text` |
-| Chrome — text, grid, borders | `dbt-grays.ink`, `dbt-grays.muted`, `dbt-grays.border`, `dbt-grays.canvas` |
+| Chrome — text, grid, borders | `dbt-grays.11`, `dbt-grays.8`, `dbt-grays.4`, `dbt-grays.1` |
 | A ramp for a continuous scale | `dbt-seq-blue`, `dbt-div-blue-red`; `:N` stops and `_r` reversed — `dbt-seq-blue:5_r` |
 | A pin that must survive a theme switch | `vivid-10.1`, `dbt-seq-blue.3` |
 
@@ -1486,13 +1484,11 @@ style:
 
 ## Variables
 
-Variables are the interactive filter layer. Each variable has an `input:` widget type and optional defaults / options.
+Variables are the interactive filter layer. Each variable has an `input:` widget type, inferred from its options or default unless you name one, plus optional defaults / options.
 
 ```yaml
 variables:
   region:
-    input: select
-    label: "Region"
     notes: "Restrict every query to one region."
     options:
       static: [US, EU, APAC]
@@ -1514,7 +1510,7 @@ Input types (14 total):
 | `range` | Two-handle numeric slider (returns `[low, high]`) |
 | `date` | Single date picker (also `datepicker`) |
 | `datepicker` | Single date picker |
-| `daterange` | Date range picker (returns `[start, end]`) |
+| `daterange` | Date range picker (returns `[start, end]`; takes dates or a preset like `last_90_days`) |
 | `checkbox` | Boolean toggle |
 | `radio` | Radio group |
 
@@ -1567,7 +1563,7 @@ variables:
   closed: { input: checkbox, enabled: false }
 
   # Jinja expression against current variable values
-  q4_only: { input: select, options: { static: [Q4] }, enabled: "{{ year >= 2024 }}" }
+  q4_only: { options: { static: [Q4] }, enabled: "{{ year >= 2024 }}" }
 
   # Query-backed (must return exactly 1 row with the named boolean column)
   territory:
@@ -1609,9 +1605,9 @@ Common mistakes (the validator rejects these — listed here so authors don't hi
 - `options: [a, b]` (bare list) → use `options.static: [a, b]`.
 - Using a `variables.` namespace prefix inside Jinja → drop it and reference the bare variable name (e.g. `{{ region }}`).
 
-**See also:** `dct docs queries` (variables are injected into SQL),
-`dct docs board` (`variables:` is a top-level board field),
-`dct docs cheatsheet` (minimal variable example).
+**See also:** the Queries section (variables are injected into SQL),
+the Board section (`variables:` is a top-level board field),
+the Cheatsheet section (minimal variable example).
 
 ## Layout
 
@@ -1680,7 +1676,6 @@ rows:
     details:                       # Collapsible
       summary: "Click to expand"
       expanded_title: "Hide"
-      expanded: false
     cols: [rev_chart, units_chart]  # Use one of: cols, rows, grid, or tabs
 ```
 
@@ -1716,7 +1711,6 @@ Accepted forms:
 ```yaml
 variables:
   show_details:
-    input: checkbox
     default: false
 
 rows:
@@ -1760,9 +1754,9 @@ rows:
       - kpi_2
 ```
 
-**See also:** `dct docs charts` (chart references inside layouts),
-`dct docs board` (`rows`/`cols`/`grid`/`tabs` are top-level board fields),
-`dct docs cheatsheet` (minimal layout examples).
+**See also:** the Charts section (chart references inside layouts),
+the Board section (`rows`/`cols`/`grid`/`tabs` are top-level board fields),
+the Cheatsheet section (minimal layout examples).
 
 ## Errors
 
@@ -1785,7 +1779,6 @@ Active domains (see `dbt_charts/core/diagnostics/codes_*.py` for the authoritati
 
 The registry is being filled out incrementally — some compile-time and variable-resolution errors still raise as plain `DbtChartsError` without a structured code.
 
-Run `dct docs errors` to list every registered code with a one-line summary, straight from `dbt_charts.core.diagnostics.REGISTRY`. Run `dct docs error-reference` for the full reference — message template and docs pointer included. (`dct docs warnings` / `dct docs warning-reference` are the equivalents for `WARN-*` codes.) Run `dct validate <board>` to validate a board and see structured error details.
+Every registered code is listed at https://docs.dbtcharts.com/reference/errors/ (errors) and https://docs.dbtcharts.com/reference/warnings/ (warnings), with its message template and fix. Run `dct validate <board>` to validate a board and see structured error details.
 
-**See also:** `dct docs queries`, `dct docs charts`, `dct docs variables` (where most errors originate),
-`dct docs all` (whole reference for context).
+**See also:** the Queries section, the Charts section, the Variables section (where most errors originate).

@@ -319,7 +319,7 @@ def test_scale_style_log_type_with_positive_domain_ok() -> None:
     assert scale.domain == (1, 1_000)
 
 
-@pytest.mark.parametrize("base", [0.0, -2.0, 1.0])
+@pytest.mark.parametrize("base", [0.0, -2.0, 0.5, 1.0])
 def test_scale_style_log_base_outside_valid_range_raises(base: float) -> None:
     with pytest.raises(ValidationError, match="log.base"):
         ScaleContinuousStyle(type="log", log=ScaleLogStyle(base=base))

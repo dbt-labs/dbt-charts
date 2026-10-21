@@ -54,6 +54,13 @@ CASES: list[tuple[str, dict[str, Any], str]] = [
     ("ERR_SUPPORT_TABLE_INDEPENDENT_X", {}, "'independent'"),
     ("ERR_SUPPORT_TABLE_X_FIELD_DISAGREE", {}, "disagree on field"),
     ("ERR_SUPPORT_TABLE_NO_Y_ENCODING", {}, "category y-encoding"),
+    ("ERR_HEATMAP_COLOR_NO_VALUES", {"field": "x"}, "color field 'x' holds no numeric"),
+    ("ERR_LAYER_AREA_SPLIT_HORIZONTAL_BASE", {"chart_id": "c"}, "Chart 'c'"),
+    (
+        "ERR_SUPPORT_TABLE_FORMAT_NOT_NUMERIC",
+        {"source": "grp", "format_spec": ",d", "value": "store"},
+        "non-numeric value 'store'",
+    ),
 ]
 
 
@@ -117,3 +124,91 @@ def test_layered_chart_without_a_color_scale_raises_its_registered_code() -> Non
     with pytest.raises(ChartDataError) as exc:
         _layer_color_scale(spec, "c")
     assert _code(exc) == "ERR-LAYERED-NO-COLOR-SCALE"
+
+
+@pytest.mark.parametrize("raw", ["store", True])
+def test_a_formatted_support_table_source_holding_a_non_number_raises(
+    raw: object,
+) -> None:
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTable,
+    )
+    from dbt_charts.core.render.chart.support_table_attachment import _entry_values
+
+    table = ResolvedSupportTable.model_validate(
+        {"entries": [{"source": "grp", "format": {"spec": ",d"}}]}
+    )
+    data = [{"cat": "a", "grp": 1}, {"cat": "b", "grp": raw}]
+    with pytest.raises(ChartDataError) as exc:
+        _entry_values(table, data, "cat", None)
+    assert _code(exc) == "ERR-SUPPORT-TABLE-FORMAT-NOT-NUMERIC"
+    assert exc.value.fields == {"source": "grp", "format_spec": ",d", "value": raw}
+
+
+def test_an_unformatted_support_table_source_keeps_its_text_cells() -> None:
+    from dbt_charts.core.compile.models.chart.resolved import (
+        ResolvedSupportTable,
+    )
+    from dbt_charts.core.render.chart.support_table_attachment import _entry_values
+
+    table = ResolvedSupportTable.model_validate({"entries": [{"source": "grp"}]})
+    data = [{"cat": "a", "grp": "n/a"}, {"cat": "b", "grp": "12"}]
+    assert _entry_values(table, data, "cat", None) == [[12.0]]
+
+
+def test_a_heatmap_color_without_a_number_raises_instead_of_painting_nan() -> None:
+    from dbt_charts.core.compile.config import get_theme_style
+    from dbt_charts.core.compile.models.chart.normalized import HeatmapChart
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
+    from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
+
+    board_style, context = resolve_style_and_context(get_theme_style())
+    chart = HeatmapChart(
+        id="h",
+        query=SqlQuery(sql="SELECT 1", source="test"),
+        query_name="q",
+        type="heatmap",
+        x="grp",
+        y="grp",
+        color="x",
+    )
+    data = [{"x": None, "grp": "a"}, {"x": None, "grp": "b"}]
+    resolved = resolve(chart, data, chart_style_context=context)
+    with pytest.raises(ChartDataError) as exc:
+        render_resolved_chart(resolved, data, board_style)
+    assert _code(exc) == "ERR-HEATMAP-COLOR-NO-VALUES"
+    assert exc.value.fields == {"field": "x"}
+
+
+@pytest.mark.parametrize("stack", ["none", "zero"])
+def test_an_area_layer_over_a_split_horizontal_bar_raises_instead_of_painting_garbage(
+    stack: str,
+) -> None:
+    from dbt_charts.core.compile.models.chart.normalized import BarChart
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
+    from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+
+    chart = BarChart(
+        id="c",
+        type="bar",
+        x="region",
+        y="revenue",
+        color="channel",
+        layers=[{"type": "area", "y": "cost"}],
+        query=SqlQuery(sql="SELECT 1", source="test"),
+        query_name="q",
+        style=BarChartStylePatch.model_validate(
+            {"orientation": "horizontal", "stack": stack}
+        ),
+    )
+    data = [
+        {"region": "North", "channel": "store", "revenue": 100, "cost": 40},
+        {"region": "North", "channel": "web", "revenue": 60, "cost": 30},
+    ]
+    with pytest.raises(ChartDataError) as exc:
+        generate_vega_lite_spec(chart, data, width=400)
+    assert _code(exc) == "ERR-LAYER-AREA-SPLIT-HORIZONTAL-BASE"
+    assert exc.value.fields == {"chart_id": "c"}

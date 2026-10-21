@@ -1,0 +1,3 @@
+kind: Fixes
+body: Layers over a bar between two date columns plot on its date axis, and a layer colored by a numeric column draws its own sequential scale. A layer on a date axis that holds no dates, mixes pinned and unpinned sides, or grows from a baseline, and a layer colored by an all-empty column, now raise a clear error.
+time: 2026-10-19T10:22:34.488707-07:00

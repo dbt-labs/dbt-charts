@@ -36,6 +36,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BINDER_UNKNOWN_RELATION,
     ERR_MUTATING_SQL,
     ERR_UNPARSEABLE_SQL,
+    ERR_WAREHOUSE_BYTES_CAP_EXCEEDED,
     ERR_WAREHOUSE_CONNECTION,
     ERR_WAREHOUSE_RUNTIME,
 )
@@ -562,4 +563,36 @@ class TestClassifyWarehouseErrorBySqlstate:
         result = classify_warehouse_error(
             "lakecompute SQL execution", error, "lakecompute"
         )
+        assert result.error.code is ERR_WAREHOUSE_RUNTIME
+
+
+class TestClassifyWarehouseErrorBigQueryBytesCap:
+    """BigQuery refuses a job estimated to scan more than the source's
+    ``maximum_bytes_billed`` before it runs. The agent needs the cap and the
+    narrowing advice, not the raw byte counts."""
+
+    _MESSAGE = (
+        "400 Query exceeded limit for bytes billed: 20000000000. "
+        "25400000000 or higher required."
+    )
+
+    def test_bytes_cap_rejection_names_the_cap_and_the_narrowing_advice(
+        self,
+    ) -> None:
+        result = classify_warehouse_error(
+            "dbt SQL execution", Exception(self._MESSAGE), "bigquery"
+        )
+        assert result.error is not None
+        assert result.error.code is ERR_WAREHOUSE_BYTES_CAP_EXCEEDED
+        assert result.error.detail == self._MESSAGE
+        text = str(result.error)
+        assert "20 GB" in text
+        assert "25.4 GB" in text
+        assert "LIMIT" in text
+
+    def test_the_cap_message_is_only_matched_under_bigquery(self) -> None:
+        result = classify_warehouse_error(
+            "dbt SQL execution", Exception(self._MESSAGE), "snowflake"
+        )
+        assert result.error is not None
         assert result.error.code is ERR_WAREHOUSE_RUNTIME

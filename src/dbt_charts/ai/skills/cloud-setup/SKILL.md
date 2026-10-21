@@ -8,7 +8,7 @@ description: >
   and render — driven by `dct cloud status` until it reports done. Use when
   the user says 'set me up with dbt charts cloud', 'deploy my dashboards to
   cloud', 'connect this repo to dbtcharts.com', or 'get my boards live'. Do
-  NOT use for authoring boards (use {{ s_skill_name_build }}) or for deleting/removing an
+  NOT use for authoring boards (use {{ s_skill_name_chart }}) or for deleting/removing an
   org, project, or connection — this skill never runs a destructive verb.
 metadata:
   author: fivetran
@@ -94,7 +94,7 @@ authenticate — don't silently scaffold one:
   `charts/` directory) — use it as-is.
 - **In a git repo but no project yet** — ask whether to make *this* repo the
   home, or to start a **new repo** for it. `dct init` scaffolds the project
-  (`dbt_charts.yml` + a starter `charts/`) beside the nearest project marker (a
+  (`dbt_charts.yml` + a `charts/` with no boards) beside the nearest project marker (a
   `dbt_project.yml` counts), so where you run it matters. Cloud tracks the repo
   **plus the subfolder that holds the project**, so whatever folder init lands
   in is the one to connect in Step 3 — keep them the same. Do whichever the
@@ -269,11 +269,9 @@ session.
 ## Step 4: Boards, if none exist yet
 
 This skill connects a repo and a warehouse; it doesn't author boards. If the
-repo has no boards the user actually authored — an empty `charts/`, or only
-the starter board `dct init` scaffolds — hand off to the {{ s_skill_name_build }} skill
+repo has no boards the user actually authored, hand off to the {{ s_skill_name_chart }} skill
 first: inspect the warehouse schema, author board YAML, validate and render
-locally, commit, push, then publish the push (Step 8). Don't render the
-starter board as if it were the user's own board.
+locally, commit, push, then publish the push (Step 8).
 
 **Show the work.** As soon as one board renders locally, serve it:
 
@@ -342,20 +340,37 @@ Later verbs address the connection by its slug. Pass `--name` to choose it, or
 let it default to the field that names the warehouse (BigQuery's `project`,
 otherwise the `database`) and read the slug off the success line.
 
-## Step 6: Map sources
+Bind the project's sources in the same call. Every board declares a
+`source:` name; `--project <slug> --map-all-sources` points each warehouse
+source the project has not mapped yet at the new connection, and
+`--map-source <name>` (repeatable) names them one at a time instead. A file
+source (`type: csv`, `json`, `parquet`) needs no mapping; it resolves straight
+from the repo. A name that is not one of the project's unmapped sources is
+refused before anything is saved.
 
-Every board declares a `source:` name. Point each one at the connection you
-just created — a file source (`type: csv`, `json`, `parquet`) needs no
-mapping; it resolves straight from the repo with no connection step.
+```bash
+dct cloud connection create --type bigquery --keyfile key.json \
+    --set project=acme-gcp --set dataset=analytics \
+    --project analytics --map-all-sources
+```
+
+## Step 6: Map what is still unmapped
+
+A create that bound its sources leaves nothing here: go to Step 7 once
+`dct cloud status` shows no unmapped sources. Map by hand,
+with `dct cloud source map <source> <connection>`, only what is left: a
+source declared after the connection was made, or one that belongs to a
+second connection.
 
 Cloud never reads a warehouse source's credential fields (`password:`,
 `keyfile:`, an `env_var()` in either) from the committed `dbt_charts.yml`;
 those are for local rendering. On Cloud the mapped connection supplies the
 credential, so an unresolvable `env_var()` in the file is not an error there.
 
-Mapping re-renders the project's boards on its own. The first render fired at
-sync, before anything was mapped, so its cards read `ERR-SOURCE-NOT-FOUND ·
-Available sources: none configured`; the mapping makes those renders stale
+Binding a source, in the create or with `source map`, re-renders the
+project's boards on its own. The first render fired at sync, before anything
+was mapped, so its cards read `ERR-SOURCE-NOT-FOUND · Available sources: none
+configured`; the binding makes those renders stale
 and Cloud sweeps them the way it does after a push. Give it a minute, then
 read `dct cloud status` again rather than editing a board to provoke a render.
 

@@ -1,0 +1,5 @@
+kind: Features
+body: Board `text:` can list project boards and folders with `glob_boards` and `glob_folders` to build navigation.
+time: 2026-10-19T15:51:47.558415-07:00
+custom:
+    DbtChartsIssue: "38"

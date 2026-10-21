@@ -1,0 +1,3 @@
+kind: Fixes
+body: A query imported from another board file now takes that file's meta.yml source when it sets none of its own.
+time: 2026-10-20T11:39:41.010407-07:00

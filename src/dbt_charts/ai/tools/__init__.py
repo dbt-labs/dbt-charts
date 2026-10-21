@@ -86,6 +86,7 @@ def _handle_render(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, A
         as_link=parsed.as_link,
         server_port=ctx.server_port,
         max_rows_per_query=MODEL_MAX_ROWS_PER_QUERY,
+        restated_check=True,
     ).model_dump(mode="json", exclude_none=True)
 
 
@@ -135,17 +136,6 @@ def _handle_search(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, A
         limit=_search.DEFAULT_SEARCH_LIMIT if parsed.limit is None else parsed.limit,
         cursor=parsed.cursor,
     ).model_dump(mode="json", exclude_none=True)
-
-
-def _handle_docs(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, Any]:
-    from dbt_charts.agent_api.docs import DocsArgs, docs as _docs
-
-    parsed = DocsArgs.model_validate(args)
-    return _docs(
-        topic=parsed.topic,
-        search=parsed.search,
-        limit=parsed.limit,
-    ).model_dump(mode="json")
 
 
 def _handle_describe_board(
@@ -276,7 +266,6 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "render_board": _handle_render,
     "execute_sql": _handle_query,
     "search_files": _handle_search,
-    "docs": _handle_docs,
     "describe_board": _handle_describe_board,
     "read_file": _handle_read_file,
     "write_file": _handle_write_file,

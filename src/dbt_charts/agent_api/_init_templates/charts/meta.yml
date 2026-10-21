@@ -1,19 +1,2 @@
-# Directory defaults for every board under charts/
-#
-# meta.yml is a *partial board* — it uses the exact same authoring surface as a
-# board file (source, theme, queries, charts, style, variables), but without a
-# layout. Its keys are deep-merged as defaults beneath every board in this
-# directory and its subdirectories; each board overrides what it sets.
-#
-# A meta.yml deeper in the tree layers on top of the ones above it, and a board
-# always wins over meta. Nested style keys merge (a board setting style.frame.margin
-# keeps a meta-supplied style.frame.max_width).
-#
-# Uncomment and edit to set project-wide defaults:
-#
-# theme: paper            # apply a built-in or custom theme to every dashboard
-# source: my_warehouse    # default data source for boards that don't name one
-#
-# style:
-#   frame:
-#     max_width: 1000
+# meta.yml: defaults for every board in this folder and below, e.g. `theme: paper` or `source: my_warehouse`.
+# Same keys as a board, minus the layout; a board's own keys win.

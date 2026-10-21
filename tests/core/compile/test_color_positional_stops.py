@@ -30,14 +30,16 @@ def test_every_stop_resolves_to_its_palette_entry(name: str):
 def test_index_past_the_end_raises(name: str):
     """Out-of-range is an error, not a clamp or a wrap."""
     n = len(palette(name))
-    with pytest.raises(UnknownColorError, match="out of range"):
+    with pytest.raises(
+        UnknownColorError, match=rf"no stop {n + 1}; valid stops: 1-{n}"
+    ):
         color(f"{name}.{n + 1}")
 
 
 @pytest.mark.parametrize("name", STOP_LIST_PALETTES)
 def test_zero_and_negative_are_rejected(name: str):
-    """Tokens are 1-indexed; 0 is a mistake worth naming."""
-    with pytest.raises(UnknownColorError, match="1-indexed"):
+    """A data palette's stops start at 1; 0 is a mistake worth naming."""
+    with pytest.raises(UnknownColorError, match="no stop 0; valid stops: 1-"):
         color(f"{name}.0")
 
 
@@ -53,7 +55,7 @@ class TestScaffoldAddressesBothWays:
     answer both forms. The slot's type picks which — names are never integers."""
 
     def test_alias_name_resolves(self):
-        assert color("dbt-grays.ink").startswith("#")
+        assert color("dbt-grays.black") == "#000000"
 
     def test_integer_slot_resolves_positionally(self):
         stops = palette("dbt-grays")

@@ -1,0 +1,3 @@
+kind: Fixes
+body: A log scale over zero or negative data now fails with a clear error.
+time: 2026-10-20T12:28:01.323475-07:00

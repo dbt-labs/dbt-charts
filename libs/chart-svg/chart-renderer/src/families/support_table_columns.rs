@@ -14,6 +14,7 @@
 //! width only feeds the view bounds Vega's autosize reads
 //! (`docs/laws-shared.md#font-measurement-policy`).
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use serde_json::Value;
@@ -21,8 +22,8 @@ use serde_json::Value;
 use crate::common::{measure_family_stand_in, slug_to_display, TAB_FONT};
 use crate::diagnostic::Diagnostic;
 use crate::families::support_table_strip::{
-    build_cells, divider_line, entry_lines, label_font_resolved, row_height, validate_against_data,
-    CellAria, CellValue, ComposedCell, DecimalPad, EntryLines, SupportTableConfig, SupportTableStyle,
+    build_cells, divider_line, entry_lines, label_font_resolved, link_cells, row_height, validate_against_data,
+    CellAria, ComposedCell, DecimalPad, EntryLines, SupportTableConfig, SupportTableStyle,
 };
 use crate::svg::{py_float_str, vega_escape_attr, xml_escape, xml_escape_attr};
 use crate::text::FontBook;
@@ -138,21 +139,6 @@ fn cell_measure_family(style: &SupportTableStyle) -> &str {
     }
 }
 
-/// Python's `str(float)` for the values a column reserves width for when the
-/// entry authors no format (`_entry_cell_widths` measures `str(num)` of a
-/// float there, though the cell paints the bare JSON number). Outside the
-/// range where Python spells a float positionally the exponent form differs,
-/// so that refuses.
-fn unformatted_width_text(v: f64) -> Result<String, String> {
-    if v != 0.0 && !(1e-4..1e16).contains(&v.abs()) {
-        return Err(format!(
-            "support_table: an unformatted cell of {v} would need Python's exponent \
-             spelling to reserve its column width — give the entry a `format:`"
-        ));
-    }
-    Ok(py_float_str(v))
-}
-
 /// Build the block: one [`Column`] per visual column, widths per
 /// `_entry_column_widths`. `centers[i]` is category `domain[i]`'s band center
 /// along the category axis. `anchored` and `series_order` carry the same
@@ -178,6 +164,7 @@ pub fn build_block(
     series_order: &[String],
     series_ink: Option<&[String]>,
     sub_offsets: Option<&[f64]>,
+    links: Option<&HashMap<(String, String), String>>,
 ) -> Result<ColumnBlock, Diagnostic> {
     if domain.len() != centers.len() {
         return Err("support_table: domain/centers length mismatch".into());
@@ -230,13 +217,6 @@ pub fn build_block(
             vec![label_of(&entry.label, &entry.source)?]
         };
 
-        if lines.iter().flatten().any(|v| matches!(v, Some(CellValue::Text(_)))) {
-            return Err(format!(
-                "support_table: column {:?} holds a text cell — a column reserves its width \
-                 from the numbers it paints (`_entry_cell_widths` measures floats)",
-                headers[0]
-            ).into());
-        }
         // The widest cell any of the entry's columns could paint. A column has
         // no free gutter for an anchor's affix to overhang, so every cell is
         // measured as if it were the anchor (`conservative=True`).
@@ -253,8 +233,9 @@ pub fn build_block(
                 }
             }
             _ => {
+                // `_entry_cell_widths` measures `str(float)` though the cell paints the bare JSON number.
                 for &v in nums.iter().filter(|v| v.is_finite()) {
-                    value_w = value_w.max(fonts.measure(&unformatted_width_text(v)?, cell_measure, font_size)?);
+                    value_w = value_w.max(fonts.measure(&py_float_str(v), cell_measure, font_size)?);
                 }
             }
         }
@@ -277,10 +258,11 @@ pub fn build_block(
                 let series_centers: Vec<f64> = centers.iter().map(|c| c + offsets[si]).collect();
                 let (series_cells, _bare_w) =
                     build_cells(&lines[si], &series_centers, &numerals, spec, fonts, cell_paint, font_size, false)?;
-                for (ci, cell) in series_cells.into_iter().enumerate() {
+                for (ci, mut cell) in series_cells.into_iter().enumerate() {
                     if lines[si][ci].is_none() {
                         continue;
                     }
+                    link_cells(std::slice::from_mut(&mut cell), entry, &domain[ci..=ci], links);
                     cell_series.push((series.clone(), series_ink.map(|ink| ink[si].clone()), ci));
                     cells.push(cell);
                 }
@@ -300,8 +282,9 @@ pub fn build_block(
             continue;
         }
         for (i, header) in headers.into_iter().enumerate() {
-            let (cells, _bare_w) =
+            let (mut cells, _bare_w) =
                 build_cells(&lines[i], centers, &numerals, spec, fonts, cell_paint, font_size, false)?;
+            link_cells(&mut cells, entry, domain, links);
             let header_shaped = fonts.measure_shaped(&header, label_family, label_size)?;
             columns.push(Column {
                 header,
@@ -407,7 +390,10 @@ impl ColumnBlock {
         plot_h: f64,
         origin_x: f64,
         origin_y: f64,
+        link_open: Option<crate::href::LinkOpen>,
     ) -> Result<(), String> {
+        // Headers and rules read no datum: on a linked chart each carries an undefined link.
+        let undefined = link_open.and_then(|open| open.anchor(Some(crate::href::UNDEFINED_HREF)));
         let font_size = self.font_size;
         let cell_ink = self.cell_ink.as_str();
         let cell_weight = style.font.weight_str();
@@ -421,6 +407,7 @@ impl ColumnBlock {
         let last = self.columns.len() - 1;
         for (i, (col, edge)) in self.columns.iter().zip(self.right_edges(plot_w)).enumerate() {
             let x = origin_x + edge;
+            out.push_str(&crate::href::anchor_open(undefined));
             let _ = write!(
                 out,
                 "<text x=\"{x:.2}\" y=\"{header_y:.2}\" text-anchor=\"end\" font-family=\"{}\" \
@@ -430,12 +417,15 @@ impl ColumnBlock {
                 xml_escape_attr(label_ink),
                 xml_escape(&col.header),
             );
+            out.push_str(crate::href::anchor_close(undefined));
             crate::contract::mark_group_open(out, "text", "strip")?;
             for (k, cell) in col.cells.iter().enumerate() {
                 let ink = col.cell_series.get(k).and_then(|(_, ink, _)| ink.as_deref()).or(col.ink.as_deref()).unwrap_or(cell_ink);
                 let cell_x = origin_x + col.cell_x(edge, cell);
                 let y = origin_y + cell.x + cell_shift;
+                let anchor = link_open.and_then(|open| open.anchor(cell.href.as_deref()));
                 for _ in 0..col.copies {
+                    out.push_str(&crate::href::anchor_open(anchor));
                     let _ = write!(
                         out,
                         "<text{} x=\"{cell_x:.2}\" y=\"{y:.2}\" text-anchor=\"end\" font-family=\"{}\" \
@@ -446,6 +436,7 @@ impl ColumnBlock {
                         xml_escape_attr(ink),
                         xml_escape(&cell.text),
                     );
+                    out.push_str(crate::href::anchor_close(anchor));
                 }
             }
             crate::contract::mark_group_close(out);
@@ -454,7 +445,9 @@ impl ColumnBlock {
                 // so the line clears the left column's glyphs by one padding
                 // and still short of the next column's leftmost glyph.
                 let rule_x = x + style.row.padding.horizontal;
+                out.push_str(&crate::href::anchor_open(undefined));
                 out.push_str(&divider_line(rule_x, origin_y, rule_x, origin_y + plot_h, &style.row.divider));
+                out.push_str(crate::href::anchor_close(undefined));
             }
         }
         Ok(())
@@ -531,8 +524,7 @@ mod tests {
             anchored,
             None,
             &[],
-            None, None,
-        )
+            None, None, None)
     }
 
     /// `_column_block_plot_gutter`: the column's own trailing padding plus the
@@ -630,7 +622,7 @@ mod tests {
         assert_eq!(col.hung_w, pct_w);
 
         let mut out = String::new();
-        block.render(&mut out, &style(), 400.0, 300.0, 100.0, 50.0).unwrap();
+        block.render(&mut out, &style(), 400.0, 300.0, 100.0, 50.0, None).unwrap();
         let edge = 100.0 + block.right_edges(400.0)[0];
         assert!((text_x(&out, "500%") - edge).abs() < 0.005, "anchor at the header edge");
         assert!((text_x(&out, "6000") - (edge - pct_w)).abs() < 0.005, "bare digits one suffix in");
@@ -721,8 +713,7 @@ mod tests {
         let ink: Vec<String> = vec!["#111111".into(), "#222222".into()];
         let block = build_block("c",
             &config, &rows, "cat", &dom, &[10.0, 30.0], &fonts, &style(), Side::Left, 6.0, false,
-            Some("series"), &series, Some(&ink), None,
-        )
+            Some("series"), &series, Some(&ink), None, None)
         .unwrap();
         assert_eq!(block.columns.len(), 2);
         assert_eq!(block.columns[0].header, "Online");
@@ -781,22 +772,28 @@ mod tests {
         assert_eq!(block.columns[0].cells[1].text, "30");
     }
 
-    /// `_entry_cell_widths` measures floats: a bare text source has no width
-    /// to reserve.
+    /// `_entry_cell_widths` measures floats: a bare text source paints its
+    /// strings verbatim and reserves no cell width (the header still does),
+    /// while a numeric-looking string counts as the float Python parses.
     #[test]
-    fn a_text_cell_refuses_by_name() {
+    fn a_text_cell_paints_verbatim_and_reserves_width_only_for_a_parsed_number() {
         let config = parse_config(&serde_json::json!({"entries": [{"source": "note"}]}), "bar").unwrap();
-        let rows: Vec<serde_json::Map<String, Value>> = [("A", "n/a"), ("B", "ok")]
-            .iter()
-            .map(|(c, n)| serde_json::from_value(serde_json::json!({"cat": c, "note": n})).unwrap())
-            .collect();
-        let dom: Vec<String> = vec!["A".into(), "B".into()];
-        let err = build_block("c",
-            &config, &rows, "cat", &dom, &[10.0, 30.0], &test_fonts(), &style(), Side::Left, 6.0,
-            false, None, &[], None, None,
-        )
-        .unwrap_err();
-        assert!(err.contains("text cell"), "{err}");
+        let block = |notes: [&str; 2]| {
+            let rows: Vec<serde_json::Map<String, Value>> = [("A", notes[0]), ("B", notes[1])]
+                .iter()
+                .map(|(c, n)| serde_json::from_value(serde_json::json!({"cat": c, "note": n})).unwrap())
+                .collect();
+            let dom: Vec<String> = vec!["A".into(), "B".into()];
+            build_block("c",
+                &config, &rows, "cat", &dom, &[10.0, 30.0], &test_fonts(), &style(), Side::Left, 6.0,
+                false, None, &[], None, None, None)
+            .unwrap()
+        };
+        let text = block(["n/a", "ok"]);
+        assert_eq!(text.columns[0].cells[0].text, "n/a");
+        assert_eq!(text.columns[0].cells[1].text, "ok");
+        let parsed = block([" 1e20 ", "ok"]);
+        assert!(parsed.columns[0].width > text.columns[0].width, "a parsed float reserves its `str(float)` width");
     }
 
     /// The strip's data guards run on the block too: a bare `source` over a
@@ -808,8 +805,7 @@ mod tests {
         rows.push(rows[0].clone());
         let err = build_block("c",
             &config, &rows, "cat", &domain(), &[10.0, 30.0, 50.0], &test_fonts(), &style(),
-            Side::Left, 6.0, false, None, &[], None, None,
-        )
+            Side::Left, 6.0, false, None, &[], None, None, None)
         .unwrap_err();
         assert!(err.contains("ambiguous"), "{err}");
     }
@@ -838,7 +834,7 @@ mod tests {
         )
         .unwrap();
         let mut out = String::new();
-        block.render(&mut out, style, 400.0, 300.0, 100.0, 50.0).unwrap();
+        block.render(&mut out, style, 400.0, 300.0, 100.0, 50.0, None).unwrap();
         out
     }
 
@@ -896,8 +892,7 @@ mod tests {
             let style: SupportTableStyle = serde_json::from_value(value).unwrap();
             let err = build_block("c",
                 &config, &rows(), "cat", &domain(), &[10.0, 30.0, 50.0], &test_fonts(), &style,
-                Side::Left, 6.0, false, None, &[], None, None,
-            )
+                Side::Left, 6.0, false, None, &[], None, None, None)
             .unwrap_err();
             assert!(err.contains(needle), "{err}");
         }
@@ -906,8 +901,7 @@ mod tests {
         let style: SupportTableStyle = serde_json::from_value(value).unwrap();
         let err = build_block("c",
             &config, &rows(), "cat", &domain(), &[10.0, 30.0, 50.0], &test_fonts(), &style,
-            Side::Left, 6.0, false, None, &[], None, None,
-        )
+            Side::Left, 6.0, false, None, &[], None, None, None)
         .unwrap_err();
         assert!(err.contains("label.font.color"), "{err}");
     }

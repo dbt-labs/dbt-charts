@@ -30,7 +30,7 @@ from dbt_charts.core.compile.schema.renderers.board_resolved import (
 )
 from dbt_charts.core.compile.template.variables import (
     check_variable_overrides,
-    normalize_multiselect_values,
+    normalize_render_values,
 )
 from dbt_charts.core.diagnostics import ERR_FILE_NOT_FOUND, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -125,7 +125,7 @@ def emit_board_artifact(
         check_variable_overrides(board.variable_registry or {}, variables or {})
     except ExecutionError as exc:
         return EmitBoardArtifactResult(success=False, errors=[exc.to_diagnostic()])
-    merged_variables: dict[str, Any] = normalize_multiselect_values(
+    merged_variables: dict[str, Any] = normalize_render_values(
         {**board.variable_defaults, **(variables or {})},
         board.variable_registry or {},
     )

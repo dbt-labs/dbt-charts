@@ -5,8 +5,8 @@ tool-call surface the ``tool`` side of the alias renders; on the CLI surface
 (``dct skills``, ``get_skill``/``list_skills`` called with ``surface="cli"``)
 the ``dct`` side renders. A third surface, ``install``, renders only when a
 skill is written to disk by ``dct init skills``: the one place a skill's
-bare registry name (``board-build``) becomes its ``dct-``-prefixed on-disk
-name (``dct-board-build``). ``cli`` stays bare so ``dct skills <name>``
+bare registry name (``chart``) becomes its ``dct-``-prefixed on-disk
+name (``dct-chart``). ``cli`` stays bare so ``dct skills <name>``
 resolves what it prints. The alias table lives in ``surface_aliases.yaml``
 next to this module so every wheel skill and every surface points at the
 same source of truth.

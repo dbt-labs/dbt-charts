@@ -1,4 +1,4 @@
-"""A column name as display text: ``revenue_usd`` is ``revenue ($)``."""
+"""A column name as display text: ``revenue_usd`` is ``Revenue ($)``."""
 
 from __future__ import annotations
 
@@ -18,6 +18,15 @@ _UNIT_SUFFIXES: dict[str, tuple[Literal["symbol", "word"], str]] = {
     "cnt": ("word", "humanize.count"),
     "num": ("symbol", "(#)"),
     "qty": ("word", "humanize.qty"),
+    "lbs": ("symbol", "(lb)"),
+    "kg": ("symbol", "(kg)"),
+    "km": ("symbol", "(km)"),
+    "mi": ("symbol", "(mi)"),
+    "mph": ("symbol", "(mph)"),
+    "secs": ("symbol", "(s)"),
+    "seconds": ("symbol", "(s)"),
+    "mins": ("symbol", "(min)"),
+    "hrs": ("symbol", "(h)"),
 }
 
 _ABBREVIATIONS: dict[str, tuple[Literal["symbol", "word"], str]] = {
@@ -43,6 +52,7 @@ _ABBREVIATIONS: dict[str, tuple[Literal["symbol", "word"], str]] = {
                 "url",
                 "sql",
                 "hr",
+                "mpg",
                 "ip",
             ]
         )
@@ -51,32 +61,47 @@ _ABBREVIATIONS: dict[str, tuple[Literal["symbol", "word"], str]] = {
 }
 
 
+# "dbt" is stylized lowercase always (dbt Labs' own convention).
+_FORCE_LOWERCASE: frozenset[str] = frozenset({"dbt"})
+
+
+def sentence_case(text: str) -> str:
+    """Uppercase the first character only; a leading ``dbt`` stays lowercase.
+
+    The rest is left alone so acronyms and proper nouns survive.
+    """
+    first, sep, rest = text.partition(" ")
+    if first.lower() in _FORCE_LOWERCASE:
+        return first.lower() + sep + rest
+    return text[:1].upper() + text[1:]
+
+
 def _display(entry: tuple[Literal["symbol", "word"], str]) -> str:
     kind, text = entry
     return board_word(text) if kind == "word" else text
 
 
 def slug_to_text(slug: str) -> str:
-    """Tokenize a slug/ID into human-readable text — WITHOUT letter-case transforms.
+    """Tokenize a slug/ID into human-readable sentence-case text.
 
     Handles common data column naming conventions:
     - snake_case and kebab-case → space-separated tokens
     - Single-case tokens lowercase; mixed-case tokens (``MTok``) keep their
       spelling
-    - Unit suffixes: ``_usd`` → ``($)``, ``_pct`` → ``(%)``
+    - Unit suffixes: ``_usd`` → ``($)``, ``_pct`` → ``(%)``, ``_in_lbs`` → ``(lb)``
     - Abbreviations: ``yoy`` → ``YoY``, ``arr`` → ``ARR``
 
-    Letter-case (title/sentence/upper/lower) is NOT applied here — the caller
-    supplies a ``font.case`` value and passes the result through
-    ``apply_font_case`` (or ``field_display_text``).
+    Only the first letter is capitalized (``sentence_case``): this is the one
+    derived-label default every surface shows. A caller's ``font.case`` is
+    applied on top of it by ``apply_font_case`` (or ``field_display_text``).
 
     Examples:
         >>> slug_to_text("revenue_usd")
-        'revenue ($)'
+        'Revenue ($)'
         >>> slug_to_text("yoy_growth_pct")
         'YoY growth (%)'
         >>> slug_to_text("logo_churn_pct")
-        'logo churn (%)'
+        'Logo churn (%)'
         >>> slug_to_text("avg_deal_size")
         'Avg deal size'
     """
@@ -90,6 +115,8 @@ def slug_to_text(slug: str) -> str:
     if len(tokens) > 1 and tokens[-1].lower() in _UNIT_SUFFIXES:
         suffix_label = _display(_UNIT_SUFFIXES[tokens[-1].lower()])
         tokens = tokens[:-1]
+        if tokens[-1].lower() == "in":  # weight_in_lbs reads "weight (lb)"
+            tokens = tokens[:-1]
 
     words = []
     for token in tokens:
@@ -104,4 +131,6 @@ def slug_to_text(slug: str) -> str:
     text = " ".join(words)
     if suffix_label:
         text = f"{text} {suffix_label}".strip()
-    return text
+    # A first word spelled with a capital (``iPhone``, ``YoY``) is already as intended.
+    first_word = text.split(" ", 1)[0]
+    return text if first_word != first_word.lower() else sentence_case(text)

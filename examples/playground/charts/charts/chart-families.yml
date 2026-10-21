@@ -1,25 +1,23 @@
 # yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Chart families
+source: examples_db
 style:
   frame:
     width: 1872
 queries:
   product_revenue:
-    source: examples_db
     sql: |
       SELECT product, SUM(revenue) AS revenue
       FROM ecommerce_orders
       GROUP BY product
       ORDER BY revenue DESC
   region_category_revenue:
-    source: examples_db
     sql: |
       SELECT region, category, SUM(revenue) AS revenue
       FROM ecommerce_orders
       GROUP BY region, category
       ORDER BY region, category
   region_category_category_share:
-    source: examples_db
     sql: |
       SELECT
         region,
@@ -30,7 +28,6 @@ queries:
       GROUP BY region, category
       ORDER BY region, category
   company_growth:
-    source: examples_db
     sql: |
       SELECT company, growth_rate
       FROM company_revenue
@@ -44,25 +41,21 @@ queries:
         AND month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
       ORDER BY month
   weekly_revenue_by_category:
-    source: examples_db
     sql: |
       SELECT DATE_TRUNC('week', date) AS week, category, SUM(revenue) AS revenue
       FROM ecommerce_orders
       GROUP BY week, category
       ORDER BY week, category
   order_scatter:
-    source: examples_db
     sql: |
       SELECT category, units_sold, revenue
       FROM ecommerce_orders
       WHERE date >= DATE '2024-06-24'
   company_growth_margin:
-    source: examples_db
     sql: |
       SELECT company, region, growth_rate, margin, headcount
       FROM company_revenue
   category_revenue:
-    source: examples_db
     sql: |
       SELECT category, SUM(revenue) AS revenue
       FROM ecommerce_orders
@@ -76,7 +69,6 @@ queries:
       GROUP BY status
       ORDER BY document_count DESC
   region_product_revenue:
-    source: examples_db
     sql: |
       SELECT region, product, SUM(revenue) AS revenue
       FROM ecommerce_orders
@@ -91,12 +83,10 @@ queries:
         AND month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
       ORDER BY month
   sales_summary:
-    source: examples_db
     sql: |
       SELECT SUM(revenue) AS revenue, SUM(units_sold) AS units_sold
       FROM ecommerce_orders
   recent_orders:
-    source: examples_db
     sql: |
       SELECT date, product, category, region, revenue, units_sold
       FROM ecommerce_orders
@@ -129,7 +119,6 @@ charts:
     x: month
     y: revenue
     style:
-      orientation: vertical
       axis_y:
         labels:
           format: currency_whole
@@ -144,7 +133,6 @@ charts:
       by: revenue
       order: desc
     style:
-      orientation: horizontal
       axis_y:
         labels:
           format: currency_whole
@@ -197,7 +185,6 @@ charts:
       by: growth_rate
       order: desc
     style:
-      orientation: horizontal
       axis_y:
         labels:
           format: percent_delta

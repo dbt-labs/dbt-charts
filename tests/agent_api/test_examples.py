@@ -160,8 +160,8 @@ def test_specimen_declares_no_source(specimen: Path) -> None:
 @pytest.mark.parametrize("specimen", SPECIMENS, ids=lambda p: str(p.name))
 def test_specimen_is_a_board_not_a_prose_page(specimen: Path) -> None:
     """The registry's promise is a working board. A text-only layout tutorial
-    duplicates `dct docs`, costs more tokens, and hands the agent nothing to
-    copy — `dct docs` is the surface for prose."""
+    duplicates the skills, costs more tokens, and hands the agent nothing to
+    copy — `dct skills` is the surface for prose."""
     parsed = yaml.safe_load(specimen.read_text(encoding="utf-8"))
     assert parsed.get("charts"), f"{specimen}: no charts:"
     assert parsed.get("queries"), f"{specimen}: no queries:"

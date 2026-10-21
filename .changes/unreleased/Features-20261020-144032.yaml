@@ -1,0 +1,5 @@
+kind: Features
+body: A `daterange` value can be a rolling preset such as `last_90_days`, resolved on every render.
+time: 2026-10-20T14:40:32.243668-07:00
+custom:
+    DbtChartsIssue: "73"

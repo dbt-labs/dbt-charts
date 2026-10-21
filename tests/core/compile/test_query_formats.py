@@ -123,7 +123,12 @@ def test_an_affix_only_format_keeps_its_affix_whichever_tier_it_is() -> None:
     suffix = FormatConfig(suffix=" USD")
     as_slot = finalize_kpi_value_format(suffix, 12345.0, compact=_KPI_COMPACT)
     as_lower_tier = finalize_kpi_value_format(
-        None, 12345.0, column=suffix, compact=_KPI_COMPACT
+        None,
+        12345.0,
+        {"usd": suffix},
+        compact=_KPI_COMPACT,
+        query_formats={"c": "usd"},
+        columns="c",
     )
     assert as_slot is not None and as_lower_tier is not None
     assert as_lower_tier.suffix == as_slot.suffix == " USD"
@@ -161,10 +166,9 @@ def test_a_date_kpi_takes_the_declared_time_format_under_a_board_affix() -> None
 
 def test_the_native_flag_holds_for_a_declared_alias_under_a_board_affix() -> None:
     money = {"money": ",.0f"}
-    assert kpi_format_native(money, None, column="money")
-    assert kpi_format_native(
-        money, None, column="money", board=FormatConfig(suffix=" USD")
-    )
+    declared = {"query_formats": {"c": "money"}, "columns": "c"}
+    assert kpi_format_native(money, None, **declared)
+    assert kpi_format_native(money, None, board=FormatConfig(suffix=" USD"), **declared)
     assert not kpi_format_native(money, None, board=FormatConfig(suffix=" USD"))
 
 
@@ -244,7 +248,8 @@ def test_an_affix_only_layer_keeps_its_options_and_takes_the_spec_below() -> Non
         "number",
         None,
         FormatConfig(prefix="EUR ", repeat="anchor", sign_placement="after_prefix"),
-        column="integer",
+        query_formats={"c": "integer"},
+        columns="c",
     )
     assert (parts.prefix, parts.repeat, parts.sign_placement) == (
         "EUR ",
@@ -346,11 +351,11 @@ def test_a_scatter_x_tooltip_uses_the_x_columns_own_format() -> None:
     chart = "    type: scatter\n    x: orders\n    y: revenue\n"
     formats = "    formats:\n      revenue: currency\n      orders: integer\n"
     svg = render_board_to_svg(_board(chart, formats=formats))
-    assert "revenue: $1,234,567" in svg and "orders: 1,234" in svg
-    assert "orders: $" not in svg
+    assert "Revenue: $1,234,567" in svg and "Orders: 1,234" in svg
+    assert "Orders: $" not in svg
     year = "    type: scatter\n    x: year\n    y: revenue\n"
     svg = render_board_to_svg(_board(year, formats="    formats:\n      year: year\n"))
-    assert "year: 2025" in svg and "2,025" not in svg
+    assert "Year: 2025" in svg and "2,025" not in svg
 
 
 def test_a_heatmap_cell_tooltip_uses_the_colors_column_format() -> None:

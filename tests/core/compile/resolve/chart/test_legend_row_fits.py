@@ -342,7 +342,7 @@ class TestCartesianTopLegendEntries:
             has_color=False,
             field_labels={},
         )
-        assert entries == ("Revenue", "order target")
+        assert entries == ("Revenue", "Order target")
 
     def test_color_domain_values_are_appended(self) -> None:
         entries = cartesian_top_legend_entries(

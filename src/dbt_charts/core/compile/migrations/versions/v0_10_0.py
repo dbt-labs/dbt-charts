@@ -10,7 +10,7 @@ Changes in this release:
 - **`legend.position` became a mapping** of `edge`, `align` and `overlay`: the
   key survives and its value's shape changed, so this is identity-path `Move`s
   carrying an `expansion` (a string rewrites to its mapping; a mapping is never
-  touched; `sub_board_prefixes` reaches nested boards). A cardinal pins `overlay: false`
+  touched). A cardinal pins `overlay: false`
   and leaves `align` to the engine (start; a pie table's own default); a corner pins its edge, alignment and `overlay: true`.
   A pie's key never overlays, so `overlay` is dropped there.
 - **The heading ramp moves to the font registry**: ``style.title.sizes``
@@ -101,7 +101,6 @@ from dbt_charts.core.compile.migrations.migrations import (
     _relative_field_paths,
     _schema_path_exists,
     _without_composition,
-    board_nesting_prefixes,
     suffix_rename_moves,
 )
 from dbt_charts.core.compile.models.factories import _PatchBase
@@ -191,7 +190,6 @@ def moves(
     """Return Move objects for the 0.9.0 -> 0.10.0 boundary."""
     from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 
-    nesting = board_nesting_prefixes(AuthoredBoard)
     return (
         _heading_ramp_moves(source_schema, target_schema, catalog)
         + _divider_moves(source_schema, target_schema, catalog)
@@ -199,9 +197,7 @@ def moves(
         + _chart_format_moves(source_schema, target_schema, catalog)
         + _style_null_moves(source_schema, target_schema, catalog)
         + tuple(
-            dataclasses.replace(
-                move, sub_board_prefixes=nesting, conflicts_with=(AUTO_LINK_TAIL,)
-            )
+            dataclasses.replace(move, conflicts_with=(AUTO_LINK_TAIL,))
             for move in suffix_rename_moves(
                 AuthoredBoard,
                 source_schema,
@@ -215,7 +211,6 @@ def moves(
                 move,
                 expansion=LEGEND_POSITION_EXPANSION,
                 drop_notes=LEGEND_POSITION_DROP_NOTES,
-                sub_board_prefixes=nesting,
             )
             for move in suffix_rename_moves(
                 AuthoredBoard,
@@ -714,14 +709,12 @@ def _style_null_moves(
     from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 
     owners = _style_owners()
-    nesting = board_nesting_prefixes(AuthoredBoard)
     return tuple(
         dataclasses.replace(
             move,
             chart_type=chart_type,
             rewrite=functools.partial(_rewrite_style_nulls, models=(model,)),
             rewrite_note=_STYLE_NULL_NOTE,
-            sub_board_prefixes=nesting,
         )
         for move in suffix_rename_moves(
             AuthoredBoard,

@@ -17,7 +17,6 @@ style:
       header:
         font:
           size: 11
-          weight: '600'
           color: '#313233'
 text: 'Tests the emphasis layer: rule-driven backgrounds and font, sequential and
   diverging color scales (with hinge-based interpolation), threshold alerts, and how
@@ -52,7 +51,6 @@ charts:
         enabled: false
       columns:
         state:
-          label: State
           width: 22%
         median_income:
           label: Median Income
@@ -76,10 +74,8 @@ charts:
         enabled: false
       columns:
         state:
-          label: State
           width: 22%
         population:
-          label: Population
           format: number
           scale:
             background:
@@ -100,7 +96,6 @@ charts:
         enabled: false
       columns:
         state:
-          label: State
           width: 22%
         median_income:
           label: Median Income
@@ -125,8 +120,6 @@ charts:
     subtitle: M2a — Diverging crimson-green on growth (auto-hinge → 0)
     style:
       columns:
-        company:
-          label: Company
         quarterly_revenue:
           label: Revenue
           format: currency
@@ -138,7 +131,6 @@ charts:
               palette: dbt-div-crimson-green
               hinge: auto
         margin:
-          label: Margin
           format: percent
         nrr:
           visible: false
@@ -153,8 +145,6 @@ charts:
     subtitle: 'M2b — Diverging asymmetric (default): per-unit intensity consistent'
     style:
       columns:
-        company:
-          label: Company
         growth_rate:
           label: Growth
           format: percent
@@ -164,7 +154,6 @@ charts:
               hinge: auto
               arm_mode: asymmetric
         margin:
-          label: Margin
           format: percent
         quarterly_revenue:
           visible: false
@@ -181,8 +170,6 @@ charts:
     subtitle: 'M2c — Diverging symmetric: both arms stretch to palette extreme'
     style:
       columns:
-        company:
-          label: Company
         growth_rate:
           label: Growth
           format: percent
@@ -192,7 +179,6 @@ charts:
               hinge: auto
               arm_mode: symmetric
         margin:
-          label: Margin
           format: percent
         quarterly_revenue:
           visible: false
@@ -209,30 +195,24 @@ charts:
     subtitle: M2d — Cross-year diverging; auto-hinge on all-positive data → midpoint
     style:
       columns:
-        country:
-          label: Country
         '2021':
-          label: '2021'
           format: percent
           scale:
             background:
               palette: dbt-div-crimson-green
               hinge: auto
         '2022':
-          label: '2022'
           format: percent
           scale:
             background:
               palette: dbt-div-crimson-green
               hinge: auto
         '2023':
-          label: '2023'
           format: percent
           scale:
             background:
               palette: dbt-div-crimson-green
               hinge: auto
-      symbol_mode: anchors
   m3_text_color_growth:
     type: table
     query: company_revenue
@@ -249,8 +229,6 @@ charts:
             color: '#dc2626'
     style:
       columns:
-        company:
-          label: Company
         quarterly_revenue:
           label: Revenue
           format: currency
@@ -258,7 +236,6 @@ charts:
           label: Growth
           format: percent
         margin:
-          label: Margin
           format: percent
         nrr:
           visible: false
@@ -280,8 +257,6 @@ charts:
             weight: '600'
     style:
       columns:
-        company:
-          label: Company
         quarterly_revenue:
           label: Revenue
           format: currency
@@ -289,7 +264,6 @@ charts:
           label: Growth
           format: percent
         margin:
-          label: Margin
           format: percent
         nrr:
           visible: false
@@ -313,8 +287,6 @@ charts:
             color: '#dc2626'
     style:
       columns:
-        company:
-          label: Company
         growth_rate:
           label: Text color
           format: percent
@@ -346,8 +318,6 @@ charts:
             color: '#dc2626'
     style:
       columns:
-        company:
-          label: Company
         quarterly_revenue:
           label: Revenue
           format: currency
@@ -355,7 +325,6 @@ charts:
           label: Growth
           format: percent
         margin:
-          label: Margin
           format: percent
         nrr:
           visible: false
@@ -377,13 +346,10 @@ charts:
           background: '#f0fdf4'
     style:
       columns:
-        company:
-          label: Company
         growth_rate:
           label: Growth
           format: percent
         margin:
-          label: Margin
           format: percent
         quarterly_revenue:
           visible: false
@@ -409,8 +375,6 @@ charts:
           glyph_color: '#dc2626'
     style:
       columns:
-        company:
-          label: Company
         quarterly_revenue:
           label: Revenue
           format: currency
@@ -418,7 +382,6 @@ charts:
           label: Growth
           format: percent
         margin:
-          label: Margin
           format: percent
         nrr:
           visible: false
@@ -439,13 +402,10 @@ charts:
           glyph_color: '#d97706'
     style:
       columns:
-        company:
-          label: Company
         growth_rate:
           label: Growth
           format: percent
         margin:
-          label: Margin
           format: percent
         quarterly_revenue:
           visible: false
@@ -462,8 +422,6 @@ charts:
     subtitle: M5c — Static status dot in every revenue cell
     style:
       columns:
-        company:
-          label: Company
         quarterly_revenue:
           label: Revenue
           format: currency
@@ -487,8 +445,6 @@ charts:
     subtitle: M6a — Sequential scale on revenue + total row (total suppresses fill)
     style:
       columns:
-        company:
-          label: Company
         quarterly_revenue:
           label: Revenue
           format: currency
@@ -499,16 +455,11 @@ charts:
           label: Growth
           format: percent
         margin:
-          label: Margin
           format: percent
       row:
         role: row_role
         divider:
           width: 0.5
-          visible: true
-      header:
-        divider:
-          width: 1
           visible: true
   m6_threshold_with_total:
     type: table
@@ -528,8 +479,6 @@ charts:
             color: '#16a34a'
     style:
       columns:
-        company:
-          label: Company
         quarterly_revenue:
           label: Revenue
           format: currency
@@ -537,16 +486,11 @@ charts:
           label: Growth
           format: percent
         margin:
-          label: Margin
           format: percent
       row:
         role: row_role
         divider:
           width: 0.5
-          visible: true
-      header:
-        divider:
-          width: 1
           visible: true
 rows:
 - title: 'M1: Sequential Scale'

@@ -122,17 +122,17 @@
       {
         "field": "pop",
         "format": ",.2~f",
-        "title": "pop",
+        "title": "Pop",
         "type": "quantitative"
       },
       {
         "field": "count",
-        "title": "count",
+        "title": "Count",
         "type": "quantitative"
       },
       {
         "field": "name",
-        "title": "name",
+        "title": "Name",
         "type": "nominal"
       }
     ]

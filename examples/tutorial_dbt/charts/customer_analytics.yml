@@ -146,11 +146,6 @@ charts:
     query: customer_segments
     theta: customer_count
     color: segment
-    style:
-      marks:
-        slice:
-          labels:
-            template: "{{ '{:.0%}'.format(percent) }} {{ segment }}"
 
   segment_revenue:
     title: "Revenue by Segment"
@@ -158,8 +153,6 @@ charts:
     query: customer_segments
     x: segment
     y: segment_revenue
-    style:
-      orientation: horizontal
 
   acquisition_trend:
     title: "New Customer Acquisition"
@@ -183,8 +176,6 @@ charts:
       columns:
         customer_name:
           label: Customer
-        orders:
-          label: Orders
         total_revenue:
           label: Total Revenue
           format: currency_full

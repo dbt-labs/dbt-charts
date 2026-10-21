@@ -117,5 +117,7 @@ class TestPaletteModel:
         assert p.name == "dbt-grays"
         assert p.colors is not None
         assert p.aliases is not None
-        assert "ink" in p.aliases and isinstance(p.aliases["ink"], int)
-        assert "canvas" in p.aliases and isinstance(p.aliases["canvas"], int)
+        assert p.aliases["0"] == "#FFFFFF"
+        assert p.aliases["100"] == "#000000"
+        assert p.aliases["white"] == "0" and p.aliases["black"] == "100"
+        assert len(p.colors) == 12

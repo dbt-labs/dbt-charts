@@ -20,8 +20,10 @@ both call directly; the sizing pass never calls ``render_board_svg``, so
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from dbt_charts.core.compile.models.board.normalized import VariableValues
@@ -88,3 +90,24 @@ def board_data_provider(provider: ChartDataProvider) -> Generator[None]:
 
 def current_board_data_provider() -> ChartDataProvider | None:
     return _BOARD_DATA_PROVIDER.get()
+
+
+# Render narrows a preset to its dates, so the id a control commits rides here.
+_DATERANGE_PRESETS: ContextVar[Mapping[str, str]] = ContextVar(
+    "dct_daterange_presets", default=MappingProxyType({})
+)
+
+
+@contextmanager
+def daterange_presets(presets: Mapping[str, str]) -> Generator[None]:
+    """Scope the committed preset id of each preset-valued daterange variable."""
+    token = _DATERANGE_PRESETS.set(presets)
+    try:
+        yield
+    finally:
+        _DATERANGE_PRESETS.reset(token)
+
+
+def current_daterange_presets() -> Mapping[str, str]:
+    """Variable name to committed preset id, for the render in progress."""
+    return _DATERANGE_PRESETS.get()

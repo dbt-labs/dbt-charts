@@ -485,7 +485,17 @@ fn title_case(small: &Small, text: &str) -> String {
         .map(|line| process_line(small, line, true))
         .collect::<Vec<_>>()
         .join("\n");
-    lowercase_extra_small_words(small, &titled)
+    let mut out = lowercase_extra_small_words(small, &titled);
+    for unit in crate::CASED_UNIT_SYMBOLS {
+        out = out.replace(&unit_inner_cap(unit), unit);
+    }
+    out
+}
+
+/// `(kg)` -> `(Kg)`: the form title case gives a unit symbol.
+fn unit_inner_cap(unit: &str) -> String {
+    let inner = &unit[1..unit.len() - 1];
+    format!("({})", capitalize(inner))
 }
 
 /// [`apply_case_in`] in the active board language.
@@ -527,7 +537,7 @@ pub fn apply_case_in(lang: &str, text: &str, case: &str) -> Result<String, Strin
 
 /// Uppercase the first character only, except a leading `dbt`, which stays
 /// lowercase.
-fn sentence_case(text: &str) -> String {
+pub fn sentence_case(text: &str) -> String {
     let first_word = text.split(' ').next().unwrap_or("");
     if force_lowercase(&first_word.to_lowercase()) {
         return first_word.to_lowercase() + &text[first_word.len()..];
@@ -669,6 +679,18 @@ mod inline_period_tests {
             ("dbt-labs/dbt-charts", "dbt-labs/dbt-charts"),
             ("pie/donut table", "Pie/Donut Table"),
             ("a/b testing results", "A/B Testing Results"),
+        ] {
+            assert_eq!(apply_case(input, "title").unwrap(), expected, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn title_case_leaves_unit_symbols_alone() {
+        for (input, expected) in [
+            ("weight (lb)", "Weight (lb)"),
+            ("total mass (kg) by year", "Total Mass (kg) by Year"),
+            ("top speed (mph)", "Top Speed (mph)"),
+            ("wait (s)", "Wait (s)"),
         ] {
             assert_eq!(apply_case(input, "title").unwrap(), expected, "{input:?}");
         }

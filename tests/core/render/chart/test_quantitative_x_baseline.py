@@ -124,19 +124,15 @@ def test_scatter_categorical_x_never_gets_x_rule() -> None:
 
 
 def test_log_scale_x_skips_x_rule() -> None:
-    """A log-typed x scale can never carry the datum:0 rule -- same
-    incompatibility as the measure-axis guard.
-
-    The x=0 row is load-bearing: it is what makes _domain_reaches report
-    True once the log guard is bypassed, so this data actually exercises the
-    guard. An authored log domain can't reach 0 -- that is rejected at
-    compile time."""
+    """A log-typed x scale never carries the datum:0 rule -- same
+    incompatibility as the measure-axis guard. Zero or negative x on a log
+    scale is rejected at compile time, so the data here stays positive."""
     style = ScatterChartStylePatch(
         axis_x=AxisXStylePatch(
             scale=XScaleStylePatch(continuous=ScaleContinuousStylePatch(type="log"))
         ),
     )
-    data = [{"x": 0, "y": -5}, {"x": 10, "y": 5}, {"x": 50, "y": 10}]
+    data = [{"x": 1, "y": -5}, {"x": 10, "y": 5}, {"x": 50, "y": 10}]
     spec = _spec("scatter", data, style=style)
     assert _x_rules(spec) == []
 

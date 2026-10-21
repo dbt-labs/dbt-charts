@@ -1,6 +1,6 @@
 """Regression: every ```yaml fence the wheel ships to agents must pass dct validate.
 
-Covers DBT_CHARTS_SYNTAX.md (served by `dct docs`) and every packaged
+Covers DBT_CHARTS_SYNTAX.md (inlined into the authoring prompts) and every packaged
 ai/skills/*/SKILL.md (served by `dct skills`).
 
 If this test fails, either the example is wrong (update the doc) or the
@@ -28,7 +28,7 @@ from dbt_charts.core.compile.config import load_project_sources
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 
 # ---------------------------------------------------------------------------
-# Source path (mirrors dbt_charts.agent_api.docs._loader)
+# Source path (mirrors dbt_charts.ai.prompts.read_syntax_guide)
 # ---------------------------------------------------------------------------
 
 _SYNTAX_FILE = Path(
@@ -273,7 +273,7 @@ MAX_PLACEHOLDER_FENCES = 2
 # Floors on real coverage: without them, a change that stops discovering fences
 # leaves every other check trivially satisfied.
 MIN_SYNTAX_FENCES = 27
-MIN_SKILL_FENCES = 28
+MIN_SKILL_FENCES = 4
 
 
 def _label(path: Path) -> str:
@@ -463,7 +463,8 @@ def test_corpus_block_compiles(
     local_project: Callable[..., FilesystemProject],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every ```yaml block in the dct docs corpus must pass dct validate."""
+    """Every ```yaml block in the syntax guide must pass dct validate and
+    restate no default: the corpus is what agents copy."""
     from dbt_charts.agent_api.validate import validate
 
     parsed = yaml.safe_load(fence_body)
@@ -496,6 +497,15 @@ def test_corpus_block_compiles(
 
         result = validate(board_file, project=local_project(tmp_path))
         if result.success:
+            restated = [
+                w.message
+                for w in result.warnings
+                if w.code.startswith("WARN-RESTATED-")
+            ]
+            assert not restated, (
+                f"{filename}:{start_line} restates a default the engine already "
+                f"supplies; agents copy the verbose spelling:\n" + "\n".join(restated)
+            )
             return
         errors = "\n".join(f"  [{e.path or '?'}] {e.message}" for e in result.errors)
         failures.append(

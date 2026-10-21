@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 from dbt_charts.core.compile.compiler import CompileResult
 from dbt_charts.core.compile.models.board.normalized import Board, Layout, LayoutItem
 from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.renderer import render
@@ -398,6 +399,25 @@ class TestTextFormat:
 
         assert "5.0%" in result
         assert "vs last month" in result
+
+    def test_kpi_support_follows_the_query_format(self, make_chart):
+        """A query's `formats:` reaches the support value, not only the headline."""
+        data = [{"revenue": 210.0, "delta": 0.05}]
+        chart = make_chart(
+            "kpi",
+            value="revenue",
+            x=None,
+            y=None,
+            query=SqlQuery(
+                sql="SELECT 1", source="test_profile", formats={"delta": "percent"}
+            ),
+            support={"value": "delta", "label": "vs last month"},
+        )
+        result = render(
+            _make_board([chart]), _make_executor(data), format="text"
+        ).output
+
+        assert "5.0% vs last month" in result
 
     def test_kpi_no_format_unchanged(self, make_chart):
         """A small, unformatted KPI value keeps the plain comma-grouped digits.
@@ -1194,9 +1214,6 @@ rows:
         assert "WARN-QUERY-RESULT-TRUNCATED" in render_result.output
 
     def test_no_warnings_section_when_clean(self, make_chart) -> None:
-        # "count" (not "revenue"/"price"/etc.) so the render doesn't also trip
-        # WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER — this test is
-        # only about the absence of the `## Warnings` heading itself.
         data = [{"month": "Jan", "count": 100}]
         chart = make_chart("bar", x="month", y="count")
         board = _make_board([chart])

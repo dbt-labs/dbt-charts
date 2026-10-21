@@ -224,9 +224,13 @@ class Generator:
         """Text that only the CLI surface sees."""
         return f"{{{{#if_surface cli}}}}{text}{{{{/if_surface}}}}"
 
-    def cli_or_files(self, text: str) -> str:
-        """Text for a surface that reads and writes project files: the CLI and file-tool hosts."""
-        return f"{{{{#if_tool write_file}}}}{text}{{{{/if_tool}}}}"
+    def tool(self, text: str) -> str:
+        """Text that only the tool surface sees."""
+        return f"{{{{#if_surface tool}}}}{text}{{{{/if_surface}}}}"
+
+    def tool_files(self, text: str) -> str:
+        """Tool-surface text for a host that also has file tools."""
+        return self.tool(f"{{{{#if_tool write_file}}}}{text}{{{{/if_tool}}}}")
 
     def tool_commands(self) -> str:
         """The tool-surface counterpart of `commands()`: the same loop as tool calls."""
@@ -360,24 +364,6 @@ class Generator:
         msgs = [m for m in dict.fromkeys(plain) if any(w in m for w in wanted)]
         return self._wrap("\n".join(f"- {m}" for m in msgs))
 
-    def codes(self, group: str) -> str:
-        """Diagnostic code, its registry summary, and its fix text where it has one."""
-        from dbt_charts.core.diagnostics.registry import REGISTRY
-
-        out = []
-        for code in self.cfg["codes"][group]:
-            if code not in REGISTRY.codes():
-                raise KeyError(
-                    f"codes.{group}: {code} is not in the diagnostics registry"
-                )
-            dc = REGISTRY.get(code)
-            summary = _summary(dc.summary or dc.doc, code, max_words=26)
-            summary = re.sub(r"^Fire[sd]? when ", "", summary)
-            fix = getattr(dc, "fix_template", None)
-            tail = f" Fix: {' '.join(fix.split())}" if fix and "{" not in fix else ""
-            out.append(f"- `{code}`: {summary[:1].upper()}{summary[1:]}.{tail}")
-        return self._wrap("\n".join(out))
-
     def init_command(self) -> str:
         """`dct init` with the opt-outs for the integrations an agent run does not want."""
         cmd = _cli_commands()["init"]
@@ -468,24 +454,26 @@ class Generator:
         return self._wrap(", ".join(f"`{m.value}`" for m in names))
 
     def themes(self) -> str:
-        """One line per built-in theme: canvas, palette and heading font, from its file."""
+        """One row per built-in theme: canvas, heading type, palette, and its note."""
         from importlib_resources import files
 
         root = files("dbt_charts.core") / "defaults" / "themes"
-        out = []
+        rows = [
+            "| Theme | Canvas | Headings | Colors | Note |",
+            "|---|---|---|---|---|",
+        ]
         for name in self.cfg["themes"]:
-            data = yaml.safe_load((root / f"{name}.yaml").read_text())
-            style = data["style"]
             canvas = _theme_value(root, name, ("style", "background"))
             palette = _theme_value(root, name, ("style", "palettes", "category"))
-            heading = _theme_value(root, name, ("style", "fonts", "heading", "family"))
-            kind = "dark" if _is_dark(canvas) else "light"
-            out.append(
-                f"- `{name}`: {kind} canvas "
-                f"`{canvas}`, categorical `{palette}`, `fonts.heading.family` {heading}"
+            chrome = _theme_value(root, name, ("style", "palettes", "chrome"))
+            family = _theme_value(root, name, ("style", "fonts", "heading", "family"))
+            heading = "serif" if family.endswith(", serif") else "sans-serif"
+            notes = _theme_value(root, name, ("notes",))
+            rows.append(
+                f"| `{name}` | {_canvas_word(canvas, chrome)} | {heading} | `{palette}` "
+                f"| {notes} |"
             )
-            del style
-        return self._wrap("\n".join(out))
+        return self._wrap("\n".join(rows))
 
     def palettes(self, family: str) -> str:
         """Palette names of one family; a `-dark` twin is folded into its base name."""
@@ -510,8 +498,16 @@ class Generator:
             text += " (each also as `<name>-dark`)"
         return self._wrap(text)
 
-    def aliases(self, scaffold: str) -> str:
-        return self._wrap(", ".join(f"`{a}`" for a in _palette(scaffold)["aliases"]))
+    def stops(self, scaffold: str) -> str:
+        """A scaffold's addressable stops: declared numeric endpoints around `1-N`."""
+        data = _palette(scaffold)
+        declared = sorted(int(a) for a in data["aliases"] if str(a).isdigit())
+        parts = [
+            *(str(n) for n in declared if n < 1),
+            f"1-{len(data['colors'])}",
+            *(str(n) for n in declared if n > len(data["colors"])),
+        ]
+        return ", ".join(f"`{part}`" for part in parts)
 
     def data_extensions(self) -> str:
         from dbt_charts.core.compile.file_refs import INLINE_FILE_SOURCE_SUFFIXES
@@ -567,14 +563,23 @@ def _palette(name: str) -> dict[str, Any]:
     return data
 
 
-def _is_dark(token: str) -> bool:
-    """Whether a `scaffold.alias` canvas token resolves to a dark color."""
-    family, alias = token.split(".")
-    data = _palette(family)
-    ref = data["aliases"][alias]
-    hexcolor = str(data["colors"][ref - 1] if isinstance(ref, int) else ref).lstrip("#")
+def _canvas_word(token: str, chrome: str) -> str:
+    """`dark`, `cream` or `white` for a theme's canvas color token.
+
+    ``chrome`` is the scaffold palette the theme binds to the ``chrome`` role.
+    """
+    from dbt_charts.core.compile.resolve.style.palette import color, color_from_theme
+
+    resolved = (
+        color_from_theme(token, palettes={"chrome": chrome})
+        if token.startswith("chrome")
+        else color(token)
+    )
+    hexcolor = resolved.lstrip("#")
     r, g, b = (int(hexcolor[k : k + 2], 16) / 255 for k in (0, 2, 4))
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5
+    if 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5:
+        return "dark"
+    return "cream" if r - b > 0.02 else "white"
 
 
 @functools.cache

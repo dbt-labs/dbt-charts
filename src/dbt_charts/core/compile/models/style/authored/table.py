@@ -283,7 +283,11 @@ class TableColumnConfig(ConstrainedModel):
         ),
     )
     label: Annotated[str | None, DisplayText()] = Field(
-        default=None, description="Display header label (defaults to column name)."
+        default=None,
+        description=(
+            "Header, default the prettified column name (`first_year` reads "
+            '"First year"). Alias in SQL instead.'
+        ),
     )
     format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
         default=None,

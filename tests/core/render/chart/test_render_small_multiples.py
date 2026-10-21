@@ -1186,7 +1186,7 @@ class TestRenderChartBridge:
             "no explicit height given: nothing should be stamped on the unit spec"
         )
         y_title = traced["spec"]["encoding"]["y"]["title"]
-        assert y_title == ["estimated total revenue from new", "customers"], (
+        assert y_title == ["Estimated total revenue from new", "customers"], (
             f"y title wrapped against a divided height, got {y_title!r}"
         )
 

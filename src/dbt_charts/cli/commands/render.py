@@ -15,7 +15,11 @@ from dbt_charts.agent_api._paths import (
     ignore_code_diagnostics,
     render_crash_diagnostic,
 )
-from dbt_charts.cli._error_format import emit_diagnostics_jsonl, print_diagnostics
+from dbt_charts.cli._error_format import (
+    emit_diagnostics_jsonl,
+    one_per_path,
+    print_diagnostics,
+)
 from dbt_charts.cli._parsing import cwd_first
 from dbt_charts.cli._project import with_project
 from dbt_charts.cli.filesystem_project import FilesystemProject
@@ -71,9 +75,7 @@ def _report_failure(
     if diagnostics_json:
         emit_diagnostics_jsonl(exc.warnings + exc.errors)
         return
-    if not no_warnings:
-        _print_warnings(exc.warnings)
-    print_diagnostics(exc.errors)
+    print_diagnostics(exc.errors + ([] if no_warnings else exc.warnings))
 
 
 def _validate_ignore_codes(ignore_codes: set[str], *, diagnostics_json: bool) -> None:
@@ -95,6 +97,7 @@ def _print_warnings(warnings: list[Diagnostic]) -> None:
     The header is a render-command concern, not a diagnostic-printing one:
     `print_diagnostics` also renders errors, where "N warnings:" would be wrong.
     """
+    warnings = one_per_path(warnings)
     if not warnings:
         return
     n = len(warnings)
@@ -292,6 +295,7 @@ def render_command(
             scale=2.0,
             ignore_codes=ignore_codes,
             max_workers=max_workers,
+            restated_check=True,
             # `dct render` writes files. Nothing serves them, so an HTML export
             # carries its fonts inline rather than naming /static/fonts/.
             standalone=True,
@@ -392,6 +396,7 @@ def render_command_from_yaml(
             scale=2.0,
             ignore_codes=ignore_codes,
             max_workers=max_workers,
+            restated_check=True,
             standalone=True,
         )
 

@@ -21,6 +21,8 @@ from dbt_charts.core.compile.sql_guard import source_dialect
 from dbt_charts.core.compile.template.jinja import extract_sql_variable_dependencies
 from dbt_charts.core.compile.template.variables import (
     check_variable_overrides,
+    coerce_variable_values,
+    parse_variable_json_strings,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_compile import (
@@ -591,7 +593,7 @@ def _fail(
 
 
 _VALUE_HINTS = {
-    "daterange": 'a JSON string like \'["2024-01-01", "2024-01-31"]\'',
+    "daterange": 'a JSON string like \'["2024-01-01", "2024-01-31"]\' or a preset like "last_90_days"',
     "multiselect": 'a list of strings like ["COMMERCIAL"], or [] to select none',
 }
 
@@ -650,10 +652,13 @@ def query_board(
 
     try:
         check_variable_overrides(board.variable_registry or {}, vars or {})
+        merged_vars = coerce_variable_values(
+            parse_variable_json_strings({**board.variable_defaults, **(vars or {})}),
+            board.variable_registry or {},
+        )
     except ExecutionError as exc:
         return _fail(name, resolved_display, [str(exc)], error_code_of(exc))
 
-    merged_vars = {**board.variable_defaults, **(vars or {})}
     query = board.queries[name].model_copy(update={"limit": limit + 1})
     sql = query.sql if isinstance(query, SqlQuery) else None
     noted = query.notes

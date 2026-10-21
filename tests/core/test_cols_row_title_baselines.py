@@ -47,10 +47,10 @@ queries:
   q:
     type: values
     rows:
-      - {{month: Jan, revenue: 1130000}}
-      - {{month: Feb, revenue: 1500000}}
-      - {{month: Mar, revenue: 1200000}}
-      - {{month: Apr, revenue: 1800000}}
+      - {{month: Jan, revenue: 1130000.0}}
+      - {{month: Feb, revenue: 1500000.0}}
+      - {{month: Mar, revenue: 1200000.0}}
+      - {{month: Apr, revenue: 1800000.0}}
 charts:
   wide: {{title: Wide title, query: q, type: bar, x: month, y: revenue}}
   narrow: {{title: Narrow title, query: q, type: bar, x: month, y: revenue}}

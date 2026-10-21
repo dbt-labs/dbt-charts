@@ -59,6 +59,21 @@ def test_a_nested_board_auto_link_migrates_to_a_nested_links_block(
     assert "auto_link" not in migrated["rows"][0]
 
 
+def test_a_chart_named_auto_link_in_a_rows_map_keeps_its_name(
+    catalog: YamlSchemaCatalog,
+) -> None:
+    chart: JsonObject = {"type": "bar", "query": "q", "x": "a", "y": "b"}
+    raw: JsonObject = {
+        "title": "t",
+        "auto_link": True,
+        "queries": {"q": {"sql": "select 1 as a, 2 as b"}},
+        "rows": [{"auto_link": chart}],
+    }
+    migrated = _migrate(raw, catalog)
+    assert migrated["links"] == {"auto": True}
+    assert migrated["rows"] == [{"auto_link": chart}]
+
+
 def test_a_nested_auto_link_fails_naming_the_fix() -> None:
     result = compile(
         "title: t\nrows:\n  - title: Inner\n    auto_link: true\n    text: x\n"

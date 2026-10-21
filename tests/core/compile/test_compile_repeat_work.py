@@ -11,11 +11,13 @@ memo nobody installs is indistinguishable from a working one at the unit level.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from typing import Any
 
 import pytest
 import yaml
+from pydantic import BaseModel
 
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.style.authored import StylePatch
@@ -256,6 +258,27 @@ class TestCompileDoesNotRepeatItself:
         # sharing between the two identically-styled siblings either.
         assert len(cascades) == 3
 
+    def test_only_the_root_propagates_nested_styles(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        resolves: list[str] = []
+        real = normalizer.compile_board_resolved_style
+
+        def counting(*a: Any, **kw: Any) -> Any:
+            resolves.append("resolve")
+            return real(*a, **kw)
+
+        monkeypatch.setattr(normalizer, "compile_board_resolved_style", counting)
+        result = compile(
+            "title: Root\nrows:\n  - rows:\n      - text: leaf\n", file="f.yaml"
+        )
+        assert result.success, [d.message for d in result.errors]
+
+        # Three boards resolve once each inside their own normalize_board, then
+        # the root's walk resolves the two nested ones against their parents.
+        # A nested walk would add the leaf a third time.
+        assert len(resolves) == 5
+
     def test_a_board_is_composed_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
         composes: list[str] = []
         real_compose = yaml.compose
@@ -269,3 +292,72 @@ class TestCompileDoesNotRepeatItself:
         assert result.success, [d.message for d in result.errors]
 
         assert len(composes) == 1
+
+
+_SWATCH_YAML = """\
+title: Swatches
+rows:
+  - text: " "
+    style:
+      background: "#ff0000"
+  - text: plain
+"""
+
+
+def _style_node_ids(value: object, ids: set[int]) -> set[int]:
+    if id(value) in ids:
+        return ids
+    if isinstance(value, BaseModel):
+        ids.add(id(value))
+        for name in type(value).model_fields:
+            _style_node_ids(getattr(value, name), ids)
+    elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+        ids.add(id(value))
+        for field in dataclasses.fields(value):
+            _style_node_ids(getattr(value, field.name), ids)
+    elif isinstance(value, (list, tuple)):
+        ids.add(id(value))
+        for item in value:
+            _style_node_ids(item, ids)
+    elif isinstance(value, dict):
+        ids.add(id(value))
+        for item in value.values():
+            _style_node_ids(item, ids)
+    return ids
+
+
+class TestNestedBoardsShareTheirParentsStyle:
+    """A nested board keeps only what differs from its parent's style."""
+
+    def _boards(self) -> Any:
+        result = compile(_SWATCH_YAML, file="f.yaml")
+        assert result.success, [d.message for d in result.errors]
+        root = result.board
+        assert root is not None
+        swatch, plain = (item.board for item in root.layout.items)
+        assert swatch is not None
+        assert plain is not None
+        return root, swatch, plain
+
+    def _private_nodes(self, board: Any, parent: Any) -> set[int]:
+        parent_ids = _style_node_ids(parent.resolved_style, set())
+        _style_node_ids(parent.chart_style_context, parent_ids)
+        own = _style_node_ids(board.resolved_style, set())
+        _style_node_ids(board.chart_style_context, own)
+        return own - parent_ids
+
+    def test_a_one_key_block_keeps_only_its_difference(self) -> None:
+        root, swatch, _ = self._boards()
+
+        assert swatch.resolved_style.background != root.resolved_style.background
+        assert len(self._private_nodes(swatch, root)) < 150
+
+    def test_an_unstyled_block_shares_nearly_everything(self) -> None:
+        root, _, plain = self._boards()
+
+        assert len(self._private_nodes(plain, root)) < 20
+
+    def test_each_board_still_holds_its_own_resolved_style(self) -> None:
+        root, swatch, plain = self._boards()
+
+        assert len({id(b.resolved_style) for b in (root, swatch, plain)}) == 3

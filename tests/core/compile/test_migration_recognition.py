@@ -36,6 +36,7 @@ from dbt_charts.core.compile.migrations.migrations import (
 )
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     JsonObject,
+    JsonValue,
     YamlSchemaCatalog,
     YamlSchemaEntry,
 )
@@ -433,6 +434,44 @@ def test_a_current_document_is_never_probed(monkeypatch: pytest.MonkeyPatch) -> 
     assert _recognize(board, catalog, registry) == catalog.dev.version
 
 
+def test_a_nested_board_without_a_moves_lead_key_is_never_seated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seating walks the schema down to a nested board; its count must not scale
+    with the number of boards."""
+    from dbt_charts.core.compile.migrations import migrations as _impl
+
+    seated: list[tuple[str, ...]] = []
+    seat = _impl._positions_along
+
+    def _spy(
+        node: JsonValue,
+        path: tuple[str, ...],
+        schema: JsonObject,
+        positions: list[JsonObject],
+    ) -> list[JsonObject]:
+        seated.append(path)
+        return seat(node, path, schema, positions)
+
+    monkeypatch.setattr(_impl, "_positions_along", _spy)
+    catalog, registry = _board_migration_context()
+
+    def seatings(boards: int) -> int:
+        seated.clear()
+        board = cast(
+            JsonObject,
+            {
+                "title": "t",
+                "style": {"text": {"column": {"rule": {"color": "#f00"}}}},
+                "rows": [{"text": "x"} for _ in range(boards)],
+            },
+        )
+        assert _recognize(board, catalog, registry) == "0.9.0"
+        return len(seated)
+
+    assert seatings(20) == seatings(2)
+
+
 def test_a_retired_token_at_an_undeclared_position_is_current_not_an_error() -> None:
     """The token/role-key presence predicate is deliberately over-eager (a
     whole-document string scan), so it can fire on a board no declared
@@ -656,6 +695,21 @@ def test_no_retired_path_survives_into_the_current_grammar() -> None:
                 f"currently-valid value {value!r} -- it must gate on the "
                 "value a document holds, not on the key merely being present"
             )
+
+
+def test_no_identity_value_map_chains_into_itself() -> None:
+    """A respell must be a fixed point: a value one entry produces is never a key
+    that maps elsewhere, or a second application would respell it again."""
+    _, registry = _board_migration_context()
+    chained = [
+        (move.old_path, value, produced)
+        for move in registry.moves
+        if move.old_path == move.new_path and move.value_map is not None
+        for value, produced in move.value_map.items()
+        if move.value_map.get(produced, produced) != produced
+    ]
+
+    assert not chained, f"value maps chain: {chained[:3]}"
 
 
 def _nest(path: tuple[str, ...], value: object) -> JsonObject:

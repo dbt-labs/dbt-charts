@@ -2,8 +2,7 @@
 
 Mirrors `compile.schema.renderers.prompt.render_prompt` for the YAML field
 reference: introspect a single source of truth (here, `REGISTRY`) into
-markdown, rendered when read (`dct docs`, MCP) or when the docs site builds,
-never committed. One function, filtered by `level`: errors and warnings
+markdown, rendered when the docs site builds, never committed. One function, filtered by `level`: errors and warnings
 differ only in which codes match.
 """
 
@@ -74,10 +73,8 @@ def _fence_for(text: str) -> str:
     return "`" * max(3, longest_run + 1)
 
 
-def _code_section(dc: DiagnosticCode, *, with_anchors: bool) -> str:
-    heading = f"### {dc.code}: {dc.title}"
-    if with_anchors:
-        heading += f" {{: #{dc.code.lower()} }}"
+def _code_section(dc: DiagnosticCode) -> str:
+    heading = f"### {dc.code}: {dc.title} {{: #{dc.code.lower()} }}"
     fence = _fence_for(dc.message_template)
     lines = [
         heading,
@@ -101,19 +98,13 @@ def _code_section(dc: DiagnosticCode, *, with_anchors: bool) -> str:
     return "\n".join(lines)
 
 
-def render_reference(
-    level: Literal["error", "warning"], *, with_anchors: bool = True
-) -> str:
+def render_reference(level: Literal["error", "warning"]) -> str:
     """Render every registered code at `level` as markdown, grouped by `docs_topic`.
 
-    With `with_anchors` (the docs-site copy), sections are H3 headings
-    carrying an explicit `{: #<code-lowercased> }` inline attribute list —
-    MkDocs' `toc: {permalink: true}` has no custom slugify, so a bare heading
-    would slug from the whole title instead of the code, breaking every
-    `build_doc_url()` anchor. The wheel copy (`with_anchors=False`) drops the
-    IAL: it's MkDocs-only syntax that would otherwise leak as literal noise
-    into `dct docs error-reference`/`warning-reference` output and the
-    `dct://docs/*-reference` MCP resource.
+    Sections are H3 headings carrying an explicit `{: #<code-lowercased> }`
+    inline attribute list — MkDocs' `toc: {permalink: true}` has no custom
+    slugify, so a bare heading would slug from the whole title instead of the
+    code, breaking every `build_doc_url()` anchor.
     """
     codes = REGISTRY.all(level=level)
     topics: dict[str, list[DiagnosticCode]] = {}
@@ -124,5 +115,5 @@ def render_reference(
     for topic in sorted(topics):
         sections.append(f"## {topic}\n")
         for dc in sorted(topics[topic], key=lambda d: d.code):
-            sections.append(_code_section(dc, with_anchors=with_anchors))
+            sections.append(_code_section(dc))
     return "\n\n".join(sections) + "\n"

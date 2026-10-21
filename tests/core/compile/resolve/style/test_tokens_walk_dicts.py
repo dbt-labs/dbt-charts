@@ -22,10 +22,10 @@ import pytest
 from dbt_charts.agent_api import ProjectSession
 from dbt_charts.core.project import InMemoryBoard
 
-# `dbt-grays.border` and `negative.text` are dotted tokens; `category[1]` is
+# `dbt-grays.4` and `negative.text` are dotted tokens; `category[1]` is
 # a bracket role token. All three go through the same walk.
 _TOKENS = {
-    "background": "dbt-grays.border",
+    "background": "dbt-grays.4",
     "font_color": "negative.text",
     "spark_color": "category[1]",
     "glyph_color": "warning.solid",
@@ -112,7 +112,7 @@ def test_the_walk_leaves_the_resolver_s_own_lookup_tables_alone() -> None:
     """`Style.roles` maps a role name to a token *address*, not to a color.
 
     The first cut of the dict branch walked it, so `roles["ink"]`
-    ("chrome.heading") was resolved to hex and the indirection table stopped
+    ("chrome[10]") was resolved to hex and the indirection table stopped
     pointing anywhere — every later lookup through it would have failed. The
     entries are addresses precisely because they are meant to be followed, not
     evaluated in place.

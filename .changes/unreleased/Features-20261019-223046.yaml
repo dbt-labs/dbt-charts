@@ -1,0 +1,3 @@
+kind: Features
+body: '`dct init` no longer writes a starter board; `dct serve` shows an intro page until the project has one.'
+time: 2026-10-19T22:30:46.39309-07:00

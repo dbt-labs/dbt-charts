@@ -5,10 +5,11 @@
 # hierarchy; pick `paper` for the same voice on a warm canvas.
 
 extends: stark
+notes: the default
 style:
   background: dbt-grays.white
   # Clarity palette — gray scaffold muted step in place of the stark muted.
-  muted: dbt-grays.muted
+  muted: chrome[8]
   # Rebind the categorical role to the editorial-10 family. `_base` binds
   # category to vivid-10; without this rebind, theme-portable refs like
   # `category[2]` or `category[2].dark` keep resolving to stark's palette
@@ -24,10 +25,10 @@ style:
   # `stark` collapses this to ink (gray-80); `clarity` restores the
   # soft separator.
   border:
-    color: dbt-grays.border
+    color: chrome[4]
   # Prose ink — gray-90, restored from `stark`'s ink collapse.
   font:
-    color: dbt-grays.ink
+    color: chrome[11]
   # The editorial voice: serif headlines and prose on top of `stark`'s sans.
   fonts:
     heading:
@@ -44,7 +45,7 @@ style:
     # so titles and headings read the same ink as prose.
     subtitle:
       font:
-        color: dbt-grays.subtitle
+        color: chrome[7]
   charts:
     color:
       categorical:
@@ -56,42 +57,42 @@ style:
     axis:
       labels:
         font:
-          color: dbt-grays.muted
+          color: chrome[8]
       title:
         font:
           # Axis titles render in `subtitle` — quieter than `heading` (which
           # is the chart-title role). Editorial precedent: axis titles
           # orient, they don't compete with marks or the chart title.
-          color: dbt-grays.subtitle
+          color: chrome[7]
       grid:
         # One rung quieter than the measure grid (axis_y below), never more.
-        color: &category_grid dbt-grays.border
+        color: &category_grid chrome[4]
         threshold:
-          color: dbt-grays.subtitle
+          color: chrome[7]
       ticks:
         color: *category_grid
       line:
-        color: dbt-grays.grid
+        color: chrome[3]
     axis_y:
       grid:
-        color: dbt-grays.grid-emphasis
+        color: chrome[5]
       ticks:
-        color: dbt-grays.grid-emphasis
+        color: chrome[5]
     axis_quantitative:
       labels:
         font:
-          color: dbt-grays.ink
+          color: chrome[11]
       grid:
-        color: dbt-grays.grid-emphasis
+        color: chrome[5]
       ticks:
-        color: dbt-grays.grid-emphasis
+        color: chrome[5]
     legend:
       label:
         font:
-          color: dbt-grays.muted
+          color: chrome[8]
       title:
         font:
-          color: dbt-grays.heading
+          color: chrome[10]
     # Resets border.width / shadow.visible / swatch.radius / active_marker --
     # stark (the structural root) sets 1.5 / false / 0 / triangle for its own
     # utilitarian look; those values would otherwise leak into every descendant
@@ -101,12 +102,12 @@ style:
       background: dbt-grays.white
       label:
         font:
-          color: dbt-grays.subtitle
+          color: chrome[7]
       value:
         font:
-          color: dbt-grays.ink
+          color: chrome[11]
       border:
-        color: dbt-grays.border
+        color: chrome[4]
         # No border on shadowed themes: the drop shadow already separates the
         # card, so the outline is redundant. Kept only on stark, which turns the
         # shadow off and relies on a hard outline for its utilitarian look.
@@ -120,7 +121,7 @@ style:
     # One scaffold rung past this theme's own measure gridline, at twice
     # that gridline's width -- reads as structure, not as another series.
     hover_emphasis:
-      drop_line_color: dbt-grays.disabled
+      drop_line_color: chrome[6]
       drop_line_width: 3.0
     kpi:
       # KPI value font is a serif on clarity-voiced themes — narrative type
@@ -169,17 +170,17 @@ style:
       total:
         value:
           font:
-            color: dbt-grays.ink
+            color: chrome[11]
         label:
           font:
-            color: dbt-grays.subtitle
+            color: chrome[7]
     marks:
       text:
         font:
-          color: dbt-grays.heading
+          color: chrome[10]
       rule:
         stroke:
-          color: dbt-grays.ink
+          color: chrome[11]
       geoshape:
         # Neutral fill for geography without joined data. Comes from the
         # gray scaffold, not the categorical palette: the basemap is chrome
@@ -187,41 +188,41 @@ style:
         # is picked to hold its own against other series, which is the
         # opposite requirement: a categorical light stop rendered a
         # mid-tone mark effectively invisible against it.
-        fill: dbt-grays.grid-emphasis
+        fill: chrome[5]
     support_table:
-      neutral_color: dbt-grays.muted
+      neutral_color: chrome[8]
       label:
         font:
-          color: dbt-grays.muted
+          color: chrome[8]
       divider:
-        color: dbt-grays.muted
+        color: chrome[8]
       row:
         divider:
-          color: dbt-grays.muted
+          color: chrome[8]
     table:
       header:
         divider:
-          color: dbt-grays.ink
+          color: chrome[11]
         font:
-          color: dbt-grays.heading
+          color: chrome[10]
       row:
         divider:
-          color: dbt-grays.ink
+          color: chrome[11]
         roles:
           summary:
             divider:
-              color: dbt-grays.ink
+              color: chrome[11]
           total:
             divider:
-              color: dbt-grays.ink
+              color: chrome[11]
         stripe:
-          color: dbt-grays.surface-subtle   # subtle zebra (one scaffold stop off canvas)
+          color: chrome[2]   # subtle zebra (one scaffold stop off canvas)
   variables:
     # Variable-strip labels track the muted gray rather than the
     # cooler #666666 stark uses.
     font:
-      color: dbt-grays.muted
+      color: chrome[8]
     # Variable-strip input border — subtle gray separator. `stark` collapses
     # this to ink (gray-80); `clarity` restores the soft separator.
     border:
-      color: dbt-grays.grid-emphasis
+      color: chrome[5]

@@ -32,8 +32,8 @@ rows:
       Discrete hues for unordered categories. `vivid-10` is the chroma-pushed
       default the `vivid` and `neon` themes cycle through; `editorial-10` is
       the muted, cycling-discipline counterpart used by `clarity` and `paper`.
-      A board can pin a fixed dark `dbt-grays.heading` single-series
-      mark via `single_series_palette: [dbt-grays.heading]`
+      A board can pin a fixed dark `dbt-grays.10` single-series
+      mark via `single_series_palette: [dbt-grays.10]`
       (see `labs/gray-single-series`). The `category-6-tonal-*` palettes stay
       within a single hue family for editorial restraint.
 
@@ -1557,95 +1557,283 @@ rows:
   - text: |
       ## Scaffold
 
-      UI structural framing — canvas, borders, dividers, axis labels,
-      table stripes, secondary text. Not data encoding. Twelve named
-      steps from `canvas` (near-white) to `void` (near-black).
+      UI structural framing, not data encoding. Steps run lightest to darkest:
+      `1` to `12` near-white to near-black, `0` white, `100` black. Write
+      `dbt-grays.8`, or `chrome[8]` to follow the theme's scaffold; a theme
+      that sets `palettes.chrome: dbt-creams` swaps every `chrome[N]` to the
+      cream ladder at once.
 
   - cols:
       - width: "180px"
         text: "**dbt-grays**"
       - cols:
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-grays.1"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-grays.2"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-grays.3"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-grays.4"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-grays.5"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-grays.6"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-grays.7"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-grays.8"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-grays.9"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-grays.10"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-grays.11"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-grays.12"}
+          - text: "0"
+            width: "64px"
+            style:
+              background: "dbt-grays.0"
+              border:
+                width: 1
+                color: "dbt-grays.4"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.12"
+          - text: "1"
+            width: "64px"
+            style:
+              background: "dbt-grays.1"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.12"
+          - text: "2"
+            width: "64px"
+            style:
+              background: "dbt-grays.2"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.12"
+          - text: "3"
+            width: "64px"
+            style:
+              background: "dbt-grays.3"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.12"
+          - text: "4"
+            width: "64px"
+            style:
+              background: "dbt-grays.4"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.12"
+          - text: "5"
+            width: "64px"
+            style:
+              background: "dbt-grays.5"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.12"
+          - text: "6"
+            width: "64px"
+            style:
+              background: "dbt-grays.6"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.12"
+          - text: "7"
+            width: "64px"
+            style:
+              background: "dbt-grays.7"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.12"
+          - text: "8"
+            width: "64px"
+            style:
+              background: "dbt-grays.8"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.0"
+          - text: "9"
+            width: "64px"
+            style:
+              background: "dbt-grays.9"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.0"
+          - text: "10"
+            width: "64px"
+            style:
+              background: "dbt-grays.10"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.0"
+          - text: "11"
+            width: "64px"
+            style:
+              background: "dbt-grays.11"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.0"
+          - text: "12"
+            width: "64px"
+            style:
+              background: "dbt-grays.12"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.0"
+          - text: "100"
+            width: "64px"
+            style:
+              background: "dbt-grays.100"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.0"
         style: {gap: "4px"}
-    height: "28px"
+    height: "56px"
 
   - cols:
       - width: "180px"
         text: "**dbt-creams**"
       - cols:
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-creams.1"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-creams.2"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-creams.3"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-creams.4"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-creams.5"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-creams.6"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-creams.7"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-creams.8"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-creams.9"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-creams.10"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-creams.11"}
-          - text: " "
-            width: "28px"
-            style: {background: "dbt-creams.12"}
+          - text: "0"
+            width: "64px"
+            style:
+              background: "dbt-creams.0"
+              border:
+                width: 1
+                color: "dbt-grays.4"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.12"
+          - text: "1"
+            width: "64px"
+            style:
+              background: "dbt-creams.1"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.12"
+          - text: "2"
+            width: "64px"
+            style:
+              background: "dbt-creams.2"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.12"
+          - text: "3"
+            width: "64px"
+            style:
+              background: "dbt-creams.3"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.12"
+          - text: "4"
+            width: "64px"
+            style:
+              background: "dbt-creams.4"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.12"
+          - text: "5"
+            width: "64px"
+            style:
+              background: "dbt-creams.5"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.12"
+          - text: "6"
+            width: "64px"
+            style:
+              background: "dbt-creams.6"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.12"
+          - text: "7"
+            width: "64px"
+            style:
+              background: "dbt-creams.7"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.12"
+          - text: "8"
+            width: "64px"
+            style:
+              background: "dbt-creams.8"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.0"
+          - text: "9"
+            width: "64px"
+            style:
+              background: "dbt-creams.9"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.0"
+          - text: "10"
+            width: "64px"
+            style:
+              background: "dbt-creams.10"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.0"
+          - text: "11"
+            width: "64px"
+            style:
+              background: "dbt-creams.11"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.0"
+          - text: "12"
+            width: "64px"
+            style:
+              background: "dbt-creams.12"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.0"
+          - text: "100"
+            width: "64px"
+            style:
+              background: "dbt-creams.100"
+              padding: 0
+              text:
+                align: center
+              font:
+                color: "dbt-grays.0"
         style: {gap: "4px"}
-    height: "28px"
+    height: "56px"
 
 
   # ── Tone ──────────────────────────────────────────────────────────────
@@ -1863,10 +2051,12 @@ rows:
       ## Scaffold
 
       `dbt-grays` (cool) and `dbt-creams` (warm) are the structural framing
-      palettes. They're not data — they're chrome. Reference slots by
-      named step: `color("dbt-grays.ink")`, `color("dbt-creams.canvas")`.
-      Scaffolds pair with their matching theme: clarity/vivid/neon →
-      dbt-grays; paper → dbt-creams.
+      palettes. They're not data — they're chrome. Reference a step by
+      number: `color("dbt-grays.11")`, `color("dbt-creams.1")`. Write
+      `chrome[11]` to follow the theme: a theme's `palettes.chrome` names the
+      scaffold (clarity/vivid/neon → dbt-grays; paper → dbt-creams), so
+      setting `palettes.chrome: dbt-creams` swaps every `chrome[N]` stop to
+      the cream ladder at once.
 
       ## Tone
 

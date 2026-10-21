@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import (
     check_anchored_sign,
     column_format,
+    declared_column_format,
     resolve_label_format,
 )
 from dbt_charts.core.compile.models.chart.authored._layer import (
@@ -104,6 +105,7 @@ def _resolve_one_layer(
     datasets: LayerDatasets,
     chart_id: str,
     index: int,
+    query_formats: Mapping[str, str] | None,
 ) -> ResolvedLayer:
     """Resolve a single typed authored layer into its resolved counterpart.
 
@@ -161,10 +163,27 @@ def _resolve_one_layer(
     axis_format: ResolvedFormat | None = None
     tick_label: ResolvedTickLabel | None = None
     tooltip_format: ResolvedFormat | None = None
-    if authored_axis_y.labels is not None and authored_axis_y.labels.format is not None:
-        raw_format = authored_axis_y.labels.format
+    raw_format = (
+        authored_axis_y.labels.format if authored_axis_y.labels is not None else None
+    )
+    # The query's `formats:` describes the base query's columns only.
+    own_query_formats = (
+        query_formats if layer.query is None or layer.query == base_query_name else None
+    )
+    if raw_format is not None or (
+        declared_column_format(
+            own_query_formats, layer.y, chart_style_context.formats, time=False
+        )
+        is not None
+    ):
         # A spec-less affix takes the ``number`` default so the painter has digits.
-        axis_format = column_format("number", chart_style_context.formats, raw_format)
+        axis_format = column_format(
+            "number",
+            chart_style_context.formats,
+            raw_format,
+            query_formats=own_query_formats,
+            columns=layer.y,
+        )
         if is_d3_si_spec(axis_format.spec) and axis_format.is_house:
             tick_label = ladderless_tick_label(axis_format, list(_layer_values()))
         else:
@@ -177,6 +196,8 @@ def _resolve_one_layer(
             "number",
             chart_style_context.formats,
             raw_format,
+            query_formats=own_query_formats,
+            columns=layer.y,
             values=_layer_values(),
         )
         if voted.spec != axis_format.spec:
@@ -410,6 +431,7 @@ def _resolve_layer_list(
     data: ChartRows,
     datasets: LayerDatasets,
     chart_id: str,
+    query_formats: Mapping[str, str] | None,
 ) -> tuple[ResolvedLayer, ...]:
     """Resolve a list of authored typed layers to their resolved counterparts.
 
@@ -459,6 +481,7 @@ def _resolve_layer_list(
             datasets,
             chart_id,
             index,
+            query_formats,
         )
         for index, layer in enumerate(layers)
     )

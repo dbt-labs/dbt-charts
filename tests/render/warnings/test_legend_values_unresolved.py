@@ -315,7 +315,7 @@ def test_fires_on_wide_scatter_when_an_entry_matches_no_measure() -> None:
     warnings = detector.detect(_ctx(chart, rows))
     assert len(warnings) == 1
     assert "nope" in warnings[0].message
-    assert "named, non named" in warnings[0].message
+    assert "Named, Non named" in warnings[0].message
 
 
 def test_silent_on_wide_scatter_when_every_entry_resolves() -> None:

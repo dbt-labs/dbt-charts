@@ -31,7 +31,6 @@ HELP_TARGETS: list[list[str]] = [
     ["render"],
     ["query"],
     ["search"],
-    ["docs"],
     ["skills"],
     ["serve"],
     ["init"],

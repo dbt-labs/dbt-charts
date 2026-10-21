@@ -81,7 +81,7 @@ def test_cascade_keeps_the_theme_pinned_spark_bar_track():
     base = get_theme_style().model_copy(update={"muted": "#123456"})
     cascaded = apply_inherit(base, get_inherit_graph())
     assert cascaded.charts.table.spark.bar.background == resolve_palette_color(
-        "dbt-grays.grid"
+        "dbt-grays.3"
     )
 
 

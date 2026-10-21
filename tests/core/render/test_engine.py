@@ -1186,6 +1186,32 @@ def test_board_style_envelope_carries_the_resolved_text_mark_font() -> None:
     assert envelope["text_mark_font"] == {"family": font.family, "size": font.size}
 
 
+def test_board_style_envelope_carries_the_themes_default_view_widths() -> None:
+    from dbt_charts.core.render.engine import board_style_envelope
+    from dbt_charts.core.text.format_d3 import active_format_locale, active_time_locale
+
+    style, _ = resolve_style_and_context(get_theme_style())
+    envelope = board_style_envelope(
+        style, None, active_format_locale(), active_time_locale()
+    )
+    view = style.chart_defaults.view
+    assert envelope["continuous_width"] == view.continuous_width
+    assert envelope["discrete_width"] == view.discrete_width
+
+
+def test_board_style_envelope_carries_the_board_palette_a_chart_with_none_falls_back_to() -> (
+    None
+):
+    from dbt_charts.core.render.engine import board_style_envelope
+    from dbt_charts.core.text.format_d3 import active_format_locale, active_time_locale
+
+    style, context = resolve_style_and_context(get_theme_style())
+    envelope = board_style_envelope(
+        style, None, active_format_locale(), active_time_locale()
+    )
+    assert envelope["palette"] == context.palette
+
+
 def _pivot_headers(cells: list[object]) -> list[str]:
     rows = [{"r": "x", "c": c, "v": i} for i, c in enumerate(cells)]
     table = {
@@ -1294,6 +1320,32 @@ rows:
     )
     assert ">37.7749</tspan>" in svg
     assert (f'"start">{unit}</tspan>' in svg) == (unit is not None)
+
+
+def test_a_redefined_number_beats_the_integer_default_in_a_table() -> None:
+    """An integer column prints the board's redefined `number`, not the
+    whole-number type default, so the board's affix survives."""
+    svg = render_board_to_svg(
+        """
+title: T
+style:
+  formats:
+    number: currency
+    currency: latitude
+queries:
+  q:
+    columns: [lat]
+    values:
+      - [37]
+charts:
+  t:
+    query: q
+    type: table
+rows:
+  - t
+"""
+    )
+    assert '"start">\u00b0</tspan>' in svg
 
 
 def test_a_chain_ending_at_an_engine_name_keeps_that_names_rules() -> None:

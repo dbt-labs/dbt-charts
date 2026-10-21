@@ -3,7 +3,7 @@
 The design rule: a bare table (no style overrides, default theme) renders
 with header rule + row stripe on, header fill off. Editorial (the shipped
 default theme) sets the stripe via a single scaffold-token
-(`charts.table.row.stripe.color: dbt-grays.surface-subtle` in
+(`charts.table.row.stripe.color: dbt-grays.2` in
 editorial.yaml) — one step off the canvas, faint enough to read as
 row-tracking texture rather than value encoding. Summary and total rules
 still fire via row typing when `row.role` is configured.
@@ -207,7 +207,7 @@ class TestPydanticDefaults:
         # one scaffold step off canvas. See row.stripe.color in editorial.yaml.
         stripe = get_theme_style().charts.table.row.stripe
         assert stripe is not None
-        assert stripe.color == resolve_palette_color("dbt-grays.surface-subtle")
+        assert stripe.color == resolve_palette_color("dbt-grays.2")
 
     def test_header_rule_default_is_on(self):
         """Header rule is on — verify via theme pipeline."""

@@ -84,7 +84,7 @@ def test_short_comma_free_layered_legend_keeps_vegas_own_enumeration() -> None:
     legend_labels = _legend_aria_labels(svg)
     assert legend_labels, "expected a legend group with its own aria-label"
     for legend_label in legend_labels:
-        assert "revenue" in legend_label
+        assert "Revenue" in legend_label
         assert "target" in legend_label
 
 

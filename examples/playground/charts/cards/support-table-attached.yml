@@ -7,8 +7,8 @@ notes: |
   (above the plot); set `style.support_table.position: bottom` for below-plot.
   Works on `bar`, `line`, and `area` charts. Each entry is one row of the
   strip; use `aggregate:` to roll up rows that have multiple values per x.
-
 source: examples_db
+
 text: |
   **Attached support tables** turn a chart into a chart-plus-table: every x-tick
   carries one or more numeric rows adjacent to it, formatted and labeled. By

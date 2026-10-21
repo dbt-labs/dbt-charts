@@ -1,0 +1,3 @@
+kind: Features
+body: Keys that restate a default, an inferred value or a column's default format now warn with `WARN-RESTATED-STYLE`, `WARN-RESTATED-INFERRED` or `WARN-RESTATED-FORMAT`.
+time: 2026-10-19T22:57:10.447221-07:00

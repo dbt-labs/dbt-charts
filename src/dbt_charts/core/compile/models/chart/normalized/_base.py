@@ -107,6 +107,10 @@ class _BaseChartFields(BaseModel):
         default_factory=list,
         description="Warning codes to suppress for this chart.",
     )
+    authored_fields: frozenset[str] = Field(
+        default=frozenset(),
+        description="Fields the author wrote, before normalization filled in the rest.",
+    )
 
 
 class _SharedChartFields(_BaseChartFields):

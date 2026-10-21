@@ -22,7 +22,7 @@ TokenOrSanitizableColor = Annotated[
     StringConstraints(pattern=TOKEN_OR_SANITIZABLE_COLOR_PATTERN),
     ErrorHint(
         "category_colors color {value!r} is neither a palette token (e.g. "
-        "`category[1]`, `dbt-grays.muted`) nor a CSS hex color (e.g. `#1f77b4`)."
+        "`category[1]`, `dbt-grays.8`) nor a CSS hex color (e.g. `#1f77b4`)."
     ),
 ]
 
@@ -46,7 +46,7 @@ class CategoryColorBinding(BaseModel):
     # hex legal.
     values: dict[str, CategorySlotToken | TokenOrSanitizableColor] = Field(
         description=(
-            "Data value → palette token (`category[1]`, `dbt-grays.muted`) "
+            "Data value → palette token (`category[1]`, `dbt-grays.8`) "
             "or literal hex. Tokens resolve against the board's theme."
         ),
     )

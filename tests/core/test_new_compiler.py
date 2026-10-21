@@ -1555,7 +1555,7 @@ rows:
         chart, _ = self._resolved_chart(yaml_content, "my_donut")
         assert chart.total is not None, "donut must auto-fill chart.total when omitted"
         assert chart.total.visible is True
-        assert chart.total.label == "Total Score", (
+        assert chart.total.label == "Total score", (
             f"auto label should prefix 'Total ' before the slug-titled theta; "
             f"got {chart.total.label!r}"
         )
@@ -1692,7 +1692,7 @@ rows:
             f"{resolved.style.total_style.value.format!r}"
         )
         assert resolved.total is not None
-        assert resolved.total.label == "Total Value", (
+        assert resolved.total.label == "Total value", (
             f"omitted label must still be auto-derived even though the "
             f"author set a style.total.value.format; got "
             f"{resolved.total.label!r}"
@@ -1795,19 +1795,14 @@ rows:
         """
         chart = self._compile_donut("revenue_usd")
         assert chart.total is not None
-        assert chart.total.label == "Total Revenue ($)", chart.total.label
+        assert chart.total.label == "Total revenue ($)", chart.total.label
 
-    def test_donut_auto_label_lowercases_stopwords_per_title_case_rules(self):
-        """Multi-word theta with a stopword renders the engine's shared
-        title-case convention — `apply_case("title")` uses the NYT
-        small-words list, so ``by`` stays lowercase. Locks in
-        consistency with axis titles / KPI captions that share the same
-        path; guards against a hand-rolled per-token capitalizer sneaking
-        back in.
-        """
+    def test_donut_auto_label_is_the_sentence_case_derived_label(self):
+        """The auto total label is "Total" plus the theta column's derived
+        (sentence-case) label, so only the first word is capitalized."""
         chart = self._compile_donut("revenue_by_region")
         assert chart.total is not None
-        assert chart.total.label == "Total Revenue by Region", chart.total.label
+        assert chart.total.label == "Total revenue by region", chart.total.label
 
     def test_donut_auto_label_skips_total_prefix_when_theta_starts_with_total(self):
         """Skip rule: when the theta column already contains ``total`` as a
@@ -1820,7 +1815,7 @@ rows:
         assert chart.total is not None
         # slug_to_text("total_revenue") → "total revenue" → title "Total Revenue".
         # Substring "total" present → no prefix added.
-        assert chart.total.label == "Total Revenue", chart.total.label
+        assert chart.total.label == "Total revenue", chart.total.label
 
     def test_donut_auto_label_skip_rule_is_case_insensitive(self):
         """Skip rule matches case-insensitively — author column casing
@@ -1828,7 +1823,7 @@ rows:
         """
         chart = self._compile_donut("TOTAL_BOOKINGS")
         assert chart.total is not None
-        assert chart.total.label == "Total Bookings", chart.total.label
+        assert chart.total.label == "Total bookings", chart.total.label
 
     def test_donut_auto_label_skips_for_total_substring_anywhere(self):
         """Skip rule fires on substring anywhere in the column name, not
@@ -1837,7 +1832,7 @@ rows:
         """
         chart = self._compile_donut("revenue_total")
         assert chart.total is not None
-        assert chart.total.label == "Revenue Total", chart.total.label
+        assert chart.total.label == "Revenue total", chart.total.label
 
     def test_donut_chart_total_visible_false_opts_out_of_auto_render(self):
         """Author opt-out: ``chart.total.visible: false`` suppresses the
@@ -1928,7 +1923,7 @@ rows:
             "chart.total — firing predicate is shape, not authoring alias"
         )
         assert chart.total.visible is True
-        assert chart.total.label == "Total Score", chart.total.label
+        assert chart.total.label == "Total score", chart.total.label
 
     # ------------------------------------------------------------------
     # Default 2-line label template for pie/donut

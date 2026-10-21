@@ -38,7 +38,6 @@ def _handler_args() -> dict[str, dict[str, Any]]:
     return {
         "render_board": {"path": "nonexistent.yml"},
         "search_files": {"text": "anything"},
-        "docs": {"topic": "yaml"},
         "describe_board": {"path": "nonexistent.yml"},
         "read_file": {"path": "nonexistent.yml"},
         "write_file": {"path": "out.yml", "content": "title: X\n"},
@@ -50,7 +49,7 @@ def _handler_args() -> dict[str, dict[str, Any]]:
         "move_file": {"source_path": "nonexistent.yml", "destination_path": "dest.yml"},
         "delete_file": {"path": "nonexistent.yml"},
         "list_skills": {},
-        "get_skill": {"name": "kpi-row"},
+        "get_skill": {"name": "chart"},
         "list_diagnostic_codes": {},
         "get_diagnostic_code": {"code": "WARN-REDUNDANT-ENCODING"},
     }

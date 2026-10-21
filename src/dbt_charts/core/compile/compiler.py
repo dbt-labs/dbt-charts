@@ -120,6 +120,7 @@ from dbt_charts.core.compile.parse.source_map import (
 from dbt_charts.core.compile.parse.yaml_error_formatter import (
     format_validation_errors_structured,
 )
+from dbt_charts.core.compile.restated import schema_default_restated, tree_restated
 from dbt_charts.core.compile.template.custom_template import available_template_names
 from dbt_charts.core.compile.template.jinja import (
     check_dialect_composition,
@@ -154,6 +155,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
 from dbt_charts.core.diagnostics.codes_query import WARN_PARSE_ERROR
 from dbt_charts.core.diagnostics.diagnostic import SourceRange
 from dbt_charts.core.diagnostics.from_query_diagnostic import from_query_diagnostic
+from dbt_charts.core.utils import YAML_LOADER
 
 logger = logging.getLogger(__name__)
 
@@ -532,6 +534,7 @@ def compile_authored_board(
     warnings.extend(
         detect_board_warnings(compiled, _own_format_names(_yaml_content), chart_styles)
     )
+    warnings.extend(tree_restated(compiled))
     authored_queries = authored.queries
     warnings.extend(
         _sql_parse_warnings(
@@ -782,7 +785,12 @@ def _compile_with_text(
     """
     regional = DEFAULT_REGIONAL if board.regional is None else board.regional
     authoring_warnings = detect_authoring_warnings(
-        yaml_content, regional.resolved_language
+        yaml_content,
+        regional.resolved_language,
+        board.source if isinstance(board.source, str) else None,
+    )
+    authoring_warnings += schema_default_restated(
+        board, yaml.load(yaml_content, Loader=YAML_LOADER)
     )
     result = compile_authored_board(
         board,
@@ -1580,20 +1588,26 @@ def _resolve_ref_item(
 
 
 def _board_level_default_source(
-    content: dict[str, YamlValue], file_label: str
+    content: dict[str, YamlValue], file_path: ProjectPath
 ) -> str | None:
-    """Validated board-level `source:` of a raw source-file mapping.
+    """Default source of the raw source-file mapping at *file_path*.
 
-    Cross-board-pulled queries inherit the declaring file's default source. The
-    source file's content is a raw mapping here (never parsed into
-    AuthoredBoard), so the string-ness the model would enforce is checked here.
+    Cross-board-pulled queries inherit the declaring file's default source: its
+    board-level `source:`, else the one its meta.yml chain sets (its `extends:`
+    chain is not consulted). The content is a raw mapping here (never parsed
+    into AuthoredBoard), so the string-ness the model would enforce is checked
+    here.
     """
+    from dbt_charts.core.compile.merge import merge_metas
+
     source = content.get("source")
     if source is None:
-        return None
+        metas = merge_metas(file_path.parent, file_path.project.directory("."))
+        meta_source = metas.model_dump(exclude_unset=True).get("source")
+        return meta_source if isinstance(meta_source, str) else None
     if not isinstance(source, str):
         raise CompilationError(
-            f"Invalid board-level `source:` in {file_label}: "
+            f"Invalid board-level `source:` in {file_path.relpath}: "
             f"expected a source name string, got {type(source).__name__}"
         )
     return source
@@ -1655,9 +1669,7 @@ def load_from_reference(
         return normalize_query(
             item_name,
             item_def,
-            _board_level_default_source(
-                source_file_content, str(resolved_path.relpath)
-            ),
+            _board_level_default_source(source_file_content, resolved_path),
             base_dir=base_dir,
             sources=sources,
             cache_root=cache_root,
@@ -1810,9 +1822,7 @@ def _resolve_cross_board_query(
             resolving,
             chart_ref,
             yaml_path,
-            default_source=_board_level_default_source(
-                target_content, target_path.relpath
-            ),
+            default_source=_board_level_default_source(target_content, target_path),
             sources=sources,
             cache_root=cache_root,
             board_cache=board_cache,
@@ -1943,7 +1953,7 @@ def _load_chart_ref_with_lexical_queries(
     if not isinstance(queries_section, dict):
         queries_section = {}
     file_relpath = resolved_path.relpath
-    source_default = _board_level_default_source(content, str(file_relpath))
+    source_default = _board_level_default_source(content, resolved_path)
     key_cache: dict[tuple[str, str], str] = {}
     resolving: set[tuple[str, str]] = set()
 
@@ -1988,9 +1998,7 @@ def _load_chart_ref_with_lexical_queries(
             resolving,
             chart_ref.ref,
             yaml_path,
-            default_source=_board_level_default_source(
-                target_content, target_path.relpath
-            ),
+            default_source=_board_level_default_source(target_content, target_path),
             sources=sources,
             cache_root=cache_root,
             board_cache=board_cache,

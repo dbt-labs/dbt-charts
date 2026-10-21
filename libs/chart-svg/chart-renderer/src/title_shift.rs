@@ -42,17 +42,10 @@ impl TitleShift {
 /// paints marks, a table, a spark_bar or a custom chart (`title_band.py::chart_title_metrics`);
 /// a kpi, a callout, a sankey and an attached-table pie are untitled for the
 /// band and always carry a zero shift. A shift anywhere else refuses by name
-/// rather than painting an unshifted title; so does a shift over a query that
-/// returned no rows, except for a table, whose empty arm applies the shift.
+/// rather than painting an unshifted title.
 pub fn for_family<'a>(payload: &'a Payload, chart_type: &str) -> Result<Cow<'a, Payload>, String> {
     if payload.title_shift.is_zero() {
         return Ok(Cow::Borrowed(payload));
-    }
-    // A table draws its own empty arm and applies the shift there.
-    if payload.rows.is_empty() && !matches!(chart_type, "table" | "custom") {
-        return Err(format!(
-            "{chart_type}: a title shift over an empty result is not modeled"
-        ));
     }
     match chart_type {
         "bar" | "line" | "area" | "scatter" | "heatmap" | "histogram" | "custom" => {
@@ -603,10 +596,10 @@ mod tests {
     }
 
     #[test]
-    fn a_shift_over_an_empty_result_refuses() {
+    fn a_shift_over_an_empty_result_applies_like_any_other() {
         let mut p = payload("bar", (1.0, 2.0), |_| {});
         p.rows.clear();
-        assert!(shifted(&p, "bar").unwrap_err().contains("empty result"));
+        shifted(&p, "bar").expect("an empty cartesian chart takes the shift");
     }
 
     // A table draws its own empty arm, which applies the shift.

@@ -55,6 +55,7 @@ CACHE_REF_JINJA_RE: re.Pattern[str] = re.compile(
 
 logger = logging.getLogger(__name__)
 
+from dbt_charts.core.board_listings import resolve_listings
 from dbt_charts.core.compile.format import missing_format_columns
 from dbt_charts.core.compile.models.board.normalized import (
     Board,
@@ -73,6 +74,7 @@ from dbt_charts.core.compile.models.source import (
     parse_source_config,
 )
 from dbt_charts.core.compile.sql_guard import sqlglot_dialect
+from dbt_charts.core.compile.template.listings import ListingCall, TextListings
 from dbt_charts.core.compile.template.parameterized import DateRangeFilter
 from dbt_charts.core.compile.template.variables import (
     coerce_variable_values,
@@ -549,6 +551,8 @@ class Executor:
         # Same idea for the dbt manifest a ref()/source() resolves against,
         # keyed by the source's authored target_path.
         self._manifest_versions: dict[str | None, str] = {}
+        # Sizing and paint resolve the same text, so each listing is read once.
+        self._text_listings: dict[tuple[str, frozenset[ListingCall]], TextListings] = {}
         self.adapter_registry = adapter_registry
         # Pre-parse file source configs once so _resolve_file_source does not
         # re-run Pydantic on every hot-path query call.
@@ -580,6 +584,15 @@ class Executor:
         # demand-executed, so a cycle that slips past compile-time detection raises
         # a clear ExecutionError instead of a Python RecursionError.
         self._cache_ref_inflight: set[str] = set()
+
+    def text_listings(
+        self, base_dir: str, calls: frozenset[ListingCall]
+    ) -> TextListings:
+        key = (base_dir, calls)
+        if key not in self._text_listings:
+            directory = self.adapter_registry.project.directory(base_dir)
+            self._text_listings[key] = resolve_listings(calls, directory)
+        return self._text_listings[key]
 
     def execute_query(
         self,

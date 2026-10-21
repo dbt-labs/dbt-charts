@@ -287,6 +287,14 @@ impl LinearScale {
     }
 }
 
+/// A value's fraction down a linear value axis from its `y_max` end, the
+/// ratio [`LinearScale::position`] scales by the range. A zero-extent domain
+/// puts every value at the midpoint (d3-scale `normalize`).
+pub fn linear_frac_from_top(y_min: f64, y_max: f64, value: f64) -> f64 {
+    let span = y_max - y_min;
+    if span == 0.0 { 0.5 } else { (y_max - value) / span }
+}
+
 #[cfg(test)]
 mod linear_scale_tests {
     use super::*;
@@ -297,6 +305,15 @@ mod linear_scale_tests {
         // — the reference rule sits a hair under the half-pixel tie.
         let scale = LinearScale::new(6000.0, 28000.0, 231.0, 0.0);
         assert_eq!(scale.position(15000.0), 136.49999999999997);
+    }
+
+    /// The fraction down the axis shares `normalize`'s zero-extent case.
+    #[test]
+    fn a_zero_extent_domain_puts_every_value_half_way_down() {
+        assert_eq!(linear_frac_from_top(0.0, 0.0, 0.0), 0.5);
+        assert_eq!(linear_frac_from_top(5.0, 5.0, 9.0), 0.5);
+        assert_eq!(linear_frac_from_top(0.0, 10.0, 10.0), 0.0);
+        assert_eq!(linear_frac_from_top(0.0, 10.0, 0.0), 1.0);
     }
 
     /// d3-scale `continuous.js` `normalize`: a zero-extent domain maps every
@@ -336,8 +353,9 @@ impl LogScale {
             return 0.0;
         }
         let span = self.domain_max.ln() - self.domain_min.ln();
+        // d3's `normalize` maps a zero span to the range midpoint.
         if span == 0.0 {
-            return self.range_start;
+            return (self.range_start + self.range_end) / 2.0;
         }
         let t = (value.ln() - self.domain_min.ln()) / span;
         self.range_start * (1.0 - t) + self.range_end * t
@@ -362,46 +380,70 @@ impl MeasureScale {
     }
 }
 
-/// d3-scale log `nice()`: floor/ceil the domain ends to base-10 powers
-/// (`pows(floor(logs(x)))` / `pows(ceil(logs(x)))` — `log.js`'s `nice()`,
-/// base 10 unconditionally since production authors no other log base).
-/// Callers must have already rejected non-positive `lo`/`hi` — this has no
-/// defined answer for either.
-pub fn log_nice_domain(lo: f64, hi: f64) -> (f64, f64) {
-    let exp_hi = hi.log10().ceil() as i32;
-    // `pows(floor(logs(0)))` is `pow(-Infinity)`: a zero floor stays zero.
-    let lo = if lo == 0.0 { 0.0 } else { 10f64.powi(lo.log10().floor() as i32) };
-    (lo, 10f64.powi(exp_hi))
+/// d3-scale `log.js`'s `logp(base)`: the base's logarithm, exact for e, 10, 2.
+fn log_in_base(base: f64, x: f64) -> f64 {
+    if base == std::f64::consts::E {
+        x.ln()
+    } else if base == 10.0 {
+        x.log10()
+    } else if base == 2.0 {
+        x.log2()
+    } else {
+        x.ln() / base.ln()
+    }
 }
 
-/// d3-scale log `ticks(count)` over an already-`nice`d domain (so `lo`/`hi`
-/// are exact base-10 powers and their exponents are whole numbers).
+/// d3-scale `log.js`'s `powp(base)`: `base^x`, decimal-exact for 10 (`+("1e" + x)`).
+fn pow_in_base(base: f64, x: f64) -> f64 {
+    if base == std::f64::consts::E {
+        x.exp()
+    } else if base == 10.0 {
+        10f64.powi(x as i32)
+    } else {
+        base.powf(x)
+    }
+}
+
+/// d3-scale log `nice()`: floor/ceil the domain ends to powers of `base`
+/// (`pows(floor(logs(x)))` / `pows(ceil(logs(x)))`, `log.js`'s `nice()`).
+/// Callers must have already rejected non-positive `lo`/`hi` — this has no
+/// defined answer for either.
+pub fn log_nice_domain(base: f64, lo: f64, hi: f64) -> (f64, f64) {
+    let exp_hi = log_in_base(base, hi).ceil();
+    // `pows(floor(logs(0)))` is `pow(-Infinity)`: a zero floor stays zero.
+    let lo = if lo == 0.0 { 0.0 } else { pow_in_base(base, log_in_base(base, lo).floor()) };
+    (lo, pow_in_base(base, exp_hi))
+}
+
+/// [`log_nice_domain`] over a pair that may be descending: d3's `nice` swaps a
+/// reversed domain around the same rounding.
+pub fn log_nice_pair(base: f64, (lo, hi): (f64, f64)) -> (f64, f64) {
+    let (floor, ceil) = log_nice_domain(base, lo.min(hi), lo.max(hi));
+    if lo <= hi { (floor, ceil) } else { (ceil, floor) }
+}
+
+/// d3-scale log `ticks(count)` over the domain `[lo, hi]` (`lo < hi`).
 ///
-/// Two branches of `log.js`'s `ticks()`, keyed on the decade span `r1 − r0`
-/// against `count`:
-/// - `r1 − r0 < count` (the common case — few decades): every 1×..9× decade
-///   multiple inside `[lo, hi]`, across each whole decade `r0..=r1`.
-/// - otherwise (many decades): d3-array `ticks(r0, r1, min(r1−r0, count))`
-///   on the EXPONENTS, mapped back through `10^x` — reuses `d3_ticks`, the
-///   same linear-ticks primitive Vega's own unbaked ladder already ports.
-///
-/// A single nice'd decade that yields very few multiples inside `[lo, hi]`
-/// (`z.length * 2 < count`) falls back to a plain linear `ticks()` over the
-/// domain, as `log.js` does.
-pub fn log_ticks(lo: f64, hi: f64, count: usize) -> Vec<f64> {
+/// Two branches of `log.js`'s `ticks()`, keyed on the decade span
+/// `logs(hi) − logs(lo)` against `count` (and an integer base):
+/// - integer base, span `< count` (few decades): every `1×..(base−1)×` multiple
+///   of each whole decade `floor(logs(lo))..=ceil(logs(hi))` inside `[lo, hi]`;
+///   a result with fewer than `count / 2` ticks falls back to a plain linear
+///   `ticks()` over the domain.
+/// - otherwise (many decades, or a fractional base): d3-array `ticks(i, j,
+///   min(j−i, count))` on the EXPONENTS, mapped back through `base^x`.
+pub fn log_ticks(base: f64, lo: f64, hi: f64, count: usize) -> Vec<f64> {
     // `logs(0)` is `-Infinity`, so d3-array's tick step over it is empty.
     if lo == 0.0 {
         return Vec::new();
     }
-    let exp_lo = lo.log10().round() as i32;
-    let exp_hi = hi.log10().round() as i32;
-    let decades = (exp_hi - exp_lo) as f64;
-    if decades < count as f64 {
+    let (i, j) = (log_in_base(base, lo), log_in_base(base, hi));
+    if base % 1.0 == 0.0 && j - i < count as f64 {
         let mut z = Vec::new();
-        for r in exp_lo..=exp_hi {
-            let decade = 10f64.powi(r);
-            for k in 1..10 {
-                let t = k as f64 * decade;
+        for r in (i.floor() as i32)..=(j.ceil() as i32) {
+            for k in 1..base as i32 {
+                let k = f64::from(k);
+                let t = if r < 0 { k / pow_in_base(base, f64::from(-r)) } else { k * pow_in_base(base, f64::from(r)) };
                 if t < lo {
                     continue;
                 }
@@ -416,31 +458,32 @@ pub fn log_ticks(lo: f64, hi: f64, count: usize) -> Vec<f64> {
         }
         z
     } else {
-        let n = (decades as usize).min(count);
-        d3rs::ticks::d3_ticks(exp_lo as f64, exp_hi as f64, n)
+        d3rs::ticks::d3_ticks_fractional(i, j, (j - i).min(count as f64))
             .into_iter()
-            .map(|e| 10f64.powi(e.round() as i32))
+            .map(|e| pow_in_base(base, e))
             .collect()
     }
 }
 
-/// d3-scale log `tickFormat`'s minor-mantissa visibility rule — the mask a
-/// caller applies when NO explicit axis format overrides `scale.tickFormat`
-/// (an authored format string always wins over it; see `log_ticks`' caller
-/// in `line.rs` for why that path isn't ported here).
+/// Vega `tickLog`'s minor-mantissa visibility rule: the mask a caller applies
+/// when NO explicit axis format overrides it (an authored format string always
+/// wins over it; see `log_ticks`' caller in `line.rs` for why that path isn't
+/// ported here).
 ///
-/// `k = max(1, base * count / ticks.len())`; a tick is visible when its
-/// mantissa (`d / 10^round(log10(d))`, corrected by ×10 when that leaves a
-/// sub-1 mantissa past the `base − 0.5` rounding boundary) is `<= k`.
-pub fn log_tick_mantissa_visible(ticks: &[f64], count: usize) -> Vec<bool> {
-    let k = (10.0 * count as f64 / ticks.len() as f64).max(1.0);
+/// `k = max(1, base * count / scale_ticks)`, `scale_ticks` being how many ticks
+/// the scale itself would draw (an axis with authored `values` still reads the
+/// scale's own); a tick is visible when its mantissa (`d / base^round(log(d) /
+/// log(base))`, corrected by × `base` when that leaves a sub-1 mantissa past
+/// the `base − 0.5` rounding boundary) is `<= k`.
+pub fn log_tick_mantissa_visible(base: f64, ticks: &[f64], scale_ticks: usize, count: usize) -> Vec<bool> {
+    let k = (base * count as f64 / scale_ticks as f64).max(1.0);
     ticks
         .iter()
         .map(|&d| {
-            let r = d.log10().round();
-            let mut i = d / 10f64.powf(r);
-            if i * 10.0 < 10.0 - 0.5 {
-                i *= 10.0;
+            let r = (d.ln() / base.ln()).round();
+            let mut i = d / base.powf(r);
+            if i * base < base - 0.5 {
+                i *= base;
             }
             i <= k
         })
@@ -467,7 +510,7 @@ mod log_scale_tests {
     fn nice_domain_floors_and_ceils_to_base_10_powers() {
         // Oracle: probe on `charts/axis-scales_0`'s own data extent
         // (990000000..7795000000) niced to [1e8, 1e10] by vl-convert.
-        assert_eq!(log_nice_domain(990_000_000.0, 7_795_000_000.0), (1e8, 1e10));
+        assert_eq!(log_nice_domain(10.0, 990_000_000.0, 7_795_000_000.0), (1e8, 1e10));
     }
 
     #[test]
@@ -475,7 +518,7 @@ mod log_scale_tests {
         // Oracle: vl_convert scenegraph over [1e8, 1e10] (2 decades, count
         // 10) — 9 multiples per decade for the first two decades, 1 for the
         // partial third (only 1e10 itself lies inside the closed domain).
-        let ticks = log_ticks(1e8, 1e10, 10);
+        let ticks = log_ticks(10.0, 1e8, 1e10, 10);
         assert_eq!(ticks.len(), 19);
         assert_eq!(ticks[0], 1e8);
         assert_eq!(ticks[8], 9e8);
@@ -485,10 +528,42 @@ mod log_scale_tests {
     }
 
     #[test]
+    fn nice_domain_floors_and_ceils_to_powers_of_the_base() {
+        assert_eq!(log_nice_domain(2.0, 100.0, 170.0), (64.0, 256.0));
+        assert_eq!(log_nice_domain(5.0, 100.0, 170.0), (25.0, 625.0));
+        assert_eq!(log_nice_pair(2.0, (170.0, 100.0)), (256.0, 64.0));
+    }
+
+    #[test]
+    fn a_base_two_domain_of_few_powers_falls_back_to_the_linear_ladder() {
+        // Oracle: vl_convert over a base-2 log axis on [64, 256] draws 80..240
+        // by 20 (the powers alone are fewer than count / 2).
+        let ticks = log_ticks(2.0, 64.0, 256.0, 10);
+        assert_eq!(ticks, vec![80.0, 100.0, 120.0, 140.0, 160.0, 180.0, 200.0, 220.0, 240.0]);
+    }
+
+    #[test]
+    fn a_fractional_base_ticks_on_the_exponents() {
+        // Oracle: vl_convert over a base-2.5 axis niced to [2.5^5, 2.5^6] labels
+        // only those two powers.
+        let ticks = log_ticks(2.5, 97.65625, 244.140625, 10);
+        assert_eq!(ticks.len(), 2);
+        assert!((ticks[0] - 97.65625).abs() < 1e-9 && (ticks[1] - 244.140625).abs() < 1e-9, "{ticks:?}");
+    }
+
+    #[test]
+    fn mantissa_visibility_reads_the_scale_s_own_tick_count_for_authored_values() {
+        // Authored `values` [50, 100, 200] under a scale that would draw 19 ticks:
+        // k = 10 * 10 / 19 = 5.26, so all three mantissas (5, 1, 2) stay labeled.
+        assert_eq!(log_tick_mantissa_visible(10.0, &[50.0, 100.0, 200.0], 19, 10), vec![true; 3]);
+        // The function itself only reads the ladder; an axis with authored values skips it (`noSkip`).
+    }
+
+    #[test]
     fn ticks_use_coarse_exponent_steps_when_decades_exceed_count() {
         // Oracle: vl_convert scenegraph over [1, 1e12] (12 decades > count
         // 10) — one tick per decade exponent, per d3-array's own ticks().
-        let ticks = log_ticks(1.0, 1e12, 10);
+        let ticks = log_ticks(10.0, 1.0, 1e12, 10);
         assert_eq!(ticks, vec![1.0, 10.0, 100.0, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12]);
     }
 
@@ -497,8 +572,8 @@ mod log_scale_tests {
         // Oracle: vl_convert scenegraph over [1e8, 1e10] at the default
         // count 10 — k = 10*10/19 ≈ 5.263, so mantissas 1..5 stay labeled
         // (100M..500M, 1G..5G, 10G) and 6..9 blank.
-        let ticks = log_ticks(1e8, 1e10, 10);
-        let visible = log_tick_mantissa_visible(&ticks, 10);
+        let ticks = log_ticks(10.0, 1e8, 1e10, 10);
+        let visible = log_tick_mantissa_visible(10.0, &ticks, ticks.len(), 10);
         let expected = [
             true, true, true, true, true, false, false, false, false, // 1e8..9e8
             true, true, true, true, true, false, false, false, false, // 1e9..9e9
@@ -713,7 +788,7 @@ pub(crate) fn rail_pane_width(
     Ok((widest + RAIL_LABEL_GAP).min(rail_cap(chart_w)))
 }
 
-const RAIL_LABEL_GAP: f64 = 4.0;
+pub(crate) const RAIL_LABEL_GAP: f64 = 4.0;
 
 /// The widest a rail may grow: `endpoint_labels.max_width_fraction` of the chart.
 fn rail_cap(chart_w: f64) -> f64 {

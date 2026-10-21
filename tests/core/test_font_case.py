@@ -23,13 +23,13 @@ from dbt_charts.core.text.humanize import slug_to_text
 def test_slug_to_text_no_capitalize_applied() -> None:
     """slug_to_text must emit lowercase words (no .capitalize() or title logic)."""
     # Plain snake_case slug with no special tokens
-    assert slug_to_text("revenue_by_month") == "revenue by month"
+    assert slug_to_text("revenue_by_month") == "Revenue by month"
 
 
 def test_slug_to_text_unit_suffix_preserved() -> None:
     """Unit suffix is expanded but NOT title-cased."""
     # revenue_usd → revenue ($) — lower case 'revenue', suffix expanded
-    assert slug_to_text("revenue_usd") == "revenue ($)"
+    assert slug_to_text("revenue_usd") == "Revenue ($)"
 
 
 def test_slug_to_text_abbreviation_preserved() -> None:
@@ -41,16 +41,38 @@ def test_slug_to_text_yoy_growth() -> None:
     assert slug_to_text("yoy_growth_pct") == "YoY growth (%)"
 
 
+@pytest.mark.parametrize(
+    ("slug", "expected"),
+    [
+        ("weight_in_lbs", "Weight (lb)"),
+        ("weight_lbs", "Weight (lb)"),
+        ("mass_kg", "Mass (kg)"),
+        ("distance_km", "Distance (km)"),
+        ("distance_mi", "Distance (mi)"),
+        ("wait_secs", "Wait (s)"),
+        ("wait_seconds", "Wait (s)"),
+        ("wait_mins", "Wait (min)"),
+        ("wait_hrs", "Wait (h)"),
+        ("top_mph", "Top (mph)"),
+        ("avg_mpg", "Avg MPG"),
+        ("lbs", "Lbs"),
+        ("miles_per_gallon", "Miles per gallon"),
+    ],
+)
+def test_slug_to_text_common_unit_suffixes(slug: str, expected: str) -> None:
+    assert slug_to_text(slug) == expected
+
+
 def test_slug_to_text_empty_string() -> None:
     assert slug_to_text("") == ""
 
 
 def test_slug_to_text_kebab_case() -> None:
-    assert slug_to_text("revenue-by-month") == "revenue by month"
+    assert slug_to_text("revenue-by-month") == "Revenue by month"
 
 
 def test_slug_to_text_single_word() -> None:
-    assert slug_to_text("revenue") == "revenue"
+    assert slug_to_text("revenue") == "Revenue"
 
 
 @pytest.mark.parametrize(
@@ -71,8 +93,8 @@ def test_slug_to_text_keeps_mixed_case_tokens(slug: str, expected: str) -> None:
 @pytest.mark.parametrize(
     ("slug", "expected"),
     [
-        ("REVENUE_USD", "revenue ($)"),
-        ("REVENUE", "revenue"),
+        ("REVENUE_USD", "Revenue ($)"),
+        ("REVENUE", "Revenue"),
         ("YOY_GROWTH_PCT", "YoY growth (%)"),
         ("Api_Id", "API ID"),
     ],
@@ -200,8 +222,8 @@ def _font(case: str) -> ResolvedFontStyle:
 @pytest.mark.parametrize(
     ("case", "expected"),
     [
-        ("none", "revenue ($)"),
-        ("title", "Revenue ($)"),
+        ("none", "Revenue ($)"),
+        ("lower", "revenue ($)"),
     ],
 )
 def test_field_display_text_derived_takes_font_case(case: str, expected: str) -> None:
@@ -226,7 +248,7 @@ def test_field_display_text_authored_label_is_verbatim() -> None:
 def test_field_title_skips_case_and_prefers_authored_label() -> None:
     from dbt_charts.core.text.case import field_title
 
-    assert field_title("order_month", {}) == "order month"
+    assert field_title("order_month", {}) == "Order month"
     assert field_title("order_month", {"order_month": "Month"}) == "Month"
 
 
@@ -242,3 +264,33 @@ def test_font_case_cascade_none_not_in_theme_resolves() -> None:
     resolved = resolve_style(get_theme_style())
     # Root font has case=none; title font may override
     assert resolved.font.case == "none"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("weight (lb)", "Weight (lb)"),
+        ("total mass (kg) by year", "Total Mass (kg) by Year"),
+        ("top speed (mph)", "Top Speed (mph)"),
+    ],
+)
+def test_title_case_leaves_unit_symbols_alone(text: str, expected: str) -> None:
+    from dbt_charts.core.text.case import apply_case
+
+    assert apply_case(text, "title") == expected
+
+
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("Revenue", "revenue"),
+        ("Revenue2024 by month", "revenue2024 by month"),
+        ("Q", "Q"),
+        ("API ID", "API ID"),
+        ("YoY growth", "YoY growth"),
+    ],
+)
+def test_inline_derived_label_matches_the_rust_twin(label: str, expected: str) -> None:
+    from dbt_charts.core.text.case import inline_derived_label
+
+    assert inline_derived_label(label) == expected

@@ -6,8 +6,8 @@ notes: |
     2. Dynamic URL — field value is interpolated into the URL
     3. Variable update — clicking a mark updates a dashboard variable in-place
        (the query string is intercepted by variables.js; no full navigation)
-
 source: examples_db
+
 variables:
   selected_category:
     label: Category

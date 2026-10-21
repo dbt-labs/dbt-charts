@@ -14,7 +14,7 @@ text: |
   optional in every variant. Compact splits a lone `support` block across its
   two right-column lines.
 # Inline `columns`/`values` keep this specimen runnable anywhere. In your own
-# board, replace them with `source:` + `sql:` — see `dct docs queries`.
+# board, replace them with `source:` + `sql:` — see https://docs.dbtcharts.com/queries/
 queries:
   q:
     notes: One aggregate row — current values plus prior-period deltas.

@@ -77,7 +77,7 @@ def test_color_field_rejects_non_color_values(
         "transparent",
         "none",
         "currentColor",
-        "dbt-grays.grid",
+        "dbt-grays.3",
         "'oklch(0.7 0.1 250)'",
         "'var(--x)'",
         "'rgb(10 20 30 / 50%)'",

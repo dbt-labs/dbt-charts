@@ -483,7 +483,7 @@ rows: []
         assert "options" in error.hint
         assert "default" in error.hint
         assert "Did you mean" not in error.hint
-        assert "See: dct docs variables" in error.hint
+        assert "See: https://docs.dbtcharts.com/reference/yaml-reference/" in error.hint
         assert error.fields["unknown_field"] == "values"
         assert "options" in error.fields["allowed_keys"]
         assert error.fields["docs_topic"] == "variables"
@@ -541,7 +541,7 @@ rows: []
         assert "sql" in error.hint
         assert "source" in error.hint
         assert "type" in error.hint
-        assert "See: dct docs queries" in error.hint
+        assert "See: https://docs.dbtcharts.com/reference/yaml-reference/" in error.hint
 
     def test_inline_chart_query_unknown_field_lists_allowed_keys(self):
         yaml_content = """title: Test
@@ -600,7 +600,7 @@ rows:
         assert "Allowed keys:" in error.hint
         assert "visible" in error.hint
         assert "Did you mean 'visible'?" in error.hint
-        assert "See: dct docs charts" in error.hint
+        assert "See: https://docs.dbtcharts.com/reference/yaml-reference/" in error.hint
 
     def test_line_format_at_chart_root_points_at_the_axis_slot(self):
         yaml_content = """title: Test
@@ -1066,104 +1066,6 @@ rows:
 """
         result = compile(yaml_content)
         assert result.success, result.errors
-
-
-class TestDescriptionRenamedHintNamesTheRealParent:
-    """``description:`` -> ``notes:`` hint must name the key's actual parent,
-    not a union-tag-laden schema path (regression: the hint used to reuse
-    the same ``parent_path`` as the generic diagnostic, which legitimately
-    carries Pydantic discriminator tags like ``@inline``/``bar``/``sql`` --
-    see ``test_query_unknown_field_lists_allowed_keys`` above, which pins
-    that tag-carrying path for the *generic* message. The rename hint must
-    not repeat that path: 'Rename the key at queries.q.sql' names a
-    schema-internal position nobody authored, not the actual `queries.q`
-    mapping the key lives in.
-
-    Every fixture here authors ``description:`` inside a sub-board nested
-    under ``rows:``. That is deliberate: at a top-level position the rename
-    is migrated transparently by ``NOTES_RENAMES`` and no error is raised at
-    all (``test_description_notes_migration.py``), so the sub-board's own
-    ``charts:``/``queries:``/``variables:`` maps -- which the resolved move
-    set does not reach -- are the positions where this hint still fires.
-    """
-
-    def test_chart_level_description_hint_names_the_chart_not_the_union_tags(self):
-        yaml_content = """title: Test
-queries:
-  q1: {sql: "SELECT 1 AS a, 2 AS b"}
-rows:
-  - charts:
-      c1: {type: bar, query: q1, x: a, y: b, description: "x"}
-    rows: [c1]
-"""
-        result = compile(yaml_content)
-
-        assert not result.success
-        error = next(e for e in result.errors if e.hint and "notes:" in e.hint)
-        assert "Rename the key at rows.0.charts.c1 to `notes:`" in error.hint
-
-    def test_query_level_description_hint_names_the_query_not_the_type_tag(self):
-        yaml_content = """title: Test
-rows:
-  - queries:
-      q1: {sql: "SELECT 1 AS a, 2 AS b", description: "x"}
-    charts:
-      c1: {type: bar, query: q1, x: a, y: b}
-    rows: [c1]
-"""
-        result = compile(yaml_content)
-
-        assert not result.success
-        error = next(e for e in result.errors if e.hint and "notes:" in e.hint)
-        assert "Rename the key at rows.0.queries.q1 to `notes:`" in error.hint
-
-    def test_inline_chart_query_description_hint_names_the_chart_query(self):
-        yaml_content = """title: Test
-rows:
-  - charts:
-      c1: {type: bar, query: {sql: "SELECT 1 AS a, 2 AS b", description: "x"}, x: a, y: b}
-    rows: [c1]
-"""
-        result = compile(yaml_content)
-
-        assert not result.success
-        error = next(e for e in result.errors if e.hint and "notes:" in e.hint)
-        assert "Rename the key at rows.0.charts.c1.query to `notes:`" in error.hint
-
-    def test_variable_level_description_hint_names_the_variable_not_the_inline_tag(
-        self,
-    ):
-        yaml_content = """title: Test
-rows:
-  - variables:
-      v1: {input: text, description: "x"}
-    text: hi
-"""
-        result = compile(yaml_content)
-
-        assert not result.success
-        error = next(e for e in result.errors if e.hint and "notes:" in e.hint)
-        assert "Rename the key at rows.0.variables.v1 to `notes:`" in error.hint
-
-    def test_callout_chart_has_no_notes_field_so_hint_falls_through(self):
-        """CalloutChart has no ``notes`` field, so ``description:`` on
-        ``type: callout`` correctly gets the generic diagnostic instead of a
-        replacement that doesn't exist there."""
-        yaml_content = """title: Test
-rows: [c1]
-charts:
-  c1:
-    type: callout
-    description: "x"
-    message: "hello"
-"""
-        result = compile(yaml_content)
-
-        assert not result.success
-        error = result.errors[0]
-        assert error.hint is not None
-        assert "notes:" not in error.hint
-        assert "Allowed keys:" in error.hint
 
 
 class TestNormalizationExtraForbiddenErrors:
@@ -1874,6 +1776,43 @@ class TestRetiredKeysNameTheirSuccessor:
         assert "`zero` was renamed to `threshold` in 0.7.0" in _hint_for(
             result.errors, "zero"
         )
+
+    def test_a_retired_key_in_a_nested_sub_board_names_its_full_successor(self) -> None:
+        result = compile(
+            """titel: x
+queries:
+  q: {sql: "SELECT 1 AS a, 2 AS b"}
+rows:
+  - charts:
+      c1: {type: bar, query: q, x: a, y: b, description: "x"}
+    rows: [c1]
+"""
+        )
+
+        description = _diagnostic_for(result.errors, "description")
+        assert description.hint is not None
+        assert (
+            "`description` was renamed to `notes` in 0.6.0. Rename the key."
+            in description.hint
+        )
+        assert description.fields["successor"] == "rows.0.charts.c1.notes"
+
+    def test_callout_description_names_no_successor(self) -> None:
+        """``CalloutChart`` has no ``notes``, so the generic diagnostic stands."""
+        result = compile(
+            """titel: x
+rows: [c1]
+charts:
+  c1:
+    type: callout
+    description: "x"
+    message: "hello"
+"""
+        )
+
+        hint = _hint_for(result.errors, "description")
+        assert "notes:" not in hint
+        assert "Allowed keys:" in hint
 
     def test_a_grammar_past_the_support_window_names_the_successor(
         self, monkeypatch: pytest.MonkeyPatch

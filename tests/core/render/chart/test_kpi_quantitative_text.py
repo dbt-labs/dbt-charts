@@ -32,9 +32,9 @@ from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
-    bake_kpi_support_ink,
     resolve_chart_style_context,
     resolve_style,
+    unset_auto_support_ink,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.errors import RenderError
@@ -983,10 +983,7 @@ class TestKpiGeometryRefinements:
 
     @staticmethod
     def _override_kpi(es, **kpi_updates):
-        style = resolve_style(get_theme_style())
-        return bake_kpi_support_ink(
-            es.kpi.model_copy(update=kpi_updates), style.tones, style.muted
-        )
+        return unset_auto_support_ink(es.kpi.model_copy(update=kpi_updates))
 
     def test_editorial_kpi_keeps_sans_support_row(self):
         """An editorial KPI overrides ``kpi.value.font.family`` to a serif

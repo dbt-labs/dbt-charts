@@ -40,24 +40,27 @@ impl<'a> XAxis<'a> {
         }
     }
 
-    /// `gap_fill_ordinal_time`: whether the ordinal scaffold is built (bucket
-    /// placement and missing-bucket synthesis) for this resolution.
-    pub fn fills_gaps(&self, resolution: &XResolution) -> bool {
+    /// `gap_fill_ordinal_time` returns rows (so the chart's base spec carries its own data)
+    /// when it fires, whether it builds the scaffold or only sorts and canonicalizes.
+    pub fn rewrites_rows(&self, resolution: &XResolution) -> bool {
         if self.authored_type == Some("temporal") || self.time_unit == Some("none") {
             return false;
         }
         if !matches!(self.raw_type, None | Some("auto") | Some("ordinal")) {
             return false;
         }
-        if !matches!(resolution.fill_grain, Grain::Calendar(_)) {
-            return false;
-        }
+        matches!(resolution.fill_grain, Grain::Calendar(_))
+    }
+
+    /// `gap_fill_ordinal_time`: whether the ordinal scaffold is built (bucket
+    /// placement and missing-bucket synthesis) for this resolution.
+    pub fn fills_gaps(&self, resolution: &XResolution) -> bool {
         // A continuous temporal scale under `fill: null` synthesizes no buckets.
         let continuous = self.fill == Some("null")
             && matches!(self.raw_type, None | Some("auto"))
             && self.time_unit.is_none()
             && resolution.vl_type == VegaType::Temporal;
-        !continuous
+        self.rewrites_rows(resolution) && !continuous
     }
 }
 
@@ -373,14 +376,6 @@ pub fn resolve_cartesian_x_type(
     {
         vl_type = VegaType::Ordinal;
     }
-    // Vega's `timeunit` transform yields NaN for a year below 100: production draws no tick and puts the
-    // marks at x 0. A bar raises `ERR-CHART-PAINTED-NO-MARKS` instead, which its own arm owns.
-    if vl_type == VegaType::Temporal
-        && matches!(mark, "line" | "area" | "scatter")
-        && cells.iter().any(|cell| cell.as_str().and_then(parse_date).is_some_and(|((year, _, _), _)| year < 100))
-    {
-        return Err(format!("{mark}: a temporal x axis over a year below 100 is not supported (Vega reads it as NaN)"));
-    }
     Ok(XResolution { vl_type, from_data, grain, fill_grain })
 }
 
@@ -424,20 +419,19 @@ mod tests {
         assert_eq!((bar.vl_type, bar.grain), (VegaType::Temporal, Grain::None));
     }
 
-    /// Vega reads a year below 100 as NaN on a temporal scale; a bar raises its own error, the other
-    /// cartesian marks refuse by name.
+    /// Vega reads a year below 100 as NaN on a temporal scale; each family positions the NaN row
+    /// itself, the law resolves the same type and grain as for any other year.
     #[test]
-    fn a_year_below_100_refuses_off_the_bar_mark() {
-        let rows: Vec<Row> = ["0099-01-01", "0100-01-01"]
-            .iter()
-            .map(|d| Row::from_iter([("x".to_string(), Value::from(*d))]))
-            .collect();
+    fn a_year_below_100_resolves_like_any_other_year() {
+        let rows = |dates: &[&str]| -> Vec<Row> {
+            dates.iter().map(|d| Row::from_iter([("x".to_string(), Value::from(*d))])).collect()
+        };
         let axis = XAxis { time_unit: None, authored_type: Some("temporal"), raw_type: None, fill: Some("null"), fiscal_year_start_month: 1 };
-        for mark in ["line", "area", "scatter"] {
-            let err = resolve_cartesian_x_type(&rows, "x", &axis, mark, false, &[]).unwrap_err();
-            assert!(err.contains("a temporal x axis over a year below 100"), "{mark}: {err}");
+        for mark in ["line", "area", "scatter", "bar"] {
+            let low = resolve_cartesian_x_type(&rows(&["0099-01-01", "0100-01-01"]), "x", &axis, mark, false, &[]).unwrap();
+            let high = resolve_cartesian_x_type(&rows(&["2099-01-01", "2100-01-01"]), "x", &axis, mark, false, &[]).unwrap();
+            assert_eq!((low.vl_type, low.grain), (high.vl_type, high.grain), "{mark}");
         }
-        assert!(resolve_cartesian_x_type(&rows, "x", &axis, "bar", false, &[]).is_ok());
     }
 
     #[test]

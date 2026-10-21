@@ -875,8 +875,7 @@ class TestStampDiagnosticsWalksUpUnresolvablePaths:
 
     This is what lets a detector name the field it means without knowing
     whether the author wrote it — several warnings are *about* an absent key
-    (`WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER` has no `format:` line
-    to point at), so an over-specific anchor has to degrade rather than lose
+    (`WARN-REDUNDANT-ENCODING` has no key to point at when the author wrote none), so an over-specific anchor has to degrade rather than lose
     its position entirely.
     """
 
@@ -884,17 +883,15 @@ class TestStampDiagnosticsWalksUpUnresolvablePaths:
         self,
     ) -> None:
         from dbt_charts.core.compile.parse.source_map import stamp_diagnostics
-        from dbt_charts.core.diagnostics.codes_render import (
-            WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER,
-        )
+        from dbt_charts.core.diagnostics.codes_render import WARN_TOO_MANY_X_CATEGORIES
 
         source_map = {
             "charts.c1": SourceRange(file="f.yaml", start_line=2, end_line=8),
             "charts.c1.style": SourceRange(file="f.yaml", start_line=6, end_line=8),
         }
         d = Diagnostic.from_code(
-            WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER,
-            message="looks like money",
+            WARN_TOO_MANY_X_CATEGORIES,
+            message="too many",
             path="charts.c1.style.axis_y.format",
         )
         stamp_diagnostics([d], source_map)

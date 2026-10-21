@@ -3,7 +3,7 @@
 Field descriptions enable:
 - Better IDE autocomplete tooltips in JSON Schema
 - AI understanding of field semantics
-- The generated YAML field reference (`dct docs reference` and the docs site)
+- The generated YAML field reference (the docs site's YAML reference)
 
 Design: denylist approach — assert all model fields have descriptions,
 with explicit exemptions for fields intentionally left bare (e.g., private/internal

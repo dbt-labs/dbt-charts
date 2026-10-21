@@ -1,5 +1,6 @@
 # yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Layered charts
+source: examples_db
 theme: vivid
 style:
   frame:
@@ -38,14 +39,12 @@ queries:
         AND month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
       ORDER BY month
   daily_revenue:
-    source: examples_db
     sql: |
       SELECT date, SUM(revenue) AS revenue
       FROM ecommerce_orders
       GROUP BY date
       ORDER BY date
   daily_revenue_recent:
-    source: examples_db
     sql: |
       SELECT date, SUM(revenue) AS revenue
       FROM ecommerce_orders
@@ -53,7 +52,6 @@ queries:
       GROUP BY date
       ORDER BY date
   daily_revenue_average:
-    source: examples_db
     sql: |
       SELECT
         date,
@@ -70,7 +68,6 @@ queries:
         AND month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
       ORDER BY month
   company_revenue_target:
-    source: examples_db
     sql: |
       SELECT
         company,
@@ -79,28 +76,24 @@ queries:
       FROM company_revenue
       ORDER BY quarterly_revenue DESC
   region_category_revenue:
-    source: examples_db
     sql: |
       SELECT region, category, SUM(revenue) AS revenue
       FROM ecommerce_orders
       GROUP BY region, category
       ORDER BY region, category
   region_total_revenue:
-    source: examples_db
     sql: |
       SELECT region, SUM(revenue) AS total_revenue
       FROM ecommerce_orders
       GROUP BY region
       ORDER BY region
   region_daily_revenue:
-    source: examples_db
     sql: |
       SELECT date, region, SUM(revenue) AS revenue
       FROM ecommerce_orders
       WHERE date >= DATE '2024-06-01'
       GROUP BY date, region
   daily_revenue_range:
-    source: examples_db
     sql: |
       SELECT
         date,

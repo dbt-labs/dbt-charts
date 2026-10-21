@@ -9,7 +9,7 @@ description: >
   and the template dialect. Use when the user asks for a shape by name that no
   built-in type or composed recipe draws: a Sankey, funnel, gauge, radar, XmR
   chart, isotype pictogram, waffle. Do NOT use when a built-in type answers the
-  question (see board-design), or for styling an existing chart.
+  question (see {{ s_skill_name_chart }}), or for styling an existing chart.
 metadata:
   author: fivetran
 ---

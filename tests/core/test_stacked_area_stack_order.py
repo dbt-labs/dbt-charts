@@ -71,9 +71,10 @@ def _baseline_calc(spec: dict) -> str:
 @pytest.mark.parametrize("wide", [True, False])
 def test_stack_order_data_stacks_in_authored_order(wide: bool):
     calc = _baseline_calc(_spec("data", wide=wide))
-    assert '"zeta" ? 0' in calc
-    assert '"alpha" ? 1' in calc
-    assert '"mid" ? 2' in calc
+    zeta, alpha, mid = ("Zeta", "Alpha", "Mid") if wide else ("zeta", "alpha", "mid")
+    assert f'"{zeta}" ? 0' in calc
+    assert f'"{alpha}" ? 1' in calc
+    assert f'"{mid}" ? 2' in calc
 
 
 def test_stack_order_data_survives_ordinal_time_gap_fill():
@@ -99,5 +100,6 @@ def test_stack_order_data_survives_gap_fill_for_y_list_with_color():
 @pytest.mark.parametrize("wide", [True, False])
 def test_stack_order_default_stays_value(wide: bool):
     calc = _baseline_calc(_spec(None, wide=wide))
-    assert '"mid" ? 0' in calc
-    assert '"alpha" ? 1' in calc
+    mid, alpha = ("Mid", "Alpha") if wide else ("mid", "alpha")
+    assert f'"{mid}" ? 0' in calc
+    assert f'"{alpha}" ? 1' in calc

@@ -962,27 +962,6 @@ pub struct SizingCtx<'a> {
     pub variable_values: &'a serde_json::Map<String, Value>,
 }
 
-/// A CHEAP raw-JSON gate for a refusal site that cannot afford a full
-/// resolved-chart deserialize. It calls `families::line::shape` itself
-/// rather than re-deriving the decision, reading the IDENTICAL field path
-/// `render_line_panel` does (`color.is_some() && style.endpoint_labels.
-/// visible`).
-fn railconcat_eligible_json(chart: &Value) -> bool {
-    let chart_type = chart.get("chart_type").and_then(Value::as_str);
-    if !matches!(chart_type, Some("line") | Some("area")) {
-        return false;
-    }
-    let is_multi = chart.get("color").is_some_and(|c| !c.is_null());
-    let show_rail = is_multi
-        && chart
-            .get("style")
-            .and_then(|s| s.get("endpoint_labels"))
-            .and_then(|e| e.get("visible"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-    crate::families::line::shape(show_rail) == crate::families::line::Shape::RailConcat
-}
-
 /// One layout item's resolved height, at a given width — the single entry
 /// point every measurement/assignment pass below calls, mirroring
 /// `_resolve_height`'s dispatch (render/sizing.py:167-189) minus the
@@ -1174,26 +1153,6 @@ pub fn forced_fresh_renders(
         }
     }
     Ok(fresh)
-}
-
-/// A nested `grid` layout holding a rail-concat chart that a parent cols row
-/// realigns would need the fresh render `forced_fresh_renders` models, which
-/// is only pinned against production for a nested `rows` layout; refuse by
-/// name instead of painting the chart unrefreshed. A tabs layout holds only
-/// nested boards, never a direct chart, so it needs no such gate.
-pub fn refuse_forced_rail_charts(items: &[LayoutItemInput]) -> Result<(), String> {
-    for item in items {
-        if let (Some(chart), Some(_)) = (item.chart, item.chart_height_override) {
-            if railconcat_eligible_json(chart) {
-                return Err(
-                    "sizing: a rail-concat chart realigned by a parent cols row inside a \
-                     nested grid board is not modeled (only a nested rows board is)"
-                        .to_string(),
-                );
-            }
-        }
-    }
-    Ok(())
 }
 
 /// render/sizing.py::_calculate_rows_dimensions, ported as its own two-pass

@@ -92,7 +92,6 @@ rows:
           border:
             width: 2
             color: "#e65100"
-            radius: 8
           background: "#fff"
       - text: "**20px radius**\n\nborder-radius: 20px"
         style:
@@ -122,7 +121,6 @@ rows:
         style:
           background: "#fff"
           border:
-            width: 1
             color: "#c2185b"
       - text: "**Red text**\n\nfont.color: #c62828"
         style:
@@ -130,7 +128,6 @@ rows:
             color: "#c62828"
           background: "#fff"
           border:
-            width: 1
             color: "#c2185b"
       - text: "**Blue text**\n\nfont.color: #1565c0"
         style:
@@ -138,7 +135,6 @@ rows:
             color: "#1565c0"
           background: "#fff"
           border:
-            width: 1
             color: "#c2185b"
 
   - text: |
@@ -247,7 +243,6 @@ rows:
         style:
           background: "#fff"
           border:
-            width: 1
             color: "#9c27b0"
         rows:
           - text: "Row 1"
@@ -264,7 +259,6 @@ rows:
         style:
           background: "#fff"
           border:
-            width: 1
             color: "#9c27b0"
           gap: "4px"
         rows:
@@ -282,7 +276,6 @@ rows:
         style:
           background: "#fff"
           border:
-            width: 1
             color: "#9c27b0"
           gap: "16px"
         rows:
@@ -354,16 +347,12 @@ rows:
         style:
           background: "#fff"
           border:
-            width: 1
             color: "#ffa000"
-          text:
-            align: "left"
       - title: "Center Aligned"
         text: "Centered text alignment"
         style:
           background: "#fff"
           border:
-            width: 1
             color: "#ffa000"
           text:
             align: "center"
@@ -372,7 +361,6 @@ rows:
         style:
           background: "#fff"
           border:
-            width: 1
             color: "#ffa000"
           text:
             align: "right"

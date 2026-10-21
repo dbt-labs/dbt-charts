@@ -11,10 +11,20 @@ the detector was checking against the wrong (too-wide) number.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
+from datetime import date
+from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
+
+from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
+from dbt_charts.core.compile.template.daterange import resolve_daterange_preset_iso
+from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute import Executor
+from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.render import render
 
 
@@ -506,3 +516,92 @@ def test_no_fire_when_authored_height_clears_the_floor() -> None:
 
     codes = {w.code for w in render_result.warnings}
     assert "WARN-BAR-BAND-WIDTH-TOO-NARROW" not in codes
+
+
+# Daterange presets through a full render: text, queries, the control.
+_BOARD = """
+title: "From {{ span[0] }}"
+variables:
+  span:
+    input: daterange
+    default: last_7_days
+queries:
+  q:
+    source: db
+    sql: |
+      SELECT 'recent' AS w FROM (SELECT current_date - 3 AS d) t
+      WHERE {{ filter_date_range('d', span) }}
+charts:
+  c:
+    query: q
+    type: table
+rows:
+  - c
+"""
+
+# The value reaches only text: no query coerces it, no control draws it.
+_HIDDEN = """
+title: "From {{ span[0] }}"
+variables:
+  span:
+    input: daterange
+    visible: false
+queries:
+  q:
+    source: db
+    sql: SELECT 1 AS n
+charts:
+  c:
+    query: q
+    type: table
+rows:
+  - c
+"""
+
+
+def _render_with_duckdb(
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    yaml_text: str,
+    variables: dict[str, str],
+) -> str:
+    (tmp_path / "dbt_charts.yml").write_text(
+        'sources:\n  db:\n    type: duckdb\n    path: ":memory:"\n'
+    )
+    project = local_project(tmp_path)
+    result = compile(yaml_text, base_dir=project.directory())
+    assert result.success, [d.message for d in result.errors]
+    assert result.board is not None
+    executor = Executor(
+        result.board,
+        adapter_registry=build_adapter_registry(project),
+        query_registry=result.query_registry,
+    )
+    svg = render(result.board, executor, format="svg", variables=variables).output
+    assert isinstance(svg, str)
+    return svg
+
+
+@pytest.mark.parametrize(
+    ("variables", "preset"),
+    [({}, "last_7_days"), ({"span": "last_90_days"}, "last_90_days")],
+)
+def test_a_preset_reaches_text_as_dates_and_the_control_as_its_id(
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    variables: dict[str, str],
+    preset: str,
+) -> None:
+    svg = _render_with_duckdb(tmp_path, local_project, _BOARD, variables)
+    start, _ = resolve_daterange_preset_iso(preset, date.today())
+
+    assert f"From {start}" in svg
+    assert "recent" in svg
+    assert re.search(rf'data-dbt-variable="span"[^>]*data-dbt-value="{preset}"', svg)
+
+
+def test_an_unknown_preset_in_a_template_raises_naming_the_presets(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    with pytest.raises(ExecutionError, match="last_90_days"):
+        _render_with_duckdb(tmp_path, local_project, _HIDDEN, {"span": "last_30_dayz"})

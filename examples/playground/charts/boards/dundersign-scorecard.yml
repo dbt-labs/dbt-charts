@@ -96,7 +96,6 @@ charts:
       order: desc
     height: 185
     style:
-      orientation: horizontal
       axis_y:
         labels:
           format: currency_whole
@@ -122,23 +121,15 @@ charts:
     type: table
     style:
       columns:
-        month:
-          label: Month
         revenue:
-          label: Revenue
           format: currency_whole
           align: right
         new_users:
-          label: New users
-          format: integer
           align: right
         tickets_created:
           label: Tickets opened
-          format: integer
           align: right
         tickets_resolved:
-          label: Tickets resolved
-          format: integer
           align: right
 
 rows:

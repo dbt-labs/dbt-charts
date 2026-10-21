@@ -118,10 +118,7 @@ charts:
     subtitle: Another rollup composed from the shared order_facts query
     style:
       columns:
-        region:
-          label: Region
         revenue:
-          label: Revenue
           format: currency_whole
         share:
           label: "% of total"

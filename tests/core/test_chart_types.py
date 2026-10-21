@@ -295,11 +295,10 @@ class TestTableChart:
             height=200,
             board_style=resolve_style(get_theme_style()),
         )
-        # Numeric columns with no explicit format use the theme SI default
-        # (.3~s): 1234567 -> "1.23" + "M", 9876.54 -> "9.88" + "K".
-        assert ">1.23</tspan>" in svg
+        # An integer column prints whole; other numerics with no explicit
+        # format use the theme SI default (.3~s): 9876.54 -> "9.88" + "K".
+        assert "1,234,567" in svg
         assert ">9.88</tspan>" in svg
-        assert "1,234,567" not in svg  # not full precision
 
     def test_table_truncates_rows(self, make_chart):
         from ._engine_render import render_table_svg

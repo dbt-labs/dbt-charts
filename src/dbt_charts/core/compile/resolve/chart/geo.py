@@ -374,7 +374,11 @@ def _resolve_geoshape(
                 column_format(
                     "number",
                     chart_style_context.formats,
-                    chart_style_context.tooltip.format,
+                    board=chart_style_context.tooltip.format,
+                    query_formats=normalized.query.formats
+                    if normalized.query
+                    else None,
+                    columns=_resolve_choropleth_value_field(normalized, channels),
                     values=tooltip_format_values,
                 ),
                 "style.tooltip.format",
@@ -518,7 +522,11 @@ def _resolve_point_map(
                 column_format(
                     "number",
                     chart_style_context.formats,
-                    chart_style_context.tooltip.format,
+                    board=chart_style_context.tooltip.format,
+                    query_formats=normalized.query.formats
+                    if normalized.query
+                    else None,
+                    columns=normalized.size,
                     values=tooltip_format_values,
                 ),
                 "style.tooltip.format",

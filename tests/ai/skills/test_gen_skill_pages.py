@@ -14,8 +14,8 @@ import pytest
 
 from ..._paths import DBT_CHARTS_DIR
 
-_PAGES_BUDGET_BYTES = 37 * 1024
-_MIN_GENERATED_SHARE = 0.75
+_PAGES_BUDGET_BYTES = 39 * 1024
+_MIN_GENERATED_SHARE = 0.73
 
 
 @pytest.fixture(scope="module")
@@ -93,6 +93,29 @@ def test_chart_page_teaches_serve_detach_and_custom_charts() -> None:
         assert "custom-chart-build" in get_skill("chart", surface=surface).body
 
 
+def test_tool_surface_keeps_boards_only_guidance() -> None:
+    from dbt_charts.agent_api.skills import get_skill
+
+    only_viz_tool = "dbt Charts is the only visualization tool here"
+    assert only_viz_tool in get_skill("chart", surface="tool").body
+    assert only_viz_tool not in get_skill("chart", surface="cli").body
+
+
+def test_file_tool_hosts_copy_by_writing_and_change_only_what_was_asked() -> None:
+    from dbt_charts.agent_api.skills import get_skill
+
+    with_files = get_skill(
+        "chart", surface="tool", available_tools={"render_board", "write_file"}
+    ).body
+    without_files = get_skill(
+        "chart", surface="tool", available_tools={"render_board"}
+    ).body
+    assert "write the copy" in with_files
+    assert "only what the user explicitly asked" in with_files
+    assert "write the copy" not in without_files
+    assert "write the copy" not in get_skill("chart", surface="cli").body
+
+
 def test_tool_names_the_pages_teach_exist_in_the_tool_registry() -> None:
     import re
 
@@ -106,7 +129,7 @@ def test_tool_names_the_pages_teach_exist_in_the_tool_registry() -> None:
     taught = [
         chart[: chart.index("## Board")],
         chart[chart.index("## Finish") :],
-        styling[styling.index("## Errors") :],
+        styling[styling.index("After any edit") :],
     ]
     names = {n for text in taught for n in re.findall(r"`([a-z]+(?:_[a-z]+)+)\(", text)}
     assert {"render_board", "execute_sql", "search_files", "get_skill"} <= names

@@ -183,32 +183,6 @@ impl NumberLocale {
     }
 }
 
-/// A painter that lifts the dollar sign or the percent sign out of the digits
-/// d3 wrote into a lane of its own (the support-table strip's anchored
-/// affixes) writes the board's currency as a leading `$` and its percent sign
-/// as a trailing `%`. A locale whose currency template or percent sign differs
-/// refuses by name: the lane would print a stand-in symbol in the wrong place.
-pub fn require_en_us_affixes(site: &str, spec: &str) -> Result<(), String> {
-    let parts = d3rs::format::parse_parts(spec).map_err(|e| format!("{site}: format {spec:?}: {e}"))?;
-    let locale = active_number_locale();
-    let en_us = Locale::en_us();
-    if parts.symbol && locale.locale.currency != en_us.currency {
-        return Err(format!(
-            "{site}: format {spec:?} paints the board's currency {:?} as a `$` prefix — only the en-US \
-             currency is supported here",
-            locale.locale.currency
-        ));
-    }
-    if matches!(parts.type_, '%' | 'p') && locale.locale.percent != en_us.percent {
-        return Err(format!(
-            "{site}: format {spec:?} paints the board's percent sign {:?} as a `%` suffix — only the \
-             en-US one is supported here",
-            locale.locale.percent
-        ));
-    }
-    Ok(())
-}
-
 thread_local! {
     static ACTIVE: RefCell<Rc<NumberLocale>> = RefCell::new(Rc::new(NumberLocale::en_us()));
 }
@@ -352,24 +326,6 @@ mod tests {
         assert_eq!(de.magnitude_word("P", "narrative").unwrap().as_deref(), Some("P"));
         assert_eq!(de.magnitude_word("m", "narrative").unwrap(), None);
         assert!(de.magnitude_word("k", "loud").is_err());
-    }
-
-    // Oracle: production's de-DE currency template is `["", "\u{a0}€"]`; fr-FR's percent is
-    // `"\u{202f}%"`.
-    #[test]
-    fn a_dollar_spec_under_a_suffix_currency_refuses_by_name() {
-        let err = with_number_locale(&de_de(), || require_en_us_affixes("probe", "$,.0f")).unwrap_err();
-        assert!(err.contains("paints the board's currency"), "{err}");
-        assert!(with_number_locale(&de_de(), || require_en_us_affixes("probe", ",.0f")).is_ok());
-        assert!(require_en_us_affixes("probe", "$,.0f").is_ok());
-    }
-
-    #[test]
-    fn a_percent_spec_under_another_percent_sign_refuses_by_name() {
-        let fr = wire_with(|w| w["percent"] = json!("\u{202f}%")).unwrap();
-        let err = with_number_locale(&fr, || require_en_us_affixes("probe", ".1%")).unwrap_err();
-        assert!(err.contains("paints the board's percent sign"), "{err}");
-        assert!(with_number_locale(&fr, || require_en_us_affixes("probe", ",.0f")).is_ok());
     }
 
     #[test]

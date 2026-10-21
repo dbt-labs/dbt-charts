@@ -19,6 +19,7 @@ from unittest.mock import Mock
 import pytest
 
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.diagnostics.codes_execute import ERR_VARIABLE_OPTIONS_FAILED
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters.base import QueryResult
@@ -306,11 +307,11 @@ class TestColumnOptionUsesNamedQueryCache:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test 4: Best-effort — failing column-option query does not abort the render
+# Test 4: a failing column-option query fails loudly, naming the variable
 # ─────────────────────────────────────────────────────────────────────────────
 
-_BEST_EFFORT_YAML = """\
-title: Best Effort Test
+_FAILING_OPTIONS_YAML = """\
+title: Failing Options Test
 sources:
   db:
     type: duckdb
@@ -335,42 +336,37 @@ rows:
 """
 
 
-class TestBestEffortColumnOptionDegradation:
-    def test_failing_column_option_query_gives_empty_options_not_error(self) -> None:
-        """When the column-option query fails, the dropdown renders empty, not an error."""
+class TestFailingColumnOptionQuery:
+    """An empty dropdown looks like a table with no rows; a missing table must
+    not render that way."""
+
+    def test_failed_options_query_raises_naming_the_variable(self) -> None:
         from dbt_charts.core.render.variables_resolve import resolve_query_options
 
-        result = compile_with_board_sources(_BEST_EFFORT_YAML)
+        result = compile_with_board_sources(_FAILING_OPTIONS_YAML)
         assert result.success
-
-        # Executor that fails the column-option query
         registry = Mock()
-        registry.execute.return_value = QueryResult(
-            data=None, error=QueryError("table not found")
-        )
+        registry.database_file_version.return_value = ""
         executor = Executor(board=result.board, adapter_registry=registry)
+        executor._query_errors["_var_options_region"] = QueryError(
+            "no such table: regions"
+        )
 
-        # Store the error on the executor as the named-query pipeline would
-        executor._query_errors["_var_options_region"] = RuntimeError("table not found")
+        with pytest.raises(QueryError) as exc_info:
+            resolve_query_options("region", "_var_options_region", executor, {})
 
-        # resolve_query_options must return [] (not raise) when query failed
-        options = resolve_query_options("_var_options_region", executor, variables={})
-        assert options == []
+        assert exc_info.value.code is ERR_VARIABLE_OPTIONS_FAILED
+        assert "'region'" in str(exc_info.value)
+        assert "no such table: regions" in str(exc_info.value)
 
-    def test_render_does_not_abort_when_column_option_query_fails(self) -> None:
-        """Full render completes even when a column-option query raises an error."""
+    def test_render_fails_when_column_option_query_fails(self) -> None:
         from dbt_charts.core.render.renderer import render
 
-        result = compile_with_board_sources(_BEST_EFFORT_YAML)
+        result = compile_with_board_sources(_FAILING_OPTIONS_YAML)
         assert result.success
 
-        # Adapter that succeeds for 'sales' but fails for the column-option query
-        call_count = {"n": 0}
-
         def adapter_execute(query, variables=None, **kw):
-            call_count["n"] += 1
-            sql = getattr(query, "sql", "")
-            if "regions" in sql:
+            if "regions" in getattr(query, "sql", ""):
                 return QueryResult(
                     data=None, error=QueryError("no such table: regions")
                 )
@@ -379,9 +375,11 @@ class TestBestEffortColumnOptionDegradation:
         registry = Mock()
         registry.execute.side_effect = adapter_execute
         registry.database_file_version.return_value = ""
-
         executor = Executor(board=result.board, adapter_registry=registry)
 
-        # Must not raise — column-option failure is best-effort
-        svg = render(result.board, executor, format="svg")
-        assert svg  # some output was produced
+        rendered = render(result.board, executor, format="svg")
+
+        assert rendered.output is None
+        assert rendered.board_error is not None
+        assert rendered.board_error.code == ERR_VARIABLE_OPTIONS_FAILED.code
+        assert "no such table: regions" in rendered.board_error.message

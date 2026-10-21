@@ -265,8 +265,8 @@ def test_wide_measures_anchor_at_the_last_axis_category(make_chart, model_copy_a
     spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
     assert spec["hconcat"][0]["encoding"]["x"]["type"] == "nominal"
     assert dict(spec["$df_endpoint_label_cascade"]["anchors"]) == {
-        "alpha": 90.0,
-        "bravo": 70.0,
+        "Alpha": 90.0,
+        "Bravo": 70.0,
     }
 
 
@@ -315,6 +315,6 @@ def test_wide_measures_under_a_sort_rank_on_vega_lites_own_fold() -> None:
         "op": "min",
     }
     assert dict(spec["$df_endpoint_label_cascade"]["anchors"]) == {
-        "alpha": 10.0,
-        "bravo": 1.0,
+        "Alpha": 10.0,
+        "Bravo": 1.0,
     }

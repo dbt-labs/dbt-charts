@@ -309,7 +309,7 @@ def test_layered_base_series_is_named_by_its_measure(orientation: str) -> None:
 
     walk(spec)
     named = {name for domain in domains for name in domain}
-    assert "revenue" in named, (
+    assert "Revenue" in named, (
         f"{orientation}: base series must be named by its measure, got {sorted(named)}"
     )
     assert "month" not in named, (

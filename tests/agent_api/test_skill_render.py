@@ -15,12 +15,12 @@ from dbt_charts.agent_api.skill_render import (
 
 class TestSurfaceExpansion:
     def test_expands_s_macro_on_tool_surface(self) -> None:
-        out = render_skill_body("Run {{ s_render_board }} now.", surface="tool")
-        assert out == "Run render_board now."
+        out = render_skill_body("Run {{ s_execute_sql }} now.", surface="tool")
+        assert out == "Run execute_sql now."
 
     def test_expands_s_macro_on_cli(self) -> None:
-        out = render_skill_body("Run {{ s_render_board }} now.", surface="cli")
-        assert out == "Run dct render now."
+        out = render_skill_body("Run {{ s_execute_sql }} now.", surface="cli")
+        assert out == "Run dct query SOURCE SQL now."
 
     def test_expands_multi_line_block_macro_tool_surface(self) -> None:
         body = "Try this:\n{{ s_render_png_example }}\nDone."
@@ -41,11 +41,8 @@ class TestSurfaceSelection:
     @pytest.mark.parametrize(
         ("body", "surface", "expected"),
         [
-            ("{{ s_render_board }}", "tool", "render_board"),
-            ("{{ s_render_board }}", "cli", "dct render"),
-            # Regression: the CLI side uses positional board context.
-            ("{{ s_execute_named_query }}", "cli", "dct query BOARD.yml QUERY"),
-            ("{{ s_execute_named_query }}", "tool", "execute_sql(board, query)"),
+            ("{{ s_execute_sql }}", "tool", "execute_sql"),
+            ("{{ s_execute_sql }}", "cli", "dct query SOURCE SQL"),
         ],
     )
     def test_s_macro_picks_correct_side(
@@ -63,23 +60,23 @@ class TestBareNameAliasFamily:
     resolves names against the bare registry, not the file-install directory."""
 
     def test_bare_name_renders_unprefixed_on_tool(self) -> None:
-        out = render_skill_body("{{ s_skill_name_design_board }}", surface="tool")
-        assert out == "board-design"
+        out = render_skill_body("{{ s_skill_name_chart }}", surface="tool")
+        assert out == "chart"
 
     def test_bare_name_renders_unprefixed_on_cli(self) -> None:
-        out = render_skill_body("{{ s_skill_name_design_board }}", surface="cli")
-        assert out == "board-design"
+        out = render_skill_body("{{ s_skill_name_chart }}", surface="cli")
+        assert out == "chart"
 
     def test_bare_name_renders_prefixed_on_install(self) -> None:
-        out = render_skill_body("{{ s_skill_name_design_board }}", surface="install")
-        assert out == "dct-board-design"
+        out = render_skill_body("{{ s_skill_name_chart }}", surface="install")
+        assert out == "dct-chart"
 
     def test_command_macro_identical_on_cli_and_install(self) -> None:
         """Non-name macros (commands, prose) don't vary between `cli` and
         `install`: only the bare-name family does."""
-        cli_out = render_skill_body("{{ s_render_board }}", surface="cli")
-        install_out = render_skill_body("{{ s_render_board }}", surface="install")
-        assert cli_out == install_out == "dct render"
+        cli_out = render_skill_body("{{ s_execute_sql }}", surface="cli")
+        install_out = render_skill_body("{{ s_execute_sql }}", surface="install")
+        assert cli_out == install_out == "dct query SOURCE SQL"
 
 
 class TestUnknownKey:
@@ -170,7 +167,7 @@ class TestNoStaleDashboardVocabularyInSkills:
 class TestNoBareInstallSetNameInSkillBodies:
     """A sibling reference must be a `{{ s_skill_name_* }}` macro, not a literal
     install-set skill name — the macro is what makes the CLI-installed body read
-    `dct-board-design` while the tool-call body reads `board-design`. `dct://guide/`
+    `dct-custom-chart-build` while the tool-call body reads `custom-chart-build`. `dct://guide/`
     resource URIs are exempt: registry addresses, not filesystem paths."""
 
     def test_no_bare_install_set_name_outside_guide_uri(self) -> None:

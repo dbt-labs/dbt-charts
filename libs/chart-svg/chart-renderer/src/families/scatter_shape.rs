@@ -46,19 +46,48 @@ fn num(v: f64) -> String {
     }
 }
 
-/// The half extents (x, y) of `symbol` drawn at radius `r` (`sqrt(size) / 2`).
-pub fn half_extents(symbol: &str, r: f64) -> (f64, f64) {
-    match symbol {
-        "triangle-up" | "triangle-down" => (r, HALF_SQRT_3 * r),
-        "triangle-right" | "triangle-left" => (HALF_SQRT_3 * r, r),
-        _ => (r, r),
-    }
+/// `tan(30deg)`, the offset that lifts `triangle` and `wedge` onto their
+/// centroid (`vega-scenegraph/src/path/symbols.js`).
+const TAN_30: f64 = 0.577_350_269_189_625_7;
+
+/// A symbol's bounds around its origin: the half width and the reach above and
+/// below it (`triangle` and `wedge` sit on their centroid, so they reach higher
+/// than they fall), and whether its corners are sharp enough that Vega's miter
+/// limit of 10, not the SVG default of 4, shapes a stroked tip.
+#[derive(Clone, Copy)]
+pub struct Bounds {
+    pub x: f64,
+    pub up: f64,
+    pub down: f64,
+    pub sharp: bool,
+}
+
+/// The bounds of `symbol` drawn at radius `r` (`sqrt(size) / 2`).
+pub fn half_extents(symbol: &str, r: f64) -> Bounds {
+    let h = HALF_SQRT_3 * r;
+    let o = h - r * TAN_30;
+    let (x, up, down) = match symbol {
+        "triangle-up" | "triangle-down" => (r, h, h),
+        "triangle-right" | "triangle-left" => (h, r, r),
+        "triangle" => (r, h + o, h - o),
+        "wedge" => (r / 4.0, h + o, h - o),
+        "arrow" => (r / 2.5, r, r),
+        "stroke" => (r, 0.0, 0.0),
+        _ => (r, r, r),
+    };
+    Bounds { x, up, down, sharp: symbol == "wedge" }
+}
+
+/// The attribute a stroked glyph of these bounds carries.
+pub fn miter_attr(bounds: Bounds) -> &'static str {
+    if bounds.sharp { " stroke-miterlimit=\"10\"" } else { "" }
 }
 
 /// The SVG path `vega-scenegraph/src/path/symbols.js` draws for `symbol` at
 /// radius `r` (`sqrt(size) / 2`), centered on the origin.
 pub fn path(symbol: &str, r: f64) -> Result<String, String> {
     let h = HALF_SQRT_3 * r;
+    let o = h - r * TAN_30;
     let poly = |pts: &[(f64, f64)]| {
         let mut d = String::new();
         for (i, (x, y)) in pts.iter().enumerate() {
@@ -99,7 +128,14 @@ pub fn path(symbol: &str, r: f64) -> Result<String, String> {
         "triangle-down" => poly(&[(0.0, h), (-r, -h), (r, -h)]),
         "triangle-right" => poly(&[(h, 0.0), (-h, -r), (-h, r)]),
         "triangle-left" => poly(&[(-h, 0.0), (h, -r), (h, r)]),
-        other => return Err(format!("scatter: unknown shape symbol {other:?}")),
+        "triangle" => poly(&[(0.0, -h - o), (-r, h - o), (r, h - o)]),
+        "wedge" => poly(&[(0.0, -h - o), (-r / 4.0, h - o), (r / 4.0, h - o)]),
+        "arrow" => {
+            let (s, t, v) = (r / 7.0, r / 2.5, r / 8.0);
+            poly(&[(-s, r), (s, r), (s, -v), (t, -v), (0.0, -r), (-t, -v), (-s, -v)])
+        }
+        "stroke" => format!("M{},0L{},0", num(-r), num(r)),
+        other => return Err(format!("scatter: shape symbol {other:?} is no Vega symbol (resolver required)")),
     })
 }
 
@@ -165,8 +201,7 @@ impl ShapeLegend {
         let glyphs: Vec<Option<LegendSymbol>> = symbols
             .iter()
             .map(|s| {
-                let (x, y) = half_extents(s, SYMBOL_RADIUS);
-                Some(LegendSymbol::Glyph(x, y))
+                Some(LegendSymbol::Glyph(half_extents(s, SYMBOL_RADIUS)))
             })
             .collect();
         let paths = symbols.iter().map(|s| path(s, SYMBOL_RADIUS)).collect::<Result<Vec<_>, _>>()?;
@@ -250,5 +285,21 @@ mod tests {
             path("triangle-up", 5.0).unwrap(),
             "M0,-4.33L-5,4.33L5,4.33Z"
         );
+    }
+
+    #[test]
+    fn the_centroid_symbols_and_the_arrow_match_the_vega_scenegraph_output() {
+        assert_eq!(path("arrow", 3.873).unwrap(), "M-0.553,3.873L0.553,3.873L0.553,-0.484L1.549,-0.484L0,-3.873L-1.549,-0.484L-0.553,-0.484Z");
+        assert_eq!(path("wedge", 3.873).unwrap(), "M0,-4.472L-0.968,2.236L0.968,2.236Z");
+        assert_eq!(path("triangle", 3.873).unwrap(), "M0,-4.472L-3.873,2.236L3.873,2.236Z");
+        assert_eq!(path("stroke", 3.873).unwrap(), "M-3.873,0L3.873,0");
+        assert!(path("hexagon", 3.873).is_err());
+    }
+
+    #[test]
+    fn a_centroid_symbol_reaches_further_up_than_down() {
+        let b = half_extents("wedge", 5.0);
+        assert!((b.up - b.down - 2.0 * (HALF_SQRT_3 * 5.0 - 5.0 * TAN_30)).abs() < 1e-9);
+        assert!(b.sharp && !half_extents("triangle", 5.0).sharp);
     }
 }

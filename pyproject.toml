@@ -294,7 +294,7 @@ constraint-dependencies = [
     "openai<3",
     # sqlglot majors reshape the expression type surface (28 -> 30 did); this
     # keeps a re-lock of oss/uv.lock on the major the monorepo type-checks
-    # against, the same ceiling libs/asql publishes for the shared lock.
+    # against, the same ceiling the asql dependency declares for the shared lock.
     "sqlglot<31",
 ]
 cache-keys = [

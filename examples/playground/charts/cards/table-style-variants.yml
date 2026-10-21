@@ -31,8 +31,6 @@ charts:
     subtitle: Minimal — no rules, no bg, uniform weight
     style:
       columns:
-        company:
-          label: Company
         quarterly_revenue:
           label: Revenue
           format: currency
@@ -40,15 +38,11 @@ charts:
           label: Growth
           format: percent
         margin:
-          label: Margin
           format: percent
-      symbol_mode: anchors
       row:
         role: row_role
         stripe:
           color: transparent
-        divider:
-          visible: false
         roles:
           summary:
             font:
@@ -72,8 +66,6 @@ charts:
     subtitle: BI — apparatus-tier header (11/600/gray)
     style:
       columns:
-        company:
-          label: Company
         quarterly_revenue:
           label: Revenue
           format: currency
@@ -81,13 +73,7 @@ charts:
           label: Growth
           format: percent
         margin:
-          label: Margin
           format: percent
-      header:
-        font:
-          size: 11
-          weight: '600'
-          color: '#313233'
       row:
         role: row_role
   variant_classic:
@@ -97,8 +83,6 @@ charts:
     subtitle: Classic — Source Serif, per-column rule gaps, no header fill
     style:
       columns:
-        company:
-          label: Company
         quarterly_revenue:
           label: Revenue
           format: currency
@@ -106,9 +90,7 @@ charts:
           label: Growth
           format: percent
         margin:
-          label: Margin
           format: percent
-      symbol_mode: anchors
       font:
         family: '''Source Serif 4'', Georgia, ''Times New Roman'', serif'
       header:
@@ -117,26 +99,15 @@ charts:
           weight: '400'
           color: '#222222'
         divider:
-          width: 1
           continuous: false
-          visible: true
       row:
         role: row_role
         stripe:
           color: transparent
-        divider:
-          visible: false
         roles:
           summary:
             font:
               weight: '400'
-            divider:
-              visible: true
-              width: 1
-          total:
-            divider:
-              visible: true
-              width: 1
 rows:
 - title: Variants — Minimal / BI / Classic (3-up)
   cols:

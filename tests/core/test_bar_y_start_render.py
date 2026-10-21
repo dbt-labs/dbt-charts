@@ -426,7 +426,7 @@ class TestTooltips:
         (desc,) = _descriptions(
             _spec(_BRIDGE, x="step", y="end_value", y_start="start_value")
         )
-        assert "start value: " in desc and "end value: " in desc
+        assert "Start value: " in desc and "End value: " in desc
         assert "\\u0394: " in desc
 
     def test_row_starting_at_zero_reads_as_a_plain_bar(self):
@@ -514,7 +514,7 @@ class TestTooltips:
         )
         (block,) = set(_descriptions(spec))
         order = [
-            block.index(f'"{name}: "') for name in ("open", "high", "low", "close")
+            block.index(f'"{name}: "') for name in ("Open", "High", "Low", "Close")
         ]
         assert order == sorted(order)
         assert "\\u0394: " in block
@@ -527,8 +527,8 @@ class TestTooltips:
             y_start=None,
             layers=[{"type": "bar", "y": "close", "y_start": "open"}],
         )
-        (block,) = [d for d in set(_descriptions(spec)) if '"open: "' in d]
-        assert '("open \\u2013 close")' in block and " to " not in block
+        (block,) = [d for d in set(_descriptions(spec)) if '"Open: "' in d]
+        assert '("Open \\u2013 Close")' in block and " to " not in block
 
 
 class TestSpanLabelPositions:
@@ -747,7 +747,8 @@ class TestBarLayerSpanOnNonBarChart:
         assert err.value.code.code == "ERR-BAR-Y-START-KIND"
 
 
-def test_right_axis_layer_is_not_held_to_the_base_axis_kind():
+@pytest.mark.parametrize("position", ["left", "right"])
+def test_pinned_axis_layer_is_not_held_to_the_base_axis_kind(position):
     rows = [
         {
             "category": r["task"],
@@ -765,7 +766,7 @@ def test_right_axis_layer_is_not_held_to_the_base_axis_kind():
                 "type": "bar",
                 "y": "high",
                 "y_start": "low",
-                "axis_y": {"position": "right"},
+                "axis_y": {"position": position},
             }
         ],
     )
@@ -861,3 +862,151 @@ class TestNativeDateDimension:
     def test_category_x_still_takes_axis_band(self):
         rows = [{"cohort": c, "revenue": i} for i, c in enumerate("abcd")]
         assert self._label_padding(rows, "cohort") == 33
+
+
+def _plan_with_mid() -> list[dict[str, Any]]:
+    return [
+        {**r, "mid": r["start_date"] + (r["finish_date"] - r["start_date"]) / 2}
+        for r in _PLAN
+    ]
+
+
+def _y_encodings(spec: dict[str, Any], mark: str) -> list[dict[str, Any]]:
+    """The ``y`` encoding of every layer drawing ``mark``, parents merged in."""
+    found: list[dict[str, Any]] = []
+
+    def walk(node: Any, inherited: dict[str, Any]) -> None:
+        if isinstance(node, list):
+            for item in node:
+                walk(item, inherited)
+        elif isinstance(node, dict):
+            enc = {**inherited, **node.get("encoding", {})}
+            node_mark = node.get("mark")
+            if (
+                node_mark.get("type") if isinstance(node_mark, dict) else node_mark
+            ) == mark:
+                found.append(enc["y"])
+            for key in ("layer", "spec"):
+                walk(node.get(key, []), enc)
+
+    walk(spec, {})
+    return found
+
+
+@pytest.mark.parametrize("layer_type", ["line", "scatter"])
+def test_a_layer_on_a_date_measure_plots_dates_on_the_shared_scale(layer_type):
+    spec = _spec(
+        _plan_with_mid(),
+        x="task",
+        y="finish_date",
+        y_start="start_date",
+        layers=[{"type": layer_type, "y": "mid"}],
+    )
+    mark = "line" if layer_type == "line" else "point"
+    (y_enc,) = _y_encodings(spec, mark)
+    assert y_enc["type"] == "temporal"
+    assert "scale" not in y_enc
+    assert "format" not in y_enc["axis"]
+
+
+@pytest.mark.parametrize(
+    "layer",
+    [{"type": "area", "y": "mid"}, {"type": "bar", "y": "mid"}],
+    ids=["area", "bar-without-y-start"],
+)
+def test_a_baseline_layer_on_a_date_measure_is_refused(layer):
+    with pytest.raises(CompilationError) as err:
+        _spec(
+            _plan_with_mid(),
+            x="task",
+            y="finish_date",
+            y_start="start_date",
+            layers=[layer],
+        )
+    assert err.value.code is not None
+    assert err.value.code.code == "ERR-LAYER-BASELINE-ON-DATE-MEASURE"
+    assert "charts.t.layers[0]" in str(err.value)
+
+
+def test_a_bar_layer_with_its_own_y_start_spans_dates_on_a_date_measure():
+    spec = _spec(
+        _plan_with_mid(),
+        x="task",
+        y="finish_date",
+        y_start="start_date",
+        layers=[{"type": "bar", "y": "finish_date", "y_start": "mid"}],
+    )
+    assert all(enc["type"] == "temporal" for enc in _y_encodings(spec, "bar"))
+
+
+def test_a_numeric_layer_on_a_date_measure_is_refused():
+    rows = [{**r, "score": 5 + 10 * i} for i, r in enumerate(_plan_with_mid())]
+    with pytest.raises(CompilationError) as err:
+        _spec(
+            rows,
+            x="task",
+            y="finish_date",
+            y_start="start_date",
+            layers=[{"type": "scatter", "y": "score"}],
+        )
+    assert err.value.code is not None
+    assert err.value.code.code == "ERR-LAYER-Y-KIND-MISMATCH"
+    assert "plots on the bar's date axis" in str(err.value)
+
+
+def test_a_date_layer_pinned_to_a_side_is_refused():
+    rows = _plan_with_mid()
+    with pytest.raises(CompilationError) as err:
+        _spec(
+            rows,
+            x="task",
+            y="finish_date",
+            y_start="start_date",
+            layers=[{"type": "line", "y": "mid", "axis_y": {"position": "right"}}],
+        )
+    assert err.value.code is not None
+    assert err.value.code.code == "ERR-LAYER-Y-KIND-MISMATCH"
+    assert "pinned numeric axis" in str(err.value)
+
+
+@pytest.mark.parametrize("layer_type", ["line", "scatter"])
+def test_a_date_layer_over_a_numeric_bar_is_refused(layer_type):
+    rows = [
+        {"category": "A", "high": 10, "when": dt.date(2026, 1, 5)},
+        {"category": "B", "high": 20, "when": dt.date(2026, 2, 5)},
+    ]
+    with pytest.raises(CompilationError) as err:
+        _spec(rows, y_start=None, layers=[{"type": layer_type, "y": "when"}])
+    assert err.value.code is not None
+    assert err.value.code.code == "ERR-LAYER-Y-KIND-MISMATCH"
+    assert "bar's numeric value axis" in str(err.value)
+
+
+def test_pinned_and_unpinned_layers_over_a_date_measure_are_refused():
+    rows = [{**r, "score": 5 + 10 * i} for i, r in enumerate(_plan_with_mid())]
+    with pytest.raises(CompilationError) as err:
+        _spec(
+            rows,
+            x="task",
+            y="finish_date",
+            y_start="start_date",
+            layers=[
+                {"type": "line", "y": "score", "axis_y": {"position": "right"}},
+                {"type": "scatter", "y": "mid"},
+            ],
+        )
+    assert err.value.code is not None
+    assert err.value.code.code == "ERR-LAYER-MIXED-AXES-ON-DATE-MEASURE"
+
+
+def test_a_pinned_layer_over_a_date_measure_keeps_its_numeric_scale():
+    rows = [{**r, "score": 5 + 10 * i} for i, r in enumerate(_plan_with_mid())]
+    spec = _spec(
+        rows,
+        x="task",
+        y="finish_date",
+        y_start="start_date",
+        layers=[{"type": "line", "y": "score", "axis_y": {"position": "right"}}],
+    )
+    (y_enc,) = _y_encodings(spec, "line")
+    assert y_enc["type"] == "quantitative"

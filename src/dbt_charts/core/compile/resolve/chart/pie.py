@@ -6,7 +6,11 @@ from types import EllipsisType
 from typing import Any, Literal
 
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.format import column_format, resolve_format_parts
+from dbt_charts.core.compile.format import (
+    column_format,
+    declared_column_format,
+    resolve_format_parts,
+)
 from dbt_charts.core.compile.models.chart.authored import ChartTotal
 from dbt_charts.core.compile.models.chart.normalized import (
     PieChart,
@@ -70,7 +74,6 @@ from dbt_charts.core.compile.resolve.chart.pie_attachment import (
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
-    declared_column_format,
 )
 from dbt_charts.core.compile.resolve.style.inherit_resolver import (
     merge_unset,
@@ -92,7 +95,7 @@ from dbt_charts.core.constants.pie import (
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import ERR_PIE_TOTAL_WITHOUT_HOLE
-from dbt_charts.core.text.case import apply_case, inferred_display_name
+from dbt_charts.core.text.case import inferred_display_name, inline_derived_label
 from dbt_charts.core.text.format_d3 import board_word
 from dbt_charts.core.text.predefined_formats import PredefinedNumberFormat
 
@@ -104,10 +107,10 @@ __all__ = [
 def _auto_total_label(normalized: PieChart) -> str:
     label = normalized.field_labels.get(normalized.theta)
     if label is None:
-        slug = inferred_display_name(normalized.theta)
-        label = (
-            slug if slug.isupper() and " " not in slug else apply_case(slug, "title")
-        )
+        label = inferred_display_name(normalized.theta)
+        if board_word("pie.total_word").lower() in label.lower():
+            return label
+        return board_word("pie.total", label=inline_derived_label(label))
     if board_word("pie.total_word").lower() in label.lower():
         return label
     return board_word("pie.total", label=label)
@@ -138,9 +141,6 @@ def _resolve_pie(
     # see resolve_format_parts_for_values's per-set contract.
     theta_values = _column_numeric_values(data, normalized.theta)
     format_vote_values = [*theta_values, sum(theta_values)] if theta_values else []
-    theta_declared = declared_column_format(
-        normalized, normalized.theta, chart_style_context.formats, time=False
-    )
     channels = _channels_for(normalized, data)
     # `pie` is the family merged over its board tier, so the chart's own
     # color.categorical beats the board family's, which beats the global palette.
@@ -206,7 +206,8 @@ def _resolve_pie(
         chart_style_context.formats,
         normalized.format,
         board=chart_style_context.tooltip.format,
-        column=theta_declared,
+        query_formats=normalized.query.formats if normalized.query else None,
+        columns=normalized.theta,
         values=format_vote_values,
     )
     effective_template = _slice_labels.template
@@ -268,7 +269,8 @@ def _resolve_pie(
             chart_style_context.formats,
             chart_total_format,
             board=board_total_format,
-            column=theta_declared,
+            query_formats=normalized.query.formats if normalized.query else None,
+            columns=normalized.theta,
             engine_default=lambda: PredefinedNumberFormat.integer,
             values=format_vote_values,
         )
@@ -320,7 +322,14 @@ def _resolve_pie(
     authored_edge = placed_edge(authored_position.edge)
 
     slice_authored = (
-        normalized.format if normalized.format is not None else theta_declared
+        normalized.format
+        if normalized.format is not None
+        else declared_column_format(
+            normalized.query.formats if normalized.query else None,
+            normalized.theta,
+            chart_style_context.formats,
+            time=False,
+        )
     )
     slice_format = (
         resolve_format_parts(slice_authored, chart_style_context.formats)

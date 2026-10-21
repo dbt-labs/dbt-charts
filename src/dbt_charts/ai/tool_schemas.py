@@ -17,7 +17,6 @@ from dbt_charts.agent_api.diagnostics import (
     GetDiagnosticCodeArgs,
     ListDiagnosticCodesArgs,
 )
-from dbt_charts.agent_api.docs import DocsArgs
 from dbt_charts.agent_api.files import (
     DeleteFileArgs,
     MoveFileArgs,
@@ -146,8 +145,6 @@ RENDER_BOARD = _render_board_tool()
 EXECUTE_SQL = _ai_tool("execute_sql", ExecuteQueryArgs, "Run query", open_world=True)
 SEARCH_FILES = _ai_tool("search_files", SearchFilesArgs, "Search files")
 
-DOCS = _ai_tool("docs", DocsArgs, "Read docs")
-
 LIST_DIAGNOSTIC_CODES = _ai_tool(
     "list_diagnostic_codes", ListDiagnosticCodesArgs, "List diagnostic codes"
 )
@@ -169,7 +166,6 @@ ALL_TOOLS: list[dict[str, Any]] = [
     RENDER_BOARD,
     EXECUTE_SQL,
     SEARCH_FILES,
-    DOCS,
     DESCRIBE_BOARD,
     LIST_SKILLS,
     GET_SKILL,

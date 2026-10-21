@@ -21,6 +21,7 @@ Example URLs:
 from __future__ import annotations
 
 import asyncio
+import functools
 import importlib.util
 import logging
 import os
@@ -47,7 +48,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
-from jinja2 import Environment, select_autoescape
+from jinja2 import Environment, Template, select_autoescape
 
 from dbt_charts._docs_site import docs_site_url
 from dbt_charts.core.board import BoardRenderResult, render_dashboard
@@ -417,26 +418,21 @@ def _resolve_board_file_path(project: Project, clean_path: str) -> ProjectPath:
     )
 
 
-_error_jinja_template: Any = None
-
-
 def _doc_url_for_code(code: str) -> str:
     return REGISTRY.get(code).doc_url
 
 
-def _error_template() -> Any:
-    """Load the structured-error Jinja2 template (lazy, cached at module level)."""
-    global _error_jinja_template
-    if _error_jinja_template is None:
-        raw = (
-            files("dbt_charts.core.serve.templates")
-            .joinpath("error.html.j2")
-            .read_text(encoding="utf-8")
-        )
-        env = Environment(autoescape=select_autoescape(["html", "j2"]))
-        env.globals["doc_url"] = _doc_url_for_code
-        _error_jinja_template = env.from_string(raw)
-    return _error_jinja_template
+@functools.cache
+def _serve_template(name: str) -> Template:
+    """Load a Jinja2 page template shipped under ``serve/templates`` (cached)."""
+    raw = (
+        files("dbt_charts.core.serve.templates")
+        .joinpath(name)
+        .read_text(encoding="utf-8")
+    )
+    env = Environment(autoescape=select_autoescape(["html", "j2"]))
+    env.globals["doc_url"] = _doc_url_for_code
+    return env.from_string(raw)
 
 
 def _error_palette_for_theme(theme_name: str | None = None) -> dict[str, str]:
@@ -511,7 +507,7 @@ def _render_structured_errors_html(
         data = result.data
         board_html = data.decode("utf-8") if isinstance(data, bytes) else str(data)
 
-    html = _error_template().render(
+    html = _serve_template("error.html.j2").render(
         result=result,
         request_path=request_path,
         board_html=board_html,
@@ -720,6 +716,7 @@ def _render_board_file(
             board=board,
             variables=variables,
             strict_variables=False,
+            restated_check=True,
             project=project,
             adapter_registry=adapter_registry,
             format="html",
@@ -996,6 +993,14 @@ def _render_directory_listing(
 
     dir_handle = dir_handles[0]
 
+    if not url_path and all(pf.is_meta for pf in project.iter_boards()):
+        return HTMLResponse(
+            _serve_template("intro.html.j2").render(
+                palette=_error_palette_for_theme(),
+                docs_url=docs_site_url(),
+            )
+        )
+
     # The root directory has an empty name; "/" is how the nav trigger labels it.
     nav_label = dir_handle.name or "/"  # type-state: silent_fallback — root's label
 
@@ -1038,8 +1043,7 @@ def _render_directory_listing(
     # pass is live template source by the time that pass reads it).
     listing_variables = {
         "directory_title": f"/{url_path}" if url_path else "/",
-        "listing_markdown": "\n".join(listing_lines)
-        or "No boards or directories found.",  # type-state: silent_fallback — empty-directory placeholder text, not error-hiding
+        "listing_markdown": "\n".join(listing_lines),
     }
 
     try:

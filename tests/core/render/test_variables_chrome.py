@@ -18,6 +18,8 @@ import pytest
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.variable.authored import Variable, VariableOptions
 from dbt_charts.core.compile.resolve.style.board import resolve_style
+from dbt_charts.core.compile.template.daterange import resolve_daterange_preset_iso
+from dbt_charts.core.render.board_variables import daterange_presets
 from dbt_charts.core.render.controls import controls_stylesheet, interactive_controls
 from dbt_charts.core.render.variables_layout import lay_out_variables
 from dbt_charts.core.render.variables_resolve import (
@@ -763,9 +765,46 @@ def test_a_list_valued_control_publishes_json_not_a_python_repr() -> None:
     assert "['" not in svg
 
 
+def test_a_preset_daterange_publishes_its_id_and_draws_its_dates() -> None:
+    """The id keeps a commit or link rolling; the label shows the dates."""
+    with interactive_controls(True), daterange_presets({"span": "month_to_date"}):
+        svg, _ = _strip(
+            {"span": Variable(input="daterange")},
+            {"span": ["2026-10-01", "2026-10-20"]},
+        )
+
+    assert _groups(svg)[0].get("data-dbt-value") == "month_to_date"
+    assert any("Oct" in text for text in _drawn_text(svg))
+
+
+def test_the_rail_publishes_each_preset_with_todays_window() -> None:
+    with interactive_controls(True):
+        svg, _ = _strip({"span": Variable(input="daterange")})
+    groups = json.loads(_groups(svg)[0].get("data-dbt-presets"))
+    today = datetime.date.today()
+
+    assert [[p["id"] for p in group] for group in groups] == [
+        ["today", "last_7_days", "last_28_days", "last_90_days", "last_12_months"],
+        ["month_to_date", "year_to_date"],
+    ]
+    assert groups[1][0]["range"] == resolve_daterange_preset_iso("month_to_date", today)
+
+
+def test_a_preset_default_with_no_committed_value_publishes_its_id() -> None:
+    svg, _ = _strip({"span": Variable(input="daterange", default="last_7_days")})
+
+    assert _groups(svg)[0].get("data-dbt-value") == "last_7_days"
+
+
+def test_an_artifact_render_does_not_carry_the_preset_rail() -> None:
+    svg, _ = _strip({"span": Variable(input="daterange")})
+
+    assert _groups(svg)[0].get("data-dbt-presets") is None
+
+
 def test_a_list_of_dates_publishes_iso_string_json() -> None:
     control = SimpleNamespace(
-        current=[datetime.date(2026, 1, 1), datetime.date(2026, 2, 1)]
+        current=[datetime.date(2026, 1, 1), datetime.date(2026, 2, 1)], preset=None
     )
 
     assert json.loads(_committed_value(control)) == ["2026-01-01", "2026-02-01"]

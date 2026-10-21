@@ -127,8 +127,8 @@ def test_resolve_xy_titles_returns_named_fields() -> None:
         field_labels={},
     )
     assert isinstance(result, XYTitles)
-    assert result.x_title == "date"
-    assert result.y_title == "revenue"
+    assert result.x_title == "Date"
+    assert result.y_title == "Revenue"
 
 
 def test_build_x_enc_uses_resolved_fields() -> None:

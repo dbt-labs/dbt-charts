@@ -18,7 +18,7 @@ text: |
   no header fill, uniform weight), BI (apparatus-tier header, the current
   default), and Classic (Source Serif, per-column rule gaps, no header fill).
 # Inline `columns`/`values` keep this specimen runnable anywhere. In your own
-# board, replace them with `source:` + `sql:` — see `dct docs queries`.
+# board, replace them with `source:` + `sql:` — see https://docs.dbtcharts.com/queries/
 queries:
   company_revenue_total:
     notes: Per-company revenue with a trailing total row.

@@ -3,7 +3,6 @@
 import pytest
 
 from dbt_charts.core.diagnostics import (
-    WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER,
     WARN_MISSING_JOIN_PREDICATE,
     WARN_TOO_MANY_COLOR_CATEGORIES,
 )
@@ -14,10 +13,6 @@ from dbt_charts.core.diagnostics import (
     [
         (WARN_TOO_MANY_COLOR_CATEGORIES, "'Other'"),
         (WARN_MISSING_JOIN_PREDICATE, "ignore: [WARN-MISSING-JOIN-PREDICATE]"),
-        (
-            WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER,
-            "warnings_ignore: [WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER]",
-        ),
     ],
 )
 def test_fix_names_the_concrete_move(code, needle: str) -> None:  # noqa: ANN001

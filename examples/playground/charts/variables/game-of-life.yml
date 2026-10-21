@@ -17,9 +17,7 @@ variables:
     max: 200
     step: 1
   starter_pattern:
-    input: select
     default: Random
-    label: Starter pattern
     options:
       static:
       - Random
@@ -33,7 +31,6 @@ variables:
       - Diehard
       - Acorn
   initial_live_cells:
-    input: text
     default: '300'
     label: Starting live cells
     enabled: '{{ starter_pattern == ''Random'' }}'
@@ -530,7 +527,6 @@ charts:
           visible: false
         next_link:
           visible: false
-      symbol_mode: anchors
       font:
         size: 18
         weight: 700
@@ -636,7 +632,6 @@ charts:
         c32: {}
         row_sort:
           visible: false
-      symbol_mode: anchors
       font:
         size: 9
         weight: 600

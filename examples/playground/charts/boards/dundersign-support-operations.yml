@@ -13,8 +13,6 @@ source: dundersign_db
 style:
   frame:
     width: 1440
-  variables:
-    position: title-inline
 
 variables:
   date_range:
@@ -314,7 +312,6 @@ charts:
     # and orders it fresh→aging via the age_order column carried in SQL.
     sort:
       by: age_order
-      order: asc
     style:
       # No palette override — lets the theme's editorial-10 categorical
       # default fan out across the four priorities. The first four stops
@@ -340,13 +337,6 @@ charts:
           # prefix exists in the SQL so VL's nominal scale domain orders
           # fresh→aging on stacked bars).
           expr: "datum.value ? slice(datum.value, 4) : ''"
-      # Direct labels on the right edge of each column (label_ink() inks
-      # them live, against the chart's canvas). The shipped `default` theme keeps the legend
-      # off — at this hero width direct labeling reads cleaner than a side
-      # legend. The "N · " priority labels carry their ordering prefix
-      # into the endpoint labels too, so the prefix is visible there.
-      endpoint_labels:
-        visible: true
 
   # ── Small-multiples row: four mini categorical breakdowns ──────────────
   # Same shape repeated four times — short horizontal bars at compact width.
@@ -368,14 +358,10 @@ charts:
     y: tickets
     sort:
       by: sort_order
-      order: asc
     style:
-      orientation: horizontal
       title:
         font:
           family: "'Inter Variable', Inter, system-ui, sans-serif"
-      endpoint_labels:
-        visible: true
 
   bar_channel:
     query: intake_by_channel
@@ -385,12 +371,9 @@ charts:
     x: channel
     y: tickets
     style:
-      orientation: horizontal
       title:
         font:
           family: "'Inter Variable', Inter, system-ui, sans-serif"
-      endpoint_labels:
-        visible: true
 
   bar_type:
     query: intake_by_type
@@ -400,12 +383,9 @@ charts:
     x: type
     y: tickets
     style:
-      orientation: horizontal
       title:
         font:
           family: "'Inter Variable', Inter, system-ui, sans-serif"
-      endpoint_labels:
-        visible: true
 
   bar_status:
     query: status_mix
@@ -415,12 +395,9 @@ charts:
     x: status
     y: tickets
     style:
-      orientation: horizontal
       title:
         font:
           family: "'Inter Variable', Inter, system-ui, sans-serif"
-      endpoint_labels:
-        visible: true
 
   # ── Open queue (bottom) ─────────────────────────────────────────────────
   open_queue_table:
@@ -485,16 +462,13 @@ charts:
         # value ("question") on one line. Sum = 720, the full 55%-of-1440
         # right column.
         id:
-          label: ID
           width: 90
         subject:
-          label: Subject
           width: 240
         ticket_type:
           label: Type
           width: 90
         priority:
-          label: Priority
           width: 80
         age_days:
           label: Age
@@ -509,7 +483,6 @@ charts:
             type: bar
           width: 75
         opened:
-          label: Opened
           format: "%-d %b"
           align: left
           width: 75

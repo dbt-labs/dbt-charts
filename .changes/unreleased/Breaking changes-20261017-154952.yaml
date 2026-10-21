@@ -1,0 +1,3 @@
+kind: Breaking changes
+body: 'Agents start from one `chart` skill: `dct skills intro`, `board-build`, `board-design`, the review and troubleshooting skills and the layout-pattern skills are removed, and naming one is an error.'
+time: 2026-10-17T15:49:52.085075-07:00

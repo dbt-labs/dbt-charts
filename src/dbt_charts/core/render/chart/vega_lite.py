@@ -85,6 +85,43 @@ from dbt_charts.core.render.chart.vl_field_maps import effective_bar_size
 from dbt_charts.core.render.converters.chart import render_chart_artifact
 from dbt_charts.core.render.errors import RenderError
 
+_TOP_LEGEND_ORIENTS = frozenset({"top", "top-left", "top-right"})
+
+
+def _legend_has_nothing_to_draw(node: VLDict, legend: VLDict) -> bool:
+    """Whether a legend over an empty dataset has no title and no entries.
+
+    A legend's entries come from the data unless the author fixed a domain or
+    ``values``; it is titleless when its encoding writes ``title: null`` (an
+    absent ``title`` falls back to the field name).
+    """
+    scale = node.get("scale")
+    has_domain = isinstance(scale, dict) and scale.get("domain") is not None
+    titleless = "title" in node and not node["title"]
+    return titleless and not (has_domain or legend.get("values"))
+
+
+def drop_empty_legends(node: VLDict) -> None:
+    """Drop the legends Vega cannot lay out from a spec over no rows.
+
+    Vega places a legend with no entries at ``-Number.MAX_VALUE`` unless a title
+    gives it a box: a titleless one makes the concat overshoot correction fail on
+    an unbounded width, or paints the chart at an infinite offset. A legend on
+    the top edge moves its whole view to ``translate(…, Infinity)`` even with a
+    title. A legend with a title on any other edge keeps a sane box and is left
+    alone.
+    """
+    legend = node.get("legend")
+    if isinstance(legend, dict) and (
+        legend.get("orient") in _TOP_LEGEND_ORIENTS
+        or _legend_has_nothing_to_draw(node, legend)
+    ):
+        node["legend"] = None
+    for child in node.values():
+        for part in child if isinstance(child, list) else [child]:
+            if isinstance(part, dict):
+                drop_empty_legends(part)
+
 
 def _render_vl_artifact(
     resolved: ResolvedChart,
@@ -254,6 +291,8 @@ def _render_vl_artifact(
         full_datasets,
     )
     vl = session.finalize_vl(chart_spec)
+    if not any(full_datasets.values()):
+        drop_empty_legends(vl)
     has_support_table = (
         isinstance(resolved, _CartesianResolvedChartFields)
         and resolved.support_table is not None
@@ -656,6 +695,10 @@ def _apply_support_table_strip(
         not isinstance(resolved, _CartesianResolvedChartFields)
         or resolved.support_table is None
     ):
+        return None
+    if not render_data:
+        # A strip tabulates the chart's rows: over none it would paint its
+        # header from a phantom datum (`amount: NaN`) and grow the chart for it.
         return None
 
     # Stamped on the root by _render_vl_artifact; the strip's geometry is

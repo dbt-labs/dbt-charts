@@ -23,7 +23,7 @@ to audit.
 Run this, then follow what it prints:
 
 ```text
-uv tool install dbt-charts && dct skills intro
+uv tool install dbt-charts && dct skills chart
 ```
 
 No shell? Read <https://docs.dbtcharts.com/llms.txt> and the [MCP page](https://docs.dbtcharts.com/cli/ai-cli-and-mcp/).
@@ -224,7 +224,7 @@ rows:
 Hand your coding agent one sentence. It runs the command in [Are you an AI agent?](#are-you-an-ai-agent) and follows what it prints:
 
 ```text
-I want to make charts of this data with dbt Charts. Run `uv tool install dbt-charts`, then `dct skills intro`, and follow what it prints.
+I want to make charts of this data with dbt Charts. Run `uv tool install dbt-charts`, then `dct skills chart`, and follow what it prints.
 ```
 
 ### Manually
@@ -251,8 +251,8 @@ uv tool install --prerelease=allow dbt-charts   # or: pip install --pre dbt-char
 ```
 
 ```bash
-dct init                        # bootstrap a project (creates charts/guide.yml)
-dct validate charts/guide.yml   # check board YAML for errors, no warehouse needed
+dct init                        # bootstrap a project (creates charts/ and dbt_charts.yml)
+dct validate charts/sales.yml   # check board YAML for errors, no warehouse needed
 dct serve                       # live preview server
 ```
 
@@ -282,7 +282,7 @@ dct render BOARD... --format {html,pdf,png,svg,json}
 dct query SOURCE 'SELECT …'   # run raw SQL, or a named board query
 dct search <query>            # find boards by keyword
 dct impact <column>           # which boards reference a column
-dct docs [TOPIC]              # built-in YAML reference
+dct skills chart              # the YAML reference
 dct examples [SLUG]           # bundled board specimens
 ```
 
@@ -299,7 +299,7 @@ write, render, and serve dashboards. It is the recommended tool for agents to wo
 but also ships with a local MCP server for surfaces like VS Code where one is required.
 
 ```bash
-dct skills           # list the bundled skills; `dct skills intro` is the entry point
+dct skills           # list the bundled skills; `dct skills chart` is the entry point
 dct init skills      # install them into the project for file-based agent discovery
 ```
 
@@ -373,7 +373,7 @@ More complete boards, all on the same demo data:
 
 - [Examples in the docs](https://docs.dbtcharts.com/examples/): a KPI board, an interactive board, nested layouts, and a drill-down, each paste-ready for the Playground.
 - The Playground's own gallery, under **Examples** at [play.dbtcharts.com](https://play.dbtcharts.com): chart families, composed shapes, layered charts, cards, tables, variables, and full boards.
-- `dct examples` lists the specimens bundled with the package, each with inline data so it renders anywhere. `dct skills intro` points a coding agent at them.
+- `dct examples` lists the specimens bundled with the package, each with inline data so it renders anywhere. `dct skills chart` points a coding agent at them.
 
 ---
 
@@ -435,8 +435,8 @@ that extends one of them; see [themes](https://docs.dbtcharts.com/themes/).
 
 ## Validation and CI
 
-Errors and warnings carry a code, a file and line, a suggested fix, and a pointer into
-`dct docs`. Agents cannot see rendered output, so each message is written to be acted on
+Errors and warnings carry a code, a file and line, a suggested fix, and a link to its
+docs page. Agents cannot see rendered output, so each message is written to be acted on
 from the text alone.
 
 `dct validate` checks structure without a warehouse:
@@ -449,7 +449,7 @@ mean 'line'? Supported chart types: bar, histogram, line, area, scatter,
 heatmap, pie, donut, kpi, table, point_map, bubble_map, map, geoshape, callout,
 spark_bar.
 At: charts/signups.yml:9
-Docs: dct docs board
+Docs: https://docs.dbtcharts.com/reference/errors/#err-validation-field
 ```
 
 `dct render` runs the queries and checks the result:
@@ -463,7 +463,7 @@ Fix: Check for a broken join or a nullable source column. A COALESCE or WHERE
 clause may be needed to filter the empty rows.
 Field: user_count
 At: charts/signups.yml:13
-Docs: dct docs charts
+Docs: https://docs.dbtcharts.com/reference/warnings/#warn-y-encoding-mostly-null
 ```
 
 `dct init ci` writes a GitHub Actions workflow that runs `dct validate` on every pull

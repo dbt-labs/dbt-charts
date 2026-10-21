@@ -202,6 +202,14 @@ class ContextUnresolved(CloudError):
     code: ClassVar[ErrorCode] = ErrorCode.INVALID_REQUEST
 
 
+class SourcesNotBindable(CloudError):
+    """Names asked to bind to a new connection are not the project's unmapped
+    sources. The server drops such a name without saying so, so it is refused
+    before the create rather than passing as a binding."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.INVALID_REQUEST
+
+
 class DeviceLoginFailed(CloudError):
     """The OAuth device grant (RFC 8628) did not end in a token.
 

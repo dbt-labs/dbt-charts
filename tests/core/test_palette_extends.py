@@ -2,7 +2,7 @@
 
 Tests cover:
 1. Child inherits parent aliases — resolve inherited alias on child palette
-2. dbt-creams.ink resolves to cream hex (not gray) — key regression guard
+2. dbt-creams.11 resolves to cream hex (not gray) — key regression guard
 3. Child aliases key overrides parent key
 4. Transitive extends (c extends b extends a) merges correctly
 5. Cycle (a extends b extends a) raises at load time
@@ -56,12 +56,12 @@ def clear_palette_caches():
 class TestCreamsInheritsGraysAliases:
     def test_child_inherits_parent_alias_canvas(self):
         """dbt-creams canvas must resolve via inherited alias → cream colors[0] = #FAF7F0."""
-        result = color_from_theme("chrome.canvas", palettes={"chrome": "dbt-creams"})
+        result = color_from_theme("chrome[1]", palettes={"chrome": "dbt-creams"})
         assert result.lower() == "#faf7f0"
 
     def test_child_inherits_parent_alias_border(self):
         """border → 4 → dbt-creams.colors[3] = #DDD3C0 (not gray #DFE1E5)."""
-        result = color_from_theme("chrome.border", palettes={"chrome": "dbt-creams"})
+        result = color_from_theme("chrome[4]", palettes={"chrome": "dbt-creams"})
         assert result.lower() == "#ddd3c0"
         assert result.lower() != "#dfe1e5"
 
@@ -71,13 +71,13 @@ class TestCreamsInheritsGraysAliases:
         If extends merges by pre-baking parent hex values (not alias refs), ink
         would return #222222 (gray ink). This test guards that regression.
         """
-        result = color_from_theme("chrome.ink", palettes={"chrome": "dbt-creams"})
+        result = color_from_theme("chrome[11]", palettes={"chrome": "dbt-creams"})
         assert result.lower() == "#2a2725"
         assert result.lower() != "#222222"
 
     def test_ink_on_grays_still_returns_gray(self):
-        """dbt-grays.ink is still #222222 after migration."""
-        result = color_from_theme("chrome.ink", palettes={"chrome": "dbt-grays"})
+        """dbt-grays.11 is still #222222 after migration."""
+        result = color_from_theme("chrome[11]", palettes={"chrome": "dbt-grays"})
         assert result.lower() == "#222222"
 
 

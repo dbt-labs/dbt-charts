@@ -906,7 +906,7 @@ class TestAnchorsKeepsMagnitudeSuffix:
         chart = make_chart("table", x=None, y=None)
         # Two kilo-range rows with no explicit format → SI default (.3~s):
         # 1500 -> "1.5" + "K", 3000 -> "3" + "K".
-        data = [{"revenue": 1500}, {"revenue": 3000}]
+        data = [{"revenue": 1500.0}, {"revenue": 3000.0}]
         _custom_ctx = _style_with(symbol_mode="anchors")
         chart = resolve(chart, data, chart_style_context=_custom_ctx)
         svg = render_table_svg(chart, data, width=400, board_style=_BOARD_STYLE)

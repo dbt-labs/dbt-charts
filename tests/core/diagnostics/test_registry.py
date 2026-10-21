@@ -272,7 +272,9 @@ class TestRegistryShape:
             "WARN-REDUNDANT-ENCODING",
             "WARN-UNREFERENCED-CHART",
             "WARN-REAGGREGATION",
-            "WARN-REDUNDANT-AUTHORED-LABEL",
+            "WARN-RESTATED-STYLE",
+            "WARN-RESTATED-INFERRED",
+            "WARN-RESTATED-FORMAT",
         }
         missing = expected - warn_codes
         assert not missing, f"Expected warning codes not in registry: {missing}"
@@ -332,10 +334,16 @@ class TestStructureGate:
         assert bad == [], f"Warning codes missing fix_template: {bad}"
 
     def test_docs_topic_is_a_real_syntax_guide_h2_slug(self) -> None:
-        from dbt_charts.agent_api.docs._loader import _load_sections
+        from importlib.resources import files
+
         from dbt_charts.core.diagnostics import REGISTRY
 
-        real_slugs = set(_load_sections().keys())
+        guide = (files("dbt_charts") / "DBT_CHARTS_SYNTAX.md").read_text("utf-8")
+        real_slugs = {
+            re.sub(r"[^a-z0-9-]", "", re.sub(r"\s+", "-", line[3:].strip().lower()))
+            for line in guide.splitlines()
+            if line.startswith("## ")
+        }
         bad = {
             dc.code: dc.docs_topic
             for dc in REGISTRY.all()
@@ -505,8 +513,9 @@ class TestEmissionScan:
         compile_emitted = _find_emitted_codes(compile_root)
         compile_warn_codes = {
             "WARN-UNREFERENCED-CHART",
-            "WARN-REDUNDANT-AUTHORED-LABEL",
-            "WARN-REDUNDANT-AUTHORED-DEFAULT",
+            "WARN-RESTATED-STYLE",
+            "WARN-RESTATED-INFERRED",
+            "WARN-RESTATED-FORMAT",
             "WARN-FLAT-COLS-UNSIZED-OVERFLOW",
             "WARN-DOUBLE-HEADER",
             "WARN-SINGLE-CHART-REDUNDANT-TITLE",
@@ -518,9 +527,8 @@ class TestEmissionScan:
         )
 
 
-# Step 9 regression test: WarningCode.redundant classifies the 6 redundancy codes.
 def test_warning_code_redundant_flag_exists() -> None:
-    """WarningCode.redundant defaults to False and is true for the six redundancy codes."""
+    """WarningCode.redundant defaults to False and is true for the seven redundancy codes."""
     from dbt_charts.core.diagnostics.registry import REGISTRY, WarningCode
 
     # All WarningCode instances have the attribute
@@ -532,12 +540,14 @@ def test_warning_code_redundant_flag_exists() -> None:
         assert hasattr(dc, "redundant"), f"{dc.code} missing `redundant` attr"
 
     REDUNDANT_CODES = {
-        "WARN-REDUNDANT-AUTHORED-LABEL",
-        "WARN-REDUNDANT-AUTHORED-DEFAULT",
         "WARN-REDUNDANT-ENCODING",
         "WARN-SINGLE-CHART-REDUNDANT-TITLE",
         "WARN-DOUBLE-HEADER",
         "WARN-UNREFERENCED-CHART",
+        "WARN-UNREFERENCED-QUERY",
+        "WARN-RESTATED-STYLE",
+        "WARN-RESTATED-INFERRED",
+        "WARN-RESTATED-FORMAT",
     }
     for code in REDUNDANT_CODES:
         dc = REGISTRY.get(code)

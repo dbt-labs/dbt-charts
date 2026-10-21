@@ -78,6 +78,16 @@ For no border, omit `border`; `border: none` is rejected.
 
 {{ keys('s_gradient') }}
 
+### Palettes
+
+A palette is named, never spelled as colors.
+
+- Categorical, with how many colors each holds (more categories on one chart than that is `ERR-CATEGORY-COLOR-PALETTE-EXHAUSTED`): {{ palettes('categorical') }}.
+- Sequential: {{ palettes('sequential') }}.
+- Diverging: {{ palettes('diverging') }}.
+- Tones: {{ palettes('tone') }}.
+- Scaffolds {{ palettes('scaffold') }}, addressed by step number from lightest to darkest (`dbt-grays.8`, or `chrome[8]` to follow the theme's scaffold); stops of `dbt-grays`: {{ stops('dbt-grays') }}. `white` and `black` name the endpoints.
+
 ## KPI
 
 {{ keys('s_kpi') }}
@@ -101,8 +111,10 @@ For no border, omit `border`; `border: none` is rejected.
 {{ keys('s_cond_rule') }}
 {{ rules('cond_rule') }}
 
-## Errors
+Layouts with `grid:` (rare; a chart spanning rows):
 
-{{ codes('style') }}
+{{ keys('grid') }}
+
+{{ keys('grid_item') }}
 
 After any edit, {{ s('style_recheck') }}

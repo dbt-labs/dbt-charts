@@ -1,0 +1,3 @@
+kind: Fixes
+body: A layer pinned to the left y axis no longer stretches the base chart's y axis to its own values.
+time: 2026-10-20T11:35:58.395052-07:00

@@ -41,7 +41,7 @@ def test_chart_type_documented_in_syntax(value: str) -> None:
 
 
 def test_sources_registry_has_its_own_topic() -> None:
-    """`dct docs sources` must exist: the `sources:` registry is the first thing
+    """The Sources section must exist: the `sources:` registry is the first thing
     a non-dbt project writes, and `## Queries` only names it in passing."""
     assert "\n## Sources\n" in _SYNTAX_TEXT
     section = _SYNTAX_TEXT.split("\n## Sources\n", 1)[1].split("\n## ", 1)[0]
@@ -49,18 +49,12 @@ def test_sources_registry_has_its_own_topic() -> None:
         assert f"type: {source_type}" in section, f"no `type: {source_type}` example"
 
 
-def test_docs_styling_topic_exists() -> None:
+def test_styling_section_exists() -> None:
     """Themes, fonts and the cascade have one topic, which also states what
     style cannot build."""
-    from dbt_charts.agent_api.docs import docs
-
-    result = docs(topic="styling")
-    assert result.success, result.errors
-    assert result.topic is not None
-    body = result.topic.content
+    body = _SYNTAX_TEXT.split("\n## Styling\n", 1)[1].split("\n## ", 1)[0]
     for needle in ("theme:", "extends:", "style.fonts", "meta.yml", "no light/dark"):
         assert needle in body, needle
-    assert docs(topic="theme").hints[0].startswith("Did you mean: styling")
 
 
 def test_format_object_form_is_documented_in_syntax() -> None:
@@ -242,8 +236,8 @@ def test_cited_diagnostic_code_is_registered(code: str) -> None:
 
     assert code in REGISTRY.codes(), (
         f"DBT_CHARTS_SYNTAX.md cites diagnostic code {code!r}, which is not in "
-        "the registry. Use a registered code (`dct docs errors` / "
-        "`dct docs warnings`) — agents copy doc examples verbatim."
+        "the registry. Use a registered code (listed on the docs site's Error "
+        "and Warning Reference pages) — agents copy doc examples verbatim."
     )
 
 
@@ -330,8 +324,8 @@ def test_chart_shape_recipe_documented_in_syntax(noun: str) -> None:
     """Every composed shape the error formatter names is also in the docs.
 
     The error map is reactive — it fires only once an author has already guessed
-    a `type:` that does not exist. `DBT_CHARTS_SYNTAX.md` is what `dct docs`
-    serves, so it is the copy an agent reads *before* authoring. A recipe in one
+    a `type:` that does not exist. `DBT_CHARTS_SYNTAX.md` is inlined into the
+    authoring prompts, so it is the copy an agent reads *before* authoring. A recipe in one
     and not the other means the shape is discoverable only by failing first.
     """
     assert noun.replace("_", " ") in _SYNTAX_TEXT or noun in _SYNTAX_TEXT, (
@@ -341,7 +335,7 @@ def test_chart_shape_recipe_documented_in_syntax(noun: str) -> None:
     )
     # The recipe's TEXT, not just its noun: editing a recipe value would
     # otherwise leave the doc stale with CI green, and the doc is the copy
-    # `dct docs charts` serves — the one an agent actually authors from.
+    # the authoring prompts inline — the one an agent actually authors from.
     assert _CHART_SHAPE_RECIPES[noun] in _SYNTAX_TEXT, (
         f"The recipe for {noun!r} differs between _CHART_SHAPE_RECIPES and "
         "dbt_charts/DBT_CHARTS_SYNTAX.md. Regenerate the table."

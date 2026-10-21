@@ -18,6 +18,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart.spec import RenderBox
 
 _DEFAULT_BOX = RenderBox(width=600.0, height=300.0)
@@ -365,7 +366,7 @@ def test_line_layer_style_color_token_resolves() -> None:
     line_layer = LineLayer(
         type="line",
         y="target",
-        style={"marks": {"line": {"stroke": {"color": "dbt-creams.subtitle"}}}},
+        style={"marks": {"line": {"stroke": {"color": "dbt-creams.7"}}}},
     )
     chart = _bar_normalized(layers=[line_layer])
     resolved = resolve(chart, _BAR_DATA, _default_board_style())
@@ -847,39 +848,16 @@ def test_typed_overlay_color_field_is_encoded(layer_type: str) -> None:
     assert "datum" not in color
 
 
-def test_overlay_color_uses_own_query_rows_for_numeric_type_inference() -> None:
-    """A layer color field is inferred from its own query dataset, not the base."""
-    layer = LineLayer(type="line", y="target", color="priority", query="goals")
-    goals_rows = [
-        {"month": "Jan", "target": 90.0, "priority": 1},
-        {"month": "Feb", "target": 180.0, "priority": 2},
-    ]
-
-    vl = _render_bar_with_layer_data(layer, _BAR_DATA, datasets={"goals": goals_rows})
-    overlay = _overlay_encoding(vl, "target")
-
-    assert overlay["color"]["field"] == "priority"
-    assert overlay["color"]["type"] == "quantitative"
-    assert (
-        next(
-            layer_vl["data"]["values"]
-            for layer_vl in vl["layer"]
-            if layer_vl.get("encoding", {}).get("y", {}).get("field") == "target"
-        )
-        == goals_rows
-    )
-
-
-def test_numeric_overlay_color_uses_an_independent_scale_and_line_glyph() -> None:
-    """A numeric own-query color cannot inherit the base series' category scale."""
+def test_temporal_overlay_color_uses_an_independent_scale_and_line_glyph() -> None:
+    """A temporal own-query color cannot inherit the base series' category scale."""
     import json
 
     import vl_convert as vlc
 
     layer = LineLayer(type="line", y="target", color="priority", query="goals")
     goals_rows = [
-        {"month": "Jan", "target": 90.0, "priority": 1},
-        {"month": "Feb", "target": 180.0, "priority": 2},
+        {"month": "Jan", "target": 90.0, "priority": "2024-01-01"},
+        {"month": "Feb", "target": 180.0, "priority": "2024-02-01"},
     ]
 
     vl = _render_bar_with_layer_data(layer, _BAR_DATA, datasets={"goals": goals_rows})
@@ -888,6 +866,7 @@ def test_numeric_overlay_color_uses_an_independent_scale_and_line_glyph() -> Non
 
     assert "<svg" in svg
     assert vl["resolve"]["scale"]["color"] == "independent"
+    assert overlay["color"]["type"] == "temporal"
     assert overlay["color"]["legend"]["symbolType"] == "stroke"
     assert "symbolStrokeColor" not in overlay["color"]["legend"]
 
@@ -1575,7 +1554,7 @@ def test_authored_layer_stroke_drives_paint_and_legend_scale() -> None:
         type="line",
         y="target",
         label="Goal",
-        style={"marks": {"line": {"stroke": {"color": "dbt-creams.subtitle"}}}},
+        style={"marks": {"line": {"stroke": {"color": "dbt-creams.7"}}}},
     )
     vl, resolved = _render_color_base_with_line_layer("bar", layer)
     scale = vl["layer"][0]["encoding"]["color"]["scale"]
@@ -1787,3 +1766,22 @@ def test_layered_color_base_with_an_empty_palette_raises_its_registered_code() -
         BarEmitter().emit(resolved, _DEFAULT_BOX, regroup((), _COLOR_LAYER_DATA))
     assert exc.value.code is not None
     assert exc.value.code.code == "ERR-LAYERED-NO-PALETTE"
+
+
+def test_a_layer_color_read_from_its_own_query_is_judged_on_that_querys_rows() -> None:
+    """The docs board `revenue_vs_regional_targets`: the base has no `region`,
+    the layer's own query does. Without the layer's rows supplied nothing is
+    judged; with them the color is read from them; an all-null column there is
+    refused."""
+    layer = LineLayer(type="line", y="target", color="region", query="targets")
+    targets = [
+        {"month": "Jan", "target": 90.0, "region": "East"},
+        {"month": "Jan", "target": 80.0, "region": "West"},
+    ]
+    _render_bar_with_layer_data(layer, _BAR_DATA)
+    _render_bar_with_layer_data(layer, _BAR_DATA, datasets={"targets": targets})
+    empty = [{**row, "region": None} for row in targets]
+    with pytest.raises(ChartDataError) as err:
+        _render_bar_with_layer_data(layer, _BAR_DATA, datasets={"targets": empty})
+    assert err.value.code is not None
+    assert err.value.code.code == "ERR-LAYER-COLOR-ALL-NULL"

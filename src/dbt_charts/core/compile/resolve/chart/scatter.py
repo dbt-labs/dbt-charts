@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.format import column_format
+from dbt_charts.core.compile.format import column_format, declared_column_format
 from dbt_charts.core.compile.models.chart.normalized import (
     ScatterChart,
 )
@@ -40,7 +40,9 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _CartesianTickResolution,
     _check_bar_layer_spans,
     _first_non_numeric_y,
+    _reject_non_positive_log_layer_data,
     _reject_non_positive_log_scale_data,
+    _reject_non_positive_log_x_data,
     _resolve_cartesian_ticks,
     _shared_y_values,
     _zero_anchor_floats,
@@ -75,7 +77,6 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
-    declared_column_format,
 )
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
@@ -202,6 +203,10 @@ def _resolve_scatter(
         ),
         data,
     )
+    _reject_non_positive_log_layer_data(normalized, ay_merged, data, datasets)
+    _reject_non_positive_log_x_data(
+        normalized.id, plan.axes.x.style, normalized.x, data
+    )
     # _zero_anchor_floats spans every wide measure's own values, or the
     # single y field's -- the one shared extent the zero-anchor decision and
     # the tick ladder both read from (mirrors line.py's multi-metric bake).
@@ -319,6 +324,7 @@ def _resolve_scatter(
         data,
         datasets,
         normalized.id,
+        normalized.query.formats if normalized.query else None,
     )
     if authored_y_domain is not None:
         _check_layers_y_domain(normalized.id, resolved_layers, authored_y_domain)
@@ -334,9 +340,7 @@ def _resolve_scatter(
     )
     _ck, wide_measures = bake_wide_measures_kwargs(normalized.y, _ck)
     x_values = quantitative_channel_values(data, normalized.x)
-    x_declared = declared_column_format(
-        normalized, normalized.x, chart_style_context.formats, time=False
-    )
+    x_query_formats = normalized.query.formats if normalized.query else None
     return ResolvedScatterChart(
         **_base_kwargs(
             normalized,
@@ -361,10 +365,15 @@ def _resolve_scatter(
             column_format(
                 "number",
                 chart_style_context.formats,
-                column=x_declared,
+                query_formats=x_query_formats,
+                columns=normalized.x,
                 values=x_values,
             )
-            if x_declared is not None and x_values
+            if x_values
+            and declared_column_format(
+                x_query_formats, normalized.x, chart_style_context.formats, time=False
+            )
+            is not None
             else None
         ),
         size=normalized.size,

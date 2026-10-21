@@ -8,6 +8,7 @@
 # (`dbt-grays.black`), which is what a hue-free palette needs.
 
 extends: _base
+notes: grayscale, black ink
 style:
   # ── Colors ─────────────────────────────────────────────────────────────────
   # Stark's sequential identity is achromatic: magnitude without hue, matching
@@ -25,11 +26,11 @@ style:
   # gray the old value carried lives on the bar-track pins below
   # (spark_bar.bar.background, table.spark.bar.background), which no longer
   # borrow this token.
-  muted: dbt-grays.heading
+  muted: chrome[10]
 
   font:
     family: &font_sans '''Inter Variable'', Inter, system-ui, sans-serif'
-    color: &color_ink dbt-grays.heading
+    color: &color_ink chrome[10]
 
   border:
     color: *color_ink
@@ -88,9 +89,9 @@ style:
 
     table:
       paginator:
-        color_active: dbt-grays.ink
-        color_inactive: dbt-grays.inactive
-        color_disabled: dbt-grays.disabled
+        color_active: chrome[11]
+        color_inactive: chrome[9]
+        color_disabled: chrome[6]
       header:
         divider:
           color: *color_ink
@@ -99,9 +100,10 @@ style:
       spark:
         empty:
           stroke:
-            color: dbt-grays.grid-emphasis
+            # Gray on every theme: the cream themes keep this stop too.
+            color: dbt-grays.5
         bar:
-          background: dbt-grays.grid
+          background: chrome[3]
       row:
         divider:
           color: *color_ink
@@ -115,7 +117,7 @@ style:
 
     spark_bar:
       bar:
-        background: dbt-grays.grid
+        background: chrome[3]
 
     marks:
       bar:
@@ -139,7 +141,7 @@ style:
       geoshape:
         # Neutral fill for geography without joined data; keeps unjoined
         # countries/regions visible without entering the data color scale.
-        fill: dbt-grays.grid-emphasis
+        fill: chrome[5]
 
     # Themed sequential default for heatmap/geoshape gradient color — see
     # paper.yaml for the contrast-floor rationale (blues' light end fails
@@ -182,7 +184,7 @@ style:
     # owns, so there is no color headroom left -- the drop line carries the
     # distinction on weight alone (double the gridline width).
     hover_emphasis:
-      drop_line_color: dbt-grays.heading
+      drop_line_color: chrome[10]
       drop_line_width: 3.5
 
     support_table:
@@ -235,26 +237,26 @@ style:
         # No size: code is sized as a fraction of the text it sits in (mdsvg's
         # code_font_scale), so it tracks prose and headings instead of pinning a
         # px value that silently desyncs the next time body prose is retuned.
-      background: dbt-grays.surface-subtle
+      background: chrome[2]
       border:
-        color: dbt-grays.border
+        color: chrome[4]
         width: 1
         radius: 4
 
     blockquote:
       font:
-        color: dbt-grays.muted
+        color: chrome[8]
         style: italic
       background: ''
       border:
-        color: dbt-grays.border
+        color: chrome[4]
         width: 2
         radius: 0
     divider:
-      color: dbt-grays.border
+      color: chrome[4]
     column:
       divider:
-        color: dbt-grays.border
+        color: chrome[4]
 
   variables:
     font:
@@ -266,4 +268,5 @@ style:
     overlay:
       background: 'rgba(255, 255, 255, 0.5)'
       font:
-        color: dbt-grays.muted
+        # Gray on every theme, like the empty spark track.
+        color: dbt-grays.8

@@ -22,6 +22,7 @@ from dbt_charts.core.execute.cache_backend import CacheRows
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import VariableValues
+    from dbt_charts.core.compile.template.listings import ListingCall, TextListings
 
 
 class UnrecordedQueryError(KeyError):
@@ -40,6 +41,10 @@ class VariableMismatchError(ValueError):
     values would silently answer a question the data cannot answer — the board
     would render successfully and show the wrong numbers.
     """
+
+
+class UnrecordedListingError(KeyError):
+    """The board's text lists boards, and a recording holds no project tree."""
 
 
 @dataclass(frozen=True)
@@ -85,6 +90,16 @@ class ReplayDataProvider:
                 "data came from different emits, or the recording is truncated."
             )
         return self.rows_by_query[key]
+
+    def text_listings(
+        self, base_dir: str, calls: frozenset[ListingCall]
+    ) -> TextListings:
+        """Always raises: ``render_board_from_artifact`` rejects listing boards
+        before rendering, so reaching this is a caller bypassing that check."""
+        raise UnrecordedListingError(
+            f"Board text under {base_dir!r} lists boards ({sorted(calls)}), "
+            "which a recording does not capture."
+        )
 
     @property
     def cache_hit_ats(self) -> list[datetime]:

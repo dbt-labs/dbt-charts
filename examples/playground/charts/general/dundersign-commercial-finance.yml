@@ -11,10 +11,6 @@ source: dundersign_db
 style:
   frame:
     width: 1440
-  # First-class title-inline band: board title left, variable controls right
-  # on one horizontal row.
-  variables:
-    position: title-inline
 
 variables:
   date_range:
@@ -370,8 +366,6 @@ charts:
         labels:
           align: right
           format: currency
-      endpoint_labels:
-        visible: true
 
   # ── Donut: price-point mix ─────────────────────────────────────────────
   plan_mix_donut:
@@ -384,18 +378,6 @@ charts:
     total:
       label: "Total bookings"
     style:
-      # Wedge labels carry the legend — hide the auto-rendered one.
-      legend:
-        visible: false
-      marks:
-        slice:
-          labels:
-            # Two-line label: percentage + name on line 1, nominal $ on line 2.
-            # Uses the theme default block_height: 28 which reserves two lines.
-            template: "{{ '{:.0%}'.format(share) }} {{ plan }}\n${{ '{:,}'.format(bookings) }}"
-            offset: 4
-            font:
-              size: 10
       total:
         value:
           format: "$,.0f"
@@ -410,8 +392,6 @@ charts:
     y: win_rate
     color: lead_source
     style:
-      legend:
-        visible: false
       padding:
         right: 36
       axis_y:
@@ -468,11 +448,9 @@ charts:
         enabled: false
       columns:
         company:
-          label: Company
           width: 170
           link: "/general/accounts?company={{ company }}"
         bookings:
-          label: Bookings
           format: "$,.0f"
           align: right
         bookings_bar:
@@ -495,7 +473,6 @@ charts:
           format: ",.0f"
           align: right
         win_rate:
-          label: Win rate
           format: ".0%"
           align: right
           scale:
@@ -504,15 +481,12 @@ charts:
               # Semantic: a 40% win rate is meaningful independent of this dataset.
               hinge: 0.40
         avg_deal:
-          label: Avg deal
           format: "$,.0f"
           align: right
         sources:
-          label: Sources
           format: ",.0f"
           align: right
         last_close:
-          label: Last close
           format: "%-d %B %Y"
           align: left
         days_since_close:

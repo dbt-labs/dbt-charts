@@ -93,8 +93,7 @@ impl DurationUnit {
 }
 
 /// A ranged bar's start values and the tooltip law that reads them
-/// (`validate_span` has confirmed the shape: single-series, or a vertical
-/// color split 1:1 with the category).
+/// (single-series, or a vertical color split 1:1 with the category).
 pub(crate) struct RangedBars {
     /// The start column's row-title (`field_title`; never the chart's
     /// `y_label`, which titles the end column).
@@ -230,6 +229,9 @@ pub(crate) struct SpanBlock {
     change: BlockRow,
     change_ends: (String, String),
     rises_only: bool,
+    /// Set for a date measure: values print as dates and the change as a
+    /// duration in the unit of the change ends' median length.
+    duration: Option<DurationUnit>,
 }
 
 impl SpanBlock {
@@ -241,6 +243,7 @@ impl SpanBlock {
         named: Vec<BlockRow>,
         inner: Option<&Ends>,
         bar_swatch: Option<&str>,
+        date: bool,
     ) -> Self {
         let own = |title: &str, field: &str| BlockRow {
             title: title.to_string(),
@@ -269,11 +272,19 @@ impl SpanBlock {
         let numeric = |row: &Row, field: &str| row.get(field).and_then(Value::as_f64);
         let rises_only =
             span_rises_only(data.iter().map(|row| (numeric(row, &change.end), numeric(row, &change.start))));
+        let duration = date.then(|| {
+            DurationUnit::of_median(
+                data.iter()
+                    .filter_map(|row| Some(numeric(row, &change.end)? - numeric(row, &change.start)?))
+                    .collect(),
+            )
+        });
         Self {
             rows: named.into_iter().chain(tail).collect(),
             change: own("Δ", ""),
             change_ends: (change.end.clone(), change.start.clone()),
             rises_only,
+            duration,
         }
     }
 
@@ -286,25 +297,59 @@ impl SpanBlock {
         datum: &Row,
         format: &FormatSlot,
     ) -> Result<String, String> {
+        self.label_of(header, series, datum, format, false)
+    }
+
+    /// The label a ranged bar LAYER's mark carries: on a date measure its duration
+    /// row reads in milliseconds, as production's layer mark does.
+    pub(crate) fn layer_bar_label(
+        &self,
+        header: &str,
+        series: Option<&str>,
+        datum: &Row,
+        format: &FormatSlot,
+    ) -> Result<String, String> {
+        self.label_of(header, series, datum, format, true)
+    }
+
+    fn label_of(
+        &self,
+        header: &str,
+        series: Option<&str>,
+        datum: &Row,
+        format: &FormatSlot,
+        layer_bar: bool,
+    ) -> Result<String, String> {
         let number = |field: &str| {
             datum
                 .get(field)
                 .and_then(Value::as_f64)
                 .ok_or_else(|| format!("bar: tooltip block: row has no numeric {field:?}"))
         };
-        let row = |block: &BlockRow, value: String| SpanRow {
+        let row = |block: &BlockRow, value: String, muted: bool| SpanRow {
             title: block.title.clone(),
             value,
-            muted: false,
+            muted,
             swatch: block.swatch.clone(),
         };
-        let mut rows = Vec::with_capacity(self.rows.len() + 1);
+        let paint = |v: f64| format.paint(v).map_err(|e| format!("bar: tooltip value {e}"));
+        let mut rows = Vec::with_capacity(self.rows.len() + 2);
         for block in &self.rows {
-            let value = format.paint(number(&block.field)?).map_err(|e| format!("bar: tooltip value {e}"))?;
-            rows.push(row(block, value));
+            let value = number(&block.field)?;
+            rows.push(row(block, if self.duration.is_some() { tooltip_date(value) } else { paint(value)? }, false));
         }
         let (end, start) = (number(&self.change_ends.0)?, number(&self.change_ends.1)?);
-        rows.push(row(&self.change, difference_text(format, self.rises_only, start, end)?));
+        match self.duration {
+            Some(unit) => {
+                let days = end - start;
+                let length = if layer_bar { paint(days * 86_400_000.0)? } else { unit.text(days)? };
+                let swatch = self.change.swatch.clone();
+                let duration = |title: String, value: String, muted: bool| SpanRow { title, value, muted, swatch: swatch.clone() };
+                rows.push(duration(display_text::language::tr("tooltip.duration", None, &[])?, length, false));
+                rows.push(duration(String::new(), unit.native_text(days)?, true));
+            }
+            None => rows.push(row(&self.change, difference_text(format, self.rises_only, start, end)?, false)),
+        }
         Ok(contract::span_aria_label(header, series, None, &rows))
     }
 }
@@ -341,12 +386,13 @@ pub(crate) struct DateAxis {
 /// the exact extent of both columns (Vega-Lite never nices a time scale,
 /// `vega-lite/src/compile/scale/properties.ts:270-278`) and d3's calendar
 /// ticks at the axis's authored `tickCount` (`_temporal_measure_encoding`
-/// forwards it; Vega's `tickCount` passes a number through, `vega.js:14514`).
-pub(crate) fn date_axis(rows: &[Row], fields: [&str; 2], tick_count: usize) -> Result<DateAxis, String> {
+/// forwards it; Vega's `tickCount` passes a number through, `vega.js:14514`). The layers'
+/// own dates (`extra`) share the scale, so they widen it.
+pub(crate) fn date_axis(rows: &[Row], fields: [&str; 2], extra: &[f64], tick_count: usize) -> Result<DateAxis, String> {
     let days = rows.iter().flat_map(|row| fields.iter().map(|f| row.get(*f).and_then(Value::as_f64)));
-    let (lo, hi) = days.flatten().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), d| (lo.min(d), hi.max(d)));
+    let (lo, hi) = days.flatten().chain(extra.iter().copied()).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), d| (lo.min(d), hi.max(d)));
     if !(hi > lo) {
-        return Err("bar: a date measure whose dates span no time has no scale".into());
+        return Err(crate::refuse!("bar: a date measure whose dates span no time is not supported (it has no scale)").into());
     }
     let ticks = utc_instants(lo, hi, tick_count);
     Ok(DateAxis { domain: (lo, hi), labels: ticks.iter().map(|&t| date_tick_label(t.floor() as i64)).collect(), ticks })
@@ -365,6 +411,56 @@ pub(crate) fn with_day_numbers(payload: &Payload, fields: [&str; 2]) -> Result<P
             let day = date_text_day(&text)
                 .ok_or_else(|| format!("bar: row {i}: date column {field:?} value {text:?} is not a date"))?;
             row.insert(field.to_string(), Value::from(day));
+        }
+    }
+    Ok(converted)
+}
+
+/// The columns a layer plots on the bar's date axis; a layer pinned to a side owns a numeric
+/// scale and plots none.
+fn layer_date_fields(layer: &Value) -> impl Iterator<Item = &str> {
+    let pinned = layer.pointer("/axis_y/position").is_some_and(|p| !p.is_null());
+    ["y", "y_start"].into_iter().filter(move |_| !pinned).filter_map(|key| layer.get(key).and_then(Value::as_str))
+}
+
+/// `payload` with the date columns the layers plot on a date measure as day numbers, in the
+/// rows each layer reads (the chart's own, or its query's dataset). A base end a layer reuses
+/// (`base_fields`) is already numeric; any other layer column must hold dates, as the bar's
+/// own do.
+pub(crate) fn with_layer_day_numbers(
+    payload: &Payload,
+    base_query: Option<&str>,
+    base_fields: [&str; 2],
+    layers: &[Value],
+) -> Result<Payload, String> {
+    let mut converted = payload.clone();
+    // Layers can read one column twice; the second finds day numbers the first wrote.
+    let mut written: std::collections::HashSet<(Option<&str>, &str)> = std::collections::HashSet::new();
+    for layer in layers {
+        let query = layer.get("query_name").and_then(Value::as_str).filter(|q| Some(*q) != base_query);
+        let rows: &mut Vec<Row> = match query {
+            None => &mut converted.rows,
+            Some(name) => converted
+                .datasets
+                .as_mut()
+                .and_then(|datasets| datasets.get_mut(name))
+                .ok_or_else(|| format!("bar: a layer reads query {name:?}, which has no dataset available"))?,
+        };
+        for field in layer_date_fields(layer) {
+            let converted_already = !written.insert((query, field));
+            for (i, row) in rows.iter_mut().enumerate() {
+                match row.get(field) {
+                    Some(Value::String(text)) => {
+                        let day = date_text_day(text.as_str())
+                            .ok_or_else(|| format!("bar: layer row {i}: date column {field:?} value {text:?} is not a date"))?;
+                        row.insert(field.to_string(), Value::from(day));
+                    }
+                    Some(Value::Number(n)) if !converted_already && !base_fields.contains(&field) => {
+                        return Err(format!("bar: layer row {i}: column {field:?} holds {n}, not a date, beside a date measure"));
+                    }
+                    _ => {}
+                }
+            }
         }
     }
     Ok(converted)
@@ -456,16 +552,23 @@ mod tests {
                 serde_json::json!({"start": day(s), "end": day(e)}).as_object().unwrap().clone()
             })
             .collect();
-        let axis = date_axis(&rows, ["end", "start"], 6).unwrap();
+        let axis = date_axis(&rows, ["end", "start"], &[], 6).unwrap();
         assert_eq!(axis.labels, ["Feb", "Mar", "Apr", "May"]);
         let (y, m, d) = civil_from_days(axis.domain.0 as i64);
         assert_eq!((y, m, d), (2026, 1, 5), "no nice: the first bar starts at the plot's left edge");
     }
 
     #[test]
+    fn a_layers_dates_widen_the_date_axis_past_the_bars() {
+        let rows: Vec<Row> = vec![serde_json::json!({"start": 100.0, "end": 120.0}).as_object().unwrap().clone()];
+        let axis = date_axis(&rows, ["end", "start"], &[90.0, 140.0], 6).unwrap();
+        assert_eq!(axis.domain, (90.0, 140.0));
+    }
+
+    #[test]
     fn a_span_of_no_time_has_no_scale() {
         let rows: Vec<Row> = vec![serde_json::json!({"start": 5.0, "end": 5.0}).as_object().unwrap().clone()];
-        assert!(date_axis(&rows, ["end", "start"], 6).is_err());
+        assert!(date_axis(&rows, ["end", "start"], &[], 6).is_err());
     }
 
     fn bars(pairs: &[(f64, f64)], temporal: bool) -> RangedBars {
@@ -477,7 +580,7 @@ mod tests {
 
     fn label(rb: &RangedBars, start: f64, end: f64) -> String {
         let plain = || Ok(Some("plain".to_string()));
-        rb.aria(true, "Region A", None, false, None, None, None, ("end", &FormatSlot::from(",.2~f")), (start, end), plain).unwrap().unwrap()
+        rb.aria(true, "Region A", None, false, None, None, None, ("End", &FormatSlot::from(",.2~f")), (start, end), plain).unwrap().unwrap()
     }
 
     /// `floating_bar`'s reference tooltip: every bar rises, so an unsigned
@@ -485,7 +588,7 @@ mod tests {
     #[test]
     fn a_span_that_only_rises_reads_as_a_range() {
         let rb = bars(&[(71.6, 90.8), (28.1, 55.0)], false);
-        assert_eq!(label(&rb, 71.6, 90.8), "\u{2061}Region A; start: 71.6; end: 90.8; Δ: 19.2");
+        assert_eq!(label(&rb, 71.6, 90.8), "\u{2061}Region A; Start: 71.6; End: 90.8; Δ: 19.2");
     }
 
     #[test]
@@ -496,7 +599,7 @@ mod tests {
         let ends = [(("c0".to_string(), String::new()), 90.8)].into();
         let rb = RangedBars::new("start", &labels, starts, &ends, false).unwrap();
         assert!(label(&rb, 71.6, 90.8).contains("Opened on: 71.6"));
-        assert!(label(&bars(&[(71.6, 90.8)], false), 71.6, 90.8).contains("start: 71.6"));
+        assert!(label(&bars(&[(71.6, 90.8)], false), 71.6, 90.8).contains("Start: 71.6"));
     }
 
     #[test]
@@ -535,7 +638,7 @@ mod tests {
         };
         let aria = |rb: &RangedBars, fmt: &FormatSlot, start, end| {
             let plain = || Ok(Some("plain".to_string()));
-            rb.aria(true, "Region A", None, false, None, None, None, ("end", fmt), (start, end), plain).unwrap().unwrap()
+            rb.aria(true, "Region A", None, false, None, None, None, ("End", fmt), (start, end), plain).unwrap().unwrap()
         };
         let both_ways = bars(&[(100.0, 600.0), (700.0, 200.0)], false);
         assert!(aria(&both_ways, &slot(None), 100.0, 600.0).contains("Δ: +US$500"));

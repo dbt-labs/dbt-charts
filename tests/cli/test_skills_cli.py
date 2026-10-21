@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 
+import pytest
 from typer.testing import CliRunner
 
 from dbt_charts.cli.main import app
@@ -25,7 +26,7 @@ class TestSkillsList:
     def test_lists_known_skills(self) -> None:
         result = runner.invoke(app, ["skills"])
         assert result.exit_code == 0, result.output
-        assert "kpi-row" in result.output
+        assert "chart" in result.output
 
     def test_json_output(self) -> None:
         result = runner.invoke(app, ["skills", "--json"])
@@ -33,7 +34,7 @@ class TestSkillsList:
         data = json.loads(result.output)
         assert data["success"] is True
         names = [s["name"] for s in data["skills"]]
-        assert "kpi-row" in names
+        assert "chart" in names
 
     def test_board_pack_scaffolding_is_not_cli_visible(self) -> None:
         result = runner.invoke(app, ["skills", "--json"])
@@ -46,65 +47,74 @@ class TestSkillsList:
         result = runner.invoke(app, ["skills", "--json"])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        kpi = next(s for s in data["skills"] if s["name"] == "kpi-row")
-        assert kpi["kind"] == "pattern"
-        assert kpi["has_examples"] is True
-        assert kpi["body"]
+        chart = next(s for s in data["skills"] if s["name"] == "chart")
+        assert chart["kind"] == "workflow"
+        assert chart["has_examples"] is False
+        assert chart["body"]
 
-    def test_lists_workflows_and_patterns_sections(self) -> None:
+    def test_lists_exactly_the_kept_skills(self) -> None:
+        result = runner.invoke(app, ["skills", "--json"])
+        assert result.exit_code == 0, result.output
+        names = {s["name"] for s in json.loads(result.output)["skills"]}
+        assert names == {
+            "board-replicate",
+            "chart",
+            "cloud-setup",
+            "custom-chart-build",
+            "mcp-setup",
+            "report-design",
+            "styling",
+        }
+
+    @pytest.mark.parametrize("name", ["intro", "board-build", "kpi-row"])
+    def test_retired_skill_exits_one(self, name: str) -> None:
+        result = runner.invoke(app, ["skills", name])
+        assert result.exit_code == 1
+        assert name in result.output + result.stderr
+
+    def test_listing_has_no_workflow_or_pattern_sections(self) -> None:
         result = runner.invoke(app, ["skills"])
         assert result.exit_code == 0, result.output
-        assert "Workflows" in result.output
-        assert "Patterns" in result.output
+        assert "Workflows" not in result.output
+        assert "Patterns" not in result.output
 
     def test_next_steps_footer_present(self) -> None:
         result = runner.invoke(app, ["skills"])
         assert result.exit_code == 0, result.output
         assert "dct skills" in result.output
 
-    def test_cross_link_to_docs_search(self) -> None:
-        result = runner.invoke(app, ["skills"])
-        assert result.exit_code == 0, result.output
-        assert "dct docs" in result.output
-
     def test_start_here_line_precedes_the_list(self) -> None:
         result = runner.invoke(app, ["skills"])
         assert result.exit_code == 0, result.output
         output = _plain(result.output)
-        start_here_pos = output.find("dct skills intro")
-        workflows_pos = output.find("Workflows")
+        start_here_pos = output.find("dct skills chart")
+        first_skill_pos = output.find("board-replicate")
         assert start_here_pos != -1, output
-        assert workflows_pos != -1, output
-        assert start_here_pos < workflows_pos
-
-    def test_scaffold_marker_shown_for_skills_with_examples(self) -> None:
-        result = runner.invoke(app, ["skills"])
-        assert result.exit_code == 0, result.output
-        # kpi-row ships with an example YAML.
-        assert "[scaffold]" in result.output
+        assert first_skill_pos != -1, output
+        assert start_here_pos < first_skill_pos
 
 
 class TestSkillsHasNoSearch:
     def test_search_option_is_rejected(self) -> None:
-        result = runner.invoke(app, ["skills", "--search", "kpi"])
+        result = runner.invoke(app, ["skills", "--search", "chart"])
         assert result.exit_code == 2
         assert "--search" in _plain(result.stderr)
 
 
 class TestSkillsGet:
     def test_prints_skill_body(self) -> None:
-        result = runner.invoke(app, ["skills", "kpi-row"])
+        result = runner.invoke(app, ["skills", "chart"])
         assert result.exit_code == 0, result.output
         assert len(result.output.strip()) > 0
 
     def test_json_output_for_skill(self) -> None:
-        result = runner.invoke(app, ["skills", "kpi-row", "--json"])
+        result = runner.invoke(app, ["skills", "chart", "--json"])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        assert data["name"] == "kpi-row"
+        assert data["name"] == "chart"
         assert data["description"]
         assert data["body"]
-        assert data["kind"] == "pattern"
+        assert data["kind"] == "workflow"
 
     def test_unknown_skill_exits_one(self) -> None:
         result = runner.invoke(app, ["skills", "no-such-skill-xyz"])

@@ -128,7 +128,7 @@ def test_a_label_falls_back_to_the_variable_name() -> None:
         {"parent_region_name": Variable(input="text")}, {}, None, _vs()
     )
 
-    assert resolved[0].label == "Parent Region Name"
+    assert resolved[0].label == "Parent region name"
 
 
 def test_an_authored_label_wins() -> None:
@@ -145,7 +145,22 @@ def test_refined_slider_bounds_travel_with_the_control() -> None:
     Two consumers need them — the chrome that draws the track and the HTML
     control that binds it — and neither may re-derive them.
     """
-    executor = _OptionExecutor([{"n": str(n)} for n in range(10, 60, 10)])
+    executor = _OptionExecutor([])
+    var = Variable(
+        input="select",
+        input_auto_detected=True,
+        options=VariableOptions(static=[10, 20, 30, 40, 50]),
+    )
+
+    resolved = resolve_controls({"limit": var}, {}, executor, _vs())
+
+    assert resolved[0].input in ("slider", "range")
+    assert resolved[0].slider_min == 10
+    assert resolved[0].slider_max == 50
+
+
+def test_a_numeric_column_backed_variable_stays_an_unsettable_select() -> None:
+    executor = _OptionExecutor([{"n": str(n)} for n in range(1970, 1976)])
     var = Variable(
         input="select",
         input_auto_detected=True,
@@ -154,9 +169,8 @@ def test_refined_slider_bounds_travel_with_the_control() -> None:
 
     resolved = resolve_controls({"limit": var}, {}, executor, _vs())
 
-    assert resolved[0].input in ("slider", "range")
-    assert resolved[0].slider_min == 10
-    assert resolved[0].slider_max == 50
+    assert resolved[0].input == "select"
+    assert resolved[0].can_unset
 
 
 def test_authored_slider_bounds_beat_the_theme_defaults() -> None:

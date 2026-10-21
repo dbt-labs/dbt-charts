@@ -158,7 +158,7 @@
       },
       "field": "month",
       "sort": null,
-      "title": "month",
+      "title": "Month",
       "type": "nominal"
     },
     "y": {
@@ -186,7 +186,7 @@
       },
       "field": "category",
       "sort": null,
-      "title": "category",
+      "title": "Category",
       "type": "nominal"
     }
   },

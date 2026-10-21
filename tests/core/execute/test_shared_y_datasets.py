@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 from pydantic import TypeAdapter
 
 from dbt_charts.core.compile.models.chart.normalized import Chart
@@ -27,12 +28,6 @@ def test_collects_each_primary_scale_query_once() -> None:
             "layers": [
                 {"type": "line", "y": "goal", "query": "goal_query"},
                 {"type": "bar", "y": "target", "query": "goal_query"},
-                {
-                    "type": "line",
-                    "y": "benchmark",
-                    "query": "right_query",
-                    "axis_y": {"position": "right"},
-                },
             ],
         }
     )
@@ -48,6 +43,38 @@ def test_collects_each_primary_scale_query_once() -> None:
         "goal_query": goal_rows,
     }
     executor.execute_query.assert_called_once_with("goal_query", {})
+
+
+@pytest.mark.parametrize("position", ["left", "right"])
+def test_a_pinned_layer_leaves_every_layer_off_the_primary_scale(
+    position: str,
+) -> None:
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "layered",
+            "type": "bar",
+            "x": "month",
+            "y": "actual",
+            "query": SqlQuery(sql="SELECT 1", source="src"),
+            "query_name": "actual_query",
+            "layers": [
+                {"type": "line", "y": "goal", "query": "goal_query"},
+                {
+                    "type": "line",
+                    "y": "benchmark",
+                    "query": "pinned_query",
+                    "axis_y": {"position": position},
+                },
+            ],
+        }
+    )
+    base_rows = [{"month": "2024-01", "actual": 70.5}]
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+
+    datasets = collect_shared_y_datasets(chart, base_rows, executor, {})
+
+    assert datasets == {"actual_query": base_rows}
+    executor.execute_query.assert_not_called()
 
 
 def test_collects_a_right_axis_span_layer_query() -> None:

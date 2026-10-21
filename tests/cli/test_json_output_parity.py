@@ -78,15 +78,6 @@ class TestImpactParityJson:
         _assert_parity(result.output, ColumnImpactResult)
 
 
-class TestDocsParityJson:
-    def test_parity(self) -> None:
-        from dbt_charts.agent_api.docs import DocsResult
-
-        result = runner.invoke(app, ["docs", "--json"])
-        assert result.exit_code == 0, result.output
-        _assert_parity(result.output, DocsResult)
-
-
 _DESCRIBE_BOARD = (
     "title: Test\n"
     "queries:\n  q:\n    sql: 'select 1'\n    source: db\n"

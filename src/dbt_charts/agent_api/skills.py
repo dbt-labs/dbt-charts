@@ -6,8 +6,8 @@ A skill is a directory under ``dbt_charts/ai/skills/<name>/`` containing a
 board YAML files exercised by the snapshot test in
 ``dbt-charts/tests/agent_api/test_skills.py``.
 
-``kind`` is ``"workflow"`` (end-to-end agent playbooks like ``board-build``)
-or ``"pattern"`` (layout recipes like ``kpi-row``). Required: the loader
+``kind`` is ``"workflow"`` (end-to-end agent playbooks like ``chart``)
+or ``"pattern"`` (layout recipes). Required: the loader
 rejects a SKILL.md that omits it so the genre stays self-documenting as new
 skills land.
 

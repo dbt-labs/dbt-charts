@@ -6,6 +6,7 @@
 # merged style, so a theme switch recolors them like any built-in chart.
 
 title: Custom charts
+source: examples_db
 notes: |
   Shapes dbt Charts has no `type:` for, each drawn by a template in `templates/`.
   The Sankey and funnel answer dbt-labs/dbt-charts#3, the XmR chart answers
@@ -55,7 +56,6 @@ queries:
       - [Email, 6100]
       - [Partners, 2900]
   defect_rate:
-    source: examples_db
     sql: |
       SELECT
         strftime(DATE '2024-01-01' + INTERVAL (m) MONTH, '%b %Y') AS month,

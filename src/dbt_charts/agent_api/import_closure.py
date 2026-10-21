@@ -3,8 +3,9 @@
 Returns every file the board pulls in (directly or transitively) via layout
 imports (``rows``/``cols``/``grid.items``/``tabs.items`` strings ending in
 ``.yml``/``.yaml``) and cross-file refs (bare strings and ``{ref: ...}``
-dicts in ``queries``/``charts``/``variables``), plus ``extends:`` file refs
-and the ``templates/<name>.svg.j2`` file each ``type: custom`` chart names.
+dicts in ``queries``/``charts``/``variables``), plus ``extends:`` file refs,
+the ``templates/<name>.svg.j2`` file each ``type: custom`` chart names, and
+the boards a ``glob_boards``/``glob_folders`` call in its text lists.
 
 The result includes the root board itself as the first entry and is
 deduplicated — a file imported via multiple paths appears once.
@@ -17,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from dbt_charts.core.board_listings import listing_dependencies
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.file_refs import RefKind, resolve_ref
 from dbt_charts.core.compile.models.refs import (
@@ -32,7 +34,7 @@ from dbt_charts.core.compile.template.custom_template import (
 from dbt_charts.core.utils import YAML_LOADER
 
 if TYPE_CHECKING:
-    from dbt_charts.core.project import ProjectPath
+    from dbt_charts.core.project import ProjectDirectory, ProjectPath
 
 _DOTTED_REF_RES: tuple[tuple[re.Pattern[str], RefKind], ...] = (
     (QUERY_REF_RE, "queries"),
@@ -51,37 +53,52 @@ def board_import_closure(board_path: ProjectPath) -> list[ProjectPath]:
     """
     result: list[ProjectPath] = []
     seen: set[str] = set()
+    # A file reached through ``extends:`` from several folders lists from each.
+    visited: set[tuple[str, str]] = set()
     resolving: set[str] = set()
 
-    def walk(path: ProjectPath) -> None:
+    def add(path: ProjectPath) -> None:
+        if path.relpath not in seen:
+            seen.add(path.relpath)
+            result.append(path)
+
+    def walk(path: ProjectPath, listing_dir: ProjectDirectory) -> None:
+        """*listing_dir* is the folder this file's ``text:`` lists from: its own,
+        or the extending board's when reached through ``extends:``."""
         relpath = path.relpath
         if relpath in resolving:
             raise CompilationError(
                 f"Import cycle detected: '{relpath}' imports itself transitively"
             )
-        if relpath in seen:
+        if (relpath, listing_dir.relpath) in visited:
             return
-        seen.add(relpath)
-        result.append(path)
+        visited.add((relpath, listing_dir.relpath))
+        add(path)
         resolving.add(relpath)
 
         content = path.read_text()
         data = _load_board_yaml(content, relpath)
 
         if isinstance(data, dict):
+            extends: list[tuple[str, RefKind]] = []
+            _collect_extends(data, extends)
+            for ref, kind in extends:
+                walk(resolve_ref(ref, path.parent, kind), listing_dir)
             for ref, kind in _extract_imports(data):
-                walk(resolve_ref(ref, path.parent, kind))
-            for name in _custom_template_names(data):
-                template = path.project.path(
-                    f"{TEMPLATES_DIR}/{name}{TEMPLATE_FILE_SUFFIX}"
-                )
-                if template.relpath not in seen:
-                    seen.add(template.relpath)
-                    result.append(template)
+                target = resolve_ref(ref, path.parent, kind)
+                walk(target, target.parent)
+            leaves = [
+                path.project.path(f"{TEMPLATES_DIR}/{name}{TEMPLATE_FILE_SUFFIX}")
+                for name in _custom_template_names(data)
+            ]
+            for text in _listing_texts(data):
+                leaves.extend(listing_dependencies(text, listing_dir))
+            for leaf in leaves:
+                add(leaf)
 
         resolving.discard(relpath)
 
-    walk(board_path)
+    walk(board_path, board_path.parent)
     return result
 
 
@@ -128,11 +145,22 @@ def _custom_template_names(data: dict[str, Any]) -> list[str]:
     return names
 
 
+def _listing_texts(data: Any) -> list[str]:
+    """Every ``text:`` value in the document that may call a listing function."""
+    if isinstance(data, dict):
+        own = data.get("text")
+        texts = [own] if isinstance(own, str) and "glob_" in own else []
+        return texts + [t for v in data.values() for t in _listing_texts(v)]
+    if isinstance(data, list):
+        return [t for v in data for t in _listing_texts(v)]
+    return []
+
+
 def _extract_imports(data: dict[str, Any]) -> list[tuple[str, RefKind]]:
-    """Collect every file ref (and how it names its file) in a board mapping."""
+    """Collect every file ref but ``extends:`` (and how it names its file) in a
+    board mapping."""
     refs: list[tuple[str, RefKind]] = []
-    _collect_extends(data, refs)
-    _scan_dict(data, refs)
+    _scan_dict({k: v for k, v in data.items() if k != "extends"}, refs)
     return refs
 
 

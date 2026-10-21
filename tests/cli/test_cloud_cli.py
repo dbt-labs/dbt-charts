@@ -4124,6 +4124,147 @@ class TestConnections:
         assert SyncResult.model_validate_json(result.stdout).queued is True
 
 
+class TestConnectionCreateBindsSources:
+    """The create binds sources in the same request, as the web form does, so
+    Cloud re-renders the project's boards without a second `source map` step."""
+
+    CONNECTIONS = "/api/orgs/acme-data/connections"
+    SOURCES = "/api/orgs/acme-data/projects/analytics/sources"
+
+    @staticmethod
+    def _source(name: str, connection_slug: str | None = None) -> dict[str, object]:
+        return {
+            "name": name,
+            "connection_slug": connection_slug,
+            "schema_override": "",
+            "is_default": name == "db",
+        }
+
+    def _create(self, *extra: str) -> Result:
+        return runner.invoke(
+            app,
+            [
+                "cloud",
+                "connection",
+                "create",
+                "--org",
+                "acme-data",
+                "--type",
+                "postgres",
+                "--password-env",
+                "WH_PASSWORD",
+                "--set",
+                "host=db.example",
+                *extra,
+            ],
+            env={"WH_PASSWORD": "hunter2"},
+        )
+
+    def _serve(self, api: FakeApi) -> None:
+        api.add(
+            "GET",
+            self.SOURCES,
+            {
+                "sources": [
+                    self._source("db"),
+                    self._source("events"),
+                    self._source("legacy", "old-warehouse"),
+                ],
+                "unmapped_count": 2,
+            },
+        )
+        api.add(
+            "POST",
+            self.CONNECTIONS,
+            {"success": True, "message": "", "connection": _connection("wh")},
+            status=201,
+        )
+
+    def test_map_source_sends_the_project_and_names(self, api: FakeApi) -> None:
+        self._serve(api)
+        result = self._create(
+            "--project", "analytics", "--map-source", "db", "--map-source", "events"
+        )
+        assert result.exit_code == 0, out(result)
+        body = api.body("POST", self.CONNECTIONS)
+        assert body["project_slug"] == "analytics"
+        assert body["map_sources"] == ["db", "events"]
+        assert "db, events" in result.output
+        assert "source map" not in result.output
+
+    def test_map_all_sources_sends_the_unmapped_names_it_listed(
+        self, api: FakeApi
+    ) -> None:
+        """Never a wildcard: the server is handed exact names, and a source
+        already bound to another connection is left alone."""
+        self._serve(api)
+        result = self._create("--project", "analytics", "--map-all-sources")
+        assert result.exit_code == 0, out(result)
+        assert api.body("POST", self.CONNECTIONS)["map_sources"] == ["db", "events"]
+
+    def test_a_create_without_mapping_flags_binds_nothing(self, api: FakeApi) -> None:
+        self._serve(api)
+        result = self._create()
+        assert result.exit_code == 0, out(result)
+        body = api.body("POST", self.CONNECTIONS)
+        assert "project_slug" not in body
+        assert "map_sources" not in body
+        assert [call[0] for call in api.calls] == ["POST"]
+        assert "Next: dct cloud source map <source> wh" in result.output
+
+    @pytest.mark.parametrize("name", ["dbb", "legacy"])
+    def test_a_name_that_is_not_an_unmapped_source_is_refused_before_create(
+        self, api: FakeApi, name: str
+    ) -> None:
+        """The server drops names it cannot bind without saying so; a typo or
+        an already-mapped source would leave boards unrendered behind a
+        success line, so the CLI checks first and saves nothing."""
+        self._serve(api)
+        result = self._create("--project", "analytics", "--map-source", name)
+        assert result.exit_code != 0
+        assert name in out(result)
+        assert "db, events" in out(result)
+        assert ("POST", self.CONNECTIONS) not in [call[:2] for call in api.calls]
+
+    def test_map_all_sources_with_nothing_unmapped_is_refused(
+        self, api: FakeApi
+    ) -> None:
+        api.add(
+            "GET",
+            self.SOURCES,
+            {"sources": [self._source("db", "wh")], "unmapped_count": 0},
+        )
+        result = self._create("--project", "analytics", "--map-all-sources")
+        assert result.exit_code != 0
+        assert "no unmapped" in out(result)
+        assert ("POST", self.CONNECTIONS) not in [call[:2] for call in api.calls]
+
+    def test_map_source_and_map_all_sources_are_exclusive(self, api: FakeApi) -> None:
+        result = self._create(
+            "--project", "analytics", "--map-source", "db", "--map-all-sources"
+        )
+        assert result.exit_code != 0
+        assert "--map-all-sources" in out(result)
+        assert not api.calls
+
+    def test_project_without_a_mapping_flag_is_refused(self, api: FakeApi) -> None:
+        """A create binds nothing unless told which sources; a bare --project
+        would read as a binding that never happened."""
+        result = self._create("--project", "analytics")
+        assert result.exit_code != 0
+        assert "--map-source" in out(result)
+        assert not api.calls
+
+    @pytest.mark.parametrize("field", ["project_slug", "map_sources"])
+    def test_the_binding_is_never_taken_through_set(
+        self, api: FakeApi, field: str
+    ) -> None:
+        result = self._create("--set", f"{field}=analytics")
+        assert result.exit_code != 0
+        assert "--map-source" in out(result)
+        assert not api.calls
+
+
 class TestSources:
     SOURCES = {
         "sources": [

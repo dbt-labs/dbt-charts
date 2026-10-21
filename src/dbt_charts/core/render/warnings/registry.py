@@ -57,7 +57,6 @@ import dbt_charts.core.render.warnings.layered_chart_shared_y_axis_scale_mismatc
 import dbt_charts.core.render.warnings.layout_min_exceeds_height as layout_min_exceeds_height
 import dbt_charts.core.render.warnings.legend_position_width_fallback as legend_position_width_fallback
 import dbt_charts.core.render.warnings.legend_values_unresolved as legend_values_unresolved
-import dbt_charts.core.render.warnings.likely_currency_or_percent_missing_formatter as likely_currency_or_percent_missing_formatter
 import dbt_charts.core.render.warnings.local_time_label_expr_on_bucketed_axis as local_time_label_expr_on_bucketed_axis
 import dbt_charts.core.render.warnings.low_text_contrast as low_text_contrast
 import dbt_charts.core.render.warnings.normalize_percent_format_reads_raw_value as normalize_percent_format_reads_raw_value
@@ -133,7 +132,6 @@ _DATA_DETECTORS: list[ModuleType] = [
     layer_data_outside_domain,
     layered_chart_shared_y_axis_scale_mismatch,
     legend_values_unresolved,
-    likely_currency_or_percent_missing_formatter,
     local_time_label_expr_on_bucketed_axis,
     normalize_percent_format_reads_raw_value,
     palette_unsupported,

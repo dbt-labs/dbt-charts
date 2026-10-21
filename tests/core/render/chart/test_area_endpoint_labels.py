@@ -540,5 +540,5 @@ def test_wide_area_truncation_names_the_y_key_not_the_fold_column(make_chart):
     # column name.
     assert (
         records[0].series_name
-        == "enterprise cloud data integration platform north america west"
+        == "Enterprise cloud data integration platform north america west"
     )

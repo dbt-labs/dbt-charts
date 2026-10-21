@@ -443,8 +443,6 @@ rows:
           padding: "20px"
           text:
             align: center
-          border:
-            radius: 8
 
   - text: |
       Type in the input above and watch the greeting change! The `{{ name }}` syntax inserts the variable value.
@@ -541,14 +539,12 @@ rows:
           - units_kpi
         style:
           padding: 0
-          gap: 16
 
       - cols:
           - revenue_bar
           - category_donut
         style:
           padding: 0
-          gap: 16
 
       - text: "**Widget B** leads on revenue · **Electronics** is 64% of the mix · **Tools** trail at 15%"
         style:

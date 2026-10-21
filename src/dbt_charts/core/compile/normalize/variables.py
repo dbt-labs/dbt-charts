@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
+from dbt_charts._docs_site import yaml_reference_url
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.cache import (
     INHERIT_CACHE,
@@ -37,6 +38,7 @@ from dbt_charts.core.compile.models.variable.authored import (
     Variable,
     VariableInputType,
 )
+from dbt_charts.core.compile.template.daterange import DATERANGE_PRESETS
 from dbt_charts.core.compile.template.variables import (
     choice_member_type,
     coerce_variable_values,
@@ -80,7 +82,7 @@ class UnknownVariableError:
         ]
         if suggestion:
             hint_parts.append(f"Did you mean {suggestion!r}?")
-        hint_parts.append("See: dct docs variables")
+        hint_parts.append(f"See: {yaml_reference_url()}")
         fields: dict[str, str] = {
             "surface": self.surface,
             "owner_name": self.owner_name,
@@ -125,6 +127,20 @@ def synthetic_query_name(kind: str, *parts: str | int) -> str:
     stable within a compile. e.g. ``("var_options", "region") → _var_options_region``.
     """
     return "_" + "_".join(str(p) for p in (kind, *parts))
+
+
+def infer_variable_input(var: Variable) -> None:
+    """Settle ``var.input``: detect it from ``auto``, flag a refinable select.
+
+    Only a select is flagged refinable (``input_auto_detected``): multiselect
+    has multi-value semantics that can't map to datepicker/checkbox/slider, and
+    strong structural signals (bool -> checkbox, min/max -> slider) are not
+    overridden.
+    """
+    was_auto = var.input == "auto"
+    var.input = detect_variable_input_type(var)
+    if was_auto and var.input == "select":
+        var.input_auto_detected = True
 
 
 def detect_variable_input_type(var: Variable) -> VariableInputType:
@@ -678,6 +694,17 @@ def validate_variable_value(var_name: str, var: Variable, value: Any) -> None:
 
     # Special case: daterange needs structural validation (2-element list)
     if input_type == "daterange":
+        if isinstance(value, str):
+            if value not in DATERANGE_PRESETS:
+                raise CompilationError.from_code(
+                    ERR_VALIDATION_FIELD,
+                    field_path=f"variables.{var_name}.default",
+                    pydantic_msg=(
+                        "daterange default must be [start, end] or a preset "
+                        f"({', '.join(DATERANGE_PRESETS)}), got {value!r}"
+                    ),
+                )
+            return
         if not isinstance(value, (list, tuple)) or len(value) != 2:
             raise CompilationError.from_code(
                 ERR_VALIDATION_FIELD,

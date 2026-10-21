@@ -8,8 +8,8 @@ description: >
   Claude Desktop, VS Code, Codex, Copilot, or any MCP-compatible client,
   or troubleshooting MCP connection issues like 'server not starting',
   'tools not appearing', 'MCP requires additional dependencies'. Do NOT
-  use for building dashboards (use {{ s_skill_name_build }}). Do NOT
-  use for dashboard errors (use {{ s_skill_name_troubleshooting }}).
+  use for building dashboards (use {{ s_skill_name_chart }}). Do NOT
+  use for dashboard errors (fix what the error says).
 metadata:
   author: fivetran
 ---
@@ -103,19 +103,14 @@ After setup, your AI assistant has access to these tools:
 |------|---------|
 | `render_board` | Compile, execute queries, and generate visual HTML/text output |
 | `execute_sql` | Run ad-hoc SQL, or one named query from a saved board, and inspect columns/sample rows |
-| `docs` | Browse the packaged YAML reference corpus offline |
 | `list_skills` / `get_skill` | Discover and read packaged dbt charts authoring skills — `get_skill` returns the full body including example YAML |
 
 ## Available Resources
 
 | Resource | Content |
 |----------|---------|
-| `dct://docs/all` | Syntax guide plus the generated field reference, unsliced |
-| `dct://docs/{topic}` | One H2 section by slug (`cheatsheet`, `board`, `charts`, `queries`, `variables`, `layout`, `errors`) |
-| `dct://guide/board-design` | Dashboard design principles and patterns |
+| `dct://guide/chart` | Board and chart grammar, build-render-fix loop |
 | `dct://guide/report-design` | Report design principles and narrative structure |
-| `dct://guide/board-build` | Build-test-iterate workflow best practices |
-| `dct://guide/board-review` | Self-review checklist for a finished board |
 | `dct://boards` | List of all dashboards in the project |
 | `dct://board/{path}` | YAML content and compiled structure of a specific dashboard |
 

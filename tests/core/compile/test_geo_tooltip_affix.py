@@ -110,4 +110,4 @@ def _geo_cards(chart: dict[str, Any]) -> list[str]:
 )
 def test_a_geo_hover_card_paints_the_affix(chart: dict[str, Any]) -> None:
     cards = _geo_cards(chart)
-    assert any("pop: 1,200 €" in card for card in cards), cards
+    assert any("Pop: 1,200 €" in card for card in cards), cards

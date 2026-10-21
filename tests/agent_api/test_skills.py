@@ -69,7 +69,7 @@ class TestListSkills:
     def test_includes_known_skill(self) -> None:
         result = list_skills()
         names = [s.name for s in result.skills]
-        assert "board-build" in names
+        assert "chart" in names
 
     def test_skills_have_required_fields(self) -> None:
         result = list_skills()
@@ -83,8 +83,8 @@ class TestListSkills:
 
 class TestGetSkill:
     def test_returns_skill_by_name(self) -> None:
-        skill = get_skill("board-build")
-        assert skill.name == "board-build"
+        skill = get_skill("chart")
+        assert skill.name == "chart"
         assert skill.description
 
     def test_raises_on_unknown_name(self) -> None:
@@ -92,31 +92,9 @@ class TestGetSkill:
             get_skill("no-such-skill-xyz")
 
     def test_directory_resolves_to_skill_dir(self) -> None:
-        skill = get_skill("board-build")
+        skill = get_skill("chart")
         assert skill.directory is not None, "a builtin skill is file-backed"
         assert (skill.directory / "SKILL.md").is_file()
-
-    def test_available_tools_gates_if_tool_blocks_in_the_body(self) -> None:
-        """Same contract as `load_shared_prompt`'s `available_tools` — a caller
-        that holds less than the full tool surface (the MCP connector) must be
-        able to gate `{{#if_tool}}` blocks the same way."""
-        without_write = get_skill(
-            "board-build",
-            available_tools={"render_board"},
-        )
-        assert "write_file" not in without_write.body
-
-        with_write = get_skill(
-            "board-build",
-            available_tools={"render_board", "write_file"},
-        )
-        assert "write_file" in with_write.body
-
-    def test_available_tools_none_keeps_every_block(self) -> None:
-        """The default (`None`) is the CLI/full-chat/stdio-MCP contract — no
-        gating, every `{{#if_tool}}` block survives."""
-        skill = get_skill("board-build")
-        assert "write_file" in skill.body
 
 
 class TestSkillDirectoryTyping:
@@ -145,7 +123,7 @@ class TestSkillDirectoryTyping:
             )
 
     def test_directory_serializes_to_str_on_wire(self) -> None:
-        skill = get_skill("board-build")
+        skill = get_skill("chart")
         dumped = skill.model_dump(mode="json")
         assert dumped["directory"] == str(skill.directory)
         assert isinstance(dumped["directory"], str)
@@ -156,27 +134,24 @@ class TestSkillDescription:
     per-call surface-macro render pass over the body."""
 
     def test_matches_get_skill_description(self) -> None:
-        assert skill_description("board-build") == get_skill("board-build").description
+        assert skill_description("chart") == get_skill("chart").description
 
     def test_unknown_name_returns_empty_string_not_raise(self) -> None:
         assert skill_description("no-such-skill-xyz") == ""
 
     def test_description_renders_sibling_macro_per_surface(self) -> None:
-        """board-build's description references board-design: bare on both
-        tool and cli. `dct skills` resolves names against the bare registry,
-        so the cli-rendered description must not print a name it would then
-        reject."""
-        tool_description = get_skill("board-build", surface="tool").description
-        cli_description = get_skill("board-build", surface="cli").description
-        assert "board-design" in tool_description
-        assert "dct-board-design" not in tool_description
-        assert "board-design" in cli_description
-        assert "dct-board-design" not in cli_description
+        """custom-chart-build's body references chart: bare on both tool and
+        cli. `dct skills` resolves names against the bare registry, so the
+        cli-rendered text must not print a name it would then reject."""
+        tool_body = get_skill("custom-chart-build", surface="tool").description
+        cli_body = get_skill("custom-chart-build", surface="cli").description
+        assert "dct-custom-chart-build" not in tool_body
+        assert "dct-custom-chart-build" not in cli_body
 
     def test_skill_description_helper_also_renders(self) -> None:
         assert (
-            skill_description("board-build", surface="cli")
-            == get_skill("board-build", surface="cli").description
+            skill_description("chart", surface="cli")
+            == get_skill("chart", surface="cli").description
         )
 
 
@@ -217,7 +192,7 @@ class TestProjectSkills:
     def test_builtin_skills_are_labeled_builtin(self) -> None:
         result = list_skills()
         by_name = {s.name: s for s in result.skills}
-        assert by_name["board-build"].source == "builtin"
+        assert by_name["chart"].source == "builtin"
 
     def test_without_project_arg_project_skills_are_invisible(
         self, tmp_path: Path
@@ -259,31 +234,29 @@ class TestProjectSkills:
         assert "my-metric" in {s.name for s in result.skills}
 
     def test_dct_prefixed_project_dir_is_skipped(self, tmp_path: Path) -> None:
-        """`dct init skills` writes `dct-board-build/SKILL.md` with
-        `name: dct-board-build` into `.claude/skills/`: the project-skill
+        """`dct init skills` writes `dct-chart/SKILL.md` with
+        `name: dct-chart` into `.claude/skills/`: the project-skill
         scanner must not re-read its own file-install output as a second,
         distinct registry entry."""
-        _write_project_skill(
-            tmp_path, ".claude/skills/dct-board-build", name="dct-board-build"
-        )
+        _write_project_skill(tmp_path, ".claude/skills/dct-chart", name="dct-chart")
         project = FilesystemProject(tmp_path)
 
         result = list_skills(project=project)
 
-        assert "dct-board-build" not in {s.name for s in result.skills}
+        assert "dct-chart" not in {s.name for s in result.skills}
 
     def test_project_skill_overrides_builtin_of_same_name(self, tmp_path: Path) -> None:
         _write_project_skill(
             tmp_path,
-            "skills/board-build",
-            name="board-build",
+            "skills/chart",
+            name="chart",
             description="Overridden by the project.",
             kind="workflow",
             body="Project override body.\n",
         )
         project = FilesystemProject(tmp_path)
 
-        skill = get_skill("board-build", project=project)
+        skill = get_skill("chart", project=project)
 
         assert skill.source == "project"
         assert "Project override body." in skill.body
@@ -323,7 +296,7 @@ class TestProjectSkills:
     def test_builtin_skill_body_is_not_reframed(self) -> None:
         """The disclaimer wrap is project-only — built-in skills are our own
         trusted content and must render exactly as authored."""
-        skill = get_skill("board-build")
+        skill = get_skill("chart")
 
         assert "not system policy" not in skill.body
 
@@ -606,15 +579,6 @@ def test_skills_reference_current_mcp_tool_names(skill_path: Path) -> None:
     assert stale == [], f"{skill_path} references stale tool names: {stale}"
 
 
-def test_at_least_ten_skills_have_examples() -> None:
-    result = list_skills()
-    skills_with_examples = [s for s in result.skills if s.examples]
-    assert len(skills_with_examples) >= 10, (
-        f"Expected >= 10 skills with examples, found {len(skills_with_examples)}: "
-        + ", ".join(s.name for s in skills_with_examples)
-    )
-
-
 # --- Surface rendering fan-out ----------------------------------------------
 #
 # Every packaged skill must render cleanly on every surface it claims to
@@ -684,21 +648,6 @@ def test_mcp_setup_is_cli_only() -> None:
     assert "mcp-setup" not in tool_names
 
 
-def test_dashboard_pack_scaffolding_is_tool_only() -> None:
-    """Pack scaffolding remains available to agent tools, not public CLI help."""
-    tool_skill = get_skill("board-pack-scaffolding", surface="tool")
-    assert tool_skill.name == "board-pack-scaffolding"
-    assert "tool" in tool_skill.surfaces
-
-    with pytest.raises(SkillNotFound):
-        get_skill("board-pack-scaffolding", surface="cli")
-
-    cli_names = {s.name for s in list_skills(surface="cli").skills}
-    tool_names = {s.name for s in list_skills(surface="tool").skills}
-    assert "board-pack-scaffolding" not in cli_names
-    assert "board-pack-scaffolding" in tool_names
-
-
 def test_surface_aliases_yaml_has_no_dead_entries() -> None:
     """Every alias in surface_aliases.yaml must be referenced by some SKILL.md.
 
@@ -726,7 +675,7 @@ def test_surface_aliases_yaml_has_no_dead_entries() -> None:
 def test_rendered_skill_marks_its_surface() -> None:
     """`Skill.rendered_for` records which surface the body was rendered for."""
     for surface in ("tool", "cli"):
-        skill = get_skill("board-build", surface=surface)
+        skill = get_skill("chart", surface=surface)
         assert skill.rendered_for == surface
 
 
@@ -869,62 +818,25 @@ class TestExtraSkills:
 
 # Skills that compose an authoring system prompt or get installed to disk by
 # `dct init skills` — the surfaces an agent actually reads before writing YAML.
-_AUTHORING_SKILL = "board-build"
+_AUTHORING_SKILL = "chart"
 
 
-def test_authoring_skill_forbids_other_visualization_tools() -> None:
-    """A host's own chart/artifact tools answer the same request differently —
-    with a standalone image or HTML file instead of board YAML. The skill must
-    rule them out in general terms, not per-vendor."""
-    body = get_skill(_AUTHORING_SKILL, surface="cli").body.lower()
-
-    assert "only visualization tool" in body, (
-        f"{_AUTHORING_SKILL} no longer states that dbt charts is the only "
-        "visualization tool the agent may use"
-    )
-
-
-def test_authoring_skill_teaches_single_chart_as_a_board() -> None:
-    """ "Just a chart" is the request most likely to send an agent to another
-    tool, so the skill has to say the dbt charts answer out loud: one chart in a
-    board, no title."""
-    body = get_skill(_AUTHORING_SKILL, surface="cli").body.lower()
-
-    assert "a single chart is just a board with one chart in it" in body
-    assert "leave `title:` off" in body
-
-
-def test_visualization_rule_is_vendor_neutral() -> None:
-    """Naming a vendor's tool dates the rule and misses every other host. The
-    text must generalize instead — the eval harness names specific tools, the
-    shipped skill must not."""
-    body = get_skill(_AUTHORING_SKILL, surface="cli").body.lower()
-    start = body.index("only visualization tool")
-    rule = body[start : start + 700]
-
-    named_vendors = [v for v in ("claude", "codex", "cursor", "copilot") if v in rule]
-    assert named_vendors == [], (
-        f"visualization rule names specific hosts {named_vendors}; state it "
-        "generically so it holds on hosts we have not seen"
-    )
-
-
-def test_visualization_rule_reaches_every_authoring_prompt() -> None:
-    """The rule is only worth writing if it is in context whenever an agent
-    authors YAML. Pins that the carrying skill composes every authoring prompt
-    type, so moving it into a narrower skill fails here rather than silently."""
+def test_grammar_skill_reaches_every_authoring_prompt() -> None:
+    """The grammar page must be in context whenever an agent authors YAML.
+    Pins that it composes every authoring prompt type, so dropping it from one
+    fails here rather than silently."""
     from dbt_charts.ai.prompts import _PROMPT_SKILLS, AUTHORING_PROMPT_TYPES
 
     for prompt_type in AUTHORING_PROMPT_TYPES:
         assert _AUTHORING_SKILL in _PROMPT_SKILLS[prompt_type], (
             f"{prompt_type} no longer includes {_AUTHORING_SKILL}, so the "
-            "visualization-exclusivity rule is not in its system prompt"
+            "grammar page is not in its system prompt"
         )
 
 
-def test_visualization_rule_is_installed_to_disk_for_cli_agents() -> None:
+def test_grammar_skill_is_installed_to_disk_for_cli_agents() -> None:
     """Claude Code and Codex read skills off disk, not from our system prompt.
-    The rule only reaches them if its skill is in the file-install set."""
+    The grammar page only reaches them if it is in the file-install set."""
     from dbt_charts.agent_api.skill_install import skills_for_file_install
 
     assert _AUTHORING_SKILL in {s.name for s in skills_for_file_install()}

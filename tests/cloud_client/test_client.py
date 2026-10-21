@@ -16,6 +16,7 @@ from dbt_charts.cloud_client.errors import (
     CredentialMissing,
     InvalidCredential,
     InvalidPathSegment,
+    SourcesNotBindable,
     TransportFailed,
     UnexpectedResponse,
 )
@@ -512,3 +513,96 @@ def test_a_dot_segment_is_refused_before_any_request(name: str) -> None:
     with pytest.raises(InvalidPathSegment, match="is not a name"):
         cloud.set_public("acme", name, allow=True)
     assert seen == []
+
+
+_SOURCES = {
+    "sources": [
+        {"name": "db", "connection_slug": None, "is_default": True},
+        {"name": "events", "connection_slug": None, "is_default": False},
+        {"name": "legacy", "connection_slug": "old-wh", "is_default": False},
+    ],
+    "unmapped_count": 2,
+}
+
+
+def _serving_sources(payload: dict[str, object]) -> Handler:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/orgs/acme-data/projects/analytics/sources"
+        return httpx.Response(200, json=payload)
+
+    return handler
+
+
+def test_bindable_sources_with_no_names_is_every_unmapped_source() -> None:
+    with client(_serving_sources(_SOURCES)) as cloud:
+        assert cloud.bindable_sources("acme-data", "analytics", None) == [
+            "db",
+            "events",
+        ]
+
+
+def test_bindable_sources_keeps_named_unmapped_sources_once() -> None:
+    with client(_serving_sources(_SOURCES)) as cloud:
+        names = cloud.bindable_sources("acme-data", "analytics", ["events", "events"])
+    assert names == ["events"]
+
+
+@pytest.mark.parametrize("name", ["dbb", "legacy"])
+def test_bindable_sources_refuses_a_name_the_server_would_drop(name: str) -> None:
+    """The server binds only still-unmapped names and drops the rest silently,
+    so a typo or an already-mapped source is refused before any create."""
+    with (
+        client(_serving_sources(_SOURCES)) as cloud,
+        pytest.raises(SourcesNotBindable) as caught,
+    ):
+        cloud.bindable_sources("acme-data", "analytics", ["db", name])
+    assert name in str(caught.value)
+    assert "db, events" in str(caught.value)
+
+
+def test_bindable_sources_refuses_a_project_with_nothing_unmapped() -> None:
+    mapped = {
+        "sources": [{"name": "db", "connection_slug": "wh", "is_default": True}],
+        "unmapped_count": 0,
+    }
+    with (
+        client(_serving_sources(mapped)) as cloud,
+        pytest.raises(SourcesNotBindable, match="no unmapped"),
+    ):
+        cloud.bindable_sources("acme-data", "analytics", None)
+
+
+def test_create_connection_sends_the_binding_only_when_given() -> None:
+    seen: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(
+            201,
+            json={
+                "success": True,
+                "message": "",
+                "connection": {
+                    "slug": "wh",
+                    "name": "wh",
+                    "connection_type": "postgres",
+                    "is_active": True,
+                },
+            },
+        )
+
+    with client(handler) as cloud:
+        cloud.create_connection("acme-data", "postgres", {"host": "db"})
+        cloud.create_connection(
+            "acme-data", "postgres", {"host": "db"}, ("analytics", ["db"])
+        )
+
+    assert seen == [
+        {"connection_type": "postgres", "host": "db"},
+        {
+            "connection_type": "postgres",
+            "host": "db",
+            "project_slug": "analytics",
+            "map_sources": ["db"],
+        },
+    ]

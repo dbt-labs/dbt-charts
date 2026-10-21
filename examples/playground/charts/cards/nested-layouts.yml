@@ -100,7 +100,6 @@ rows:
       Use `grid.columns` to define a column system. Items span columns with `col_span`.
 
     grid:
-      columns: 24
       items:
         - item:
             text: |
@@ -187,15 +186,11 @@ rows:
                 Tabs can contain **cols** layouts.
               style:
                 background: "rgba(255, 193, 7, 0.15)"
-                border:
-                  radius: 4
             - title: "Right"
               text: |
                 Side-by-side content in a tab.
               style:
                 background: "rgba(233, 30, 99, 0.12)"
-                border:
-                  radius: 4
 
         - title: "With Grid"
           style:
@@ -210,14 +205,10 @@ rows:
                     Grid inside a tab!
                   style:
                     background: "rgba(240, 147, 251, 0.15)"
-                    border:
-                      radius: 4
                 col_span: 3
               - item:
                   text: |
                     Flexible layouts anywhere.
                   style:
                     background: "rgba(236, 64, 122, 0.12)"
-                    border:
-                      radius: 4
                 col_span: 3

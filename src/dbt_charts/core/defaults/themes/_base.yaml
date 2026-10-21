@@ -33,9 +33,11 @@ style:
     warning: warning.solid
     info: info.solid
 
-  # Top-level theme role shortcuts. Bare alias → role.alias.
+  # Top-level theme role shortcuts. Bare name → role[N] / role.alias. A role is
+  # the theme's own name for a job; the palette it points into stays a numbered
+  # ramp.
   roles:
-    ink: chrome.heading
+    ink: chrome[10]
 
   opacity: 1.0
 
@@ -219,14 +221,12 @@ style:
         # families that DO need one opt back in: scatter (both axes
         # quantitative, so neither self-names) and histogram's y.
         #
-        # Default (unlabeled) title TEXT bypasses this font's `case: title`
-        # transform (core/text/case.py's field_title), wherever a default
-        # title renders.
+        # Derived title text is already sentence case (core/text/humanize.py),
+        # so no `case` is set here: an authored title paints as written.
         visible: auto
         font:
           extends: label
           weight: &weight_bold 600
-          case: title
         padding: 10
         align: auto
         angle: auto
@@ -359,7 +359,6 @@ style:
           extends: label
           size: 12
           weight: *weight_bold
-          case: title
         padding: 0.0
 
     view:
@@ -481,7 +480,6 @@ style:
           # cascade authoritative so themes can tune without touching the
           # render layer.
           weight: '600'
-          case: title
       wrap: true
       symbol_mode: anchors
       row:
@@ -758,7 +756,6 @@ style:
       label:
         font:
           extends: label
-          case: title
       support:
         font:
           color: auto
@@ -835,7 +832,6 @@ style:
       label:
         font:
           weight: '500'
-          case: title
           color: auto
       padding_top: 8
       padding_bottom: 4
@@ -1103,7 +1099,6 @@ style:
     label:
       font:
         weight: 500
-        case: title
     value:
       font:
         weight: 400
@@ -1112,7 +1107,7 @@ style:
       # variable strip is scannable. `disabled` is the ramp ladder step
       # semantically for hint / not-your-data text.
       font:
-        color: dbt-grays.disabled
+        color: chrome[6]
     border:
       width: 0.0
       radius: 4.0

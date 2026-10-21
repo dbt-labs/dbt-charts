@@ -1,0 +1,3 @@
+kind: Fixes
+body: A nested board that sets html_policy below a parent with a different policy is no longer reported as restating a default.
+time: 2026-10-20T11:39:40.981876-07:00

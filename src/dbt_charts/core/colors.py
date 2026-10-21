@@ -455,7 +455,7 @@ def is_color_token(value: str) -> bool:
 
 
 # A bare word with no dot/bracket suffix -- distinct from is_color_token's
-# dotted/bracket shape ("category[2]", "chrome.ink"). Both shapes can be an
+# dotted/bracket shape ("category[2]", "chrome.white"). Both shapes can be an
 # unresolved theme-role reference at board/chart scope ("category", a role
 # name authored as a bare string, matches neither a hex literal nor a CSS
 # keyword by pattern alone).

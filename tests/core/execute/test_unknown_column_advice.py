@@ -99,6 +99,17 @@ def _error(db_path: Path, sql: str):  # noqa: ANN202
         ),
         ("SELECT sector FROM us_employment ORDER BY 3", ERR_BINDER_QUERY_SHAPE),
         (
+            "SELECT sector, 1 AS n FROM us_employment UNION "
+            "SELECT sector, 2 FROM us_employment "
+            "ORDER BY CASE WHEN sector = 'x' THEN 1 ELSE 2 END",
+            ERR_BINDER_QUERY_SHAPE,
+        ),
+        (
+            "SELECT sector, 1 AS n FROM us_employment UNION "
+            "SELECT sector, 2 FROM us_employment ORDER BY zz",
+            ERR_BINDER_UNKNOWN_COLUMN,
+        ),
+        (
             "SELECT sector, year_month FROM us_employment GROUP BY sector",
             ERR_BINDER_GROUP_BY,
         ),
@@ -108,3 +119,17 @@ def test_union_and_order_by_shape_errors_have_their_own_code_group_by_main_s(
     db_path: Path, sql: str, code: object
 ) -> None:
     assert _error(db_path, sql).code is code
+
+
+def test_order_by_an_expression_over_a_union_says_to_wrap_the_union(
+    db_path: Path,
+) -> None:
+    error = _error(
+        db_path,
+        "SELECT sector, 1 AS n FROM us_employment UNION "
+        "SELECT sector, 2 FROM us_employment "
+        "ORDER BY CASE WHEN sector = 'x' THEN 1 ELSE 2 END",
+    )
+    assert "wrap the UNION in a subquery" in (error.to_diagnostic().fix or "")
+    assert "columns exist" not in str(error)
+    assert ".." not in str(error)

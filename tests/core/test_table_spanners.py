@@ -120,7 +120,7 @@ class TestRender:
     def test_spanner_row_sits_above_leaf_headers_and_grows_height(self) -> None:
         plain = _render([])
         spanned = _render([_REVENUE])
-        assert _text_y(spanned, "Revenue") < _text_y(spanned, "Q1 Rev")
+        assert _text_y(spanned, "Revenue") < _text_y(spanned, "Q1 rev")
         assert _svg_height(spanned) > _svg_height(plain)
 
     def test_adjacent_spanners_have_separate_rules(self) -> None:
@@ -137,7 +137,7 @@ class TestRender:
     def test_row_numbers_do_not_shift_the_span(self) -> None:
         svg = _render([_REVENUE], {"row_numbers": {"visible": True}})
         x, w = _rules(svg)[0]
-        for header in ("Q1 Rev", "Q2 Rev"):
+        for header in ("Q1 rev", "Q2 rev"):
             assert x <= _text_x(svg, header) <= x + w, header
         assert _text_x(svg, "Region") < x
 

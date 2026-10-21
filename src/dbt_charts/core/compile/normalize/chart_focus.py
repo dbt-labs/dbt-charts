@@ -42,11 +42,16 @@ from dbt_charts.core.compile.models.board.normalized import (
     Layout,
     LayoutItem,
 )
+from dbt_charts.core.compile.normalize.query_references import (
+    referenced_query_names,
+)
 from dbt_charts.core.diagnostics import ERR_UNKNOWN_CHART
 from dbt_charts.core.diagnostics.base import DbtChartsError
 
 # Read by compile/validate/board_warnings.py to judge WARN-UNREFERENCED-CHART.
 PRE_FOCUS_PLACED_CHARTS_META_KEY = "pre_focus_placed_chart_ids"
+# Read by board_warnings.py to judge WARN-UNREFERENCED-QUERY.
+PRE_FOCUS_REFERENCED_QUERIES_META_KEY = "pre_focus_referenced_query_names"
 
 
 def focus_on_chart(board: Board, chart_id: str) -> Board:
@@ -146,7 +151,13 @@ def focus_on_chart(board: Board, chart_id: str) -> Board:
             "authored_style": authored,
             "resolved_style": resolved_style,
             "chart_style_context": chart_style_context,
-            "meta": {**board.meta, PRE_FOCUS_PLACED_CHARTS_META_KEY: pre_focus_placed},
+            "meta": {
+                **board.meta,
+                PRE_FOCUS_PLACED_CHARTS_META_KEY: pre_focus_placed,
+                PRE_FOCUS_REFERENCED_QUERIES_META_KEY: sorted(
+                    referenced_query_names(board)
+                ),
+            },
         }
     )
 

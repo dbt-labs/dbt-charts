@@ -183,8 +183,11 @@ def test_layer_query_widens_shared_y_domain() -> None:
     assert resolved.style.axis_y.domain_max == pytest.approx(250.0 * (1 + _HEADROOM))
 
 
-def test_right_axis_layer_query_does_not_widen_primary_y_domain() -> None:
-    chart = _layered_bar("right")
+@pytest.mark.parametrize("position", ["left", "right"])
+def test_pinned_axis_layer_query_does_not_widen_primary_y_domain(
+    position: str,
+) -> None:
+    chart = _layered_bar(position)
     executor = MagicMock()
     executor.execute_query.return_value = [{"month": "2024-01", "goal": 250.0}]
 
@@ -201,6 +204,38 @@ def test_right_axis_layer_query_does_not_widen_primary_y_domain() -> None:
 
     assert resolved.style.axis_y.domain_max == pytest.approx(70.5 * (1 + _HEADROOM))
     executor.execute_query.assert_called_once_with("goal_query", {})
+
+
+def test_unpinned_layer_beside_a_pinned_one_does_not_widen_primary_y_domain() -> None:
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "layered",
+            "type": "bar",
+            "x": "month",
+            "y": "actual",
+            "query": SqlQuery(sql="SELECT 1", source="src"),
+            "query_name": "actual_query",
+            "layers": [
+                {"type": "line", "y": "goal", "query": "goal_query"},
+                {"type": "line", "y": "actual", "axis_y": {"position": "left"}},
+            ],
+        }
+    )
+    executor = MagicMock()
+    executor.execute_query.return_value = [{"month": "2024-01", "goal": 250.0}]
+
+    resolved = resolve_chart_with_runtime_inputs(
+        chart,
+        [{"month": "2024-01", "actual": 70.5}],
+        _BOARD_CTX,
+        400,
+        executor,
+        {},
+        filter_variables=frozenset(),
+        link_open="page",
+    )
+
+    assert resolved.style.axis_y.domain_max == pytest.approx(70.5 * (1 + _HEADROOM))
 
 
 def test_supplied_datasets_must_cover_shared_layer_queries() -> None:

@@ -29,7 +29,7 @@ import a family module, and no family module imports another family module — o
 """
 
 from ._dispatch import resolve
-from ._domain import resolve_y_zero
+from ._domain import layers_own_y_scale, resolve_y_zero
 from ._kwargs import (
     AutomaticLinkCandidate,
     default_chart_width,
@@ -47,6 +47,7 @@ __all__ = [
     "automatic_link_excludes_x",
     "default_chart_width",
     "infer_pivot_measure_names",
+    "layers_own_y_scale",
     "preferred_chart_width",
     "resolve",
     "resolve_y_zero",

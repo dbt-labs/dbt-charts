@@ -347,7 +347,7 @@ def test_attach_source_row_without_label_uses_source_display_name():
         and layer.get("encoding", {}).get("text", {}).get("field") == "__label"
     ]
     assert len(stub_layers) == 1
-    assert stub_layers[0]["data"]["values"] == [{"__label": "Successful Launches"}]
+    assert stub_layers[0]["data"]["values"] == [{"__label": "Successful launches"}]
 
 
 def test_attach_aggregate_row_emits_aggregate_transform_grouped_by_x():
@@ -404,7 +404,7 @@ def test_attach_aggregate_row_without_label_uses_source_display_name():
         and layer.get("encoding", {}).get("text", {}).get("field") == "__label"
     ]
     assert len(stub_layers) == 1
-    assert stub_layers[0]["data"]["values"] == [{"__label": "Total Mass Kg"}]
+    assert stub_layers[0]["data"]["values"] == [{"__label": "Total mass (kg)"}]
 
 
 def test_attach_aggregate_translates_avg_to_mean_at_lowering_layer():

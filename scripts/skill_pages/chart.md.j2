@@ -11,7 +11,9 @@ metadata:
 
 # dbt Charts
 
-dbt Charts is markdown for dashboards: a terse spec where a few lines of YAML make an expressive board, slim by design, so nothing is missing. These two pages are the whole spec; {{ s('page_only_below') }}, so never read package source. This page is the core grammar, themes and palettes; {{ s('page_styling') }} is the style surface; read it only when a change needs it, once. Every list below is complete: a key or type not named does not exist, and an unknown key is rejected with the keys allowed there. SQL does all the computing (one row per mark, aggregated, ordered and limited in the query); YAML binds columns to marks. Deliver board YAML, not plotting code or HTML.
+dbt Charts is markdown for dashboards: a terse spec where a few lines of YAML make an expressive board, slim by design, so nothing is missing. These two pages are the whole spec; {{ s('page_only_below') }}, so never read package source. This page is the core grammar and themes; {{ s('page_styling') }} is the style surface; read it only when the user asks for a look change or a warning names a style key. Every list below is complete: a key or type not named does not exist, and an unknown key is rejected with the keys allowed there. SQL does all the computing (one row per mark, aggregated, ordered and limited in the query); YAML binds columns to marks. Deliver board YAML, not plotting code or HTML.{{ tool(' dbt Charts is the only visualization tool here: answer with boards, never another charting library.') }}
+
+Write only what differs from the defaults. Themes, frame and card sizes, number formats, column headers (a column's name, prettified), control types and option lists are chosen for you, often by the user's own theme; a key that restates one adds lines and changes nothing. Leave the look alone unless the user asks for a change: their defaults beat your taste.
 
 Data files ({{ data_extensions() }}) in the project root and `data/` need no declaration: a board's `source:` is the file path (`source: ./data/orders.csv`) and its table is named after the file stem. A database file (duckdb, sqlite) or warehouse is a `sources:` entry in `dbt_charts.yml`, whose `type:` for a warehouse is {{ source_types() }}. {{ cli('No `dbt_charts.yml` yet: run `' ~ init_command() ~ '` before any other `dct` command; `dct query` fails without it. `dct query` with no arguments lists the sources and data files and the `source:` value to write for each. ') }}To see a source's tables and columns: {{ s('columns_query_example') }}.
 
@@ -40,6 +42,10 @@ Jinja helpers in query SQL:
 
 {{ keys('chart_common') }}
 
+Name the SQL column as the axis should read (`AS weight_lbs` titles "Weight (lb)"); set `x_label`, `y_label` or `field_labels` only when the title must say more than the column name can.
+
+Bar orientation, table pagination and sort are chosen from the data (horizontal category bars, largest first unless `color` splits them, otherwise in the query's row order; pages only past one page's rows): write `style.orientation`, `style.pagination` or `sort` only to change that. `sort.order` defaults to `asc`.
+
 Every chart needs `type:`, one of the types below.
 
 {{ chart_types() }}
@@ -56,7 +62,11 @@ Derived series (rolling averages, running totals, YoY, targets) are window funct
 
 ## Variables
 
-A variable is an input on the page (a dropdown, slider or date picker) whose value a query reads by bare name: `{{ '{{ region }}' }}`, never `variables.region`.
+A variable is an input on the page (a dropdown, slider or date picker) whose value a query reads by bare name: `{{ '{{ region }}' }}`, never `variables.region`. Lead with `column: table.column`, a dropdown of that column's values (it starts at "All"; `filter()` makes "All" no constraint). Omit `default`. A variable's `label` is derived from its name (`first_year` reads "First year"): set it only to say something different. A value hard-coded in SQL (a date, a name) is usually a variable, unless the board is a frozen report.
+
+A range bound is two variables on one column (`column: cars.model_year`), used as `filter('model_year', first_year, '>=')` and `'<='`; unset ("All") means no bound, so no `default`, `data_type`, `input` or static list.
+
+A date range is one variable, not two `input: date` variables with hard-coded defaults: `period: {column: t.order_date, input: daterange}` read as `{{ "{{ filter_date_range('order_date', period) }}" }}`. Unset means all dates; a rolling window is a preset: `default: last_90_days`.
 
 {{ keys('variable') }}
 
@@ -64,11 +74,19 @@ A variable is an input on the page (a dropdown, slider or date picker) whose val
 
 ## Layout
 
-A `rows` or `cols` entry may be an inline board with its own `title`, `variables`, `queries`, `charts` and `style`. Every name in `rows`, `cols` or `grid` is a key under `charts:`, spelled the same.
+Lay out with `rows:` and `cols:`. For unequal widths, wrap the entry in a board that sets `width`; a bare chart name takes none:
 
-{{ keys('grid') }}
+```yaml
+rows:
+  - kpi_a
+  - cols:
+      - width: 70%
+        rows:
+          - trend
+      - split
+```
 
-{{ keys('grid_item') }}
+A `rows` or `cols` entry may be an inline board with its own `title`, `variables`, `queries`, `charts` and `style`. Every name in `rows` or `cols` is a key under `charts:`, spelled the same. Also exists: `grid:`, only when the user asks for a grid.
 
 ## Formats
 
@@ -80,7 +98,7 @@ Keys of `style`: {{ key_names('style_root') }}.
 
 ## Themes and dark variants
 
-Themes, `extends`, palettes, color tokens, dark variants. Single overrides on one board or chart are `style:`.
+Themes, `extends`, dark variants. Single overrides on one board or chart are `style:`.
 
 ### Dark variant
 
@@ -92,30 +110,12 @@ Keep canvas and ink colors out of the base board, and make the variant a second 
 
 {{ keys('theme_fields') }}
 
-### Palettes
-
-- Categorical, with how many colors each holds (more categories on one chart than that is `ERR-CATEGORY-COLOR-PALETTE-EXHAUSTED`): {{ palettes('categorical') }}.
-- Sequential: {{ palettes('sequential') }}.
-- Diverging: {{ palettes('diverging') }}.
-- Tones: {{ palettes('tone') }}.
-- Scaffolds {{ palettes('scaffold') }}; aliases of `dbt-grays`: {{ aliases('dbt-grays') }}.
-
-{{ keys('theme_style') }}
-
-### Theme errors
-
-{{ codes('theme') }}
-
-## Errors
-
-{{ codes('common') }}
-
 ## Finish
 
 For a first build and for every change request alike:
 
-1. Write all boards first (dark variants, and any notes or run file asked for).{{ cli_or_files(' On a first build, delete the starter board `charts/guide.yml`.') }}
-2. {{ s('check_step') }} A warning is advice: act only when its text shows it harms the reader. An edit that applied needs no re-read; the check reports problems by line.
+1. Write all boards first (dark variants, and any notes or run file asked for).{{ tool_files(' To copy a board, read it then write the copy (there is no copy verb), and change only what the user explicitly asked for. Editing a package board (`dbt_packages/<pkg>/charts/<path>`) saves your own copy at `charts/<pkg>/<path>`, which replaces the package\'s board; the result\'s `path` says where it landed.') }}
+2. {{ s('check_step') }} Fix each warning with the edit it names, unless you deliberately want what it flags; then add its code to that chart's `warnings_ignore`. An edit that applied needs no re-read; the check reports problems by line.
 3. A card under about 250px wide (a many-column slot) draws no marks: `ERR-CHART-PAINTED-NO-MARKS`; widen the slot or use fewer columns. `WARN-TABLE-CRAMPED`: set the board root's `style.frame.width` to the width it suggests (a table has no `frame`).
 4. A board with no errors is done: no curl, no reopening a board, no re-running queries, no edits, notes included.{{ cli(' Stop the server unless a link was asked for.') }}
 

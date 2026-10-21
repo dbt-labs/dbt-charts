@@ -108,7 +108,7 @@ def test_multi_series_line_header_before_series_before_value():
     chart = LineChart(id="t", type="line", x="month", y="revenue", color="region")
     labels = _render(chart, _MULTI_SERIES_LINE_DATA)
     row = next(lb for lb in labels if f"{ROLE_SERIES}North" in lb and "Jan 2024" in lb)
-    assert row.index(ROLE_HEADER) < row.index(ROLE_SERIES) < row.index("revenue")
+    assert row.index(ROLE_HEADER) < row.index(ROLE_SERIES) < row.index("Revenue")
 
 
 _ENDPOINT_ORDER_LINE_DATA = [
@@ -161,7 +161,7 @@ def test_single_series_line_value_formatted():
     """No color channel at all: value must still be themed-formatted, not raw."""
     chart = LineChart(id="t", type="line", x="month", y="revenue")
     labels = _render(chart, _SINGLE_SERIES_LINE_DATA)
-    assert any("revenue: 1,234.5" in lb for lb in labels), labels
+    assert any("Revenue: 1,234.5" in lb for lb in labels), labels
 
 
 def test_single_series_line_header_is_bare_value_not_labeled():
@@ -228,7 +228,7 @@ def test_grouped_bar_header_before_series_before_value():
     chart = BarChart(id="t", type="bar", x="day_name", y="count", color="kind")
     labels = _render(chart, _GROUPED_BAR_DATA)
     row = next(lb for lb in labels if f"{ROLE_SERIES}task" in lb and "Mon" in lb)
-    assert row.index(ROLE_HEADER) < row.index(ROLE_SERIES) < row.index("count")
+    assert row.index(ROLE_HEADER) < row.index(ROLE_SERIES) < row.index("Count")
 
 
 def test_board_bound_grouped_bar_earns_a_rank_from_its_new_domain():
@@ -452,7 +452,7 @@ def test_stacked_bar_zero_carries_total_but_no_percent():
     row = next(
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
-    assert "count: 5.5" in row, row
+    assert "Count: 5.5" in row, row
     assert f"{ROLE_TOTAL}Σ: 7.5" in row, row  # Mon: task 5.5 + pr 2.0
     assert "%: " not in row, row
 
@@ -466,7 +466,7 @@ _SINGLE_SERIES_BAR_DATA = [
 def test_single_series_bar_value_formatted_no_series_row():
     chart = BarChart(id="t", type="bar", x="day_name", y="count")
     labels = _render(chart, _SINGLE_SERIES_BAR_DATA)
-    assert any("count: 5.5" in lb for lb in labels), labels
+    assert any("Count: 5.5" in lb for lb in labels), labels
     assert not any(ROLE_SERIES in lb for lb in labels), labels
 
 
@@ -486,10 +486,10 @@ def test_normalize_stack_carries_percent_raw_and_total():
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
     assert "%: 73%" in row, row
-    assert "count: 5.5" in row, row
+    assert "Count: 5.5" in row, row
     assert f"{ROLE_TOTAL}Σ: 7.5" in row, row
     # % leads, raw beneath, total last.
-    assert row.index("%: ") < row.index("count") < row.index(f"{ROLE_TOTAL}Σ")
+    assert row.index("%: ") < row.index("Count") < row.index(f"{ROLE_TOTAL}Σ")
 
 
 def test_normalize_stack_share_row_keeps_its_own_percent_format():
@@ -518,7 +518,7 @@ def test_normalize_stack_share_row_keeps_its_own_percent_format():
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
     assert "%: 73%" in row, row
-    assert "count: 550%" in row, row
+    assert "Count: 550%" in row, row
     assert f"{ROLE_TOTAL}Σ: 750%" in row, row
 
 
@@ -584,12 +584,12 @@ def test_combo_single_series_base_and_overlay_share_the_same_header():
     base_headers = {
         lb[lb.index(ROLE_HEADER) + 1 : lb.index(";")]
         for lb in labels
-        if ROLE_HEADER in lb and "revenue" in lb
+        if ROLE_HEADER in lb and "Revenue" in lb
     }
     overlay_headers = {
         lb[lb.index(ROLE_HEADER) + 1 : lb.index(";")]
         for lb in labels
-        if ROLE_HEADER in lb and "Target" in lb and "revenue" not in lb
+        if ROLE_HEADER in lb and "Target" in lb and "Revenue" not in lb
     }
     assert base_headers and overlay_headers, labels
     assert base_headers == overlay_headers, (base_headers, overlay_headers, labels)
@@ -738,7 +738,7 @@ def test_combo_mixed_unit_dual_axis_shows_both_values_no_total():
     )
     labels = _render(chart, _COMBO_MIXED_UNIT_DATA)
     assert not any(ROLE_TOTAL in lb for lb in labels), labels
-    assert any("revenue: 100" in lb for lb in labels), labels
+    assert any("Revenue: 100" in lb for lb in labels), labels
     assert any("Growth" in lb and "0.05" in lb for lb in labels), labels
 
 
@@ -798,7 +798,7 @@ def test_combo_normalized_stack_base_suppresses_percent_row():
     mon_task_row = next(
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
-    assert "count: 5.5" in mon_task_row, mon_task_row
+    assert "Count: 5.5" in mon_task_row, mon_task_row
     assert f"{ROLE_TOTAL}Σ: 7.5" in mon_task_row, mon_task_row
     overlay_rows = [lb for lb in labels if "Target" in lb and "20" in lb]
     assert overlay_rows, labels
@@ -841,7 +841,7 @@ def test_combo_overlay_label_override_wins_in_tooltip():
 def test_combo_overlay_label_falls_back_to_the_column_name():
     """No authored label: falls back to ``field_title(layer.y)``, the
     same engine-derived name the layer gets in the legend and on the rail —
-    the column's own casing, not title case."""
+    sentence case."""
     chart = BarChart(
         id="t",
         type="bar",
@@ -850,8 +850,7 @@ def test_combo_overlay_label_falls_back_to_the_column_name():
         layers=[{"type": "line", "y": "target"}],
     )
     labels = _render(chart, _COMBO_SINGLE_BASE_DATA)
-    assert any("target" in lb for lb in labels), labels
-    assert not any("Target" in lb for lb in labels), labels
+    assert any("Target" in lb for lb in labels), labels
 
 
 _COMBO_OVERLAY_COLOR_DATA = [
@@ -905,8 +904,8 @@ def test_combo_overlay_layer_color_promotes_per_datum_series_row():
     keys = [_dedup_key(lb) for lb in feb_labels]
     assert len(keys) == len(set(keys)), (keys, feb_labels)
 
-    overlay_a = next(lb for lb in feb_labels if "revenue" not in lb and "pct: A" in lb)
-    overlay_b = next(lb for lb in feb_labels if "revenue" not in lb and "pct: B" in lb)
+    overlay_a = next(lb for lb in feb_labels if "Revenue" not in lb and "Pct: A" in lb)
+    overlay_b = next(lb for lb in feb_labels if "Revenue" not in lb and "Pct: B" in lb)
     assert "0.35" in overlay_a, overlay_a
     assert "0.33" in overlay_b, overlay_b
 
@@ -928,7 +927,7 @@ def test_pie_header_and_value_present():
     )
     labels = _render_pie(chart, _PIE_DATA)
     assert any(f"{ROLE_HEADER_SWATCHED}starter_monthly" in lb for lb in labels), labels
-    assert any("User Count: 8.5" in lb for lb in labels), labels
+    assert any("User count: 8.5" in lb for lb in labels), labels
 
 
 def test_pie_header_before_value():
@@ -942,7 +941,7 @@ def test_pie_header_before_value():
     )
     labels = _render_pie(chart, _PIE_DATA)
     row = next(lb for lb in labels if f"{ROLE_HEADER_SWATCHED}starter_monthly" in lb)
-    assert row.index(ROLE_HEADER_SWATCHED) < row.index("User Count")
+    assert row.index(ROLE_HEADER_SWATCHED) < row.index("User count")
 
 
 def test_pie_carries_percent_and_grand_total():
@@ -952,9 +951,9 @@ def test_pie_carries_percent_and_grand_total():
     labels = _render_pie(chart, _PIE_DATA)
     row = next(lb for lb in labels if f"{ROLE_HEADER_SWATCHED}starter_monthly" in lb)
     assert "%: 72%" in row, row
-    assert "User Count: 8.5" in row, row
+    assert "User count: 8.5" in row, row
     assert f"{ROLE_TOTAL}Σ: 11.8" in row, row
-    assert row.index("%: ") < row.index("User Count") < row.index(f"{ROLE_TOTAL}Σ")
+    assert row.index("%: ") < row.index("User count") < row.index(f"{ROLE_TOTAL}Σ")
 
 
 def test_pie_mutes_raw_count_and_total_but_not_the_share_lead():
@@ -965,7 +964,7 @@ def test_pie_mutes_raw_count_and_total_but_not_the_share_lead():
     labels = _render_pie(chart, _PIE_DATA)
     row = next(lb for lb in labels if f"{ROLE_HEADER_SWATCHED}starter_monthly" in lb)
     # raw count and total are muted (MUTED prepended, composing with ROLE_TOTAL)
-    assert f"{MUTED}User Count: 8.5" in row, row
+    assert f"{MUTED}User count: 8.5" in row, row
     assert f"{MUTED}{ROLE_TOTAL}Σ: 11.8" in row, row
     # the share % lead and the header are NOT muted
     assert f"{MUTED}%: " not in row, row
@@ -1029,9 +1028,9 @@ def test_plain_scatter_no_header_two_peer_value_rows():
         labels
     )
     assert not any(ROLE_SERIES in lb for lb in labels), labels
-    row = next(lb for lb in labels if "revenue: 100" in lb)
-    assert "cost: 10" in row, row
-    assert row.index("revenue") < row.index("cost"), row
+    row = next(lb for lb in labels if "Revenue: 100" in lb)
+    assert "Cost: 10" in row, row
+    assert row.index("Revenue") < row.index("Cost"), row
 
 
 def test_wide_scatter_does_not_apply_structured_tooltip() -> None:
@@ -1067,9 +1066,9 @@ def test_colored_scatter_series_leads_as_swatched_header():
     chart = ScatterChart(id="t", type="scatter", x="cost", y="revenue", color="region")
     labels = _render(chart, _COLORED_SCATTER_DATA)
     row = next(lb for lb in labels if f"{ROLE_HEADER_SWATCHED}North" in lb)
-    assert "revenue: 100" in row, row
-    assert "cost: 10" in row, row
-    assert row.index(ROLE_HEADER_SWATCHED) < row.index("revenue") < row.index("cost")
+    assert "Revenue: 100" in row, row
+    assert "Cost: 10" in row, row
+    assert row.index(ROLE_HEADER_SWATCHED) < row.index("Revenue") < row.index("Cost")
     assert not any(ROLE_SERIES in lb for lb in labels), labels
 
 
@@ -1085,7 +1084,7 @@ def test_scatter_labeled_bucket_x_row_reads_the_bucket_not_epoch_ms():
     ]
     labels = _render(chart, data)
     for quarter in ("Q1 2024", "Q2 2024", "Q3 2024"):
-        assert any(f"quarter: {quarter}" in lb for lb in labels), labels
+        assert any(f"Quarter: {quarter}" in lb for lb in labels), labels
 
 
 def test_scatter_month_date_x_row_reads_its_grain():
@@ -1099,7 +1098,7 @@ def test_scatter_month_date_x_row_reads_its_grain():
     ]
     labels = _render(chart, data)
     for month in ("Jan 2024", "Feb 2024", "Mar 2024"):
-        assert any(f"month: {month}" in lb for lb in labels), labels
+        assert any(f"Month: {month}" in lb for lb in labels), labels
 
 
 def test_scatter_year_band_measure_x_row_stays_a_number():
@@ -1114,7 +1113,7 @@ def test_scatter_year_band_measure_x_row_stays_a_number():
     ]
     labels = _render(chart, data)
     for score in ("1,?950", "1,?990", "2,?050"):
-        assert any(re.search(rf"score: {score}\b", lb) for lb in labels), labels
+        assert any(re.search(rf"Score: {score}\b", lb) for lb in labels), labels
 
 
 _NEGATIVE_STACK_DATA = [
@@ -1144,7 +1143,7 @@ def test_normalize_stack_with_negative_value_falls_back_to_raw_only():
     row = next(
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
-    assert "count: 5.5" in row, row
+    assert "Count: 5.5" in row, row
 
 
 def test_zero_stack_with_negative_value_drops_total():
@@ -1164,7 +1163,7 @@ def test_zero_stack_with_negative_value_drops_total():
     row = next(
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
-    assert "count: 5.5" in row, row
+    assert "Count: 5.5" in row, row
 
 
 _SPARSE_SERIES_DATA = [
@@ -1289,8 +1288,8 @@ def test_scatter_x_row_does_not_paint_the_y_affix():
         {"widgets": 32.0, "revenue": 200.0},
     ]
     labels = _render(chart, data)
-    row = next(lb for lb in labels if "revenue: EUR 100" in lb)
-    assert "widgets: 10" in row, row
+    row = next(lb for lb in labels if "Revenue: EUR 100" in lb)
+    assert "Widgets: 10" in row, row
     assert "widgets: EUR" not in row, row
 
 

@@ -178,14 +178,14 @@ class Style(BaseModel):
         description="Semantic tone color palette (positive/negative/warning/info) for KPI support rows, table conditional glyphs, and spark negative_color."
     )
     # Top-level theme role shortcuts.
-    # Optional bare aliases: e.g. ink → chrome.heading. Board authors write the
-    # bare name; resolver dispatches via the dotted palette address.
+    # Optional bare aliases: e.g. ink → chrome[10]. Board authors write the
+    # bare name; resolver dispatches via the role's address.
     # None = no top-level aliases at this cascade level.
     roles: dict[str, str] | None = Field(
         default=None,
         description=(
-            "Optional top-level theme role aliases: bare name → role.alias. "
-            "e.g. ink: chrome.heading"
+            "Optional top-level theme role aliases: bare name → role address "
+            "(`role[N]` or `role.alias`). e.g. ink: chrome[10]"
         ),
     )
     # padding/margin are per-board and never theme-populated; NotInherited

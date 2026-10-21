@@ -31,7 +31,7 @@ def test_init_skills_agents_writes_rendered_workflows(
     result = runner.invoke(cli_main.app, ["init", "skills", "agents"])
 
     assert result.exit_code == 0, result.output
-    skill_md = Path(".agents/skills/dct-board-build/SKILL.md")
+    skill_md = Path(".agents/skills/dct-chart/SKILL.md")
     assert skill_md.exists()
     text = skill_md.read_text(encoding="utf-8")
     assert "{{ s_" not in text
@@ -48,7 +48,7 @@ def test_init_skills_claude_target(
     result = runner.invoke(cli_main.app, ["init", "skills", "claude"])
 
     assert result.exit_code == 0, result.output
-    assert Path(".claude/skills/dct-board-build/SKILL.md").exists()
+    assert Path(".claude/skills/dct-chart/SKILL.md").exists()
 
 
 def test_init_skills_project_dir_stays_in_subproject(tmp_path: Path) -> None:
@@ -67,7 +67,7 @@ def test_init_skills_project_dir_stays_in_subproject(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    assert (subproject / ".claude/skills/dct-board-build/SKILL.md").exists()
+    assert (subproject / ".claude/skills/dct-chart/SKILL.md").exists()
     assert not (git_root / ".claude").exists()
 
 
@@ -133,7 +133,7 @@ def test_init_skills_dct_project_dir_env_var_walks_to_git_root(
     result = runner.invoke(cli_main.app, ["init", "skills", "claude"])
 
     assert result.exit_code == 0, result.output
-    assert (git_root / ".claude/skills/dct-board-build/SKILL.md").exists()
+    assert (git_root / ".claude/skills/dct-chart/SKILL.md").exists()
     assert not (subproject / ".claude").exists()
 
 
@@ -148,7 +148,7 @@ def test_init_skills_dct_project_dir_env_var_in_fresh_repo_still_bootstraps(
     result = runner.invoke(cli_main.app, ["init", "skills"])
 
     assert result.exit_code == 0, result.output
-    assert Path(".agents/skills/dct-board-build/SKILL.md").exists()
+    assert Path(".agents/skills/dct-chart/SKILL.md").exists()
 
 
 def test_init_skills_all_with_both_markers(
@@ -161,8 +161,8 @@ def test_init_skills_all_with_both_markers(
     result = runner.invoke(cli_main.app, ["init", "skills", "--all"])
 
     assert result.exit_code == 0, result.output
-    assert Path(".agents/skills/dct-board-build/SKILL.md").exists()
-    assert Path(".claude/skills/dct-board-build/SKILL.md").exists()
+    assert Path(".agents/skills/dct-chart/SKILL.md").exists()
+    assert Path(".claude/skills/dct-chart/SKILL.md").exists()
 
 
 def test_init_skills_prints_a_gitignore_hint(
@@ -237,7 +237,7 @@ def test_init_skills_no_markers_defaults_to_agents(
     result = runner.invoke(cli_main.app, ["init", "skills"])
 
     assert result.exit_code == 0, result.output
-    assert Path(".agents/skills/dct-board-build/SKILL.md").exists()
+    assert Path(".agents/skills/dct-chart/SKILL.md").exists()
     assert not Path(".claude/skills").exists()
 
 
@@ -262,19 +262,17 @@ def test_init_skills_dir_override(
     ".", and a legacy install beside the project is still reported."""
     monkeypatch.chdir(tmp_path)
     _seed_project()
-    legacy_dir = Path(".cursor/skills/board-build")
+    legacy_dir = Path(".cursor/skills/chart")
     legacy_dir.mkdir(parents=True)
     (legacy_dir / "SKILL.md").write_text("stub\n", encoding="utf-8")
 
     result = runner.invoke(cli_main.app, ["init", "skills", "--dir", "custom-skills"])
 
     assert result.exit_code == 0, result.output
-    assert Path("custom-skills/dct-board-build/SKILL.md").exists()
+    assert Path("custom-skills/dct-chart/SKILL.md").exists()
     assert "→ custom-skills/" in result.output
     assert "Gitignore: custom-skills/dct-*/" in result.output
-    assert (
-        "Legacy skill install detected at .cursor/skills/board-build" in result.output
-    )
+    assert "Legacy skill install detected at .cursor/skills/chart" in result.output
 
 
 def test_init_skills_dir_override_ignores_marker_less_project_dir(
@@ -300,7 +298,7 @@ def test_init_skills_dir_override_ignores_marker_less_project_dir(
     )
 
     assert result.exit_code == 0, result.output
-    assert Path("custom-skills/dct-board-build/SKILL.md").exists()
+    assert Path("custom-skills/dct-chart/SKILL.md").exists()
 
 
 def test_init_skills_dir_override_with_project_dir_keeps_git_root_context(
@@ -314,7 +312,7 @@ def test_init_skills_dir_override_with_project_dir_keeps_git_root_context(
     elsewhere in the repo goes unreported."""
     monkeypatch.chdir(tmp_path)
     Path(".git").mkdir()
-    legacy_dir = Path(".cursor/skills/board-build")
+    legacy_dir = Path(".cursor/skills/chart")
     legacy_dir.mkdir(parents=True)
     (legacy_dir / "SKILL.md").write_text("stub\n", encoding="utf-8")
     sub = Path("sub")
@@ -328,9 +326,7 @@ def test_init_skills_dir_override_with_project_dir_keeps_git_root_context(
 
     assert result.exit_code == 0, result.output
     assert "Gitignore: custom-skills/dct-*/" in result.output
-    assert (
-        "Legacy skill install detected at .cursor/skills/board-build" in result.output
-    )
+    assert "Legacy skill install detected at .cursor/skills/chart" in result.output
 
 
 def test_init_skills_explicit_project_dir_keeps_repo_context(
@@ -342,7 +338,7 @@ def test_init_skills_explicit_project_dir_keeps_repo_context(
     repo root, and a legacy install elsewhere in the repo is still reported."""
     monkeypatch.chdir(tmp_path)
     Path(".git").mkdir()
-    legacy_dir = Path(".cursor/skills/board-build")
+    legacy_dir = Path(".cursor/skills/chart")
     legacy_dir.mkdir(parents=True)
     (legacy_dir / "SKILL.md").write_text("stub\n", encoding="utf-8")
     sub = Path("sub")
@@ -354,12 +350,10 @@ def test_init_skills_explicit_project_dir_keeps_repo_context(
     )
 
     assert result.exit_code == 0, result.output
-    assert (sub / ".claude/skills/dct-board-build/SKILL.md").exists()
+    assert (sub / ".claude/skills/dct-chart/SKILL.md").exists()
     assert not Path(".claude").exists()
     assert "Gitignore: sub/.claude/skills/dct-*/" in result.output
-    assert (
-        "Legacy skill install detected at .cursor/skills/board-build" in result.output
-    )
+    assert "Legacy skill install detected at .cursor/skills/chart" in result.output
 
 
 def test_init_skills_global_installs_into_home_claude(
@@ -375,7 +369,7 @@ def test_init_skills_global_installs_into_home_claude(
     result = runner.invoke(cli_main.app, ["init", "skills", "--global"])
 
     assert result.exit_code == 0, result.output
-    assert (home / ".claude/skills/dct-board-build/SKILL.md").exists()
+    assert (home / ".claude/skills/dct-chart/SKILL.md").exists()
 
 
 def test_init_skills_global_prints_no_gitignore_hint(
@@ -409,7 +403,7 @@ def test_init_skills_global_installs_into_home_agents_via_codex(
     result = runner.invoke(cli_main.app, ["init", "skills", "--global"])
 
     assert result.exit_code == 0, result.output
-    assert (home / ".agents/skills/dct-board-build/SKILL.md").exists()
+    assert (home / ".agents/skills/dct-chart/SKILL.md").exists()
 
 
 def test_init_skills_global_no_markers_errors(
@@ -505,7 +499,7 @@ def test_init_skills_global_ignores_dct_project_dir(
     result = runner.invoke(cli_main.app, ["init", "skills", "--global"])
 
     assert result.exit_code == 0, result.output
-    assert (home / ".claude/skills/dct-board-build/SKILL.md").exists()
+    assert (home / ".claude/skills/dct-chart/SKILL.md").exists()
     assert not (project / ".claude").exists()
     assert not (project / ".agents").exists()
 

@@ -66,7 +66,9 @@ def _print_examples_table(result: _api.ExampleList) -> None:
 
     console = dct_console()
     typer.echo("Board specimens — complete, renderable boards to copy and edit.")
-    typer.echo("Workflow prose is `dct skills`; field reference is `dct docs`.\n")
+    typer.echo(
+        "Workflow prose is `dct skills`; the field reference is `dct skills chart`.\n"
+    )
 
     slug_width = max(len(e.slug) for e in result.examples)
     for category in sorted({e.category for e in result.examples}):
@@ -77,7 +79,7 @@ def _print_examples_table(result: _api.ExampleList) -> None:
 
     typer.echo("Next steps")
     typer.echo("  dct examples <slug>  Print the full board YAML and edit it")
-    typer.echo("  dct docs             YAML syntax reference")
+    typer.echo("  dct skills chart     YAML syntax reference")
     typer.echo("")
     typer.echo('Find a specimen: dct examples -s "<query>"')
     typer.echo(

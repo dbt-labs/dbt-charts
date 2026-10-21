@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, get_args
 
 import yaml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from dbt_charts.core.utils import YAML_LOADER
 
@@ -44,6 +44,20 @@ class Palette(BaseModel):
     family: str | None = None
     design_notes: str | None = None
     r8_validation: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _numeric_aliases_stay_outside_the_ladder(self) -> Palette:
+        """A numbered address checks aliases before ``colors``, so a numeric alias
+        inside ``1..len(colors)`` would silently redefine that stop."""
+        stops = 0 if self.colors is None else len(self.colors)
+        keys = [] if self.aliases is None else list(self.aliases)
+        shadowed = [key for key in keys if key.isdigit() and 1 <= int(key) <= stops]
+        if shadowed:
+            raise ValueError(
+                f"palette '{self.name}' declares numeric alias(es) {shadowed} "
+                f"inside its own stops 1-{stops}; declare only stops outside them."
+            )
+        return self
 
 
 PaletteFamily = Literal["sequential", "diverging", "categorical", "scaffold", "tone"]

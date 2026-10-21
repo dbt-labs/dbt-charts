@@ -12,7 +12,7 @@ text: |
   `rows` of `cols` — widths are only set where the split should not be even.
 
 # Inline `columns`/`values` keep this specimen runnable anywhere. In your own
-# board, replace them with `source:` + `sql:` — see `dct docs queries`.
+# board, replace them with `source:` + `sql:` — see https://docs.dbtcharts.com/queries/
 queries:
   headline:
     notes: Single-row aggregate with prior-period deltas for the KPI row.

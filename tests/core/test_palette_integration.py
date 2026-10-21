@@ -1,16 +1,14 @@
-"""Integration tests — M2 palette resolver wired through config.
+"""Integration tests — the palette resolver over the shipped scaffold palettes.
 
 Checks:
-  - config.dbt_grays / config.dbt_creams populated from defaults/palettes/scaffold/
+  - scaffold tokens resolve to hex
   - old fivetran_grays names no longer resolve but surface a did-you-mean suggestion
-  - color("dbt-grays.ink") produces the same value as config.dbt_grays
 """
 
 from __future__ import annotations
 
 import pytest
 
-from dbt_charts.core.compile.config import get_config
 from dbt_charts.core.compile.resolve.style.palette import (
     UnknownPaletteError,
     color,
@@ -18,17 +16,17 @@ from dbt_charts.core.compile.resolve.style.palette import (
 )
 
 
-class TestColorResolverMatchesConfig:
-    """color() and config.dbt_grays must return the same hex per token."""
+class TestScaffoldTokens:
+    """Scaffold tokens resolve to hex, and distinct steps differ."""
 
     def test_scaffold_tokens(self):
         # All scaffold tokens must resolve to 7-char hex strings
         tokens = [
-            "dbt-grays.ink",
-            "dbt-grays.canvas",
-            "dbt-grays.subtitle",
-            "dbt-creams.ink",
-            "dbt-creams.canvas",
+            "dbt-grays.11",
+            "dbt-grays.1",
+            "dbt-grays.7",
+            "dbt-creams.11",
+            "dbt-creams.1",
         ]
         results = [color(t) for t in tokens]
         for token, result in zip(tokens, results, strict=True):
@@ -36,13 +34,8 @@ class TestColorResolverMatchesConfig:
                 f"{token} must resolve to a 7-char hex, got {result!r}"
             )
         # Discrimination: ink and canvas must differ
-        assert color("dbt-grays.ink") != color("dbt-grays.canvas")
-        assert color("dbt-creams.ink") != color("dbt-creams.canvas")
-
-    def test_scaffold_matches_config_attribute(self):
-        config = get_config()
-        for slot, hex_ in config.dbt_grays.items():
-            assert color(f"dbt-grays.{slot}").lower() == str(hex_).lower()
+        assert color("dbt-grays.11") != color("dbt-grays.1")
+        assert color("dbt-creams.11") != color("dbt-creams.1")
 
 
 class TestLegacyNameDidYouMean:

@@ -76,7 +76,7 @@ class VariableOptions(BaseModel):
     ] = Field(
         default=None,
         description=(
-            "Option values written out in place, all strings or all numbers. "
+            "Option values that are not in the data, written out: all strings or all numbers. "
             "Numeric options type the value the control sends back as a number "
             "unless data_type says otherwise."
         ),
@@ -181,6 +181,11 @@ class Variable(BaseModel):
         json_schema_extra={"internal": True},
         description="Internal: True when input type was resolved from 'auto' to a concrete type.",
     )
+    authored_fields: frozenset[str] = Field(
+        default=frozenset(),
+        json_schema_extra={"internal": True},
+        description="Internal: the fields the author wrote, recorded before normalization fills in inferred ones.",
+    )
     label: Annotated[str | None, DisplayText()] = Field(
         default=None, description="Caption naming what this input sets."
     )
@@ -190,7 +195,7 @@ class Variable(BaseModel):
     )
     default: Any | None = Field(
         default=None,
-        description="Value used when no URL param or --var sets one. Quote one containing `: `. A daterange takes a list.",
+        description='Value used when no URL param or --var sets one; a dropdown starts at "All", so omit it there. Quote one containing `: `. A daterange takes `[start, end]` or a rolling preset such as `last_90_days`.',
     )
     placeholder: str | None = Field(
         default=None, description="Hint text shown inside the input while it is empty."
@@ -217,9 +222,9 @@ class Variable(BaseModel):
     column: str | None = Field(
         default=None,
         description=(
-            "Table column to draw option values from, as 'table.column'. The table "
-            "may be schema-qualified ('schema.table.column') when it is not in the "
-            "connection's default schema."
+            "A dropdown of this column's values, as 'table.column'. Use "
+            "'schema.table.column' outside the default schema. It starts at "
+            '"All"; filter() turns "All" into no constraint.'
         ),
     )
     query: Annotated[
@@ -233,7 +238,7 @@ class Variable(BaseModel):
     # Options
     options: VariableOptions | None = Field(
         default=None,
-        description="Where the selectable values come from: a written-out list or a query.",
+        description="Dropdown values come from a query column, or (rarely) a written-out list.",
     )
 
     data_type: Literal["string", "number", "date", "boolean", "array"] | None = Field(

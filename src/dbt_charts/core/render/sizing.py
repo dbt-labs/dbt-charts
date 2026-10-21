@@ -399,6 +399,7 @@ def get_markdown_text_height(
         text,
         variable_values,
         resolved_style=resolved_style,
+        base_dir=base_dir,
     )
     _, height = render_prose_svg(
         resolved_content,

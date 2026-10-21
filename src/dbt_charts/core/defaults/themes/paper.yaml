@@ -1,43 +1,56 @@
 # Unified theme: paper
-# The shipped `clarity` theme on a warm cream surface. Chart chrome is wired
-# through the dbt-creams.* palette so axis grids, ticks, labels, and mark
-# strokes sit on the cream canvas instead of inheriting the gray defaults
-# from `stark`.
+# The shipped `clarity` theme on a warm cream surface. `palettes.chrome` is
+# rebound to dbt-creams, so every chrome[N] stop (axis grids, ticks, labels,
+# mark strokes) sits on the cream canvas instead of the gray ladder.
 
 extends: clarity
+notes: clarity, warmer
 style:
   palettes:
+    chrome: dbt-creams
     sequence: dbt-seq-brown
-  background: dbt-creams.canvas
-  muted: dbt-creams.muted
+  background: chrome[1]
+  muted: chrome[8]
   font:
-    color: dbt-creams.ink
+    color: chrome[11]
   title:
     # No color pin here — the InheritSlot carries `font.color`, so titles
     # and headings read the same ink as prose.
     subtitle:
       font:
-        color: dbt-creams.subtitle
+        color: chrome[7]
   border:
-    color: dbt-creams.border
+    color: chrome[4]
   text:
     # Color inherits from `font.color` (InheritSlot) — no pin here so a
     # board-root style.font.color override reaches prose.
     code:
-      background: dbt-creams.surface-subtle
+      # Inline code keeps clarity's gray ink, not a cream stop.
+      font:
+        color: dbt-grays.10
+      background: chrome[2]
       border:
-        color: dbt-creams.border
+        color: chrome[4]
     blockquote:
       font:
-        color: dbt-creams.muted
+        color: chrome[8]
       border:
-        color: dbt-creams.border
+        color: chrome[4]
     divider:
-      color: dbt-creams.border
+      color: chrome[4]
     column:
       divider:
-        color: dbt-creams.border
+        color: chrome[4]
   charts:
+    pie:
+      # The donut total keeps clarity's gray inks, not cream stops.
+      total:
+        value:
+          font:
+            color: dbt-grays.11
+        label:
+          font:
+            color: dbt-grays.7
     color:
       categorical:
         # Single-series ink rhythm: brown, gold, rust. Warm canvas takes warm
@@ -54,10 +67,10 @@ style:
     marks:
       rule:
         stroke:
-          color: dbt-creams.ink
+          color: chrome[11]
       text:
         font:
-          color: dbt-creams.heading
+          color: chrome[10]
       geoshape:
         # Basemap chrome on a warm canvas. Clarity's equivalent comes from
         # dbt-grays; paper takes its own ladder from dbt-creams so the terrain
@@ -67,48 +80,48 @@ style:
         # ladder is tinted at every step, so the value that reads as neutral
         # ground on a gray canvas reads as a tan continent on cream — a
         # subject competing with the marks rather than ground beneath them.
-        fill: dbt-creams.grid
+        fill: chrome[3]
     axis:
       grid:
         # One rung quieter than the measure grid (axis_y below), never more.
-        color: &category_grid dbt-creams.border
+        color: &category_grid chrome[4]
         threshold:
-          color: dbt-creams.subtitle
+          color: chrome[7]
       ticks:
         color: *category_grid
       line:
-        color: dbt-creams.grid
+        color: chrome[3]
       labels:
         font:
-          color: dbt-creams.muted
+          color: chrome[8]
       title:
         font:
           # Axis titles in `subtitle` — quieter than chart-title `heading`.
           # Editorial precedent: axis titles orient, not compete.
-          color: dbt-creams.subtitle
+          color: chrome[7]
     # axis_x cascades from axis — no overrides needed.
     axis_y:
       grid:
-        color: dbt-creams.grid-emphasis  # softer grid for the value axis (overrides default gray)
+        color: chrome[5]  # softer grid for the value axis (overrides default gray)
       ticks:
-        color: dbt-creams.grid-emphasis
+        color: chrome[5]
     axis_quantitative:
-      # Overrides clarity's dbt-grays.ink quantitative-label color — paper's
+      # Overrides clarity's chrome[11] quantitative-label color — paper's
       # axis chrome stays on the dbt-creams ladder throughout.
       labels:
         font:
-          color: dbt-creams.muted
+          color: chrome[8]
       grid:
-        color: dbt-creams.grid-emphasis
+        color: chrome[5]
       ticks:
-        color: dbt-creams.grid-emphasis
+        color: chrome[5]
     legend:
       label:
         font:
-          color: dbt-creams.muted
+          color: chrome[8]
       title:
         font:
-          color: dbt-creams.heading
+          color: chrome[10]
     # Themed sequential default for heatmap/geoshape gradient color — _base's
     # `blues` measures 1.08:1 contrast against the cream canvas at its light
     # end (WCAG floor is 3:1), so low-value cells are effectively invisible.
@@ -125,72 +138,69 @@ style:
     # cool-gray fill, which would sit as a cool cast on the cream canvas.
     spark_bar:
       bar:
-        background: dbt-creams.grid
+        background: chrome[3]
     table:
       header:
         divider:
-          color: dbt-creams.ink
+          color: chrome[11]
         font:
-          color: dbt-creams.heading
+          color: chrome[10]
       row:
         divider:
-          color: dbt-creams.ink
+          color: chrome[11]
         roles:
           summary:
             divider:
-              color: dbt-creams.ink
+              color: chrome[11]
           total:
             divider:
-              color: dbt-creams.ink
+              color: chrome[11]
         stripe:
-          color: dbt-creams.surface-subtle
+          color: chrome[2]
       paginator:
         # Cream-scaffold variant of the default gray ramp — same three-tier
         # contrast, warm-canvas colors.
-        color_active: dbt-creams.ink
-        color_inactive: dbt-creams.inactive
-        color_disabled: dbt-creams.disabled
+        color_active: chrome[11]
+        color_inactive: chrome[9]
+        color_disabled: chrome[6]
       spark:
         # Spark progress track was renamed to `bar` upstream (single
         # horizontal bar with optional track in `bar-normalize`).
         bar:
-          background: dbt-creams.border
+          background: chrome[4]
     tooltip:
       background: dbt-grays.white
       label:
         font:
-          color: dbt-creams.subtitle
+          color: chrome[7]
       value:
         font:
-          color: dbt-creams.ink
+          color: chrome[11]
       border:
-        color: dbt-creams.border
+        color: chrome[4]
         radius: 4.0
-    # Literal dbt-creams.* token, not chrome.* -- style.palettes.chrome stays
-    # bound to dbt-grays in _base.yaml and is never rebound for paper, so a
-    # chrome.* reference here would hand paper cool-gray neutrals on a warm
-    # canvas. One scaffold rung past paper's own measure gridline, at twice
-    # that gridline's width.
+    # One scaffold rung past paper's own measure gridline, at twice that
+    # gridline's width.
     hover_emphasis:
-      drop_line_color: dbt-creams.disabled
+      drop_line_color: chrome[6]
       drop_line_width: 3.0
     support_table:
-      neutral_color: dbt-creams.muted
+      neutral_color: chrome[8]
       divider:
-        color: dbt-creams.muted
+        color: chrome[8]
       row:
         divider:
-          color: dbt-creams.muted
+          color: chrome[8]
       label:
         font:
-          color: dbt-creams.muted
+          color: chrome[8]
   variables:
     font:
-      color: dbt-creams.muted
+      color: chrome[8]
     placeholder:
       # Cream-toned hint for warm-canvas themes (overrides stark's
       # gray disabled token so unselected text stays in the cream ramp).
       font:
-        color: dbt-creams.disabled
+        color: chrome[6]
     border:
-      color: dbt-creams.grid-emphasis
+      color: chrome[5]

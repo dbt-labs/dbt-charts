@@ -21,12 +21,9 @@ _TOOL_TO_CLI: dict[str, str] = {
     "render_board": "render",
     "execute_sql": "query",
     "search_files": "search",
-    "docs": "docs",
     "describe_board": "describe",
     "list_skills": "skills",
     "get_skill": "skills",
-    "list_diagnostic_codes": "docs",
-    "get_diagnostic_code": "docs",
 }
 
 # Tools intentionally missing CLI parity (each comment explains why).
@@ -40,6 +37,9 @@ _EXEMPT_TOOLS: set[str] = {
     "apply_patch",
     "move_file",
     "delete_file",
+    # Registry lookups; the CLI prints each error's docs-site URL (`doc_url`) instead.
+    "list_diagnostic_codes",
+    "get_diagnostic_code",
 }
 
 

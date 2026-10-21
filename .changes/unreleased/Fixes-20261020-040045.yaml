@@ -1,0 +1,3 @@
+kind: Fixes
+body: A chart with no rows no longer breaks its legend or support table layout.
+time: 2026-10-20T04:00:45.263417-07:00

@@ -333,8 +333,8 @@ def test_multi_y_stacked_bar_baseline_measure_receives_first_palette_slot(
         zip(color["scale"]["domain"], color["scale"]["range"], strict=True)
     )
 
-    assert color_by_measure["rev"] == rc.palette[0]
-    assert color_by_measure["cost"] == rc.palette[1]
+    assert color_by_measure["Rev"] == rc.palette[0]
+    assert color_by_measure["Cost"] == rc.palette[1]
 
 
 # ---------------------------------------------------------------------------
@@ -467,8 +467,8 @@ class TestMultiYScatter:
             WIDE_VALUE_FIELD,
             WIDE_LABEL_FIELD,
         ]
-        assert tooltip[0]["title"] == "month"
-        assert tooltip[1]["title"] == "rev, cost"
+        assert tooltip[0]["title"] == "Month"
+        assert tooltip[1]["title"] == "Rev, Cost"
         assert tooltip[2]["title"] == "Series"
 
     def test_multi_y_scatter_value_labels_render_per_point(self, make_chart):

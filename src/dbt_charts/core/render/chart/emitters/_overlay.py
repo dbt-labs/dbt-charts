@@ -22,6 +22,7 @@ from dbt_charts.core.compile.models.chart.resolved._layer import (
     ResolvedLayer,
     ResolvedLineLayer,
     ResolvedScatterLayer,
+    layers_share_date_axis,
 )
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedLegendStyle
@@ -33,7 +34,9 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
 from dbt_charts.core.compile.resolve.chart.tick_values import numeric_domain_bounds
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
+    ERR_LAYER_AREA_SPLIT_HORIZONTAL_BASE,
     ERR_LAYER_AXIS_POSITION_ORIENTATION,
+    ERR_LAYER_COLOR_ALL_NULL,
     ERR_LAYER_LABEL_COLLISION,
     ERR_LAYER_ORDER_TRANSFORM_MISSING,
     ERR_LAYER_STEP_ORIENTATION,
@@ -802,6 +805,15 @@ def _free_palette_color(
     )
 
 
+def _drop_shared_scale_legends(specs: list[ChartSpec], shared_scale: VLDict) -> None:
+    """Remove the legend of every color encoding bound to ``shared_scale``."""
+    for spec in specs:
+        color = spec.encoding.get("color")
+        if isinstance(color, dict) and color.get("scale") is shared_scale:
+            color["legend"] = None
+        _drop_shared_scale_legends(spec.layers, shared_scale)
+
+
 def _layer_series_color(layer: ResolvedLayer) -> str | None:
     """Authored constant series color for a layer, or None to use a palette slot.
 
@@ -1412,7 +1424,7 @@ def render_cartesian_overlay(
     use_shared_scale = (
         bool(base_spec.encoding)
         and ("color" not in base_spec.encoding or field_color_base)
-        and y_enc_base.get("type") == "quantitative"
+        and y_enc_base.get("type") in ("quantitative", "temporal")
     )
     # The caller supplies the base series' legend label as plain text. Reading
     # it off ``y_enc_base["title"]`` would pick up the display title, which is
@@ -1717,12 +1729,16 @@ def render_cartesian_overlay(
             else ("", [])
         )
 
+        # A layer on the base's own date axis plots its dates on it.
+        on_date_axis = y_enc_base.get("type") == "temporal" and layers_share_date_axis(
+            lay.axis_y.position for lay in layers
+        )
         y_enc: VLDict = {
             "field": y_field,
-            "type": "quantitative",
+            "type": "temporal" if on_date_axis else "quantitative",
             "title": label,
             "axis": layer_ay_vl,
-            **vl_format_key(layer_value_format),
+            **({} if on_date_axis else vl_format_key(layer_value_format)),
         }
         if layer_y_scale is not None:
             y_enc["scale"] = layer_y_scale
@@ -1736,11 +1752,33 @@ def render_cartesian_overlay(
             )
             color_enc = {"field": layer_color_field, "type": layer_color_type}
         has_color_encoding = layer_color_field is not None
+        # A layer reading its own query whose rows were not supplied has no rows
+        # here to judge; the base's would be the wrong ones.
+        layer_rows_known = own_data is not None or layer.query_name in (
+            None,
+            base_query_name,
+        )
         if (
-            has_color_encoding
-            and layer_color_type not in ("nominal", "ordinal")
-            and use_shared_scale
+            layer_color_field is not None
+            and layer_rows_known
+            and all(row.get(layer_color_field) is None for row in rows_for_layer)
         ):
+            raise ChartDataError.from_code(
+                ERR_LAYER_COLOR_ALL_NULL,
+                chart_id=chart_id,
+                layer_index=layer_idx,
+                color_field=layer_color_field,
+            )
+        # A continuous color builds a scale of its own from the values it holds.
+        has_own_color_scale = (
+            layer_color_field is not None
+            and layer_color_type
+            not in (
+                "nominal",
+                "ordinal",
+            )
+        )
+        if has_own_color_scale and use_shared_scale:
             independent_color_scale = True
         # Only the base's merged legend (apply_legend_entry_order, below)
         # ever writes a resolved `values` -- this per-layer legend hasn't
@@ -1781,7 +1819,7 @@ def render_cartesian_overlay(
                     )
                 color_enc["scale"] = shared_scale
             layer_series_fill = single_series_fill
-        elif use_shared_scale:
+        elif use_shared_scale and not has_own_color_scale:
             # Collision only matters where it's load-bearing: the layered
             # endpoint-label rail's anchors dict (_apply_layered_single_series)
             # is keyed by label, so two entries sharing one silently collapse
@@ -1889,6 +1927,10 @@ def render_cartesian_overlay(
                 field_color_legend_symbols.append((wrapper, "stroke"))
 
         elif isinstance(layer, ResolvedAreaLayer):
+            if cat_ch == "y" and field_color_base:
+                raise ChartDataError.from_code(
+                    ERR_LAYER_AREA_SPLIT_HORIZONTAL_BASE, chart_id=chart_id
+                )
             # Area always renders as a continuous silhouette.
             step_data = _apply_layer_step_band(
                 layer.area_mark.curve,
@@ -2197,6 +2239,10 @@ def render_cartesian_overlay(
         resolve_scale[val_ch] = "independent"
     if independent_color_scale:
         resolve_scale["color"] = "independent"
+        # An independent color scale stops Vega-Lite merging the layers that
+        # share the label scale, so each would draw its own copy of the base's
+        # legend.
+        _drop_shared_scale_legends(vl_layers[1:], shared_scale)
     resolve = {"scale": resolve_scale} if resolve_scale else {}
 
     # A non-diverging layer (see `_resolve_layer_rows`) carries no explicit

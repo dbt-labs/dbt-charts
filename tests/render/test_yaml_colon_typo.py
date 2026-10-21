@@ -40,5 +40,5 @@ def test_colon_typos_report_every_line_and_the_quoting_fix(
 
     assert result.exit_code == 1
     assert "ERR-INTERNAL" not in result.output
-    assert result.output.count("ERR-YAML-SYNTAX") == 2
+    assert result.output.count("error[ERR-YAML-SYNTAX]") == 2
     assert "wrap the whole value in quotes" in result.output

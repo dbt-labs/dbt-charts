@@ -1,5 +1,6 @@
 # yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Cards and layouts
+source: examples_db
 style:
   frame:
     width: 1440
@@ -9,7 +10,6 @@ text: |
   each, using our own product metrics as the data.
 queries:
   kpi_metrics:
-    source: examples_db
     sql: |
       WITH complete_months AS (
         SELECT *
@@ -37,7 +37,6 @@ queries:
       ORDER BY month DESC
       LIMIT 1
   product_performance:
-    source: examples_db
     sql: |
       WITH per_order AS (
         SELECT
@@ -59,14 +58,12 @@ queries:
       GROUP BY product
       ORDER BY total_revenue DESC
   category_region_pivot:
-    source: examples_db
     sql: |
       SELECT category, region, SUM(revenue) AS revenue, SUM(units_sold) AS units_sold
       FROM main.ecommerce_orders
       GROUP BY 1, 2
       ORDER BY 1, 2
   weekly_revenue:
-    source: examples_db
     sql: |
       SELECT
         date_trunc('week', date)::DATE AS week,
@@ -77,21 +74,18 @@ queries:
       GROUP BY 1
       ORDER BY 1
   category_revenue:
-    source: examples_db
     sql: |
       SELECT category, SUM(revenue) AS revenue
       FROM main.ecommerce_orders
       GROUP BY 1
       ORDER BY 2 DESC
   region_revenue:
-    source: examples_db
     sql: |
       SELECT region, SUM(revenue) AS revenue
       FROM main.ecommerce_orders
       GROUP BY 1
       ORDER BY 2 DESC
   monthly_revenue:
-    source: examples_db
     sql: |
       SELECT month, revenue
       FROM dundersign_serving.monthly_metrics
@@ -99,7 +93,6 @@ queries:
         AND month < (SELECT max(month) FROM dundersign_serving.monthly_metrics)
       ORDER BY month
   monthly_tickets_resolved:
-    source: examples_db
     sql: |
       SELECT month, tickets_resolved
       FROM dundersign_serving.monthly_metrics
@@ -107,7 +100,6 @@ queries:
         AND month < (SELECT max(month) FROM dundersign_serving.monthly_metrics)
       ORDER BY month
   monthly_active_users:
-    source: examples_db
     sql: |
       SELECT month, active_users
       FROM dundersign_serving.monthly_metrics
@@ -115,7 +107,6 @@ queries:
         AND month < (SELECT max(month) FROM dundersign_serving.monthly_metrics)
       ORDER BY month
   monthly_tickets_created_resolved:
-    source: examples_db
     sql: |
       WITH complete_months AS (
         SELECT *
@@ -128,14 +119,12 @@ queries:
       SELECT month, 'Resolved' AS series, tickets_resolved AS value FROM complete_months
       ORDER BY 1, 2
   documents_by_status:
-    source: examples_db
     sql: |
       SELECT status, count(*) / SUM(count(*)) OVER () AS share
       FROM dundersign.documents
       GROUP BY 1
       ORDER BY 1
   recent_orders:
-    source: examples_db
     sql: |
       SELECT date, region, product, category, revenue, units_sold
       FROM main.ecommerce_orders
@@ -216,10 +205,7 @@ charts:
     title: Product performance, first half of 2024
     style:
       columns:
-        product:
-          label: Product
         total_revenue:
-          label: Total revenue
           format: currency
         weekly_trend:
           label: Weekly trend, Jan-Jun
@@ -251,11 +237,9 @@ charts:
     style:
       columns:
         revenue:
-          label: Revenue
           format: currency_whole
         units_sold:
           label: Units
-          format: integer
   weekly_revenue_support:
     query: weekly_revenue
     type: bar
@@ -302,10 +286,7 @@ charts:
     title: Revenue by region
     style:
       columns:
-        region:
-          label: Region
         revenue:
-          label: Revenue
           format: currency_whole
   grid_chart_top:
     query: monthly_revenue
@@ -324,10 +305,7 @@ charts:
     title: Revenue by category
     style:
       columns:
-        category:
-          label: Category
         revenue:
-          label: Revenue
           format: currency_whole
   grid_chart_bottom:
     query: monthly_tickets_resolved
@@ -392,10 +370,7 @@ charts:
     title: Most recent orders
     style:
       columns:
-        date:
-          label: Date
         revenue:
-          label: Revenue
           format: currency_whole
         units_sold:
           label: Units
@@ -447,7 +422,6 @@ rows:
           - width_demo_kpi
   - text: "Layout — `grid:` with `col_span` and `row_span`"
   - grid:
-      columns: 24
       items:
         - item: grid_tall_chart
           col_span: 8

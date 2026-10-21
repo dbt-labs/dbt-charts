@@ -103,7 +103,7 @@ class TestBindingModel:
         style = get_theme_style()
         for token in sorted(offered):
             # The cascade's own resolver, not `color_from_theme` alone —
-            # a `palette.slot` address like `dbt-grays.muted` resolves on
+            # a `palette.slot` address like `dbt-grays.8` resolves on
             # the direct path before role indirection is tried.
             _resolve_one_color_token(token, style.palettes, style.roles)
 

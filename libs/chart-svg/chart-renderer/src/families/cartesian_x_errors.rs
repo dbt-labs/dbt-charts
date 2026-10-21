@@ -80,7 +80,7 @@ fn label_value_date(value: &Value) -> Result<(), Diagnostic> {
             let iso_like = text.get(..4).is_some_and(|y| y.bytes().all(|b| b.is_ascii_digit()))
                 && text.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'W' | b'T' | b':' | b' ' | b'.' | b'+' | b'Z'));
             if iso_like && text.len() >= 8 {
-                return Err(format!("labels.values entry {text:?} is an ISO form this port does not model").into());
+                return Err(crate::refuse!("labels.values entry {text:?} in an ISO form this port does not model is not supported").into());
             }
             Err(invalid())
         }
@@ -155,7 +155,7 @@ fn label_format(facts: &Facts, field: &str, vl_type: VegaType, rows: &[Row], rem
 }
 
 /// `gate_label_format`.
-fn gate_label_format(
+pub(super) fn gate_label_format(
     format: Option<&crate::common::FormatSlot>,
     setting: &str,
     field: &str,
@@ -437,7 +437,7 @@ fn gap_fill(facts: &Facts, field: &str, rows: &[Row], axis: &XAxis, resolution: 
     gap_fill_collision(facts, field, rows, resolution.fill_grain)
 }
 
-const HEATMAP_FORMAT_REMEDY: &str = "Remove the format \u{2014} a heatmap has no measure axis. Both axes are grid dimensions and the value lives on the color channel, which carries no label format of its own.";
+pub(super) const HEATMAP_FORMAT_REMEDY: &str = "Remove the format \u{2014} a heatmap has no measure axis. Both axes are grid dimensions and the value lives on the color channel, which carries no label format of its own.";
 
 /// A heatmap's x and y are grid dimensions: nominal bands that still run the
 /// authored-axis gates `build_cartesian_x_encoding` and the y gate apply.

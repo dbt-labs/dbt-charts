@@ -1,6 +1,6 @@
 """Tokens-in-themes: dotted palette tokens resolve everywhere a hex is allowed.
 
-Themes name color *concepts* (e.g. ``dbt-grays.grid-emphasis``, ``negative.solid``)
+Themes name color *concepts* (e.g. ``dbt-grays.5``, ``negative.solid``)
 rather than hard-coding hex literals. Tokens are resolved twice:
 - when ``get_theme_style()`` builds and caches a built-in theme, so every
   Style reader sees concrete hex.
@@ -42,28 +42,22 @@ from dbt_charts.core.compile.resolve.style.tokens import _THEME_SELF_TOKENS
 class TestScaffoldTokensThroughResolve:
     def test_bar_border_color_token_resolves_to_hex(self):
         patch = StylePatch.model_validate(
-            {
-                "charts": {
-                    "marks": {"bar": {"border": {"color": "dbt-grays.grid-emphasis"}}}
-                }
-            }
+            {"charts": {"marks": {"bar": {"border": {"color": "dbt-grays.5"}}}}}
         )
         ctx = resolve_chart_style_context(get_theme_style(), patch)
-        assert ctx.marks.bar.border.color == resolve_palette_color(
-            "dbt-grays.grid-emphasis"
-        )
+        assert ctx.marks.bar.border.color == resolve_palette_color("dbt-grays.5")
 
     def test_view_stroke_token_resolves_to_hex(self):
         patch = StylePatch.model_validate(
-            {"charts": {"view": {"stroke": "dbt-creams.grid-emphasis"}}}
+            {"charts": {"view": {"stroke": "dbt-creams.5"}}}
         )
         ctx = resolve_chart_style_context(get_theme_style(), patch)
-        assert ctx.view.stroke == resolve_palette_color("dbt-creams.grid-emphasis")
+        assert ctx.view.stroke == resolve_palette_color("dbt-creams.5")
 
     def test_background_token_resolves_to_hex(self):
-        patch = StylePatch.model_validate({"background": "dbt-grays.canvas"})
+        patch = StylePatch.model_validate({"background": "dbt-grays.1"})
         resolved = resolve_style(get_theme_style(), patch)
-        assert resolved.background == resolve_palette_color("dbt-grays.canvas")
+        assert resolved.background == resolve_palette_color("dbt-grays.1")
 
 
 class TestCategoryRoleBracketTokens:
@@ -124,17 +118,11 @@ class TestCategoryRoleBracketTokens:
 
     def test_table_row_stripe_color_token_resolves_to_hex(self):
         patch = StylePatch.model_validate(
-            {
-                "charts": {
-                    "table": {"row": {"stripe": {"color": "dbt-grays.surface-subtle"}}}
-                }
-            }
+            {"charts": {"table": {"row": {"stripe": {"color": "dbt-grays.2"}}}}}
         )
         ctx = resolve_chart_style_context(get_theme_style(), patch)
         assert ctx.table.row.stripe is not None
-        assert ctx.table.row.stripe.color == resolve_palette_color(
-            "dbt-grays.surface-subtle"
-        )
+        assert ctx.table.row.stripe.color == resolve_palette_color("dbt-grays.2")
 
     def test_literal_hex_passes_through_unchanged(self):
         patch = StylePatch.model_validate(
@@ -241,7 +229,7 @@ class TestThemeBackgroundSelfToken:
 
     The loaded theme keeps the sentinel; ``resolve_style`` substitutes it
     against the merged canvas, so palette-token backgrounds (e.g.
-    ``dbt-creams.canvas``) arrive already resolved to concrete hex.
+    ``dbt-creams.1``) arrive already resolved to concrete hex.
     """
 
     @pytest.mark.parametrize(
@@ -317,7 +305,7 @@ class TestThemeBackgroundSelfToken:
 
 
 # =============================================================================
-# Neon chrome is scaffold-sourced (dbt-grays.void), not inline hex
+# Neon chrome is scaffold-sourced (dbt-grays.12), not inline hex
 # =============================================================================
 
 
@@ -330,28 +318,28 @@ def _rec709_luma(hex_str: str) -> float:
 
 
 class TestNeonChromeFromScaffold:
-    """Neon's dark canvas is the ``void`` scaffold step, not a hardcoded hex.
+    """Neon's dark canvas is scaffold step 12, not a hardcoded hex.
 
-    ``void`` is the darkest ``dbt-grays`` step (one past ``ink``), added so the
+    Step 12 is the darkest numbered ``dbt-grays`` step (one past step 11), so the
     near-black neutral canvas has a real palette home. These are *binding*
-    assertions (canvas tracks the scaffold slot), not brittle hex pins — retuning
-    ``void``'s value moves both sides together.
+    assertions (canvas tracks the scaffold step), not brittle hex pins —
+    retuning the step's value moves both sides together.
     """
 
-    def test_void_is_darkest_gray_step(self):
-        assert _rec709_luma(resolve_palette_color("dbt-grays.void")) < _rec709_luma(
-            resolve_palette_color("dbt-grays.ink")
+    def test_step_twelve_is_the_darkest_numbered_step(self):
+        assert _rec709_luma(resolve_palette_color("dbt-grays.12")) < _rec709_luma(
+            resolve_palette_color("dbt-grays.11")
         )
 
-    def test_neon_canvas_tracks_void(self):
+    def test_neon_canvas_tracks_step_twelve(self):
         compiled = get_theme_style("neon")
-        void_hex = resolve_palette_color("dbt-grays.void")
-        assert compiled.background == void_hex
+        step_twelve_hex = resolve_palette_color("dbt-grays.12")
+        assert compiled.background == step_twelve_hex
 
-    def test_neon_panel_tier_tracks_ink(self):
+    def test_neon_panel_tier_tracks_step_eleven(self):
         compiled = get_theme_style("neon")
         assert compiled.charts.table.header.background == resolve_palette_color(
-            "dbt-grays.ink"
+            "dbt-grays.11"
         )
 
 
@@ -386,20 +374,18 @@ class TestChromeAccentTokens:
 
 
 class TestVividFourTierAnchorsTrackScaffold:
-    def test_muted_tracks_muted_step(self) -> None:
-        assert get_theme_style("vivid").muted == resolve_palette_color(
-            "dbt-grays.muted"
-        )
+    def test_muted_tracks_step_eight(self) -> None:
+        assert get_theme_style("vivid").muted == resolve_palette_color("dbt-grays.8")
 
-    def test_border_tracks_grid_emphasis(self) -> None:
+    def test_border_tracks_step_five(self) -> None:
         compiled = get_theme_style("vivid")
-        assert compiled.border.color == resolve_palette_color("dbt-grays.grid-emphasis")
+        assert compiled.border.color == resolve_palette_color("dbt-grays.5")
 
-    def test_axis_threshold_tracks_ink(self) -> None:
+    def test_axis_threshold_tracks_step_eleven(self) -> None:
         compiled = get_theme_style("vivid")
         assert compiled.charts.axis.grid.threshold is not None
         assert compiled.charts.axis.grid.threshold.color == resolve_palette_color(
-            "dbt-grays.ink"
+            "dbt-grays.11"
         )
 
 

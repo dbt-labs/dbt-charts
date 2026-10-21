@@ -844,3 +844,30 @@ rows:
             and w.message.startswith("sales/weekly_funnel.yaml:")
             for w in result.warnings
         ), [w.message for w in result.warnings]
+
+
+@pytest.mark.parametrize("section", ["queries", "charts"])
+def test_imported_query_inherits_the_declaring_files_meta_source(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject], section: str
+) -> None:
+    """A query pulled from another file takes that file's default source the
+    way the file itself would: `charts/meta.yml` counts, not only a board-level
+    `source:`, whether the query arrives by a `queries:` ref or inside an
+    imported chart."""
+    charts = tmp_path / "charts"
+    charts.mkdir()
+    (charts / "meta.yml").write_text("source: db\n")
+    (charts / "a.yml").write_text(
+        "title: A\nqueries:\n  q:\n    sql: SELECT 1 AS x\n"
+        "charts:\n  c:\n    type: table\n    query: q\nrows:\n  - c\n"
+    )
+    importer = (
+        "title: B\nqueries:\n  base: a.queries.q\n"
+        "rows:\n  - title: t\n    query: base\n    type: table\n"
+        if section == "queries"
+        else "title: B\ncharts:\n  c2: a.charts.c\nrows:\n  - c2\n"
+    )
+    result = compile(
+        importer, base_dir=local_project(root=tmp_path).directory("charts")
+    )
+    assert result.success, [e.code for e in result.errors]

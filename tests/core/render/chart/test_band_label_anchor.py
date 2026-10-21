@@ -175,7 +175,7 @@ def _label_positions(svg: str) -> dict[str, float]:
     ):
         for text in re.finditer(r"<text ([^>]*)>", group.group(1)):
             attrs = text.group(1)
-            label = re.search(r'aria-label="month: ([^;"]+)', attrs)
+            label = re.search(r'aria-label="Month: ([^;"]+)', attrs)
             x = re.search(r'transform="translate\(([-\d.]+),', attrs)
             if label is not None and x is not None:
                 positions[label.group(1)] = float(x.group(1))

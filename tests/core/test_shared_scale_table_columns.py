@@ -95,7 +95,7 @@ class TestResolveSharedScaleForTableColumn:
 
     def test_majority_tier_column_resolves_a_shared_scale(self) -> None:
         scale = self._resolve(
-            [{"amount": v} for v in (3_500_000, 4_200_000, 12_000_000)]
+            [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 12_000_000.0)]
         )
         assert scale is not None
         assert scale.exponent == 6
@@ -107,7 +107,7 @@ class TestResolveSharedScaleForTableColumn:
         # 12,000,000 (largest, scaled 12.0, 2 integer digits) needs only 1.
         # Picking precision from the largest would truncate 3.5 -> "4".
         scale = self._resolve(
-            [{"amount": v} for v in (3_500_000, 4_200_000, 12_000_000)]
+            [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 12_000_000.0)]
         )
         assert scale is not None
         magnitude = 10.0**scale.exponent
@@ -118,11 +118,11 @@ class TestResolveSharedScaleForTableColumn:
     def test_no_majority_tier_column_resolves_no_shared_scale(self) -> None:
         # 500 (no tier -- None) and 1_000_000 (tier 6) tie 1-1; None wins any
         # tie it's part of.
-        scale = self._resolve([{"amount": 500}, {"amount": 1_000_000}])
+        scale = self._resolve([{"amount": 500.0}, {"amount": 1_000_000.0}])
         assert scale is None
 
     def test_below_compaction_threshold_resolves_no_shared_scale(self) -> None:
-        scale = self._resolve([{"amount": 1500}, {"amount": 3000}])
+        scale = self._resolve([{"amount": 1500.0}, {"amount": 3000.0}])
         assert scale is None
 
     def test_unformatted_column_falls_back_to_number_for_the_gate(self) -> None:
@@ -136,7 +136,7 @@ class TestResolveSharedScaleForTableColumn:
             text_color=None,
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
-            rows=[{"amount": v} for v in (3_500_000, 4_200_000, 12_000_000)],
+            rows=[{"amount": v} for v in (3_500_000.0, 4_200_000.0, 12_000_000.0)],
             allow_shared_scale=True,
             own_formats={n: c.format for n, c in (columns or {}).items()},
             defaults_format=None,
@@ -154,9 +154,9 @@ class TestResolveSharedScaleForTableColumn:
         )
         decimal_scale = self._resolve(
             [
-                {"amount": Decimal("3500000")},
-                {"amount": Decimal("4200000")},
-                {"amount": Decimal("12000000")},
+                {"amount": Decimal("3500000.0")},
+                {"amount": Decimal("4200000.0")},
+                {"amount": Decimal("12000000.0")},
             ]
         )
         assert float_scale is not None
@@ -169,10 +169,16 @@ class TestResolveSharedScaleForTableColumn:
         # already filters them to None for every other table numeric path;
         # the shared-scale bake must agree, order-independently.
         first = self._resolve(
-            [{"amount": v} for v in (float("nan"), 3_500_000, 4_200_000, 12_000_000)]
+            [
+                {"amount": v}
+                for v in (float("nan"), 3_500_000.0, 4_200_000.0, 12_000_000.0)
+            ]
         )
         second = self._resolve(
-            [{"amount": v} for v in (3_500_000, 4_200_000, 12_000_000, float("inf"))]
+            [
+                {"amount": v}
+                for v in (3_500_000.0, 4_200_000.0, 12_000_000.0, float("inf"))
+            ]
         )
         assert first is not None
         assert second is not None
@@ -182,14 +188,14 @@ class TestResolveSharedScaleForTableColumn:
         # A fixed-point format is never SI-shaped -- shared_scale only ever
         # applies to a `~s`-typed spec.
         scale = self._resolve(
-            [{"amount": v} for v in (3_500_000, 4_200_000, 12_000_000)],
+            [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 12_000_000.0)],
             fmt=",.0f",
         )
         assert scale is None
 
     def test_shared_scale_digit_spec_always_types_fixed_point(self) -> None:
         scale = self._resolve(
-            [{"amount": v} for v in (3_500_000, 4_200_000, 12_000_000)]
+            [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 12_000_000.0)]
         )
         assert scale is not None
         assert _d3_parse(scale.digit_spec).type == "f"
@@ -198,7 +204,7 @@ class TestResolveSharedScaleForTableColumn:
         # Extreme scaled value >= 4 integer digits at its own tier triggers
         # REPEAT (mirrors _mode_for_scaled_extreme's ladder contract).
         scale = self._resolve(
-            [{"amount": v} for v in (3_500_000, 4_200_000, 1_234_000_000)]
+            [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 1_234_000_000.0)]
         )
         assert scale is not None
         assert scale.mode is SuffixMode.REPEAT
@@ -214,7 +220,7 @@ class TestResolveSharedScaleForTableColumn:
         # for the case genuinely close enough (one tier below) to accommodate
         # with a few extra decimals instead of refusing.
         scale = self._resolve(
-            [{"amount": 500}, {"amount": 3_500_000}, {"amount": 4_200_000}]
+            [{"amount": 500.0}, {"amount": 3_500_000.0}, {"amount": 4_200_000.0}]
         )
         assert scale is None
 
@@ -250,7 +256,7 @@ class TestFormatKpiPartsSharedScale:
         return scale
 
     def test_anchor_mode_shows_suffix_only_on_anchor_row(self) -> None:
-        rows = [{"amount": v} for v in (3_500_000, 4_200_000, 12_000_000)]
+        rows = [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 12_000_000.0)]
         scale = self._resolved_scale(rows)
         assert scale.mode is SuffixMode.ANCHOR
         _, anchor_num, anchor_suffix = format_kpi_parts(
@@ -265,7 +271,7 @@ class TestFormatKpiPartsSharedScale:
         assert other_num == "4.2"
 
     def test_repeat_mode_shows_suffix_on_every_nonzero_row(self) -> None:
-        rows = [{"amount": v} for v in (3_500_000, 4_200_000, 1_234_000_000)]
+        rows = [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 1_234_000_000.0)]
         scale = self._resolved_scale(rows)
         assert scale.mode is SuffixMode.REPEAT
         _, anchor_num, anchor_suffix = format_kpi_parts(
@@ -286,7 +292,7 @@ class TestFormatKpiPartsSharedScale:
     def test_authored_notation_overrides_the_mode_derived_register(self) -> None:
         from dbt_charts.core.compile.models.primitives import FormatConfig
 
-        rows = [{"amount": v} for v in (3_500_000, 4_200_000, 12_000_000)]
+        rows = [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 12_000_000.0)]
         scale = self._resolved_scale(rows)  # ANCHOR mode -> analytic by default
         _, _, suffix = format_kpi_parts(
             3_500_000,
@@ -297,7 +303,7 @@ class TestFormatKpiPartsSharedScale:
         assert suffix.strip() == "mn"
 
     def test_zero_never_carries_a_suffix(self) -> None:
-        rows = [{"amount": v} for v in (3_500_000, 4_200_000, 1_234_000_000)]
+        rows = [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 1_234_000_000.0)]
         scale = self._resolved_scale(rows)  # REPEAT mode
         _, number_str, suffix = format_kpi_parts(
             0, ".3~s", shared_scale=scale, is_anchor=False
@@ -311,7 +317,7 @@ class TestFormatKpiPartsSharedScale:
         # ("1k") on top of the shared one -- the double-suffix bug
         # ruler_digit_format's own docstring warns about. digit_spec is
         # always fixed-point, so this must render plain grouped digits.
-        rows = [{"amount": v} for v in (3_500_000, 4_200_000, 1_234_000_000)]
+        rows = [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 1_234_000_000.0)]
         scale = self._resolved_scale(rows)  # REPEAT mode, exponent 6
         _, number_str, _ = format_kpi_parts(
             1_234_000_000, ".3~s", shared_scale=scale, is_anchor=False
@@ -358,7 +364,11 @@ class TestSharedScaleAnchorsRender:
         chart = make_chart("table", x=None, y=None)
         # Three million-range rows sharing tier M (ANCHOR mode: extreme
         # 12,000,000 / 1e6 = 12.0, only 2 integer digits).
-        data = [{"revenue": 3_500_000}, {"revenue": 4_200_000}, {"revenue": 12_000_000}]
+        data = [
+            {"revenue": 3_500_000.0},
+            {"revenue": 4_200_000.0},
+            {"revenue": 12_000_000.0},
+        ]
         custom_ctx = _style_with(symbol_mode="anchors")
         chart = resolve(chart, data, chart_style_context=custom_ctx)
         svg = render_table_svg(chart, data, width=400, board_style=_BOARD_STYLE)
@@ -389,9 +399,9 @@ class TestSharedScaleAnchorsRender:
         chart = make_chart("table", x=None, y=None)
         # Extreme scaled value >= 4 integer digits at its own tier -> REPEAT.
         data = [
-            {"revenue": 3_500_000},
-            {"revenue": 4_200_000},
-            {"revenue": 1_234_000_000},
+            {"revenue": 3_500_000.0},
+            {"revenue": 4_200_000.0},
+            {"revenue": 1_234_000_000.0},
         ]
         custom_ctx = _style_with(symbol_mode="anchors")
         chart = resolve(chart, data, chart_style_context=custom_ctx)
@@ -420,7 +430,11 @@ class TestSharedScaleAnchorsRender:
         from .test_table_variants import _BOARD_STYLE, _style_with
 
         chart = make_chart("table", x=None, y=None)
-        data = [{"revenue": 3_500_000}, {"revenue": 4_200_000}, {"revenue": 12_000_000}]
+        data = [
+            {"revenue": 3_500_000.0},
+            {"revenue": 4_200_000.0},
+            {"revenue": 12_000_000.0},
+        ]
         custom_ctx = _style_with(symbol_mode="all")
         chart = resolve(chart, data, chart_style_context=custom_ctx)
         svg = render_table_svg(chart, data, width=400, board_style=_BOARD_STYLE)
@@ -447,9 +461,9 @@ class TestSharedScaleAnchorsRender:
         chart = make_chart("table", x=None, y=None)
         data = [
             {"revenue": 0},
-            {"revenue": 3_500_000},
-            {"revenue": 4_200_000},
-            {"revenue": 12_000_000},
+            {"revenue": 3_500_000.0},
+            {"revenue": 4_200_000.0},
+            {"revenue": 12_000_000.0},
         ]
         custom_ctx = _style_with(symbol_mode="anchors")
         chart = resolve(chart, data, chart_style_context=custom_ctx)
@@ -515,7 +529,7 @@ class TestSubTierPrecisionAndRefusal:
         # digit at all -- distinguishable from every other refusal case
         # covered above, which precision alone resolves.
         scale = self._resolve(
-            [{"amount": v} for v in (300_000, 3_500_000, 4_200_000)], fmt=".0~s"
+            [{"amount": v} for v in (300_000.0, 3_500_000.0, 4_200_000.0)], fmt=".0~s"
         )
         assert scale is None
 
@@ -529,14 +543,16 @@ class TestSubTierPrecisionAndRefusal:
         # requested, seven delivered). Refusing the whole bake when the
         # finest value sits more than one tier below the majority protects
         # the normal rows' own precision contract.
-        scale = self._resolve([{"amount": v} for v in (500, 3_456_789, 4_234_567)])
+        scale = self._resolve(
+            [{"amount": v} for v in (500.0, 3_456_789.0, 4_234_567.0)]
+        )
         assert scale is None
 
     def test_far_outlier_refuses_even_when_it_is_not_the_smallest_by_much(
         self,
     ) -> None:
         scale = self._resolve(
-            [{"amount": v} for v in (5_000_000, 6_000_000, 7_000_000, 0.001)]
+            [{"amount": v} for v in (5_000_000.0, 6_000_000.0, 7_000_000.0, 0.001)]
         )
         assert scale is None
 
@@ -545,7 +561,9 @@ class TestSubTierPrecisionAndRefusal:
         # tier below the majority (thousands inside a millions column)
         # legitimately needs a few extra decimals and must still resolve,
         # not refuse -- distinguishing it from the far-outlier cases above.
-        scale = self._resolve([{"amount": v} for v in (10_000, 3_500_000, 4_200_000)])
+        scale = self._resolve(
+            [{"amount": v} for v in (10_000.0, 3_500_000.0, 4_200_000.0)]
+        )
         assert scale is not None
         assert _d3_parse(scale.digit_spec).precision <= 5
 
@@ -554,7 +572,7 @@ class TestSubTierPrecisionAndRefusal:
         # not "0" -- the refusal check must key on digit content, not a
         # fixed glyph set, or a signed spec silently bypasses the guard.
         scale = self._resolve(
-            [{"amount": v} for v in (300_000, 3_500_000, 4_200_000)], fmt="+.0~s"
+            [{"amount": v} for v in (300_000.0, 3_500_000.0, 4_200_000.0)], fmt="+.0~s"
         )
         assert scale is None
 
@@ -590,7 +608,7 @@ class TestPadTableCappedAtObservedDepth:
 
     def test_pad_table_does_not_exceed_the_columns_real_fractional_depth(self) -> None:
         columns = {"amount": TableColumnConfig(format="~s")}
-        rows = [{"amount": v} for v in (3_500_000, 4_200_000, 12_000_000)]
+        rows = [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 12_000_000.0)]
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
@@ -709,11 +727,11 @@ class TestAllowSharedScaleGate:
         return resolved["amount"].shared_scale
 
     def test_false_disables_the_shared_scale_bake(self) -> None:
-        rows = [{"amount": v} for v in (3_500_000, 4_200_000, 12_000_000)]
+        rows = [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 12_000_000.0)]
         assert self._resolve(rows, allow_shared_scale=False) is None
 
     def test_true_keeps_the_default_authored_table_behavior(self) -> None:
-        rows = [{"amount": v} for v in (3_500_000, 4_200_000, 12_000_000)]
+        rows = [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 12_000_000.0)]
         scale = self._resolve(rows, allow_shared_scale=True)
         assert scale is not None
         assert scale.exponent == 6
@@ -810,7 +828,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
         (``column_shares_one_printed_unit``).
         """
         columns = {"amount": TableColumnConfig(format="number")}
-        rows = [{"amount": v} for v in (15_000, 5_000, 3_500)]
+        rows = [{"amount": v} for v in (15_000.0, 5_000.0, 3_500.0)]
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
@@ -840,7 +858,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
         at all.
         """
         columns = {"amount": TableColumnConfig(format="number")}
-        rows = [{"amount": v} for v in (12_100, 900)]
+        rows = [{"amount": v} for v in (12_100.0, 900.0)]
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
@@ -1059,19 +1077,19 @@ class TestUnformattedColumnThatDoesNotCompact:
         assert len(column.decimal_pad_table) == 3
 
     def test_a_column_whose_rows_all_print_one_unit_keeps_compacting(self) -> None:
-        column = self._resolve([42000, 60000, 81000])
+        column = self._resolve([42000.0, 60000.0, 81000.0])
         assert column.shared_scale is None
         assert column.format is None
-        assert [self._printed(column, v) for v in (42000, 60000, 81000)] == [
+        assert [self._printed(column, v) for v in (42000.0, 60000.0, 81000.0)] == [
             "42K",
             "60K",
             "81K",
         ]
 
     def test_a_column_that_does_compact_is_untouched(self) -> None:
-        column = self._resolve([3_500_000, 4_200_000, 12_000_000])
+        column = self._resolve([3_500_000.0, 4_200_000.0, 12_000_000.0])
         assert column.shared_scale is not None
 
     def test_a_legend_table_never_bakes_exact_digits(self) -> None:
-        column = self._resolve([5, 1200, 77], allow_shared_scale=False)
+        column = self._resolve([5.0, 1200.0, 77.0], allow_shared_scale=False)
         assert column.format is None

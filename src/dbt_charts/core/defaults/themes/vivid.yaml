@@ -14,16 +14,17 @@
 # All color comes from vivid-10 marks only. Confident marks, flat fills.
 # stark = 1 chrome tier · vivid = 4 coarse/extreme tiers (+1 grid split) · clarity = 9 soft tiers.
 extends: stark
+notes: colorful accents, bold sans type
 style:
   palettes:
     sequence: dbt-seq-blue
   background: dbt-grays.white
   accent: info.solid-hover
-  muted: &mid dbt-grays.muted
+  muted: &mid chrome[8]
   font:
-    color: &high dbt-grays.heading   # body prose = content
+    color: &high chrome[10]   # body prose = content
   border:
-    color: &faint dbt-grays.grid-emphasis
+    color: &faint chrome[5]
   title:
     font:
       weight: 600
@@ -49,10 +50,10 @@ style:
         # Category/time grid. Every gridline here is a hairline, so contrast
         # carries the axis hierarchy that width cannot: this sits one rung
         # closer to the canvas than the measure grid on axis_y below.
-        color: &category_grid dbt-grays.border
+        color: &category_grid chrome[4]
         width: 1
         threshold:
-          color: &value dbt-grays.ink  # baseline anchors at max contrast
+          color: &value chrome[11]  # baseline anchors at max contrast
       ticks:
         # A tick and its gridline mark the same value; they read as one mark
         # crossing the axis line, so the tick takes the grid's rung above.
@@ -127,7 +128,7 @@ style:
         stroke:
           color: *high
       geoshape:
-        fill: dbt-grays.grid-emphasis   # unjoined regions = neutral, recede
+        fill: chrome[5]   # unjoined regions = neutral, recede
     table:
       header:
         divider:
@@ -145,14 +146,14 @@ style:
             divider:
               color: *high
         stripe:
-          color: dbt-grays.surface-subtle   # subtle cool zebra (one step off white)
+          color: chrome[2]   # subtle cool zebra (one step off white)
       spark:
         # Light progress-bar track on the FAINT chrome tier so the fill pops.
-        # Track fills are theme-pinned (stark pins dbt-grays.grid); this
+        # Track fills are theme-pinned (stark pins chrome[3]); this
         # override keeps vivid's track on its own 4-tier ladder instead
         # (paper sets its track the same way, under table.spark).
         bar:
-          background: dbt-grays.grid-emphasis
+          background: chrome[5]
     support_table:
       neutral_color: *value
       label:
@@ -195,7 +196,7 @@ style:
         radius: 3.0
       active_marker: fill
     hover_emphasis:
-      drop_line_color: dbt-grays.disabled
+      drop_line_color: chrome[6]
       drop_line_width: 2.0
   variables:
     font:

@@ -374,15 +374,12 @@ class Config(ConfigMappingBase):
     terminal: ConfigNode
     # Nothing reads this: categorical palettes resolve through
     # dbt_charts.core.compile.resolve.style.palette's own name index, never
-    # through the config tree (config.py's _load_palettes no longer scans
-    # the categorical directory into it). It must stay declared anyway --
+    # through the config tree. It must stay declared anyway --
     # Config is extra="forbid" and validates the whole file, so dropping the
     # field would fail load_config for a dbt_charts.yml that still sets it.
     # None = no explicit palettes: section (the shipped default carries none
     # either, now).
     palettes: ConfigNode | None = None
-    dbt_grays: ConfigNode
-    dbt_creams: ConfigNode
     strict: bool | None = None  # None = strict mode not configured; defaults to off
     # Nothing reads this: a project's registry is read per-project by
     # load_project_sources, never off the global. It must stay declared anyway —

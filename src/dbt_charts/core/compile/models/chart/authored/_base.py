@@ -331,6 +331,8 @@ class _FieldLabelsField(BaseModel):
             default_factory=dict,
             description=(
                 "Display text per query column in legends, tooltips and axis titles. "
+                "The default is the column name prettified (`model_year` reads "
+                '"Model year"): set one only to say something different. '
                 "Painted as written wherever the chart would otherwise derive text "
                 "from the column's name; x_label/y_label and a layer's label win "
                 "on their own surface. Not for kpi or table: use "
@@ -409,14 +411,14 @@ class _CartesianChartFields(_SharedChartFields, _FieldLabelsField):
         str | None,
         Field(
             default=None,
-            description="X axis title, replacing the column-derived one. Quote a number, as in '2013'.",
+            description="X axis title, replacing the column-derived one (`model_year` reads \"Model year\"): set it only to say something different. Quote a number, as in '2013'.",
         ),
     ]
     y_label: Annotated[
         str | None,
         Field(
             default=None,
-            description="Y axis title, replacing the derived one. Quote a number, as in '2013'.",
+            description="Y axis title, replacing the derived one (`model_year` reads \"Model year\"): set it only to say something different. Quote a number, as in '2013'.",
         ),
     ]
     # None = no color encoding (solid fill from theme).

@@ -41,7 +41,7 @@ objects:
   variable:
     path: Variable
     label: variables.<name>
-    keys: [options, default, label, required, min, max, step, data_type, input]
+    keys: [column, options, default, label, required, min, max, step, data_type, input]
     detail: [input]
   variable_options:
     path: Variable.options
@@ -224,13 +224,6 @@ objects:
     hide: [theme]
     also: false
     detail: [extends]
-    also: false
-  theme_style:
-    path: StylePatch
-    label: style
-    keys: [palettes]
-    detail: [palettes]
-    also: false
   kpi_support:
     path: chart:kpi.support
     label: kpi support
@@ -283,8 +276,3 @@ helpers:
   filter_date_range: [date_range]
 
 themes: [clarity, paper, vivid, neon, stark]
-
-codes:
-  style: [ERR-WRONG-SHAPE, ERR-LEGEND-ALIGN-UNSUPPORTED, ERR-AXIS-COLUMN-REQUIRES-TABULAR-FONT, ERR-GAP-FILL-BUCKET-COLLISION]
-  theme: [ERR-EXTENDS-UNRESOLVED, ERR-COLOR-TOKEN, ERR-CATEGORY-COLOR-PALETTE-EXHAUSTED]
-  common: [ERR-YAML-SYNTAX, ERR-BAR-Y-NOT-NUMERIC, WARN-MISSING-JOIN-PREDICATE, WARN-DATE-AS-TEXT, WARN-REDUNDANT-ENCODING, WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER, ERR-PERCENT-RANGE, ERR-LABEL-FORMAT-AXIS-MISMATCH, WARN-TABLE-CRAMPED]

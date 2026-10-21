@@ -29,15 +29,12 @@ from typing import TYPE_CHECKING, Literal
 
 from dbt_charts import _engine
 from dbt_charts.core.text.format_d3 import active_language
-from dbt_charts.core.text.humanize import slug_to_text
+from dbt_charts.core.text.humanize import sentence_case, slug_to_text
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
 
 CaseValue = Literal["none", "sentence", "title", "upper", "lower", "slug", "camel"]
-
-# "dbt" is stylized lowercase always (dbt Labs' own convention).
-_FORCE_LOWERCASE: frozenset[str] = frozenset({"dbt"})
 
 
 def apply_case(text: str, case: CaseValue) -> str:
@@ -57,13 +54,7 @@ def apply_case(text: str, case: CaseValue) -> str:
     if case == "lower":
         return text.lower()
     if case == "sentence":
-        # Cautious sentence case: uppercase only the first character, leave
-        # the rest unchanged (preserves acronyms/proper nouns), except a
-        # leading forced-lowercase token such as "dbt".
-        first, sep, rest = text.partition(" ")
-        if first.lower() in _FORCE_LOWERCASE:
-            return first.lower() + sep + rest
-        return text[:1].upper() + text[1:]
+        return sentence_case(text)
     if case == "title":
         return _engine.apply_case(active_language(), text, "title")
     if case == "slug":
@@ -114,7 +105,7 @@ def field_title(field: str, field_labels: Mapping[str, str]) -> str:
     """Text a surface paints for a field an author gave no surface-level label.
 
     The chart's authored ``field_labels`` entry, verbatim; else the tokenized
-    column name (``order_month`` → ``order month``) with no case transform.
+    column name (``order_month`` → ``Order month``), sentence-cased.
     """
     label = field_labels.get(field)
     return label if label is not None else slug_to_text(field)
@@ -127,6 +118,23 @@ def field_display_text(
     (legend titles, tooltip series rows). An authored label stays verbatim."""
     label = field_labels.get(field)
     return label if label is not None else apply_font_case(slug_to_text(field), font)
+
+
+def inline_derived_label(label: str) -> str:
+    """A derived (sentence-case) label read mid-sentence: ``Revenue`` in ``Total revenue``.
+
+    Only a plain capitalized first word is lowered, and only in languages whose
+    title style keeps ordinary words lowercase (English); acronyms, mixed-case
+    words and languages that capitalize nouns keep their spelling.
+    """
+    first = label.split(" ", 1)[0]
+    plain = first[:1].isupper() and first[1:].islower()
+    if (
+        plain
+        and _engine.message(active_language(), "case.title_style") == "en_small_words"
+    ):
+        return label[0].lower() + label[1:]
+    return label
 
 
 def inferred_display_name(

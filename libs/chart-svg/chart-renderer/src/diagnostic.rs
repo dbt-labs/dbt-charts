@@ -65,6 +65,22 @@ impl Diagnostic {
     }
 }
 
+/// Declines a shape the renderer does not draw. The text names the shape and
+/// ends in the ledger form, "... is not supported"; `refusal_inventory` ledgers
+/// every call, and any other error text must be allowlisted there as a payload
+/// or mirrored-production error.
+#[macro_export]
+macro_rules! refuse {
+    ($($arg:tt)*) => {{
+        let message = format!($($arg)*);
+        debug_assert!(
+            message.contains("not supported"),
+            "refusal outside the ledger form: {message}"
+        );
+        message
+    }};
+}
+
 /// Unit tests compare a refusal by its text.
 #[cfg(test)]
 impl Diagnostic {

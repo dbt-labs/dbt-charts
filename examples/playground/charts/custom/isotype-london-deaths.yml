@@ -36,7 +36,7 @@ charts:
     options:
       note: event
       symbol: cross
-      symbol_color: chrome.heading
+      symbol_color: chrome[10]
       out_of: 100
       backdrop_symbol: person
       backdrop_color: warning.solid

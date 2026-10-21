@@ -2927,9 +2927,11 @@ fn boxes_for_layout(
         // background-parity-lab`'s own corpus shape).
         "cols" => calculate_cols_boxes(inputs, content_width, available_height, ctx),
         "grid" => {
-            sizing::refuse_forced_rail_charts(inputs)?;
             let columns = layout.columns.unwrap_or(sizing::DEFAULT_GRID_COLUMNS);
-            calculate_grid_boxes(inputs, columns, content_width, f64::INFINITY, ctx)
+            let (boxes, overrides, mut fresh_render) =
+                calculate_grid_boxes(inputs, columns, content_width, f64::INFINITY, ctx)?;
+            fresh_render.extend(sizing::forced_fresh_renders(inputs, &boxes, ctx)?);
+            Ok((boxes, overrides, fresh_render))
         }
         // `_calculate_tabs_dimensions`'s own `tab_available = available_
         // height - tab_bar_height` then `min(ch, tab_available)`
@@ -5775,32 +5777,32 @@ mod nested_box_sidecar_tests {
         );
     }
 
-    /// A nested `grid` board holding a rail-concat chart the parent
-    /// row realigns refuses by name: the fresh render is only pinned for a
-    /// nested `rows` board. The gate must recognize a RailConcat chart with a
-    /// VISIBLE legend (`families::line::shape` picks `Shape::RailConcat` from
-    /// `show_rail && !y_on_right && !has_support_table`, whatever the legend says).
+    /// A rail-concat chart alone in a nested `grid` board that a parent cols row
+    /// forces is re-rendered there like one in a nested `rows` board, so the
+    /// probe-wrap disagreement regrows past the aligned height.
     #[test]
-    fn a_rail_chart_realigned_inside_a_nested_grid_board_refuses() {
+    fn a_rail_chart_realigned_inside_a_nested_grid_board_regrows_the_disagreement() {
         let fonts = real_fonts();
         let mut slope: serde_json::Value = serde_json::from_str(SLOPE_RESOLVED_JSON).unwrap();
         slope["legend"]["visible"] = serde_json::json!(true);
         slope["legend"]["position"] =
             serde_json::json!({"edge": "bottom", "align": "start", "overlay": false});
         let p = slope_in_nested_board_beside_tall_sibling(slope, "grid");
+        let (svg, _painted) = render_board(&p, &fonts).expect("board renders");
 
-        let err = render_board(&p, &fonts).expect_err("refuses rather than paint unrefreshed");
+        let slope_h = chart_height_attr(&svg, "slope");
+        let sibling_h = chart_height_attr(&svg, "tall_sibling");
         assert!(
-            err.contains("rail-concat chart realigned by a parent cols row inside a nested grid"),
-            "unexpected error: {err}"
+            slope_h - sibling_h >= 12.0,
+            "slope grows past the aligned height by the probe-wrap residual: \
+             slope={slope_h} sibling={sibling_h}: {svg}"
         );
     }
 
-    /// The gate reads `show_rail` alone: a right-axis chart with no endpoint
-    /// rail takes `Shape::Fit`, never `Shape::RailConcat`, so a nested grid
-    /// board does not refuse it.
+    /// A right-axis chart with no endpoint rail takes `Shape::Fit`, never
+    /// `Shape::RailConcat`, so a nested grid board paints it as it is.
     #[test]
-    fn a_right_axis_chart_without_a_rail_is_not_refused_inside_a_nested_grid_board() {
+    fn a_right_axis_chart_without_a_rail_paints_inside_a_nested_grid_board() {
         let fonts = real_fonts();
         let mut slope: serde_json::Value = serde_json::from_str(SLOPE_RESOLVED_JSON).unwrap();
         slope["style"]["axis_y"]["position"] = serde_json::json!("right");
@@ -5808,7 +5810,7 @@ mod nested_box_sidecar_tests {
         let p = slope_in_nested_board_beside_tall_sibling(slope, "grid");
 
         render_board(&p, &fonts)
-            .expect("a right-axis chart is Shape::Fit, not RailConcat — no refusal");
+            .expect("a right-axis chart is Shape::Fit, not RailConcat");
     }
 
     /// `layout_sizing.py::_align_grid_rows` (called from `_align_all_

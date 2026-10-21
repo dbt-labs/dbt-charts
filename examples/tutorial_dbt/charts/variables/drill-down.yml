@@ -58,4 +58,4 @@ charts:
     query: filtered_sales
     type: table
 rows:
-  - {'grid': {'columns': 24, 'items': [{'item': 'revenue_chart', 'width': 12}, {'item': 'orders_chart', 'width': 12}, {'item': 'sales_table', 'width': 24}]}}
+  - {'grid': {'items': [{'item': 'revenue_chart', 'width': 12}, {'item': 'orders_chart', 'width': 12}, {'item': 'sales_table', 'width': 24}]}}

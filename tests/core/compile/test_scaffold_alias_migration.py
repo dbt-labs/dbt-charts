@@ -1,7 +1,7 @@
 """Migration coverage for the retired scaffold aliases
 (dbt_charts.core.compile.migrations.versions.v0_11_0): `separator`,
 `fill-muted`, `spark-empty`, `placeholder` and `accent` on `dbt-grays` and
-`dbt-creams` respell to a ladder step or `info.solid-hover`.
+`dbt-creams` respell to a numbered step or `info.solid-hover`.
 """
 
 from __future__ import annotations
@@ -18,15 +18,15 @@ from dbt_charts.core.compile.migrations.migrations import (
 )
 
 _CASES = [
-    ("dbt-grays.separator", "dbt-grays.border"),
-    ("dbt-grays.fill-muted", "dbt-grays.grid"),
-    ("dbt-grays.spark-empty", "dbt-grays.grid-emphasis"),
-    ("dbt-grays.placeholder", "dbt-grays.muted"),
+    ("dbt-grays.separator", "dbt-grays.4"),
+    ("dbt-grays.fill-muted", "dbt-grays.3"),
+    ("dbt-grays.spark-empty", "dbt-grays.5"),
+    ("dbt-grays.placeholder", "dbt-grays.8"),
     ("dbt-grays.accent", "info.solid-hover"),
-    ("dbt-creams.separator", "dbt-creams.border"),
-    ("dbt-creams.fill-muted", "dbt-creams.grid"),
-    ("dbt-creams.spark-empty", "dbt-creams.grid-emphasis"),
-    ("dbt-creams.placeholder", "dbt-creams.muted"),
+    ("dbt-creams.separator", "dbt-creams.4"),
+    ("dbt-creams.fill-muted", "dbt-creams.3"),
+    ("dbt-creams.spark-empty", "dbt-creams.5"),
+    ("dbt-creams.placeholder", "dbt-creams.8"),
     ("dbt-creams.accent", "info.solid-hover"),
 ]
 
@@ -76,7 +76,7 @@ def test_a_retired_alias_in_a_nested_boards_chart_respells(old: str, new: str) -
 
 
 def test_a_ladder_step_is_left_alone() -> None:
-    mapping = _board("dbt-grays.border")
+    mapping = _board("dbt-grays.4")
 
     assert prepare_board_mapping(mapping) == mapping
 
@@ -116,7 +116,7 @@ def test_migrate_yaml_text_rewrites_the_authored_text_to_the_dev_boundary() -> N
         text, catalog=catalog, registry=registry, stop_target=catalog.dev.version
     )
 
-    assert "dbt-grays.border" in migrated
+    assert "dbt-grays.4" in migrated
     assert "separator" not in migrated
 
 
@@ -174,7 +174,7 @@ def test_every_color_field_of_the_board_model_has_a_respell_move() -> None:
         move.old_path[-1]
         for move in registry.moves
         if move.value_map is not None
-        and move.value_map.get("dbt-grays.separator") == "dbt-grays.border"
+        and move.value_map.get("dbt-grays.separator") == "dbt-grays.4"
     }
 
     assert color_fields - reached == set()

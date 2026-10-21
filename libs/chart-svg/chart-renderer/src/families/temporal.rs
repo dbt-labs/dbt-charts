@@ -107,9 +107,8 @@ impl<'a> AuthoredTimeFormat<'a> {
                 letter = chars.next();
             }
             if let Some(l) = letter.filter(|l| l.is_ascii_alphabetic() && !AUTHORED_DIRECTIVES.contains(*l)) {
-                return Err(format!(
-                    "{family}: authored time format {fmt:?} uses %{l}, which a temporal x axis does \
-                     not paint (supported directives: {})",
+                return Err(crate::refuse!(
+                    "{family}: authored time format {fmt:?} using %{l} is not supported on a temporal x axis (supported directives: {})",
                     AUTHORED_DIRECTIVES.chars().map(|d| format!("%{d}")).collect::<Vec<_>>().join(" ")
                 ));
             }
@@ -123,21 +122,11 @@ impl<'a> AuthoredTimeFormat<'a> {
     /// The text one tick paints: `portable_strftime` of the tick's date.
     /// d3 pads `%Y` to four digits where strftime does not, so a year before
     /// 1000 paints its `%Y` padded (`%-Y` bare, `%_Y` space-padded, `%0Y`
-    /// zero-padded); a year before 100 refuses (JavaScript's Date reads it as
-    /// 19xx).
-    pub fn text(self, year: i32, month: u8, day: u8) -> Result<String, String> {
-        // The real gap: Vega's timeunit transform yields NaN for a year below 100, so
-        // production draws no tick for it and plots its mark at x 0 (path broken, domain
-        // excluded); the "19xx" in the message is the ledger's identity, not the cause.
-        if year < 100 {
-            return Err(format!(
-                "authored time format {:?} on the year {year} is not supported (JavaScript's Date reads years 0-99 as 19xx)",
-                self.0
-            ));
-        }
+    /// zero-padded).
+    pub fn text(self, year: i32, month: u8, day: u8) -> String {
         let moment = Moment::midnight(year as u32, month.into(), day.into());
         if year >= 1000 {
-            return Ok(strftime(moment, self.0).expect("the spec was validated at parse"));
+            return strftime(moment, self.0).expect("the spec was validated at parse");
         }
         let mut spec = String::with_capacity(self.0.len() + 4);
         let mut chars = self.0.chars().peekable();
@@ -163,7 +152,7 @@ impl<'a> AuthoredTimeFormat<'a> {
                 None => spec.push('%'),
             }
         }
-        Ok(strftime(moment, &spec).expect("the spec was validated at parse"))
+        strftime(moment, &spec).expect("the spec was validated at parse")
     }
 }
 
@@ -209,7 +198,7 @@ pub fn axis_time_format<'a>(
 /// where production labels every tick through the format.
 pub fn refuse_authored_time_format(family: &str, labels_format: Option<&str>) -> Result<(), String> {
     match labels_format {
-        Some(fmt) if is_time_format(fmt) => Err(format!(
+        Some(fmt) if is_time_format(fmt) => Err(crate::refuse!(
             "{family}: an authored time `axis_x.labels.format` ({fmt:?}) on a temporal x is not \
              supported; production paints it as the label text"
         )),
@@ -355,7 +344,7 @@ pub fn part_band_texts(
     bands
         .into_iter()
         .map(|(label, (y, m, d))| match authored {
-            Some(format) => format.text(y, m, d),
+            Some(format) => Ok(format.text(y, m, d)),
             None => Ok(label),
         })
         .collect()
@@ -382,22 +371,22 @@ pub fn time_part_ticks(
     format: Option<AuthoredTimeFormat>,
 ) -> Result<Vec<PartTick>, String> {
     let (lo, hi) = domain;
-    let text = |at: f64| -> Result<String, String> {
+    let text = |at: f64| -> String {
         let (y, m, d) = civil_from_days(at.floor() as i64);
         match format {
             Some(f) => f.text(y, m, d),
-            None => Ok(part.tick_text(at)),
+            None => part.tick_text(at),
         }
     };
     if lo == hi {
-        return Ok(vec![PartTick { at: lo, frac: 0.5, text: text(lo)? }]);
+        return Ok(vec![PartTick { at: lo, frac: 0.5, text: text(lo) }]);
     }
     // Vega asks d3 for ten ticks when no `tickCount` reaches the axis.
     let count = authored.or_else(|| part.default_tick_count(plot_w)).unwrap_or(10);
     let count = part.min_step_days().map_or(count, |step| count.min(min_step_ticks(hi - lo, step)));
     utc_instants(lo, hi, count)
         .into_iter()
-        .map(|at| Ok(PartTick { at, frac: (at - lo) / (hi - lo), text: text(at)? }))
+        .map(|at| Ok(PartTick { at, frac: (at - lo) / (hi - lo), text: text(at) }))
         .collect()
 }
 
@@ -439,7 +428,7 @@ impl LabelUnit {
         };
         let Some((y, m, d)) = parse_iso_date(band) else { return Ok(band.to_string()) };
         match (authored, part) {
-            (Some(format), _) => format.text(y, m, d),
+            (Some(format), _) => Ok(format.text(y, m, d)),
             (None, Some(part)) => Ok(part.text(y, m, d, date_text_day(band).map_or(0, clock_hour))),
             (None, None) => Ok(band.to_string()),
         }
@@ -771,6 +760,13 @@ impl VegaType {
             VegaType::Nominal => "nominal",
         }
     }
+}
+
+/// Whether any row's `field` is a labeled bucket (`2024-Q1`) that production rewrites to its ISO start.
+pub(crate) fn has_labeled_bucket(rows: &[serde_json::Map<String, serde_json::Value>], field: &str) -> bool {
+    rows.iter().any(|row| {
+        row.get(field).and_then(serde_json::Value::as_str).is_some_and(|text| parse_iso_date(text).is_none() && parse_bucket_string(text).is_some())
+    })
 }
 
 pub fn infer_vega_type(rows: &[serde_json::Map<String, serde_json::Value>], field: &str) -> VegaType {
@@ -2553,16 +2549,16 @@ fn resolve_vega_bucketed(
 /// week-number arithmetic, and no corpus case authors `none` on weekly data.
 pub fn vl_default_format(y: i32, m: u8, d: u8, tu: TimeUnit) -> Result<String, String> {
     match tu {
-        TimeUnit::Year => Ok(format!("{y}")),
+        TimeUnit::Year => Ok(format!("{y:04}")),
         TimeUnit::YearQuarter => display_text::language::tr(
             "time.year_quarter",
             None,
-            &[("year", &y.to_string()), ("n", &((m - 1) / 3 + 1).to_string())],
+            &[("year", &format!("{y:04}")), ("n", &((m - 1) / 3 + 1).to_string())],
         ),
-        TimeUnit::YearMonth => Ok(format!("{} {y}", MONTH_ABBR[(m - 1) as usize])),
-        TimeUnit::YearMonthDate => Ok(format!("{} {d:02}, {y}", MONTH_ABBR[(m - 1) as usize])),
+        TimeUnit::YearMonth => Ok(format!("{} {y:04}", MONTH_ABBR[(m - 1) as usize])),
+        TimeUnit::YearMonthDate => Ok(format!("{} {d:02}, {y:04}", MONTH_ABBR[(m - 1) as usize])),
         TimeUnit::YearWeek => {
-            Err("line: labels.time_unit: none on weekly data is unmodeled (no ISO week arithmetic)".into())
+            Err(crate::refuse!("line: labels.time_unit: none on weekly data is not supported (no ISO week arithmetic)").into())
         }
     }
 }
@@ -2571,7 +2567,7 @@ pub fn vl_default_format(y: i32, m: u8, d: u8, tu: TimeUnit) -> Result<String, S
 /// the author's format, else the grain's own [`vl_default_format`].
 fn none_label_text(y: i32, m: u8, d: u8, tu: TimeUnit, authored: Option<AuthoredTimeFormat>) -> Result<String, String> {
     match authored {
-        Some(fmt) => fmt.text(y, m, d),
+        Some(fmt) => Ok(fmt.text(y, m, d)),
         None => vl_default_format(y, m, d, tu),
     }
 }
@@ -2646,10 +2642,10 @@ fn pinned_label_text(
     authored: Option<AuthoredTimeFormat>,
 ) -> Result<String, String> {
     if let Some(format) = authored {
-        return format.text(y, m, d);
+        return Ok(format.text(y, m, d));
     }
     let spec = match format_tu {
-        TimeUnit::Year => return Ok(y.to_string()),
+        TimeUnit::Year => return Ok(format!("{y:04}")),
         TimeUnit::YearQuarter => return Ok(format!("Q{}", (m - 1) / 3 + 1)),
         TimeUnit::YearMonth => "%b",
         TimeUnit::YearWeek => "W%V",
@@ -2757,8 +2753,8 @@ pub fn resolve_vega_x_labels(
     // `data_tu`'s vocabulary instead of refusing).
     if let Some(s) = authored_label_tu_str {
         if s != "auto" && parse_authored_time_unit(s).is_none() {
-            return Err(format!(
-                "line: axis_x.labels.time_unit {s:?} (a time-part grain) is unmodeled on the Vega arms"
+            return Err(crate::refuse!(
+                "line: axis_x.labels.time_unit {s:?} (a time-part grain) is not supported on the Vega arms"
             ));
         }
     }
@@ -2833,24 +2829,24 @@ pub(crate) const MONTH_ABBR: [&str; 12] = [
 pub fn tooltip_header_date(y: i32, m: u8, d: u8, tu: Option<TimeUnit>) -> Result<String, String> {
     let mon = |m: u8| MONTH_ABBR[(m - 1) as usize];
     Ok(match tu {
-        Some(TimeUnit::Year) => format!("{y}"),
+        Some(TimeUnit::Year) => format!("{y:04}"),
         Some(TimeUnit::YearQuarter) => display_text::language::tr(
             "time.quarter_year",
             None,
-            &[("year", &y.to_string()), ("n", &((m - 1) / 3 + 1).to_string())],
+            &[("year", &format!("{y:04}")), ("n", &((m - 1) / 3 + 1).to_string())],
         )?,
-        Some(TimeUnit::YearMonth) => format!("{} {y}", mon(m)),
+        Some(TimeUnit::YearMonth) => format!("{} {y:04}", mon(m)),
         Some(TimeUnit::YearWeek) => {
             let (ey, em, ed) = civil_from_days(days_from_civil(y, m, d) + 6);
             if ey != y {
-                format!("{d} {} {y} \u{2013} {ed} {} {ey}", mon(m), mon(em))
+                format!("{d} {} {y:04} \u{2013} {ed} {} {ey:04}", mon(m), mon(em))
             } else if em != m {
-                format!("{d} {} \u{2013} {ed} {} {ey}", mon(m), mon(em))
+                format!("{d} {} \u{2013} {ed} {} {ey:04}", mon(m), mon(em))
             } else {
-                format!("{d}\u{2013}{ed} {} {ey}", mon(em))
+                format!("{d}\u{2013}{ed} {} {ey:04}", mon(em))
             }
         }
-        Some(TimeUnit::YearMonthDate) | None => format!("{d} {} {y}", mon(m)),
+        Some(TimeUnit::YearMonthDate) | None => format!("{d} {} {y:04}", mon(m)),
     })
 }
 
@@ -2969,7 +2965,7 @@ fn label_rows(
     authored: Option<AuthoredTimeFormat>,
 ) -> Result<(String, String), String> {
     match authored {
-        Some(format) => Ok((format.text(year, month, day)?, String::new())),
+        Some(format) => Ok((format.text(year, month, day), String::new())),
         None => format_label(year, month, day, label_tu, is_first, fiscal_start),
     }
 }
@@ -2997,7 +2993,7 @@ fn format_label(
     let year2 = year % 100;
 
     Ok(match label_tu {
-        TimeUnit::Year => (format!("{year}"), String::new()),
+        TimeUnit::Year => (format!("{year:04}"), String::new()),
 
         TimeUnit::YearQuarter => {
             // Mirrors `_quarter_label`'s `_fiscal_month_expr`: shift the
@@ -3007,7 +3003,7 @@ fn format_label(
             let q = fiscal_month / 3 + 1;
             let row1 = display_text::language::tr("time.quarter", None, &[("n", &q.to_string())])?;
             let row2 = if is_first || is_year_start {
-                format!("{year}")
+                format!("{year:04}")
             } else {
                 String::new()
             };
@@ -3017,7 +3013,7 @@ fn format_label(
         TimeUnit::YearMonth => {
             let row1 = MONTH_ABBR[(month - 1) as usize].to_string();
             let row2 = if is_first || is_year_start {
-                format!("{year}")
+                format!("{year:04}")
             } else {
                 String::new()
             };
@@ -3417,6 +3413,12 @@ pub fn utc_fraction_at(date: &str, extent: (f64, f64)) -> Option<f64> {
     Some((date_text_day(date)? - extent.0) / (extent.1 - extent.0))
 }
 
+/// A date Vega's `timeunit` transform reads as NaN: JavaScript's Date constructor maps a year
+/// 0-99 to 1900-1999, which the transform's floor cannot place on the date's own bucket.
+pub fn timeunit_nan(date: &str) -> bool {
+    parse_iso_date(date).is_some_and(|(year, _, _)| year < 100)
+}
+
 /// Floors an ISO date to its containing week's Sunday — d3's
 /// `utcSunday.floor`, the transform Vega-Lite's `utcyearweek` timeUnit
 /// applies to every value under that encoding (both the scale domain and
@@ -3713,7 +3715,7 @@ fn d3_multi_format(y: i32, m: u8, d: u8) -> String {
     } else if m != 1 {
         MONTH_FULL[(m - 1) as usize].to_string()
     } else {
-        format!("{y}")
+        format!("{y:04}")
     }
 }
 
@@ -3752,18 +3754,16 @@ pub fn authored_tick_interval(
         None => 1,
         Some(s) if s.is_finite() && s >= 1.0 && s.fract() == 0.0 => s as i64,
         Some(s) => {
-            return Err(format!(
-                "axis_x.ticks.step {s} is not a whole number of at least 1 — \
+            return Err(crate::refuse!(
+                "axis_x.ticks.step {s}, not a whole number of at least 1, is not supported: \
                  d3's interval.every floors it and returns no interval below 1"
             ))
         }
     };
     match parse_authored_time_unit(time_unit) {
         Some(unit) => Ok(tick_interval_entry(unit).0(step)),
-        None => Err(format!(
-            "axis_x.ticks.time_unit {time_unit:?} has no step-anchored cadence — production \
-             (type_inference.py:1036) raises for all but year, yearquarter, yearmonth, \
-             yearweek and yearmonthdate"
+        None => Err(crate::refuse!(
+            "axis_x.ticks.time_unit {time_unit:?} without a step-anchored cadence is not supported: production (type_inference.py:1036) raises for all but year, yearquarter, yearmonth, yearweek and yearmonthdate"
         )),
     }
 }
@@ -3976,7 +3976,7 @@ pub fn authored_tick_count(count: f64) -> Result<usize, String> {
     if count.is_finite() && count >= 1.0 && count.fract() == 0.0 {
         Ok(count as usize)
     } else {
-        Err(format!("axis_x.ticks.count {count} is not a whole number of at least 1"))
+        Err(crate::refuse!("axis_x.ticks.count {count}, not a whole number of at least 1, is not supported"))
     }
 }
 
@@ -3999,7 +3999,7 @@ pub fn bare_temporal_ticks(
     let tick = |at: f64, index: usize, frac: f64| -> Result<BareTick, String> {
         let (y, m, d) = civil_from_days(at.floor() as i64);
         let (text, row2) = match (format, subday) {
-            (Some(f), _) => (f.text(y, m, d)?, None),
+            (Some(f), _) => (f.text(y, m, d), None),
             (None, Some(plan)) => match plan.label(at, index)? {
                 Some((text, row2)) => (text, row2),
                 None => (multi_format_at(at)?, None),
@@ -6240,7 +6240,7 @@ mod tests {
             ("%Y-%m-%d (week %U/%W/%V, day %j)", "2024-03-05 (week 09/10/10, day 065)"),
             ("%e|%-m|%_d|%%", " 5|3| 5|%"),
         ] {
-            assert_eq!(authored(fmt).unwrap().text(2024, 3, 5).unwrap(), want, "{fmt}");
+            assert_eq!(authored(fmt).unwrap().text(2024, 3, 5), want, "{fmt}");
         }
     }
 
@@ -6261,7 +6261,7 @@ mod tests {
             let fmt = format!("%b %{letter}");
             let err = AuthoredTimeFormat::parse("bar", Some(&fmt)).expect_err(&fmt);
             assert!(err.starts_with("bar: authored time format"), "{err}");
-            assert!(err.contains(&format!("uses %{letter},")), "{fmt}: {err}");
+            assert!(err.contains(&format!("using %{letter} is not supported")), "{fmt}: {err}");
         }
         for (fmt, named) in [("%-b", "%-b"), ("%Y%", "trailing")] {
             let err = AuthoredTimeFormat::parse("bar", Some(fmt)).expect_err(fmt);
@@ -6271,12 +6271,12 @@ mod tests {
 
     #[test]
     fn a_year_before_1000_paints_padded_to_four_digits_as_d3_does() {
-        assert_eq!(authored("%Y").unwrap().text(100, 1, 1).unwrap(), "0100");
-        assert!(authored("%Y").unwrap().text(99, 1, 1).is_err());
-        assert_eq!(authored("%Y-%m").unwrap().text(999, 3, 1).unwrap(), "0999-03");
-        assert_eq!(authored("%-Y").unwrap().text(999, 1, 1).unwrap(), "999");
-        assert_eq!(authored("%_Y").unwrap().text(999, 1, 1).unwrap(), " 999");
-        assert_eq!(authored("%0Y-%m").unwrap().text(999, 3, 1).unwrap(), "0999-03");
+        assert_eq!(authored("%Y").unwrap().text(100, 1, 1), "0100");
+        assert_eq!(authored("%Y").unwrap().text(99, 1, 1), "0099");
+        assert_eq!(authored("%Y-%m").unwrap().text(999, 3, 1), "0999-03");
+        assert_eq!(authored("%-Y").unwrap().text(999, 1, 1), "999");
+        assert_eq!(authored("%_Y").unwrap().text(999, 1, 1), " 999");
+        assert_eq!(authored("%0Y-%m").unwrap().text(999, 3, 1), "0999-03");
     }
 
     #[test]

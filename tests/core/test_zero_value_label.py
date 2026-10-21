@@ -166,10 +166,10 @@ def _categorical_axis_order(svg: str, axis: str) -> list[str]:
 def test_vertical_bar_zero_gets_direct_label_no_mark(width: int) -> None:
     svg = _render_svg(_bar_board(orientation="vertical", width=width), _ROWS_ZERO_NULL)
     bars = dict(_bar_marks(svg))
-    zero_bar = next(d for label, d in bars.items() if "v: 0" in label)
+    zero_bar = next(d for label, d in bars.items() if "V: 0" in label)
     assert _is_zero_extent(zero_bar), zero_bar
-    assert any("v: 12" in label for label in bars), bars
-    assert any("v: 7" in label for label in bars), bars
+    assert any("V: 12" in label for label in bars), bars
+    assert any("V: 7" in label for label in bars), bars
     labels = _value_label_texts(svg)
     assert labels == ["0"], labels
 
@@ -192,10 +192,10 @@ def test_horizontal_bar_zero_gets_direct_label_no_mark(width: int) -> None:
         _bar_board(orientation="horizontal", width=width), _ROWS_ZERO_NULL
     )
     bars = dict(_bar_marks(svg))
-    zero_bar = next(d for label, d in bars.items() if "v: 0" in label)
+    zero_bar = next(d for label, d in bars.items() if "V: 0" in label)
     assert _is_zero_extent(zero_bar), zero_bar
-    assert any("v: 12" in label for label in bars), bars
-    assert any("v: 7" in label for label in bars), bars
+    assert any("V: 12" in label for label in bars), bars
+    assert any("V: 7" in label for label in bars), bars
     labels = _value_label_texts(svg)
     assert labels == ["0"], labels
 
@@ -339,8 +339,8 @@ def test_negative_value_alongside_zero() -> None:
     svg = _render_svg(_bar_board(orientation="vertical", width=600), rows)
     bars = dict(_bar_marks(svg))
     assert any(label.startswith("⁡A;") for label in bars), bars
-    assert any("v: 7" in label for label in bars), bars
-    zero_bar = next(d for label, d in bars.items() if "v: 0" in label)
+    assert any("V: 7" in label for label in bars), bars
+    zero_bar = next(d for label, d in bars.items() if "V: 0" in label)
     assert _is_zero_extent(zero_bar), zero_bar
     assert _value_label_texts(svg) == ["0"]
 

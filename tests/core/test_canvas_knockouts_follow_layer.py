@@ -212,10 +212,10 @@ def test_self_token_walk_leaves_the_roles_table_alone() -> None:
 
 def test_board_roles_keep_their_token_addresses() -> None:
     result = compile_board(
-        f"extends: clarity\nstyle:\n  roles:\n    myink: chrome.heading\n{_ROWS}"
+        f"extends: clarity\nstyle:\n  roles:\n    myink: chrome[10]\n{_ROWS}"
     )
     assert result.success, result.errors
-    assert result.board.chart_style_context.roles["myink"] == "chrome.heading"
+    assert result.board.chart_style_context.roles["myink"] == "chrome[10]"
 
 
 @pytest.mark.parametrize("text", ["U.S", "v1.2", "orders.html", "example.com"])

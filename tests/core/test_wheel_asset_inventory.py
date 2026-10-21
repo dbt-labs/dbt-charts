@@ -145,11 +145,11 @@ EXPECTED_ASSETS: list[tuple[str, str]] = [
         "dbt_charts/core/render/fonts/NOTO_EMOJI_LICENSE.txt",
         "Noto Emoji SIL OFL license",
     ),
-    # Canonical YAML syntax reference — sliced by `dct docs` at runtime, bundled
-    # into agent system prompts, returned verbatim by the MCP board-schema verb.
+    # Canonical YAML syntax reference — inlined into authoring prompts and the
+    # Playground assistant.
     (
         "dbt_charts/DBT_CHARTS_SYNTAX.md",
-        "canonical YAML syntax reference; the single source of truth for docs / agents / MCP",
+        "canonical YAML syntax reference; the single source of truth for the authoring prompts",
     ),
     # `dct init` templates — read at runtime when scaffolding a new project.
     (
@@ -157,7 +157,6 @@ EXPECTED_ASSETS: list[tuple[str, str]] = [
         "dct init project config template",
     ),
     ("dbt_charts/agent_api/_init_templates/README.md", "dct init project README"),
-    ("dbt_charts/agent_api/_init_templates/charts/guide.yml", "dct init guide board"),
     (
         "dbt_charts/agent_api/_init_templates/charts/meta.yml",
         "dct init directory-defaults template",
@@ -213,7 +212,7 @@ EXPECTED_ASSETS: list[tuple[str, str]] = [
     ),
     # AI surface — the agent loop and MCP load these at runtime.
     (
-        "dbt_charts/ai/skills/board-build/SKILL.md",
+        "dbt_charts/ai/skills/chart/SKILL.md",
         "anchor AI skill — proves dbt-charts/ai/skills/ tree is shipped",
     ),
     (

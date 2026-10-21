@@ -27,7 +27,6 @@ from dbt_charts.agent_api.boards import CompiledBoard, get_board
 from dbt_charts.ai.context import DbtChartsAIContext
 from dbt_charts.ai.mcp.server import (
     _BASE_RESOURCES,
-    _docs_topic_resources,
     _is_domain_error,
     _read_resource_content,
     create_server,
@@ -207,10 +206,10 @@ class TestDesignGuides:
     @pytest.mark.parametrize(
         ("slug", "must_contain_exact", "must_contain_lower"),
         [
-            ("board-design", ("Dashboard Design", "Chart Selection"), ("kpi",)),
+            ("chart", ("dbt Charts", "## Board"), ("kpi",)),
             ("report-design", ("Report Design", "Executive Summary"), ("narrative",)),
         ],
-        ids=["board-design", "report-design"],
+        ids=["chart", "report-design"],
     )
     def test_design_guide_loads(
         self,
@@ -517,8 +516,7 @@ class TestThinShimLOCGuards:
     @pytest.mark.parametrize(
         ("rel", "limit"),
         [
-            # server.py limit raised 265→275 after adding dct://docs/reference,
-            # then 275→290 after wrapping tool returns in CallToolResult with isError,
+            # server.py limit raised 265→290 after wrapping tool returns in CallToolResult with isError,
             # then 290→300 after adding list_diagnostic_codes + get_diagnostic_code MCP
             # tools (originally two warning-only tools, generalized to cover both
             # levels), then 300→302 after reading DCT_CACHE_PATH via
@@ -682,8 +680,7 @@ class TestMCPInputSchemaShape:
 
 
 # ---------------------------------------------------------------------------
-# FR-004: Every _BASE_RESOURCES URI + every _docs_topic_resources() URI
-#         + both ResourceTemplate URIs read at least once.
+# FR-004: Every _BASE_RESOURCES URI + the ResourceTemplate URI read at least once.
 # FR-005 / FR-013: Unknown-URI error paths return schematic envelope.
 # FR-015: parametrize over live tables so renames cause test failures.
 # ---------------------------------------------------------------------------
@@ -720,47 +717,6 @@ class TestBaseResourceCoverage:
         assert "dct://boards" in uris
 
 
-class TestDocsTopicResourceCoverage:
-    """FR-004 — every _docs_topic_resources() URI reads successfully.
-
-    FR-011: sort by URI so test IDs are deterministic across platforms.
-    """
-
-    @pytest.mark.parametrize(
-        "uri",
-        [
-            pytest.param(uri, id=uri.removeprefix("dct://docs/"))
-            for uri in sorted(uri for uri, *_ in _docs_topic_resources())
-        ],
-    )
-    def test_docs_topic_returns_content(self, uri: str, make_context) -> None:
-        ctx = make_context()
-        result = _read_resource_content(uri, context=ctx)
-        assert isinstance(result, str) and result
-        # Must not be a JSON error envelope (mirroring TestResourceTemplates pattern).
-        assert not result.startswith('{"error"'), (
-            f"{uri} returned an error envelope: {result[:200]}"
-        )
-
-    def test_at_least_one_docs_topic_exists(self) -> None:
-        """Guard: if DBT_CHARTS_SYNTAX.md has no H2s, the parametrize yields 0 cases."""
-        assert len(_docs_topic_resources()) >= 1
-
-    def test_advertised_uris_are_unique(self) -> None:
-        """The topic index carries the generated references too — one URI, one entry."""
-        uris = [uri for uri, *_ in _BASE_RESOURCES + _docs_topic_resources()]
-        assert len(uris) == len(set(uris))
-
-    def test_docs_all_resource_matches_the_docs_verb(self, make_context) -> None:
-        from dbt_charts.agent_api.docs import docs as docs_verb
-
-        topic = docs_verb(topic="all").topic
-        assert topic is not None
-        assert _read_resource_content("dct://docs/all", context=make_context()) == (
-            topic.content
-        )
-
-
 class TestResourceTemplates:
     """FR-004 — both ResourceTemplate URIs are advertised and readable."""
 
@@ -770,7 +726,7 @@ class TestResourceTemplates:
         templates = result.root.resourceTemplates
         uri_templates = {t.uriTemplate for t in templates}
         assert "dct://board/{path}" in uri_templates
-        assert "dct://docs/{topic}" in uri_templates
+        assert not any(u.startswith("dct://docs/") for u in uri_templates)
 
     def test_dashboard_template_readable_with_fixture(self, tmp_path: Path) -> None:
         """dct://board/{path} resolves a real board from single-query-board."""
@@ -784,19 +740,11 @@ class TestResourceTemplates:
         payload = json.loads(result)
         assert payload.get("success") is True
 
-    def test_docs_template_readable_with_known_topic(self, make_context) -> None:
-        """dct://docs/{topic} resolves a known topic slug."""
-        ctx = make_context()
-        result = _read_resource_content("dct://docs/board", context=ctx)
-        assert isinstance(result, str) and result
-        # Not JSON — the content itself is markdown, not an error envelope.
-        assert not result.startswith('{"error"')
-
 
 class TestUnknownResourceErrorEnvelope:
     """FR-005 / FR-013 — unknown URIs return error envelopes with schematic assertions.
 
-    Fallback URIs (unknown scheme, unknown docs topic, unknown guide) return
+    Fallback URIs (unknown scheme, retired docs URI, unknown guide) return
     {"error": <str>}.  Dashboard URIs that resolve but fail return the structured
     Pydantic shape {"success": False, "errors": [...]}.
     """
@@ -805,7 +753,7 @@ class TestUnknownResourceErrorEnvelope:
         "uri",
         [
             pytest.param("dct://nonsense", id="unknown_scheme"),
-            pytest.param("dct://docs/unknown-topic-xyz", id="unknown_docs_topic"),
+            pytest.param("dct://docs/board", id="retired_docs_uri"),
             pytest.param("dct://guide/unknown-guide-xyz", id="unknown_guide"),
         ],
     )
@@ -952,7 +900,7 @@ class TestRunServerOwnsProjectSessionWithRefresh:
 
         context = DbtChartsAIContext(project_session=_SpyProjectSession())  # type: ignore[arg-type]
 
-        result = dispatch_tool_call("docs", {"topic": "board"}, context=context)
+        result = dispatch_tool_call("list_skills", {}, context=context)
 
         assert refresh_calls == ["refresh"], (
             f"dispatch_tool_call must call project_session.refresh() exactly once "

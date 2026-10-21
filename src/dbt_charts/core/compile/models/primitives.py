@@ -1633,7 +1633,7 @@ class StaticGradientColorStyle(BaseModel):
 
     static: Annotated[str | None, Color(), Absent("no explicit color")] = Field(
         default=None,
-        description="One color for all marks: a hex, CSS name, `rgb()`/`oklch()` or theme token (`category[1]`, `positive.solid`, `dbt-grays.muted`). A token follows the theme, a hex stays put.",
+        description="One color for all marks: a hex, CSS name, `rgb()`/`oklch()` or theme token (`category[1]`, `positive.solid`, `dbt-grays.8`). A token follows the theme, a hex stays put.",
     )
     gradient: Annotated[ScaleTargetConfig | None, Absent("no gradient")] = Field(
         default=None,

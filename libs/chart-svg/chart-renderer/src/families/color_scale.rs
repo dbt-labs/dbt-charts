@@ -2,7 +2,7 @@
 //! numeric, date or authored-gradient column (Vega's `linear` and `time`
 //! scales with a color range), shared by every family that paints one.
 
-use d3rs::color::{interpolate_hcl, interpolate_rgb_piecewise, rgb_text, Rgb};
+use d3rs::color::{byte, interpolate_hcl_color, interpolate_rgb_piecewise, rgb_text, Color, Rgb};
 use d3rs::vega_schemes::BLUES;
 
 use crate::common::{FormatSlot, ScaleTarget};
@@ -18,15 +18,15 @@ enum Ramp {
     /// A scheme's control colors, mixed piecewise in sRGB along the unit
     /// position (`blues`, the default `ramp`, and every continuous scheme).
     Rgb(&'static [Rgb]),
-    /// A time scale's two-value domain: `blues` sampled at a third and two
+    /// A time scale's two-value domain: a scheme sampled at a third and two
     /// thirds (`quantize(scheme, 2)`), mixed in HCL.
-    DateBlues,
+    DatePair(&'static [Rgb]),
     /// An authored palette, its stops mixed piecewise in HCL (Vega-Lite's
     /// default `interpolate` for a color range list), evenly over the domain.
-    Stops(Vec<Rgb>),
+    Stops(Vec<Color>),
     /// A diverging palette: `colors[i]` sits at `domain[i]`, mixed in HCL and
     /// clamped to the domain's ends.
-    Diverging { domain: Vec<f64>, colors: Vec<Rgb> },
+    Diverging { domain: Vec<f64>, colors: Vec<Color> },
     /// A scheme under an asymmetric pivot: the domain spans the ramp's
     /// positions `extent`, clamped (`scheme.extent`).
     Windowed { ramp: &'static [Rgb], extent: (f64, f64) },
@@ -42,20 +42,23 @@ pub(crate) struct ContinuousColor {
     pub(crate) lo: f64,
     pub(crate) hi: f64,
     dates: bool,
+    /// The diverging scale's pivot; Vega labels it on the legend beside the ticks.
+    pub(crate) pivot: Option<f64>,
 }
 
 impl ContinuousColor {
     pub(crate) fn blues(lo: f64, hi: f64) -> Self {
-        Self { ramp: Ramp::Rgb(&BLUES), lo, hi, dates: false }
+        Self { ramp: Ramp::Rgb(&BLUES), lo, hi, dates: false, pivot: None }
     }
 
-    pub(crate) fn dates(lo: f64, hi: f64) -> Self {
-        Self { ramp: Ramp::DateBlues, lo, hi, dates: true }
+    /// A time scale over `[lo, hi]` days, colored from `scheme`.
+    pub(crate) fn dates(scheme: &'static [Rgb], lo: f64, hi: f64) -> Self {
+        Self { ramp: Ramp::DatePair(scheme), lo, hi, dates: true, pivot: None }
     }
 
     #[cfg(test)]
     pub(crate) fn stops(colors: Vec<Rgb>, lo: f64, hi: f64) -> Self {
-        Self { ramp: Ramp::Stops(colors), lo, hi, dates: false }
+        Self { ramp: Ramp::Stops(colors.into_iter().map(Color::opaque).collect()), lo, hi, dates: false, pivot: None }
     }
 
     /// A gradient-mode channel's scale over `kept`, the extent of the values
@@ -85,20 +88,20 @@ impl ContinuousColor {
                         }
                         Palette::Ramp(ramp) => Ramp::Halved { ramp, pivot, hcl: false },
                         // A categorical array is no ramp to window, so it runs its colors evenly over the domain.
-                        Palette::Array(stops) if asymmetric => Ramp::Stops(stops.to_vec()),
+                        Palette::Array(stops) if asymmetric => Ramp::Stops(stops.iter().copied().map(Color::opaque).collect()),
                         Palette::Array(colors) => Ramp::Halved { ramp: colors, pivot, hcl: true },
                     };
-                    return Ok(Self { ramp, lo, hi, dates: false });
+                    return Ok(Self { ramp, lo, hi, dates: false, pivot: Some(pivot) });
                 }
             }
         }
         let (lo, hi) = (scale.min.unwrap_or(kept.0), scale.max.unwrap_or(kept.1));
         let ramp = match palette {
-            Palette::Stops(stops) => Ramp::Stops(stops),
+            Palette::Stops(stops) => Ramp::Stops(stops.into_iter().map(|stop| stop.vega).collect()),
             Palette::Ramp(ramp) => Ramp::Rgb(ramp),
-            Palette::Array(colors) => Ramp::Stops(colors.to_vec()),
+            Palette::Array(colors) => Ramp::Stops(colors.iter().copied().map(Color::opaque).collect()),
         };
-        Ok(Self { ramp, lo, hi, dates: false })
+        Ok(Self { ramp, lo, hi, dates: false, pivot: None })
     }
 
     /// The color at `v`, printed the way d3 formats an `rgb()`. A one-value
@@ -106,7 +109,7 @@ impl ContinuousColor {
     /// Whether the scale gives a mark a color: Vega's interpolator over a
     /// one-color range yields none, so production's chart paints no marks.
     pub(crate) fn paints(&self) -> bool {
-        !matches!(&self.ramp, Ramp::Stops(colors) if colors.len() < 2)
+        !matches!(&self.ramp, Ramp::Stops(colors) if colors.len() == 1)
     }
 
     pub(crate) fn fill(&self, v: f64) -> String {
@@ -114,14 +117,14 @@ impl ContinuousColor {
             Ramp::Diverging { domain, colors } => {
                 // d3 pairs a one-point domain with no second stop, so every value takes the lone color.
                 if domain.len() == 1 {
-                    return rgb_text(colors[0]);
+                    return color_text(colors[0]);
                 }
                 let v = v.clamp(self.lo, self.hi);
                 let i = domain.partition_point(|&x| x <= v).saturating_sub(1).min(domain.len() - 2);
                 // d3 maps a zero-width segment to its middle.
                 let span = domain[i + 1] - domain[i];
                 let t = if span == 0.0 { 0.5 } else { (v - domain[i]) / span };
-                rgb_text(interpolate_hcl(colors[i], colors[i + 1], t))
+                color_text(interpolate_hcl_color(colors[i], colors[i + 1], t))
             }
             Ramp::Windowed { ramp, extent: (a, b) } => {
                 let t = unit_position(v.clamp(self.lo, self.hi), self.lo, self.hi);
@@ -133,7 +136,11 @@ impl ContinuousColor {
                 let arm = |width: f64| if width == 0.0 { 0.0 } else { 0.5 / width };
                 let k = if v < *pivot { arm(pivot - self.lo) } else { arm(self.hi - pivot) };
                 let t = 0.5 + (v - pivot) * k;
-                rgb_text(if *hcl { piecewise_hcl(ramp, t) } else { interpolate_rgb_piecewise(ramp, t) })
+                if *hcl {
+                    color_text(piecewise_hcl(&ramp.iter().copied().map(Color::opaque).collect::<Vec<_>>(), t))
+                } else {
+                    rgb_text(interpolate_rgb_piecewise(ramp, t))
+                }
             }
             _ => self.fill_at(unit_position(v, self.lo, self.hi)),
         }
@@ -147,12 +154,12 @@ impl ContinuousColor {
             assert!(self.lo == self.hi, "a pivoted scale is positioned by value, never by fraction");
             return self.fill(self.lo);
         }
-        rgb_text(match &self.ramp {
-            Ramp::Rgb(colors) => interpolate_rgb_piecewise(colors, t),
-            Ramp::DateBlues => d3rs::color::quantized_pair_hcl(&BLUES, t),
-            Ramp::Stops(colors) => piecewise_hcl(colors, t),
+        match &self.ramp {
+            Ramp::Rgb(colors) => rgb_text(interpolate_rgb_piecewise(colors, t)),
+            Ramp::DatePair(scheme) => rgb_text(d3rs::color::quantized_pair_hcl(scheme, t)),
+            Ramp::Stops(colors) => color_text(piecewise_hcl(colors, t)),
             Ramp::Diverging { .. } | Ramp::Windowed { .. } | Ramp::Halved { .. } => unreachable!("handled above"),
-        })
+        }
     }
 
     /// The values a gradient legend `length` px long labels, with their text:
@@ -168,23 +175,22 @@ impl ContinuousColor {
     ) -> Result<(Vec<f64>, Vec<String>), String> {
         let count = gradient_tick_count(length);
         if self.dates {
-            let values = gradient_labeled_values(crate::families::temporal::utc_instants(self.lo, self.hi, count), self.lo, self.hi);
+            let values = crate::families::heatmap::date_legend_ticks(self.lo, self.hi, count, authored)?;
             let labels = values.iter().map(|&d| crate::families::heatmap::legend_date_label(d)).collect::<Result<_, _>>()?;
             return Ok((values, labels));
         }
         let values = match authored {
             // An authored `legend.values` replaces the ladder, each token read as
-            // the number d3's scale coerces it to.
-            Some(tokens) => tokens
-                .iter()
-                .map(|t| t.trim().parse::<f64>().map_err(|_| format!("legend.values entry {t:?} is not a number")))
-                .collect::<Result<Vec<_>, _>>()?,
+            // the number d3's scale coerces it to; a non-number is `NaN`, which
+            // Vega labels `NaN` at the bar's origin.
+            Some(tokens) => tokens.iter().map(|t| crate::common::js_string_to_number(t).unwrap_or(f64::NAN)).collect(),
             None => gradient_labeled_values(d3rs::ticks::d3_ticks(self.lo, self.hi, count), self.lo, self.hi),
         };
         let precision = tick_precision(d3rs::ticks::d3_tick_step(self.lo, self.hi, count));
         let labels = values
             .iter()
             .map(|&v| match format {
+                _ if v.is_nan() => Ok("NaN".to_string()),
                 Some(format) => format.paint_tick(v),
                 None => crate::number_locale::d3_format(&format!(",.{precision}f"), v),
             })
@@ -232,7 +238,10 @@ pub(crate) fn legend_format_spec(format: &FormatSlot) -> Option<&str> {
 /// JavaScript's `String(number)`: Rust's shortest round-trip digits, spelled in
 /// exponent form past `1e21` and below `1e-6`, where JavaScript switches.
 pub(crate) fn js_number_string(v: f64) -> String {
-    if v == 0.0 || (1e-6..1e21).contains(&v.abs()) {
+    if v == 0.0 {
+        return "0".to_string();
+    }
+    if (1e-6..1e21).contains(&v.abs()) {
         return format!("{v}");
     }
     let spelled = format!("{v:e}");
@@ -242,26 +251,93 @@ pub(crate) fn js_number_string(v: f64) -> String {
     }
 }
 
-/// `d3.piecewise(d3.interpolateHcl, colors)(t)`.
-fn piecewise_hcl(colors: &[Rgb], t: f64) -> Rgb {
-    // A one-color ramp has no segment to mix; the scale reports it unpaintable.
-    if colors.len() == 1 {
-        return colors[0];
+/// `d3.piecewise(d3.interpolateHcl, colors)(t)`. An empty range has nothing to
+/// mix: Vega paints it black.
+fn piecewise_hcl(colors: &[Color], t: f64) -> Color {
+    match colors {
+        [] => Color::opaque((0, 0, 0)),
+        // A one-color ramp has no segment to mix; the scale reports it unpaintable.
+        [only] => *only,
+        _ => {
+            let n = (colors.len() - 1) as f64;
+            let scaled = t * n;
+            let i = scaled.floor().clamp(0.0, n - 1.0) as usize;
+            interpolate_hcl_color(colors[i], colors[i + 1], scaled - i as f64)
+        }
     }
-    let n = (colors.len() - 1) as f64;
-    let scaled = t * n;
-    let i = scaled.floor().clamp(0.0, n - 1.0) as usize;
-    interpolate_hcl(colors[i], colors[i + 1], scaled - i as f64)
 }
 
+/// d3's `formatRgb`: `rgb(r, g, b)`, or `rgba(r, g, b, a)` under a partial
+/// opacity, each channel rounded and clamped to a byte.
+fn color_text(c: Color) -> String {
+    let alpha = if c.a.is_nan() { 1.0 } else { c.a.clamp(0.0, 1.0) };
+    let (r, g, b) = (byte(c.r), byte(c.g), byte(c.b));
+    if alpha == 1.0 {
+        format!("rgb({r}, {g}, {b})")
+    } else {
+        format!("rgba({r}, {g}, {b}, {})", js_number_string(alpha))
+    }
+}
 
 /// What a gradient channel's `palette` names: color stops (a named palette's
 /// baked ones, or the authored list), a continuous Vega scheme, or a
 /// categorical one.
 enum Palette {
-    Stops(Vec<Rgb>),
+    Stops(Vec<Stop>),
     Ramp(&'static [Rgb]),
     Array(&'static [Rgb]),
+}
+
+/// One authored palette stop: as Vega reads its text (`vega`, undefined when d3 cannot parse it, as
+/// for a space-separated `hsl()`), and as production's own parser reads it for the HCL blends it
+/// bakes (`python`).
+#[derive(Clone, Copy)]
+struct Stop {
+    vega: Color,
+    python: Option<Color>,
+}
+
+/// `colors.py::parse_css_color` over what d3-color does not read: `none`, and the CSS-4 function
+/// spellings (space-separated channels, `/ alpha`, a `%` alpha, a `deg` hue).
+fn python_color(text: &str) -> Option<Color> {
+    let lowered = text.trim().to_ascii_lowercase();
+    if lowered == "none" {
+        return d3rs::color::parse_color("transparent");
+    }
+    if let Some(color) = d3rs::color::parse_color(&lowered) {
+        return Some(color);
+    }
+    let (name, rest) = lowered.split_once('(')?;
+    let body = rest.strip_suffix(')')?;
+    if !matches!(name, "rgb" | "rgba" | "hsl" | "hsla") {
+        return None;
+    }
+    let (channels, slash_alpha) = match body.split_once('/') {
+        Some((channels, alpha)) => (channels.trim(), Some(alpha.trim())),
+        None => (body.trim(), None),
+    };
+    let mut tokens: Vec<&str> = if channels.contains(',') { channels.split(',').map(str::trim).collect() } else { channels.split_whitespace().collect() };
+    let alpha_token = match (slash_alpha, tokens.len()) {
+        (Some(alpha), 3) => alpha,
+        (None, 4) => tokens.pop().expect("four tokens"),
+        (None, 3) => "1",
+        _ => return None,
+    };
+    let alpha = match alpha_token.strip_suffix('%') {
+        Some(percent) => percent.trim().parse::<f64>().ok()? / 100.0,
+        None => alpha_token.parse::<f64>().ok()?,
+    }
+    .clamp(0.0, 1.0);
+    let [first, second, third] = tokens[..] else { return None };
+    if name.starts_with("rgb") {
+        let channel = |token: &str| match token.strip_suffix('%') {
+            Some(percent) => percent.trim().parse::<f64>().ok().map(|p| (p * 255.0 / 100.0).clamp(0.0, 255.0)),
+            None => token.parse::<f64>().ok().map(|v| v.clamp(0.0, 255.0)),
+        };
+        return Some(Color { r: channel(first)?, g: channel(second)?, b: channel(third)?, a: alpha });
+    }
+    let hue = first.strip_suffix("deg").unwrap_or(first).trim();
+    d3rs::color::parse_color(&format!("hsla({hue}, {second}, {third}, {alpha})"))
 }
 
 impl Palette {
@@ -279,14 +355,9 @@ impl Palette {
             }
             (None, other) => return Err(format!("gradient palette {other} is not a list of colors")),
         };
-        if texts.is_empty() {
-            return Err("gradient palette has no colors".into());
-        }
-        texts
-            .into_iter()
-            .map(|c| d3rs::color::parse_color(c).ok_or_else(|| format!("gradient palette color {c:?} is not a hex, rgb() or keyword color")))
-            .collect::<Result<_, _>>()
-            .map(Self::Stops)
+        Ok(Self::Stops(
+            texts.into_iter().map(|c| Stop { vega: d3rs::color::parse_color(c).unwrap_or(Color::UNDEFINED), python: python_color(c) }).collect(),
+        ))
     }
 }
 
@@ -316,22 +387,40 @@ fn diverging_bounds(scale: &ScaleTarget, all: Option<(f64, f64)>) -> Option<(f64
     raw_bounds(scale, all)
 }
 
+/// An HCL blend of two stops as production hands it to Vega (`interpolate_hcl`): a hex color
+/// when opaque, else `rgba(r, g, b, a)` with the linearly blended alpha rounded to four
+/// places; either way each channel is already a byte. An unreadable stop raises there.
+fn blended(a: Stop, b: Stop, t: f64) -> Result<Stop, String> {
+    let (Some(a), Some(b)) = (a.python, b.python) else {
+        return Err("gradient palette stop is not a readable color".to_string());
+    };
+    let mixed = interpolate_hcl_color(a, b, t);
+    let channels = (byte(mixed.r), byte(mixed.g), byte(mixed.b));
+    let color = if mixed.a >= 1.0 {
+        Color::opaque(channels)
+    } else {
+        let alpha: f64 = format!("{:.4}", mixed.a).parse().expect("a formatted float parses");
+        Color { r: f64::from(channels.0), g: f64::from(channels.1), b: f64::from(channels.2), a: alpha }
+    };
+    Ok(Stop { vega: color, python: Some(color) })
+}
+
 /// `_diverging_breakpoints_truncated`: the palette's stops at their natural
 /// breakpoints about the pivot, cut to `[lo, hi]` with one HCL-blended stop
 /// at a bound a dropped breakpoint crossed. An even stop count gains a
 /// center stop blended from the two middle ones.
 fn breakpoints_truncated(
-    mut palette: Vec<Rgb>,
+    mut palette: Vec<Stop>,
     pivot: f64,
     (lo, hi): (f64, f64),
     (neg, pos): (f64, f64),
-) -> Result<(Vec<f64>, Vec<Rgb>), String> {
+) -> Result<(Vec<f64>, Vec<Color>), String> {
     if palette.len() < 2 {
         return Err(format!("diverging gradient (hinge set) requires at least 2 palette stops, got {}", palette.len()));
     }
     if palette.len() % 2 == 0 {
         let mid = palette.len() / 2;
-        palette.insert(mid, interpolate_hcl(palette[mid - 1], palette[mid], 0.5));
+        palette.insert(mid, blended(palette[mid - 1], palette[mid], 0.5)?);
     }
     let n = palette.len();
     let mid = n / 2;
@@ -351,23 +440,24 @@ fn breakpoints_truncated(
     if (domain[n - 1] - hi).abs() < snap && hi > domain[n - 2] {
         domain[n - 1] = hi;
     }
-    let points: Vec<(f64, Rgb)> = domain.into_iter().zip(palette).collect();
-    let mut kept: Vec<(f64, Rgb)> = points.iter().copied().filter(|&(x, _)| lo <= x && x <= hi).collect();
+    let points: Vec<(f64, Stop)> = domain.into_iter().zip(palette).collect();
+    let mut kept: Vec<(f64, Stop)> = points.iter().copied().filter(|&(x, _)| lo <= x && x <= hi).collect();
     let dropped_lo = points.iter().copied().filter(|&(x, _)| x < lo).last();
     let dropped_hi = points.iter().copied().find(|&(x, _)| x > hi);
     if let Some((x0, c0)) = dropped_lo {
         if kept[0].0 != lo {
             let (x1, c1) = kept[0];
-            kept.insert(0, (lo, interpolate_hcl(c0, c1, (lo - x0) / (x1 - x0))));
+            kept.insert(0, (lo, blended(c0, c1, (lo - x0) / (x1 - x0))?));
         }
     }
     if let Some((x1, c1)) = dropped_hi {
         let (x0, c0) = kept[kept.len() - 1];
         if x0 != hi {
-            kept.push((hi, interpolate_hcl(c0, c1, (hi - x0) / (x1 - x0))));
+            kept.push((hi, blended(c0, c1, (hi - x0) / (x1 - x0))?));
         }
     }
-    Ok(kept.into_iter().unzip())
+    let (domain, stops): (Vec<f64>, Vec<Stop>) = kept.into_iter().unzip();
+    Ok((domain, stops.into_iter().map(|stop| stop.vega).collect()))
 }
 
 /// A gradient legend's ladder at one plot size: a vertical bar follows the
@@ -439,9 +529,225 @@ impl GradientAt {
     }
 }
 
+/// How many ticks a symbol legend over a continuous scale draws (`legend.tickCount`'s default).
+const SYMBOL_LEGEND_TICKS: usize = 5;
+
+impl ContinuousColor {
+    /// A symbol legend's entries over this scale: each tick's text and color.
+    pub(crate) fn symbol_ladder(&self) -> Result<Vec<(String, String)>, String> {
+        let precision = tick_precision(d3rs::ticks::d3_tick_step(self.lo, self.hi, SYMBOL_LEGEND_TICKS));
+        d3rs::ticks::d3_ticks(self.lo, self.hi, SYMBOL_LEGEND_TICKS)
+            .into_iter()
+            .map(|v| Ok((crate::number_locale::d3_format(&format!(",.{precision}f"), v)?, self.fill(v))))
+            .collect()
+    }
+}
+
+/// The legends of layers colored by a numeric field, one beside the base's own
+/// in layer order: each layer's color scale is its own, so Vega draws its
+/// legend apart. A bar or scatter layer's is a gradient, a line or area layer's
+/// a column of circles.
+pub(crate) struct NumericLegends<'a> {
+    parts: Vec<NumericPart<'a>>,
+    /// A line layer's unlisted entry still collapses the base legend's cells to the
+    /// font size (`_mixed_mark_legend_symbols`).
+    pub(crate) unlisted_line: bool,
+}
+
+struct NumericPart<'a> {
+    color: &'a ContinuousColor,
+    gradient: bool,
+    title: String,
+    id: String,
+}
+
+/// Where each numeric legend sits relative to the stack's origin, and the whole stack's size.
+pub(crate) struct LegendStack {
+    pub(crate) offsets: Vec<(f64, f64)>,
+    pub(crate) size: (f64, f64),
+}
+
+impl<'a> NumericLegends<'a> {
+    /// `layers` yields each numeric layer's scale, whether it draws a gradient, and its color field.
+    pub(crate) fn new(
+        layers: impl IntoIterator<Item = (&'a ContinuousColor, bool, &'a str)>,
+        cfg: &LegendConfig,
+        id_stem: &str,
+    ) -> Result<Self, String> {
+        let parts = layers
+            .into_iter()
+            .enumerate()
+            .map(|(i, (color, gradient, field))| {
+                Ok(NumericPart {
+                    color,
+                    gradient,
+                    // The implicit title of the layer's own encoding: the field as authored.
+                    title: if cfg.title.visible == Some(false) { String::new() } else { field.to_string() },
+                    id: format!("{id_stem}-{i}"),
+                })
+            })
+            .collect::<Result<_, String>>()?;
+        Ok(Self { parts, unlisted_line: false })
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.parts.len()
+    }
+
+    /// Legend `index`'s box `(w, h)` beside a unit `(pw, ph)`.
+    pub(crate) fn measure_part(
+        &self,
+        index: usize,
+        cfg: &LegendConfig,
+        fonts: &FontBook,
+        unit: (f64, f64),
+    ) -> Result<(f64, f64), String> {
+        let part = &self.parts[index];
+        if part.gradient {
+            GradientAt::measure(cfg, None, part.color, (&part.id, &part.title), fonts, unit)
+        } else {
+            let (legend, _) = part.symbol_legend(cfg, fonts)?;
+            Ok((legend.box_w, legend.box_h()))
+        }
+    }
+
+    /// Paints legend `index` at `(x, y)` beside a unit `(pw, ph)`.
+    pub(crate) fn paint_part(
+        &self,
+        index: usize,
+        svg: &mut String,
+        cfg: &LegendConfig,
+        fonts: &FontBook,
+        unit: (f64, f64),
+        (x, y): (f64, f64),
+    ) -> Result<(), String> {
+        let part = &self.parts[index];
+        if part.gradient {
+            return GradientAt::paint(cfg, None, part.color, (&part.id, &part.title), fonts, unit, (svg, x, y));
+        }
+        let (legend, ladder) = part.symbol_legend(cfg, fonts)?;
+        let entries: Vec<_> = ladder
+            .iter()
+            .map(|(label, fill)| crate::families::legend::LegendEntry {
+                label,
+                fill,
+                symbol: Some(crate::families::legend::LegendSymbol::Circle),
+                series_key: None,
+            })
+            .collect();
+        crate::families::legend::emit_vega_legend(
+            svg,
+            &entries,
+            &legend,
+            cfg,
+            crate::families::legend::LegendSymbol::Circle,
+            x,
+            y,
+            false,
+        );
+        Ok(())
+    }
+
+    /// The stack of the base legend's box `base` and these, one `VEGA_LEGEND_GROUP_MARGIN` apart.
+    pub(crate) fn stack(
+        &self,
+        base: (f64, f64),
+        cfg: &LegendConfig,
+        fonts: &FontBook,
+        unit: (f64, f64),
+    ) -> Result<LegendStack, String> {
+        let mut blocks = vec![base];
+        for index in 0..self.len() {
+            blocks.push(self.measure_part(index, cfg, fonts, unit)?);
+        }
+        let along_x = matches!(cfg.position.edge.as_str(), "top" | "bottom");
+        let (along, size) = crate::families::legend::stack_legends(&blocks, along_x);
+        let offsets = along.into_iter().map(|o| if along_x { (o, 0.0) } else { (0.0, o) }).collect();
+        Ok(LegendStack { offsets, size })
+    }
+
+    /// `base` stacked with these legends: its box grows to the stack's.
+    pub(crate) fn stack_onto(
+        &self,
+        mut base: crate::families::legend::VegaLegend,
+        cfg: &LegendConfig,
+        fonts: &FontBook,
+        unit: (f64, f64),
+    ) -> Result<crate::families::legend::VegaLegend, String> {
+        let own = (base.box_w, base.title_band + base.grid.box_h);
+        let stack = self.stack(own, cfg, fonts, unit)?;
+        base.box_w = stack.size.0;
+        base.stack = Some(stack);
+        Ok(base)
+    }
+
+    /// Paints the numeric legends stacked onto `base` from its origin `(x, y)`.
+    pub(crate) fn paint_after(
+        &self,
+        svg: &mut String,
+        base: &crate::families::legend::VegaLegend,
+        cfg: &LegendConfig,
+        fonts: &FontBook,
+        unit: (f64, f64),
+        origin: (f64, f64),
+    ) -> Result<(), String> {
+        let stack = base.stack.as_ref().expect("a legend stacked with numeric legends carries its stack");
+        self.paint(svg, stack, cfg, fonts, unit, origin)
+    }
+
+    /// Paints the numeric legends of `stack` from the stack origin `(x, y)`.
+    fn paint(
+        &self,
+        svg: &mut String,
+        stack: &LegendStack,
+        cfg: &LegendConfig,
+        fonts: &FontBook,
+        unit: (f64, f64),
+        (x, y): (f64, f64),
+    ) -> Result<(), String> {
+        for (index, (dx, dy)) in stack.offsets.iter().skip(1).enumerate() {
+            self.paint_part(index, svg, cfg, fonts, unit, (x + dx, y + dy))?;
+        }
+        Ok(())
+    }
+}
+
+impl NumericPart<'_> {
+    fn symbol_legend(
+        &self,
+        cfg: &LegendConfig,
+        fonts: &FontBook,
+    ) -> Result<(crate::families::legend::VegaLegend, Vec<(String, String)>), String> {
+        let ladder = self.color.symbol_ladder()?;
+        let entries: Vec<_> = ladder
+            .iter()
+            .map(|(label, fill)| crate::families::legend::LegendEntry {
+                label,
+                fill,
+                symbol: Some(crate::families::legend::LegendSymbol::Circle),
+                series_key: None,
+            })
+            .collect();
+        let legend = crate::families::legend::vega_legend(&entries, false, &self.title, cfg, fonts)?;
+        Ok((legend, ladder))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A symbol legend over a continuous scale labels each tick at the precision its step
+    /// implies, and colors it as the scale does.
+    #[test]
+    fn a_symbol_legend_lists_the_ticks_of_the_scale() {
+        let color = ContinuousColor::blues(1.0, 4.0);
+        let ladder = color.symbol_ladder().unwrap();
+        let labels: Vec<&str> = ladder.iter().map(|(label, _)| label.as_str()).collect();
+        assert_eq!(labels, ["1.0", "1.5", "2.0", "2.5", "3.0", "3.5", "4.0"]);
+        assert_eq!(ladder[0].1, color.fill(1.0));
+        assert_eq!(ladder[6].1, color.fill(4.0));
+    }
 
     #[test]
     fn a_number_prints_as_javascript_spells_it() {
@@ -467,14 +773,14 @@ mod tests {
     #[test]
     fn a_one_value_domain_takes_the_middle_color() {
         assert_eq!(ContinuousColor::blues(5.0, 5.0).fill(5.0), "rgb(91, 163, 207)");
-        assert_eq!(ContinuousColor::dates(19000.0, 19000.0).fill(19000.0), "rgb(96, 161, 206)");
+        assert_eq!(ContinuousColor::dates(&BLUES, 19000.0, 19000.0).fill(19000.0), "rgb(96, 161, 206)");
     }
 
     /// Oracle: a production histogram dated 2024-01-01 .. 2024-06-01 (a time
     /// scale over `blues`, ends 134/188/220 and 56/135/192).
     #[test]
     fn a_date_scale_mixes_two_samples_of_blues_in_hcl() {
-        let scale = ContinuousColor::dates(0.0, 152.0);
+        let scale = ContinuousColor::dates(&BLUES, 0.0, 152.0);
         assert_eq!(scale.fill(0.0), "rgb(134, 188, 220)");
         assert_eq!(scale.fill(152.0), "rgb(56, 135, 192)");
         assert_eq!(scale.fill(31.0), "rgb(119, 177, 214)");
@@ -497,6 +803,20 @@ mod tests {
         }
         let target: ScaleTarget = serde_json::from_value(scale).expect("a scale target");
         ContinuousColor::gradient(&target, Some((2.5, 20.0)), (2.5, 20.0)).expect("a scale")
+    }
+
+    /// An authored `legend.values` token reads as JavaScript's `Number()` does: `0x10` is 16, `inf`
+    /// and `1_000` are `NaN`, labeled `NaN`.
+    #[test]
+    fn a_legend_values_token_reads_as_a_javascript_number() {
+        let scale = ContinuousColor::blues(0.0, 100.0);
+        let ladder = |token: &str| scale.legend_ladder(200.0, None, Some(&[token.to_string()]));
+        assert_eq!(ladder("0x10").expect("hex reads").0, vec![16.0]);
+        assert_eq!(ladder(" 12 ").expect("padded reads").0, vec![12.0]);
+        for token in ["inf", "nan", "1_000"] {
+            let (values, labels) = ladder(token).expect("a non-number reads as NaN");
+            assert!(values[0].is_nan() && labels == ["NaN"], "{token}");
+        }
     }
 
     fn fills(scale: &ContinuousColor, ws: &[f64]) -> Vec<String> {
@@ -596,12 +916,11 @@ mod tests {
     }
 
     #[test]
-    fn a_one_color_ramp_paints_nothing_and_an_empty_one_is_refused() {
+    fn a_one_color_ramp_paints_nothing_and_an_empty_one_paints_black() {
         let one = gradient(serde_json::json!(["#c8281e"]), serde_json::json!({}));
         assert!(!one.paints());
-        let empty: ScaleTarget = serde_json::from_value(serde_json::json!({"palette": [], "nice": false, "arm_mode": "asymmetric"})).unwrap();
-        let err = ContinuousColor::gradient(&empty, Some((0.0, 1.0)), (0.0, 1.0)).err().expect("refuses");
-        assert!(err.contains("no colors"), "{err}");
+        let empty = gradient(serde_json::json!([]), serde_json::json!({}));
+        assert_eq!(empty.fill(10.0), "rgb(0, 0, 0)");
     }
 
     #[test]
@@ -609,8 +928,10 @@ mod tests {
         let scale = gradient(serde_json::json!(["#f00", "blue", "rgb(0, 255, 0)"]), serde_json::json!({}));
         assert_eq!(scale.fill(2.5), "rgb(255, 0, 0)");
         assert_eq!(scale.fill(20.0), "rgb(0, 255, 0)");
-        let bad: ScaleTarget = serde_json::from_value(serde_json::json!({"palette": ["notacolor", "red"], "nice": false, "arm_mode": "asymmetric"})).unwrap();
-        assert!(ContinuousColor::gradient(&bad, Some((0.0, 1.0)), (0.0, 1.0)).is_err());
+        // An unreadable color is d3's undefined color: it takes its neighbor's.
+        let bad = gradient(serde_json::json!(["notacolor", "red"]), serde_json::json!({}));
+        assert_eq!(bad.fill(2.5), "rgb(255, 0, 0)");
+        assert_eq!(bad.fill(20.0), "rgb(255, 0, 0)");
     }
 
     /// A tick step's decimal exponent sets the legend's precision, read the way
@@ -642,11 +963,28 @@ mod tests {
     /// dropped breakpoint crossed.
     #[test]
     fn breakpoints_cut_to_the_bounds_gain_a_blended_edge_stop() {
-        let palette = vec![(255, 255, 204), (65, 182, 196), (12, 44, 132)];
-        let (domain, colors) = breakpoints_truncated(palette.clone(), 10.0, (4.0, 14.0), (10.0, 10.0)).unwrap();
+        let stop = |rgb| {
+            let color = Color::opaque(rgb);
+            Stop { vega: color, python: Some(color) }
+        };
+        let palette: Vec<Color> = [(255, 255, 204), (65, 182, 196), (12, 44, 132)].into_iter().map(Color::opaque).collect();
+        let stops: Vec<Stop> = [(255, 255, 204), (65, 182, 196), (12, 44, 132)].into_iter().map(stop).collect();
+        let (domain, colors) = breakpoints_truncated(stops, 10.0, (4.0, 14.0), (10.0, 10.0)).unwrap();
         assert_eq!(domain, [4.0, 10.0, 14.0]);
-        assert_eq!(colors[1], (65, 182, 196));
+        assert_eq!(colors[1], Color::opaque((65, 182, 196)));
         assert_ne!(colors[0], palette[0], "the dropped first breakpoint blends into the edge");
-        assert!(breakpoints_truncated(vec![(0, 0, 0)], 0.0, (0.0, 1.0), (1.0, 1.0)).is_err());
+        assert!(breakpoints_truncated(vec![stop((0, 0, 0))], 0.0, (0.0, 1.0), (1.0, 1.0)).is_err());
+    }
+
+    /// A blended stop keeps the alpha production's `interpolate_hcl` blends, printed to four places.
+    #[test]
+    fn a_blended_translucent_stop_keeps_its_alpha() {
+        let stop = |text: &str| Stop { vega: d3rs::color::parse_color(text).unwrap_or(Color::UNDEFINED), python: python_color(text) };
+        let mixed = blended(stop("#ff000080"), stop("#0000ff"), 0.5).unwrap().vega;
+        assert!((mixed.a - 0.7510).abs() < 1e-9, "{}", mixed.a);
+        let opaque = blended(stop("#ff0000"), stop("#0000ff"), 0.5).unwrap().vega;
+        assert_eq!(opaque.a, 1.0);
+        assert!(blended(stop("notacolor"), stop("red"), 0.5).is_err());
+        assert!(python_color("hsl(0 80% 50% / 50%)").is_some_and(|c| c.a == 0.5));
     }
 }

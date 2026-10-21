@@ -19,9 +19,8 @@ from typing import Protocol
 
 from jinja2 import Environment, StrictUndefined
 
-from dbt_charts.agent_api.docs import docs as _docs_index
 from dbt_charts.agent_api.skill_render import SkillSurface, render_skill_body
-from dbt_charts.agent_api.skills import skill_description
+from dbt_charts.agent_api.skills import list_skills
 from dbt_charts.core.project import Project
 
 
@@ -63,17 +62,23 @@ AUTHORING_PROMPT_TYPES = frozenset(
     {"yaml_generation", "dashboard_design", "report_generation"}
 )
 
-# `analyst-runbook` fronts the dashboard-building prompt types (Cloud, Playground)
-# with the analyst process — triage, answer-verification, method patterns. It leads
-# each tuple so it sits first in the composed prompt, where it's most salient. Pure
-# schema exploration (`database_exploration`) doesn't build an artifact, so it's left
-# out there. The conversational agent wires the runbook separately in agent.py.
+# The `chart` skill is the grammar page every authoring prompt composes;
+# `report-design` adds report-specific guidance. Pure schema exploration
+# (`database_exploration`) doesn't build an artifact, so it composes no skill.
 _PROMPT_SKILLS: dict[str, tuple[str, ...]] = {
-    "yaml_generation": ("analyst-runbook", "board-build"),
-    "dashboard_design": ("analyst-runbook", "board-build", "board-design"),
-    "report_generation": ("analyst-runbook", "board-build", "report-design"),
-    "database_exploration": ("data-exploration",),
+    "yaml_generation": ("chart",),
+    "dashboard_design": ("chart",),
+    "report_generation": ("chart", "report-design"),
+    "database_exploration": (),
 }
+
+
+_EXPLORATION_GUIDANCE = (
+    "Explore the data with `execute_sql`: list tables and columns from "
+    "`information_schema`, profile the columns you will use (row count, distinct "
+    "values, min and max) before you answer, and answer with the query you ran "
+    "and what it returned."
+)
 
 
 def _strip_frontmatter(text: str) -> str:
@@ -127,7 +132,7 @@ def load_shared_prompt(
     Args:
         skill_name: The skill directory name under dbt_charts/ai/skills/
             (kebab-case, matches the on-disk directory exactly — e.g.
-            "board-build", "board-design", "board-review").
+            "chart", "report-design").
         surface: Which surface's macro vocabulary to render. Default ``"tool"``.
         available_tools: When given, ``{{#if_tool NAME}}`` blocks referencing a
             tool outside this set are dropped. ``None`` keeps every block —
@@ -150,49 +155,20 @@ def load_shared_prompt(
     return ""
 
 
-# `skill_description` (imported above) is the description-only counterpart to
-# `load_shared_prompt` — reads a skill's frontmatter without rendering its
-# body. It lives in `agent_api.skills` (not wrapped here) because it reads
-# from the already-parsed skill registry rather than re-reading SKILL.md, so
-# a prompts.py wrapper would add a layer with no behavior of its own.
-
-# The skills the full agent loops (Cloud, and run_agent's default profile) list in their
-# progressive-disclosure skills index. Order matches presentation: the runbook
-# (process) leads the build/design/review skills (what/how).
-_SKILL_INDEX: tuple[str, ...] = (
-    "analyst-runbook",
-    "board-build",
-    "board-design",
-    "board-review",
-    "board-replicate",
-)
-
-
 def build_skills_index() -> str:
     """Progressive-disclosure skills index: name + description, no bodies.
 
+    Lists every packaged skill exposed on the tool surface, read from the
+    registry so adding, renaming or deleting a skill cannot desync the prompt.
     Shared by ``build_cloud_system_prompt`` and ``build_agent_system_prompt``
     so the two surfaces can't drift on which skills are listed or how they're
     described. The model reads a description, then calls ``get_skill`` to
     load the matching skill's full guide on demand.
-
-    Raises:
-        ValueError: A skill in ``_SKILL_INDEX`` has no description — the
-            index is a hardcoded, curated list, so a miss means the skill
-            was renamed or removed and the constant needs updating, not a
-            normal "unknown skill" case (``skill_description`` itself stays
-            silent for that).
     """
-    entries = []
-    for name in _SKILL_INDEX:
-        description = skill_description(name)
-        if not description:
-            raise ValueError(
-                f"Progressive-disclosure skills index entry {name!r} has no "
-                "description — it was renamed or removed. Update "
-                "_SKILL_INDEX in dbt_charts/ai/prompts.py."
-            )
-        entries.append(f"- **{name}**: {description}")
+    entries = [
+        f"- **{skill.name}**: {skill.description}"
+        for skill in list_skills(surface="tool").skills
+    ]
     lines = "\n".join(entries)
     return (
         "## Available Skills\n\n"
@@ -203,22 +179,9 @@ def build_skills_index() -> str:
     )
 
 
-def build_docs_pointer() -> str:
-    """Point the agent at the `docs` tool instead of inlining DBT_CHARTS_SYNTAX.md.
-
-    Names each top-level topic slug — read live from the docs index, never
-    hand-typed — so the model knows what it can pass to `docs(topic=...)`
-    without paying for the whole reference on every call.
-    """
-    topics = ", ".join(entry.id for entry in _docs_index().topics)
-    return (
-        "## dbt charts YAML Reference\n\n"
-        "The full syntax reference is not inlined here — call `docs()` for the "
-        f'topic index ({topics}), `docs(topic="<slug>")` for one section, '
-        '`docs(topic="reference")` for the generated field spec, or '
-        '`docs(search="...")` to search across topics. Read this before writing '
-        "YAML you're unsure about the syntax for."
-    )
+def read_syntax_guide() -> str:
+    """Return the packaged ``DBT_CHARTS_SYNTAX.md`` inlined into authoring prompts."""
+    return (files("dbt_charts") / "DBT_CHARTS_SYNTAX.md").read_text(encoding="utf-8")
 
 
 def load_project_instructions(project: Project) -> str:
@@ -303,12 +266,14 @@ def build_dbt_charts_system_prompt(
         if prompt
     ]
 
+    if prompt_type == "database_exploration":
+        sections.append(_EXPLORATION_GUIDANCE)
+
     if prompt_type in AUTHORING_PROMPT_TYPES:
-        from dbt_charts.agent_api.docs import read_full_text as _read_dbt_charts_syntax
         from dbt_charts.ai.generate_sql import get_sql_generation_guidance
 
         sections.append(get_sql_generation_guidance())
-        sections.append(_read_dbt_charts_syntax())
+        sections.append(read_syntax_guide())
 
     context_section = build_context_section(
         database_context=database_context,

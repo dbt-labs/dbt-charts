@@ -603,7 +603,7 @@ class TestLegendNotOverSuppressed:
         assert domain is not None, "legend must stay on to name every series"
         assert {"X", "Y"} <= set(domain)
         counts = _named_series_counts(spec)
-        assert counts["annual"] == 1, (
+        assert counts["Annual"] == 1, (
             f"the base series must be named exactly once (by the legend, "
             f"since the rail never fired) — got {counts!r}"
         )

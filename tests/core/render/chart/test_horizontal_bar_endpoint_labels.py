@@ -1293,7 +1293,7 @@ def test_wide_measure_rail_collision_check_measures_humanized_text(
     Monkeypatches the check's own humanizer to the identity function
     (measuring the raw name instead) and asserts the collision verdict
     genuinely differs at a width chosen empirically to sit inside the two
-    verdicts' gap (380px raw-collides, humanized-fits)."""
+    verdicts' gap (381.5px raw-collides, humanized-fits)."""
     import dbt_charts.core.compile.resolve.chart.bar as bar_module
     from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 
@@ -1309,14 +1309,14 @@ def test_wide_measure_rail_collision_check_measures_humanized_text(
     )
     chart = make_chart("bar", x="row", y=measures, style=style)
 
-    rc_humanized = resolve(chart, data, chart_style_context=_BOARD_CTX, width=380.0)
+    rc_humanized = resolve(chart, data, chart_style_context=_BOARD_CTX, width=381.5)
 
     monkeypatch.setattr(
         bar_module,
         "wide_measure_labels_for",
         lambda measures, field_labels: {m: m for m in measures},
     )
-    rc_raw = resolve(chart, data, chart_style_context=_BOARD_CTX, width=380.0)
+    rc_raw = resolve(chart, data, chart_style_context=_BOARD_CTX, width=381.5)
 
     assert rc_humanized.style.endpoint_labels.visible is True
     assert rc_raw.style.endpoint_labels.visible is False
@@ -1345,10 +1345,10 @@ def test_wide_measure_rail_collision_check_measures_humanized_composite_text(
     )
     chart = make_chart("bar", x="row", y=measures, color="d", style=style)
 
-    # 460px sits between the two: the humanized composites fit the rail and
+    # 463px sits between the two: the humanized composites fit the rail and
     # the raw ones do not. The two spellings differ only in glyph width
     # (spaces and parens against underscores), so the window is narrow.
-    width = 460.0
+    width = 463.0
     rc_humanized = resolve(chart, data, chart_style_context=_BOARD_CTX, width=width)
 
     monkeypatch.setattr(

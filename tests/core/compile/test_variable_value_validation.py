@@ -23,6 +23,7 @@ class TestValidateVariableValue:
             ("daterange", ("2024-01-01", "2024-12-31")),
             ("daterange", [None, "2024-12-31"]),
             ("daterange", ["2024-01-01", None]),
+            ("daterange", "last_90_days"),
             ("number", 42),
             ("number", 3.14),
             ("slider", 50),
@@ -50,6 +51,8 @@ class TestValidateVariableValue:
         ("input_type", "value", "error_contains"),
         [
             ("daterange", "2024-01-01", "must be [start, end]"),
+            ("daterange", "last_91_days", "last_90_days"),
+            ("daterange", 7, "must be [start, end]"),
             ("daterange", ["2024-01-01"], "must be [start, end]"),
             ("daterange", ["a", "b", "c"], "must be [start, end]"),
             ("daterange", [20240101, 20241231], "must be string"),

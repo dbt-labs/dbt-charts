@@ -1,33 +1,32 @@
 # Scaffold palette — dbt-creams (warm-canvas UI chrome)
 #
 # Cream-scaffold complement to dbt-grays. Use on warm-canvas themes.
-# Theme assigns chrome: dbt-creams to get the cream ladder via the same
-# alias vocabulary (chrome.ink, chrome.canvas, etc.) as dbt-grays.
+# A theme assigns `palettes.chrome: dbt-creams` and keeps writing the same
+# step numbers (chrome[N]) it writes for dbt-grays, so the whole ladder swaps
+# at once.
 #
-# Inherits the full alias graph from dbt-grays via `extends:`. Integer
-# aliases (canvas: 1, ink: 11, etc.) resolve against this palette's own
-# colors array at resolve time — so chrome.ink → cream #2A2725, not gray #222222.
+# Inherits the endpoint aliases (0, 100, white, black) from dbt-grays via
+# `extends:`. Only cream-specific colors are listed below.
 
 name: dbt-creams
 extends: dbt-grays
 description: |
   Warm cream-toned scaffold — UI structural framing for warm-canvas themes.
-  Twelve named steps from near-white (canvas) to near-black (void). Applied to
-  canvas backgrounds, borders, dividers, axis labels, table stripes, and
-  secondary text on editorial/print-styled themes. Step 12 (void) mirrors
-  dbt-grays.void — the inherited integer ladder requires a matching slot — as a
-  warm near-black for a future warm dark canvas.
+  The same step numbers as dbt-grays: steps 1-12 run from warm near-white (1) to
+  warm near-black (12), with step 0 white and step 100 black inherited. Applied
+  to canvas backgrounds, borders, dividers, axis labels, table stripes, and
+  secondary text on editorial/print-styled themes.
 
 colors:
-  - "#FAF7F0"    # 1  canvas
-  - "#F5F2EB"    # 2  surface-subtle
-  - "#E9E1D2"    # 3  grid
-  - "#DDD3C0"    # 4  border
-  - "#CEC1AB"    # 5  grid-emphasis
-  - "#B2A691"    # 6  disabled
-  - "#918878"    # 7  subtitle
-  - "#6F685D"    # 8  muted
-  - "#56504A"    # 9  inactive
-  - "#403B37"    # 10 heading
-  - "#2A2725"    # 11 ink
-  - "#1A1714"    # 12 void  (warm near-black; mirrors dbt-grays.void, one tier below ink)
+  - "#FAF7F0"    # 1
+  - "#F5F2EB"    # 2
+  - "#E9E1D2"    # 3
+  - "#DDD3C0"    # 4
+  - "#CEC1AB"    # 5
+  - "#B2A691"    # 6
+  - "#918878"    # 7
+  - "#6F685D"    # 8
+  - "#56504A"    # 9
+  - "#403B37"    # 10
+  - "#2A2725"    # 11
+  - "#1A1714"    # 12

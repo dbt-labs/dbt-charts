@@ -20,6 +20,7 @@ use crate::families::temporal::{
 use crate::families::x_type::{Grain, XResolution};
 use crate::text::FontBook;
 
+use crate::common::RAW_X;
 use super::{continuous_pad_px, x_resolution, BandColumns, BarResolved, ColumnSplit, ContinuousWidth, MarkStyle};
 
 type Row = Map<String, Value>;
@@ -28,9 +29,6 @@ type Row = Map<String, Value>;
 pub(super) fn tooltip_date(row: &Row, field: &str) -> String {
     row_str(row, if row.contains_key(RAW_X) { RAW_X } else { field })
 }
-
-/// The key under which a row floored to its bucket keeps the date it carried, which production's tooltip reads.
-pub(super) const RAW_X: &str = "\u{1d}raw_x";
 
 enum Sizing {
     /// A bar that kept its `timeUnit` spans its bucket: Vega-Lite draws it across `band_width` of the
@@ -163,7 +161,7 @@ pub(super) fn at_bucket_starts<'a>(rows: Cow<'a, [Row]>, field: &str, grain: Opt
 /// The shapes of a time-axis bar this arm does not draw: each names what it declines.
 fn refuse_unported_shape(r: &BarResolved) -> Result<(), String> {
     if r.style.axis_x.labels.expr.is_some() {
-        return Err("bar: authored `axis_x.labels.expr` on a time x axis is not supported".into());
+        return Err(crate::refuse!("bar: authored `axis_x.labels.expr` on a time x axis is not supported").into());
     }
     Ok(())
 }
@@ -293,10 +291,6 @@ impl TimeX {
             None => Vec::new(),
         };
         let rows: Vec<Row> = plotted.into_iter().filter(|row| row_num(row, &r.y).is_some()).collect();
-        // The negative-value corner law and signed y ladder are the linear arm's own, unmodeled.
-        if rows.iter().any(|row| row_num(row, &r.y).is_some_and(|y| y < 0.0)) {
-            return Err("bar: a negative bar on a time x axis needs the signed value axis ladder, which is not supported".into());
-        }
 
         let mark = &r.style.mark;
         let mut scale_ax: AxisStyle = ax_x.clone();

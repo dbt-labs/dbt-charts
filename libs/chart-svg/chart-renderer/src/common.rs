@@ -487,6 +487,100 @@ pub struct MirrorGhost {
     /// The ghost's own `format` (`ResolvedMirrorAxis.format`); `None` repeats
     /// the primary's labels.
     pub format: Option<FormatSlot>,
+    /// The ruler baked for the ghost's own edge when it is not the primary's;
+    /// `None` repeats the primary's labels.
+    pub ruler: Option<RulerConfig>,
+}
+
+impl MirrorGhost {
+    /// The ghost's own label for each of `ticks`, `None` when it repeats the
+    /// primary's: the ghost's `format` paints as a plain value-axis tick
+    /// ([`FormatSlot::paint_tick`], `compose_axis_format`), its own ruler as
+    /// `compose_axis_label_expr` does.
+    pub fn labels(&self, ticks: &[f64]) -> Result<Option<Vec<String>>, String> {
+        if let Some(slot) = &self.format {
+            return ticks
+                .iter()
+                .map(|&tv| slot.paint_tick(tv).map_err(|e| format!("axis_y.mirror.format: {e}")))
+                .collect::<Result<_, _>>()
+                .map(Some);
+        }
+        let Some(ruler) = &self.ruler else { return Ok(None) };
+        ticks
+            .iter()
+            .enumerate()
+            .map(|(i, &tv)| format_y_label(tv, Some(ruler), None, None, i, ticks.len()))
+            .collect::<Result<_, _>>()
+            .map(Some)
+    }
+
+    /// [`Self::labels`], falling back to the `primary` labels it repeats.
+    pub fn texts(&self, ticks: &[f64], primary: &[String]) -> Result<Vec<String>, String> {
+        Ok(self.labels(ticks)?.unwrap_or_else(|| primary.to_vec()))
+    }
+
+    /// The width of each ghost label, `primary_ws` when it repeats the primary's.
+    pub fn widths(
+        &self,
+        ticks: &[f64],
+        primary_ws: &[f64],
+        measure: impl Fn(&str) -> Result<f64, String>,
+    ) -> Result<Vec<f64>, String> {
+        match self.labels(ticks)? {
+            Some(labels) => labels.iter().map(|label| measure(label)).collect(),
+            None => Ok(primary_ws.to_vec()),
+        }
+    }
+}
+
+/// The edge an x axis hangs from (`axis_x.position`). Every distance away from the plot,
+/// the tick, the label row and the title, flips sign on the top edge; the labels anchor
+/// on their `bottom` baseline there instead of `top`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum XEdge {
+    Bottom,
+    Top,
+}
+
+impl XEdge {
+    /// `+1` below the plot, `-1` above it.
+    pub fn sign(self) -> f64 {
+        match self {
+            XEdge::Bottom => 1.0,
+            XEdge::Top => -1.0,
+        }
+    }
+
+    /// The baseline a flat label anchors on.
+    pub fn baseline(self) -> &'static str {
+        match self {
+            XEdge::Bottom => "top",
+            XEdge::Top => "bottom",
+        }
+    }
+
+    /// The y of the plot edge the axis hangs from, in a plot of height `plot_h`.
+    pub fn edge_y(self, plot_h: f64) -> f64 {
+        match self {
+            XEdge::Bottom => plot_h,
+            XEdge::Top => 0.0,
+        }
+    }
+
+    /// The y of a distance `away` from the plot edge, in a plot of height `plot_h`.
+    pub fn at(self, plot_h: f64, away: f64) -> f64 {
+        self.edge_y(plot_h) + self.sign() * away
+    }
+}
+
+/// JS `+text`: what d3 formats for a category tick that reads as a number. A category
+/// that does not is NaN, which `gate_label_format` has already refused for a number spec.
+pub fn js_number(text: &str) -> f64 {
+    match text.trim() {
+        "" | "false" => 0.0,
+        "true" => 1.0,
+        other => other.parse().unwrap_or(f64::NAN),
+    }
 }
 
 /// Where a leading sign sits against a prefix (`SignPlacement`,
@@ -536,6 +630,11 @@ impl FormatSlot {
             notation: self.notation.as_deref(),
             placement: self.placement(),
         }
+    }
+
+    /// Whether the slot authors a prefix or suffix text (no notation).
+    pub fn has_affix_text(&self) -> bool {
+        !self.prefix.is_empty() || !self.suffix.is_empty()
     }
 
     /// `ResolvedFormat.has_affix`.
@@ -1154,13 +1253,27 @@ fn spec_with_symbol(digit_spec: &str, symbol: &str) -> String {
 /// `_sub_unit_guarded_format` exactly, `scientific_format` optional and
 /// all (production's own signature, even though `ResolvedTickLabel.
 /// __post_init__` guarantees it whenever `si_format` is set).
+///
+/// `affix` is `Some(anchored)` to wear the authored `labels.format` prefix and suffix on a
+/// nonzero tick (`anchored`: the ladder baked an anchor, which fixes the sign placement), and
+/// `None` for the bare digits.
 pub fn sub_unit_guarded_format(
     value: f64,
     format_spec: &str,
     si_format: &str,
     scientific_format: Option<&str>,
     labels_format: Option<&FormatSlot>,
+    affix: Option<bool>,
 ) -> Result<String, String> {
+    let sub_unit_sci = scientific_format.filter(|_| value != 0.0 && value.abs() < d3rs::format::SUB_UNIT_SCIENTIFIC_FLOOR);
+    let band_spec = if value.abs() >= 1.0 { si_format } else { sub_unit_sci.unwrap_or(format_spec) };
+    if let (Some(anchored), Some(slot)) = (affix, labels_format.filter(|s| s.has_affix_text())) {
+        if value != 0.0 {
+            return slot
+                .paint_anchored(band_spec, value, anchored, &[])
+                .map_err(|e| format!("tick_label affixed spec {band_spec:?}: {e}"));
+        }
+    }
     if value.abs() >= 1.0 {
         // Only the SI arm takes the format's notation (`numeral_vega_expr(..,
         // tick_label.si_format, fmt.notation)`).
@@ -1170,14 +1283,7 @@ pub fn sub_unit_guarded_format(
         }
         .map_err(|e| format!("tick_label si_format {si_format:?}: {e}"));
     }
-    if let Some(sci) = scientific_format {
-        if value != 0.0 && value.abs() < d3rs::format::SUB_UNIT_SCIENTIFIC_FLOOR {
-            return crate::number_locale::d3_format(sci, value)
-                .map_err(|e| format!("tick_label scientific_format {sci:?}: {e}"));
-        }
-    }
-    crate::number_locale::d3_format(format_spec, value)
-        .map_err(|e| format!("tick_label format {format_spec:?}: {e}"))
+    crate::number_locale::d3_format(band_spec, value).map_err(|e| format!("tick_label format {band_spec:?}: {e}"))
 }
 
 /// Production's `_ESTIMATE_TARGET_COUNTS`.
@@ -1193,35 +1299,27 @@ fn linear_tick_candidates(lo: f64, hi: f64) -> Vec<f64> {
     candidates
 }
 
-/// Production's `_log_tick_candidates` (`_measured_label_padding.py:348-
-/// 366`) for base 10: `k * 10^n` for `k` in `1..=9` over every decade from
-/// `floor(log(lo))` to `ceil(log(hi))`, united with the positive members of
-/// the linear ladder over the raw `(lo, hi)` (no zero extension) that d3
-/// falls back to when a domain spans too few decades. The exponents use
-/// `log(x) / log(10)`, production's `math.log(x, 10)`, not `log10`: the two
-/// differ in the last ulp at exact powers (`math.log(1000, 10)` is
-/// 2.9999999999999996), which moves the floor.
-///
-/// A base other than 10 is refused by name: production sizes those from
-/// `base^n` powers too, but nothing in the corpus authors one and the
-/// renderer's own log-domain law (`log_nice_domain`) is base 10.
+/// Production's `_log_tick_candidates` (`_measured_label_padding.py:357-
+/// 366`): `k * step^n` for `k` in `1..int(base)` (just `1` for a fractional
+/// base) over every exponent from `floor(log_step(lo))` to `ceil(log_step(hi))`,
+/// `step` being the base, or its reciprocal below 1 (d3 draws no log ticks
+/// for such a base, so the reciprocal's powers stand in), united with the
+/// positive members of the linear ladder over the raw `(lo, hi)` (no zero
+/// extension) that d3 falls back to when a domain spans too few decades. The
+/// exponents use `log(x) / log(step)`, production's `math.log(x, step)`, not
+/// `log10`: the two differ in the last ulp at exact powers
+/// (`math.log(1000, 10)` is 2.9999999999999996), which moves the floor.
 fn log_tick_candidates(axis: &AxisStyle, lo: f64, hi: f64) -> Result<Vec<f64>, String> {
-    let authored_base = axis
-        .scale
-        .get("continuous")
-        .and_then(|c| c.get("log"))
-        .and_then(|l| l.get("base"))
-        .and_then(Value::as_f64);
-    if let Some(base) = authored_base.filter(|&b| b != 10.0) {
-        return Err(format!("log base {base} is not supported: only base 10"));
-    }
     if lo <= 0.0 {
         return Err(format!("log scale requires positive values, got a minimum of {lo}"));
     }
-    let log10 = |v: f64| v.ln() / 10f64.ln();
-    let (lo_exp, hi_exp) = (log10(lo).floor() as i32, log10(hi).ceil() as i32);
+    let base = axis.log_base();
+    let step = if base < 1.0 { 1.0 / base } else { base };
+    let multipliers = if base % 1.0 == 0.0 { 1..base as i32 } else { 1..2 };
+    let log_step = |v: f64| v.ln() / step.ln();
+    let (lo_exp, hi_exp) = (log_step(lo).floor() as i32, log_step(hi).ceil() as i32);
     let mut candidates: Vec<f64> = (lo_exp..=hi_exp)
-        .flat_map(|n| (1..=9).map(move |k| f64::from(k) * 10f64.powf(f64::from(n))))
+        .flat_map(|n| multipliers.clone().map(move |k| f64::from(k) * step.powf(f64::from(n))))
         .collect();
     candidates.extend(linear_tick_candidates(lo, hi).into_iter().filter(|&v| v > 0.0));
     Ok(candidates)
@@ -1275,12 +1373,11 @@ pub fn estimated_tick_label_gutter(
     let measure_family = measure_family_stand_in(family);
     let mut max_w = 0.0_f64;
     for &v in &candidates {
-        let lbl = match (tick_label, labels_format) {
-            (Some(tl), _) => match tl.si_format.as_deref() {
-                Some(si) => sub_unit_guarded_format(v, &tl.format, si, tl.scientific_format.as_deref(), labels_format)?,
-                None => crate::number_locale::d3_format(&tl.format, v)
-                    .map_err(|e| format!("estimated tick label {:?}: {e}", tl.format))?,
-            },
+        let lbl = match (tick_label.filter(|tl| tl.si_format.is_some()), labels_format) {
+            (Some(tl), _) => {
+                let si = tl.si_format.as_deref().expect("filtered on si_format");
+                sub_unit_guarded_format(v, &tl.format, si, tl.scientific_format.as_deref(), labels_format, Some(tl.anchor_at_start.is_some()))?
+            }
             (None, Some(slot)) => slot.paint_tick(v).map_err(|e| format!("estimated tick label: {e}"))?,
             (None, None) => crate::number_locale::d3_format(",.0~f", v)
                 .map_err(|e| format!("estimated tick label \",.0~f\": {e}"))?,
@@ -1335,13 +1432,17 @@ pub fn format_y_label(
             // spec from, so magnitude alone (not a baked tick position)
             // picks the register.
             if let Some(si) = tl.si_format.as_deref() {
-                return sub_unit_guarded_format(
-                    value,
-                    &tl.format,
-                    si,
-                    tl.scientific_format.as_deref(),
-                    labels_format,
-                );
+                let guarded = |affix| sub_unit_guarded_format(value, &tl.format, si, tl.scientific_format.as_deref(), labels_format, affix);
+                let bare = guarded(None)?;
+                // The authored affix wraps the band's digits (`_affixed_digits_expr`)
+                // on every tick, or on the anchor alone once resolve bakes one;
+                // zero stays the bare digits.
+                let affixed_text = guarded(Some(tl.anchor_at_start.is_some()))?;
+                return Ok(match tl.anchor_at_start {
+                    None => affixed_text,
+                    Some(at_start) if idx == if at_start { 0 } else { total - 1 } => affixed_text,
+                    Some(_) => bare,
+                });
             }
             // The ladder's affix — the baked currency symbol (`tl.prefix`,
             // folded into the d3 spec so the sign leads it, "−$500") and the
@@ -1350,7 +1451,7 @@ pub fn format_y_label(
             // the first or last drawn tick) or, with `anchor_at_start: None`,
             // on every non-zero tick (`inject_axis_numeral_expr`'s
             // `prefix_present`); a zero tick never wears one.
-            let affixed_slot = labels_format.filter(|s| !s.prefix.is_empty() || !s.suffix.is_empty());
+            let affixed_slot = labels_format.filter(|s| s.has_affix_text());
             let anchor_spec = if tl.prefix.is_empty() {
                 tl.format.clone()
             } else {
@@ -1378,16 +1479,14 @@ pub fn format_y_label(
             if tl.decimal_pad_table.is_empty() {
                 return Ok(text);
             }
-            // _apply_decimal_pad: missing = length(format(v, untilded spec))
-            // − length(painted text) — measured against the text actually
-            // produced (the anchor's symbol-carrying string included, as the
-            // compiled expr does), then the ternary chain selects table[i]
-            // on an exact match for i in 0..len−1 and the LAST entry for
-            // everything else.
-            let full_spec = tl.format.replace('~', "");
-            let full = crate::number_locale::d3_format(&full_spec, value)
-                .map_err(|e| format!("tick_label pad spec {full_spec:?}: {e}"))?;
-            let missing = full.chars().count() as i64 - text.chars().count() as i64;
+            // `_apply_decimal_pad`: the pad slot follows the painted text's own
+            // fractional digits (`_decimal_pad_missing_len_expr`), the anchor's
+            // symbol and an authored affix included, then the ternary chain
+            // selects table[i] on an exact match for i in 0..len-1 and the
+            // LAST entry for everything else.
+            let frac = crate::families::table::count_decimals(&text) as i64;
+            let precision = tl.decimal_pad_table.len() as i64 - 2;
+            let missing = if frac == 0 { precision + 1 } else { precision - frac };
             let table = &tl.decimal_pad_table;
             let pad = table[..table.len() - 1]
                 .iter()
@@ -1423,20 +1522,34 @@ pub fn format_y_label(
     let carries_prefix = value != 0.0 && (ruler.prefix_repeats || is_anchor);
     // A currency the locale places after the digits goes around the magnitude
     // word ("12.4M €", not "12.4 €M"): `composed_currency`'s lead precedes the
-    // digits of the anchor tick, its trail follows the word.
+    // digits of the anchor tick, its trail follows the word. An authored affix
+    // has no d3 slot: its prefix leads the anchor's digits, its suffix trails
+    // the word ("12.4 M EUR"), both on the ticks the currency rides.
     let (lead, trail) = active_number_locale().composed_currency(&ruler.prefix, ruler.prefix_repeats);
     let composed = !lead.is_empty() || !trail.is_empty();
+    let authored = labels_format.filter(|slot| !slot.prefix.is_empty() || !slot.suffix.is_empty());
+    let authored_prefix = authored.map_or("", |slot| slot.prefix.as_str());
+    let authored_suffix = authored.map_or("", |slot| slot.suffix.as_str());
     let scaled = value / divisor;
-    let numeral = if carries_prefix && !lead.is_empty() {
-        // The anchored currency leads the sign (`painted_sign_placement`).
-        FormatSlot {
-            spec: ruler.digit_spec.clone(),
-            prefix: lead,
-            sign_placement: Some(SignPlacement::AfterPrefix),
+    let numeral = if carries_prefix && (!lead.is_empty() || !authored_prefix.is_empty()) {
+        // The anchored prefix leads the sign (`painted_sign_placement`).
+        let spec = if !ruler.prefix.is_empty() && !composed {
+            spec_with_symbol(&ruler.digit_spec, &ruler.prefix)
+        } else {
+            ruler.digit_spec.clone()
+        };
+        let slot = FormatSlot {
+            spec,
+            prefix: format!("{authored_prefix}{lead}"),
+            notation: authored.and_then(|slot| slot.notation.clone()),
+            sign_placement: Some(if ruler.prefix_repeats {
+                authored.map_or(SignPlacement::BeforePrefix, FormatSlot::placement)
+            } else {
+                SignPlacement::AfterPrefix
+            }),
             ..FormatSlot::default()
-        }
-        .paint(scaled)
-        .map_err(|e| format!("ruler anchor spec {:?}: {e}", ruler.digit_spec))?
+        };
+        slot.paint(scaled).map_err(|e| format!("ruler anchor spec {:?}: {e}", slot.spec))?
     } else if carries_prefix && !ruler.prefix.is_empty() && !composed {
         let spec = spec_with_symbol(&ruler.digit_spec, &ruler.prefix);
         crate::number_locale::d3_format(&spec, scaled)
@@ -1446,12 +1559,13 @@ pub fn format_y_label(
             .map_err(|e| format!("ruler digit_spec {:?}: {e}", ruler.digit_spec))?
     };
     let trail = if carries_prefix { trail } else { String::new() };
+    let tail = if carries_prefix { authored_suffix } else { "" };
     let word = suffix_at_register(ruler.exponent, ruler.analytic()?)?;
     if ruler.mode == "repeat" {
         // Repeat mode's `suffix_present` is `datum.value !== 0` — every
         // non-zero tick, not just the anchor — at the ruler's own register
         // (`ResolvedRulerAxis.suffix_string`).
-        return Ok(if value == 0.0 { numeral } else { format!("{numeral}{word}{trail}") });
+        return Ok(if value == 0.0 { numeral } else { format!("{numeral}{word}{trail}{tail}") });
     }
     if is_anchor {
         // The anchor's unit suffix yields to the reservation padding when
@@ -1461,10 +1575,10 @@ pub fn format_y_label(
         if value == 0.0 {
             Ok(format!("{numeral}{}", ruler.reservation))
         } else {
-            Ok(format!("{numeral}{word}{trail}"))
+            Ok(format!("{numeral}{word}{trail}{tail}"))
         }
     } else {
-        Ok(format!("{numeral}{}{trail}", ruler.reservation))
+        Ok(format!("{numeral}{}{trail}{tail}", ruler.reservation))
     }
 }
 
@@ -1750,10 +1864,8 @@ impl AxisStyle {
     pub fn refuse_bare_x_tick_step(&self, family: &str) -> Result<(), String> {
         match (self.ticks.step, &self.ticks.time_unit) {
             (None, _) | (Some(_), Some(_)) => Ok(()),
-            (Some(step), None) => Err(format!(
-                "{family}: axis_x.ticks.step {step} without ticks.time_unit is not drawn — \
-                 production applies it as tickMinStep on a quantitative x and raises on any \
-                 other, and no x axis here reads it"
+            (Some(step), None) => Err(crate::refuse!(
+                "{family}: axis_x.ticks.step {step} without ticks.time_unit is not supported: production applies it as tickMinStep on a quantitative x and raises on any other, and no x axis here reads it"
             )),
         }
     }
@@ -1770,82 +1882,84 @@ impl AxisStyle {
         self.refuse_bare_x_tick_step(family)?;
         match self.ticks.time_unit.as_deref() {
             None => Ok(()),
-            Some(unit) => Err(format!(
-                "{family}: axis_x.ticks.time_unit {unit:?} is not drawn — only line and area \
-                 draw the tickCount interval production builds from it"
+            Some(unit) => Err(crate::refuse!(
+                "{family}: axis_x.ticks.time_unit {unit:?} is not supported: only line and area draw the tickCount interval production builds from it"
             )),
         }
     }
 
-    /// Entry gate for `axis_x.position: top`. Production passes it to Vega-Lite
-    /// as the x axis's `orient`, which draws the labels and ticks above the
-    /// plot and reserves the top margin for them; no cartesian family here
-    /// paints that axis, so each refuses by name instead of drawing it at the
-    /// bottom. `bottom` is Vega-Lite's own default.
+    /// The edge `axis_x.position` hangs the x axis from; Vega-Lite's default is the bottom.
+    pub fn x_edge(&self) -> XEdge {
+        match self.position.as_deref() {
+            Some("top") => XEdge::Top,
+            _ => XEdge::Bottom,
+        }
+    }
+
+    /// Entry gate for `axis_x.position: top` on the layouts that stay laid out against a bottom
+    /// axis: small multiples (production's `column_header` role), an endpoint rail's panes and
+    /// a support_table strip. A single chart draws its top axis through [`XEdge`].
     pub fn refuse_top_x_axis(&self, family: &str) -> Result<(), String> {
         match self.position.as_deref() {
-            Some("top") => Err(format!(
-                "{family}: axis_x.position \"top\" is not painted — production draws the x axis \
-                 above the plot and no family here reserves that margin"
+            Some("top") => Err(crate::refuse!(
+                "{family}: axis_x.position \"top\" in small multiples, beside an endpoint rail or under a support_table strip is not supported: production draws the axis above the plot and these layouts place it below"
             )),
             _ => Ok(()),
         }
     }
 
-    /// Entry gate for an axis's authored `labels.format`: refuses by name any
-    /// key the family does not paint, so an affix is never silently dropped.
-    /// A value axis (`paints_plain`: the family paints its `labels.format`)
-    /// wears the affix on every non-zero tick through
-    /// [`FormatSlot::paint_tick`] (`compose_axis_format`,
-    /// `vl_field_maps.py:217`) — `repeat: every` composes the same label — or,
-    /// once resolve bakes a `tick_label` ladder, on the anchor tick or every
-    /// tick as `anchor_at_start` says (`inject_axis_numeral_expr`'s tick_label
-    /// arm, [`format_y_label`]) — the plain, unpadded ladder with baked
-    /// `tick_values` only: the ladder-less SI shape (`si_format`), a
-    /// `decimal_pad_table` and the unbaked ladder's estimated gutter
-    /// ([`estimated_tick_label_gutter`]) compose no affix here, as a
-    /// `repeat: anchor` that resolve left unbaked and a ruler ladder's authored
-    /// prefix or suffix do not.
-    pub fn refuse_unpainted_affix(&self, family: &str, axis: &str, paints_plain: bool) -> Result<(), String> {
+    /// Entry gate for an authored affix no painter here reaches. An authored
+    /// `labels.expr` wins outright in production's `compose_axis_format`
+    /// (`vl_field_maps.py:228`) and no Vega expression evaluator is ported;
+    /// `unmodeled_axis` names an axis kind the family draws without its own
+    /// numeral ladder (line's quantitative x sits on a point scale). Either
+    /// refuses by name instead of dropping the affix.
+    pub fn refuse_unpainted_affix(&self, family: &str, axis: &str, unmodeled_axis: Option<&str>) -> Result<(), String> {
         let Some(slot) = &self.labels.format else { return Ok(()) };
-        let unported = if !paints_plain {
-            Some("the family paints no affix on this axis")
-        } else if self.ruler.is_some() {
-            Some("a ruler ladder axis is not ported (inject_axis_numeral_expr)")
-        } else if self.labels.expr.is_some() {
-            Some("an authored labels.expr replaces the composed label (compose_axis_format, vl_field_maps.py:228)")
-        } else if let Some(tl) = &self.tick_label {
-            if tl.si_format.is_some() {
-                Some("a ladder-less SI tick_label composes no affix here (inject_axis_numeral_expr's si arm)")
-            } else if !tl.decimal_pad_table.is_empty() {
-                Some("a decimal-padded ladder's affix is not ported (_apply_decimal_pad)")
-            } else if self.tick_values.is_empty() {
-                Some("an unbaked ladder's estimated gutter paints no affix (estimated_quantitative_tick_labels)")
-            } else {
-                None
-            }
+        let Some(key) = slot.carried().next() else { return Ok(()) };
+        let reason = match (&self.labels.expr, unmodeled_axis) {
+            (Some(_), _) => "an authored labels.expr replaces the composed label (compose_axis_format, vl_field_maps.py:228)",
+            (None, Some(reason)) => reason,
+            (None, None) => return Ok(()),
+        };
+        Err(crate::refuse!("{family}: {axis}.labels.format {key:?} is not supported: {reason}"))
+    }
+
+    /// Whether production's axis carries a `labelExpr` that reads `datum.value`
+    /// (`inject_axis_numeral_expr`, `compose_axis_format`): a baked ruler or
+    /// `tick_label`, an affix, a currency symbol, an SI notation, or one of the
+    /// two natives with a Vega arm. Such an axis paints every tick itself, so a
+    /// log axis keeps the labels d3's `tickFormat` would have blanked.
+    pub fn composes_numeral_expr(&self) -> bool {
+        if self.ruler.is_some() || self.tick_label.is_some() {
+            return true;
+        }
+        let Some(slot) = &self.labels.format else { return false };
+        let parts = d3rs::format::parse_parts(&slot.spec).ok();
+        slot.has_affix_text()
+            || matches!(slot.spec.as_str(), "bytes" | "duration")
+            || parts.as_ref().is_some_and(|p| p.symbol)
+            || (slot.notation.is_some() && parts.is_some_and(|p| p.type_ == 's'))
+    }
+
+    /// A quantitative tick of an axis whose emitter hands `labels.format` to
+    /// Vega as `format` and composes no numeral expression (a vertical bar's
+    /// continuous x): an axis with a baked ruler or `tick_label` ladder paints
+    /// the bare spec (`axis_to_vl`), every other the zero-bare affixed digits
+    /// (`compose_axis_format`).
+    pub fn format_only_label(&self, slot: &FormatSlot, value: f64) -> Result<String, String> {
+        if self.ruler.is_some() || self.tick_label.is_some() {
+            crate::number_locale::d3_format(&slot.spec, value)
         } else {
-            None
-        };
-        // A ruler's digit spec carries no SI type, so `notation`, `sign_placement`
-        // and `repeat` (baked into the ruler) change none of its digits: only an
-        // authored affix is unported there.
-        let key = match unported {
-            Some(_) if self.ruler.is_some() => slot.carried().find(|k| matches!(*k, "prefix" | "suffix")),
-            Some(_) => slot.carried().next(),
-            None => slot.unpainted_key(self.tick_label.is_some()),
-        };
-        let Some(key) = key else { return Ok(()) };
-        let reason =
-            unported.unwrap_or("an anchor ladder resolve did not bake is not ported (inject_axis_numeral_expr)");
-        Err(format!("{family}: {axis}.labels.format {key:?} is not painted: {reason}"))
+            slot.paint_tick(value)
+        }
     }
 
     /// Whether `style.axis_y.mirror` asks for a ghost axis that repaints the
     /// primary's labels; a ghost `format` refuses by name (see
     /// [`Self::mirror_ghost`] for the families that paint one).
     pub fn mirror_requested(&self, family: &str) -> Result<bool, String> {
-        Ok(self.mirror_ghost(family, false)?.is_some())
+        Ok(self.mirror_ghost(family)?.is_some())
     }
 
     /// The ghost axis `style.axis_y.mirror` asks for, `None` when there is none.
@@ -1862,10 +1976,10 @@ impl AxisStyle {
     /// format and a `ruler` that is not the primary's own are per-edge
     /// relabels this port has no model for. A bare `true` is the same
     /// request with nothing baked.
-    pub fn mirror_ghost(&self, family: &str, paints_format: bool) -> Result<Option<MirrorGhost>, String> {
+    pub fn mirror_ghost(&self, family: &str) -> Result<Option<MirrorGhost>, String> {
         let resolved = match self.mirror.as_ref() {
             None | Some(Value::Null) | Some(Value::Bool(false)) => return Ok(None),
-            Some(Value::Bool(true)) => return Ok(Some(MirrorGhost { format: None })),
+            Some(Value::Bool(true)) => return Ok(Some(MirrorGhost { format: None, ruler: None })),
             Some(Value::Object(resolved)) => resolved,
             Some(other) => {
                 return Err(format!(
@@ -1894,15 +2008,9 @@ impl AxisStyle {
                 format!("{family}: axis_y.mirror.ruler is not a ResolvedRulerAxis: {e}")
             })?),
         };
-        if ghost_ruler != self.ruler {
-            return Err(format!(
-                "{family}: axis_y.mirror.ruler differs from axis_y.ruler (a per-edge ruler) is not supported"
-            ));
-        }
-        let Some(format) = set("format") else { return Ok(Some(MirrorGhost { format: None })) };
-        if !paints_format {
-            return Err(format!("{family}: axis_y.mirror.format (a per-edge relabel) is not supported"));
-        }
+        let Some(format) = set("format") else {
+            return Ok(Some(MirrorGhost { format: None, ruler: ghost_ruler.filter(|g| Some(g) != self.ruler.as_ref()) }));
+        };
         if ghost_ruler.is_some() {
             return Err(format!(
                 "{family}: axis_y.mirror.format on a ruled axis is not supported (the ghost's ruler replaces \
@@ -1911,14 +2019,7 @@ impl AxisStyle {
         }
         let slot = serde_json::from_value::<FormatSlot>(format.clone())
             .map_err(|e| format!("{family}: axis_y.mirror.format is not a ResolvedFormat: {e}"))?;
-        // The ghost paints through the primary's plain value-axis painter
-        // ([`FormatSlot::paint_tick`]), which has no baked ladder to anchor on.
-        match slot.unpainted_key(false) {
-            Some(key) => Err(format!(
-                "{family}: axis_y.mirror.format {key:?} is not painted: the ghost has no baked ladder to anchor on"
-            )),
-            None => Ok(Some(MirrorGhost { format: Some(slot) })),
-        }
+        Ok(Some(MirrorGhost { format: Some(slot), ruler: None }))
     }
 
     /// The transform of `scale.continuous.type`; Vega's defaults for the
@@ -1936,6 +2037,21 @@ impl AxisStyle {
             Some("symlog") => Bend::Symlog(param("symlog", "constant")),
             _ => Bend::Linear,
         }
+    }
+
+    /// The authored `scale.values`, Vega's explicit tick positions.
+    pub fn authored_scale_values(&self) -> Option<Vec<f64>> {
+        self.scale.get("values")?.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect())
+    }
+
+    /// The log scale's authored base, Vega's default 10 when unauthored.
+    pub fn log_base(&self) -> f64 {
+        self.scale
+            .get("continuous")
+            .and_then(|c| c.get("log"))
+            .and_then(|l| l.get("base"))
+            .and_then(Value::as_f64)
+            .unwrap_or(10.0)
     }
 
     /// Returns true when the scale type is "log" (scale.continuous.type == "log").
@@ -2150,6 +2266,8 @@ pub fn x_threshold_fires(
 #[derive(Deserialize, Clone)]
 pub struct AxisLine {
     pub visible: Option<bool>,
+    pub width: Option<f64>,
+    pub color: Option<String>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -2321,7 +2439,7 @@ pub fn parse_labels_expr_slice_n(expr: &str) -> Result<i64, String> {
         .and_then(|s| s.strip_suffix(suffix))
         .and_then(|n| n.parse::<i64>().ok())
         .ok_or_else(|| {
-            format!(
+            crate::refuse!(
                 "labels.expr {expr:?} not supported — only the null-guarded \
                  `datum.value ? slice(datum.value, N) : ''` shape is modeled"
             )
@@ -3230,6 +3348,15 @@ pub fn row_num(row: &serde_json::Map<String, Value>, field: &str) -> Option<f64>
     }
 }
 
+/// The rows whose `field` holds a number, each with that number. A null or non-numeric measure
+/// draws no mark and no label (Vega skips the datum), so every pass over a measure reads rows here.
+pub fn valued_rows<'a>(
+    rows: impl IntoIterator<Item = &'a serde_json::Map<String, Value>>,
+    field: &str,
+) -> Vec<(&'a serde_json::Map<String, Value>, f64)> {
+    rows.into_iter().filter_map(|row| row_num(row, field).map(|val| (row, val))).collect()
+}
+
 /// Python's comparison of two raw values: numbers (bools included) with numbers,
 /// strings with strings, any other pair has no order (`TypeError`).
 pub fn raw_x_order(a: &Value, b: &Value) -> Result<std::cmp::Ordering, String> {
@@ -3489,7 +3616,7 @@ pub fn extra_title_lines(text: &str, font_size: f64) -> f64 {
 /// The axis title as it paints: `text` wrapped by [`wrap_axis_title`] and joined
 /// by newlines, with `WARN-AXIS-TITLE-TRUNCATED` when authored text was cut.
 /// `extent` is the chart size along the title's direction and `authored_field`
-/// the YAML key the text came from. A hidden title still wraps and warns, as
+/// the YAML key the text came from; `panels` is how many facet panels share the extent. A hidden title still wraps and warns, as
 /// production's `resolve_xy_titles` does.
 pub fn wrapped_axis_title(
     chart_id: &str,
@@ -3497,37 +3624,17 @@ pub fn wrapped_axis_title(
     text: &str,
     font: &Font,
     extent: f64,
+    panels: f64,
     fonts: &crate::text::FontBook,
 ) -> Result<String, String> {
     if text.is_empty() {
         return Ok(String::new());
     }
-    let (lines, truncated) = wrap_axis_title(text, extent, 1.0, font, fonts)?;
+    let (lines, truncated) = wrap_axis_title(text, extent, panels, font, fonts)?;
     if truncated {
         warn_axis_title_truncated(chart_id, authored_field, text);
     }
     Ok(lines.join("\n"))
-}
-
-/// Refuses a small-multiples panel title that wraps: production wraps it against
-/// the panel's extent and the `panels` it was divided across, but the composite
-/// paints the raw text.
-pub fn refuse_wrapping_facet_title(
-    family: &str,
-    text: &str,
-    title: &AxisTitle,
-    extent: f64,
-    panels: usize,
-    fonts: &crate::text::FontBook,
-) -> Result<(), String> {
-    if axis_title_band(title, text) == 0.0 {
-        return Ok(());
-    }
-    let (lines, truncated) = wrap_axis_title(text, extent, panels as f64, &title.font, fonts)?;
-    if truncated || lines.len() > 1 {
-        return Err(format!("{family}: multiples with an axis title wider than its panel budget is not supported"));
-    }
-    Ok(())
 }
 
 /// The widest line of a (possibly wrapped) axis title as Vega measures it
@@ -3709,6 +3816,31 @@ pub fn emit_axis_title_bottom(
     emit_axis_title_at(out, text, style, center_x, y, key);
 }
 
+/// [`emit_axis_title_bottom`] for either edge: above a top axis the title baseline sits a label
+/// height and its padding past the label row's own baseline, away from the plot.
+pub fn emit_axis_title_flat(
+    out: &mut String,
+    text: &str,
+    style: &AxisTitle,
+    center_x: f64,
+    label_baseline_y: f64,
+    label_font_size: f64,
+    key: Option<crate::contract::LabelKey>,
+    edge: XEdge,
+) {
+    match edge {
+        XEdge::Bottom => emit_axis_title_bottom(out, text, style, center_x, label_baseline_y, label_font_size, key),
+        XEdge::Top => emit_axis_title_at(
+            out,
+            text,
+            style,
+            center_x,
+            label_baseline_y - label_font_size - style.padding.unwrap_or(10.0),
+            key,
+        ),
+    }
+}
+
 /// Emit a rotated (vertical) axis title for a left- or right-side axis,
 /// centered on the plot's extent in that direction.
 ///
@@ -3770,7 +3902,12 @@ pub fn emit_axis_title_rotated(
 /// ~29 call sites across bar/heatmap/line/pie/scatter/support_table_strip
 /// would silently disagree with what Vega actually draws.
 pub fn row_str(row: &serde_json::Map<String, Value>, field: &str) -> String {
-    match row.get(field) {
+    cell_str(row.get(field))
+}
+
+/// `row_str` of one cell.
+pub fn cell_str(cell: Option<&Value>) -> String {
+    match cell {
         Some(Value::String(s)) => s.clone(),
         Some(Value::Null) | None => String::new(),
         Some(other) => other.to_string(),
@@ -3822,7 +3959,7 @@ pub fn js_string_to_number(s: &str) -> Option<f64> {
 }
 
 /// JS `Number(v)` of a JSON scalar; `None` where it is `NaN`.
-fn js_to_number(v: &Value) -> Option<f64> {
+pub fn js_to_number(v: &Value) -> Option<f64> {
     match v {
         Value::Number(n) => n.as_f64(),
         Value::Bool(b) => Some(f64::from(u8::from(*b))),
@@ -4128,6 +4265,13 @@ mod row_str_tests {
 /// `WIDE_VALUE_FIELD`. A wide payload's own `y` is already this constant
 /// (baked by the resolver), so no family needs to set it itself.
 pub const WIDE_VALUE_FIELD: &str = "__dbt_charts_wide_value__";
+/// The key under which a row whose date x was floored to its time bucket keeps
+/// the date it carried, which production's tooltip and link read.
+pub const RAW_X: &str = "\u{1d}raw_x";
+
+/// The raw measure name the fold keys each row by — mirrors `WIDE_KEY_FIELD`,
+/// which a link's `{{ color }}` reads.
+pub const WIDE_KEY_FIELD: &str = "__dbt_charts_wide_key__";
 /// Human-readable series label the fold's color field carries — mirrors
 /// `WIDE_LABEL_FIELD`. Substituted for the chart's own `color` field once,
 /// at the top of each wide-capable family's render entry point.
@@ -4179,6 +4323,7 @@ pub fn unfold_wide_rows(
                 Some(dim) => format!("{}{WIDE_SERIES_SEPARATOR}{measure}", wide_dimension_str(row, dim)),
             };
             folded.insert(WIDE_LABEL_FIELD.to_string(), Value::String(label));
+            folded.insert(WIDE_KEY_FIELD.to_string(), Value::String(measure.clone()));
             folded.insert(WIDE_VALUE_FIELD.to_string(), value.clone());
             out.push(folded);
         }
@@ -4444,9 +4589,9 @@ mod wide_fields_tests {
     #[test]
     fn wide_measures_title_joins_measure_labels() {
         let measures = vec!["revenue".to_string(), "fix-linked".to_string()];
-        assert_eq!(wide_measures_title(&measures, &FieldLabels::new()).unwrap(), "revenue, fix linked");
+        assert_eq!(wide_measures_title(&measures, &FieldLabels::new()).unwrap(), "Revenue, Fix linked");
         let labels = FieldLabels::from([("fix-linked".to_string(), "fix-linked".to_string())]);
-        assert_eq!(wide_measures_title(&measures, &labels).unwrap(), "revenue, fix-linked");
+        assert_eq!(wide_measures_title(&measures, &labels).unwrap(), "Revenue, fix-linked");
     }
 
     #[test]
@@ -4808,7 +4953,7 @@ mod axis_title_tests {
         let labels = FieldLabels::from([("category".to_string(), "Product line".to_string())]);
         assert_eq!(axis_title_text("category", Some("Category Label"), &labels).unwrap(), "Category Label");
         assert_eq!(axis_title_text("category", None, &labels).unwrap(), "Product line");
-        assert_eq!(axis_title_text("order_month", None, &FieldLabels::new()).unwrap(), "order month");
+        assert_eq!(axis_title_text("order_month", None, &FieldLabels::new()).unwrap(), "Order month");
     }
 
     #[test]
@@ -5245,6 +5390,91 @@ mod format_y_label_tests {
         );
     }
 
+    fn affixed_slot(prefix: &str, suffix: &str) -> FormatSlot {
+        FormatSlot { spec: ",.0f".to_string(), prefix: prefix.to_string(), suffix: suffix.to_string(), ..FormatSlot::default() }
+    }
+
+    /// `inject_axis_numeral_expr`'s ruler arm: an authored prefix leads the
+    /// anchor's digits and an authored suffix trails the magnitude word, on the
+    /// anchor tick alone.
+    #[test]
+    fn a_ruler_wears_an_authored_affix_on_its_anchor_tick() {
+        let r = currency_ruler();
+        let slot = affixed_slot("", " CHF");
+        assert_eq!(format_y_label(180000.0, Some(&r), None, Some(&slot), 4, 5).unwrap(), "$180K CHF");
+        assert_eq!(
+            format_y_label(100000.0, Some(&r), None, Some(&slot), 0, 5).unwrap(),
+            "100\u{2004}\u{2004}\u{2008}\u{200b}"
+        );
+        let slot = affixed_slot("EUR ", "");
+        assert_eq!(format_y_label(180000.0, Some(&r), None, Some(&slot), 4, 5).unwrap(), "EUR $180K");
+    }
+
+    /// A ladder-less SI `tick_label` wraps each magnitude band's digits in the
+    /// authored affix on every tick but zero, which stays the bare digits.
+    #[test]
+    fn a_ladderless_si_tick_label_wears_the_authored_affix() {
+        let tl = TickLabelConfig {
+            format: "$.3~r".to_string(),
+            prefix: String::new(),
+            anchor_at_start: None,
+            decimal_pad_table: Vec::new(),
+            si_format: Some("$.3~s".to_string()),
+            scientific_format: Some("$.3~e".to_string()),
+        };
+        let slot = affixed_slot("", " x");
+        let label = |v: f64| format_y_label(v, None, Some(&tl), Some(&slot), 1, 4).unwrap();
+        assert_eq!(label(1500.0), "$1.5k x");
+        assert_eq!(label(0.5), "$0.5 x");
+        assert_eq!(label(0.0), "$0");
+    }
+
+    /// The decimal pad follows the fractional digits of the text actually
+    /// painted (`_decimal_pad_missing_len_expr`), authored suffix included.
+    #[test]
+    fn a_decimal_pad_reads_the_affixed_text() {
+        let tl = TickLabelConfig {
+            format: ",.1~f".to_string(),
+            prefix: String::new(),
+            anchor_at_start: None,
+            decimal_pad_table: ["P0", "P1", "P2", "P3"].map(String::from).to_vec(),
+            si_format: None,
+            scientific_format: None,
+        };
+        let slot = affixed_slot("", " x");
+        assert_eq!(format_y_label(2.5, None, Some(&tl), Some(&slot), 1, 4).unwrap(), "2.5 xP1");
+        assert_eq!(format_y_label(2.0, None, Some(&tl), Some(&slot), 1, 4).unwrap(), "2 xP3");
+    }
+
+    /// An axis keeps d3's log `tickFormat` blanking unless production composes
+    /// a `labelExpr` over `datum.value`.
+    #[test]
+    fn only_a_numeral_labelexpr_defeats_the_log_blanking() {
+        let axis = |format: serde_json::Value| -> AxisStyle {
+            serde_json::from_value(serde_json::json!({
+                "grid": {"visible": true, "threshold": null, "width": 1.5, "color": "#D0D3D9", "opacity": 1.0},
+                "ticks": {"color": "#D0D3D9", "visible": false, "count": 6.0, "length": 6.0, "offset": 1.0},
+                "labels": {
+                    "font": {"family": "Inter", "color": "#626366", "size": 11.0, "weight": "400"},
+                    "padding": 6.0, "min_gap": null, "format": format, "visible": true
+                },
+                "title": {"font": {"family": "Inter", "size": 11.0, "weight": "600", "color": "#8A8C8F"}, "padding": 10.0, "visible": false},
+                "position": null, "mirror": null, "band_position": 0.5, "scale": {},
+                "tick_values": [], "domain_max": null, "domain_min": null,
+                "ruler": null, "tick_label": null,
+                "time_unit": null, "fiscal_year_start_month": 1, "fill": null, "line": null,
+                "is_quantitative": true, "zero_anchored": false
+            }))
+            .unwrap()
+        };
+        assert!(!axis(serde_json::json!({"spec": ".3~s"})).composes_numeral_expr());
+        assert!(!axis(serde_json::json!({"spec": ",.0f"})).composes_numeral_expr());
+        assert!(axis(serde_json::json!({"spec": ",.0f", "suffix": " pts"})).composes_numeral_expr());
+        assert!(axis(serde_json::json!({"spec": "$,.0f"})).composes_numeral_expr());
+        assert!(axis(serde_json::json!({"spec": ",.2s", "notation": "narrative"})).composes_numeral_expr());
+        assert!(axis(serde_json::json!({"spec": "bytes"})).composes_numeral_expr());
+    }
+
     #[test]
     fn negative_anchor_puts_the_sign_before_the_currency_symbol() {
         // d3's "$" spec flag places the symbol INSIDE the sign —
@@ -5531,17 +5761,13 @@ pub fn category_ink(
 /// precedence lives in exactly one place. A `value` absent from
 /// `palette_domain` refuses — the same guarantee bar.rs's pre-#7167 "series
 /// {s} not in palette domain" error made, since every wired caller's domain
-/// is built from the same rows the value comes from. `fallback` is the
-/// family's pre-existing sentinel for a hand-built payload whose palette
-/// can't cover a position `value` DOES own (production's own palette is
-/// never empty for a bound series) — the board-scale branch never reaches
-/// it either, since that branch is strict (see `category_color`).
+/// is built from the same rows the value comes from. `palette` is a
+/// [`Payload::series_palette`], which is never empty.
 pub fn series_color(
     value: &str,
     palette_domain: &[String],
     palette: &[String],
     scale: Option<&CategoryColorScale>,
-    fallback: &str,
 ) -> Result<String, String> {
     if let Some(scale) = scale {
         return category_color(scale, value, palette);
@@ -5550,7 +5776,14 @@ pub fn series_color(
         .iter()
         .position(|s| s == value)
         .ok_or_else(|| format!("internal error — {value:?} not in this chart's own color domain"))?;
-    Ok(palette.get(idx % palette.len().max(1)).cloned().unwrap_or_else(|| fallback.to_string()))
+    palette_slot(palette, idx).map(str::to_string)
+}
+
+/// Slot `idx` of a series palette, wrapping past its end as Vega's ordinal scale cycles a short range.
+fn palette_slot(palette: &[String], idx: usize) -> Result<&str, String> {
+    idx.checked_rem(palette.len())
+        .map(|slot| palette[slot].as_str())
+        .ok_or_else(|| "internal error — a series color read an empty palette; Payload::series_palette never hands one out".to_string())
 }
 
 /// The companion ink `value`'s fill pairs with, mirroring
@@ -5577,10 +5810,7 @@ pub fn series_ink(
         .ok_or_else(|| format!("internal error — {value:?} not in this chart's own color domain"))?;
     match companions.get(idx) {
         Some(ink) => Ok(ink.clone()),
-        None => palette
-            .get(idx % palette.len().max(1))
-            .cloned()
-            .ok_or_else(|| "internal error - empty palette".to_string()),
+        None => palette_slot(palette, idx).map(str::to_string),
     }
 }
 
@@ -5647,11 +5877,11 @@ mod category_color_tests {
         let palette = pal(&["#a", "#b", "#c", "#d"]);
         let domain = vec!["East".to_string(), "North".to_string()]; // chart-local order
         assert_eq!(
-            series_color("East", &domain, &palette, Some(&s), "#ccc").unwrap(),
+            series_color("East", &domain, &palette, Some(&s)).unwrap(),
             "#d"
         );
         assert_eq!(
-            series_color("North", &domain, &palette, Some(&s), "#ccc").unwrap(),
+            series_color("North", &domain, &palette, Some(&s)).unwrap(),
             "#a"
         );
     }
@@ -5694,8 +5924,8 @@ mod category_color_tests {
     fn no_scale_falls_back_to_chart_local_position() {
         let palette = pal(&["#a", "#b", "#c"]);
         let domain = vec!["East".to_string(), "North".to_string()];
-        assert_eq!(series_color("East", &domain, &palette, None, "#ccc").unwrap(), "#a");
-        assert_eq!(series_color("North", &domain, &palette, None, "#ccc").unwrap(), "#b");
+        assert_eq!(series_color("East", &domain, &palette, None).unwrap(), "#a");
+        assert_eq!(series_color("North", &domain, &palette, None).unwrap(), "#b");
     }
 
     /// A value missing from the chart's own local domain (unbound case) is
@@ -5707,7 +5937,7 @@ mod category_color_tests {
     fn a_value_outside_the_local_domain_refuses_even_without_a_scale() {
         let palette = pal(&["#a", "#b"]);
         let domain = vec!["East".to_string()];
-        let err = series_color("Ghost", &domain, &palette, None, "#ccc").unwrap_err();
+        let err = series_color("Ghost", &domain, &palette, None).unwrap_err();
         assert!(err.contains("Ghost"), "{err}");
         let err = series_ink("Ghost", &domain, &palette, &palette, &[], None).unwrap_err();
         assert!(err.contains("Ghost"), "{err}");
@@ -6055,23 +6285,44 @@ mod estimated_gutter_tests {
         assert_eq!(gutter(&log, "$,.0f", 18837.0, 75739.0).unwrap(), 56.02978515625);
     }
 
+    /// The candidates are the authored base's powers, not base ten's.
+    #[test]
+    fn a_log_axis_is_sized_from_the_authored_base() {
+        let base_two = axis(json!({"type": "log", "log": {"base": 2.0}}));
+        let base_ten = axis(json!({"type": "log"}));
+        assert_ne!(
+            gutter(&base_two, "$,.0f", 18837.0, 75739.0).unwrap(),
+            gutter(&base_ten, "$,.0f", 18837.0, 75739.0).unwrap()
+        );
+    }
+
     #[test]
     fn a_log_axis_over_billions_widens_to_the_four_hundred_million_label() {
         let log = axis(json!({"type": "log"}));
         assert_eq!(gutter(&log, ".3~s", 990_000_000.0, 8_200_000_000.0).unwrap(), 34.92138671875);
     }
 
+    /// An authored affix widens a ladder-less tick-label axis's gutter in every arm
+    /// (`_measured_label_padding.estimated_quantitative_tick_labels`).
+    #[test]
+    fn an_authored_affix_widens_a_ladder_less_tick_label_gutter() {
+        let tick_label: TickLabelConfig = serde_json::from_value(json!({
+            "format": ",.0f", "si_format": ".3~s", "scientific_format": ".2e"
+        }))
+        .unwrap();
+        let bare = FormatSlot::from(",.0f");
+        let affixed = FormatSlot { prefix: "USD ".to_string(), ..FormatSlot::from(",.0f") };
+        let linear = axis(json!({"type": null}));
+        let measure = |slot: &FormatSlot| {
+            estimated_tick_label_gutter(&fonts(), FAMILY, 11.0, 180.0, Some(&tick_label), Some(slot), &linear, 0.0, 75739.0).unwrap()
+        };
+        assert!(measure(&affixed) > measure(&bare) + 20.0, "{} vs {}", measure(&affixed), measure(&bare));
+    }
+
     #[test]
     fn a_linear_axis_keeps_the_zero_extended_linear_ladder() {
         let linear = axis(json!({"type": null}));
         assert_eq!(gutter(&linear, "$,.0f", 18837.0, 75739.0).unwrap(), 53.39794921875);
-    }
-
-    #[test]
-    fn a_log_base_other_than_ten_is_refused_by_name() {
-        let log = axis(json!({"type": "log", "log": {"base": 2.0}}));
-        let err = gutter(&log, "$,.0f", 18837.0, 75739.0).unwrap_err();
-        assert!(err.contains("log base 2"), "{err}");
     }
 
     #[test]

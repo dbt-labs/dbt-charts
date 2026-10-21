@@ -2472,7 +2472,7 @@ def _connect_next_step(org: str, project: ProjectSummary) -> str:
             "board renders without a source. A source whose data lives in the "
             "repo (CSV, JSON or Parquet, including an export of a local DuckDB "
             "file) needs no connection: declare it as a file source in "
-            "dbt_charts.yml (`dct docs sources`), commit and push it, then sync."
+            "dbt_charts.yml (https://docs.dbtcharts.com/sources/), commit and push it, then sync."
         )
     return f"Next: dct cloud project sync --org {org} --project {project.slug}"
 
@@ -2750,7 +2750,30 @@ def connection_create(
             ),
         ),
     ] = None,
+    map_source: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--map-source",
+            metavar="SOURCE",
+            help="Bind this unmapped project source to the new connection, repeatable",
+        ),
+    ] = None,
+    map_all_sources: Annotated[
+        bool,
+        typer.Option(
+            "--map-all-sources",
+            help="Bind every source the project has not mapped yet",
+        ),
+    ] = False,
     org: OrgOption = None,
+    project: Annotated[
+        str | None,
+        typer.Option(
+            "--project",
+            help="Project whose sources --map-source or --map-all-sources binds"
+            " (default: inferred, then `use`)",
+        ),
+    ] = None,
     host: HostOption = None,
     as_json: JsonOption = False,
 ) -> None:
@@ -2764,6 +2787,11 @@ def connection_create(
 
     Key material is never a flag value — pass --keyfile, --password-stdin, or
     --password-env VAR.
+
+    --map-source SOURCE (repeatable) or --map-all-sources binds the project's
+    unmapped sources to the connection in the same call, so Cloud re-renders
+    the boards they feed without a separate `source map`. A name that is not
+    one of the project's unmapped sources is refused before anything is saved.
 
     The connection is addressed by the slug of --name. Left off, the display
     name defaults to the field that names the warehouse — BigQuery's project,
@@ -2790,6 +2818,26 @@ def connection_create(
             "the display name is --name, not --set name=.",
             param_hint="--set",
         )
+    bound = sorted({"project_slug", "map_sources"} & set(fields))
+    if bound:
+        raise typer.BadParameter(
+            f"{', '.join(bound)} is set with --project and --map-source or"
+            " --map-all-sources, not --set.",
+            param_hint="--set",
+        )
+    if map_source and map_all_sources:
+        raise typer.BadParameter(
+            "name sources with --map-source or bind them all with"
+            " --map-all-sources, not both.",
+            param_hint="--map-all-sources",
+        )
+    binds = bool(map_source) or map_all_sources
+    if project is not None and not binds:
+        raise typer.BadParameter(
+            "a create binds no sources on its own; add --map-source SOURCE or"
+            " --map-all-sources.",
+            param_hint="--project",
+        )
     if name is not None:
         if not name.strip():
             # Blank reaches the form as "derive one for me", which is what
@@ -2802,14 +2850,25 @@ def connection_create(
     fields.update(_secret_field(connection_type, keyfile, password_stdin, password_env))
 
     with _cloud(host, as_json) as (client, config):
-        result = client.create_connection(
-            _org(client, config, org), connection_type, fields
-        )
+        binding = None
+        if binds:
+            context = _context(client, config, org, project)
+            org_slug = context.org
+            names = client.bindable_sources(org_slug, context.project, map_source)
+            binding = (context.project, names)
+        else:
+            org_slug = _org(client, config, org)
+        result = client.create_connection(org_slug, connection_type, fields, binding)
     if as_json:
         print_json_result(result)
         return
     typer.echo(f"Created {result.connection.slug} — connection test passed.")
-    typer.echo(f"Next: dct cloud source map <source> {result.connection.slug}")
+    if binding is not None:
+        typer.echo(
+            f"Bound {', '.join(binding[1])}; Cloud re-renders the boards they feed."
+        )
+    else:
+        typer.echo(f"Next: dct cloud source map <source> {result.connection.slug}")
 
 
 def _secret_field(

@@ -15,11 +15,13 @@ helpers) live there too.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import (
     column_format,
+    declared_column_format,
     reject_native,
     resolve_format_parts,
 )
@@ -27,6 +29,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     ChartSupportTable,
     ChartSupportTableAggregate,
     ChartSupportTablePerSeries,
+    ChartSupportTableSource,
 )
 from dbt_charts.core.compile.models.chart.authored._support_table import (
     ChartSupportTableEntry,
@@ -281,6 +284,7 @@ def resolve_support_table(
     formats: FormatTable | None,
     data: list[dict[str, Any]],  # type-state: explicit_any — query-row boundary values
     y: str | list[str] | None,
+    query_formats: Mapping[str, str] | None,
     *,
     stamp_number: bool,
 ) -> ResolvedSupportTable:
@@ -318,6 +322,12 @@ def resolve_support_table(
                 )
                 if voted.spec != fmt.spec:
                     fmt = voted.model_copy(update={"raw": None})
+        elif isinstance(entry, ChartSupportTableSource) and declared_column_format(
+            query_formats, column, formats, time=False
+        ):
+            fmt = column_format(
+                "number", formats, query_formats=query_formats, columns=column
+            )
         elif stamp_number and column == y:
             fmt = resolve_format_parts(PredefinedNumberFormat.number, formats)
         if fmt is not None:

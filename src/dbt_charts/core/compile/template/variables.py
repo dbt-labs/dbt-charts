@@ -15,6 +15,11 @@ from typing import Any
 
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.variable.authored import Variable
+from dbt_charts.core.compile.template.daterange import (
+    DATERANGE_PRESETS,
+    resolve_daterange_preset,
+    resolve_daterange_preset_iso,
+)
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_UNKNOWN_VARIABLE_OVERRIDE,
     ERR_VARIABLE_VALUE_NOT_IN_OPTIONS,
@@ -196,6 +201,12 @@ def coerce_variable_values(
             if variable_value_is_absent(value):
                 result[name] = None
                 continue
+            if isinstance(value, str):
+                try:
+                    result[name] = list(resolve_daterange_preset(value, date.today()))
+                except ValueError as e:
+                    raise ExecutionError(f"Variable '{name}': {e}") from None
+                continue
             if not isinstance(value, (list, tuple)) or len(value) != 2:
                 raise ExecutionError(
                     f"Variable '{name}': daterange value must be [start, end], "
@@ -254,7 +265,7 @@ def _float_or_none(text: str) -> float | None:
 def check_option_values(
     registry: dict[str, Variable],
     overrides: VariableValues,
-    options_of: Callable[[Variable], Sequence[str]],
+    options_of: Callable[[str, Variable], Sequence[str]],
 ) -> None:
     """Reject a choice-input value outside the variable's options.
 
@@ -273,7 +284,7 @@ def check_option_values(
             or variable_value_is_absent(value)
         ):
             continue
-        options = options_of(var)
+        options = options_of(name, var)
         if not options:
             continue
         members = coerce_multiselect(value) if var.input == "multiselect" else [value]
@@ -306,13 +317,15 @@ def check_variable_overrides(
                 variable=name,
                 available=sorted(registry),
             )
-    check_option_values(registry, overrides, static_option_values)
+    check_option_values(
+        registry, overrides, lambda _name, var: static_option_values(var)
+    )
 
 
-def normalize_multiselect_values(
+def normalize_render_values(
     values: VariableValues, registry: dict[str, Variable]
 ) -> VariableValues:
-    """Give every registered `multiselect` a list value, adding `[]` when absent.
+    """Narrow multiselects to lists and resolve daterange presets for render.
 
     The render boundary's counterpart to the coercion `coerce_variable_values`
     does for queries — same narrowing rule, applied where render merges defaults
@@ -325,15 +338,41 @@ def normalize_multiselect_values(
     ``default:`` never reaches ``variable_defaults`` at all, so a template would
     see Jinja's Undefined and ``| join`` would raise — the failure that took
     down whole boards.
+
+    A daterange preset id becomes its ISO ``[start, end]``; any other string
+    raises, since a template indexing it would read characters, not dates.
     """
     normalized = dict(values)
+    today = date.today()
     for name, var in registry.items():
+        raw = values.get(name)
         if var.input == "multiselect":
-            raw = values.get(name)
             normalized[name] = coerce_multiselect(
                 UNSET_MULTISELECT if raw is None else raw
             )
+        elif (
+            var.input == "daterange"
+            and isinstance(raw, str)
+            and not variable_value_is_absent(raw)
+        ):
+            try:
+                normalized[name] = resolve_daterange_preset_iso(raw, today)
+            except ValueError as e:
+                raise ExecutionError(f"Variable '{name}': {e}") from None
     return normalized
+
+
+def daterange_preset_ids(
+    values: VariableValues, registry: dict[str, Variable]
+) -> dict[str, str]:
+    """The daterange variables whose value is a preset id, mapped to that id."""
+    return {
+        name: value
+        for name, var in registry.items()
+        if var.input == "daterange"
+        and isinstance(value := values.get(name), str)
+        and value in DATERANGE_PRESETS
+    }
 
 
 def coerce_multiselect(value: _MultiselectRaw) -> list[_Coercible]:
@@ -483,7 +522,8 @@ __all__ = [
     "coerce_multiselect",
     "variables_from_query_pairs",
     "coerce_variable_values",
-    "normalize_multiselect_values",
+    "daterange_preset_ids",
+    "normalize_render_values",
     "parse_iso_date",
     "parse_variable_json_strings",
     "variable_value_is_absent",

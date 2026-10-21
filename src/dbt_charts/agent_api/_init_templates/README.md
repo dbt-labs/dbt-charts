@@ -6,8 +6,6 @@ Dashboards for this project, authored as YAML and rendered by
 - `dbt_charts.yml`: project config, data sources and engine settings.
 - `charts/`: one board per `.yml` (or `.md`) file. `charts/meta.yml` holds
   defaults every board in the folder inherits.
-- `charts/guide.yml`: a starter tour that runs without a database. Delete it
-  once you have boards of your own.
 
 Preview every board in your browser:
 

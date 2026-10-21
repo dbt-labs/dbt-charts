@@ -1,0 +1,3 @@
+kind: Fixes
+body: Retired keys inside a board nested in another board now migrate like top-level ones, so an older board no longer fails to load because of one.
+time: 2026-10-20T12:00:51.392749-04:00

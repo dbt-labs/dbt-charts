@@ -1,0 +1,3 @@
+kind: Features
+body: '`dct cloud connection create` binds the project''s sources in the same call with `--project` and `--map-source` or `--map-all-sources`.'
+time: 2026-10-16T23:52:54.500936501Z

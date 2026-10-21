@@ -307,7 +307,6 @@ charts:
     x: country
     y: pct
     style:
-      orientation: horizontal
       axis_y:
         labels:
           format: ".0%"
@@ -321,7 +320,6 @@ charts:
     y: pct
     sort:
       by: sort_key
-      order: asc
     style:
       axis_y:
         labels:
@@ -338,7 +336,6 @@ charts:
       by: usage_count
       order: desc
     style:
-      orientation: horizontal
       axis_y:
         labels:
           format: ",.0f"
@@ -353,7 +350,6 @@ charts:
     color: pct_of_fields
     sort:
       by: sort_key
-      order: asc
 
   recipient_funnel_chart:
     query: recipient_funnel
@@ -364,9 +360,7 @@ charts:
     y: pct_of_sent
     sort:
       by: ord
-      order: asc
     style:
-      orientation: horizontal
       axis_y:
         labels:
           format: ".0%"
@@ -381,8 +375,6 @@ charts:
     total:
       visible: false
     style:
-      legend:
-        visible: false
       marks:
         slice:
           labels:
@@ -396,7 +388,6 @@ charts:
     x: signup_source
     y: accounts
     style:
-      orientation: horizontal
       axis_y:
         labels:
           format: ",.0f"
@@ -410,7 +401,6 @@ charts:
     y: accounts
     sort:
       by: sort_key
-      order: asc
     style:
       axis_y:
         labels:

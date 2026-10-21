@@ -273,7 +273,7 @@ class TestStyleInputColumnsAutoHide:
             self._HELPER_DATA,
         )
         assert 'font-weight="bold"' in svg
-        assert "Weight Col" in svg
+        assert "Weight col" in svg
         assert ">400<" in svg
 
     def test_explicit_entry_beats_auto_hide(self) -> None:

@@ -10,8 +10,7 @@
 //! (`paint_layer_marks`/`emit_line_layer`, parameterized by the base's own
 //! x-position law — band centers for bar, the fitted x scale for line).
 //! Bar-only shapes (`type: bar` layers, grouped-base) also have their own
-//! types/helpers here (`OverlayBarLayer`,
-//! `column_is_nominal`) — only `bar.rs` calls them, but they live alongside
+//! types/helpers here (`OverlayBarLayer`) — only `bar.rs` calls them, but they live alongside
 //! the two-caller machinery rather than in `bar.rs` itself. A layer pinned to
 //! a scale of its own (`ScaledLayer`, `LayerAxis`) is also shared: both
 //! families measure, fit and paint its independent axis through this module.
@@ -25,6 +24,7 @@ use serde_json::Value;
 
 use crate::diagnostic::Diagnostic;
 use crate::common::{row_num, row_str, FormatSlot, MarkLabels};
+use crate::families::color_scale::ContinuousColor;
 use crate::families::legend::{LegendConfig, LegendEntry, LegendSymbol};
 use crate::svg::xml_escape_attr;
 use crate::text::FontBook;
@@ -94,8 +94,8 @@ pub(crate) struct OverlayPointMark {
 }
 
 /// A layer's own axis paints its `labels.format` affix (`_overlay.py:1583`);
-/// every other layer format affix, and an authored layer `scale.domain`,
-/// reaches no painter here and refuses by name instead of vanishing.
+/// every other layer format affix reaches no painter here and refuses by name
+/// instead of vanishing.
 /// `own_axis` is whether the chart's layers own their axes (`YSides`).
 pub(crate) fn refuse_unpainted_layer_affix(family: &str, raw: &Value, own_axis: bool) -> Result<(), String> {
     #[derive(Deserialize)]
@@ -105,8 +105,6 @@ pub(crate) fn refuse_unpainted_layer_affix(family: &str, raw: &Value, own_axis: 
     }
     #[derive(Deserialize)]
     struct Axis {
-        #[serde(default)]
-        scale: Option<Value>,
         #[serde(default)]
         labels: Option<Labels>,
         #[serde(default)]
@@ -119,12 +117,6 @@ pub(crate) fn refuse_unpainted_layer_affix(family: &str, raw: &Value, own_axis: 
     }
     let layer: Layer = serde_json::from_value(raw.clone()).map_err(|e| format!("{family}: layer payload: {e}"))?;
     let Some(axis) = layer.axis_y else { return Ok(()) };
-    if axis.scale.as_ref().and_then(|scale| scale.get("domain")).is_some_and(|domain| !domain.is_null()) {
-        return Err(format!(
-            "{family}: layer axis_y.scale.domain is not painted: a layer's authored domain, and the plot clip \
-             (or `clip: false`) that goes with it, have no layer law here"
-        ));
-    }
     // A layer's own right axis paints its `labels.format` affix on every
     // non-zero tick (`format_y_label` through `FormatSlot::paint_tick`,
     // `compose_axis_format`, which composes `repeat: every` the same way) and
@@ -140,7 +132,7 @@ pub(crate) fn refuse_unpainted_layer_affix(family: &str, raw: &Value, own_axis: 
             } else {
                 "a layer axis bakes no anchor ladder"
             };
-            return Err(format!("{family}: layer axis_y.labels.format {key:?} is not painted: {reason}"));
+            return Err(crate::refuse!("{family}: layer axis_y.labels.format {key:?} is not supported: {reason}"));
         }
     }
     if let Some(key) = axis.tooltip_format.as_ref().and_then(|slot| slot.carried().next()) {
@@ -189,6 +181,22 @@ pub(crate) struct OverlayAxisY {
     /// The ladder resolve bakes for a house SI layer format.
     #[serde(default)]
     pub tick_label: Option<crate::common::TickLabelConfig>,
+    /// The layer's authored `scale.domain`, and whether its marks cut off at the
+    /// plot edge outside it.
+    #[serde(default)]
+    pub scale: Option<OverlayAxisScale>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct OverlayAxisScale {
+    #[serde(default)]
+    pub domain: Option<(f64, f64)>,
+    #[serde(default = "clip_by_default")]
+    pub clip: bool,
+}
+
+fn clip_by_default() -> bool {
+    true
 }
 
 #[derive(Deserialize)]
@@ -224,6 +232,29 @@ pub(crate) fn layer_series_text(name: &str, color_value: Option<&str>) -> String
     }
 }
 
+/// The series row a block whose bar has none borrows from the first layer whose
+/// color splits its rows over the shared scale (`_layer_series`), keyed by that
+/// layer's category: the layer's paint for the row's value, SWATCH-bracketed,
+/// since the hovered mark may be the uncolored bar. A numeric color has no paint
+/// on the shared scale, so it lends nothing.
+pub(crate) fn layer_series_swatches<'a>(
+    layers: impl IntoIterator<Item = (&'a OverlayLayer, &'a [serde_json::Map<String, Value>], &'a LayerClaim)>,
+    scale: &LayerScale,
+    cat_field: &str,
+) -> HashMap<String, String> {
+    let split = layers.into_iter().find_map(|(layer, rows, claim)| {
+        layer.color().filter(|cf| claim.numeric.is_none() && layer_color_promoted(rows, cf)).map(|cf| (layer, cf, rows))
+    });
+    let Some((layer, color_field, rows)) = split else { return HashMap::new() };
+    rows.iter()
+        .map(|row| {
+            let value = row_str(row, color_field);
+            let swatch = format!("{}{}{}{value}", crate::contract::SWATCH, scale.color_of(&value), crate::contract::SWATCH);
+            (row_str(row, layer.x().unwrap_or(cat_field)), swatch)
+        })
+        .collect()
+}
+
 #[derive(Deserialize)]
 pub(crate) struct OverlayAxisLabels {
     #[serde(default)]
@@ -255,6 +286,10 @@ pub(crate) struct OverlayLineLayer {
 }
 
 impl OverlayLineLayer {
+    pub(crate) fn layer_type(&self) -> LayerType {
+        if self.area_mark.is_some() { LayerType::Area } else { LayerType::Line }
+    }
+
     /// Whether any of the layer's rows paints outside `domain`
     /// (`_overlay.py::paints_outside_domain`): the gate for clipping a layer
     /// over a normalized base.
@@ -350,6 +385,14 @@ impl OverlayLineLayer {
 /// d3's curve for an authored `curve` literal (VL `interpolate`). A literal
 /// `step` is d3's centered `curveStep` here: the band-aware plateau is a row
 /// transform the caller applies on a band x, never a curve.
+/// The link a layer carries: the chart's own, unless the layer reads another query's rows.
+pub(crate) fn layer_link<'a>(
+    link: Option<&'a crate::href::DatumLink<'a>>,
+    (query, base_query): (Option<&str>, Option<&str>),
+) -> Option<&'a crate::href::DatumLink<'a>> {
+    link.filter(|_| query.is_none_or(|query| Some(query) == base_query))
+}
+
 pub(crate) fn curve_named(name: Option<&str>, family: &str) -> Result<d3rs::shape::Curve, String> {
     use d3rs::shape::Curve;
     Ok(match name {
@@ -365,29 +408,15 @@ pub(crate) fn curve_named(name: Option<&str>, family: &str) -> Result<d3rs::shap
     })
 }
 
-/// True when every non-null value of `field` across `rows` is a JSON
-/// string — mirrors production's `infer_vega_type_from_data` far enough to
-/// gate the one modeled layer-color shape: a genuinely nominal/ordinal
-/// field. A column with no values at all is nominal by the same fallback
-/// `infer_vega_type_from_data` uses (`data or field not in data[0]` →
-/// `"nominal"`).
-pub(crate) fn column_is_nominal(rows: &[serde_json::Map<String, Value>], field: &str) -> bool {
-    rows.iter().filter_map(|row| row.get(field)).filter(|v| !v.is_null()).all(Value::is_string)
-}
-
-/// Refuses a layer color field that is not nominal. Vega-Lite types it
-/// quantitative and builds a continuous color scale, which vl-convert fails on
-/// (a `TypeError` in vega-encode, so the layer's marks, or the whole chart's,
-/// vanish) or draws as a gradient legend with `NaN` labels: no render to match.
-pub(crate) fn refuse_non_nominal_layer_color(
-    rows: &[serde_json::Map<String, Value>],
-    field: &str,
-    family: &str,
-) -> Result<(), String> {
-    if !column_is_nominal(rows, field) {
-        return Err(format!("{family}: a layer color field of a non-nominal type is not supported"));
-    }
-    Ok(())
+/// The color fields of the layers drawing on the shared color scale: a layer colored by a
+/// numeric field has a scale, and so a legend, of its own.
+pub(crate) fn shared_color_fields<'a>(
+    layers: impl IntoIterator<Item = (&'a OverlayLayer, &'a [serde_json::Map<String, Value>])>,
+) -> Vec<&'a str> {
+    layers
+        .into_iter()
+        .filter_map(|(layer, rows)| layer.color().filter(|field| numeric_layer_color(rows, field).is_none()))
+        .collect()
 }
 
 /// The title of a layered chart's one merged color legend. Vega-Lite joins the
@@ -561,6 +590,13 @@ pub(crate) struct LayerStack {
     color_field: String,
     y_field: String,
     cells: HashMap<(String, Option<String>), Vec<(f64, f64)>>,
+    /// A numeric color's series each hold a zero-thickness cell at every x they
+    /// have no row at (Vega-Lite's imputed zeros under a continuous color), in
+    /// first-appearance x order.
+    imputed_cells: Vec<((String, Option<String>), (f64, f64))>,
+    /// Per color value, the `(x, href)` of the zero rows Vega-Lite's impute pass adds
+    /// under a link, in the order it generates them.
+    imputed: Vec<(Option<String>, Vec<(String, String)>)>,
 }
 
 impl LayerStack {
@@ -571,9 +607,64 @@ impl LayerStack {
         color_field: &str,
         y_field: &str,
     ) -> Self {
+        Self::ordered(rows, x_field, color_field, y_field, true)
+    }
+
+    /// The same stack read along a horizontal chart's measure axis: the first value of the
+    /// domain sits at the baseline, a null-colored row below all.
+    pub(crate) fn ascending(
+        rows: &[serde_json::Map<String, Value>],
+        x_field: &str,
+        color_field: &str,
+        y_field: &str,
+    ) -> Self {
+        Self::ordered(rows, x_field, color_field, y_field, false)
+    }
+
+    fn ordered(
+        rows: &[serde_json::Map<String, Value>],
+        x_field: &str,
+        color_field: &str,
+        y_field: &str,
+        descending: bool,
+    ) -> Self {
         let any_null = rows.iter().any(|row| layer_color_of(row, color_field).is_none());
-        let baseline_first = layer_stack_order(&layer_color_values(rows, color_field), any_null);
+        if numeric_layer_color(rows, color_field).is_some() {
+            // A numeric color orders its series by value.
+            let mut values: Vec<(f64, String)> = rows
+                .iter()
+                .filter_map(|row| Some((row_num(row, color_field)?, row_str(row, color_field))))
+                .collect();
+            values.sort_by(|a, b| if descending { b.0.total_cmp(&a.0) } else { a.0.total_cmp(&b.0) });
+            values.dedup_by(|a, b| a.1 == b.1);
+            let texts = values.into_iter().map(|(_, text)| Some(text));
+            let baseline_first: Vec<Option<String>> = if descending {
+                texts.chain(any_null.then_some(None)).collect()
+            } else {
+                any_null.then_some(None).into_iter().chain(texts).collect()
+            };
+            return Self::build(rows, x_field, color_field, y_field, &baseline_first, true);
+        }
+        let values = layer_color_values(rows, color_field);
+        let baseline_first: Vec<Option<String>> = if descending {
+            layer_stack_order(&values, any_null)
+        } else {
+            any_null.then_some(None).into_iter().chain(values.into_iter().map(Some)).collect()
+        };
         Self::new(rows, x_field, color_field, y_field, &baseline_first)
+    }
+
+    /// Under a link the stack also imputes a zero row per (color, href) group at every x
+    /// the group has no row at.
+    pub(crate) fn imputing(
+        mut self,
+        rows: &[serde_json::Map<String, Value>],
+        link: Option<&crate::href::DatumLink>,
+    ) -> Result<Self, String> {
+        if let Some(link) = link {
+            self.imputed = imputed_rows(rows, &self.x_field, &self.color_field, link)?;
+        }
+        Ok(self)
     }
 
     pub(crate) fn new(
@@ -583,8 +674,28 @@ impl LayerStack {
         y_field: &str,
         baseline_first: &[Option<String>],
     ) -> Self {
+        Self::build(rows, x_field, color_field, y_field, baseline_first, false)
+    }
+
+    fn build(
+        rows: &[serde_json::Map<String, Value>],
+        x_field: &str,
+        color_field: &str,
+        y_field: &str,
+        baseline_first: &[Option<String>],
+        impute: bool,
+    ) -> Self {
         let mut columns: Vec<(String, crate::common::StackZero)> = Vec::new();
         let mut cells: HashMap<(String, Option<String>), Vec<(f64, f64)>> = HashMap::new();
+        let mut imputed = Vec::new();
+        if impute {
+            for row in rows.iter().filter(|row| row_num(row, y_field).is_some()) {
+                let x = row_str(row, x_field);
+                if !columns.iter().any(|(seen, _)| *seen == x) {
+                    columns.push((x, crate::common::StackZero::new(0.0)));
+                }
+            }
+        }
         for series in baseline_first {
             for row in rows.iter().filter(|row| layer_color_of(row, color_field) == *series) {
                 let Some(val) = row_num(row, y_field) else { continue };
@@ -598,13 +709,52 @@ impl LayerStack {
                 };
                 cells.entry((x, series.clone())).or_default().push(columns[slot].1.push(val));
             }
+            if impute {
+                for (x, stack) in columns.iter_mut() {
+                    if !cells.contains_key(&(x.clone(), series.clone())) {
+                        imputed.push(((x.clone(), series.clone()), stack.push(0.0)));
+                    }
+                }
+            }
         }
         LayerStack {
             x_field: x_field.to_string(),
             color_field: color_field.to_string(),
             y_field: y_field.to_string(),
             cells,
+            imputed: Vec::new(),
+            imputed_cells: imputed,
         }
+    }
+
+    /// The top of each x column's positive stack: where the imputed zero rows sit (no
+    /// sort index puts them last, and a zero stacks on the positive side).
+    pub(crate) fn column_top(&self, x: &str) -> f64 {
+        self.cells
+            .iter()
+            .filter(|((cell_x, _), _)| cell_x == x)
+            .flat_map(|(_, segments)| segments.iter().filter(|(start, end)| end >= start).map(|&(_, end)| end))
+            .fold(0.0, f64::max)
+    }
+
+    /// The zero-thickness cells a series of `rows` holds where it has no row, as
+    /// `(x text, (start, end))`.
+    pub(crate) fn imputed_cells_for(&self, rows: &[serde_json::Map<String, Value>]) -> Vec<(&str, (f64, f64))> {
+        let Some(first) = rows.first() else { return Vec::new() };
+        let series = layer_color_of(first, &self.color_field);
+        self.imputed_cells.iter().filter(|((_, s), _)| *s == series).map(|((x, _), span)| (x.as_str(), *span)).collect()
+    }
+
+    pub(crate) fn x_field(&self) -> &str {
+        &self.x_field
+    }
+
+    pub(crate) fn color_field(&self) -> &str {
+        &self.color_field
+    }
+
+    pub(crate) fn imputed_for(&self, color: &Option<String>) -> &[(String, String)] {
+        self.imputed.iter().find(|(seen, _)| seen == color).map_or(&[], |(_, items)| items)
     }
 
     /// The `(start, end)` of each of `rows`' segments on its column's stack, in row
@@ -623,6 +773,74 @@ impl LayerStack {
             })
             .collect()
     }
+}
+
+/// Vega-Lite's impute pass over a stacked area under a link: the stack's groups are the
+/// link plus the color field unless that is the x field itself (then the imputed row takes the
+/// x key as its color), and every group is filled with a zero at each x it has no row at.
+pub(crate) struct ImputeGroups {
+    groups: Vec<(Option<String>, String)>,
+    keys: Vec<(String, Option<String>)>,
+    present: HashSet<(usize, usize)>,
+    color_is_x: bool,
+}
+
+impl ImputeGroups {
+    /// `cells` are every row's `(x, color, href)` in row order, synthetic gap-fill rows included.
+    pub(crate) fn new(cells: impl IntoIterator<Item = (String, Option<String>, String)>, color_is_x: bool) -> Self {
+        let mut groups: Vec<(Option<String>, String)> = Vec::new();
+        let mut keys: Vec<(String, Option<String>)> = Vec::new();
+        let mut present: HashSet<(usize, usize)> = HashSet::new();
+        for (x, color, href) in cells {
+            let group = (if color_is_x { None } else { color.clone() }, href);
+            let g = groups.iter().position(|seen| *seen == group).unwrap_or_else(|| {
+                groups.push(group);
+                groups.len() - 1
+            });
+            let k = keys.iter().position(|(seen, _)| *seen == x).unwrap_or_else(|| {
+                keys.push((x, color));
+                keys.len() - 1
+            });
+            present.insert((g, k));
+        }
+        Self { groups, keys, present, color_is_x }
+    }
+
+    /// A series' hrefs in the order its rows first show them.
+    pub(crate) fn hrefs_of(&self, color: &str) -> Vec<&str> {
+        self.groups.iter().filter(|(group_color, _)| group_color.as_deref() == Some(color)).map(|(_, href)| href.as_str()).collect()
+    }
+
+    /// The zero rows the pass adds, per color: `(x, href)` group after group.
+    fn imputed(&self) -> Vec<(Option<String>, Vec<(String, String)>)> {
+        let mut imputed: Vec<(Option<String>, Vec<(String, String)>)> = Vec::new();
+        for (g, (group_color, href)) in self.groups.iter().enumerate() {
+            for (k, (x, key_color)) in self.keys.iter().enumerate() {
+                if self.present.contains(&(g, k)) {
+                    continue;
+                }
+                let color = if self.color_is_x { key_color } else { group_color };
+                match imputed.iter_mut().find(|(seen, _)| seen == color) {
+                    Some((_, items)) => items.push((x.clone(), href.clone())),
+                    None => imputed.push((color.clone(), vec![(x.clone(), href.clone())])),
+                }
+            }
+        }
+        imputed
+    }
+}
+
+fn imputed_rows(
+    rows: &[serde_json::Map<String, Value>],
+    x_field: &str,
+    color_field: &str,
+    link: &crate::href::DatumLink,
+) -> Result<Vec<(Option<String>, Vec<(String, String)>)>, String> {
+    let cells = rows
+        .iter()
+        .map(|row| Ok((row_str(row, x_field), layer_color_of(row, color_field), link.href(row)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(ImputeGroups::new(cells, x_field == color_field).imputed())
 }
 
 /// How far above its plot the scope groups of a color-grouped or band-step line or
@@ -893,6 +1111,56 @@ pub(crate) struct LayerClaim {
     /// The color a layer with no `color` took for its label, which its marks
     /// paint as a literal even when the label repeats an earlier entry.
     pub fill: Option<String>,
+    /// Whether the claimed values draw as circles in the legend: a scatter
+    /// layer's own grouping.
+    pub circle: bool,
+    /// The sequential scale of a layer colored by a numeric field: it claims no
+    /// slot on the shared scale and paints each value by position on this one.
+    pub numeric: Option<ContinuousColor>,
+}
+
+impl LayerClaim {
+    /// The color a group of rows sharing `value` of the layer's color `field` paints.
+    pub(crate) fn group_color(
+        &self,
+        scale: &LayerScale,
+        field: &str,
+        value: Option<&str>,
+        rows: &[serde_json::Map<String, Value>],
+    ) -> String {
+        match &self.numeric {
+            Some(numeric) => rows
+                .iter()
+                .find_map(|row| row_num(row, field))
+                .map_or_else(|| UNSCALED_COLOR.to_string(), |v| numeric.fill(v)),
+            None => scale.color_of_value(value).to_string(),
+        }
+    }
+
+    /// The color `row`'s own value of the layer's color `field` paints.
+    pub(crate) fn row_color(&self, scale: &LayerScale, field: &str, row: &serde_json::Map<String, Value>) -> String {
+        match &self.numeric {
+            Some(numeric) => row_num(row, field).map_or_else(|| UNSCALED_COLOR.to_string(), |v| numeric.fill(v)),
+            None => scale.color_of_row(row, field).to_string(),
+        }
+    }
+}
+
+/// The sequential scale a layer's `color` field draws over `rows`, when Vega-Lite types
+/// the field quantitative (`infer_vega_type_from_data`): its first 10 rows hold only
+/// numbers and nulls. The domain is the field's extent over every row.
+pub(crate) fn numeric_layer_color(rows: &[serde_json::Map<String, Value>], field: &str) -> Option<ContinuousColor> {
+    let first = rows.first()?;
+    if !first.contains_key(field) {
+        return None;
+    }
+    let sample = || rows.iter().take(10).filter_map(|row| row.get(field)).filter(|v| !v.is_null());
+    if sample().next().is_none() || !sample().all(|v| v.is_number()) {
+        return None;
+    }
+    let values = rows.iter().filter_map(|row| row_num(row, field));
+    let (lo, hi) = values.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(v), hi.max(v)));
+    Some(ContinuousColor::blues(lo, hi))
 }
 
 /// Every layer's claim on the shared scale, in authored order (`_overlay.py`):
@@ -916,6 +1184,9 @@ pub(crate) fn claim_layers(
                     (l.color.is_some().then(|| LegendSymbol::FadedCircle(area_opacity.unwrap_or(1.0))), l.point_mark.color.as_deref())
                 }
             };
+            if let Some(numeric) = layer.color().and_then(|field| numeric_layer_color(rows, field)) {
+                return Ok(LayerClaim { label, values: Vec::new(), fill: None, circle: false, numeric: Some(numeric) });
+            }
             let Some(color_field) = layer.color() else {
                 scale.refuse_repeat(&label)?;
                 let fill = scale.claim(&label, authored)?;
@@ -925,7 +1196,7 @@ pub(crate) fn claim_layers(
                 if matches!(layer, OverlayLayer::Bar(_)) {
                     scale.set_square(&label);
                 }
-                return Ok(LayerClaim { label, values: Vec::new(), fill: Some(fill) });
+                return Ok(LayerClaim { label, values: Vec::new(), fill: Some(fill), circle: false, numeric: None });
             };
             let values = layer_color_values(rows, color_field);
             scale.claim_values(&values)?;
@@ -935,7 +1206,7 @@ pub(crate) fn claim_layers(
             if matches!(layer, OverlayLayer::Bar(_)) {
                 values.iter().for_each(|value| scale.set_square(value));
             }
-            Ok(LayerClaim { label, values, fill: None })
+            Ok(LayerClaim { label, values, fill: None, circle: matches!(layer, OverlayLayer::Scatter(_)), numeric: None })
         })
         .collect()
 }
@@ -974,6 +1245,7 @@ pub(crate) fn paint_line_layer_marks(
     svg: &mut String,
     l: &OverlayLineLayer,
     rows: &[serde_json::Map<String, Value>],
+    // A NaN x is Vega's NaN position: the mark sits at 0 and the line or area is undefined there.
     x_of: impl Fn(&serde_json::Map<String, Value>) -> Option<f64>,
     label_x_of: Option<&dyn Fn(&serde_json::Map<String, Value>) -> Option<f64>>,
     y_of: impl Fn(f64) -> f64,
@@ -987,10 +1259,17 @@ pub(crate) fn paint_line_layer_marks(
     step_band: Option<StepBand>,
     step_lead: f64,
     stacked: Option<&LayerStack>,
+    link: Option<&crate::href::DatumLink>,
 ) -> Result<(), String> {
     use std::fmt::Write as _;
 
+    // A band step's marks are drawn from data Vega-Lite rewrites, so they carry no link; its labels still do.
+    let mark_link = link.filter(|_| !(l.curve_name() == Some("step") && step_band.is_some()));
+    let marks_from = svg.len();
+
     let mut points: Vec<(f64, f64)> = Vec::with_capacity(rows.len());
+    // Each point's own link; a path's is its first datum's.
+    let mut hrefs: Vec<Option<String>> = Vec::with_capacity(rows.len());
     // Each point's area span `(top, bottom)` in the pile of the rows at its x.
     let mut spans: Vec<(f64, f64)> = Vec::with_capacity(rows.len());
     let mut piles: HashMap<u64, crate::common::StackZero> = HashMap::new();
@@ -1001,15 +1280,33 @@ pub(crate) fn paint_line_layer_marks(
         .transpose()?;
     let mut captions: Vec<(LayerCaption, Option<String>)> = Vec::new();
     let mut label_points: Vec<(f64, f64)> = Vec::new();
+    let mut caption_hrefs: Vec<Option<String>> = Vec::new();
     let stack_spans = stacked.map(|stack| stack.of_rows(rows));
+    let mut undefined: Vec<bool> = Vec::with_capacity(rows.len());
+    // Where a row with no value sits: the number of drawn points before it
+    // and its position along the dimension channel. It draws nothing but ends
+    // the path, as Vega's `defined` predicate does.
+    let mut gaps: Vec<(usize, f64)> = Vec::new();
+    // The x and row of every drawn point, for the link's impute pass.
+    let mut kept_x: Vec<f64> = Vec::with_capacity(rows.len());
+    let mut kept_rows: Vec<&serde_json::Map<String, Value>> = Vec::with_capacity(rows.len());
     for (index, row) in rows.iter().enumerate() {
         let Some(x) = x_of(row) else { continue };
-        let val = row_num(row, &l.y)
-            .ok_or_else(|| format!("layer row: missing or non-numeric field {:?}", l.y))?;
+        let Some(val) = row_num(row, &l.y) else {
+            gaps.push((points.len(), x));
+            continue;
+        };
+        kept_x.push(x);
+        kept_rows.push(row);
+        undefined.push(x.is_nan());
+        // An undefined row shares no pile with the row that really sits at 0.
+        let pile_key = if x.is_nan() { u64::MAX - index as u64 } else { x.to_bits() };
+        let x = if x.is_nan() { 0.0 } else { x };
         points.push(if horizontal { (y_of(val), x) } else { (x, y_of(val)) });
+        hrefs.push(link.map(|link| link.href(row)).transpose()?);
         let (below, end) = match &stack_spans {
             Some(spans) => spans[index].expect("a row with a value is on the stack"),
-            None => piles.entry(x.to_bits()).or_insert_with(|| crate::common::StackZero::new(0.0)).push(val),
+            None => piles.entry(pile_key).or_insert_with(|| crate::common::StackZero::new(0.0)).push(val),
         };
         spans.push(((frame.free_y)(end), (frame.free_y)(below)));
         labels.push(describe(row, val)?);
@@ -1022,8 +1319,53 @@ pub(crate) fn paint_line_layer_marks(
             if let Some(label_x) = label_x_of.map_or(Some(x), |label_x_of| label_x_of(row)) {
                 label_points.push(if horizontal { (y_of(val), label_x) } else { (label_x, y_of(val)) });
                 captions.push((style.caption(row, val, band)?, describe_label(row, val)?));
+                caption_hrefs.push(hrefs[hrefs.len() - 1].clone());
             }
         }
+    }
+    // A link adds its href to the stack's groups: the impute pass puts a zero row per href at
+    // every x it lacks, and the stack orders each column by href, descending.
+    let mut linked_items: Option<Vec<(f64, f64, f64)>> = None;
+    if let (Some(_), None, Some(_)) = (&l.area_mark, stacked, mark_link) {
+        let groups: Vec<&str> = hrefs.iter().flatten().map(String::as_str).fold(Vec::new(), |mut seen, href| {
+            if !seen.contains(&href) {
+                seen.push(href);
+            }
+            seen
+        });
+        let mut columns: Vec<f64> = Vec::new();
+        for (&x, _) in kept_x.iter().zip(&undefined).filter(|(_, undefined)| !**undefined) {
+            if !columns.iter().any(|seen| seen.to_bits() == x.to_bits()) {
+                columns.push(x);
+            }
+        }
+        // (kept index, x, value, href): the rows, then the imputed zeros group by group.
+        let mut items: Vec<(Option<usize>, f64, f64, &str)> = Vec::new();
+        for (i, &row) in kept_rows.iter().enumerate().filter(|(i, _)| !undefined[*i]) {
+            items.push((Some(i), kept_x[i], row_num(row, &l.y).expect("a kept row has its value"), hrefs[i].as_deref().expect("a linked row has an href")));
+        }
+        for group in &groups {
+            for &x in &columns {
+                if !items.iter().any(|&(i, ix, _, href)| i.is_some() && ix.to_bits() == x.to_bits() && href == *group) {
+                    items.push((None, x, 0.0, group));
+                }
+            }
+        }
+        let mut piles: HashMap<u64, crate::common::StackZero> = HashMap::new();
+        let mut order: Vec<usize> = (0..items.len()).collect();
+        order.sort_by(|&a, &b| items[b].3.cmp(items[a].3));
+        let mut ends: Vec<(f64, f64)> = vec![(0.0, 0.0); items.len()];
+        for &item in &order {
+            ends[item] = piles.entry(items[item].1.to_bits()).or_insert_with(|| crate::common::StackZero::new(0.0)).push(items[item].2);
+        }
+        for (&(kept, ..), &(below, end)) in items.iter().zip(&ends) {
+            if let Some(kept) = kept {
+                spans[kept] = ((frame.free_y)(end), (frame.free_y)(below));
+            }
+        }
+        let mut path: Vec<(f64, f64, f64)> = items.iter().zip(&ends).map(|(&(_, x, ..), &(below, end))| (x, (frame.free_y)(end), (frame.free_y)(below))).collect();
+        path.sort_by(|a, b| a.0.total_cmp(&b.0));
+        linked_items = Some(path);
     }
     let line_color = l.line_mark.stroke.color.as_deref().unwrap_or(series_color);
     let join = l.line_mark.stroke.join.as_deref().unwrap_or("miter");
@@ -1045,16 +1387,22 @@ pub(crate) fn paint_line_layer_marks(
         l.line_mark.disconnected_cap.as_deref(),
     );
     let dash = l.line_mark.stroke.dasharray.as_deref().map_or(Ok(String::new()), |raw| {
-        crate::step_band::attr("layer", &crate::step_band::parse("layer", raw)?, band_step.filter(|_| disconnected).map(|bw| bw * plateau))
+        let fit = band_step.filter(|_| disconnected).map(|bw| bw * plateau);
+        Ok::<_, String>(crate::step_band::attr(&crate::step_band::parse("layer", raw, fit.is_some())?, fit))
     })?;
-    let (curve, runs, area_runs, mark_points, mark_labels): (_, Vec<Vec<(f64, f64)>>, Vec<Vec<(f64, f64, f64)>>, Vec<(f64, f64)>, Vec<Option<String>>) =
+    let (curve, runs, area_runs, mark_points, mark_labels, mark_hrefs, run_hrefs): (_, Vec<Vec<(f64, f64)>>, Vec<Vec<(f64, f64, f64)>>, Vec<(f64, f64)>, Vec<Option<String>>, Vec<Option<String>>, Vec<Option<String>>) =
         match band_step {
             Some(bw) => {
                 let (lo, hi) = crate::step_band::band_step_edges(plateau);
                 let pairs: Vec<[(f64, f64); 2]> = points
                     .iter()
                     .map(|&(cx, y)| {
-                        let edge = |at: f64| cx - bw / 2.0 + bw * (step_lead + (1.0 - step_lead) * at);
+                        // Over a grouped base the plateau is the last slot of the shared offset
+                        // scale, which spans the inset band.
+                        let edge = |at: f64| {
+                            let u = (at - lo) / (hi - lo);
+                            cx - bw / 2.0 + bw * (lo + (hi - lo) * (step_lead + (1.0 - step_lead) * u))
+                        };
                         [(edge(lo), y), (edge(hi), y)]
                     })
                     .collect();
@@ -1070,38 +1418,103 @@ pub(crate) fn paint_line_layer_marks(
                         None => bands.push((cx.to_bits(), vec![i])),
                     }
                 }
+                // A row with no value ends the connected path at its band.
+                let cuts: Vec<usize> = gaps.iter().map(|&(before, _)| before).collect();
                 let runs = if disconnected {
                     bands.iter().map(|(_, at)| at.iter().flat_map(|&i| pairs[i]).collect()).collect()
                 } else {
-                    vec![flat.clone()]
+                    runs_cut_before(&pairs, &cuts)
                 };
                 let area_runs = if disconnected {
                     bands.iter().map(|(_, at)| at.iter().flat_map(|&i| spanned[i]).collect()).collect()
                 } else {
-                    vec![spanned.iter().flatten().copied().collect()]
+                    runs_cut_before(&spanned, &cuts)
                 };
                 let doubled_labels = labels.iter().flat_map(|label| [label.clone(), label.clone()]).collect();
-                (d3rs::shape::Curve::StepAfter, runs, area_runs, flat, doubled_labels)
+                let doubled_hrefs = hrefs.iter().flat_map(|href| [href.clone(), href.clone()]).collect();
+                let run_hrefs = if disconnected {
+                    bands.iter().map(|(_, at)| hrefs[at[0]].clone()).collect()
+                } else {
+                    vec![hrefs[0].clone()]
+                };
+                (d3rs::shape::Curve::StepAfter, runs, area_runs, flat, doubled_labels, doubled_hrefs, run_hrefs)
             }
             None => {
                 // Vega sorts a line/area mark's vertices along its dimension channel (the
                 // scale domain's order), while its symbols keep the data's own order.
-                let mut sorted: Vec<usize> = (0..points.len()).collect();
-                sorted.sort_by(|&a, &b| {
-                    if horizontal { points[a].1.total_cmp(&points[b].1) } else { points[a].0.total_cmp(&points[b].0) }
-                });
-                let path_points = sorted.iter().map(|&i| points[i]).collect();
-                let path_spans = sorted.iter().map(|&i| (points[i].0, spans[i].0, spans[i].1)).collect();
-                (curve, vec![path_points], vec![path_spans], points.clone(), labels.clone())
+                // A row with no value keeps its place in that order and ends the run it sits in.
+                let along = |i: usize| if horizontal { points[i].1 } else { points[i].0 };
+                let mut order: Vec<(f64, usize, Option<usize>)> = (0..points.len())
+                    .filter(|&i| !undefined[i])
+                    .map(|i| (along(i), 2 * i + 1, Some(i)))
+                    .chain(gaps.iter().map(|&(before, x)| (x, 2 * before, None)))
+                    .collect();
+                order.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+                let (mut path_runs, mut span_runs) = (vec![Vec::new()], vec![Vec::new()]);
+                for &(_, _, point) in &order {
+                    match point {
+                        Some(i) => {
+                            path_runs.last_mut().expect("a run is open").push(points[i]);
+                            span_runs.last_mut().expect("a run is open").push((along(i), spans[i].0, spans[i].1));
+                        }
+                        None if !path_runs.last().expect("a run is open").is_empty() => {
+                            path_runs.push(Vec::new());
+                            span_runs.push(Vec::new());
+                        }
+                        None => {}
+                    }
+                }
+                if path_runs.len() > 1 && path_runs.last().is_some_and(Vec::is_empty) {
+                    path_runs.pop();
+                    span_runs.pop();
+                }
+                // A stack's imputed zero cells join the run their dimension position falls in.
+                if let Some(stack) = stacked {
+                    for (x_text, (below, end)) in stack.imputed_cells_for(rows) {
+                        let mut stand_in = serde_json::Map::new();
+                        stand_in.insert(stack.x_field().to_string(), Value::String(x_text.to_string()));
+                        if let Some(x) = x_of(&stand_in) {
+                            let at = span_runs
+                                .iter()
+                                .position(|run| run.first().zip(run.last()).is_some_and(|(a, b)| a.0 <= x && x <= b.0))
+                                .unwrap_or(0);
+                            let run = &mut span_runs[at];
+                            run.push((x, (frame.free_y)(end), (frame.free_y)(below)));
+                            run.sort_by(|a, b| a.0.total_cmp(&b.0));
+                        }
+                    }
+                }
+                // Each run's link is its first point's; a row with no x leads the path and its link.
+                let mut run_hrefs: Vec<Option<String>> = Vec::new();
+                let mut open = true;
+                for &(_, _, point) in &order {
+                    match point {
+                        Some(i) if open => {
+                            run_hrefs.push(hrefs[i].clone());
+                            open = false;
+                        }
+                        Some(_) => {}
+                        None => open = true,
+                    }
+                }
+                run_hrefs.resize(path_runs.len(), None);
+                if let Some(first) = (0..points.len()).find(|&i| undefined[i]) {
+                    run_hrefs[0] = hrefs[first].clone();
+                }
+                if let Some(linked) = linked_items.take() {
+                    span_runs = vec![linked];
+                    path_runs.truncate(1);
+                }
+                (curve, path_runs, span_runs, points.clone(), labels.clone(), hrefs.clone(), run_hrefs)
             }
         };
     if let Some(area) = &l.area_mark {
-        let d = d3rs::shape::stacked_area_path(&area_runs, curve);
+        let d = if horizontal { d3rs::shape::stacked_area_path_horizontal(&area_runs, curve) } else { d3rs::shape::stacked_area_path(&area_runs, curve) };
         // A clipped pile is cut at the plot rect, as Vega cuts the mark, never
         // squeezed onto the edge.
         let (plot_w, plot_h) = frame.plot;
         let leaves_plot = frame.clip
-            && area_runs.iter().flatten().any(|&(_, top, bottom)| [top, bottom].iter().any(|y| *y < 0.0 || *y > plot_h));
+            && area_runs.iter().flatten().any(|&(_, top, bottom)| [top, bottom].iter().any(|v| *v < 0.0 || *v > if horizontal { plot_w } else { plot_h }));
         let clip_id = format!("dbt-area-clip-{plot_w}-{plot_h}");
         let clip_attr = if leaves_plot {
             let _ = write!(svg, "<clipPath id=\"{clip_id}\"><rect width=\"{plot_w}\" height=\"{plot_h}\"/></clipPath>");
@@ -1110,24 +1523,56 @@ pub(crate) fn paint_line_layer_marks(
             String::new()
         };
         crate::contract::connected_group_open(svg, "area", "layer_1_marks");
+        let first = run_hrefs.first().cloned().flatten();
+        svg.push_str(&crate::href::anchor_open(crate::href::anchor_for(mark_link, &first)));
         let _ = write!(
             svg,
             "<path d=\"{d}\" fill=\"{}\" fill-opacity=\"{}\" stroke-opacity=\"0\" opacity=\"1\"{clip_attr}/>",
             xml_escape_attr(series_color),
             area.opacity,
         );
+        svg.push_str(crate::href::anchor_close(crate::href::anchor_for(mark_link, &first)));
         crate::contract::mark_group_close(svg);
     }
+    // The imputed zero rows of this color value form their own mark group, zero-high atop each column.
+    if let (Some(area), Some(stack), Some(first), Some(_)) = (&l.area_mark, stacked, rows.first(), mark_link) {
+        let mut items: Vec<(f64, f64, &str)> = Vec::new();
+        for (key, href) in stack.imputed_for(&layer_color_of(first, stack.color_field())) {
+            let mut probe = serde_json::Map::new();
+            probe.insert(stack.x_field().to_string(), Value::String(key.clone()));
+            if let Some(x) = x_of(&probe).filter(|x| !x.is_nan()) {
+                items.push((x, (frame.free_y)(stack.column_top(key)), href));
+            }
+        }
+        items.sort_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some(&(_, _, first_href)) = items.first() {
+            let run: Vec<(f64, f64, f64)> = items.iter().map(|&(x, y, _)| (x, y, y)).collect();
+            let d = d3rs::shape::stacked_area_path(&[run], curve);
+            let first_href = Some(first_href.to_string());
+            crate::contract::connected_group_open(svg, "area", "layer_1_marks");
+            svg.push_str(&crate::href::anchor_open(crate::href::anchor_for(mark_link, &first_href)));
+            let _ = write!(
+                svg,
+                "<path d=\"{d}\" fill=\"{}\" fill-opacity=\"{}\" stroke-opacity=\"0\" opacity=\"1\"/>",
+                xml_escape_attr(series_color),
+                area.opacity,
+            );
+            svg.push_str(crate::href::anchor_close(crate::href::anchor_for(mark_link, &first_href)));
+            crate::contract::mark_group_close(svg);
+        }
+    }
     // A disconnected plateau is its own path, never joined to its neighbors.
-    for run in &runs {
+    for (run, run_href) in runs.iter().zip(&run_hrefs) {
         let d = d3rs::shape::line_path(std::slice::from_ref(run), curve);
         crate::contract::connected_group_open(svg, "line", "layer_1_marks");
+        svg.push_str(&crate::href::anchor_open(crate::href::anchor_for(mark_link, run_href)));
         let _ = write!(
             svg,
             "<path d=\"{d}\" fill=\"none\" stroke=\"{line_color}\" \
              stroke-width=\"{}\" stroke-linecap=\"{cap}\" stroke-linejoin=\"{join}\"{dash}/>",
             l.line_mark.stroke.width, line_color = xml_escape_attr(line_color), cap = xml_escape_attr(cap), join = xml_escape_attr(join)
         );
+        svg.push_str(crate::href::anchor_close(crate::href::anchor_for(mark_link, run_href)));
         crate::contract::mark_group_close(svg);
     }
     // A visible point overlay only draws when `point_mark.size` is authored
@@ -1144,9 +1589,11 @@ pub(crate) fn paint_line_layer_marks(
         if announced {
             crate::contract::mark_group_open(svg, "symbol", "layer_2_marks")?;
         }
-        for (&(px, py), label) in mark_points.iter().zip(&mark_labels) {
+        for ((&(px, py), label), href) in mark_points.iter().zip(&mark_labels).zip(&mark_hrefs) {
             let point_color = l.point_mark.color.as_deref().unwrap_or(series_color);
+            svg.push_str(&crate::href::anchor_open(crate::href::anchor_for(mark_link, href)));
             paint_overlay_point(svg, &l.point_mark, px, py, r_pt, point_color, canvas, label.as_deref())?;
+            svg.push_str(crate::href::anchor_close(crate::href::anchor_for(mark_link, href)));
         }
         if announced {
             crate::contract::mark_group_close(svg);
@@ -1159,23 +1606,49 @@ pub(crate) fn paint_line_layer_marks(
         } else {
             crate::contract::mark_group_open(svg, "symbol", "layer_3_marks")?;
         }
-        for (&(px, py), label) in mark_points.iter().zip(&mark_labels) {
+        for ((&(px, py), label), href) in mark_points.iter().zip(&mark_labels).zip(&mark_hrefs) {
             let aria = if drawn.is_some() { None } else { label.as_deref() };
             let label_attr = crate::contract::aria_attr(aria, crate::contract::ItemRole::Point)?;
+            svg.push_str(&crate::href::anchor_open(crate::href::anchor_for(mark_link, href)));
             let _ = write!(
                 svg,
                 "<circle transform=\"translate({px:.3},{py:.3})\" r=\"{hover_r:.3}\" fill=\"{}\" \
                  opacity=\"0\"{label_attr}/>",
                 xml_escape_attr(series_color)
             );
+            svg.push_str(crate::href::anchor_close(crate::href::anchor_for(mark_link, href)));
         }
         crate::contract::mark_group_close(svg);
     }
+    // An area clips itself; a line's own marks clip as a group, its value labels do not.
+    if frame.clip && l.area_mark.is_none() {
+        clip_marks_from(svg, marks_from, frame.plot);
+    }
     if let Some(style) = &label_style {
-        let marks = layer_label_marks(label_points.iter().zip(captions), step_band, horizontal);
-        paint_layer_value_labels(svg, style, &marks)?;
+        let marks = layer_label_marks(label_points.iter().zip(captions).zip(caption_hrefs), step_band, horizontal);
+        paint_layer_value_labels(svg, style, &marks, link.map(|link| link.open).unwrap_or_default())?;
     }
     Ok(())
+}
+
+/// The step-after pairs of `pairs` flattened into one run per stretch between
+/// `cuts` (each an index of the first pair after a gap); a gap with no pair
+/// before it leaves no empty run.
+fn runs_cut_before<P: Copy, const N: usize>(pairs: &[[P; N]], cuts: &[usize]) -> Vec<Vec<P>> {
+    let mut bounds: Vec<usize> = cuts.to_vec();
+    bounds.push(pairs.len());
+    let mut start = 0;
+    let mut runs = Vec::new();
+    for end in bounds {
+        if end > start {
+            runs.push(pairs[start..end].iter().flatten().copied().collect());
+        }
+        start = start.max(end);
+    }
+    if runs.is_empty() {
+        runs.push(Vec::new());
+    }
+    runs
 }
 
 /// Where an area layer clips: the unclamped value scale its piles are placed
@@ -1191,17 +1664,17 @@ pub(crate) struct AreaFrame<'a> {
 /// The painted marks of a layer's captions at their datum `points`: a caption
 /// with a band edge moves to that edge of its band.
 fn layer_label_marks<'a>(
-    captions: impl Iterator<Item = (&'a (f64, f64), (LayerCaption, Option<String>))>,
+    captions: impl Iterator<Item = ((&'a (f64, f64), (LayerCaption, Option<String>)), Option<String>)>,
     step_band: Option<StepBand>,
     horizontal: bool,
 ) -> Vec<LayerLabelMark> {
     captions
-        .map(|(&(px, py), (caption, aria))| {
+        .map(|((&(px, py), (caption, aria)), href)| {
             let x = match (caption.spot.edge, step_band) {
                 (Some(frac), Some(sb)) if !horizontal => px - sb.bandwidth / 2.0 + sb.bandwidth * frac,
                 _ => px,
             };
-            LayerLabelMark { x, y: py, caption, aria }
+            LayerLabelMark { x, y: py, caption, aria, href }
         })
         .collect()
 }
@@ -1276,6 +1749,8 @@ pub(crate) struct LayerLabelMark {
     pub y: f64,
     pub caption: LayerCaption,
     pub aria: Option<String>,
+    /// The datum's link, which wraps its label.
+    pub href: Option<String>,
 }
 
 /// The layer's value-label text mark set, drawn after the layer's marks the
@@ -1284,6 +1759,7 @@ pub(crate) fn paint_layer_value_labels(
     svg: &mut String,
     style: &LayerLabelStyle,
     marks: &[LayerLabelMark],
+    link_open: crate::href::LinkOpen,
 ) -> Result<(), String> {
     let stamped = marks.iter().any(|m| m.aria.is_some());
     if stamped {
@@ -1291,6 +1767,8 @@ pub(crate) fn paint_layer_value_labels(
     }
     for m in marks {
         let spot = &m.caption.spot;
+        let anchor = link_open.anchor(m.href.as_deref());
+        svg.push_str(&crate::href::anchor_open(anchor));
         crate::common::write_value_label(
             svg,
             m.x + spot.dx,
@@ -1304,6 +1782,7 @@ pub(crate) fn paint_layer_value_labels(
             &crate::contract::aria_attr(m.aria.as_deref(), crate::contract::ItemRole::TextMark)?,
             &m.caption.text,
         );
+        svg.push_str(crate::href::anchor_close(anchor));
     }
     if stamped {
         crate::contract::mark_group_close(svg);
@@ -1446,35 +1925,47 @@ pub(crate) fn paint_scatter_layer_marks(
     canvas: &str,
     board_style: Option<&crate::BoardStyle>,
     mut describe_label: impl FnMut(&serde_json::Map<String, Value>, f64) -> Result<Option<String>, String>,
+    link: Option<&crate::href::DatumLink>,
+    clip: Option<(f64, f64)>,
 ) -> Result<(), String> {
     let r_pt = crate::common::symbol_radius(size);
+    let marks_from = svg.len();
     crate::contract::mark_group_open(svg, "symbol", &format!("layer_{layer_index}_marks"))?;
     let ml = l.point_mark.labels.visible.then_some(&l.point_mark.labels);
     let label_style = ml.map(|ml| LayerLabelStyle::new(ml, l.label_is_house, rows, board_style)).transpose()?;
     let mut label_points: Vec<(f64, f64)> = Vec::new();
     let mut captions: Vec<(LayerCaption, Option<String>)> = Vec::new();
+    let mut caption_hrefs: Vec<Option<String>> = Vec::new();
     for row in rows {
         let Some(cross) = x_of(row) else { continue };
-        let val = row_num(row, &l.y)
-            .ok_or_else(|| format!("layer row: missing or non-numeric field {:?}", l.y))?;
+        let Some(val) = row_num(row, &l.y) else { continue };
         let measure = y_of(val);
         let (x, y) = if horizontal { (measure, cross) } else { (cross, measure) };
         let aria = aria_of(row, val)?;
+        let href = link.map(|link| link.href(row)).transpose()?;
+        let anchor = link.and_then(|link| link.open.anchor(href.as_deref()));
         let point_color = match &color {
             PointColor::Claimed(claimed) => l.point_mark.color.as_deref().unwrap_or(claimed).to_string(),
             PointColor::Encoded(of_row) => of_row(row),
         };
+        svg.push_str(&crate::href::anchor_open(anchor));
         paint_overlay_point(svg, &l.point_mark, x, y, r_pt, &point_color, canvas, aria.as_deref())?;
+        svg.push_str(crate::href::anchor_close(anchor));
         if let Some(style) = &label_style {
             if let Some(label_cross) = label_x_of.map_or(Some(cross), |label_x_of| label_x_of(row)) {
                 label_points.push(if horizontal { (measure, label_cross) } else { (label_cross, measure) });
                 captions.push((style.caption(row, val, None)?, describe_label(row, val)?));
+                caption_hrefs.push(href);
             }
         }
     }
     crate::contract::mark_group_close(svg);
+    if let Some(plot) = clip {
+        clip_marks_from(svg, marks_from, plot);
+    }
     if let Some(style) = &label_style {
-        paint_layer_value_labels(svg, style, &layer_label_marks(label_points.iter().zip(captions), None, horizontal))?;
+        let marks = layer_label_marks(label_points.iter().zip(captions).zip(caption_hrefs), None, horizontal);
+        paint_layer_value_labels(svg, style, &marks, link.map(|link| link.open).unwrap_or_default())?;
     }
     Ok(())
 }
@@ -1647,9 +2138,20 @@ impl YSides {
     }
 }
 
+/// How a layer's marks meet its own authored domain (`_overlay.py`): within it,
+/// cut off at the plot edge (a value outside while the scale's `clip` holds), or
+/// painted past the plot (`clip: false`), which grows the fit.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DomainCut {
+    Within,
+    Clip,
+    Overrun,
+}
+
 /// A layer's own independent y scale — computed once from the layer's own row
 /// values, never from the negotiated plot size.
 pub(crate) struct LayerAxis {
+    pub cut: DomainCut,
     /// The side the layer's axis draws on (`YSides`).
     pub side: LayerSide,
     pub domain_min: f64,
@@ -1759,22 +2261,33 @@ impl DualAxisTitles {
     }
 }
 
-/// Rows sharing a category stack in row order (a bar layer's `y` keeps
+/// Rows sharing a category (every NaN position is one) stack in row order (a bar layer's `y` keeps
 /// Vega-Lite's default `stack: zero`, with no series to order by): each row's
 /// `(category, start, end)`.
 pub(crate) fn row_order_stack<'a>(
     rows: impl IntoIterator<Item = &'a serde_json::Map<String, Value>>,
     cat_field: &str,
     y: &str,
+    nan: IsNan,
 ) -> Vec<(String, f64, f64)> {
-    let mut stacks: HashMap<String, crate::common::StackZero> = HashMap::new();
+    let mut stacks: HashMap<Option<String>, crate::common::StackZero> = HashMap::new();
     rows.into_iter()
         .filter_map(|row| {
             let cat = row_str(row, cat_field);
-            let (start, end) = stacks.entry(cat.clone()).or_insert_with(|| crate::common::StackZero::new(0.0)).push(row_num(row, y)?);
+            // Vega groups every NaN position into one pile.
+            let pile = (!nan(&cat)).then(|| cat.clone());
+            let (start, end) = stacks.entry(pile).or_insert_with(|| crate::common::StackZero::new(0.0)).push(row_num(row, y)?);
             Some((cat, start, end))
         })
         .collect()
+}
+
+/// Whether an x text is Vega's NaN position (a year below 100 over a calendar grain).
+pub(crate) type IsNan<'a> = &'a dyn Fn(&str) -> bool;
+
+/// For a chart whose x has no NaN position.
+pub(crate) fn never_nan(_: &str) -> bool {
+    false
 }
 
 /// Whether the shared value scale pins a domain that excludes the 0 baseline a bar
@@ -1788,17 +2301,57 @@ pub(crate) fn baseline_outside_shared_domain(ax_y: &crate::common::AxisStyle) ->
     lo.is_some_and(|lo| lo > 0.0) || hi.is_some_and(|hi| hi < 0.0)
 }
 
+/// Whether a layer's marks paint under the plot clip (`clip_layer`, `_overlay.py`). A layer
+/// over a `normalize` base clips when any of its values leaves the pinned domain; a bar or area
+/// layer also clips on any scale pinned away from its 0 baseline. A layer with its own scale
+/// takes neither rule.
+pub(crate) fn layer_clip(
+    kind: LayerType,
+    y_field: &str,
+    rows: &[serde_json::Map<String, Value>],
+    ax_y: &crate::common::AxisStyle,
+    normalize: bool,
+    independent: bool,
+) -> bool {
+    if independent {
+        return false;
+    }
+    if normalize {
+        let (lo, hi) = ax_y.authored_continuous_domain().unwrap_or((0.0, 1.0));
+        let (lo, hi) = (lo.min(hi), lo.max(hi));
+        if rows.iter().filter_map(|row| row_num(row, y_field)).any(|v| !(lo..=hi).contains(&v)) {
+            return true;
+        }
+    }
+    matches!(kind, LayerType::Area | LayerType::Bar) && baseline_outside_shared_domain(ax_y)
+}
+
+/// A value's position, left unclamped when the layer paints under the plot clip.
+pub(crate) fn clamp_unless_clipped(position: f64, extent: f64, clipped: bool) -> f64 {
+    if clipped { position } else { position.clamp(0.0, extent) }
+}
+
+/// Wraps what `svg` gained since `from` in the plot clip (`clip: true` on a line or scatter layer).
+pub(crate) fn clip_marks_from(svg: &mut String, from: usize, (plot_w, plot_h): (f64, f64)) {
+    let id = format!("dbt-area-clip-{plot_w}-{plot_h}");
+    let open = format!("<clipPath id=\"{id}\"><rect width=\"{plot_w}\" height=\"{plot_h}\"/></clipPath><g clip-path=\"url(#{id})\">");
+    svg.insert_str(from, &open);
+    svg.push_str("</g>");
+}
+
 /// Opens the plot-sized clip a layer's marks paint under (`clip: true`); close it
-/// with `</g>`. The id names the plot box, so every chart of one size shares one.
-pub(crate) fn clip_open(svg: &mut String, (plot_w, plot_h): (f64, f64)) {
-    let id = format!("dbt-layer-clip-{plot_w}-{plot_h}");
-    let _ = std::fmt::Write::write_fmt(
-        svg,
-        format_args!(
-            "<clipPath id=\"{id}\"><rect x=\"0\" y=\"0\" width=\"{plot_w}\" height=\"{plot_h}\"/></clipPath>\
-             <g clip-path=\"url(#{id})\">"
-        ),
-    );
+/// with `</g>`. The id names the plot box and carries the chart's namespace suffix,
+/// as every id production mints does (`_namespace_svg_ids`).
+pub(crate) fn clip_open(svg: &mut String, (plot_w, plot_h): (f64, f64), chart_id: &str) {
+    let id = format!("dbt-layer-clip-{plot_w}-{plot_h}-{}", crate::contract::safe_svg_id(chart_id));
+    // One definition per id: a second clipped layer of the same plot reuses it.
+    if !svg.contains(&format!("<clipPath id=\"{id}\">")) {
+        let _ = std::fmt::Write::write_fmt(
+            svg,
+            format_args!("<clipPath id=\"{id}\"><rect x=\"0\" y=\"0\" width=\"{plot_w}\" height=\"{plot_h}\"/></clipPath>"),
+        );
+    }
+    let _ = std::fmt::Write::write_fmt(svg, format_args!("<g clip-path=\"url(#{id})\">"));
 }
 
 /// One rect of a bar layer: spanning `from..to` on the value scale at its row's x.
@@ -1819,17 +2372,14 @@ pub(crate) fn bar_layer_marks<'a>(
     bl: &OverlayBarLayer,
     rows: &'a [serde_json::Map<String, Value>],
     x_field: &str,
-    family: &str,
-) -> Result<Vec<BarLayerMark<'a>>, String> {
-    let numeric = |row: &serde_json::Map<String, Value>, field: &str| {
-        row_num(row, field).ok_or_else(|| format!("{family}: layer row: missing or non-numeric field {field:?}"))
-    };
+    nan: IsNan,
+) -> Vec<BarLayerMark<'a>> {
     if let Some(start) = bl.y_start.as_deref() {
         return rows
             .iter()
-            .map(|row| {
-                let value = numeric(row, &bl.y)?;
-                Ok(BarLayerMark { from: numeric(row, start)?, to: value, value, row })
+            .filter_map(|row| {
+                let value = row_num(row, &bl.y)?;
+                Some(BarLayerMark { from: row_num(row, start)?, to: value, value, row })
             })
             .collect();
     }
@@ -1840,18 +2390,19 @@ pub(crate) fn bar_layer_marks<'a>(
             LayerStack::new(rows, x_field, color, &bl.y, &order).of_rows(rows)
         }
         None => {
-            rows.iter().try_for_each(|row| numeric(row, &bl.y).map(|_| ()))?;
-            row_order_stack(rows, x_field, &bl.y).into_iter().map(|(_, from, to)| Some((from, to))).collect()
+            let mut stacked = row_order_stack(rows, x_field, &bl.y, nan).into_iter();
+            rows.iter()
+                .map(|row| row_num(row, &bl.y).and_then(|_| stacked.next()).map(|(_, from, to)| (from, to)))
+                .collect()
         }
     };
-    Ok(rows
-        .iter()
+    rows.iter()
         .zip(spans)
         .filter_map(|(row, span)| {
             let (from, to) = span?;
             Some(BarLayerMark { from, to, value: row_num(row, &bl.y)?, row })
         })
-        .collect())
+        .collect()
 }
 
 /// Each layer axis's own grid, over the base axis's theme style: the rungs of its
@@ -1890,10 +2441,10 @@ pub(crate) fn placed_bar_layer_marks<'a>(
     bl: &OverlayBarLayer,
     rows: &'a [serde_json::Map<String, Value>],
     x_field: &str,
-    family: &str,
+    nan: IsNan,
     placed: impl Fn(&serde_json::Map<String, Value>) -> bool,
-) -> Result<Vec<BarLayerMark<'a>>, String> {
-    Ok(bar_layer_marks(bl, rows, x_field, family)?.into_iter().filter(|m| placed(m.row)).collect())
+) -> Vec<BarLayerMark<'a>> {
+    bar_layer_marks(bl, rows, x_field, nan).into_iter().filter(|m| placed(m.row)).collect()
 }
 
 /// The value extent the layers on a shared scale add to it: a bar from its
@@ -1901,15 +2452,15 @@ pub(crate) fn placed_bar_layer_marks<'a>(
 pub(crate) fn layers_value_extent(
     layers: &[(&OverlayLayer, &[serde_json::Map<String, Value>])],
     base_x: &str,
-    family: &str,
-) -> Result<(f64, f64), String> {
+    nan: IsNan,
+) -> (f64, f64) {
     let mut extent = (f64::INFINITY, f64::NEG_INFINITY);
     let mut reach = |v: f64| extent = (extent.0.min(v), extent.1.max(v));
     for &(overlay, layer_rows) in layers {
         let layer_x = overlay.x().unwrap_or(base_x);
         match overlay {
             OverlayLayer::Bar(bl) => {
-                for m in bar_layer_marks(bl, layer_rows, layer_x, family)? {
+                for m in bar_layer_marks(bl, layer_rows, layer_x, nan) {
                     reach(m.from);
                     reach(m.to);
                 }
@@ -1917,7 +2468,7 @@ pub(crate) fn layers_value_extent(
             OverlayLayer::Line(l) if l.area_mark.is_some() => {
                 let piles: Vec<Option<(f64, f64)>> = match l.color.as_deref() {
                     Some(cf) => LayerStack::descending(layer_rows, layer_x, cf, &l.y).of_rows(layer_rows),
-                    None => row_order_stack(layer_rows, layer_x, &l.y)
+                    None => row_order_stack(layer_rows, layer_x, &l.y, &never_nan)
                         .into_iter()
                         .map(|(_, from, to)| Some((from, to)))
                         .collect(),
@@ -1930,7 +2481,7 @@ pub(crate) fn layers_value_extent(
             _ => layer_rows.iter().filter_map(|row| row_num(row, overlay.y())).for_each(&mut reach),
         }
     }
-    Ok(extent)
+    extent
 }
 
 /// A layer on its own value scale (`YSides`). A bar or area mark paints from the
@@ -2001,7 +2552,7 @@ impl<'a> ScaledLayer<'a> {
     /// its values as they stand.
     pub(crate) fn value_extent<'b>(&self, rows: impl Iterator<Item = &'b serde_json::Map<String, Value>>) -> (f64, f64) {
         let reaches: Vec<f64> = if self.layer_type == LayerType::Area {
-            row_order_stack(rows, self.x, self.y).into_iter().flat_map(|(_, start, end)| [start, end]).collect()
+            row_order_stack(rows, self.x, self.y, &never_nan).into_iter().flat_map(|(_, start, end)| [start, end]).collect()
         } else {
             rows.filter_map(|row| row_num(row, self.y)).collect()
         };
@@ -2042,7 +2593,11 @@ impl<'a> ScaledLayer<'a> {
         let LayerAxisFrame { family, ax_y, fonts, font_family, font_size, label_limit, tick_size, title_style, field_labels } =
             *frame;
         let (layer_min, layer_max) = (extent.0.min(0.0), extent.1.max(0.0));
-        let (domain_min, domain_max) = d3rs::ticks::d3_nice(layer_min, layer_max, 10);
+        // An authored pair reaches Vega verbatim, in authored order; ticks fall inside it.
+        let (domain_min, domain_max) = match self.axis_y.scale.as_ref().and_then(|scale| scale.domain) {
+            Some(pair) => pair,
+            None => d3rs::ticks::d3_nice(layer_min, layer_max, 10),
+        };
         let tick_values = d3rs::ticks::d3_ticks(domain_min, domain_max, count);
         // No ruler, no `tick_label` bake — `_overlay.py`'s own comment on
         // its `ay_vl = axis_to_vl(axis_y)` seed: "axis_y is the BASE
@@ -2092,7 +2647,19 @@ impl<'a> ScaledLayer<'a> {
             None => crate::common::axis_title_text(self.y, self.label, field_labels)?,
         };
         let title_extra = crate::common::y_title_extra(title_style, &title_text);
+        let own_scale = self.axis_y.scale.as_ref().filter(|scale| scale.domain.is_some());
+        let cut = match own_scale {
+            Some(scale) if self.rows.iter().filter_map(|row| row_num(row, self.y)).any(|v| {
+                let (lo, hi) = scale.domain.expect("filtered to an authored domain");
+                !(lo.min(hi)..=lo.max(hi)).contains(&v)
+            }) =>
+            {
+                if scale.clip { DomainCut::Clip } else { DomainCut::Overrun }
+            }
+            _ => DomainCut::Within,
+        };
         Ok(LayerAxis {
+            cut,
             side: self.side,
             domain_min,
             domain_max,
@@ -2305,6 +2872,52 @@ mod tests {
         assert!(scope(false, true, Some("q"), Some("q")) == Dataset);
     }
     use super::*;
+
+    fn bar_layer(color: Option<&str>) -> OverlayBarLayer {
+        OverlayBarLayer::parse(
+            &serde_json::json!({
+                "type": "bar",
+                "bar_mark": {
+                    "border": {"width": 1.0, "color": "#FFFFFF", "radius": 2.0},
+                    "band_width": 0.8,
+                    "labels": {"visible": false, "position": "middle", "field": null, "format": null, "dx": null, "dy": null, "font": null}
+                },
+                "axis_y": {"position": null},
+                "x": "x", "y": "y", "label": null, "color": color, "query_name": null,
+            }),
+            "test",
+        )
+        .expect("a bar layer")
+    }
+
+    fn layer_rows(values: &[(&str, Option<f64>)]) -> Vec<serde_json::Map<String, Value>> {
+        values
+            .iter()
+            .map(|(x, y)| serde_json::json!({"x": x, "y": y}).as_object().expect("an object").clone())
+            .collect()
+    }
+
+    /// A row with no value draws no bar and takes no place in the stack: the
+    /// marks of the rows after it keep their own spans.
+    #[test]
+    fn a_bar_layer_row_with_no_value_leaves_the_rows_after_it_their_own_spans() {
+        let rows = layer_rows(&[("a", None), ("a", Some(5.0)), ("b", Some(7.0))]);
+        let marks = bar_layer_marks(&bar_layer(None), &rows, "x", &never_nan);
+        let spans: Vec<(f64, f64)> = marks.iter().map(|m| (m.from, m.to)).collect();
+        assert_eq!(spans, [(0.0, 5.0), (0.0, 7.0)]);
+        assert_eq!(marks[1].row["x"], "b");
+    }
+
+    /// A gap ends the connected path at its band; one at either end leaves no
+    /// empty run.
+    #[test]
+    fn runs_cut_before_splits_at_each_gap_and_never_leaves_an_empty_run() {
+        let pairs = [[1, 2], [3, 4], [5, 6], [7, 8]];
+        assert_eq!(runs_cut_before(&pairs, &[]), vec![vec![1, 2, 3, 4, 5, 6, 7, 8]]);
+        assert_eq!(runs_cut_before(&pairs, &[0, 2, 2, 4]), vec![vec![1, 2, 3, 4], vec![5, 6, 7, 8]]);
+        assert_eq!(runs_cut_before(&pairs[..0], &[0]), vec![Vec::<i32>::new()]);
+    }
+
     fn axis(side: LayerSide) -> LayerAxis {
         LayerAxis {
             side,
@@ -2319,6 +2932,7 @@ mod tests {
             grid_visible: false,
             title_text: String::new(),
             title_extra: 15.0,
+            cut: DomainCut::Within,
         }
     }
 
@@ -2501,6 +3115,63 @@ mod tests {
         assert_eq!(title(false, &["seg"], false), "Base", "a hidden title stays the base's own empty one");
     }
 
+    fn numeric_rows(values: &[Value]) -> Vec<serde_json::Map<String, Value>> {
+        values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let mut row = serde_json::Map::new();
+                row.insert("x".into(), Value::String(format!("x{i}")));
+                row.insert("y".into(), Value::from(10.0 * (i as f64 + 1.0)));
+                row.insert("c".into(), v.clone());
+                row
+            })
+            .collect()
+    }
+
+    /// Vega-Lite types a color field from its first 10 rows: numbers and nulls are
+    /// quantitative, a string anywhere in them nominal, no value at all untyped.
+    #[test]
+    fn a_layer_color_is_numeric_when_its_first_ten_rows_hold_only_numbers_and_nulls() {
+        let n = |v: f64| Value::from(v);
+        let numeric = |rows: &[Value]| numeric_layer_color(&numeric_rows(rows), "c").is_some();
+        assert!(numeric(&[n(1.0), n(2.0)]));
+        assert!(numeric(&[n(1.0), Value::Null, n(2.0)]));
+        assert!(!numeric(&[n(1.0), Value::String("a".into())]));
+        assert!(!numeric(&[Value::Null, Value::Null]));
+        let mut late_string = vec![n(1.0); 10];
+        late_string.push(Value::String("a".into()));
+        assert!(numeric(&late_string), "only the first ten rows type the field");
+    }
+
+    /// A numeric color's series each hold a zero-thickness cell at every x they have no
+    /// row at, stacked from the baseline in descending value order; a nominal color's
+    /// series draw only their own rows.
+    #[test]
+    fn a_numeric_color_imputes_zero_cells_and_stacks_its_largest_value_first() {
+        let data = numeric_rows(&[Value::from(1.0), Value::from(2.0)]);
+        let stack = LayerStack::descending(&data, "x", "c", "y");
+        // Value 2 is the baseline series: at x0, where only 1 has a row, it is a zero cell at 0.
+        assert_eq!(stack.imputed_cells_for(&data[1..]), [("x0", (0.0, 0.0))]);
+        // Value 1 stacks on it: at x1 it is a zero cell on top of the 20.
+        assert_eq!(stack.imputed_cells_for(&data[..1]), [("x1", (20.0, 20.0))]);
+        let nominal = numeric_rows(&[Value::from("a"), Value::from("b")]);
+        assert!(LayerStack::descending(&nominal, "x", "c", "y").imputed_cells_for(&nominal[..1]).is_empty());
+    }
+
+    /// A horizontal chart reads the stack along its measure axis: the first value of the
+    /// domain sits at the baseline.
+    #[test]
+    fn an_ascending_stack_starts_the_first_value_at_the_baseline() {
+        let data = rows(&[("n", Some("a"), 40.0), ("n", Some("b"), 20.0)]);
+        let ends: Vec<(f64, f64)> = LayerStack::ascending(&data, "x", "c", "y")
+            .of_rows(&data)
+            .into_iter()
+            .map(|span| span.expect("stacked"))
+            .collect();
+        assert_eq!(ends, [(0.0, 40.0), (40.0, 60.0)]);
+    }
+
     /// A row with no value draws no segment and takes no place in its cell's order.
     #[test]
     fn a_row_with_no_value_takes_no_place_on_the_stack() {
@@ -2540,17 +3211,6 @@ mod tests {
         let data = rows(&[("n", Some("a"), 40.0), ("n", Some("a"), 20.0), ("n", Some("b"), 5.0)]);
         let ends = LayerStack::descending(&data, "x", "c", "y").of_rows(&data);
         assert_eq!(ends, [Some((5.0, 45.0)), Some((45.0, 65.0)), Some((0.0, 5.0))]);
-    }
-
-    #[test]
-    fn an_authored_layer_domain_refuses_by_name_and_an_unset_one_does_not() {
-        let layer = |scale: serde_json::Value| serde_json::json!({"axis_y": {"position": null, "scale": scale}});
-        let err = refuse_unpainted_layer_affix("line", &layer(serde_json::json!({"domain": [230.0, 290.0], "clip": true})), false)
-            .unwrap_err();
-        assert!(err.contains("layer axis_y.scale.domain"), "{err}");
-        for unset in [serde_json::Value::Null, serde_json::json!({"domain": null, "clip": true})] {
-            refuse_unpainted_layer_affix("line", &layer(unset), false).unwrap();
-        }
     }
 
     #[test]

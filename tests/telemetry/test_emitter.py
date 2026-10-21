@@ -203,10 +203,10 @@ class TestCliWiring:
     ) -> None:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("DCT_NO_WORKSPACE_GUARD", "1")
-        result = CliRunner().invoke(app, ["docs"])
+        result = CliRunner().invoke(app, ["skills"])
         assert result.exit_code == 0
         assert [e.progress for e in sent] == ["start", "end"]
-        assert sent[0].command == "docs"
+        assert sent[0].command == "skills"
         assert sent[1].result_type == "ok"
 
     def test_failing_command_reports_error(
@@ -217,7 +217,7 @@ class TestCliWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        result = CliRunner().invoke(app, ["docs", "--no-such-option"])
+        result = CliRunner().invoke(app, ["skills", "--no-such-option"])
         assert result.exit_code != 0
         assert sent[-1].progress == "end"
         assert sent[-1].result_type == "error"
@@ -230,7 +230,7 @@ class TestCliWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        result = CliRunner().invoke(app, ["--no-send-anonymous-usage-stats", "docs"])
+        result = CliRunner().invoke(app, ["--no-send-anonymous-usage-stats", "skills"])
         assert result.exit_code == 0
         assert sent == []
 
@@ -248,7 +248,7 @@ class TestCliWiring:
 
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(emitter, "send", boom)
-        result = CliRunner().invoke(app, ["docs"])
+        result = CliRunner().invoke(app, ["skills"])
         assert result.exit_code == 0
 
 
@@ -353,7 +353,7 @@ class TestTargetedProject:
     ) -> None:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("DBT_SEND_ANONYMOUS_USAGE_STATS", "maybe")
-        result = CliRunner().invoke(app, ["docs"])
+        result = CliRunner().invoke(app, ["skills"])
         assert result.exit_code == 0
         assert "DBT_SEND_ANONYMOUS_USAGE_STATS" in result.stderr
         assert sent == []

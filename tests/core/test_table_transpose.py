@@ -72,10 +72,10 @@ class TestTableTransposeRender:
         assert "Value" in svg, (
             f"Transposed SVG must have 'Value' header; got: {svg[:400]}"
         )
-        # slug_to_text("col_a") → "col a". In the transposed output these appear as
+        # slug_to_text("col_a") → "Col a". In the transposed output these appear as
         # __metric__ data-cell values; in a normal render they would be column headers.
         # The "Metric"/"Value" header combo uniquely identifies the transposed shape.
-        assert "col a" in svg and "col b" in svg and "col c" in svg, (
+        assert "Col a" in svg and "Col b" in svg and "Col c" in svg, (
             f"Expected slug labels as metric-column data cells, got: {svg[:400]}"
         )
 
@@ -87,7 +87,7 @@ class TestTableTransposeRender:
 
         from ._engine_render import render_table_svg
 
-        data = [{"dollars_used": 1500, "dollars_balance": 3000}]
+        data = [{"dollars_used": 1500.0, "dollars_balance": 3000}]
         chart = self._make_transposed_chart(make_chart, data)
         # Patch in column configs with labels
         column_configs = {
@@ -163,8 +163,8 @@ class TestTableTransposeRender:
 
         data = [
             {
-                "dollars_used": 1500,
-                "dollars_balance": 3000,
+                "dollars_used": 1500.0,
+                "dollars_balance": 3000.0,
                 "credits_used": 50,
                 "credits_balance": 200,
                 "storage_used": 100,
@@ -193,18 +193,18 @@ class TestTableTransposeRender:
 
         # Each original column becomes one metric row. Count slug-label occurrences;
         # each should appear exactly once in the __metric__ column cells.
-        # slug_to_text produces lowercase tokens: "dollars used", not "Dollars Used".
+        # slug_to_text is sentence case: "Dollars used", not "Dollars Used".
         expected_labels = [
-            "dollars used",
-            "dollars balance",
-            "credits used",
-            "credits balance",
-            "storage used",
-            "storage balance",
-            "compute hours",
-            "active users",
+            "Dollars used",
+            "Dollars balance",
+            "Credits used",
+            "Credits balance",
+            "Storage used",
+            "Storage balance",
+            "Compute hours",
+            "Active users",
             "API calls",
-            "subscription months",
+            "Subscription months",
         ]
         for lbl in expected_labels:
             count = len(re.findall(re.escape(lbl), svg))

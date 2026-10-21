@@ -15,8 +15,8 @@ Regenerate (after any model, CLI, registry or allowlist change):
 - `<name>.md.j2`: hand-written text only: the frontmatter, the orientation
   paragraph, the Finish loop, a few one-line rules that no model, CLI or
   registry states, and the section order.
-- `allowlist.yml`: names only. It picks which keys, commands, chart types,
-  codes and themes the pages show in full, and in what order. It carries no
+- `allowlist.yml`: names only. It picks which keys, commands, chart types
+  and themes the pages show in full, and in what order. It carries no
   description, type, default or value; a name the engine no longer has fails
   generation with the list of names it does have.
 - `../gen_skill_pages.py`: reads the schema IR (`introspect()`), the Typer app,
@@ -46,5 +46,4 @@ model, where the schema and the docs read it too.
                            sentence] pairs of the command's help)
     rules                  cross-field constraints a model declares, picked by a
                            substring of the validator's message
-    codes                  diagnostics-registry codes: summary and fix text
     formats                sample value and the format names printed against it

@@ -71,11 +71,7 @@ def test_named_font_expands_on_affix_and_glyph() -> None:
 
 def test_support_glyph_color_token_resolves() -> None:
     kpi, _ = _kpi(
-        {
-            "charts": {
-                "kpi": {"support": {"glyph": {"font": {"color": "chrome.heading"}}}}
-            }
-        }
+        {"charts": {"kpi": {"support": {"glyph": {"font": {"color": "chrome[10]"}}}}}}
     )
     color = kpi.support.glyph.font.color
     assert color is not None and color.startswith("#")

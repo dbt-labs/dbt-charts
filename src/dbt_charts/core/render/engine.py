@@ -270,11 +270,20 @@ def board_style_envelope(
     the root board width WARN-TABLE-CRAMPED sizes its fix from. `None` is a
     render with no board; a table that needs the width then errors."""
     rule = board_style.vega_config.get("rule")
+    category_range = board_style.vega_config.get("range")
+    palette = (
+        list(category_range["category"])
+        if category_range is not None and "category" in category_range
+        else []
+    )
     return {
         "muted": board_style.muted,
         "tones": board_style.tones.model_dump(mode="json"),
         "title_case": board_style.title.font.case,
         "continuous_height": board_style.chart_defaults.view.continuous_height,
+        "continuous_width": board_style.chart_defaults.view.continuous_width,
+        "discrete_width": board_style.chart_defaults.view.discrete_width,
+        "palette": palette,
         "rule_stroke_width": None if rule is None else rule.get("strokeWidth"),
         "font": board_style.vega_config.get("font"),
         "font_color": board_style.font.color,
@@ -373,8 +382,8 @@ def build_chart_payload(
         context = get_link_context()
         resolved["link"] = resolve_href(chart.link, context) if context else chart.link
     elif isinstance(chart, ResolvedSparkBarChart):
-        # A spark_bar has never drawn a link, authored or auto-linked; the
-        # engine refuses a family it does not link, so it never receives one.
+        # A spark_bar has never drawn a link, authored or auto-linked, so the
+        # engine never receives one.
         resolved["link"] = None
         # The bar's label prints `str(cell)`, and a datetime's differs from the
         # ISO form every other cell travels in.

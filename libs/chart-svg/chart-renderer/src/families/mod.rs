@@ -5,6 +5,7 @@ pub mod color_scale;
 pub mod callout;
 pub mod custom;
 pub mod empty;
+pub mod empty_cartesian;
 pub mod geoshape;
 pub mod heatmap;
 pub mod histogram;

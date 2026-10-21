@@ -119,13 +119,13 @@
         "tooltip": [
           {
             "field": "state_id",
-            "title": "state ID",
+            "title": "State ID",
             "type": "nominal"
           },
           {
             "field": "population",
             "format": ",.2~f",
-            "title": "population",
+            "title": "Population",
             "type": "quantitative"
           }
         ]

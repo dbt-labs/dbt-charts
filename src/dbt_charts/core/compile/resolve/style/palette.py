@@ -23,11 +23,13 @@ Palette YAML shape (unified):
     description: str | None
 
 Role-indirection grammar:
-    chrome.ink         → theme.palettes[chrome] → palette → resolve alias "ink"
+    chrome.white       → theme.palettes[chrome] → palette → resolve alias "white"
+    chrome[11]          → theme.palettes[chrome] → palette → stop 11 (an alias "11"
+                          if declared, else colors[10])
     category[1]        → theme.palettes[category] → palette → colors[0] (1-indexed)
     single_series[1]   → theme's single_series_palette[0] (1-indexed; not a
                           palettes: role — the list is authored directly)
-    ink                → theme.roles[ink] → recurse as role.alias
+    ink                → theme.roles[ink] → recurse as role[N] / role.alias
 
 surface="table" (sequential and diverging only)
 -----------------------------------------------
@@ -317,8 +319,8 @@ def _load_spine_raw(name: str) -> Palette:
     # The four variant words are reserved on a categorical palette's own
     # aliases: a third-segment token (`category.dark`) always means the
     # `dark` variant of role `category`, never an alias literally named
-    # "dark" -- scaffold/tone aliases (`dbt-grays.ink`) are untouched, since
-    # "ink" is not one of the four words and scaffold/tone tokens never carry
+    # "dark" -- scaffold/tone aliases (`dbt-grays.white`) are untouched, since
+    # "white" is not one of the four words and scaffold/tone tokens never carry
     # a third segment in the first place (color()'s stop-list branch is the
     # only one that reaches a categorical palette's own aliases -- see
     # docstring there -- and it never consults `aliases:` at all).
@@ -899,14 +901,45 @@ def resolve_alias_chain(
 _STOP_LIST_FAMILIES = frozenset({"categorical", "sequential", "diverging", "scaffold"})
 
 
+def _positional_stop(palette_name: str, idx: int, spine: Palette) -> str:
+    """The color at stop ``idx`` — the one lookup behind ``name.N`` and ``role[N]``.
+
+    A numeric alias the palette declares (a scaffold's stops 0 and 100) wins;
+    otherwise ``idx`` is a 1-indexed position in ``colors``. Anything else
+    raises, naming the stops the palette does have.
+    """
+    aliases = {} if spine.aliases is None else spine.aliases
+    if str(idx) in aliases:
+        return resolve_alias_chain(str(idx), aliases, colors=spine.colors)
+    stops = [] if spine.colors is None else spine.colors
+    if 1 <= idx <= len(stops):
+        return stops[idx - 1]
+    declared = sorted(int(k) for k in aliases if k.isdigit())
+    valid = sorted({*declared, *range(1, len(stops) + 1)})
+    runs: list[str] = []
+    start = 0
+    while start < len(valid):
+        end = start
+        while end + 1 < len(valid) and valid[end + 1] == valid[end] + 1:
+            end += 1
+        if end - start >= 2:
+            runs.append(f"{valid[start]}-{valid[end]}")
+        else:
+            runs.extend(str(n) for n in valid[start : end + 1])
+        start = end + 1
+    raise UnknownColorError(
+        f"palette '{palette_name}' has no stop {idx}; valid stops: {', '.join(runs)}"
+    )
+
+
 def color(token: str) -> str:
     """Resolve a single color token (``palette.slot``) to an sRGB hex string.
 
     Supports tone and scaffold (aliases: format) plus every stop-list family
     (categorical, sequential, diverging), which is addressed by 1-indexed
     position.
-    For role-indirected tokens (``chrome.ink`` where ``chrome`` is a theme
-    palette role), use ``color_from_theme()`` instead.
+    For role-indirected tokens (``chrome[11]`` or ``chrome.white``, where ``chrome``
+    is a theme palette role), use ``color_from_theme()`` instead.
 
     A trailing variant segment (``vivid-10.3.dark``) is tried *after* the
     unmodified token first, not before: a scaffold/tone palette's own
@@ -973,25 +1006,12 @@ def _color_without_variant(token: str) -> str:
             )
 
     if family in _STOP_LIST_FAMILIES:
-        # Positional slot by integer, 1-indexed (vivid-10.1 is the first
-        # stop) — matches the bracket form and scaffold/tone alias integers.
-        try:
-            idx = int(slot)
-        except ValueError as e:
+        if not (slot.isascii() and slot.isdigit()):
             raise UnknownColorError(
                 f"{family} palette '{palette_name}' indexed by integer; got '{slot}'"
-            ) from e
-        stops = list(spine.colors)  # type: ignore[arg-type]
-        if idx < 1:
-            raise UnknownColorError(
-                f"{family} palette '{palette_name}' slot {idx} must be 1-indexed (≥ 1)"
             )
-        if idx > len(stops):
-            raise UnknownColorError(
-                f"{family} palette '{palette_name}' index {idx} out of range "
-                f"[1, {len(stops)}]"
-            )
-        return stops[idx - 1]
+        idx = int(slot)
+        return _positional_stop(palette_name, idx, spine)
 
     raise UnknownColorError(
         f"palette '{palette_name}' (family={family}) does not support color() access"
@@ -1014,7 +1034,9 @@ def color_from_theme(
     """Resolve a role-indirected color token against theme palettes and roles.
 
     Token grammar:
-        ``chrome.ink``        — role.alias: look up palettes[role], resolve alias
+        ``chrome.white``     — role.alias: look up palettes[role], resolve alias
+        ``chrome[11]``        — role[N]: palettes[role], stop N (a declared numeric alias,
+            else colors[N-1])
         ``category[1]``       — role[N]: look up palettes[role], colors[N-1] (1-indexed)
         ``single_series[1]``  — the active theme's single-series ink list, N-1
             (1-indexed); not a ``palettes:`` role — themes author
@@ -1041,7 +1063,7 @@ def color_from_theme(
         UnknownColorError: Token is unresolvable (unknown role, missing alias,
             out-of-range index, cycle, or missing colors array).
 
-    A trailing variant segment (``category[1].dark``, ``chrome.ink.dark``) is
+    A trailing variant segment (``category[1].dark``, ``chrome[11].dark``) is
     tried *after* the unmodified token first, the same "original wins"
     ordering ``color()`` uses and for the same reason: a scaffold/tone
     palette's own ``aliases:`` are not restricted against the four variant
@@ -1050,7 +1072,7 @@ def color_from_theme(
     ``chrome`` defines one. Tried independently at every level of the
     bare-name recursion, so a variant an author writes on a bare role
     (``ink.dark``) and one a theme's own ``roles:`` target already carries
-    (``roles: {ink: chrome.heading.dark}``) both apply, provided the token
+    (``roles: {ink: chrome[10].dark}``) both apply, provided the token
     ultimately bottoms out on a categorical palette -- see ``palette()``'s
     identical categorical-only restriction; a continuous or scaffold target
     raises instead.
@@ -1153,16 +1175,12 @@ def _color_from_theme_dispatch(
     if bracket_match:
         role, n_str = bracket_match.group(1), bracket_match.group(2)
         n = int(n_str)
-        if n < 1:
-            raise UnknownColorError(
-                f"bracket index must be 1-indexed (≥ 1), got {token!r}"
-            )
         if role == "single_series":
             if single_series_palette is None:
                 raise UnknownColorError(
                     f"no single-series palette context available for {token!r}"
                 )
-            if n > len(single_series_palette):
+            if not 1 <= n <= len(single_series_palette):
                 raise UnknownColorError(
                     f"single-series palette has {len(single_series_palette)} slot(s); "
                     f"requested slot {n} (1-indexed)"
@@ -1181,12 +1199,12 @@ def _color_from_theme_dispatch(
                 f"palette '{palette_name}' (role '{role}') has no 'colors:' array; "
                 "bracket form requires a colors array"
             )
-        if n > len(spine.colors):
-            raise UnknownColorError(
-                f"palette '{palette_name}' has {len(spine.colors)} slot(s); "
-                f"requested slot {n} (1-indexed)"
-            )
-        return _apply_bound_variant(spine.colors[n - 1], bound_variant), family
+        return (
+            _apply_bound_variant(
+                _positional_stop(palette_name, n, spine), bound_variant
+            ),
+            family,
+        )
 
     # Dotted form: role.alias
     if "." in token:
@@ -1230,7 +1248,7 @@ def _color_from_theme_dispatch(
     # Recurse through _color_from_theme_resolve (not this dispatcher calling
     # itself) so the resolved target gets its own independent "try original,
     # fall back to variant-split" pass -- a theme's `roles:` table may point
-    # at an already-varianted token (`roles: {ink: chrome.heading.dark}`) --
+    # at an already-varianted token (`roles: {ink: chrome[10].dark}`) --
     # and so its own family comes back as an ordinary return value instead
     # of needing to be re-derived by a second, separate walk afterward.
     return _color_from_theme_resolve(

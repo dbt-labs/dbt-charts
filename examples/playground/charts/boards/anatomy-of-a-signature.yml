@@ -498,12 +498,8 @@ charts:
           label: Company
           width: 200
         users:
-          label: Users
-          format: integer
           align: right
         documents:
-          label: Documents
-          format: integer
           align: right
           spark:
             type: bar
@@ -516,11 +512,9 @@ charts:
             # Semantic: completion_rate is a rate, definitionally bounded at 1 (100%).
             max: 1
         avg_pages:
-          label: Avg pages
           format: number_full
           align: right
         top_plan:
-          label: Top plan
           width: 160
 
 rows:

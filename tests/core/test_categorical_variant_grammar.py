@@ -139,10 +139,10 @@ class TestWholeListVariant:
     def test_a_scaffold_alias_rejects_a_variant_through_color(self) -> None:
         with pytest.raises(
             UnknownColorError,
-            match=r"unknown color token 'dbt-grays\.muted\.pale'\. "
+            match=r"unknown color token 'dbt-grays\.8\.pale'\. "
             r"Variants apply to categorical palettes\.",
         ):
-            color("dbt-grays.muted.pale")
+            color("dbt-grays.8.pale")
 
 
 class TestBracketAndDottedTokenVariant:
@@ -210,10 +210,10 @@ class TestReservedVariantWords:
             monkeypatch.setattr(palette_mod, "_index", None)
             palette_mod._spine_cache.pop("zz-fake", None)
 
-    def test_scaffold_alias_named_ink_is_untouched(self) -> None:
-        """`dbt-grays.ink` -- a scaffold/tone `<role>.<alias>` -- is
-        unaffected: "ink" is not one of the four reserved variant words."""
-        assert color("dbt-grays.ink")
+    def test_a_scaffold_alias_is_untouched(self) -> None:
+        """`dbt-grays.black` -- a scaffold `<palette>.<alias>` -- is
+        unaffected: "black" is not one of the four reserved variant words."""
+        assert color("dbt-grays.black")
 
     def test_a_variant_split_that_still_fails_reports_the_authored_token(
         self,
@@ -307,20 +307,20 @@ class TestColorFromThemeCategoricalGuardThreadsThroughRoleIndirection:
     def test_a_role_target_through_a_bare_role_reaching_a_scaffold_alias(
         self,
     ) -> None:
-        """`muted: chrome.heading` (a scaffold alias, reached via a second
+        """`muted: chrome[10]` (a scaffold alias, reached via a second
         role `chrome` bound in `palettes`), token `muted.pale` -- same
         rejection as the continuous case, for a scaffold family instead.
-        `chrome.ink` (no variant, no bare-role layer) must still resolve
+        `chrome[11]` (no variant, no bare-role layer) must still resolve
         directly -- the guard only ever gates the variant-split fallback."""
         palettes = {"chrome": "dbt-grays"}
-        roles = {"muted": "chrome.heading"}
+        roles = {"muted": "chrome[10]"}
         with pytest.raises(
             UnknownColorError,
             match=r"unknown color token 'muted\.pale'\. "
             r"Variants apply to categorical palettes\.",
         ):
             color_from_theme("muted.pale", palettes=palettes, roles=roles)
-        assert color_from_theme("chrome.ink", palettes=palettes, roles=roles)
+        assert color_from_theme("chrome[11]", palettes=palettes, roles=roles)
 
 
 class TestUnknownVariantWord:

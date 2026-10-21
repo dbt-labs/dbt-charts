@@ -1377,4 +1377,4 @@ class TestMirrorAxisTitleSuppression:
         data = [{"month": i, "signups": 100 + i * 5} for i in range(6)]
         svg = _v2_svg(chart, data)
         # Aria-label attributes (not text content) still carry "Signups: <value>"
-        assert "signups: 100" in svg
+        assert "Signups: 100" in svg

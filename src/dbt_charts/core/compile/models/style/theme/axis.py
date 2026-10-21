@@ -759,14 +759,11 @@ class ScaleContinuousStyle(ScaleDomainValidationMixin):
                 f"scale is undefined at and below 0, got domain {list(self.domain)}. "
                 "Use positive bounds or drop the log scale."
             )
-        if (
-            self.log is not None
-            and self.log.base is not None
-            and (self.log.base <= 0 or self.log.base == 1)
-        ):
+        if self.log is not None and self.log.base is not None and self.log.base <= 1:
             raise ValueError(
-                "scale.continuous.log.base must be positive and not 1, got "
-                f"{self.log.base}."
+                "scale.continuous.log.base must be greater than 1, got "
+                f"{self.log.base}. A base at or below 1 flips or flattens the "
+                "scale's decades, so Vega-Lite's nice domain no longer covers the data."
             )
         return self
 

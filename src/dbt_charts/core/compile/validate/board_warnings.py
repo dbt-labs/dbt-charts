@@ -23,6 +23,11 @@ from dbt_charts.core.compile.models.chart.normalized import (
 )
 from dbt_charts.core.compile.normalize.chart_focus import (
     PRE_FOCUS_PLACED_CHARTS_META_KEY,
+    PRE_FOCUS_REFERENCED_QUERIES_META_KEY,
+)
+from dbt_charts.core.compile.normalize.query_references import (
+    defined_query_names,
+    referenced_query_names,
 )
 from dbt_charts.core.compile.resolve.style.axis_cascade import (
     AUTO_AXIS_FORMAT,
@@ -36,6 +41,7 @@ from dbt_charts.core.diagnostics import (
     WARN_H1_BODY_NO_TITLE,
     WARN_SINGLE_CHART_REDUNDANT_TITLE,
     WARN_UNREFERENCED_CHART,
+    WARN_UNREFERENCED_QUERY,
     Diagnostic,
     RelatedLocation,
 )
@@ -58,6 +64,7 @@ def detect_board_warnings(
     _detect_double_headers(board, warnings)
     _detect_single_chart_redundant_title(board, warnings)
     _detect_orphan_charts(board, warnings)
+    _detect_unreferenced_queries(board, warnings)
     _detect_axis_align_discarded(board, chart_styles, warnings)
     _detect_unused_format_names(board, own_format_names, chart_styles, warnings)
     return warnings
@@ -291,6 +298,27 @@ def _detect_orphan_charts(board: Board, warnings: list[Diagnostic]) -> None:
                     chart_id=chart_id
                 ),
                 fix=WARN_UNREFERENCED_CHART.fix_template,
+            )
+        )
+
+
+def _detect_unreferenced_queries(board: Board, warnings: list[Diagnostic]) -> None:
+    """Warn for queries defined somewhere in the tree that nothing reads.
+
+    A focused board is judged by the references it had before focus pruned its
+    variables and title, which ``focus_on_chart`` records in ``board.meta``.
+    """
+    pre_focus = board.meta.get(PRE_FOCUS_REFERENCED_QUERIES_META_KEY)
+    referenced = (
+        set(pre_focus) if pre_focus is not None else referenced_query_names(board)
+    )
+    for name in sorted(defined_query_names(board) - referenced):
+        warnings.append(
+            Diagnostic.from_code(
+                WARN_UNREFERENCED_QUERY,
+                path=f"queries.{name}",
+                message=WARN_UNREFERENCED_QUERY.message_template.format(query=name),
+                fix=WARN_UNREFERENCED_QUERY.fix_template,
             )
         )
 

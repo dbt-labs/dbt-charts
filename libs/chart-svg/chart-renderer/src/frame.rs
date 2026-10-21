@@ -14,7 +14,11 @@ use crate::Payload;
 /// `dim` prints the root's `width`/`height` (and so the rect's): families
 /// disagree on how a whole-number size reads (`600` vs Python's `600.0`).
 pub struct ChartFrame<'a> {
+    /// The card's width, which the emitters' own decisions read.
     pub w: f64,
+    /// The width the view fits to and the canvas prints: the card's, unless the
+    /// card has no room (`Payload::view_width`).
+    pub view_w: f64,
     pub h: f64,
     /// `(left, right, top, bottom)`.
     pub pad: (f64, f64, f64, f64),
@@ -30,7 +34,12 @@ impl<'a> ChartFrame<'a> {
         background: &'a str,
         dim: fn(f64) -> String,
     ) -> Self {
-        ChartFrame { w, h, pad, background, dim }
+        ChartFrame { w, view_w: w, h, pad, background, dim }
+    }
+
+    /// [`Self::of`] over a card with no room: the view takes the theme's default width.
+    pub fn of_view(payload: &Payload, background: &'a str, x_scale: crate::ViewScale) -> Result<Self, String> {
+        Ok(ChartFrame { view_w: payload.view_width(x_scale)?, ..Self::of(payload, background) })
     }
 
     /// The payload's own card, its dims printed as bare numbers.
@@ -50,24 +59,28 @@ impl<'a> ChartFrame<'a> {
         )
     }
 
+    /// The frame over a canvas of its own size: a plot laid out under
+    /// `autosize: pad` grows the canvas around its ink.
+    pub fn sized(&self, w: f64, h: f64) -> ChartFrame<'a> {
+        ChartFrame { w, view_w: w, h, pad: self.pad, background: self.background, dim: self.dim }
+    }
+
     /// The width a title wraps against.
     pub fn avail_w(&self) -> f64 {
         self.w - self.pad.0 - self.pad.1
     }
 
-    /// `fit_plot` over `ink` and the title, or the named refusal when nothing
-    /// is left for the plot. Pass a no-op `ink` for a body with no axes.
-    pub fn fit(
-        &self,
-        family: &str,
-        title: &FrameTitle,
-        ink: impl FnMut(f64, f64, &mut Bounds),
-    ) -> Result<FitMargins, String> {
-        let m = vega_fit::fit_plot(self.w, self.h, self.pad, ink, title.ink());
-        if m.plot_w <= 0.0 || m.plot_h <= 0.0 {
-            return Err(format!("{family}: chart box {}×{} too small for content", self.w, self.h));
-        }
-        Ok(m)
+    /// `fit_plot` over `ink` and the title. A card with no room fits a plot
+    /// with no width or height, as Vega's `max(0, …)` clamp does. Pass a no-op
+    /// `ink` for a body with no axes.
+    pub fn fit(&self, title: &FrameTitle, ink: impl FnMut(f64, f64, &mut Bounds)) -> FitMargins {
+        self.fit_beside(0.0, title, ink)
+    }
+
+    /// [`Self::fit`] for a plot that shares the card's width with a pane of
+    /// `reserve` px beside it (an endpoint rail's concat).
+    pub fn fit_beside(&self, reserve: f64, title: &FrameTitle, ink: impl FnMut(f64, f64, &mut Bounds)) -> FitMargins {
+        vega_fit::fit_plot(self.view_w - reserve, self.h, self.pad, ink, title.ink())
     }
 
     /// The body origin a fit yields, in canvas coordinates.
@@ -77,7 +90,7 @@ impl<'a> ChartFrame<'a> {
 
     /// Writes the opening `<svg>` tag.
     pub fn root(&self, out: &mut String) {
-        let (w, h) = ((self.dim)(self.w), (self.dim)(self.h));
+        let (w, h) = ((self.dim)(self.view_w), (self.dim)(self.h));
         out.push_str(&format!(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" \
              viewBox=\"0 0 {w} {h}\">"
@@ -88,7 +101,7 @@ impl<'a> ChartFrame<'a> {
     pub fn background(&self, out: &mut String) {
         out.push_str(&format!(
             "<rect width=\"{}\" height=\"{}\" fill=\"{}\"/>",
-            (self.dim)(self.w),
+            (self.dim)(self.view_w),
             (self.dim)(self.h),
             xml_escape_attr(self.background)
         ));

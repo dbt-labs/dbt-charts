@@ -418,6 +418,8 @@ pub struct GhostRule<'a> {
     pub x: f64,
     pub y: f64,
     pub stroke: &'a str,
+    /// The datum's link, which wraps its rule like any other mark of the datum.
+    pub(crate) anchor: Option<crate::href::Anchor<'a>>,
 }
 
 /// How far a ghost rule runs from its datum.
@@ -427,6 +429,8 @@ pub enum GhostRun {
     Down(f64),
     /// A horizontal bar's rule runs back to the plot's left edge.
     ToLeftEdge,
+    /// A heatmap cell's rule runs back to the plot's origin.
+    ToOrigin,
 }
 
 /// A facet's mirrored far-edge axis rides an invisible rule layer, one rule per
@@ -441,7 +445,9 @@ pub fn mirror_ghost_layer(out: &mut String, rules: &[GhostRule], run: GhostRun) 
         let (x2, y2) = match run {
             GhostRun::Down(floor) => (0.0, floor - rule.y),
             GhostRun::ToLeftEdge => (-rule.x, 0.0),
+            GhostRun::ToOrigin => (-rule.x, -rule.y),
         };
+        out.push_str(&crate::href::anchor_open(rule.anchor));
         let _ = write!(
             out,
             "<line transform=\"translate({:.3},{:.3})\" x2=\"{x2:.3}\" y2=\"{y2:.3}\" stroke=\"{}\" \
@@ -450,6 +456,7 @@ pub fn mirror_ghost_layer(out: &mut String, rules: &[GhostRule], run: GhostRun) 
             rule.y,
             xml_escape_attr(rule.stroke),
         );
+        out.push_str(crate::href::anchor_close(rule.anchor));
     }
     mark_group_close(out);
     Ok(())
@@ -645,7 +652,7 @@ pub fn tooltip_header_text(
     let (y, m, d) = crate::families::temporal::parse_iso_date(cat)
         .ok_or_else(|| format!("tooltip header: unparsed date {cat:?}"))?;
     match grain_format {
-        Some(format) => format.text(y, m, d),
+        Some(format) => Ok(format.text(y, m, d)),
         None => crate::families::temporal::tooltip_header_date(y, m, d, detected_tu),
     }
 }

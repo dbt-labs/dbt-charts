@@ -206,12 +206,14 @@ def run_wizard(
     if install_warnings:
         typer.echo("")
     typer.echo(
-        "  You're all set. Your project has a charts/ directory with a starter dashboard."
+        "  You're all set. Your project has a charts/ directory; add a board to it."
     )
     typer.echo("")
-    typer.echo("  Run `dct serve` to preview it in your browser.")
+    typer.echo(
+        "  Run `dct serve` to see an intro page and your boards in your browser."
+    )
     typer.echo("")
     typer.echo(
-        "  New to dbt Charts, or an agent? Read `dct skills intro` before "
+        "  New to dbt Charts, or an agent? Read `dct skills chart` before "
         "authoring boards."
     )

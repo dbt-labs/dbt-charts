@@ -61,6 +61,11 @@ from dbt_charts.core.compile.template._helpers import (
     template_error_location,
 )
 from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
+from dbt_charts.core.compile.template.listings import (
+    LISTING_FUNCTIONS,
+    TextListings,
+    listing_helpers,
+)
 from dbt_charts.core.compile.template.markdown_fence import mask_fenced_code
 from dbt_charts.core.compile.template.output_budget import (
     TemplateOutputBudgetExceeded,
@@ -237,6 +242,7 @@ RESERVED_VARIABLE_NAMES: frozenset[str] = frozenset(
         "filter",
         "filter_date_range",
         "queries",
+        *LISTING_FUNCTIONS,
     }
 )
 
@@ -405,20 +411,24 @@ def template_literal_text(template_str: str) -> str:
 
 
 def text_needs_render_data(template_str: str) -> bool:
-    """Whether board text reads query results or the render-only ``format``.
+    """Whether board text reads query results, lists boards, or uses the
+    render-only ``format``.
 
     Counts ``format`` passed by name (``map('format', ...)``) too. Text that does
     not parse counts as needing data.
     """
     masked, _ = mask_fenced_code(template_str)
-    if "queries" not in masked and "format" not in masked:
+    if "queries" not in masked and "format" not in masked and "glob_" not in masked:
         return False
     try:
         ast = Environment().parse(masked)
     except TemplateSyntaxError:
         return True
     return (
-        any(node.name == "queries" for node in ast.find_all(jinja_nodes.Name))
+        any(
+            node.name == "queries" or node.name in LISTING_FUNCTIONS
+            for node in ast.find_all(jinja_nodes.Name)
+        )
         or any(node.name == "format" for node in ast.find_all(jinja_nodes.Filter))
         or any(node.value == "format" for node in ast.find_all(jinja_nodes.Const))
     )
@@ -436,6 +446,8 @@ def resolve_jinja_template(
     | None = None,  # type-state: optional — only board text reads query results
     format_cell: CellFormatter
     | None = None,  # type-state: optional — travels with query_results
+    listings: TextListings
+    | None = None,  # type-state: optional — only board text lists boards
 ) -> str:
     """Resolve a Jinja template string.
 
@@ -462,6 +474,8 @@ def resolve_jinja_template(
                 ``strict=False``; never combined with ``queries=``.
         format_cell: Required with ``query_results``; replaces the ``format``
                 filter.
+        listings: Board text only, with ``query_results``: what
+                ``glob_boards``/``glob_folders`` return, resolved by the data provider.
 
     Returns:
         Resolved string with variables substituted
@@ -488,6 +502,8 @@ def resolve_jinja_template(
         raise ValueError("query_results cannot be combined with queries")
     if query_results is not None and strict:
         raise ValueError("query_results requires strict=False: board text is lenient")
+    if listings is not None and query_results is None:
+        raise ValueError("listings requires query_results: only board text lists")
 
     if not template:
         return template
@@ -507,6 +523,8 @@ def resolve_jinja_template(
         context["queries"] = _QueryNamespace(queries)
     if query_results is not None:
         context["queries"] = QueryResults(query_results)
+    if listings is not None:
+        context.update(listing_helpers(listings))
 
     # Add helper functions. The stubs raise; a caller able to bind them — one
     # that knows the warehouse the SQL will run on — supplies real ones.

@@ -224,8 +224,9 @@ pub fn check(payload: &Payload, chart_type: &str) -> Result<(), Diagnostic> {
         return Ok(());
     }
     let facts: Facts = serde_json::from_value(payload.resolved.clone()).map_err(|e| format!("{chart_type} payload: {e}"))?;
-    // Faceted against zero rows at resolve, rendered with rows: no panel axes to split by.
-    if facts.multiples.is_some() && facts.panel_axes.is_empty() {
+    // Faceted against zero rows at resolve, rendered with rows: no panel axes to split by. Rendered
+    // against zero rows too, it is the empty facet.
+    if facts.multiples.is_some() && facts.panel_axes.is_empty() && !payload.rows.is_empty() {
         return Err(Diagnostic::new(&codes::ERR_MULTIPLES_RESOLVED_WITHOUT_DATA, [("chart_id", json!(facts.chart_id()))]));
     }
     if matches!(chart_type, "bar" | "line" | "area") {
@@ -274,7 +275,7 @@ pub fn check(payload: &Payload, chart_type: &str) -> Result<(), Diagnostic> {
         endpoint_rail(&facts, &payload.rows)?;
     }
     value_labels(&facts, payload)?;
-    mirror(&facts)?;
+    mirror(&facts, &payload.rows)?;
     multiples_conflicts(&facts, payload)?;
     legend_align(&facts)
 }
@@ -412,7 +413,7 @@ fn endpoint_rail(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
 }
 
 /// `mirror_axis.py::MirrorAxisFeature.apply`.
-fn mirror(facts: &Facts) -> Result<(), Diagnostic> {
+fn mirror(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
     if !facts.mirrored() {
         return Ok(());
     }
@@ -443,7 +444,51 @@ fn mirror(facts: &Facts) -> Result<(), Diagnostic> {
         let code = if facts.multiples.is_some() { &codes::ERR_MULTIPLES_ENDPOINT_LABELS } else { &codes::ERR_MIRROR_ENDPOINT_LABELS };
         return Err(Diagnostic::new(code, [("chart_id", chart_id())]));
     }
+    mirror_format(facts, rows)?;
     unmeasurable_align(facts)
+}
+
+/// The `mirror.format` gate: the ghost relabels the shared y scale, which
+/// is categorical on a horizontal bar, a heatmap and a dot plot, so a number
+/// format can only read numeric-looking categories.
+fn mirror_format(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
+    let Some(format) = facts.style.axis_y.mirror.as_ref().and_then(|m| m.get("format")).filter(|f| !f.is_null()) else {
+        return Ok(());
+    };
+    let (field, vl_type) = match facts.chart_type.as_str() {
+        "bar" if facts.orientation.as_deref() == Some("horizontal") => {
+            let Some(x) = facts.x.as_deref() else { return Ok(()) };
+            (x, infer_vega_type(rows, x))
+        }
+        "heatmap" => {
+            let Some(y) = facts.y.as_ref().and_then(Value::as_str) else { return Ok(()) };
+            (y, VegaType::Nominal)
+        }
+        "scatter" => {
+            let Some(y) = facts.y.as_ref().and_then(Value::as_str) else { return Ok(()) };
+            (y, infer_vega_type(rows, y))
+        }
+        _ => return Ok(()),
+    };
+    let slot: crate::common::FormatSlot =
+        serde_json::from_value(format.clone()).map_err(|e| format!("{}: axis_y.mirror.format is not a ResolvedFormat: {e}", facts.chart_type))?;
+    let move_it_to = match facts.chart_type.as_str() {
+        "heatmap" => super::cartesian_x_errors::HEATMAP_FORMAT_REMEDY,
+        "scatter" => "Remove axis_y.mirror.format; to format the measure instead, author it on style.axis_x.labels.format.",
+        _ => "Remove axis_y.mirror.format; to format the measure instead, author it on style.axis_y.labels.format.",
+    };
+    let remedy = format!(
+        "axis_y.mirror.format relabels the shared y-scale on the opposite edge, and that scale is categorical here \u{2014} it can't carry a number format. {move_it_to}"
+    );
+    let categorical = matches!(vl_type, VegaType::Nominal | VegaType::Ordinal);
+    super::cartesian_x_errors::gate_label_format(
+        Some(&slot),
+        "axis_y.mirror.format",
+        field,
+        vl_type,
+        rows,
+        categorical.then_some(remedy.as_str()),
+    )
 }
 
 /// The ghost axis sits on the edge opposite the primary. A label alignment
@@ -625,7 +670,8 @@ fn value_labels(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
 }
 
 /// `_overlay.py`: a layer's pinned y-axis side and a band-aware step curve
-/// both need a vertical base, and a band-aware step is a single-series idiom.
+/// both need a vertical base, an area layer needs a vertical or unsplit base,
+/// and a band-aware step is a single-series idiom.
 fn layers(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
     let chart_id = || json!(facts.chart_id());
     let step_curve = |layer: &Layer| {
@@ -637,14 +683,36 @@ fn layers(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
         .and_then(|m| m.curve.as_deref());
         curve == Some("step") && layer.y.as_ref().is_some_and(|y| !y.is_null())
     };
+    for (index, layer) in facts.layers.iter().enumerate() {
+        let Some(color) = layer.color.as_deref() else { continue };
+        let own_rows = if layer.query_name.is_none() || layer.query_name == facts.query_name {
+            Some(&payload.rows)
+        } else {
+            layer.query_name.as_deref().and_then(|name| payload.datasets.as_ref()?.get(name))
+        };
+        if own_rows.is_some_and(|rows| rows.iter().all(|row| row.get(color).map_or(true, Value::is_null))) {
+            return Err(Diagnostic::new(
+                &codes::ERR_LAYER_COLOR_ALL_NULL,
+                [("chart_id", chart_id()), ("layer_index", json!(index)), ("color_field", json!(color))],
+            ));
+        }
+    }
     if facts.orientation.as_deref() == Some("horizontal") {
         // The pinned side is read ahead of the per-layer step transform.
         let pinned = |l: &Layer| l.axis_y.as_ref().and_then(|a| a.position.as_deref()).is_some_and(|p| matches!(p, "left" | "right"));
         if facts.layers.iter().any(pinned) {
             return Err(Diagnostic::new(&codes::ERR_LAYER_AXIS_POSITION_ORIENTATION, [("chart_id", chart_id())]));
         }
-        if facts.layers.iter().any(step_curve) {
-            return Err(Diagnostic::new(&codes::ERR_LAYER_STEP_ORIENTATION, [("chart_id", chart_id())]));
+        // Each layer's own branch raises in authored order; an area layer's split-base check precedes its step.
+        let split_base = !facts.wide_measures.is_empty()
+            || facts.color.as_deref().is_some_and(|c| matches!(infer_vega_type(&payload.rows, c), VegaType::Nominal | VegaType::Ordinal));
+        for layer in &facts.layers {
+            if layer.kind == "area" && split_base {
+                return Err(Diagnostic::new(&codes::ERR_LAYER_AREA_SPLIT_HORIZONTAL_BASE, [("chart_id", chart_id())]));
+            }
+            if step_curve(layer) {
+                return Err(Diagnostic::new(&codes::ERR_LAYER_STEP_ORIENTATION, [("chart_id", chart_id())]));
+            }
         }
         return Ok(());
     }

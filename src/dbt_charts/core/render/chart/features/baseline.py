@@ -134,9 +134,9 @@ def _zero_in_shared_domain(
 
     Mirrors ``_shared_y_values``, the resolve-time function that actually
     decides the domain: the union of the base measure (or every wide
-    measure) and every layer not pinned to an independent right axis.
-    ``apply()`` has already bailed out for an independent dual axis, so
-    every layer reaching here shares the base's scale.
+    measure) and every layer sharing its scale. ``apply()`` has already
+    bailed out for an independent dual axis, so every layer reaching here
+    shares the base's scale.
 
     The union is the question, not "does any one series straddle 0". Two
     series that each stay on one side of zero still bracket it once they

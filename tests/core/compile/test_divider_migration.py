@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
     migrate_mapping,
@@ -284,6 +285,38 @@ def test_chart_level_table_style_migrates() -> None:
             },
         },
     }
+
+
+def test_a_board_nested_in_a_board_migrates() -> None:
+    raw = {
+        "title": "t",
+        "rows": [
+            {
+                "text": "x",
+                "style": {"text": {"column": {"rule": {"color": "#f00"}}}},
+            }
+        ],
+    }
+    migrated = _migrate(raw)
+    assert migrated["rows"][0]["style"] == {
+        "text": {"column": {"divider": {"visible": True, "color": "#f00"}}}
+    }
+    AuthoredBoard.model_validate(migrated)
+
+
+def test_a_board_nested_two_deep_compiles() -> None:
+    result = compile(
+        "title: t\n"
+        "rows:\n"
+        "  - cols:\n"
+        "      - text: x\n"
+        "        style:\n"
+        "          text:\n"
+        "            column:\n"
+        "              rule:\n"
+        "                color: '#f00'\n"
+    )
+    assert result.success, result.errors
 
 
 def test_values_authored_at_two_levels_resolve_per_block() -> None:

@@ -7,7 +7,6 @@ source: examples_db
 # Each starts unset, which filter() below treats as "no filter".
 variables:
   region:
-    input: select
     options:
       static: [North, South, East, West]
 

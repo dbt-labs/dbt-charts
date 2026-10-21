@@ -168,10 +168,17 @@ def resolve_display_text_via(
     variables: VariableValues | None,  # type-state: optional — None means no variables
     *,
     resolved_style: "ResolvedStyle",
+    base_dir: str | None = None,  # type-state: optional — None is no location
 ) -> str:
-    """Resolve board ``text:`` or a board title, reading query results from *provider*."""
+    """Resolve board ``text:`` or a board title, reading query results and
+    listings from *provider*. Listings resolve against *base_dir*, the directory
+    of the text's file."""
     from dbt_charts.core.compile.template.display_text import resolve_display_text
     from dbt_charts.core.compile.template.jinja import extract_query_result_references
+    from dbt_charts.core.compile.template.listings import (
+        extract_listing_calls,
+        listing_pattern_error,
+    )
     from dbt_charts.core.compile.template.query_result import QueryResult
 
     values = variables or {}  # type-state: silent_fallback — None means no variables
@@ -187,8 +194,22 @@ def resolve_display_text_via(
             name: QueryResult(name, provider.execute_query(name, values))
             for name in sorted(query_names)
         }
+    calls = extract_listing_calls(text)
+    listings = None
+    if calls:
+        if provider is None:
+            raise RuntimeError(
+                "display text lists boards but no data provider is scoped"
+            )
+        if base_dir is None:
+            raise listing_pattern_error(min(calls), "the text has no file location")
+        listings = provider.text_listings(base_dir, frozenset(calls))
     return resolve_display_text(
-        text, values, query_results, resolved_style.chart_defaults.formats
+        text,
+        values,
+        query_results,
+        resolved_style.chart_defaults.formats,
+        listings=listings,
     )
 
 
@@ -197,13 +218,18 @@ def resolve_display_text_from_provider(
     variables: VariableValues | None,  # type-state: optional — None means no variables
     *,
     resolved_style: "ResolvedStyle",
+    base_dir: str | None = None,  # type-state: optional — None is no location
 ) -> str:
     """``resolve_display_text_via`` the provider scoped for this render pass, the one
     resolution that sizing and paint share."""
     from dbt_charts.core.render.board_variables import current_board_data_provider
 
     return resolve_display_text_via(
-        current_board_data_provider(), text, variables, resolved_style=resolved_style
+        current_board_data_provider(),
+        text,
+        variables,
+        resolved_style=resolved_style,
+        base_dir=base_dir,
     )
 
 
@@ -578,7 +604,7 @@ def _render_text_svg(
     from dbt_charts.core.render.contrast_warning import check_markdown_contrast
 
     resolved = resolve_display_text_from_provider(
-        text, variables, resolved_style=resolved_style
+        text, variables, resolved_style=resolved_style, base_dir=base_dir
     )
     resolved = rewrite_board_links(resolved, get_link_context())
     result = render_prose_svg(

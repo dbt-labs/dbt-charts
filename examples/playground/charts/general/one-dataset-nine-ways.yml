@@ -8,7 +8,7 @@ style:
   charts:
     color:
       categorical:
-        single_series_palette: [dbt-grays.heading]
+        single_series_palette: [dbt-grays.10]
 
 queries:
   monthly:
@@ -73,9 +73,6 @@ charts:
         scale:
           continuous:
             zero: true
-      marks:
-        point:
-          size: 60
 
   c_lollipop:
     query: monthly
@@ -86,7 +83,7 @@ charts:
     style:
       color:
         categorical:
-          palette: [dbt-grays.heading, dbt-grays.heading]
+          palette: [dbt-grays.10, dbt-grays.10]
       legend:
         visible: false
       marks:

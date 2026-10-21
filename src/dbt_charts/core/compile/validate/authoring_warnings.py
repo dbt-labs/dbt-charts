@@ -5,17 +5,14 @@ from __future__ import annotations
 from typing import Any, TypeAlias
 
 import yaml
-from pydantic_core import PydanticUndefinedType
 
 from dbt_charts.core.compile.models.primitives import LanguageCode
-from dbt_charts.core.compile.models.variable.authored import Variable
+from dbt_charts.core.compile.restated import restated_diagnostic
 from dbt_charts.core.diagnostics import (
     WARN_FLAT_COLS_UNSIZED_OVERFLOW,
-    WARN_REDUNDANT_AUTHORED_DEFAULT,
-    WARN_REDUNDANT_AUTHORED_LABEL,
+    WARN_RESTATED_INFERRED,
     Diagnostic,
 )
-from dbt_charts.core.text.case import inferred_display_name
 from dbt_charts.core.text.format_d3 import language_scope
 from dbt_charts.core.utils import YAML_LOADER
 
@@ -34,27 +31,16 @@ _MAX_UNSIZED_FLAT_COLS = 4
 YamlScalar: TypeAlias = str | int | float | bool | None
 YamlValue: TypeAlias = "YamlScalar | list[YamlValue] | dict[str, YamlValue]"
 
-# Derived from the Variable model so this dict cannot silently diverge from the
-# actual field defaults.  Fields with None defaults (optional overrides) and
-# internal/computed fields are excluded — there is no useful warning to emit
-# when an author redundantly sets an optional field to None.
-_VARIABLE_DEFAULTS: dict[str, object] = {
-    name: field.default
-    for name, field in Variable.model_fields.items()
-    if not isinstance(field.default, PydanticUndefinedType)
-    and field.default is not None
-    and not field.exclude
-}
-
 
 def detect_authoring_warnings(
-    yaml_content: str, language: LanguageCode
+    yaml_content: str, language: LanguageCode, inherited_source: str | None
 ) -> list[Diagnostic]:
     """Return non-fatal warnings for redundant authored YAML.
 
     ``language`` is the merged board's (meta.yml cascade included): the label a
     variable would print is humanized in it, and the redundancy check reads it
-    there.
+    there. ``inherited_source`` is the board's ``source:`` after the meta
+    cascade: the default a nested ``source:`` or a query's must differ from.
     """
     raw = yaml.load(yaml_content, Loader=YAML_LOADER)
     if not isinstance(raw, dict):
@@ -64,7 +50,7 @@ def detect_authoring_warnings(
     _collect_chart_types(raw, chart_types)
     warnings: list[Diagnostic] = []
     with language_scope(language):
-        _walk_board_like_mapping(raw, chart_types, [], warnings)
+        _walk_board_like_mapping(raw, chart_types, [], warnings, inherited_source)
     return warnings
 
 
@@ -97,21 +83,46 @@ def _walk_board_like_mapping(
     chart_types: dict[str, str],
     path: list[str],
     warnings: list[Diagnostic],
+    inherited_source: str | None,
 ) -> None:
     if not isinstance(node, dict):
         return
 
-    variables = node.get("variables")
-    if isinstance(variables, dict):
-        _detect_variable_warnings(variables, [*path, "variables"], warnings)
-
+    source = node.get("source")
+    if isinstance(source, str) and source == inherited_source and path:
+        warnings.append(
+            restated_diagnostic(
+                WARN_RESTATED_INFERRED,
+                ".".join([*path, "source"]),
+                source,
+                "the enclosing board's source",
+                "inherited",
+            )
+        )
+    in_force = source if isinstance(source, str) else inherited_source
+    queries = node.get("queries")
+    if isinstance(queries, dict):
+        for query_name, query in queries.items():
+            query_source = query.get("source") if isinstance(query, dict) else None
+            if isinstance(query_source, str) and query_source == in_force:
+                warnings.append(
+                    restated_diagnostic(
+                        WARN_RESTATED_INFERRED,
+                        ".".join([*path, "queries", str(query_name), "source"]),
+                        query_source,
+                        "the enclosing board's source",
+                        "inherited",
+                    )
+                )
     for key in ("rows", "cols"):
         value = node.get(key)
         if isinstance(value, list):
             if key == "cols":
                 _detect_flat_cols_warning(value, chart_types, [*path, key], warnings)
             for index, item in enumerate(value):
-                _walk_layout_item(item, chart_types, [*path, key, str(index)], warnings)
+                _walk_layout_item(
+                    item, chart_types, [*path, key, str(index)], warnings, in_force
+                )
 
     grid = node.get("grid")
     if isinstance(grid, dict):
@@ -119,7 +130,11 @@ def _walk_board_like_mapping(
         if isinstance(items, list):
             for index, item in enumerate(items):
                 _walk_layout_item(
-                    item, chart_types, [*path, "grid", "items", str(index)], warnings
+                    item,
+                    chart_types,
+                    [*path, "grid", "items", str(index)],
+                    warnings,
+                    in_force,
                 )
 
     tabs = node.get("tabs")
@@ -128,7 +143,11 @@ def _walk_board_like_mapping(
         if isinstance(items, list):
             for index, item in enumerate(items):
                 _walk_layout_item(
-                    item, chart_types, [*path, "tabs", "items", str(index)], warnings
+                    item,
+                    chart_types,
+                    [*path, "tabs", "items", str(index)],
+                    warnings,
+                    in_force,
                 )
 
 
@@ -137,12 +156,15 @@ def _walk_layout_item(
     chart_types: dict[str, str],
     path: list[str],
     warnings: list[Diagnostic],
+    inherited_source: str | None,
 ) -> None:
     if isinstance(item, dict):
-        _walk_board_like_mapping(item, chart_types, path, warnings)
+        _walk_board_like_mapping(item, chart_types, path, warnings, inherited_source)
     elif isinstance(item, list):
         for index, child in enumerate(item):
-            _walk_layout_item(child, chart_types, [*path, str(index)], warnings)
+            _walk_layout_item(
+                child, chart_types, [*path, str(index)], warnings, inherited_source
+            )
 
 
 def _is_sized_col_cell(item: YamlValue) -> bool:
@@ -206,46 +228,3 @@ def _detect_flat_cols_warning(
             fix=WARN_FLAT_COLS_UNSIZED_OVERFLOW.fix_template,
         )
     )
-
-
-def _detect_variable_warnings(
-    variables: dict[Any, Any], path: list[str], warnings: list[Diagnostic]
-) -> None:
-    for raw_name, raw_def in variables.items():
-        if not isinstance(raw_name, str) or not isinstance(raw_def, dict):
-            continue
-
-        var_path = [*path, raw_name]
-        authored_label = raw_def.get("label")
-        inferred_label = inferred_display_name(raw_name, case="title")
-        if isinstance(authored_label, str) and authored_label == inferred_label:
-            path_str = ".".join([*var_path, "label"])
-            warnings.append(
-                Diagnostic.from_code(
-                    WARN_REDUNDANT_AUTHORED_LABEL,
-                    path=path_str,
-                    message=WARN_REDUNDANT_AUTHORED_LABEL.message_template.format(
-                        var_name=raw_name, authored_label=authored_label
-                    ),
-                    fix=WARN_REDUNDANT_AUTHORED_LABEL.fix_template,
-                )
-            )
-
-        for field_name, default_value in _VARIABLE_DEFAULTS.items():
-            if raw_def.get(field_name) != default_value:
-                continue
-            path_str = ".".join([*var_path, field_name])
-            warnings.append(
-                Diagnostic.from_code(
-                    WARN_REDUNDANT_AUTHORED_DEFAULT,
-                    path=path_str,
-                    message=WARN_REDUNDANT_AUTHORED_DEFAULT.message_template.format(
-                        var_name=raw_name,
-                        field_name=field_name,
-                        default_value=default_value,
-                    ),
-                    fix=WARN_REDUNDANT_AUTHORED_DEFAULT.fix_template.format(
-                        field_name=field_name
-                    ),
-                )
-            )

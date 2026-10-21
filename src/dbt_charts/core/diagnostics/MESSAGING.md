@@ -4,8 +4,8 @@ Rules for authoring a new `ErrorCode` or `WarningCode` in
 `dbt_charts/core/diagnostics/codes_*.py`. Both are `DiagnosticCode` subclasses
 registered on the same `REGISTRY` and share every rule below except where
 called out. The full reference these rules produce is rendered from `REGISTRY`
-by `render_reference.py` when read, and served via `dct docs error-reference` /
-MCP `docs(topic="error-reference")` and the docs site's Error Reference page.
+by `render_reference.py` when the docs site builds, and published as the docs
+site's Error Reference and Warning Reference pages.
 
 ## Code naming
 
@@ -66,9 +66,9 @@ wrap a literal in a `lambda **_: "..."`.
 ## `docs_topic`
 
 Required on every code (validated by `test_registry.py`'s coverage check).
-Points at the relevant `DBT_CHARTS_SYNTAX.md` H2 section so downstream tooling
-can eventually deep-link from a diagnostic to the exact doc slice. Use the
-H2's slug (e.g. `charts`, `queries`) — not a hand-invented dotted namespace.
+Groups the code under its `##` section in the generated Error and Warning
+Reference pages. Use the H2's slug (e.g. `charts`, `queries`) — not a
+hand-invented dotted namespace.
 
 ## AI phrasing
 
@@ -92,6 +92,5 @@ audience:
    or `REGISTRY.register(WarningCode(...))`.
 2. Import it in `diagnostics/__init__.py` if any other module needs the constant
    (side-effect registration happens on import either way).
-3. Check the entry with `dct docs error-reference` (or `warning-reference`);
-   the reference is rendered from `REGISTRY`, so there is nothing to
-   regenerate.
+3. The docs site's Error/Warning Reference pages render from `REGISTRY`, so
+   there is nothing to regenerate.

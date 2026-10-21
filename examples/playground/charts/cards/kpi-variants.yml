@@ -27,7 +27,6 @@ charts:
     style:
       value:
         format: currency
-      variant: stacked
       support:
         format: percent_delta
         tone: positive
@@ -43,7 +42,6 @@ charts:
     style:
       value:
         format: currency
-      variant: stacked
   stacked_support_only:
     type: kpi
     query: q
@@ -51,7 +49,6 @@ charts:
     style:
       value:
         format: currency
-      variant: stacked
       support:
         format: percent_delta
         tone: positive
@@ -66,7 +63,6 @@ charts:
     style:
       value:
         format: currency
-      variant: stacked
 
   # ──────── inline ────────
   inline_full:

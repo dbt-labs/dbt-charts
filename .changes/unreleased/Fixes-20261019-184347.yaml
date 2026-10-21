@@ -1,0 +1,3 @@
+kind: Fixes
+body: A KPI support value in a delta format is now colored by its sign, and tone sets the direction (negative means up is bad).
+time: 2026-10-19T18:43:47.110882-07:00

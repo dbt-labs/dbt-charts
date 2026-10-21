@@ -59,11 +59,9 @@ class TestChartTooltips:
         spec = generate_vega_lite_spec(chart, data)
         enc = spec["encoding"]
         xy_titles = {enc.get("x", {}).get("title"), enc.get("y", {}).get("title")}
-        # Default axis/tooltip titles are tokenized but preserve the column's
-        # own casing (lowercase) — an authored x_label/y_label is what gets
-        # title case.
-        assert "order date" in xy_titles
-        assert "total revenue" in xy_titles
+        # Default axis/tooltip titles are tokenized and sentence-cased.
+        assert "Order date" in xy_titles
+        assert "Total revenue" in xy_titles
 
     def test_tooltip_quantitative_fields_have_format(self, make_chart):
         chart = make_chart("bar", x="category", y="value")
@@ -151,7 +149,7 @@ class TestSpecialChartTypeTooltips:
         # x channel carries title (bin range entry in aria-label); y is the
         # auto-aggregated count.
         assert spec["encoding"]["x"]["field"] == "value"
-        assert spec["encoding"]["x"]["title"] == "value"
+        assert spec["encoding"]["x"]["title"] == "Value"
 
     def test_pie_chart_has_tooltips(self, make_chart):
         chart = make_chart("pie", x="category", y="value")

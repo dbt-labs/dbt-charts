@@ -109,7 +109,7 @@ rows: [a, b]
         return [
             label
             for label in re.findall(r'aria-label="([^"]*)"', chunk)
-            if "revenue" in label and ("Jan" in label or "Feb" in label)
+            if "Revenue" in label and ("Jan" in label or "Feb" in label)
         ]
 
     chart_a, chart_b = data_mark_labels(svg[ia:ib]), data_mark_labels(svg[ib:])
@@ -149,4 +149,4 @@ charts:
 
     # A single row's own value defines the axis domain, so the hover band adds
     # no layer here: only the real bar's aria-label is present.
-    assert header_labels == [f"{ROLE_HEADER}Jan; revenue: 100"]
+    assert header_labels == [f"{ROLE_HEADER}Jan; Revenue: 100"]

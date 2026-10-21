@@ -157,17 +157,6 @@ def test_parent_mapping_reflects_nested_mutation():
     assert node["child"].value == 2
 
 
-def test_mapping_helpers_project_config_nodes_to_plain_dicts():
-    config = get_config()
-
-    # Verify the mapping helper works for non-empty nodes (dbt_grays as
-    # example -- palettes is unpopulated by default since the categorical
-    # scan that used to fill it is gone, see models/config.py's comment).
-    assert is_mapping_like(config.dbt_grays) is True
-    dbt_grays = as_plain_mapping(config.dbt_grays)
-    assert len(dbt_grays) > 0
-
-
 def test_mapping_helpers_support_open_ended_nodes():
     node = ConfigNode.model_validate({"alpha": 1, "child": {"beta": 2}})
 
@@ -184,7 +173,7 @@ def test_yaml_defaults_round_trip_into_settings():
     compiled = get_config()
     round_tripped = Config.model_validate(compiled.to_plain_dict(exclude_none=False))
 
-    assert round_tripped.dbt_grays["ink"] == compiled.dbt_grays["ink"]
+    assert round_tripped == compiled
 
 
 def test_load_settings_rejects_unknown_top_level_keys(

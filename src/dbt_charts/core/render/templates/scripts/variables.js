@@ -578,11 +578,14 @@
             } else if (input === 'multiselect' || input === 'daterange') {
                 /*{# List-valued: published as JSON so a member may contain any #}*/
                 /*{# delimiter. A malformed value is empty, never a raw string #}*/
-                /*{# the query path would filter on literally. #}*/
+                /*{# the query path would filter on literally. A daterange preset #}*/
+                /*{# id is the one string value. #}*/
                 try {
                     var parsed = JSON.parse(raw);
                     allVars[name] = Array.isArray(parsed) ? parsed : [];
-                } catch (e) { allVars[name] = []; }
+                } catch (e) {
+                    allVars[name] = input === 'daterange' && raw ? raw : [];
+                }
             } else if (input === 'number' || input === 'slider' || input === 'range') {
                 allVars[name] = raw === '' ? null : parseFloat(raw);
             } else {
@@ -1202,20 +1205,6 @@
 
     /*{# ── Daterange preset + calendar machinery ──────────────────────────── #}*/
 
-    /*{# 8 non-divider presets + 2 dividers = 10 entries total. #}*/
-    var PRESETS = [
-        { id: 'today',          word: 'today' },
-        { id: 'last_7_days',    word: 'last_7_days' },
-        { id: 'last_28_days',   word: 'last_28_days' },
-        { id: 'last_90_days',   word: 'last_90_days' },
-        { id: 'last_12_months', word: 'last_12_months' },
-        { id: 'divider' },
-        { id: 'mtd',            word: 'month_to_date' },
-        { id: 'ytd',            word: 'year_to_date' },
-        { id: 'divider' },
-        { id: 'custom',         word: 'custom' },
-    ];
-
     /*{# The words this runtime prints come from the board's language, which the #}*/
     /*{# strip carries as `data-dbt-language` (a JSON object keyed by word); the #}*/
     /*{# page cannot fetch the catalog. Stored renders without the attribute are English: #}*/
@@ -1229,27 +1218,6 @@
     /*{# Fills a word's `{name}` placeholders with the date's parts. #}*/
     function _fill(template, values) {
         return template.replace(/\{(\w+)\}/g, function(_, name) { return values[name]; });
-    }
-
-    /*{# All date math relative to local midnight so tests stay deterministic. #}*/
-    function resolvePreset(id) {
-        var today = _startOfToday();
-        var end = new Date(today);
-        var start = new Date(today);
-        switch (id) {
-            case 'today':          break;
-            case 'last_7_days':    start.setDate(end.getDate() - 6); break;
-            case 'last_28_days':   start.setDate(end.getDate() - 27); break;
-            case 'last_90_days':   start.setDate(end.getDate() - 89); break;
-            /*{# Single constructor call avoids the two-step setFullYear+setDate #}*/
-            /*{# rollover on Feb 29 in leap years. #}*/
-            case 'last_12_months': start = new Date(end.getFullYear() - 1, end.getMonth(), end.getDate() + 1); break;
-            case 'mtd':            start = new Date(end.getFullYear(), end.getMonth(), 1); break;
-            case 'ytd':            start = new Date(end.getFullYear(), 0, 1); break;
-            case 'custom':         return null;
-            default:               return null;
-        }
-        return [start, end];
     }
 
     /*{# Local midnight for today. #}*/
@@ -1278,42 +1246,31 @@
         return d;
     }
 
-    function buildRail(railEl, words, onPick) {
+    /*{# Each published group followed by a divider, then 'custom'. A preset's #}*/
+    /*{# id is also its word. #}*/
+    function buildRail(railEl, words, groups, onPick) {
         railEl.innerHTML = '';
-        PRESETS.forEach(function(p) {
-            if (p.id === 'divider') {
-                var div = document.createElement('div');
-                div.className = 'dbt-preset-divider';
-                railEl.appendChild(div);
-            } else {
-                var btn = document.createElement('button');
-                btn.type = 'button';
-                btn.textContent = words[p.word];
-                btn.dataset.preset = p.id;
-                btn.addEventListener('click', function() { onPick(p); });
-                railEl.appendChild(btn);
-            }
+        function button(id) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.textContent = words[id];
+            btn.dataset.preset = id;
+            btn.addEventListener('click', function() { onPick(id); });
+            railEl.appendChild(btn);
+        }
+        groups.forEach(function(group) {
+            group.forEach(function(p) { button(p.id); });
+            var div = document.createElement('div');
+            div.className = 'dbt-preset-divider';
+            railEl.appendChild(div);
         });
+        button('custom');
     }
 
     function markRailActive(railEl, presetId) {
         railEl.querySelectorAll('button').forEach(function(b) {
             b.classList.toggle('dbt-preset-active', b.dataset.preset === presetId);
         });
-    }
-
-    /*{# Which preset id matches the current [start, end] pair, or 'custom', or #}*/
-    /*{# null if the range is unset. #}*/
-    function matchPreset(range) {
-        if (!range[0] || !range[1]) return null;
-        var s = toISO(range[0]), e = toISO(range[1]);
-        for (var i = 0; i < PRESETS.length; i++) {
-            var p = PRESETS[i];
-            if (!p.id || p.id === 'divider' || p.id === 'custom') continue;
-            var r = resolvePreset(p.id);
-            if (r && toISO(r[0]) === s && toISO(r[1]) === e) return p.id;
-        }
-        return 'custom';
     }
 
     /*{# Shared calendar chrome: header (prev/month-name/next), DOW row, and a #}*/
@@ -1415,7 +1372,15 @@
         var words = _words(el);
         var canUnset = el.getAttribute('data-dbt-can-unset') === 'true';
 
+        /*{# Each preset's [start, end] as the render resolved it. #}*/
+        var presetGroups = JSON.parse(el.getAttribute('data-dbt-presets') || '[]');
+        var presetRanges = {};
+        presetGroups.forEach(function(group) {
+            group.forEach(function(p) { presetRanges[p.id] = p.range; });
+        });
+
         var range     = [null, null];
+        var active    = null;   /*{# rail entry: a preset id, 'custom', or null #}*/
         var hoverDate = null;
         var viewMonth = new Date();
 
@@ -1439,17 +1404,22 @@
             /*{# writes back data-dbt-value) is reflected in the popover's state. #}*/
             var raw = el.getAttribute('data-dbt-value') || '';
             range = [null, null];
+            active = null;
             hoverDate = null;
-            try {
-                var parsed = JSON.parse(raw);
-                if (Array.isArray(parsed) && parsed.length === 2) {
-                    /*{# One set end is a value too (the chip reads From/Until), #}*/
-                    /*{# so either end alone seeds the calendar. #}*/
-                    range = [fromISO(String(parsed[0])), fromISO(String(parsed[1]))];
-                    var shown = range[1] || range[0];
-                    if (shown) viewMonth = new Date(shown.getFullYear(), shown.getMonth(), 1);
-                }
-            } catch (ex) {}
+            var parsed = null;
+            try { parsed = JSON.parse(raw); } catch (ex) {}
+            if (!Array.isArray(parsed) && presetRanges[raw]) {
+                active = raw;
+                parsed = presetRanges[raw];
+            }
+            if (Array.isArray(parsed) && parsed.length === 2) {
+                /*{# One set end is a value too (the chip reads From/Until), #}*/
+                /*{# so either end alone seeds the calendar. #}*/
+                range = [fromISO(String(parsed[0])), fromISO(String(parsed[1]))];
+                var shown = range[1] || range[0];
+                if (shown) viewMonth = new Date(shown.getFullYear(), shown.getMonth(), 1);
+                if (!active && range[0] && range[1]) active = 'custom';
+            }
             rebuildCalendar();
             _floatPopover(popover);
             popover.classList.add('dbt-popover-open');
@@ -1525,7 +1495,7 @@
             calEl.appendChild(footer);
 
             paintCalendarState();
-            markRailActive(rail, matchPreset(range));
+            markRailActive(rail, active);
         }
 
         function paintCalendarState() {
@@ -1575,24 +1545,22 @@
             }
             hoverDate = null;
             if (range[0] && range[1]) {
-                markRailActive(rail, matchPreset(range));
+                active = 'custom';
                 updateVariable(name, [toISO(range[0]), toISO(range[1])]);
             } else {
-                markRailActive(rail, null);
+                active = null;
             }
             rebuildCalendar();
         }
 
-        buildRail(rail, words, function(p) {
-            var r = resolvePreset(p.id);
-            if (r) {
-                range = r;
-                viewMonth = new Date(r[1].getFullYear(), r[1].getMonth(), 1);
-                markRailActive(rail, p.id);
-                updateVariable(name, [toISO(r[0]), toISO(r[1])]);
-            } else {
-                /*{# 'custom' — just highlight the rail entry and let the user pick. #}*/
-                markRailActive(rail, p.id);
+        buildRail(rail, words, presetGroups, function(id) {
+            active = id;
+            /*{# 'custom' only highlights: the days are picked on the calendar. #}*/
+            if (id !== 'custom') {
+                var r = presetRanges[id];
+                range = [fromISO(r[0]), fromISO(r[1])];
+                viewMonth = new Date(range[1].getFullYear(), range[1].getMonth(), 1);
+                updateVariable(name, id);
             }
             rebuildCalendar();
         });

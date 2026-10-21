@@ -10,7 +10,7 @@ import dataclasses
 from typing import Any
 
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.format import declared_format, resolve_format
+from dbt_charts.core.compile.format import declared_column_format
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
     BarChart,
@@ -18,7 +18,6 @@ from dbt_charts.core.compile.models.chart.normalized import (
     HeatmapChart,
     LineChart,
     ScatterChart,
-    _BaseChartFields,
 )
 from dbt_charts.core.compile.models.primitives import (
     AuthoredFormat,
@@ -31,38 +30,9 @@ from dbt_charts.core.compile.resolve.style.chart_style import (
     merge_chart_style,
     primary_patch,
 )
-from dbt_charts.core.text.format_d3 import is_time_format
-from dbt_charts.core.text.predefined_formats import PREDEFINED_TEXT_NAMES
 
 # The families that carry axes.
 CartesianFamilyChart = BarChart | LineChart | AreaChart | ScatterChart | HeatmapChart
-
-
-def declared_column_format(
-    chart: _BaseChartFields,
-    columns: str | list[str] | None,
-    formats: FormatTable | None,
-    *,
-    time: bool,
-    text: bool = False,
-) -> str | None:
-    """The format name the chart's query declares for ``columns``, when it is of
-    the asked kind (a time format for ``time``, else a number format).
-
-    A text name (``email``, ``url``) is of no numeric or date kind: it comes
-    back only for a destination that links text (``text=True``, the KPI), and
-    is no format at all to an axis or label.
-
-    A number format on a date axis would paint garbage, and a time format has
-    nothing to say about a number, so the other kind is no format at all.
-    """
-    name = declared_format(chart.query.formats if chart.query else None, columns)
-    if name is None:
-        return None
-    resolved = resolve_format(name, formats)
-    if resolved in PREDEFINED_TEXT_NAMES:
-        return name if text else None
-    return None if is_time_format(resolved) != time else name
 
 
 def axis_layer_format(
@@ -81,7 +51,10 @@ def axis_layer_format(
     if channel_type not in ("quantitative", "temporal"):
         return None
     return declared_column_format(
-        chart, columns, formats, time=channel_type == "temporal"
+        chart.query.formats if chart.query else None,
+        columns,
+        formats,
+        time=channel_type == "temporal",
     )
 
 

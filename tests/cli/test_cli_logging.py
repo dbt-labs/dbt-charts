@@ -55,7 +55,7 @@ def test_failing_query_prints_its_diagnostic_once_and_no_log_lines(
     tmp_path: Path,
 ) -> None:
     out = _render(tmp_path)
-    assert out.count("ERR-BINDER-UNKNOWN-COLUMN") == 1, out
+    assert out.count("error[ERR-BINDER-UNKNOWN-COLUMN]") == 1, out
     assert "dbt_charts." not in out, out
 
 

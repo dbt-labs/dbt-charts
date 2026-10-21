@@ -56,34 +56,34 @@ class TestSlugToText:
 
     def test_snake_case(self):
         """Test snake_case: words lowercased (no title casing)."""
-        assert slug_to_text("revenue_by_month") == "revenue by month"
+        assert slug_to_text("revenue_by_month") == "Revenue by month"
 
     def test_kebab_case(self):
         """Test kebab-case: words lowercased."""
-        assert slug_to_text("revenue-by-month") == "revenue by month"
+        assert slug_to_text("revenue-by-month") == "Revenue by month"
 
     def test_single_word(self):
         """Test single word: lowercase, no casing."""
-        assert slug_to_text("revenue") == "revenue"
+        assert slug_to_text("revenue") == "Revenue"
 
     def test_empty_string(self):
         """Test empty string."""
         assert slug_to_text("") == ""
 
     def test_unit_suffix_usd(self):
-        assert slug_to_text("revenue_usd") == "revenue ($)"
+        assert slug_to_text("revenue_usd") == "Revenue ($)"
 
     def test_unit_suffix_pct(self):
         assert slug_to_text("yoy_growth_pct") == "YoY growth (%)"
 
     def test_count_suffix_cnt(self):
-        assert slug_to_text("customer_cnt") == "customer (Count)"
+        assert slug_to_text("customer_cnt") == "Customer (Count)"
 
     def test_count_suffix_num(self):
-        assert slug_to_text("employee_num") == "employee (#)"
+        assert slug_to_text("employee_num") == "Employee (#)"
 
     def test_count_suffix_qty(self):
-        assert slug_to_text("order_qty") == "order (Qty)"
+        assert slug_to_text("order_qty") == "Order (Qty)"
 
     def test_abbreviation_arr(self):
         assert slug_to_text("arr") == "ARR"
@@ -96,16 +96,16 @@ class TestSlugToText:
 
     def test_single_token_suffix_not_stripped(self):
         """Single-token inputs are not treated as suffixes."""
-        assert slug_to_text("usd") == "usd"
+        assert slug_to_text("usd") == "Usd"
 
     def test_spaces_in_input(self):
-        assert slug_to_text("contribution margin") == "contribution margin"
+        assert slug_to_text("contribution margin") == "Contribution margin"
 
     def test_chart_id_with_suffix(self):
         """Field slugs get suffix treatment but not title casing."""
-        assert slug_to_text("revenue_usd") == "revenue ($)"
-        assert slug_to_text("customer_cnt") == "customer (Count)"
-        assert slug_to_text("growth_pct") == "growth (%)"
+        assert slug_to_text("revenue_usd") == "Revenue ($)"
+        assert slug_to_text("customer_cnt") == "Customer (Count)"
+        assert slug_to_text("growth_pct") == "Growth (%)"
 
 
 class TestSingleChartPropertyValidation:

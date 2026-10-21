@@ -163,7 +163,7 @@
       },
       "bin": true,
       "field": "price",
-      "title": "price",
+      "title": "Price",
       "type": "quantitative"
     },
     "y": {

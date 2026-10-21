@@ -1,9 +1,8 @@
 """Regression tests for dct init → dct serve first-run onboarding bugs.
 
 Anchors:
-- root URL on a fresh init must show the directory listing, not a welcome page.
-  index.md WAS matched by _resolve_folder_index_board and hijacked /; the
-  scaffold no longer creates it, so root falls through to the listing.
+- root URL on a fresh init (no boards) shows the built-in intro page, not a
+  welcome page from index.md (which would hijack / and is never scaffolded).
 - inspect/ in root listing: clicking inspect/ links 500 because they need
   ?model=...&column=... params; hide the directory from the listing.
 - inspect/ filter must be root-only: nested charts/reports/inspect/ should remain
@@ -11,7 +10,7 @@ Anchors:
 - charts/dbt_charts.yml collision: DCT_ROOT_MARKERS includes "dbt_charts.yml", so
   find_project_root stops at charts/ when charts/dbt_charts.yml exists,
   treating charts/ as the project root — which has no sources: section, causing
-  every chart to error "Source not found". The scaffold uses guide.yml instead.
+  every chart to error "Source not found". The scaffold ships only meta.yml.
 """
 
 from __future__ import annotations
@@ -43,27 +42,29 @@ def init_project(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-class TestRootShowsListingAfterInit:
-    def test_root_returns_directory_listing_not_welcome_page(
+class TestRootShowsIntroAfterInit:
+    def test_root_of_a_project_with_no_boards_shows_the_intro_page(
         self, init_project: Path
     ) -> None:
-        """After dct init, / must serve the directory listing, not a welcome page.
+        """After dct init there is no starter board: / explains what a board is
+        and where to put one, instead of an empty listing."""
+        with TestClient(create_server(FilesystemProject(init_project))) as client:
+            response = client.get("/")
+        assert response.status_code == 200, response.text[:500]
+        assert "No boards yet" in response.text
+        assert "charts/" in response.text
+        assert "type: bar" in response.text
+        assert "No boards or directories found" not in response.text
 
-        Root falls through to _render_directory_listing(), giving new users
-        discoverability on first run."""
+    def test_intro_page_gives_way_once_a_board_exists(self, init_project: Path) -> None:
+        (init_project / "charts" / "sales.yml").write_text("title: Sales\n")
         with TestClient(
             create_server(FilesystemProject(init_project)),
+            raise_server_exceptions=False,
         ) as client:
             response = client.get("/")
-        assert response.status_code == 200, (
-            f"Expected 200 for /, got {response.status_code}. "
-            f"Body preview: {response.text[:500]}"
-        )
-        # Directory listing contains links to boards; welcome page does not.
-        assert "guide" in response.text.lower(), (
-            "Root listing must mention 'guide' (the guide.yml guide board). "
-            f"Body: {response.text[:800]}"
-        )
+        assert "No boards yet" not in response.text
+        assert "sales" in response.text
 
 
 # ---------------------------------------------------------------------------
@@ -86,10 +87,10 @@ class TestInspectHiddenFromListing:
         server.py is what this test pins — it only fires when the directory is present.
         """
         app = create_server(FilesystemProject(init_project))
-        # Explicitly create charts/inspect/ so the filter has something to suppress.
-        # No need to remove index.md — init no longer scaffolds it; root falls
-        # through to the listing naturally.
+        # Explicitly create charts/inspect/ so the filter has something to suppress,
+        # and a board so the root shows the listing rather than the intro page.
         (init_project / "charts" / "inspect").mkdir()
+        (init_project / "charts" / "sales.yml").write_text("title: Sales\n")
         with TestClient(app, raise_server_exceptions=False) as client:
             response = client.get("/")
         assert response.status_code == 200
@@ -137,30 +138,30 @@ class TestProjectRootConfigNotCollided:
     matches the DCT_ROOT_MARKERS sentinel "dbt_charts.yml" in project_roots.py.
     discover_render_context walks up from a board, stops at charts/dbt_charts.yml,
     and treats charts/ as the project root — so every chart errors "Source not found".
-    Fix: scaffold guide.yml instead; guide.yml is not a DCT_ROOT_MARKERS match.
+    Fix: scaffold no dbt_charts.yml under charts/.
     """
 
-    def test_guide_yaml_does_not_collide_with_project_markers(
+    def test_board_file_does_not_collide_with_project_markers(
         self, tmp_path: Path
     ) -> None:
-        """After dct init, guide.yml must NOT be mistaken for a project root marker.
+        """A board under charts/ must NOT be mistaken for a project root marker.
 
         Verifies that find_project_root finds the real project root (tmp_path,
-        which has dbt_charts.yml) and NOT charts/ (which has only guide.yml).
+        which has dbt_charts.yml) and NOT charts/ (which has only boards).
         """
         from dbt_charts.core.project_roots import find_project_root
 
-        # Simulate dct init layout: project root has dbt_charts.yml, charts/ has guide.yml
+        # Simulate dct init layout: project root has dbt_charts.yml, charts/ has a board
         (tmp_path / "dbt_charts.yml").write_text("# project config\n")
         boards_dir = tmp_path / "charts"
         boards_dir.mkdir()
-        (boards_dir / "guide.yml").write_text("title: Guide\n")
+        (boards_dir / "sales.yml").write_text("title: Sales\n")
 
         project_root = find_project_root(boards_dir, boundary=None)
         assert project_root == tmp_path, (
             f"find_project_root must resolve to the project root ({tmp_path}), "
             f"not the charts/ dir ({boards_dir}). Got: {project_root}. "
-            "charts/guide.yml must not trigger the dbt_charts.yml DCT_ROOT_MARKERS sentinel."
+            "a board file must not trigger the dbt_charts.yml DCT_ROOT_MARKERS sentinel."
         )
 
     def test_boards_dbt_charts_yml_would_collide(self, tmp_path: Path) -> None:

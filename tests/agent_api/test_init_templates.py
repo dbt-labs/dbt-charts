@@ -2,22 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-import pytest
 import yaml
 from importlib_resources import files
 
 from dbt_charts.agent_api.init import _EXCLUDED_TEMPLATE_NAMES
-from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.project import (
     CHARTS_SUBDIR,
     META_FILENAMES,
     PROJECT_CONFIG_NAME,
-    BoardFile,
     is_board_candidate,
 )
 
@@ -54,129 +50,17 @@ def _scaffold_board_names() -> list[str]:
     )
 
 
-def _scaffold_board(
-    tmp_path: Path, local_project: Callable[..., FilesystemProject], name: str
-) -> tuple[BoardFile, FilesystemProject, AdapterRegistry]:
-    """A fresh scaffold's board *name*, ready to render."""
-    from dbt_charts.agent_api.init import init_project
-    from dbt_charts.core.execute.adapters import build_adapter_registry
-
-    init_project(tmp_path)
-    project = local_project(root=tmp_path)
-    registry = build_adapter_registry(project, read_only=False)
-    return project.path(name).read_board(), project, registry
-
-
-# Computed once at collection time; parametrize IDs are the relative paths.
+# Computed once at collection time.
 _SCAFFOLD_BOARD_NAMES = _scaffold_board_names()
 
 
-class TestScaffoldBoardsValidate:
-    @pytest.mark.parametrize("name", _SCAFFOLD_BOARD_NAMES)
-    def test_scaffold_board_renders(
-        self,
-        name: str,
-        tmp_path: Path,
-        local_project: Callable[..., FilesystemProject],
-    ) -> None:
-        # SVG format so chart emission (the arm a stale scaffold broke on Cloud)
-        # actually runs, not just query execution. Render subsumes validation:
-        # a schema-invalid template fails here with the same validation_errors.
-        from dbt_charts.core.board import render_dashboard
-
-        board, project, registry = _scaffold_board(tmp_path, local_project, name)
-        result = render_dashboard(
-            board=board,
-            project=project,
-            adapter_registry=registry,
-            result_cache=None,
-            format="svg",
-        )
-        assert result.status == "ok", (
-            f"{name} failed to render: "
-            f"validation_errors={[e.message for e in result.validation_errors]} "
-            f"chart_errors={result.chart_errors} board_error={result.board_error}"
-        )
-        # The scaffold is the first YAML a user copies from; it must not model
-        # anything the engine's own lint flags.
-        assert result.warnings == [], [
-            f"{w.code}: {w.message}" for w in result.warnings
-        ]
-
-    def test_guide_variable_reaches_the_render(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        """The starter's control changes what the board shows: a control that
-        renders but moves nothing teaches that controls are decoration."""
-        from dbt_charts.core.board import render_dashboard
-
-        board, project, registry = _scaffold_board(
-            tmp_path, local_project, f"{CHARTS_SUBDIR}/guide.yml"
-        )
-
-        def rendered(variables: dict[str, Any] | None) -> str:
-            result = render_dashboard(
-                board=board,
-                project=project,
-                adapter_registry=registry,
-                result_cache=None,
-                format="html",
-                variables=variables,
-            )
-            assert result.status == "ok", result.chart_errors
-            assert isinstance(result.data, str)
-            return result.data
-
-        assert "Region control: All" in rendered(None)
-        assert "Region control: West" in rendered({"region": "West"})
-
-    def test_guide_derived_figures_match_the_monthly_rows(self) -> None:
-        """The KPI row and the product breakdown are hand-derived from the
-        monthly rows; an edit to one must not leave the others stale."""
-        guide = yaml.safe_load(
-            _template_pkg().joinpath(f"{CHARTS_SUBDIR}/guide.yml").read_text()
-        )
-        queries = guide["queries"]
-        monthly = [
-            dict(zip(queries["monthly_by_product"]["columns"], row, strict=True))
-            for row in queries["monthly_by_product"]["values"]
-        ]
-        assert {p for p, _ in queries["by_product"]["values"]} == {
-            r["product"] for r in monthly
-        }
-        for product, revenue in queries["by_product"]["values"]:
-            assert revenue == sum(
-                r["revenue"] for r in monthly if r["product"] == product
-            ), product
-        months = sorted({r["month"] for r in monthly})
-        totals = {
-            m: (
-                sum(r["revenue"] for r in monthly if r["month"] == m),
-                sum(r["orders"] for r in monthly if r["month"] == m),
-            )
-            for m in months
-        }
-        (revenue, orders), (prior_revenue, _) = totals[months[-1]], totals[months[-2]]
-        latest = dict(
-            zip(
-                queries["latest_month"]["columns"],
-                queries["latest_month"]["values"][0],
-                strict=True,
-            )
-        )
-        assert latest["revenue"] == revenue
-        assert latest["orders"] == orders
-        assert latest["avg_order"] == round(revenue / orders, 1)
-        assert latest["revenue_change"] == round(revenue / prior_revenue - 1, 3)
-
-    def test_exactly_one_scaffold_board(self) -> None:
-        """dct init scaffolds exactly one board."""
-        assert [f"{CHARTS_SUBDIR}/guide.yml"] == _SCAFFOLD_BOARD_NAMES, (
-            f"expected exactly one scaffold board (guide.yml), got {_SCAFFOLD_BOARD_NAMES}"
-        )
+class TestScaffoldBoards:
+    def test_no_scaffold_board(self) -> None:
+        """dct init ships no starter board: `dct serve` shows an intro page instead."""
+        assert _SCAFFOLD_BOARD_NAMES == []
 
     def test_scaffold_ships_no_data_files(self) -> None:
-        """The starter renders from inline rows."""
+        """The scaffold ships no data files."""
         names = list(_walk_template_names(_template_pkg()))
         data_files = [n for n in names if n.endswith((".csv", ".json", ".parquet"))]
         assert data_files == [], data_files
@@ -206,22 +90,13 @@ class TestBoardYmlTemplate:
         assert "type: postgres" in content
 
 
-class TestInitCreatesGuide:
-    """init_project() must create charts/guide.yml, not charts/dbt_charts.yml or charts/hello.yml.
+class TestInitScaffold:
+    """init_project() creates no board; charts/dbt_charts.yml must never be scaffolded.
 
     charts/dbt_charts.yml collides with the DCT_ROOT_MARKERS sentinel in project_roots.py:
     find_project_root walks up from a board, stops at charts/dbt_charts.yml, and
     treats charts/ as the project root — so every chart errors "Source not found".
     """
-
-    def test_init_creates_boards_guide_yaml(self, tmp_path: Path) -> None:
-        from dbt_charts.agent_api.init import init_project
-
-        init_project(tmp_path)
-        boards_dir = tmp_path / "charts"
-        assert (boards_dir / "guide.yml").exists(), (
-            "init_project must create charts/guide.yml"
-        )
 
     def test_init_does_not_create_board_yml(self, tmp_path: Path) -> None:
         """charts/dbt_charts.yml must not be scaffolded — it collides with DCT_ROOT_MARKERS."""
@@ -290,4 +165,4 @@ class TestScaffoldConventions:
         forced = init_project(tmp_path, force=True)
         assert readme.read_text(encoding="utf-8") == "# mine\n"
         assert Path("README.md") not in forced.refreshed_files
-        assert Path(f"{CHARTS_SUBDIR}/guide.yml") in forced.refreshed_files
+        assert Path(f"{CHARTS_SUBDIR}/meta.yml") in forced.refreshed_files

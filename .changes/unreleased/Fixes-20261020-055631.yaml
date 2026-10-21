@@ -1,0 +1,3 @@
+kind: Fixes
+body: An area layer over a color-split or stacked horizontal bar now fails with a clear error instead of drawing a skewed chart.
+time: 2026-10-20T05:56:31.004556-07:00

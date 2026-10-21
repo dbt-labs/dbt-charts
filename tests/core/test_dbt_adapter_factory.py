@@ -373,6 +373,21 @@ class TestBigQueryMethodInference:
         )
         assert received.get("method") == "oauth"
 
+    def test_unset_execution_project_runs_jobs_in_the_source_project(self) -> None:
+        """The compiled source dumps every unset optional as None, and dbt-bigquery
+        defaults `execution_project` to `project` only when the key is absent — an
+        explicit None ran every job in the ADC default project instead, so
+        `dataset.table` resolved against the wrong project."""
+        pytest.importorskip("dbt.adapters.bigquery")
+        from dbt_charts.core.compile.models.source import BigQuerySourceConfig
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+        source = BigQuerySourceConfig(
+            type="bigquery", method="oauth", project="data-proj", dataset="ds"
+        )
+        adapter = build_adapter(source.model_dump(by_alias=True))
+        assert adapter.config.credentials.execution_project == "data-proj"
+
 
 class TestProfileAliases:
     """Profile-style keys are translated to canonical credentials fields."""

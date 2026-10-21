@@ -42,7 +42,6 @@ from dbt_charts.cli.commands import (
     board_artifact as board_artifact_cmd,
     cloud as cloud_cmd,
     describe as describe_cmd,
-    docs as docs_cmd,
     doctor as doctor_cmd,
     examples as examples_cmd,
     extension as extension_cmd,
@@ -169,13 +168,13 @@ def _render_init_banner() -> None:
     if is_plain_output():
         Console(force_terminal=False, no_color=True).print(
             "Welcome to dbt charts — run `dct init` to start a new project. "
-            "New to it, or an agent? Read `dct skills intro` first."
+            "New to it, or an agent? Read `dct skills chart` first."
         )
         return
     Console().print(
         Panel(
             "Run [bold cyan]dct init[/bold cyan] to start a new project!\n"
-            "New to it, or an agent? Read [bold cyan]dct skills intro[/bold cyan] first.",
+            "New to it, or an agent? Read [bold cyan]dct skills chart[/bold cyan] first.",
             title="Welcome to dbt charts",
             title_align="left",
             border_style="yellow",
@@ -206,7 +205,7 @@ class _RootHelpGroup(TyperGroup):
     on the root help. TyperGroup also overrides Click's sorted
     list_commands with registration order, which buckets sub-typer
     groups after leaf commands within the same rich_help_panel (e.g.
-    `init` after docs/playground/skills under Reference). Sorting here
+    `init` after doctor/playground/skills under Reference). Sorting here
     interleaves them so each panel reads A-Z. Also prints the "run
     `dct init`" banner above the help body when cwd isn't a scaffolded
     dbt charts project. Intentionally attached to the root Typer only —
@@ -321,7 +320,7 @@ def init_default(
     """Bootstrap a dbt charts project in an existing repo.
 
     Detects dbt projects, creates charts/ and charts/partials/, ejects inspect
-    templates, and writes starter dashboards. Optionally wires up MCP for AI
+    templates, and writes charts/meta.yml. Optionally wires up MCP for AI
     assistants and installs IDE extensions.
 
     Safe to re-run — existing files are never overwritten unless --force is used.
@@ -428,7 +427,7 @@ def init_skills(
     """Install dbt charts workflow skills for file-based agent auto-discovery.
 
     Writes CLI-rendered skill files, namespaced under a ``dct-`` prefix
-    (``dct-board-build/``, ...), to ``.agents/skills/`` (Cursor, Codex,
+    (``dct-chart/``, ...), to ``.agents/skills/`` (Cursor, Codex,
     Copilot) and/or ``.claude/skills/`` (Claude Code) inside the current
     repository. Pass ``--global`` to install into your user-level directories
     instead (``~/.claude/skills/``, ``~/.agents/skills/``), so any new project
@@ -1694,69 +1693,6 @@ app.add_typer(mcp_app, name="mcp", rich_help_panel="AI")
 # --- Reference --------------------------------------------------------------
 
 
-@app.command("docs", rich_help_panel="Reference")
-def docs(
-    topic: Annotated[
-        str | None,
-        typer.Argument(
-            help="Topic name (run `dct docs` for the index). Use 'all' for the syntax guide plus the field reference, 'reference' for the field reference alone, or 'errors'/'warnings' to browse diagnostic codes."
-        ),
-    ] = None,
-    code: Annotated[
-        str | None,
-        typer.Argument(
-            help="Diagnostic code for detail view (only used when topic is 'errors' or 'warnings')."
-        ),
-    ] = None,
-    search: Annotated[
-        str | None,
-        typer.Option(
-            "--search",
-            "-s",
-            help="Ranked term search across every section and the generated references; add a topic to scope it",
-        ),
-    ] = None,
-    json_output: Annotated[
-        bool,
-        typer.Option("--json", help="Output as JSON"),
-    ] = False,
-    limit: Annotated[
-        int,
-        typer.Option(
-            "--limit",
-            min=1,
-            max=20,
-            help="Max search hits to return (default 5, max 50)",
-        ),
-    ] = 5,
-) -> None:
-    """Browse the dbt charts YAML reference offline (topics, search).
-
-    \b
-    Modes:
-      dct docs                    # Topic index (one row per topic)
-      dct docs cheatsheet         # One-page essentials
-      dct docs <topic>            # Full docs for one section
-      dct docs all                # Syntax guide + field reference, unsliced
-      dct docs reference          # Generated YAML field reference
-      dct docs errors             # List all error codes
-      dct docs errors <CODE>      # Full doc for one error code
-      dct docs warnings           # List all warning codes
-      dct docs warnings <CODE>    # Full doc for one warning code
-      dct docs --search "grid"    # Ranked search across all topics
-      dct docs charts -s "legend" # Ranked search scoped to one topic
-
-    Use --json for stable, machine-readable output.
-    """
-    docs_cmd.docs_command(
-        topic=topic,
-        code=code,
-        search=search,
-        json_output=json_output,
-        limit=limit,
-    )
-
-
 @app.command("doctor", rich_help_panel="Reference")
 def doctor(
     project_dir: ProjectDirOption = None,
@@ -1835,7 +1771,7 @@ def examples(
 
     Specimens are complete boards that render standalone: inline data, no
     `source:`. Point their queries at your own source after copying. Workflow
-    prose is `dct skills`; YAML field reference is `dct docs`.
+    prose is `dct skills`; the YAML field reference is `dct skills chart`.
     """
     examples_cmd.examples_command(
         slug=slug,
@@ -1866,8 +1802,8 @@ def skills(
       dct skills <name>           # Show the named skill body
       dct skills --json           # Stable JSON for any of the above
 
-    Skills are agent workflows and layout patterns. For YAML field reference,
-    use `dct docs` instead.
+    Skills are agent workflows and layout patterns; `dct skills chart` is the
+    YAML field reference.
     """
     skills_cmd.skills_command(
         name=skill_name,

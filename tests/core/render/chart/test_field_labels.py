@@ -109,12 +109,19 @@ _WIDE_ROWS = [
     {"month": "Feb", "all": 7, "fix-linked": 3},
 ]
 _WIDE = {"type": "line", "x": "month", "y": ["all", "fix-linked"]}
+# A measure whose derived label is its own raw name (derived text is
+# sentence-cased, so only a capitalized name is) can collide with an authored one.
+_CAPITAL_ROWS = [
+    {"month": "Jan", "All": 5, "fix-linked": 2},
+    {"month": "Feb", "All": 7, "fix-linked": 3},
+]
+_CAPITAL = {**_WIDE, "y": ["All", "fix-linked"]}
 
 
 def test_wide_measure_entries_and_joined_title_use_field_label() -> None:
     spec = _spec({**_WIDE, "field_labels": {"fix-linked": "fix-linked"}}, _WIDE_ROWS)
-    assert "all, fix-linked" in list(_values(spec, "title"))
-    assert "fix linked" not in json.dumps(spec)
+    assert "All, fix-linked" in list(_values(spec, "title"))
+    assert "Fix linked" not in json.dumps(spec)
 
 
 @pytest.mark.parametrize("family", ["line", "bar", "area"])
@@ -122,14 +129,14 @@ def test_wide_measure_entry_paints_field_label_in_svg(family: str) -> None:
     labeled = {**_WIDE, "type": family, "field_labels": {"fix-linked": "fix-linked"}}
     svg = _render(labeled, _WIDE_ROWS).output
     assert ">fix-linked<" in svg
-    assert "fix linked" not in svg
-    assert "fix linked" in _render({**_WIDE, "type": family}, _WIDE_ROWS).output
+    assert "Fix linked" not in svg
+    assert "Fix linked" in _render({**_WIDE, "type": family}, _WIDE_ROWS).output
 
 
 def test_scatter_wide_measure_labels_use_field_label() -> None:
     labeled = {**_WIDE, "type": "scatter", "field_labels": {"fix-linked": "fix-linked"}}
-    assert "fix linked" not in json.dumps(_spec(labeled, _WIDE_ROWS))
-    assert "fix linked" in json.dumps(_spec({**_WIDE, "type": "scatter"}, _WIDE_ROWS))
+    assert "Fix linked" not in json.dumps(_spec(labeled, _WIDE_ROWS))
+    assert "Fix linked" in json.dumps(_spec({**_WIDE, "type": "scatter"}, _WIDE_ROWS))
 
 
 _DATE_LAYER_ROWS = [
@@ -207,14 +214,14 @@ def test_endpoint_rail_reserves_width_for_field_label(field: str) -> None:
 
 
 def test_hyphen_still_splits_without_a_field_label() -> None:
-    assert "all, fix linked" in list(_values(_spec(_WIDE, _WIDE_ROWS), "title"))
+    assert "All, Fix linked" in list(_values(_spec(_WIDE, _WIDE_ROWS), "title"))
 
 
 def test_colliding_authored_wide_label_errors() -> None:
-    result = _render({**_WIDE, "field_labels": {"fix-linked": "all"}}, _WIDE_ROWS)
+    result = _render({**_CAPITAL, "field_labels": {"fix-linked": "All"}}, _CAPITAL_ROWS)
     [error] = result.chart_errors
     assert error.code == "ERR-FIELD-LABELS-WIDE-COLLISION"
-    assert "'all'" in error.message
+    assert "'All'" in error.message
 
 
 def test_heatmap_derived_label_falls_back_beside_an_authored_one() -> None:
@@ -223,12 +230,12 @@ def test_heatmap_derived_label_falls_back_beside_an_authored_one() -> None:
             "type": "heatmap",
             "x": "month",
             "y": ["all", "fix-linked"],
-            "field_labels": {"all": "fix linked"},
+            "field_labels": {"all": "Fix linked"},
         },
         _WIDE_ROWS,
     )
     datums = [c["datum"] for c in _values(spec, "color") if "datum" in c]
-    assert sorted(datums) == ["fix linked", "fix-linked"]
+    assert sorted(datums) == ["Fix linked", "fix-linked"]
 
 
 def test_colliding_authored_heatmap_label_errors() -> None:
@@ -249,7 +256,7 @@ def test_collision_error_keeps_other_charts_warnings() -> None:
         {
             "title": "T",
             "queries": {
-                "q": {"type": "values", "rows": _WIDE_ROWS},
+                "q": {"type": "values", "rows": _CAPITAL_ROWS},
                 "o": {
                     "type": "values",
                     "rows": [
@@ -259,7 +266,7 @@ def test_collision_error_keeps_other_charts_warnings() -> None:
                 },
             },
             "charts": {
-                "a": {**_WIDE, "query": "q", "field_labels": {"fix-linked": "all"}},
+                "a": {**_CAPITAL, "query": "q", "field_labels": {"fix-linked": "All"}},
                 "b": {
                     "type": "line",
                     "query": "o",

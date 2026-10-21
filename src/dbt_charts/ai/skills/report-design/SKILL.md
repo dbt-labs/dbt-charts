@@ -8,8 +8,8 @@ description: >
   data', 'create an analysis', 'narrative report'. Covers narrative
   structure, chart selection for reports, content writing, and the
   executive-summary-first pattern. Do NOT use for at-a-glance monitoring
-  dashboards (use {{ s_skill_name_design_board }}). Do NOT use for the
-  build-test-iterate workflow (use {{ s_skill_name_build }}).
+  dashboards or for the build-test-iterate workflow (use
+  {{ s_skill_name_chart }}).
 metadata:
   author: fivetran
 ---
@@ -18,7 +18,7 @@ metadata:
 
 Reports are narrative-driven documents that tell a story with data and answer specific questions. They are NOT dashboards.
 
-> Implementing in YAML? Switch to `{{ s_skill_build }}` for the build-test-iterate workflow.
+> Implementing in YAML? Switch to `{{ s_skill_chart }}` for the build-test-iterate workflow.
 
 ## Report vs. Dashboard
 
@@ -30,7 +30,7 @@ Reports are narrative-driven documents that tell a story with data and answer sp
 | **Structure** | Executive summary → analysis → conclusions | KPIs → trends → breakdowns |
 | **Interaction** | Read in minutes | Scan in seconds |
 
-If the user needs at-a-glance monitoring, use the `{{ s_skill_name_design_board }}` skill instead.
+If the user needs at-a-glance monitoring, use the `{{ s_skill_name_chart }}` skill instead.
 
 ## Core Principles
 

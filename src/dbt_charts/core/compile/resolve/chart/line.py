@@ -43,6 +43,7 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _bake_zero_flag,
     _check_bar_layer_spans,
     _first_non_numeric_y,
+    _reject_non_positive_log_layer_data,
     _reject_non_positive_log_scale_data,
     _resolve_cartesian_ticks,
     _shared_y_values,
@@ -255,6 +256,7 @@ def _resolve_line(
         ),
         data,
     )
+    _reject_non_positive_log_layer_data(normalized, ay_merged, data, datasets)
     if _zero_floats:
         _lz = resolve_y_zero(
             _ay_pre_zero_bake,
@@ -438,6 +440,7 @@ def _resolve_line(
         data,
         datasets,
         normalized.id,
+        normalized.query.formats if normalized.query else None,
     )
     if authored_y_domain is not None:
         _check_layers_y_domain(normalized.id, resolved_layers, authored_y_domain)

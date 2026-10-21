@@ -49,24 +49,20 @@ def test_unauthored_slots_carry_the_card_ink() -> None:
         assert slot.font.color == ink
 
 
-def test_support_tone_paints_row_and_glyph() -> None:
-    kpi, ctx = _kpi({"support": {"tone": "positive"}})
-    assert kpi.support.font.color == ctx.tones.positive
-    assert kpi.support.glyph.font.color == ctx.tones.positive
+def test_support_inks_stay_unset_for_the_renderer_to_pick() -> None:
+    """The tone, the sign of a delta and the muted ink are the renderer's to
+    choose, so an unauthored support ink resolves to the empty string."""
+    for chart in ({"support": {"tone": "positive"}}, {}):
+        kpi, _ = _kpi(chart)
+        assert kpi.support.font.color == ""
+        assert kpi.support.glyph.font.color == ""
 
 
-def test_support_without_tone_is_muted() -> None:
-    kpi, ctx = _kpi()
-    assert kpi.support.font.color == ctx.cascaded.muted
-    assert kpi.support.glyph.font.color == ctx.cascaded.muted
-
-
-def test_authored_support_color_keeps_tone_on_glyph() -> None:
-    kpi, ctx = _kpi({"support": {"tone": "negative", "font": {"color": "#112233"}}})
-    assert kpi.support.font.color == "#112233"
-    assert kpi.support.glyph.font.color == ctx.tones.negative
-
-
-def test_authored_support_color_without_tone_reaches_glyph() -> None:
-    kpi, _ = _kpi({"support": {"font": {"color": "#112233"}}})
-    assert kpi.support.glyph.font.color == "#112233"
+def test_authored_support_color_stays_and_the_glyph_stays_unset() -> None:
+    for support in (
+        {"tone": "negative", "font": {"color": "#112233"}},
+        {"font": {"color": "#112233"}},
+    ):
+        kpi, _ = _kpi({"support": support})
+        assert kpi.support.font.color == "#112233"
+        assert kpi.support.glyph.font.color == ""

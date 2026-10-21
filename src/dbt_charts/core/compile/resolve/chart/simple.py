@@ -7,6 +7,7 @@ from typing import Any
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.file_refs import check_images_written_out
 from dbt_charts.core.compile.format import (
+    declared_column_format,
     finalize_kpi_value_format,
     kpi_format_native,
     resolve_format_parts,
@@ -49,11 +50,10 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 from dbt_charts.core.compile.resolve.chart.channel import kpi_support_rule_column
 from dbt_charts.core.compile.resolve.style.board import (
     _build_resolved_callout_chart,
-    bake_kpi_support_ink,
+    unset_auto_support_ink,
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
-    declared_column_format,
 )
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
@@ -79,10 +79,8 @@ def _resolve_kpi(
     primary = _with_color_tokens(normalized.style, chart_style_context)
     # The chart-local context re-runs inherit, so a chart's own `style.font`
     # reaches every slot font.
-    kpi = bake_kpi_support_ink(
-        build_chart_style_context(chart_style_context, normalized).kpi,
-        chart_style_context.tones,
-        chart_style_context.cascaded.muted,
+    kpi = unset_auto_support_ink(
+        build_chart_style_context(chart_style_context, normalized).kpi
     )
     channels = _channels_for(normalized, data)
     formats = chart_style_context.formats
@@ -91,9 +89,7 @@ def _resolve_kpi(
         primary.value.format if primary is not None and primary.value else None
     )
     board_value = chart_style_context.kpi.value.format
-    declared = declared_column_format(
-        normalized, normalized.value, formats, time=headline is None, text=True
-    )
+    query_formats = normalized.query.formats if normalized.query else None
     base = _base_kwargs(
         normalized,
         chart_style_context,
@@ -118,8 +114,22 @@ def _resolve_kpi(
         formats,
         compact=kpi.value.compact,
         board=board_value,
-        column=declared,
+        query_formats=query_formats,
+        columns=normalized.value,
     )
+    support_format = kpi.support.format
+    if (
+        support_format is None
+        and normalized.support is not None
+        and normalized.support.value is not None
+    ):
+        support_format = declared_column_format(
+            query_formats,
+            normalized.support.value,
+            formats,
+            time=_headline_numeric_value(normalized.support.value, data) is None,
+            text=True,
+        )
     text_link = _kpi_text_link(
         value_format, data, normalized.value, normalized.id, bool(base["link"])
     )
@@ -139,8 +149,8 @@ def _resolve_kpi(
                 normalized.support,
                 format=(
                     None
-                    if kpi.support.format is None
-                    else resolve_format_parts(kpi.support.format, formats)
+                    if support_format is None
+                    else resolve_format_parts(support_format, formats)
                 ),
                 rules=None if support_rules is None else tuple(support_rules.when),
             )
@@ -149,7 +159,11 @@ def _resolve_kpi(
         variant=kpi.variant,
         format=value_format,
         format_native=kpi_format_native(
-            formats, chart_value, board=board_value, column=declared
+            formats,
+            chart_value,
+            board=board_value,
+            query_formats=query_formats,
+            columns=normalized.value,
         ),
         style=ResolvedKpiStyle(kpi=kpi),
     )

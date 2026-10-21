@@ -60,7 +60,7 @@ LEONARDO_THRESHOLD = 11.0
 # CVD ΔE must not drop below this for any series count past the gate.
 CVD_FLOOR_PAST_GATE = 9.0
 
-# Neon's canvas (dbt-grays.void) — same constant as test_dark_palette_forks.
+# Neon's canvas (dbt-grays.12) — same constant as test_dark_palette_forks.
 _NEON_VOID = "#161616"
 # WCAG floor for a non-text graphical object.
 _GRAPHICAL_CONTRAST_FLOOR = 3.0

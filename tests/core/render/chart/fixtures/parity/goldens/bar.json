@@ -78,7 +78,7 @@
   "encoding": {
     "description": {
       "value": {
-        "expr": "\"\\u2061\" + (datum[\"month\"]) + '; ' + \"revenue: \" + (format(datum[\"revenue\"], \",.2~f\"))"
+        "expr": "\"\\u2061\" + (datum[\"month\"]) + '; ' + \"Revenue: \" + (format(datum[\"revenue\"], \",.2~f\"))"
       }
     },
     "x": {
@@ -119,7 +119,7 @@
         "domainMin": 0.0,
         "zero": true
       },
-      "title": "revenue",
+      "title": "Revenue",
       "type": "quantitative"
     },
     "y": {
@@ -157,7 +157,7 @@
         "field": "revenue",
         "order": "descending"
       },
-      "title": "month",
+      "title": "Month",
       "type": "nominal"
     }
   },

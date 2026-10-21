@@ -9,9 +9,15 @@ from typing import Any, Literal, NamedTuple
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import resolve_format, tick_min_step_for_format
-from dbt_charts.core.compile.models.chart.authored._layer import BarLayer
+from dbt_charts.core.compile.models.chart.authored._layer import (
+    AreaLayer,
+    BarLayer,
+    CartesianLayer,
+)
 from dbt_charts.core.compile.models.chart.normalized import BarChart
+from dbt_charts.core.compile.models.chart.resolved._layer import layers_share_date_axis
 from dbt_charts.core.compile.models.style.theme import (
+    AxisXStyle,
     AxisYStyle,
     BaseScaleStyle,
     ScaleContinuousStyle,
@@ -41,7 +47,11 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_BAR_Y_NOT_NUMERIC,
     ERR_BAR_Y_START_KIND,
     ERR_BAR_Y_START_NULL,
+    ERR_LAYER_BASELINE_ON_DATE_MEASURE,
+    ERR_LAYER_MIXED_AXES_ON_DATE_MEASURE,
+    ERR_LAYER_Y_KIND_MISMATCH,
     ERR_LOG_SCALE_REQUIRES_POSITIVE_DATA,
+    ERR_LOG_SCALE_REQUIRES_POSITIVE_X_DATA,
     ERR_TICKS_COUNT_REQUIRES_NON_LOG_SCALE,
 )
 from dbt_charts.core.numeric import nice_tick_values
@@ -59,9 +69,12 @@ __all__ = [
     "_bake_zero_flag",
     "_check_bar_layer_spans",
     "_check_bar_span",
+    "_check_layer_axis_kinds",
     "_first_non_numeric_y",
     "_numeric_y_values",
+    "_reject_non_positive_log_layer_data",
     "_reject_non_positive_log_scale_data",
+    "_reject_non_positive_log_x_data",
     "_resolve_cartesian_ticks",
     "_resolve_stacked_bar_ticks",
     "_shared_y_values",
@@ -190,6 +203,58 @@ def _reject_non_positive_log_scale_data(
             )
 
 
+def _reject_non_positive_log_x_data(
+    chart_id: str,
+    ax: AxisXStyle,
+    x_field: str | None,
+    data: ChartRows,
+) -> None:
+    """Raise when a log x axis's data contains a value ``<= 0``.
+
+    The scale is undefined there: Vega draws every mark at one edge or drops
+    them, with no tick on the axis.
+    """
+    _cont = ax.scale.continuous if ax.scale is not None else None
+    if _cont is None or _cont.type != "log" or x_field is None:
+        return
+    if any(v <= 0 for v in numeric_column_values(data, x_field)):
+        raise CompilationError.from_code(
+            ERR_LOG_SCALE_REQUIRES_POSITIVE_X_DATA,
+            chart_id=chart_id,
+            x_field=x_field,
+        )
+
+
+def _reject_non_positive_log_layer_data(
+    chart: CartesianChart,
+    ay: AxisYStyle,
+    data: ChartRows,
+    datasets: LayerDatasets,
+) -> None:
+    """Raise when a layer sharing a log measure axis draws a value ``<= 0``.
+
+    A zero or negative value in the shared domain collapses every mark of the
+    chart onto one pixel row, so a layer is held to the base series' rule.
+    """
+    _cont = ay.scale.continuous if ay.scale is not None else None
+    if _cont is None or _cont.type != "log":
+        return
+    for layer in chart.layers:
+        if layer.y is None or (
+            layer.axis_y is not None and layer.axis_y.position == "right"
+        ):
+            continue
+        rows = _layer_rows(chart, layer, data, datasets)
+        if rows is not None and any(
+            v <= 0 for v in numeric_column_values(rows, layer.y)
+        ):
+            raise CompilationError.from_code(
+                ERR_LOG_SCALE_REQUIRES_POSITIVE_DATA,
+                chart_id=chart.id,
+                y_field=layer.y,
+            )
+
+
 def _axis_headroom(ay: AxisYStyle) -> float | None:
     """Read the authored (or theme-default) headroom off a cascaded axis scale."""
     return ay.scale.headroom if ay.scale is not None else None
@@ -287,8 +352,8 @@ def _check_bar_layer_spans(
     """Check every bar layer with y_start, and hold it to the chart's value axis.
 
     ``axis_kind`` is the kind already established for the chart's y, or None
-    to classify it from ``data``. A categorical chart y, or a right-axis
-    layer's own scale, leaves the layer checked against itself only.
+    to classify it from ``data``. A categorical chart y, or layers on their
+    own scales, leaves each layer checked against itself only.
     """
     span_layers = [
         layer
@@ -299,7 +364,7 @@ def _check_bar_layer_spans(
         return
     # A chart with no single y column has no one column to name beside a layer.
     axis: tuple[str, str] | None = None
-    if isinstance(chart.y, str):
+    if isinstance(chart.y, str) and not layers_own_y_scale(chart):
         kind = axis_kind if axis_kind is not None else _span_column_kind(chart.y, data)
         if kind != "categorical":
             axis = (chart.y, kind)
@@ -314,9 +379,118 @@ def _check_bar_layer_spans(
             raise ChartDataError(f"Missing rows for bar layer query {layer.query!r}")
         else:
             rows = datasets[layer.query]
-        on_right = layer.axis_y is not None and layer.axis_y.position == "right"
-        _check_bar_span(
-            chart.id, layer.y, layer.y_start, rows, None if on_right else axis
+        _check_bar_span(chart.id, layer.y, layer.y_start, rows, axis)
+
+
+def layers_own_y_scale(chart: CartesianChart) -> bool:
+    """Whether the layers draw on their own y scales.
+
+    One layer pinning ``axis_y.position`` (either side) makes every layer
+    independent of the base; with none pinned they all share it.
+    """
+    return any(
+        layer.axis_y is not None and layer.axis_y.position is not None
+        for layer in chart.layers
+    )
+
+
+def _layer_rows(
+    chart: CartesianChart,
+    layer: CartesianLayer,
+    data: ChartRows,
+    datasets: LayerDatasets,
+) -> ChartRows | None:
+    """The rows a layer draws from: the chart's own, or its own query's.
+
+    ``None`` when the layer reads another query and the caller has no datasets.
+    """
+    if layer.query is None or layer.query == chart.query_name:
+        return data
+    if datasets is ...:
+        return None
+    if layer.query not in datasets:
+        raise ChartDataError(
+            f"Missing rows for shared-scale layer query {layer.query!r}"
+        )
+    return datasets[layer.query]
+
+
+def _check_layer_axis_kinds(
+    chart: CartesianChart,
+    data: ChartRows,
+    datasets: LayerDatasets,
+    axis_kind: Literal["numeric", "temporal"] | None,
+) -> None:
+    """Hold each layer's ``y`` to the kind of axis it plots on.
+
+    An unpinned layer plots on the bar's value axis, a pinned one on a numeric
+    scale of its own; a column of the wrong kind draws no marks. Over a date
+    measure the unpinned layers share the bar's date axis
+    (``layers_share_date_axis``), where a layer growing from a baseline has no
+    zero to grow from, and pinned layers mixed with unpinned ones would leave the
+    unpinned dates on a numeric scale.
+    """
+    if not chart.layers:
+        return
+    dates = axis_kind == "temporal"
+    sides = [
+        layer.axis_y.position if layer.axis_y is not None else None
+        for layer in chart.layers
+    ]
+    if (
+        dates
+        and not layers_share_date_axis(sides)
+        and any(side is None for side in sides)
+    ):
+        raise CompilationError.from_code(
+            ERR_LAYER_MIXED_AXES_ON_DATE_MEASURE, field_path=f"charts.{chart.id}.layers"
+        )
+    for index, (layer, side) in enumerate(zip(chart.layers, sides, strict=True)):
+        field_path = f"charts.{chart.id}.layers[{index}]"
+        pinned = side is not None
+        if (
+            dates
+            and not pinned
+            and (
+                isinstance(layer, AreaLayer)
+                or (isinstance(layer, BarLayer) and layer.y_start is None)
+            )
+        ):
+            raise CompilationError.from_code(
+                ERR_LAYER_BASELINE_ON_DATE_MEASURE,
+                field_path=field_path,
+                layer_type=layer.type,
+            )
+        if layer.y is None or (
+            isinstance(layer, BarLayer) and layer.y_start is not None
+        ):
+            continue
+        # Only rows the layer actually has are judged.
+        if layer.query not in (None, chart.query_name) and (
+            datasets is ... or layer.query not in datasets
+        ):
+            continue
+        rows = _layer_rows(chart, layer, data, datasets)
+        assert rows is not None
+        layer_kind = _span_column_kind(layer.y, rows)
+        on_dates = dates and not pinned
+        if on_dates and layer_kind != "temporal":
+            where = "the bar's date axis"
+        elif not on_dates and layer_kind == "temporal":
+            where = (
+                "the layer's own pinned numeric axis"
+                if pinned
+                else "the bar's numeric value axis"
+            )
+        else:
+            continue
+        raise CompilationError.from_code(
+            ERR_LAYER_Y_KIND_MISMATCH,
+            field_path=field_path,
+            y_field=layer.y,
+            y_kind=layer_kind,
+            axis_where=where,
+            axis_kind="date" if on_dates else "numeric",
         )
 
 
@@ -334,19 +508,19 @@ def _shared_y_values(
     relative to it, autosize-fit collapses the plot height to zero and the chart
     renders as title-plus-axis only.
 
-    A layer pinned to ``axis_y.position: right`` has an independent scale, so it
-    must not widen this one. Layers sharing the base query read from ``data``;
-    own-query layers read from ``datasets`` when the caller can supply it.
+    Layers on their own scales (``layers_own_y_scale``) must not widen it.
+    Layers sharing the base query read from ``data``; own-query layers read
+    from ``datasets`` when the caller can supply it.
     """
     base_fields: tuple[str, ...] = (y_field,)
     if isinstance(chart, BarChart) and chart.y_start is not None:
         base_fields = (y_field, chart.y_start)
     values = _numeric_y_values(data, base_fields)
+    if layers_own_y_scale(chart):
+        return values
     seen = {(chart.query_name, field) for field in base_fields}
     for layer in chart.layers:
-        if layer.y is None or (
-            layer.axis_y is not None and layer.axis_y.position == "right"
-        ):
+        if layer.y is None:
             continue
         query_name = layer.query
         fields = tuple(
@@ -360,16 +534,9 @@ def _shared_y_values(
         if not fields:
             continue
         seen.update((query_name, field) for field in fields)
-        if query_name is None or query_name == chart.query_name:
-            rows = data
-        else:
-            if datasets is ...:
-                continue
-            if query_name not in datasets:
-                raise ChartDataError(
-                    f"Missing rows for shared-scale layer query {query_name!r}"
-                )
-            rows = datasets[query_name]
+        rows = _layer_rows(chart, layer, data, datasets)
+        if rows is None:
+            continue
         values.extend(_numeric_y_values(rows, fields))
     return values
 

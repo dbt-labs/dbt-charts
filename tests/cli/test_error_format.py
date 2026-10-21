@@ -17,6 +17,7 @@ import pytest
 import typer
 from rich.console import Console
 
+from dbt_charts._docs_site import docs_site_url
 from dbt_charts.cli._error_format import emit_diagnostics_jsonl, print_diagnostics
 from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
 from dbt_charts.core.diagnostics.codes_query import (
@@ -59,18 +60,19 @@ def test_plain_mode_has_no_chrome(err: Diagnostic) -> None:
     assert not _BOX_CHARS.search(output), f"Box chars in plain output:\n{output!r}"
     assert not _ANSI.search(output), f"ANSI codes in plain output:\n{output!r}"
     # Body content (with markup tags consumed by Rich) is still readable.
-    assert "ERR-INTERNAL" in output
-    assert "Something went wrong" in output
-    assert "Hint: Try this fix" in output
-    assert "At: charts/dashboard.yml:42" in output
-    assert "Docs: dct docs errors" in output
+    assert "error[ERR-INTERNAL]: Something went wrong" in output
+    assert "\n  Hint: Try this fix" in output
+    assert "\n  At: charts/dashboard.yml:42" in output
+    assert (
+        f"Docs: ERR-INTERNAL {docs_site_url()}/reference/errors/#err-internal" in output
+    )
 
 
-def test_rich_mode_has_panel_chrome(err: Diagnostic) -> None:
-    """In rich mode the surrounding Panel renders box chars."""
+def test_rich_mode_colors_the_headline_without_a_panel(err: Diagnostic) -> None:
     output = _render(err, plain=False)
-    assert _BOX_CHARS.search(output), f"Expected box chars in rich output:\n{output!r}"
-    assert "ERR-INTERNAL" in output
+    assert not _BOX_CHARS.search(output), output
+    assert _ANSI.search(output), output
+    assert "error[ERR-INTERNAL]" in _ANSI.sub("", output)
 
 
 def test_detail_and_evidence_reach_rendered_output() -> None:
@@ -180,8 +182,8 @@ def _internal(chart: str, line: int, *, message: str = "Boom") -> Diagnostic:
 def test_repeated_warning_code_prints_once_with_count_and_every_name() -> None:
     output = _render_many([_categories("revenue", 3), _categories("orders", 9)])
 
-    assert output.count("WARN-TOO-MANY-COLOR-CATEGORIES") == 1
-    assert "WARN-TOO-MANY-COLOR-CATEGORIES ×2" in output
+    assert output.count("warning[WARN-TOO-MANY-COLOR-CATEGORIES]") == 1
+    assert "warning[WARN-TOO-MANY-COLOR-CATEGORIES] x2:" in output
     assert "Applies to: revenue, orders" in output
     assert output.count("Fix: Drop the color channel.") == 1
     assert "At: boards/b.yml:3 (+1 more)" in output
@@ -190,9 +192,9 @@ def test_repeated_warning_code_prints_once_with_count_and_every_name() -> None:
 def test_single_instance_prints_without_count() -> None:
     output = _render_many([_categories("revenue", 3)])
 
-    assert "×" not in output
+    assert " x1" not in output
     assert (
-        "WARN-TOO-MANY-COLOR-CATEGORIES  revenue: Chart 'revenue': 13 color categories exceed 8"
+        "warning[WARN-TOO-MANY-COLOR-CATEGORIES]: revenue: Chart 'revenue': 13 color categories exceed 8"
         in output
     )
     assert "Applies to" not in output
@@ -209,7 +211,7 @@ def test_warnings_with_different_text_say_how_many_are_not_shown() -> None:
         ]
     )
 
-    assert "WARN-TOO-MANY-COLOR-CATEGORIES ×3" in output
+    assert "warning[WARN-TOO-MANY-COLOR-CATEGORIES] x3:" in output
     assert "13 color categories exceed 8" in output
     assert "a different problem" not in output
     assert "and 2 more" in output
@@ -218,15 +220,16 @@ def test_warnings_with_different_text_say_how_many_are_not_shown() -> None:
 def test_different_codes_stay_separate_entries() -> None:
     output = _render_many([_categories("a", 1), _internal("b", 2), _categories("c", 3)])
 
-    assert output.count("WARN-TOO-MANY-COLOR-CATEGORIES") == 1
-    assert output.count("ERR-INTERNAL") == 1
+    assert output.count("warning[WARN-TOO-MANY-COLOR-CATEGORIES]") == 1
+    assert output.count("error[ERR-INTERNAL]") == 1
+    assert output.index("error[") < output.index("warning["), "errors come first"
 
 
 def test_errors_with_one_message_keep_every_location() -> None:
     output = _render_many([_internal("a", 4), _internal("b", 8), _internal("c", 15)])
 
-    assert output.count("ERR-INTERNAL") == 1
-    assert "ERR-INTERNAL ×3" in output
+    assert output.count("error[ERR-INTERNAL]") == 1
+    assert "error[ERR-INTERNAL] x3:" in output
     assert "At: boards/b.yml:4, boards/b.yml:8, boards/b.yml:15" in output
     assert output.count("Fix: Fix it.") == 1
 
@@ -239,7 +242,7 @@ def test_errors_with_different_messages_are_never_collapsed() -> None:
         ]
     )
 
-    assert output.count("ERR-INTERNAL") == 2
+    assert output.count("error[ERR-INTERNAL]") == 2
     assert "column x is missing" in output
     assert "column y is missing" in output
 
@@ -298,10 +301,10 @@ def test_diagnostics_with_no_location_are_not_merged() -> None:
         defaults_file_skip_diagnostics([Path("a/meta.yml"), Path("b/meta.yml")])
     )
 
-    assert output.count("WARN-DEFAULTS-FILE-GIVEN-AS-BOARD") == 2
+    assert output.count("warning[WARN-DEFAULTS-FILE-GIVEN-AS-BOARD]") == 2
     assert "a/meta.yml" in output
     assert "b/meta.yml" in output
-    assert "×" not in output
+    assert " x2" not in output
 
 
 def test_same_text_charts_do_not_claim_different_text() -> None:
@@ -318,8 +321,8 @@ def test_errors_naming_their_chart_in_the_message_still_group() -> None:
         ]
     )
 
-    assert output.count("ERR-INTERNAL") == 1
-    assert "ERR-INTERNAL ×2" in output
+    assert output.count("error[ERR-INTERNAL]") == 1
+    assert "error[ERR-INTERNAL] x2:" in output
 
 
 def test_a_short_chart_name_does_not_blank_unrelated_words() -> None:
@@ -330,7 +333,7 @@ def test_a_short_chart_name_does_not_blank_unrelated_words() -> None:
         ]
     )
 
-    assert output.count("ERR-INTERNAL") == 2
+    assert output.count("error[ERR-INTERNAL]") == 2
 
 
 def test_warnings_differing_only_in_fix_say_so() -> None:

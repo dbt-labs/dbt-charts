@@ -35,11 +35,11 @@ from __future__ import annotations
 import dataclasses
 import types
 import typing
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from functools import cache
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Annotated, Any, TypeVar, overload
+from typing import TYPE_CHECKING, Annotated, Any, TypeAlias, TypeVar, overload
 
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
@@ -69,6 +69,7 @@ if TYPE_CHECKING:
     from dbt_charts.core.project import ProjectDirectory, ProjectPath
 
 P = TypeVar("P", bound=BaseModel)
+_Leaf: TypeAlias = Any  # type-state: explicit_any — an authored leaf of any type
 
 
 def deep_merge_dict(
@@ -268,6 +269,58 @@ def merge_patches(lower: P, upper: P) -> P:
             result_fields_set.add(name)
 
     return type(upper).model_construct(_fields_set=result_fields_set, **out)
+
+
+def restated_leaves(
+    own: BaseModel,
+    inherited: BaseModel | None,
+    path: tuple[str, ...] = (),
+) -> Iterator[tuple[tuple[str, ...], _Leaf]]:
+    """Authored leaves of *own* that equal what *inherited* (the fold of every layer
+    below) already holds there, walking ``merge_patches``'s strategies.
+    Comparison is exact and type-strict (``8`` is not ``8.5``; ``True`` is not
+    ``1``) on unresolved values, so a color token never matches its hex.
+
+    Fields whose removal does more than drop the leaf are skipped: members of
+    an ``Exclusive`` group (setting one zeroes the others below) and the field
+    a ``merge_reset`` declaration keys on (setting it drops the layer's other
+    inherited fields).
+    """
+    if inherited is None:
+        return
+    reset: ResetOnSet | None = getattr(  # type-state: silent_fallback — opt-in
+        type(own), "merge_reset", None
+    )
+    exclusive = {name for group in _exclusive_groups(type(own)) for name in group}
+    for name, field in type(own).model_fields.items():
+        if (
+            name not in own.model_fields_set
+            or name in exclusive
+            or (reset is not None and name == reset.field)
+        ):
+            continue
+        hi = getattr(own, name)
+        lo = getattr(inherited, name)
+        if hi is None or lo is None:
+            continue
+        here = (*path, name)
+        strat = strategy(field)
+        if strat is not Strategy.OVERRIDE and isinstance(hi, BaseModel):
+            yield from restated_leaves(hi, lo, here)
+        elif strat is not Strategy.OVERRIDE and isinstance(hi, dict):
+            for key, value in hi.items():
+                if key not in lo:
+                    continue
+                if isinstance(value, BaseModel):
+                    yield from restated_leaves(value, lo[key], (*here, key))
+                elif _same_leaf(value, lo[key]):
+                    yield (*here, key), value
+        elif _same_leaf(hi, lo):
+            yield here, hi
+
+
+def _same_leaf(a: _Leaf, b: _Leaf) -> bool:
+    return type(a) is type(b) and a == b
 
 
 @cache
@@ -728,6 +781,22 @@ def _resolve_entry(
     return merge_patches(extends_patch, own_patch)
 
 
+@typing.runtime_checkable
+class _HasExtends(typing.Protocol):
+    @property
+    def extends(self) -> str | Sequence[str] | None: ...
+
+
+def _extends_entries(node: BaseModel) -> list[str]:
+    """The ``extends:`` entries of a board or fragment patch, in authored order."""
+    if not isinstance(node, _HasExtends):
+        raise TypeError(f"{type(node).__name__} has no `extends`")
+    raw = node.extends
+    if raw is None:
+        return []
+    return [raw] if isinstance(raw, str) else list(raw)
+
+
 def _merge_extends_inner(
     node: BaseModel,
     ctx: _ExtendCtx,
@@ -738,11 +807,7 @@ def _merge_extends_inner(
     """Recursive core of merge_extends."""
     from dbt_charts.core.compile.models.board.patch import EMPTY_PATCH
 
-    raw = node.extends  # type: ignore[attr-defined]
-    if raw is None:
-        return EMPTY_PATCH
-
-    entries: list[str] = [raw] if isinstance(raw, str) else list(raw)
+    entries = _extends_entries(node)
     if not entries:
         return EMPTY_PATCH
 
@@ -765,6 +830,20 @@ def resolve_built_in_theme(name: str) -> BaseModel:
     node = BOARD_PATCH_ADAPTER.validate_python({"extends": name})
     ctx = _ExtendCtx(board_dir=None, boards_root=None, theme_names=get_theme_names())
     return _merge_extends_inner(node, ctx, frozenset(), theme_sink=None)
+
+
+@typing.runtime_checkable
+class _HasStyle(typing.Protocol):
+    @property
+    def style(self) -> StylePatch | None: ...
+
+
+def built_in_theme_style(name: str) -> StylePatch | None:
+    """The ``style:`` patch of a built-in theme (None when the theme has none)."""
+    patch = resolve_built_in_theme(name)
+    if not isinstance(patch, _HasStyle):
+        raise TypeError(f"theme {name!r} did not fold to a board patch")
+    return patch.style
 
 
 def merge_extends(
@@ -964,6 +1043,43 @@ def _replaced_layout_warnings(
     return warnings
 
 
+def _restated_warnings(
+    board_node: BaseModel,
+    own_patch: BaseModel,
+    layers: Sequence[tuple[str, BaseModel]],
+    meta_themes: Sequence[str],
+    theme_sink: Sequence[str],
+) -> list[Diagnostic]:
+    """WARN-RESTATED-STYLE/-INFERRED/-FORMAT for the board's own file: its theme and cascaded keys.
+
+    The board's own ``extends:`` theme is restated when it is the sole new
+    theme and equals the one already in force from the metas (or the default).
+    The theme under the board is the fold's bottom layer.
+    """
+    from dbt_charts.core.compile.config import get_default_theme_name
+    from dbt_charts.core.compile.restated import cascade_restated, restated_diagnostic
+    from dbt_charts.core.diagnostics import WARN_RESTATED_STYLE
+
+    below = meta_themes[-1] if meta_themes else get_default_theme_name()
+    entries = _extends_entries(board_node)
+    warnings: list[Diagnostic] = []
+    if entries == list(theme_sink[len(meta_themes) :]) == [below]:
+        warnings.append(
+            restated_diagnostic(
+                WARN_RESTATED_STYLE,
+                "extends",
+                below,
+                f"the {'meta.yml ' if meta_themes else 'default '}theme `{below}`",
+                "meta.yml theme" if meta_themes else "default theme",
+            )
+        )
+    in_force = theme_sink[-1] if theme_sink else below
+    theme = resolve_built_in_theme(in_force)
+    theme_layer = (f"the default in theme `{in_force}`", "theme default", theme)
+    inherited = [(f"set in `{source}`", "inherited", patch) for source, patch in layers]
+    return warnings + cascade_restated(own_patch, [theme_layer, *inherited])
+
+
 def merged_patch(
     board_node: BaseModel,
     board_path: ProjectPath,
@@ -996,6 +1112,7 @@ def merged_patch(
     # Base: merge of all meta files root→leaf
     layers: list[tuple[str, BaseModel]] = []
     base = merge_metas(board_path.parent, boards_root, theme_sink, layers)
+    meta_themes = list(theme_sink) if theme_sink is not None else []
     # Middle: extends chain of the board itself
     extends_patch = merge_extends(
         board_node, board_path, boards_root, theme_sink, layers
@@ -1004,6 +1121,12 @@ def merged_patch(
     own_patch = _fragment_own_patch(board_node)
     if warning_sink is not None:
         warning_sink.extend(_replaced_layout_warnings([*layers, ("", own_patch)]))
+        if theme_sink is not None:
+            warning_sink.extend(
+                _restated_warnings(
+                    board_node, own_patch, layers, meta_themes, theme_sink
+                )
+            )
     # fold: base < extends < own
     board_contribution = merge_patches(extends_patch, own_patch)
     return merge_patches(base, board_contribution)

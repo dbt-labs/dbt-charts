@@ -410,7 +410,7 @@ def test_visual_column_widths_and_headers_single_column_defaults_to_title_cased_
     widths, headers = _visual_column_widths_and_headers(
         table, [40.0], series_order=["A", "B"], single_column_per_series=True
     )
-    assert headers == ["Unit Revenue"]
+    assert headers == ["Unit revenue"]
 
 
 def test_visual_column_widths_and_headers_multi_column_still_names_each_series():

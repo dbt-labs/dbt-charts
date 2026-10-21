@@ -13,6 +13,7 @@ from dbt_charts.core.compile.format import (
     column_format,
     decimal_pad_table_for,
     declared_format,
+    inferred_number_format,
     sub_unit_spec_for_value,
 )
 from dbt_charts.core.compile.format_value import (
@@ -380,16 +381,22 @@ def _with_resolved_scale_stops(
     for name, col in columns.items():
         coerced_values = _coerced_column_values(rows, name) if rows else []
         own = own_formats.get(name)
-        declared_name = declared_format(declared, name)
+        inferred = inferred_number_format(name, (row.get(name) for row in rows))
         _effective = column_format(
             "number" if coerced_values else "time",
             formats,
             own,
             board=defaults_format,
-            column=declared_name,
+            query_formats=declared,
+            columns=name,
+            text=True,
+            inferred=inferred,
         )
         text_link = _text_link_field(name, col, _effective, rows, filter_variables)
-        has_format = any(f is not None for f in (own, defaults_format, declared_name))
+        has_format = inferred is not None or any(
+            f is not None
+            for f in (own, defaults_format, declared_format(declared, name))
+        )
         _col_parts = _effective if has_format else None
         resolved_fmt = _effective.spec if has_format else ""
 
@@ -476,7 +483,9 @@ def _with_resolved_scale_stops(
                 formats,
                 own,
                 board=defaults_format,
-                column=declared_name,
+                query_formats=declared,
+                columns=name,
+                text=True,
                 engine_default=lambda: UNCOMPACTED_COLUMN_SPEC,
             )
             if not is_d3_si_spec(exact.spec):

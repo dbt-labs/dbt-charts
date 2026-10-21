@@ -114,7 +114,7 @@
         "paddingInner": 0.0
       },
       "sort": null,
-      "title": "month",
+      "title": "Month",
       "type": "nominal"
     }
   },
@@ -122,7 +122,7 @@
     {
       "encoding": {
         "color": {
-          "datum": "revenue",
+          "datum": "Revenue",
           "legend": {
             "direction": "horizontal",
             "labelColor": "#626366",
@@ -134,20 +134,20 @@
             "orient": "top",
             "symbolLimit": 20,
             "symbolSize": {
-              "expr": "(indexof([\"target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square') === 'stroke' ? 400 : 100"
+              "expr": "(indexof([\"Target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square') === 'stroke' ? 400 : 100"
             },
             "symbolStrokeWidth": {
-              "expr": "(indexof([\"target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square') === 'stroke' ? 2 : 1.5"
+              "expr": "(indexof([\"Target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square') === 'stroke' ? 2 : 1.5"
             },
             "symbolType": {
-              "expr": "indexof([\"target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square'"
+              "expr": "indexof([\"Target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square'"
             },
             "title": null
           },
           "scale": {
             "domain": [
-              "revenue",
-              "target"
+              "Revenue",
+              "Target"
             ],
             "range": [
               "#40639c",
@@ -157,7 +157,7 @@
         },
         "description": {
           "value": {
-            "expr": "\"\\u2061\" + (datum[\"month\"]) + '; ' + \"\\u2062\" + (\"revenue\") + '; ' + \"revenue: \" + (format(datum[\"revenue\"], \",.2~f\"))"
+            "expr": "\"\\u2061\" + (datum[\"month\"]) + '; ' + \"\\u2062\" + (\"Revenue\") + '; ' + \"Revenue: \" + (format(datum[\"revenue\"], \",.2~f\"))"
           }
         },
         "x": {
@@ -195,7 +195,7 @@
             "paddingInner": 0.0
           },
           "sort": null,
-          "title": "month",
+          "title": "Month",
           "type": "nominal"
         },
         "y": {
@@ -238,7 +238,7 @@
             "domainMin": 0.0,
             "zero": true
           },
-          "title": "revenue",
+          "title": "Revenue",
           "type": "quantitative"
         }
       },
@@ -257,7 +257,7 @@
     {
       "encoding": {
         "color": {
-          "datum": "target",
+          "datum": "Target",
           "legend": {
             "direction": "horizontal",
             "labelColor": "#626366",
@@ -269,20 +269,20 @@
             "orient": "top",
             "symbolLimit": 20,
             "symbolSize": {
-              "expr": "(indexof([\"target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square') === 'stroke' ? 400 : 100"
+              "expr": "(indexof([\"Target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square') === 'stroke' ? 400 : 100"
             },
             "symbolStrokeWidth": {
-              "expr": "(indexof([\"target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square') === 'stroke' ? 2 : 1.5"
+              "expr": "(indexof([\"Target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square') === 'stroke' ? 2 : 1.5"
             },
             "symbolType": {
-              "expr": "indexof([\"target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square'"
+              "expr": "indexof([\"Target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square'"
             },
             "title": null
           },
           "scale": {
             "domain": [
-              "revenue",
-              "target"
+              "Revenue",
+              "Target"
             ],
             "range": [
               "#40639c",
@@ -292,7 +292,7 @@
         },
         "description": {
           "value": {
-            "expr": "\"\\u2061\" + (datum[\"month\"]) + '; ' + \"\\u2062\" + (\"target\") + '; ' + \"target: \" + (format(datum[\"target\"], \",.2~f\"))"
+            "expr": "\"\\u2061\" + (datum[\"month\"]) + '; ' + \"\\u2062\" + (\"Target\") + '; ' + \"Target: \" + (format(datum[\"target\"], \",.2~f\"))"
           }
         },
         "y": {
@@ -331,7 +331,7 @@
           },
           "field": "target",
           "format": ",.2~f",
-          "title": "target",
+          "title": "Target",
           "type": "quantitative"
         }
       },

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from dbt_charts.core.compile.format import (
     column_format,
+    declared_column_format,
     resolve_label_format,
 )
 from dbt_charts.core.compile.models.primitives import (
@@ -36,10 +37,7 @@ from dbt_charts.core.compile.models.style.theme import (
     PointLabelsStyle,
     PointMarkStyle,
 )
-from dbt_charts.core.compile.resolve.style.chart_context import (
-    CartesianFamilyChart,
-    declared_column_format,
-)
+from dbt_charts.core.compile.resolve.style.chart_context import CartesianFamilyChart
 from dbt_charts.core.compile.resolve.style.inherit_resolver import settled
 
 __all__ = [
@@ -97,16 +95,26 @@ def _measure_tooltip_format(
     local = None
     if primary is not None and primary.axis_y is not None:
         local = primary.axis_y.labels.format if primary.axis_y.labels else None
-    declared = (
-        declared_column_format(
-            normalized, normalized.y, formats, time=y_channel_type == "temporal"
-        )
-        if y_channel_type in ("quantitative", "temporal")
+    query_formats = (
+        normalized.query.formats
+        if normalized.query and y_channel_type in ("quantitative", "temporal")
         else None
     )
-    if local is None and declared is None:
+    if local is None and (
+        declared_column_format(
+            query_formats, normalized.y, formats, time=y_channel_type == "temporal"
+        )
+        is None
+    ):
         return None
-    return column_format("number", formats, local, column=declared, values=values)
+    return column_format(
+        "number",
+        formats,
+        local,
+        query_formats=query_formats,
+        columns=normalized.y,
+        values=values,
+    )
 
 
 _ResolvedLabelsT = TypeVar("_ResolvedLabelsT", bound=BaseModel)

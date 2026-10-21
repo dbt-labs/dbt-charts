@@ -26,7 +26,7 @@ use crate::families::line::{bare_label_anchor, bare_label_layout, flush_anchor_p
 use crate::families::subday::{SubdayPlan, SubdaySource};
 use crate::families::temporal::{
     authored_tick_count, bare_temporal_ticks, date_text_day, generic_layout, none_tick_labels, part_band_texts, time_part_ticks, AuthoredTickCadence, build_all_temporal_labels, complete_buckets, days_from_civil, interval_tick_days, interval_tick_labels, native_tick_interval,
-    build_temporal_labels, parse_authored_time_unit, parse_iso_date, ResolvedVegaLabels, resolve_vega_x_labels, time_unit_floor, tooltip_header_date, TemporalLabel,
+    build_temporal_labels, parse_authored_time_unit, parse_iso_date, ResolvedVegaLabels, resolve_vega_x_labels, time_unit_floor, timeunit_nan, tooltip_header_date, TemporalLabel,
     TimePart, TimeUnit,
 };
 use crate::families::x_type::{Grain, XResolution};
@@ -176,6 +176,7 @@ pub(crate) struct TemporalXAxis {
     /// `axis.offset`; the drawn axis group adds its own half-pixel crisp
     /// translate on top (`axis_drop`).
     axis_offset: f64,
+    edge: crate::common::XEdge,
     title_text: String,
     title_key: Option<crate::contract::LabelKey>,
     /// The data's calendar grain and the grain its labels thinned to, on a bucketed scale: the opener set a
@@ -289,6 +290,7 @@ impl TemporalXAxis {
             tick_color: crate::common::required_ink(ticks_cfg.color.as_deref(), "scatter_axis", "ticks.color")?.to_string(),
             tick_width: ticks_cfg.width.unwrap_or(1.0),
             axis_offset: ticks_cfg.offset.unwrap_or(0.0),
+            edge: ax_x.x_edge(),
             title_text,
             title_key,
             label_cadence: None,
@@ -374,9 +376,13 @@ impl TemporalXAxis {
             };
             day_of(&floored)
         };
+        // Vega's `timeunit` transform yields NaN for a year below 100: such a row stays out of the
+        // scale domain and the ladder, and its point sits at x 0.
+        let nan = |date: &String| grain.is_some() && timeunit_nan(date);
         let kept_at = col
             .kept
             .iter()
+            .filter(|date| !nan(date))
             .map(|date| match part {
                 Some(part) => date_text_day(date)
                     .map(|day| part.instant(day))
@@ -421,6 +427,11 @@ impl TemporalXAxis {
             return Ok(axis);
         }
 
+        let ladder_dates: Vec<String> = col.ladder.iter().filter(|date| !nan(date)).cloned().collect();
+        if authored_domain.is_none() && span.is_none() && col.kept.iter().any(nan) {
+            axis.scale = Scale::Utc { lo: 0.0, hi: 0.0, pad };
+            return Ok(axis);
+        }
         let (lo, hi) = match (authored_domain, span) {
             (Some(pair), _) => pair,
             (None, Some(pair)) => pair,
@@ -468,11 +479,11 @@ impl TemporalXAxis {
             return Ok(axis);
         };
 
-        let ladder = complete_buckets(col.ladder, tu, fiscal);
+        let ladder = complete_buckets(&ladder_dates, tu, fiscal);
         // `labels.time_unit: none` measures the rows' own dates, not the
         // enumerated span (`_temporal_layout`'s generic branch).
         let resolved = if labels_cfg.time_unit.as_deref() == Some("none") {
-            layout(col.ladder, tu, flushed, true, &mut measure)?
+            layout(&ladder_dates, tu, flushed, true, &mut measure)?
         } else {
             layout(&ladder, tu, flushed, true, &mut measure)?
         };
@@ -513,7 +524,7 @@ impl TemporalXAxis {
     }
 
     fn label(&self, tl: &TemporalLabel, at: At, format_tu: TimeUnit, fonts: &FontBook) -> Result<AxisLabel, String> {
-        let (text, rows, tilted_align, baseline) = tilted_temporal_label(tl, self.angle, format_tu);
+        let (text, rows, tilted_align, baseline) = tilted_temporal_label(tl, self.angle, format_tu, self.edge);
         let mut width = fonts.measure_shaped(&text, &self.family, self.font_size)?;
         if rows == 2 {
             width = width.max(fonts.measure_shaped(&tl.row2, &self.family, self.font_size)?);
@@ -522,7 +533,7 @@ impl TemporalXAxis {
     }
 
     fn plain_label(&self, text: String, row2: Option<String>, day: f64, frac: f64, pw: f64, fonts: &FontBook) -> Result<(f64, AxisLabel), String> {
-        let (tilted_align, baseline) = bare_label_anchor(self.angle, frac, pw);
+        let (tilted_align, baseline) = bare_label_anchor(self.angle, frac, pw, self.edge);
         let mut width = fonts.measure_shaped(&text, &self.family, self.font_size)?;
         if let Some(row2) = &row2 {
             width = width.max(fonts.measure_shaped(row2, &self.family, self.font_size)?);
@@ -607,6 +618,9 @@ impl TemporalXAxis {
     pub(crate) fn frac(&self, date: &str, pw: f64) -> f64 {
         match &self.scale {
             Scale::Utc { .. } => {
+                if self.grain.is_some() && timeunit_nan(date) {
+                    return 0.0;
+                }
                 let day = match self.part {
                     Some(part) => part.instant(date_text_day(date).expect("a kept date parsed at resolve")),
                     None => {
@@ -645,6 +659,12 @@ impl TemporalXAxis {
         }
     }
 
+    /// Whether `date` is a row Vega's `timeunit` transform places at NaN (drawn at x 0): only on
+    /// a UTC scale, where a bucket start is an instant.
+    pub(crate) fn is_nan_at(&self, date: &str) -> bool {
+        matches!(self.scale, Scale::Utc { .. }) && self.grain.is_some() && timeunit_nan(date)
+    }
+
     /// A UTC scale's domain in days at plot width `pw`; `None` on a point scale.
     pub(crate) fn day_domain(&self, pw: f64) -> Option<(f64, f64)> {
         matches!(self.scale, Scale::Utc { .. }).then(|| self.scale.domain_at(pw))
@@ -654,6 +674,10 @@ impl TemporalXAxis {
     /// plot width `pw`; `None` on a scale no calendar grain buckets.
     pub(crate) fn bucket_span(&self, date: &str, pw: f64) -> Option<(f64, f64)> {
         let tu = self.grain.filter(|_| matches!(self.scale, Scale::Utc { .. }))?;
+        // A NaN position is a bucket of no width at 0.
+        if timeunit_nan(date) {
+            return Some((0.0, 0.0));
+        }
         let start = parse_iso_date(&time_unit_floor(date, tu).expect("a kept date parsed at resolve"))
             .expect("a floored date parses");
         let end = crate::families::temporal::next_bucket(start, tu);
@@ -692,7 +716,10 @@ impl TemporalXAxis {
         }
         let mut ink = Bounds::empty_new();
         self.union_label_ink(pw, 0.0, &mut ink, fonts)?;
-        Ok(Some(ink.y2))
+        Ok(Some(match self.edge {
+            crate::common::XEdge::Bottom => ink.y2,
+            crate::common::XEdge::Top => -ink.y1,
+        }))
     }
 
     /// Plot-width fractions of every tick — the ticks and gridlines, which
@@ -738,6 +765,7 @@ impl TemporalXAxis {
         let x = pw * frac;
         let mut ink = vega_fit::text_ink(x, row_y, l.width.min(self.label_limit), self.font_size, self.align(l, frac, pw), l.baseline);
         if l.row2.is_some() {
+            // Vega's text bounds grow a second row downward on either edge.
             ink.y2 += self.font_size + 2.0;
         }
         if self.angle != 0.0 {
@@ -758,7 +786,7 @@ impl TemporalXAxis {
 
     /// Joins the surviving labels' ink into `b` for a `pw` × `ph` plot.
     pub(crate) fn union_label_ink(&self, pw: f64, ph: f64, b: &mut Bounds, fonts: &FontBook) -> Result<(), String> {
-        let row_y = ph + self.label_top();
+        let row_y = self.edge.at(ph, self.label_top());
         let labels = self.labels_at(pw, fonts)?;
         for ((frac, l), keep) in labels.iter().zip(self.kept(&labels, pw)) {
             if keep {
@@ -767,8 +795,9 @@ impl TemporalXAxis {
             // A tick is a rule stroked its full width past its own ends (`boundStroke`), whether or not
             // parity hid its label: one at the plot's edge reaches past it.
             if self.ticks_visible {
-                let (x, y) = (pw * frac, ph + self.axis_offset);
-                b.union(&Bounds::new(x, y, x, y + self.tick_len).expand(self.tick_width));
+                let x = pw * frac;
+                let (near, far) = (self.edge.at(ph, self.axis_offset), self.edge.at(ph, self.axis_offset + self.tick_len));
+                b.union(&Bounds::new(x, near.min(far), x, near.max(far)).expand(self.tick_width));
             }
         }
         Ok(())
@@ -788,9 +817,10 @@ impl TemporalXAxis {
         let fs = self.font_size;
         // The drawn axis group is translated by half a pixel so 1px strokes
         // land on a pixel boundary; the fit measures the ink before it.
-        let axis_drop = self.axis_offset + 0.5;
+        let sign = self.edge.sign();
+        let group_y = plot_bottom + sign * self.axis_offset + 0.5;
         let labels = self.labels_at(plot_w, fonts)?;
-        crate::contract::axis_group_open(svg, crate::contract::AxisChannel::X, (plot_left + 0.5, plot_bottom + axis_drop))?;
+        crate::contract::axis_group_open(svg, crate::contract::AxisChannel::X, (plot_left + 0.5, group_y))?;
         if self.ticks_visible {
             for (frac, _) in &labels {
                 let gx = plot_left + (plot_w * frac).round() + 0.5;
@@ -798,22 +828,26 @@ impl TemporalXAxis {
                     svg,
                     "<line x1=\"{gx:.3}\" y1=\"{:.3}\" x2=\"{gx:.3}\" y2=\"{:.3}\" \
                      stroke=\"{}\" stroke-width=\"{}\"/>",
-                    plot_bottom + axis_drop,
-                    plot_bottom + axis_drop + self.tick_len,
+                    group_y,
+                    group_y + sign * self.tick_len,
                     xml_escape_attr(&self.tick_color),
                     self.tick_width
                 );
             }
         }
         let kept = self.kept(&labels, plot_w);
-        let anchor_y = plot_bottom + axis_drop + self.tick_eff() + self.label_pad;
-        let flat_y = anchor_y + vega_fit::baseline_shift("top", fs);
+        let anchor_y = group_y + sign * (self.tick_eff() + self.label_pad);
+        let flat_y = anchor_y + vega_fit::baseline_shift(self.edge.baseline(), fs);
         let mut reach = 0.0_f64;
         for ((frac, l), keep) in labels.iter().zip(&kept) {
             if !keep {
                 continue;
             }
-            reach = reach.max(self.ink(l, *frac, plot_w, 0.0).y2);
+            let ink = self.ink(l, *frac, plot_w, 0.0);
+            reach = reach.max(match self.edge {
+                crate::common::XEdge::Bottom => ink.y2,
+                crate::common::XEdge::Top => -ink.y1,
+            });
             let gx = plot_left + plot_w * frac + 0.5;
             if self.angle != 0.0 {
                 let text_anchor = self.anchor(l, *frac, plot_w);
@@ -854,15 +888,26 @@ impl TemporalXAxis {
                     xml_escape(text)
                 );
             };
-            row(flat_y, &l.text);
-            if let Some(row2) = &l.row2 {
-                row(flat_y + fs + 2.0, row2);
+            // The label block anchors on its far baseline: the second row hangs below the first
+            // under a bottom axis, and the first sits above the second over a top one.
+            match (&l.row2, self.edge) {
+                (Some(row2), crate::common::XEdge::Bottom) => {
+                    row(flat_y, &l.text);
+                    row(flat_y + fs + 2.0, row2);
+                }
+                (Some(row2), crate::common::XEdge::Top) => {
+                    row(flat_y - fs - 2.0, &l.text);
+                    row(flat_y, row2);
+                }
+                (None, _) => row(flat_y, &l.text),
             }
         }
         // Vega's `axisTitleLayout`: the title clears the label ink's own
         // reach past the anchor, then `titlePadding`.
         let title_fs = ax_x.title.font.size_or(11.0);
-        let title_y = anchor_y + reach + ax_x.title.padding.unwrap_or(10.0) + vega_fit::baseline_shift("top", title_fs);
+        let title_y = anchor_y
+            + sign * (reach + ax_x.title.padding.unwrap_or(10.0))
+            + vega_fit::baseline_shift(self.edge.baseline(), title_fs);
         crate::common::emit_axis_title_at(svg, &self.title_text, &ax_x.title, plot_left + plot_w / 2.0, title_y, self.title_key);
         crate::contract::axis_group_close(svg);
         Ok(())

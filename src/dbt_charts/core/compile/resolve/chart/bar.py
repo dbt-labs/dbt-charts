@@ -73,6 +73,7 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _CartesianTickResolution,
     _check_bar_layer_spans,
     _check_bar_span,
+    _check_layer_axis_kinds,
     _first_non_numeric_y,
     _numeric_y_values,
     _resolve_cartesian_ticks,
@@ -657,6 +658,7 @@ def _resolve_bar(
             hint=_bar_y_hint,
         )
     _check_bar_layer_spans(normalized, data, datasets, span_kind)
+    _check_layer_axis_kinds(normalized, data, datasets, span_kind)
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
     )
@@ -1174,6 +1176,7 @@ def _resolve_bar(
         data,
         datasets,
         normalized.id,
+        normalized.query.formats if normalized.query else None,
     )
     if authored_y_domain is not None:
         _check_layers_y_domain(normalized.id, resolved_layers, authored_y_domain)

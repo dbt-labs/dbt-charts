@@ -3,12 +3,9 @@ title: Region Detail
 notes: |
   Revenue trend and top products for one region, or all of them.
   Linked from link-examples.yml's dynamic URL example.
-
 source: examples_db
 
-style:
-  variables:
-    position: title-inline
+
 
 variables:
   region:

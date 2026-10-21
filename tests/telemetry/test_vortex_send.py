@@ -164,7 +164,7 @@ def test_unresponsive_endpoint_is_bounded_and_prints_nothing(
     env.pop("DO_NOT_TRACK", None)
     started = time.monotonic()
     result = subprocess.run(
-        [sys.executable, "-c", "from dbt_charts.cli.main import app; app()", "docs"],
+        [sys.executable, "-c", "from dbt_charts.cli.main import app; app()", "skills"],
         capture_output=True,
         text=True,
         encoding="utf-8",

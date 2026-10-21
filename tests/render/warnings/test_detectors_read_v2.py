@@ -12,7 +12,6 @@ from typing import Any
 
 from dbt_charts.core.compile.models.primitives import DEFAULT_REGIONAL
 from dbt_charts.core.diagnostics import (
-    WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER,
     WARN_PIE_DOMINANT_SEGMENT,
     WARN_REDUNDANT_ENCODING,
     WARN_TEMPORAL_SINGLE_POINT,
@@ -324,50 +323,6 @@ class TestTooManyXCategoriesReadsV2:
         codes = {w.code for w in warnings}
         assert WARN_TOO_MANY_X_CATEGORIES.code not in codes, (
             f"Did not expect TOO_MANY_X_CATEGORIES for 10 categories; got {codes}"
-        )
-
-
-class TestLikelyCurrencyOrPercentMissingFormatterReadsV2:
-    """LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER fires on V2-typed charts."""
-
-    def test_fires_on_v2_bar_with_unformatted_currency_y(self) -> None:
-        """Detector fires on a V2 bar chart with a currency-like y field and no format."""
-        from dbt_charts.core.render.warnings import (
-            likely_currency_or_percent_missing_formatter as detector,
-        )
-        from dbt_charts.core.render.warnings.base import WarningContext
-
-        chart = _compile_chart_v2(_VERTICAL_BAR, "bar1")
-        board = _make_v2_board({"bar1": chart})
-        ctx = WarningContext(
-            board_spec=board,
-            chart_results={"bar1": [{"cat": "A", "revenue": 1000}]},
-            vega_specs={"bar1": {"mark": "bar"}},
-        )
-        warnings = detector.detect(ctx)
-        codes = {w.code for w in warnings}
-        assert WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.code in codes, (
-            f"Expected LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER for 'revenue' y; got {codes}"
-        )
-
-    def test_no_fire_on_v2_bar_with_non_currency_y(self) -> None:
-        """Detector does NOT fire when y field does not look like currency/percent."""
-        from dbt_charts.core.render.warnings import (
-            likely_currency_or_percent_missing_formatter as detector,
-        )
-        from dbt_charts.core.render.warnings.base import WarningContext
-
-        chart = _compile_chart_v2("type: bar\nx: cat\ny: count\n", "bar1")
-        board = _make_v2_board({"bar1": chart})
-        ctx = WarningContext(
-            board_spec=board,
-            chart_results={"bar1": [{"cat": "A", "count": 5}]},
-            vega_specs={"bar1": {"mark": "bar"}},
-        )
-        warnings = detector.detect(ctx)
-        codes = {w.code for w in warnings}
-        assert WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.code not in codes, (
-            f"Did not expect formatter warning for 'count' y; got {codes}"
         )
 
 

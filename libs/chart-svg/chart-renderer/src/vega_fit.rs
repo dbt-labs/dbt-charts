@@ -568,11 +568,13 @@ pub struct FitMargins {
     /// axis (its own gutter joins the SAME left union), a title, and a
     /// legend, none of which have a right-side counterpart — a caller may
     /// only treat `raw_left` as the right reach too on a shape with NO
-    /// left value axis, title, or legend in its own `ink` closure (every
-    /// admitted line facet shape, and a bar facet's right-axis arm; a bar
-    /// facet's own left-axis shape refuses by name for exactly this
-    /// reason — `bar.rs`'s own `axis_y.position: "left"` refusal).
+    /// left value axis, title, or legend in its own `ink` closure (a
+    /// facet's right-axis arm); a left-axis arm reads [`Self::raw_right`].
     pub raw_left: f64,
+    /// `right` before the `.ceil()`: the drawn ink's own raw `b.x2 - pw`, never
+    /// negative. The right-side reach of a shape whose left side carries a value
+    /// axis, where [`Self::raw_left`] is the gutter instead.
+    pub raw_right: f64,
     /// The plot rect vl-convert's scenegraph reports: `vegaToScenegraph`
     /// makes only [`SCENEGRAPH_PADDING_PASSES`] of the SVG's three padding
     /// passes, so on a sequence that has not converged it is one pass behind
@@ -665,6 +667,7 @@ pub fn fit_passes(
     let mut ph = view_h;
     let (mut left, mut top, mut right, mut bottom) = (0.0, 0.0, 0.0, 0.0);
     let mut raw_left = 0.0;
+    let mut raw_right = 0.0;
     let mut scenegraph_plot = (pw, ph);
     for pass in 1..=passes {
         let mut b = Bounds::new(0.0, 0.0, pw, ph);
@@ -676,7 +679,8 @@ pub fn fit_passes(
         raw_left = (-b.x1).max(0.0);
         left = raw_left.ceil();
         top = (-b.y1).ceil().max(0.0);
-        right = (b.x2 - pw).ceil().max(0.0);
+        raw_right = (b.x2 - pw).max(0.0);
+        right = raw_right.ceil();
         bottom = (b.y2 - ph).ceil().max(0.0);
         if !fixed_width {
             pw = (avail_w - left - right).max(0.0);
@@ -706,7 +710,7 @@ pub fn fit_passes(
         let (tx, ty) = title_layout(&drawn, t);
         (if pad_l > 0.0 { tx.max(-left) } else { tx }, ty)
     });
-    FitMargins { left, top, right, bottom, plot_w: pw, plot_h: ph, title_pos, raw_left, scenegraph_plot }
+    FitMargins { left, top, right, bottom, plot_w: pw, plot_h: ph, title_pos, raw_left, raw_right, scenegraph_plot }
 }
 
 /// Lay out `autosize: {type: pad, contains: padding}` — the mode production
@@ -734,15 +738,17 @@ pub fn pad_plot(
         b.union(&Bounds::new(tx, ty + t.dy_quirk, tx + t.width, ty + t.dy_quirk + t.ink_h));
     }
     let raw_left = (-b.x1).max(0.0);
+    let raw_right = (b.x2 - pw).max(0.0);
     FitMargins {
         left: raw_left.ceil(),
         top: (-b.y1).ceil().max(0.0),
-        right: (b.x2 - pw).ceil().max(0.0),
+        right: raw_right.ceil(),
         bottom: (b.y2 - ph).ceil().max(0.0),
         plot_w: pw,
         plot_h: ph,
         title_pos: placed.map(|(_, pos)| pos),
         raw_left,
+        raw_right,
         scenegraph_plot: (pw, ph),
     }
 }

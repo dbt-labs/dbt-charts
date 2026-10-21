@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any, overload
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+    from dbt_charts.core.compile.models.style.theme import Style
     from dbt_charts.core.project import ProjectDirectory
 
 from dbt_charts.core.compile.config import cap_html_policy, resolve_html_policy_ceiling
@@ -106,9 +107,9 @@ from dbt_charts.core.compile.normalize.variables import (
     VariableReferenceErrors,
     build_variable_registry,
     compute_variable_dependencies,
-    detect_variable_input_type,
     expand_chart_variable_dependencies,
     generate_layout_variables,
+    infer_variable_input,
     promote_column_option_queries,
     promote_inline_option_queries,
     validate_authored_variable_name,
@@ -116,8 +117,17 @@ from dbt_charts.core.compile.normalize.variables import (
     validate_variable_references,
     validate_variable_value,
 )
-from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
+from dbt_charts.core.compile.resolve.style.board import (
+    resolve_chart_style_context,
+    resolve_style,
+    resolve_style_and_context,
+)
+from dbt_charts.core.compile.resolve.style.sharing import share_unchanged
 from dbt_charts.core.compile.template.jinja import text_query_references
+from dbt_charts.core.compile.template.listings import (
+    check_listing_calls,
+    reject_listing_calls,
+)
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_LINKS_NESTED,
     ERR_REGIONAL_NESTED_MISMATCH,
@@ -297,6 +307,12 @@ def _with_nested_layout_gap(
     return patch.model_copy(update={"gap": layout_patch["gap"]})
 
 
+# Variable fields the compiler sets itself; never what the author wrote.
+_INFERRED_VARIABLE_FIELDS = frozenset(
+    {"defined_in_other_file", "input_auto_detected", "authored_fields"}
+)
+
+
 def compile_board_resolved_style(
     board_style: StylePatch | None,
     parent_resolved: ResolvedStyle | None,
@@ -354,7 +370,7 @@ def compile_board_resolved_style(
     read its authored or inherited ``layout.<type>.gap``
     (``_with_nested_layout_gap``). Left
     ``None`` where it is not yet known — ``normalize_board`` resolves a board
-    before its layout exists, and the parent's ``_propagate_resolved_style``
+    before its layout exists, and the root's ``_propagate_resolved_style``
     re-resolves every nested board with the type afterward.
     """
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
@@ -401,12 +417,18 @@ def compile_board_resolved_style(
         if merged_patch is not None and is_nested:
             merged_patch = _with_nested_layout_gap(merged_patch, layout_type)
         return (
-            *resolve_style_and_context(
+            *_shared_with_parent(
+                resolve_style_and_context(
+                    base,
+                    merged_patch,
+                    base_background=bottom_layer,
+                    currency=currency,
+                    language=language,
+                ),
+                parent_resolved,
+                parent_context,
                 base,
-                merged_patch,
-                base_background=bottom_layer,
-                currency=currency,
-                language=language,
+                language,
             ),
             inherited_patch,
         )
@@ -439,17 +461,49 @@ def compile_board_resolved_style(
         # cache from another's by identity. The copy shares the whole
         # resolved tree -- what the memo skips is the cascade, not the
         # allocation.
-        return copy.copy(cached[0]), cached[1], own_patch
+        resolved, context = _shared_with_parent(
+            cached, parent_resolved, parent_context, base, language
+        )
+        return copy.copy(resolved), context, own_patch
 
-    resolved = resolve_style_and_context(
+    resolved = _shared_with_parent(
+        resolve_style_and_context(
+            base,
+            resolve_patch,
+            base_background=bottom_layer,
+            currency=currency,
+            language=language,
+        ),
+        parent_resolved,
+        parent_context,
         base,
-        resolve_patch,
-        base_background=bottom_layer,
-        currency=currency,
-        language=language,
+        language,
     )
     cache[key] = resolved
     return (*resolved, own_patch)
+
+
+def _shared_with_parent(
+    products: _CascadeProducts,
+    parent_resolved: ResolvedStyle | None,
+    parent_context: ChartStyleContext | None,
+    base: Style,
+    language: LanguageCode,
+) -> _CascadeProducts:
+    """*products*, reusing every subtree equal to the parent board's.
+
+    A board resolved without a parent shares with its theme's unpatched
+    products instead. The board still gets its own ``ResolvedStyle`` object
+    (see the identity note above).
+    """
+    if parent_resolved is None or parent_context is None:
+        parent_resolved = resolve_style(base, language=language)
+        parent_context = resolve_chart_style_context(base, language=language)
+    resolved, context = products
+    resolved = share_unchanged(resolved, parent_resolved)
+    if resolved is parent_resolved:
+        resolved = copy.copy(resolved)
+    return resolved, share_unchanged(context, parent_context)
 
 
 def _block_font_sets_prose_font(style: StylePatch) -> StylePatch:
@@ -887,13 +941,16 @@ def normalize_board(
 
     # Auto-detect input type when set to "auto" (the default)
     for var in local_variables.values():
-        was_auto = var.input == "auto"
-        var.input = detect_variable_input_type(var)
-        # Only flag select as refinable — multiselect has multi-value semantics
-        # that can't map to datepicker/checkbox/slider, and strong structural
-        # signals (bool → checkbox, min/max → slider) shouldn't be overridden.
-        if was_auto and var.input == "select":
-            var.input_auto_detected = True
+        # Not `not var.authored_fields`: a variable the author wrote nothing on
+        # has an empty set that is already settled, and a second pass must not
+        # read its inferred `input` as authored.
+        if "authored_fields" not in var.model_fields_set:
+            # `input: auto` asks for inference; it is not a value to judge.
+            asked_auto = {"input"} if var.input == "auto" else set()
+            var.authored_fields = frozenset(
+                var.model_fields_set - _INFERRED_VARIABLE_FIELDS - asked_auto
+            )
+        infer_variable_input(var)
 
     # Promote inline SQL in variable options.query to synthetic named queries
     promote_inline_option_queries(
@@ -1025,6 +1082,7 @@ def normalize_board(
                     defined=sorted(query_registry),
                 )
             local_queries.setdefault(query_name, query_registry[query_name])
+    check_listing_calls(board.title, board.text)
     _pull_chart_text_queries(charts, query_registry, local_queries, False)
 
     # Expand transitive variable dependencies (A→B→C means chart depends on A, B, C)
@@ -1122,13 +1180,16 @@ def normalize_board(
         path_prefix=path_prefix,
     )
 
-    _propagate_resolved_style(
-        layout,
-        resolved_style,
-        chart_style_context,
-        own_style_patch,
-        parent_theme_name=theme,
-    )
+    # The root's walk re-resolves every nested board against its real parent,
+    # so a nested board's own walk would only be overwritten.
+    if depth == 0:
+        _propagate_resolved_style(
+            layout,
+            resolved_style,
+            chart_style_context,
+            own_style_patch,
+            parent_theme_name=theme,
+        )
 
     # Auto-generate hidden variables for tabs/details widgets
     auto_variables = generate_layout_variables(layout)
@@ -1260,6 +1321,7 @@ def _pull_chart_text_queries(
     for chart in charts.values():
         label = (chart.source_path or chart.id) if inline else chart.id
         for field in display_text_fields(chart.type):
+            reject_listing_calls(getattr(chart, field), f"chart '{label}' {field}")
             for name in sorted(text_query_references([getattr(chart, field)])):
                 key = chart.text_queries[name]
                 if key not in query_registry:

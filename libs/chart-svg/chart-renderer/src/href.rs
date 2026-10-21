@@ -96,9 +96,7 @@ pub(crate) fn vega_encode_field(s: &str) -> String {
 }
 
 /// JS `'' + value` for a datum field. A missing key is `undefined`; a number
-/// prints in JS decimal notation (`197199.0` is `197199`), so one outside
-/// `[1e-6, 1e21)`, where JS switches to exponent form, refuses by name, as
-/// does an array or object.
+/// prints as JS `String(number)`, an array or object is no scalar.
 pub(crate) fn js_string(value: Option<&Value>) -> Result<String, String> {
     match value {
         None => Ok("undefined".into()),
@@ -107,15 +105,110 @@ pub(crate) fn js_string(value: Option<&Value>) -> Result<String, String> {
         Some(Value::String(s)) => Ok(s.clone()),
         Some(Value::Number(n)) => {
             let f = n.as_f64().ok_or_else(|| format!("link value {n}: not an f64"))?;
-            if f == 0.0 {
-                Ok("0".into())
-            } else if (1e-6..1e21).contains(&f.abs()) {
-                Ok(f.to_string())
-            } else {
-                Err(format!("link value {n}: JS prints it in exponent notation, not supported"))
-            }
+            Ok(crate::families::color_scale::js_number_string(f))
         }
         Some(other) => Err(format!("link value {other}: not a scalar")),
+    }
+}
+
+/// The href of a mark whose datum carries no link value (a stack's total
+/// label reads an aggregate row): Vega writes `undefined`, which Vega-Lite's
+/// converter resolves against its data URL base.
+pub(crate) const UNDEFINED_HREF: &str = "https://vega.github.io/vega-datasets/undefined";
+
+/// How a link channel prints its column: `'' + datum[field]`, or
+/// `timeFormat(datum[field], '%Y-%m-%d')` for a date field, which a field
+/// Vega keeps as a string (an ordinal band) reads as an invalid date.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum LinkText {
+    Raw,
+    Date,
+    InvalidDate,
+    /// A date the renderer already holds as a day number.
+    Days,
+}
+
+/// The column a link channel reads and how it prints.
+#[derive(Clone, Copy)]
+pub(crate) struct LinkField<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) text: LinkText,
+}
+
+impl<'a> LinkField<'a> {
+    pub(crate) fn raw(name: &'a str) -> Self {
+        Self { name, text: LinkText::Raw }
+    }
+}
+
+/// A Vega-Lite family's per-datum `link` (`ClickInteractivityFeature`): the
+/// template, how it opens, and the column each channel placeholder reads.
+/// A channel the chart does not encode is a template error.
+pub(crate) struct DatumLink<'a> {
+    pub(crate) template: &'a str,
+    pub(crate) open: LinkOpen,
+    pub(crate) x: LinkField<'a>,
+    pub(crate) y: Option<LinkField<'a>>,
+    pub(crate) color: Option<LinkField<'a>>,
+}
+
+/// The link of the first datum at each x, keyed `(x, "")`: what a plain support-table
+/// cell reads.
+pub(crate) fn first_datum_links(
+    link: Option<&DatumLink>,
+    rows: &[serde_json::Map<String, Value>],
+    x_field: &str,
+) -> Result<std::collections::HashMap<(String, String), String>, String> {
+    let mut links = std::collections::HashMap::new();
+    let Some(link) = link else { return Ok(links) };
+    for row in rows {
+        if let std::collections::hash_map::Entry::Vacant(slot) = links.entry((crate::common::row_str(row, x_field), String::new())) {
+            slot.insert(link.href(row)?);
+        }
+    }
+    Ok(links)
+}
+
+/// The anchor around a datum's mark: `href` is the link's value for it.
+pub(crate) fn anchor_for<'h>(link: Option<&DatumLink>, href: &'h Option<String>) -> Option<Anchor<'h>> {
+    link.and_then(|link| link.open.anchor(href.as_deref()))
+}
+
+impl DatumLink<'_> {
+    /// The href of `row`'s datum.
+    pub(crate) fn href(&self, row: &serde_json::Map<String, Value>) -> Result<String, String> {
+        resolve_channel_href(self.template, |channel| {
+            let field = match channel {
+                "x" => Some(self.x),
+                "y" => self.y,
+                "color" => self.color,
+                _ => None,
+            }
+            .ok_or_else(|| format!("link template references channel '{{{{ {channel} }}}}' but chart has no '{channel}' encoding assigned"))?;
+            // A date x floored to its time bucket still links the date it carried.
+            let cell = if channel == "x" { row.get(crate::common::RAW_X).or_else(|| row.get(field.name)) } else { row.get(field.name) };
+            match field.text {
+                LinkText::Raw => js_string(cell),
+                LinkText::InvalidDate => Ok("0NaN-NaN-NaN".to_string()),
+                LinkText::Days => {
+                    let day = cell.and_then(Value::as_f64).ok_or_else(|| format!("link value {cell:?}: not a day number"))?;
+                    let (year, month, day) = crate::families::temporal::civil_from_days(day as i64);
+                    Ok(format!("{year:04}-{month:02}-{day:02}"))
+                }
+                LinkText::Date => match cell.and_then(crate::families::heatmap::date_cell_day) {
+                    Some(day) => {
+                        let (year, month, day) = crate::families::temporal::civil_from_days(day.floor() as i64);
+                        Ok(format!("{year:04}-{month:02}-{day:02}"))
+                    }
+                    // A labeled bucket (`2024-Q1`) reads as its start date.
+                    None => match cell.and_then(Value::as_str).and_then(crate::families::temporal::parse_bucket_string) {
+                        Some((year, month, day)) => Ok(format!("{year:04}-{month:02}-{day:02}")),
+                        // `timeFormat` of an invalid date prints NaN for every field.
+                        None => Ok("0NaN-NaN-NaN".to_string()),
+                    },
+                },
+            }
+        })
     }
 }
 
@@ -358,8 +451,10 @@ mod tests {
     }
 
     #[test]
-    fn js_coercion_refuses_what_it_does_not_model() {
-        for value in [json!(1e21), json!(1e-7), json!([1]), json!({"a": 1})] {
+    fn js_coercion_spells_exponents_and_refuses_non_scalars() {
+        assert_eq!(js_string(Some(&json!(1e21))).unwrap(), "1e+21");
+        assert_eq!(js_string(Some(&json!(1.5e-7))).unwrap(), "1.5e-7");
+        for value in [json!([1]), json!({"a": 1})] {
             assert!(js_string(Some(&value)).unwrap_err().starts_with("link value"), "{value}");
         }
     }

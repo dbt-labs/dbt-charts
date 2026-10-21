@@ -504,6 +504,71 @@ class TestQueryBoardUnboundVariables:
         assert result.success is True
         assert result.data == [{"n": 1}]
 
+    @pytest.mark.parametrize("preset", ["today", "last_7_days"])
+    def test_a_preset_binds_as_todays_window(
+        self,
+        preset: str,
+        tmp_path: Path,
+        registry: AdapterRegistry,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        board = _DATE_RANGE_BOARD.replace("date '2024-01-05'", "current_date").replace(
+            "    input: daterange\n", "    input: daterange\n    default: today\n"
+        )
+        path = _write_board(tmp_path, board)
+        result = query_board(
+            "by_day",
+            path,
+            local_project(tmp_path),
+            vars={"date_range": preset},
+            adapter_registry=registry,
+        )
+
+        assert result.success is True, result.errors
+        assert result.data == [{"n": 1}]
+
+    def test_an_unknown_preset_names_the_presets(
+        self,
+        tmp_path: Path,
+        registry: AdapterRegistry,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        path = _write_board(tmp_path, _DATE_RANGE_BOARD)
+        result = query_board(
+            "by_day",
+            path,
+            local_project(tmp_path),
+            vars={"date_range": "last_91_days"},
+            adapter_registry=registry,
+        )
+
+        assert result.success is False
+        assert "last_90_days" in result.errors[0]
+
+    def test_a_malformed_date_is_rejected_before_the_query(
+        self,
+        tmp_path: Path,
+        registry: AdapterRegistry,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        path = _write_board(tmp_path, _DATE_RANGE_BOARD)
+        result = query_board(
+            "by_day",
+            path,
+            local_project(tmp_path),
+            vars={"date_range": '["2024-01-01", "nope"]'},
+            adapter_registry=registry,
+        )
+
+        assert result.success is False
+        assert "ISO date" in result.errors[0]
+
 
 class TestQueryBoardPathSecurity:
     def test_path_escape_rejected(

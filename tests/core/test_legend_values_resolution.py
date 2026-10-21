@@ -181,7 +181,7 @@ class TestAuthoredValuesSurvive:
             y=["net_revenue", "gross_revenue"],
         )
         # The raw column name resolves to its humanized label.
-        assert _color_legend_values(spec) == ["gross revenue", "net revenue"]
+        assert _color_legend_values(spec) == ["Gross revenue", "Net revenue"]
 
     def test_wide_bar_resolves_even_with_an_empty_authored_palette(self, make_chart):
         # style.color.categorical.palette: [] is legal authored YAML
@@ -207,7 +207,7 @@ class TestAuthoredValuesSurvive:
             x="month",
             y=["actual_revenue", "forecast_revenue"],
         )
-        assert _color_legend_values(spec) == ["actual revenue"]
+        assert _color_legend_values(spec) == ["Actual revenue"]
 
     def test_wide_bar_humanized_label(self, make_chart):
         rows = [
@@ -220,14 +220,14 @@ class TestAuthoredValuesSurvive:
             {
                 "orientation": "vertical",
                 "stack": "zero",
-                "legend": {"values": ["gross revenue", "net revenue"]},
+                "legend": {"values": ["Gross revenue", "Net revenue"]},
                 "endpoint_labels": {"visible": False},
             },
             rows,
             x="month",
             y=["net_revenue", "gross_revenue"],
         )
-        assert _color_legend_values(spec) == ["gross revenue", "net revenue"]
+        assert _color_legend_values(spec) == ["Gross revenue", "Net revenue"]
 
     def test_wide_bar_humanized_label_carries_the_unit_suffix(self, make_chart):
         """`net_revenue`/`gross_revenue` (the sibling test above) humanize
@@ -252,7 +252,7 @@ class TestAuthoredValuesSurvive:
             x="month",
             y=["revenue_usd", "units_sold"],
         )
-        assert _color_legend_values(spec) == ["units sold", "revenue ($)"]
+        assert _color_legend_values(spec) == ["Units sold", "Revenue ($)"]
 
     def test_wide_bar_with_dimension_raw_composite_resolves_to_humanized_form(
         self, make_chart
@@ -283,7 +283,7 @@ class TestAuthoredValuesSurvive:
             y=["revenue_usd", "cost"],
             color="region",
         )
-        assert _color_legend_values(spec) == ["west - revenue ($)"]
+        assert _color_legend_values(spec) == ["west - Revenue ($)"]
 
     def test_wide_bar_with_dimension_bare_measure_name_is_unmatched(self, make_chart):
         """The bare raw measure name alone ("revenue_usd", no dimension
@@ -312,10 +312,10 @@ class TestAuthoredValuesSurvive:
             color="region",
         )
         assert _color_legend_values(spec) == [
-            "west - cost",
-            "east - cost",
-            "west - revenue ($)",
-            "east - revenue ($)",
+            "west - Cost",
+            "east - Cost",
+            "west - Revenue ($)",
+            "east - Revenue ($)",
         ]
 
     def test_field_colored_overlay(self, make_chart):
@@ -333,7 +333,7 @@ class TestAuthoredValuesSurvive:
             {
                 "orientation": "vertical",
                 "stack": "zero",
-                "legend": {"values": ["B", "A", "target"]},
+                "legend": {"values": ["B", "A", "Target"]},
             },
             rows,
             x="month",
@@ -341,7 +341,7 @@ class TestAuthoredValuesSurvive:
             color="series",
             layers=[LineLayer(type="line", y="target")],
         )
-        assert _color_legend_values(spec, overlay=True) == ["B", "A", "target"]
+        assert _color_legend_values(spec, overlay=True) == ["B", "A", "Target"]
 
     def test_field_colored_overlay_layer_legend_carries_no_raw_values(self, make_chart):
         """Regression: apply_color_legend ran on EVERY layer's own color
@@ -362,7 +362,7 @@ class TestAuthoredValuesSurvive:
             {
                 "orientation": "vertical",
                 "stack": "zero",
-                "legend": {"values": ["B", "A", "target"]},
+                "legend": {"values": ["B", "A", "Target"]},
             },
             rows,
             x="month",
@@ -390,7 +390,7 @@ class TestAuthoredValuesSurvive:
             {
                 "orientation": "vertical",
                 "stack": "zero",
-                "legend": {"visible": True, "values": ["target", "value"]},
+                "legend": {"visible": True, "values": ["Target", "Value"]},
                 "endpoint_labels": {"visible": False},
             },
             rows,
@@ -398,7 +398,7 @@ class TestAuthoredValuesSurvive:
             y="value",
             layers=[LineLayer(type="line", y="target")],
         )
-        assert _color_legend_values(spec, overlay=True) == ["target", "value"]
+        assert _color_legend_values(spec, overlay=True) == ["Target", "Value"]
 
 
 class TestOtherFamiliesResolveToo:
@@ -569,46 +569,51 @@ class TestWideMeasureAllNullDoesNotRaise:
             "area",
             {
                 "stack": "none",
-                "legend": {"visible": True, "values": ["revenue", "cost"]},
+                "legend": {"visible": True, "values": ["Revenue", "Cost"]},
                 "endpoint_labels": {"visible": False},
             },
             rows,
             x="month",
             y=["revenue", "cost"],
         )
-        assert _color_legend_values(spec) == ["revenue", "cost"]
+        assert _color_legend_values(spec) == ["Revenue", "Cost"]
 
-    def test_overlay_base_label_resolves_when_layer_color_column_is_all_null(
-        self, make_chart
-    ):
-        """Regression: infer_vega_type_from_data returns "quantitative" for
-        an all-null column (nulls are skipped, so all_numeric stays True by
-        vacuous truth) -- a layer whose color column happens to be
-        all-null in this render must resolve the same authored entry the
-        same board resolves once that column has any non-null value, not
-        divert into a different (unmatched) outcome just because this
-        render's data shape changed the inferred VL type."""
+    def test_a_layer_color_column_that_is_all_null_is_refused_by_name(self, make_chart):
+        """A layer colored by an all-null column is refused, whatever the
+        authored legend `values` name.
+
+        An earlier version pinned that the base label still resolved in the
+        spec when the layer's color column held no values. The spec resolved,
+        but the board it describes does not render: Vega-Lite builds the empty
+        color scale into a `NaN` legend and every mark collapses to zero height
+        (`ERR-CHART-PAINTED-NO-MARKS`). Resolving the legend entry of a chart
+        that cannot draw was the wrong thing to protect."""
         from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+        from dbt_charts.core.diagnostics.chart_data import ChartDataError
 
         rows = [
             {"month": "Jan", "value": 10, "target": 5, "kind": None},
             {"month": "Feb", "value": 15, "target": 8, "kind": None},
         ]
-        spec = _render(
-            make_chart,
-            "bar",
-            {
-                "orientation": "vertical",
-                "stack": "zero",
-                "legend": {"visible": True, "values": ["Alpha", "Beta"]},
-                "endpoint_labels": {"visible": False},
-            },
-            rows,
-            x="month",
-            y="value",
-            layers=[LineLayer(type="line", y="target", color="kind", label="Alpha")],
-        )
-        assert _color_legend_values(spec, overlay=True) == ["Alpha"]
+        with pytest.raises(ChartDataError) as err:
+            _render(
+                make_chart,
+                "bar",
+                {
+                    "orientation": "vertical",
+                    "stack": "zero",
+                    "legend": {"visible": True, "values": ["Alpha", "Beta"]},
+                    "endpoint_labels": {"visible": False},
+                },
+                rows,
+                x="month",
+                y="value",
+                layers=[
+                    LineLayer(type="line", y="target", color="kind", label="Alpha")
+                ],
+            )
+        assert err.value.code is not None
+        assert err.value.code.code == "ERR-LAYER-COLOR-ALL-NULL"
 
 
 class TestWideMeasureLabelBakingKeepsRawSeriesIdentity:
@@ -639,7 +644,7 @@ class TestWideMeasureLabelBakingKeepsRawSeriesIdentity:
             y=["revenue_total", "revenue_usd"],
         )
         color_scale = chart_pane(spec)["encoding"]["color"]["scale"]
-        assert color_scale["domain"] == ["revenue ($)", "revenue total"]
+        assert color_scale["domain"] == ["Revenue ($)", "Revenue total"]
 
 
 class TestWideMeasureHumanizationCollisionFallsBackToRawNames:
@@ -702,7 +707,7 @@ class TestWideMeasureHumanizationCollisionFallsBackToRawNames:
         ) == {
             "churn_pct": "churn_pct",
             "churn_percent": "churn_percent",
-            "revenue_usd": "revenue ($)",
+            "revenue_usd": "Revenue ($)",
         }
 
     def test_a_second_order_collision_through_the_raw_fallback_itself_falls_back_too(
@@ -1067,7 +1072,7 @@ class TestUnresolvedValuesDropWithoutRaising:
             x="month",
             y=["net_revenue", "gross_revenue"],
         )
-        assert _color_legend_values(spec) == ["net revenue", "gross revenue"]
+        assert _color_legend_values(spec) == ["Net revenue", "Gross revenue"]
 
     def test_single_series_base_overlay_falls_back_to_engine_order(self, make_chart):
         # No color: on the base -- this is the base_label arm (base label
@@ -1092,7 +1097,7 @@ class TestUnresolvedValuesDropWithoutRaising:
             y="value",
             layers=[LineLayer(type="line", y="target")],
         )
-        assert _color_legend_values(spec, overlay=True) == ["value", "target"]
+        assert _color_legend_values(spec, overlay=True) == ["Value", "Target"]
 
     def test_colorless_overlay_with_non_quantitative_base_y_keeps_the_authored_entry(
         self, make_chart
@@ -1111,7 +1116,7 @@ class TestUnresolvedValuesDropWithoutRaising:
             make_chart,
             "scatter",
             {
-                "legend": {"visible": True, "values": ["target"]},
+                "legend": {"visible": True, "values": ["Target"]},
             },
             rows,
             x="cat",
@@ -1119,7 +1124,7 @@ class TestUnresolvedValuesDropWithoutRaising:
             layers=[LineLayer(type="line", y="target")],
         )
         layer_color = chart_pane(spec)["layer"][1]["encoding"]["color"]
-        assert layer_color["legend"]["values"] == ["target"]
+        assert layer_color["legend"]["values"] == ["Target"]
 
     def test_single_series_base_with_field_colored_layer_does_not_raise(
         self, make_chart
@@ -1139,7 +1144,7 @@ class TestUnresolvedValuesDropWithoutRaising:
             make_chart,
             "bar",
             {
-                "legend": {"visible": True, "values": ["Gamma", "value"]},
+                "legend": {"visible": True, "values": ["Gamma", "Value"]},
                 "endpoint_labels": {"visible": False},
             },
             rows,
@@ -1147,7 +1152,7 @@ class TestUnresolvedValuesDropWithoutRaising:
             y="value",
             layers=[LineLayer(type="line", y="target", color="kind")],
         )
-        assert _color_legend_values(spec, overlay=True) == ["value"]
+        assert _color_legend_values(spec, overlay=True) == ["Value"]
 
     def test_field_colored_overlay_unresolved_entry_does_not_raise(self, make_chart):
         # scale_domain here is base_series (query data) plus layer labels.
@@ -1175,7 +1180,7 @@ class TestUnresolvedValuesDropWithoutRaising:
             color="series",
             layers=[LineLayer(type="line", y="target")],
         )
-        assert _color_legend_values(spec, overlay=True) == ["A", "B", "target"]
+        assert _color_legend_values(spec, overlay=True) == ["A", "B", "Target"]
 
 
 class TestWideEndpointLabelColorMatchesMainScale:

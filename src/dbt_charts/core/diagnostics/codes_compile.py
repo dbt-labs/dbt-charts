@@ -125,6 +125,41 @@ ERR_TEXT_QUERIES_NONLITERAL = REGISTRY.register(
     )
 )
 
+ERR_TEXT_LISTING_NONLITERAL = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TEXT-LISTING-NONLITERAL",
+        domain="compile",
+        title="Text lists boards without a literal pattern",
+        message_template=(
+            "{function} takes exactly one literal string pattern, e.g. {function}('*')."
+        ),
+        doc=(
+            "Fired when board `text:` calls `glob_boards` or `glob_folders` with "
+            "anything but one string literal, or uses the name without calling it. "
+            "The files a board lists must be known before it renders."
+        ),
+        summary="Fired when `glob_boards`/`glob_folders` get a non-literal pattern.",
+        docs_topic="board",
+    )
+)
+
+ERR_TEXT_LISTING_PATTERN = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TEXT-LISTING-PATTERN",
+        domain="compile",
+        title="Invalid board listing",
+        message_template="{function}({pattern!r}): {reason}",
+        doc=(
+            "Fired at compile when `glob_boards`/`glob_folders` is called "
+            "outside board `text:` (a board title or chart text), and at "
+            "render when a pattern leaves the listing board's root (`charts/`) "
+            "or the board has no file location."
+        ),
+        summary="Fired when a board listing pattern or call site is invalid.",
+        docs_topic="board",
+    )
+)
+
 ERR_EXTRA_FIELD = REGISTRY.register(
     ErrorCode(
         code="ERR-EXTRA-FIELD",
@@ -529,6 +564,70 @@ ERR_BAR_Y_NOT_NUMERIC = REGISTRY.register(
     )
 )
 
+ERR_LAYER_BASELINE_ON_DATE_MEASURE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LAYER-BASELINE-ON-DATE-MEASURE",
+        domain="compile",
+        title="A bar or area layer has no baseline on a date axis",
+        message_template=(
+            "{field_path} has type {layer_type}, which grows from a baseline, but "
+            "this bar's value axis holds dates, which have none. Give a bar layer "
+            "a `y_start` to span two dates, or plot the dates as a `scatter` or "
+            "`line` layer."
+        ),
+        doc=(
+            "A bar between two date columns puts dates on its value axis. A layer "
+            "that grows from a zero baseline (a bar without `y_start`, or an area) "
+            "has no zero on it, so it is refused. A layer pinned to its own axis "
+            "with `axis_y.position` keeps its own numeric scale."
+        ),
+        summary="Bar or area layer without a baseline over a date measure.",
+        docs_topic="charts",
+    )
+)
+
+ERR_LAYER_MIXED_AXES_ON_DATE_MEASURE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LAYER-MIXED-AXES-ON-DATE-MEASURE",
+        domain="compile",
+        title="Layers over a date axis cannot mix pinned and unpinned sides",
+        message_template=(
+            "{field_path}: this bar's value axis holds dates, and some layers pin "
+            "`axis_y.position` while others do not. A pinned layer gets a numeric "
+            "scale of its own, so the others' dates would have nowhere to draw. "
+            "Pin every layer, or none."
+        ),
+        doc=(
+            "Layers over a date-measure bar share its date axis unless one pins a "
+            "side. Pinning makes the layers' scales independent, and a date column "
+            "cannot ride a numeric one."
+        ),
+        summary="Pinned and unpinned layers over a date measure.",
+        docs_topic="charts",
+    )
+)
+
+ERR_LAYER_Y_KIND_MISMATCH = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LAYER-Y-KIND-MISMATCH",
+        domain="compile",
+        title="A layer's y column does not fit the axis it plots on",
+        message_template=(
+            "{field_path}: column {y_field!r} holds {y_kind} values, but it plots on "
+            "{axis_where}, which takes {axis_kind} values. Plot a {axis_kind} column "
+            "there."
+        ),
+        doc=(
+            "A layer on a bar's value axis shares its scale, so its `y` must be the "
+            "same kind as the bar's: dates over a date measure, numbers over a "
+            "numeric bar. A layer pinned with `axis_y.position` gets a numeric scale "
+            "of its own. A column of the wrong kind draws no marks."
+        ),
+        summary="Layer y column of the wrong kind for its axis.",
+        docs_topic="charts",
+    )
+)
+
 ERR_BAR_Y_START_NULL = REGISTRY.register(
     ErrorCode(
         code="ERR-BAR-Y-START-NULL",
@@ -784,6 +883,27 @@ ERR_LOG_SCALE_REQUIRES_POSITIVE_DATA = REGISTRY.register(
             "Filter out the non-positive rows, or drop the log scale."
         ),
         summary="Fired when a log y-axis scale is used but the data contains a value at or below zero.",
+        docs_topic="charts",
+    )
+)
+
+ERR_LOG_SCALE_REQUIRES_POSITIVE_X_DATA = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LOG-SCALE-REQUIRES-POSITIVE-X-DATA",
+        domain="compile",
+        title="Log x scale requires strictly positive data",
+        message_template=(
+            "Chart {chart_id!r}: column {x_field!r} has a value <= 0, but "
+            "axis_x.scale.type: log requires strictly positive data; a log "
+            "domain is undefined at and below zero. Filter out the "
+            "non-positive rows, or drop the log scale."
+        ),
+        doc=(
+            "Fired when `axis_x.scale.type: log` is used but the x column "
+            "contains a value ≤ 0. A log domain is undefined at and below zero. "
+            "Filter out the non-positive rows, or drop the log scale."
+        ),
+        summary="Fired when a log x-axis scale is used but the data contains a value at or below zero.",
         docs_topic="charts",
     )
 )
@@ -1834,6 +1954,29 @@ WARN_SCHEMA_MIGRATED = REGISTRY.register(
     )
 )
 
+WARN_UNREFERENCED_QUERY = REGISTRY.register(
+    WarningCode(
+        code="WARN-UNREFERENCED-QUERY",
+        domain="compile",
+        redundant=True,
+        title="Query is defined but nothing reads it",
+        message_template=(
+            "Query `{query}` is not used by any chart, variable, text or query; "
+            "remove it."
+        ),
+        fix_template="Delete the query, or reference it from a chart or variable.",
+        doc=(
+            "Fires at compile time for a query defined in the board tree that no "
+            "chart (or layer), variable option list or `enabled`/`visible` probe, "
+            "board title or text, or other query's `{{ queries.<name> }}` reads. "
+            "A chart-focused board is judged against the unfocused one. Emitted by "
+            "`compile/validate/board_warnings.py`."
+        ),
+        summary="Fired when a query is defined but no chart, variable, text or query reads it.",
+        docs_topic="queries",
+    )
+)
+
 WARN_UNREFERENCED_CHART = REGISTRY.register(
     WarningCode(
         code="WARN-UNREFERENCED-CHART",
@@ -1881,47 +2024,68 @@ WARN_INHERITED_LAYOUT_REPLACED = REGISTRY.register(
     )
 )
 
-WARN_REDUNDANT_AUTHORED_LABEL = REGISTRY.register(
+WARN_RESTATED_STYLE = REGISTRY.register(
     WarningCode(
-        code="WARN-REDUNDANT-AUTHORED-LABEL",
+        code="WARN-RESTATED-STYLE",
         domain="compile",
         redundant=True,
-        title="Variable label is the same as the inferred display name",
-        message_template=(
-            "Variable {var_name!r} sets label to {authored_label!r}, "
-            "which is already inferred from the variable name."
-        ),
+        title="Authored style equals the value it inherits",
+        message_template="`{path}: {value}` is already {source}; remove it.",
         fix_template=(
-            "Omit `label:` unless the display label should differ "
-            "from the inferred name."
+            "Delete `{path}`. Keep a key only to override a different "
+            "inherited or inferred value."
         ),
         doc=(
-            "Fires when a variable's authored `label:` is exactly the same as "
-            "the label dbt charts would infer from the variable name (title-cased, "
-            "underscores to spaces). The explicit label is redundant and can be "
-            "omitted. Emitted by `compile/validate/authoring_warnings.py`."
+            "Fires when an authored style value equals the value the same key resolves to "
+            "without it. That value comes from the cascade: shipped defaults, theme, "
+            "`extends:`, meta.yml, parent boards, or the board's style for the chart "
+            "type. Comparison is exact, leaf by leaf, on unresolved values, so `8` "
+            "against `8.5`, or a color token against its hex, never warns. Emitted by "
+            "`compile/restated.py`."
         ),
-        docs_topic="variables",
+        docs_topic="board",
     )
 )
 
-WARN_REDUNDANT_AUTHORED_DEFAULT = REGISTRY.register(
+WARN_RESTATED_INFERRED = REGISTRY.register(
     WarningCode(
-        code="WARN-REDUNDANT-AUTHORED-DEFAULT",
+        code="WARN-RESTATED-INFERRED",
         domain="compile",
         redundant=True,
-        title="Variable field is explicitly set to its default value",
-        message_template=(
-            "Variable {var_name!r} explicitly sets {field_name} "
-            "to the default value {default_value!r}."
+        title="Authored value equals the one the engine infers",
+        message_template="`{path}: {value}` is already {source}; remove it.",
+        fix_template=(
+            "Delete `{path}`. Keep a key only to override a different "
+            "inherited or inferred value."
         ),
-        fix_template="Omit `{field_name}:` when the default is intended.",
         doc=(
-            "Fires when a variable explicitly sets a field to its default value. "
-            "The explicit setting is redundant and adds noise without changing "
-            "behavior. Emitted by `compile/validate/authoring_warnings.py`."
+            "Fires when an authored value equals what the engine would infer without it: "
+            "a variable's input type, label or schema default, a table header derived "
+            "from the column name, a `source:` the enclosing board already sets, or an "
+            "`options.static` list that is every value of the column the variable filters. "
+            "Emitted by `compile/restated.py`."
         ),
-        docs_topic="variables",
+        summary="Fired when an authored value equals what the engine would infer without it.",
+        docs_topic="board",
+    )
+)
+
+WARN_RESTATED_FORMAT = REGISTRY.register(
+    WarningCode(
+        code="WARN-RESTATED-FORMAT",
+        domain="compile",
+        redundant=True,
+        title="Authored format equals the query's declared format",
+        message_template="`{path}: {value}` is already {source}; remove it.",
+        fix_template=(
+            "Delete `{path}`. Keep a key only to override a different "
+            "inherited or inferred value."
+        ),
+        doc=(
+            "Fires when a chart or table column names the same format its query already "
+            "declares for that column in `formats:`. Emitted by `compile/restated.py`."
+        ),
+        docs_topic="board",
     )
 )
 

@@ -1,0 +1,3 @@
+kind: Features
+body: '`dct` prints errors before warnings and lists keys that restate a default in one compact block; `WARN-UNREFERENCED-QUERY` flags a query no chart reads.'
+time: 2026-10-19T22:57:00.740336-07:00

@@ -2,7 +2,7 @@
 
 A specimen is one board YAML file under ``dbt_charts/ai/examples/<category>/``,
 addressed by the path-shaped slug ``<category>/<stem>``. Where ``skills`` hands
-an agent workflow prose and ``docs`` hands it field reference, this hands it a
+an agent workflow prose and the ``chart`` skill hands it field reference, this hands it a
 whole working board: layout, chart wiring, and query shapes in one artifact the
 agent can copy and edit.
 

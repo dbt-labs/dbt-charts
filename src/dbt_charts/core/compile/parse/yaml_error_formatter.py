@@ -29,6 +29,7 @@ from typing import (
 import yaml
 from pydantic import BaseModel, Tag
 
+from dbt_charts._docs_site import yaml_reference_url
 from dbt_charts.core.compile.parse.source_map import build_source_index
 from dbt_charts.core.utils import YAML_LOADER
 
@@ -709,14 +710,14 @@ def _format_allowed_keys(keys: list[str], limit: int = 40) -> str:
     return ", ".join(displayed) + suffix
 
 
-def _retired_key_hint(retired: "RetiredKey", docs_topic: str) -> str:
+def _retired_key_hint(retired: "RetiredKey") -> str:
     """Name the successor (or the removal) a migration declaration records."""
     version = retired.retired_in
     if retired.successor is None:
         reason = f": {retired.reason}" if retired.reason else "."
         return (
             f"`{'.'.join(retired.path)}` was removed in {version}{reason} "
-            f"Delete the key. See: dct docs {docs_topic}"
+            f"Delete the key. See: {yaml_reference_url()}"
         )
     shared = next(
         (
@@ -744,7 +745,7 @@ def _retired_key_hint(retired: "RetiredKey", docs_topic: str) -> str:
     )
     return (
         f"`{'.'.join(old)}` was {verb} `{'.'.join(new)}` in {version}. "
-        f"{action} the key{alternative}. See: dct docs {docs_topic}"
+        f"{action} the key{alternative}. See: {yaml_reference_url()}"
     )
 
 
@@ -886,37 +887,7 @@ def _extra_field_diagnostic(
             fields["successor"] = ".".join(retired_key.successor)
         return _ExtraFieldDiagnostic(
             message=message,
-            hint=_retired_key_hint(retired_key, docs_topic),
-            fields=fields,
-        )
-
-    # description: was renamed to notes: at every position that authors it
-    # (board, chart, query, grid item, tab item, variable) -- the two words
-    # share no substring difflib's cutoff would catch, so the generic
-    # suggest_similar_value fallback below never fires for this rename. It is
-    # the fallback wherever NOTES_RENAMES cannot reach -- a self-nested
-    # sub-board or a union arm that never declared the field -- so it must
-    # name the replacement explicitly rather than fall through to a plain
-    # allowed-keys dump. Gated on `"notes" in allowed_keys` rather than
-    # firing unconditionally: a chart family with no notes field (e.g.
-    # CalloutChart) correctly falls through to the generic diagnostic
-    # instead of naming a replacement that doesn't exist there.
-    if field_name == "description" and "notes" in allowed_keys:
-        fields["suggestion"] = "notes"
-        # `parent_path` can carry union-tag discriminators picked up from the
-        # Pydantic error loc (`@inline`, a chart-family literal like `bar`, a
-        # query-type literal like `sql`) that were never a YAML key the
-        # author wrote -- e.g. a query-level description lands at loc
-        # `queries.q.@inline.sql.description`. `_display_path` walks the same
-        # schema tree and drops exactly those segments, so the hint names the
-        # key's real parent (`queries.q`) instead of a schema-internal path.
-        display_parent = _format_parent_path(_display_path(parent_path))
-        return _ExtraFieldDiagnostic(
-            message=message,
-            hint=(
-                f"`description:` was renamed to `notes:`. Rename the key at "
-                f"{display_parent} to `notes:`. See: dct docs {docs_topic}"
-            ),
+            hint=_retired_key_hint(retired_key),
             fields=fields,
         )
 
@@ -1148,7 +1119,7 @@ def _extra_field_diagnostic(
         return _ExtraFieldDiagnostic(
             message=message,
             hint=(
-                f"Unknown field {field_name!r} at {parent}. See: dct docs {docs_topic}"
+                f"Unknown field {field_name!r} at {parent}. See: {yaml_reference_url()}"
             ),
             fields=fields,
         )
@@ -1165,7 +1136,7 @@ def _extra_field_diagnostic(
     misplaced = _misplaced_key_hint(field_name, parent_path)
     if misplaced is not None:
         hint_parts.append(misplaced)
-    hint_parts.append(f"See: dct docs {docs_topic}")
+    hint_parts.append(f"See: {yaml_reference_url()}")
     return _ExtraFieldDiagnostic(
         message=message,
         hint=" ".join(hint_parts),
@@ -1410,7 +1381,6 @@ def format_validation_errors_structured(
             )
         elif wrong_shape_keys:
             field_name = field_path_parts[-1] if field_path_parts else "field"
-            docs_topic = _docs_topic_for_field_path(field_path_parts)
             redirect = (
                 f" {_AXIS_TITLE_TEXT_HINT}"
                 if _path_is_axis_title(field_path_parts)
@@ -1425,7 +1395,7 @@ def format_validation_errors_structured(
             hint = (
                 f"'{field_name}' expects a mapping.{redirect} "
                 f"Available keys: {_format_allowed_keys(wrong_shape_keys)}. "
-                f"See: dct docs {docs_topic}{per_side}"
+                f"See: {yaml_reference_url()}{per_side}"
             )
         elif field_path_parts[-2:] == ["frame", "margin"] and isinstance(
             input_val, dict
@@ -1858,7 +1828,7 @@ def _format_chart_type_discriminator_error(
     if recipe:
         return (
             f"Unknown chart type {invalid_type!r}. dbt charts draws that shape as "
-            f"{recipe}. Run `dct docs charts` for the chart reference. "
+            f"{recipe}. Run `dct skills chart` for the chart reference. "
             f"Supported chart types: {supported}."
         )
     if any(k in _NORMALIZED_UNSUPPORTED_SHAPES for k in noun_keys):
@@ -1876,7 +1846,7 @@ def _format_chart_type_discriminator_error(
             f"Unknown chart type {invalid_type!r}. dbt Charts has no built-in "
             "type for that shape; draw it with `type: custom`, a sandboxed Jinja "
             "SVG template (`template:` names templates/<name>.svg.j2, or `svg:` "
-            "carries the source inline). Run `dct docs custom` for the contract. "
+            "carries the source inline). Run `dct skills custom-chart-build` for the contract. "
             f"Supported chart types: {supported}."
         )
 

@@ -26,7 +26,21 @@ const UNIT_SUFFIXES: &[(&str, Display)] = &[
     ("cnt", Display::Word("humanize.count")),
     ("num", Display::Symbol("(#)")),
     ("qty", Display::Word("humanize.qty")),
+    ("lbs", Display::Symbol("(lb)")),
+    ("kg", Display::Symbol("(kg)")),
+    ("km", Display::Symbol("(km)")),
+    ("mi", Display::Symbol("(mi)")),
+    ("mph", Display::Symbol("(mph)")),
+    ("secs", Display::Symbol("(s)")),
+    ("seconds", Display::Symbol("(s)")),
+    ("mins", Display::Symbol("(min)")),
+    ("hrs", Display::Symbol("(h)")),
 ];
+
+/// The parenthesized unit symbols of [`UNIT_SUFFIXES`] whose letters title case
+/// must leave alone: `(kg)` is a symbol, not a word to capitalize.
+pub(crate) const CASED_UNIT_SYMBOLS: &[&str] =
+    &["(lb)", "(kg)", "(km)", "(mi)", "(mph)", "(s)", "(min)", "(h)"];
 
 const ABBREVIATIONS: &[(&str, Display)] = &[
     ("yoy", Display::Word("humanize.yoy")),
@@ -48,6 +62,7 @@ const ABBREVIATIONS: &[(&str, Display)] = &[
     ("url", Display::Symbol("URL")),
     ("sql", Display::Symbol("SQL")),
     ("hr", Display::Symbol("HR")),
+    ("mpg", Display::Symbol("MPG")),
     ("ip", Display::Symbol("IP")),
 ];
 
@@ -59,7 +74,7 @@ fn lookup(table: &[(&str, Display)], key: &str) -> Result<Option<String>, String
     }
 }
 
-/// `core/text/humanize.py::slug_to_text`: split on `_`, `-` and space, expand a unit
+/// `core/text/humanize.py::slug_to_text`, sentence-cased: split on `_`, `-` and space, expand a unit
 /// suffix and abbreviations, lowercase single-case tokens, keep mixed-case
 /// tokens (`MTok`, `pgSQL`) as spelled.
 pub fn slug_to_text(slug: &str) -> Result<String, String> {
@@ -73,6 +88,9 @@ pub fn slug_to_text(slug: &str) -> Result<String, String> {
         suffix = lookup(UNIT_SUFFIXES, &tokens[tokens.len() - 1].to_lowercase())?;
         if suffix.is_some() {
             tokens.pop();
+            if tokens.last().is_some_and(|t| t.eq_ignore_ascii_case("in")) {
+                tokens.pop(); // weight_in_lbs reads "Weight (lb)"
+            }
         }
     }
 
@@ -87,16 +105,33 @@ pub fn slug_to_text(slug: &str) -> Result<String, String> {
     }
 
     let text = words.join(" ");
-    Ok(match suffix {
+    let text = match suffix {
         Some(s) => format!("{text} {s}").trim().to_string(),
         None => text,
+    };
+    // A first word spelled with a capital (`iPhone`, `YoY`) is already as intended.
+    let first_word = text.split(' ').next().unwrap_or("");
+    Ok(if first_word != first_word.to_lowercase() {
+        text
+    } else {
+        case::sentence_case(&text)
     })
 }
 
-/// `core/text/case.py::inferred_display_name(name, case="title")`: the name's
-/// humanized text, title-cased in the board language.
-pub fn inferred_display_name_title(name: &str) -> Result<String, String> {
-    case::apply_case(&slug_to_text(name)?, "title")
+/// `core/text/case.py::inline_derived_label`: a derived label read mid-sentence.
+pub fn inline_derived_label(label: &str) -> Result<String, String> {
+    let first = label.split(' ').next().unwrap_or("");
+    let mut chars = first.chars();
+    // Python's `str.islower()`: at least one cased character, none uppercase.
+    let plain = chars.next().is_some_and(char::is_uppercase)
+        && chars.as_str().chars().any(char::is_lowercase)
+        && !chars.as_str().chars().any(char::is_uppercase);
+    if plain && language::text(&language::active_language(), "case.title_style")? == "en_small_words" {
+        let mut c = label.chars();
+        let head = c.next().unwrap().to_lowercase().collect::<String>();
+        return Ok(head + c.as_str());
+    }
+    Ok(label.to_string())
 }
 
 /// `core/text/case.py::field_title`: the chart's authored `field_labels`
@@ -161,15 +196,30 @@ mod tests {
     #[test]
     fn slug_to_text_matches_production() {
         for (slug, expected) in [
-            ("revenue_usd", "revenue ($)"),
+            ("revenue_usd", "Revenue ($)"),
             ("yoy_growth_pct", "YoY growth (%)"),
             ("avg_deal_size", "Avg deal size"),
-            ("revenue-by-month", "revenue by month"),
-            ("fix-linked", "fix linked"),
-            ("usd", "usd"),
+            ("revenue-by-month", "Revenue by month"),
+            ("fix-linked", "Fix linked"),
+            ("usd", "Usd"),
+            ("weight_in_lbs", "Weight (lb)"),
+            ("avg_mpg", "Avg MPG"),
             ("", ""),
         ] {
             assert_eq!(slug_to_text(slug).unwrap(), expected, "{slug}");
+        }
+    }
+
+    #[test]
+    fn inline_derived_label_matches_pythons_islower() {
+        for (label, expected) in [
+            ("Revenue", "revenue"),
+            ("Revenue2024 by month", "revenue2024 by month"),
+            ("Q", "Q"),
+            ("API ID", "API ID"),
+            ("YoY growth", "YoY growth"),
+        ] {
+            assert_eq!(inline_derived_label(label).unwrap(), expected, "{label}");
         }
     }
 
@@ -188,7 +238,7 @@ mod tests {
     #[test]
     fn slug_to_text_folds_single_case_tokens() {
         for (slug, expected) in [
-            ("REVENUE_USD", "revenue ($)"),
+            ("REVENUE_USD", "Revenue ($)"),
             ("YOY_GROWTH_PCT", "YoY growth (%)"),
             ("Api_Id", "API ID"),
         ] {
@@ -200,7 +250,7 @@ mod tests {
     fn field_title_prefers_the_authored_label_verbatim() {
         let l = labels(&[("fix-linked", "fix-linked")]);
         assert_eq!(field_title("fix-linked", &l).unwrap(), "fix-linked");
-        assert_eq!(field_title("order_month", &l).unwrap(), "order month");
+        assert_eq!(field_title("order_month", &l).unwrap(), "Order month");
     }
 
     #[test]
@@ -208,14 +258,14 @@ mod tests {
         let measures = vec!["revenue".to_string(), "revenue".to_string()];
         let out = wide_measure_labels_for(&measures, &HashMap::new()).unwrap();
         assert_eq!(out.len(), 1);
-        assert_eq!(out["revenue"], "revenue");
+        assert_eq!(out["revenue"], "Revenue");
     }
 
     #[test]
     fn wide_labels_fall_back_only_for_derived_collisions() {
         let measures = vec!["all".to_string(), "fix-linked".to_string()];
-        let out = wide_measure_labels_for(&measures, &labels(&[("all", "fix linked")])).unwrap();
-        assert_eq!(out["all"], "fix linked");
+        let out = wide_measure_labels_for(&measures, &labels(&[("all", "Fix linked")])).unwrap();
+        assert_eq!(out["all"], "Fix linked");
         assert_eq!(out["fix-linked"], "fix-linked");
 
         let derived = vec!["orders_cnt".to_string(), "orders (Count)".to_string()];
@@ -229,27 +279,5 @@ mod tests {
         let de = language::Language::new("de").unwrap();
         let out = language::with_language(de, || slug_to_text("avg_orders_cnt")).unwrap();
         assert_eq!(out, "Ø orders (Anzahl)");
-    }
-
-    #[test]
-    fn inferred_display_name_title_matches_production() {
-        let cases = [
-            ("category", "Category"),
-            ("as_of", "As Of"),
-            ("order_month", "Order Month"),
-            ("yoy_growth_pct", "YoY Growth (%)"),
-            ("revenue_usd", "Revenue ($)"),
-            ("avg_deal_size", "Avg Deal Size"),
-            ("arr", "ARR"),
-            ("top_n", "Top N"),
-            ("customer_id", "Customer ID"),
-            ("logo_churn_pct", "Logo Churn (%)"),
-            ("q", "Q"),
-            ("api_key", "API Key"),
-            ("revenue_per_region", "Revenue per Region"),
-        ];
-        for (name, expected) in cases {
-            assert_eq!(inferred_display_name_title(name).unwrap(), expected, "{name}");
-        }
     }
 }

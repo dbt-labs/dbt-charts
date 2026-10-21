@@ -20,6 +20,7 @@ from dbt_charts.core.compile.models.chart.normalized.scatter import ScatterChart
 from dbt_charts.core.compile.models.primitives import LinkOpen, ResolvedFontStyle
 from dbt_charts.core.compile.resolve import (
     AutomaticLinkCandidate,
+    layers_own_y_scale,
     resolve,
 )
 from dbt_charts.core.compile.template.display_text import DisplayTextInputs
@@ -51,11 +52,10 @@ def collect_shared_y_datasets(
         return datasets
     if chart.query_name is not None:
         datasets[chart.query_name] = data
+    own_scales = layers_own_y_scale(chart)
     for layer in chart.layers:
-        if (
-            layer.axis_y is not None
-            and layer.axis_y.position == "right"
-            and not (isinstance(layer, BarLayer) and layer.y_start is not None)
+        if own_scales and not (
+            isinstance(layer, BarLayer) and layer.y_start is not None
         ):
             continue
         query_name = layer.query
@@ -68,8 +68,8 @@ class _LayerRows(Mapping[str, CacheRows]):
     """Shared-scale rows plus every other own-query layer's, read on demand.
 
     A layer's format vote reads its own rows wherever the layer is drawn, but a
-    right-axis layer never widens the primary scale, so its query is executed
-    only when a vote actually reads it.
+    layer on its own y scale never widens the primary one, so its query is
+    executed only when a vote actually reads it.
     """
 
     def __init__(

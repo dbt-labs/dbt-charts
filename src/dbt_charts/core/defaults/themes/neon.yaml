@@ -1,22 +1,22 @@
 # Unified theme: neon  [PLACEHOLDER — render model PARKED, see the parking note under sans-theme-refs]
 # Vivid's dark-chrome sibling: super-saturated marks glowing against dark chrome.
-# Neutral near-black canvas (dbt-grays.void #161616 — neutral, NOT navy) is the
+# Neutral near-black canvas (chrome[12] #161616 — neutral, NOT navy) is the
 # backdrop that lets the marks glow; the color lives entirely in the vivid-10 marks.
 # FOUR coarse chrome tiers (+2 grid stops), all from dbt-grays (no opacity, no inline hex).
 # "Values pop": numeric readouts get the max-contrast tier, above titles — opposite
 # clarity's soft mid-anchored ramp.
-#   VALUE dbt-grays.canvas   (#FAFAFA) — quant-axis numbers, data labels, values, zero-baseline (max)
-#   HIGH  dbt-grays.grid     (#EDEFF2) — titles, legend, table headers
-#   MID   dbt-grays.subtitle (#8A8C8F) — category labels, axis titles, support text
-#   FAINT dbt-grays.heading  (#313233) — domain, borders
-#   GRID  dbt-grays.inactive (#494A4C) — category/time gridlines + their ticks
-#   +     dbt-grays.muted    (#626366) — measure gridlines + their ticks, one step brighter
+#   VALUE chrome[1]   (#FAFAFA) — quant-axis numbers, data labels, values, zero-baseline (max)
+#   HIGH  chrome[3]     (#EDEFF2) — titles, legend, table headers
+#   MID   chrome[7] (#8A8C8F) — category labels, axis titles, support text
+#   FAINT chrome[10]  (#313233) — domain, borders
+#   GRID  chrome[9] (#494A4C) — category/time gridlines + their ticks
+#   +     chrome[8]    (#626366) — measure gridlines + their ticks, one step brighter
 # Both grid rungs sit above FAINT: a gridline at FAINT barely reads on the void canvas.
 # They split across two rungs because gridlines are not one job: at hairline width
 # the only way to sit the category grid behind the measure grid is contrast. On this
 # dark canvas the measure grid moves UP (away from the background) rather than the
 # category grid moving down.
-# Backgrounds: canvas dbt-grays.void (#161616) + one panel tier dbt-grays.ink (#222222).
+# Backgrounds: canvas chrome[12] (#161616) + one panel tier chrome[11] (#222222).
 # The engine's automatic label ink (label_ink()) is canvas-aware by
 # construction -- it reads light on this dark canvas with no theme-level
 # role rebind needed. A board or theme that explicitly wants the .light or
@@ -25,12 +25,13 @@
 # dark-mode-theming follow-on's question, not this theme's to answer here.
 # All color from vivid-10 marks only. Confident marks, flat fills.
 extends: stark
+notes: saturated, glowing colors
 style:
-  background: dbt-grays.void
+  background: chrome[12]
   accent: info.border
-  muted: &mid dbt-grays.subtitle
+  muted: &mid chrome[7]
   font:
-    color: &high dbt-grays.grid
+    color: &high chrome[3]
   palettes:
     sequence: dbt-seq-blue-dark
   # Lighter tone stops for the dark canvas — the default positive/negative
@@ -39,7 +40,7 @@ style:
     positive: positive.border
     negative: negative.border
   border:
-    color: &faint dbt-grays.heading
+    color: &faint chrome[10]
   title:
     font:
       weight: 600
@@ -53,7 +54,7 @@ style:
       theme: monokai
       font:
         color: *high
-      background: &panel dbt-grays.ink
+      background: &panel chrome[11]
       border:
         color: *faint
         width: 1
@@ -90,10 +91,10 @@ style:
         # cannot: this sits one rung closer to the canvas than the measure
         # grid on axis_y below. Same rule as the light themes, opposite
         # direction, because the background sits on the other side.
-        color: &category_grid dbt-grays.inactive
+        color: &category_grid chrome[9]
         width: 1
         threshold:
-          color: &value dbt-grays.canvas  # baseline anchors at max contrast
+          color: &value chrome[1]  # baseline anchors at max contrast
       ticks:
         color: *category_grid
       labels:
@@ -104,7 +105,7 @@ style:
           color: *mid
     axis_y:
       grid:
-        color: &measure_grid dbt-grays.muted  # measure grid reads above the vertical one
+        color: &measure_grid chrome[8]  # measure grid reads above the vertical one
       ticks:
         # A tick and its gridline mark the same value; they read as one mark
         # crossing the axis line. Without this the measure tick wore the
@@ -230,10 +231,10 @@ style:
         radius: 3.0
       active_marker: fill
     # Inverts the "away from background" rule the other themes follow: neon's
-    # canvas is dbt-grays.void (near-black), so a step AWAY from it is
+    # canvas is chrome[12] (near-black), so a step AWAY from it is
     # lighter, not darker.
     hover_emphasis:
-      drop_line_color: dbt-grays.subtitle
+      drop_line_color: chrome[7]
       drop_line_width: 2.0
     pie:
       total:

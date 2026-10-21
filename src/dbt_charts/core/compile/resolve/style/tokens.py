@@ -1,6 +1,6 @@
 """Color-token and emoji-family resolution for the style cascade.
 
-Resolves palette-dotted color tokens (``dbt-grays.gray-30``, ``category[2]``)
+Resolves palette-dotted color tokens (``dbt-grays.8``, ``category[2]``)
 and theme-self tokens (``theme.background``) against a compiled ``Style``
 tree, and inserts the emoji font family into CSS font-family stacks.
 """
@@ -41,7 +41,7 @@ _THEME_SELF_TOKENS = {"theme.background"}
 
 # Fields on Style that hold the resolver's own lookup tables rather than
 # styled content. roles maps a role name to a token address
-# (ink -> chrome.heading); walking it would resolve the addresses and
+# (ink -> chrome[10]); walking it would resolve the addresses and
 # leave the table pointing at hex, so every later lookup through it would fail.
 _RESOLUTION_CONTEXT_FIELDS = frozenset({"palettes", "roles"})
 
@@ -125,7 +125,7 @@ def _resolve_one_color_token(
 
     Tries the direct ``palette.slot`` path first.  If the left-hand side is not
     a known palette name the token is a role-indirected address (dotted alias
-    like ``chrome.ink``, or 1-indexed bracket slot like ``category[2]``, or the
+    like ``chrome.white``, or bracket stop like ``chrome[11]`` or ``category[2]``, or the
     ``single_series[N]`` list-indirected form); try ``color_from_theme()`` with
     the theme palettes/roles/single-series context.  Raises
     ``UnknownColorError`` if both paths fail.
@@ -218,7 +218,7 @@ def _resolve_color_tokens(
 
     ``palettes`` and ``roles`` are extracted from the root Style at call time
     and passed through the recursion so role-indirected tokens (e.g.
-    ``chrome.ink`` where ``chrome`` maps to a palette name via the theme's
+    ``chrome[11]`` where ``chrome`` maps to a palette name via the theme's
     ``palettes:`` block) resolve correctly alongside direct palette.slot tokens.
     ``single_series_palette`` is caller-supplied (never extracted from a
     ``Style`` node here) for the ``single_series[N]`` form — at theme-load
@@ -266,7 +266,7 @@ def _resolve_color_tokens(
         for name, value in node:
             # `palettes` and `roles` are the resolver's own lookup tables, not
             # styled content: `roles` maps a role name to a token *address*
-            # (`ink` -> `chrome.heading`). Resolving those would rewrite the
+            # (`ink` -> `chrome[10]`). Resolving those would rewrite the
             # indirection table into hex and destroy the indirection — which is
             # exactly what happened when the dict branch below first landed
             # without this guard.

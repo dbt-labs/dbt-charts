@@ -8,47 +8,36 @@
 #   palettes/scaffold/    — UI structure (canvas/borders/text/stripes)
 #   palettes/tone/        — UI roles (info/negative/warning/positive)
 #
-# Theme role: chrome. Address form: chrome.ink, chrome.canvas, etc.
+# Theme role: chrome. Address form: chrome[N] — a step number, never a job
+# name. What a step is for is the theme's decision, not the palette's.
 
 name: dbt-grays
 description: |
-  Neutral gray scaffold — UI chrome. Twelve named steps from
-  near-white (canvas) to near-black (void). Applied to canvas backgrounds,
-  borders, dividers, axis labels, table stripes, and secondary text.
-  Pairs with dbt-creams for warm-canvas themes. The darkest step, void, is
-  the near-black canvas for dark themes (neon), one tier below ink.
+  Neutral gray scaffold — UI chrome. An ordered ramp addressed by step number,
+  lightest to darkest: steps 1-12 run from near-white (1) to near-black (12); a
+  higher number is more ink. Step 0 is white and step 100 is black, the ends of
+  the ink scale. Applied to canvas backgrounds, borders, dividers, axis labels,
+  table stripes, and secondary text. Pairs with dbt-creams for warm-canvas themes.
 
 colors:
-  - "#FAFAFA"    # 1  canvas
-  - "#F7F8FA"    # 2  surface-subtle
-  - "#EDEFF2"    # 3  grid
-  - "#DFE1E5"    # 4  border
-  - "#D0D3D9"    # 5  grid-emphasis
-  - "#B0B2B8"    # 6  disabled
-  - "#8A8C8F"    # 7  subtitle
-  - "#626366"    # 8  muted
-  - "#494A4C"    # 9  inactive
-  - "#313233"    # 10 heading
-  - "#222222"    # 11 ink
-  - "#161616"    # 12 void  (dark-theme canvas; neutral near-black, not #000000)
+  - "#FAFAFA"    # 1
+  - "#F7F8FA"    # 2
+  - "#EDEFF2"    # 3
+  - "#DFE1E5"    # 4
+  - "#D0D3D9"    # 5
+  - "#B0B2B8"    # 6
+  - "#8A8C8F"    # 7
+  - "#626366"    # 8
+  - "#494A4C"    # 9
+  - "#313233"    # 10
+  - "#222222"    # 11
+  - "#161616"    # 12
 
 aliases:
-  # UI ladder aliases — use these in new authoring
-  canvas: 1
-  surface-subtle: 2
-  grid: 3
-  border: 4
-  grid-emphasis: 5
-  disabled: 6
-  subtitle: 7
-  muted: 8
-  inactive: 9
-  heading: 10
-  ink: 11
-  void: 12
-
-  # Pure endpoints — the two essential colors, named so themes never reach
-  # for raw hex. Distinct from void (#161616) / ink (#222222), which are
-  # neutral near-blacks; black is the true #000000 endpoint.
-  white: "#FFFFFF"
-  black: "#000000"
+  # Endpoints outside the ladder, measured in ink (0 none, 100 full). Declared
+  # here so the resolver carries no scaffold knowledge: a numbered step is
+  # looked up in the aliases first, then in `colors:`.
+  "0": "#FFFFFF"
+  "100": "#000000"
+  white: "0"
+  black: "100"

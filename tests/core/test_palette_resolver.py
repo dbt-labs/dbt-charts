@@ -346,8 +346,8 @@ class TestPaletteScaffold:
             palette("dbt-grays", surface="table")
 
     def test_dbt_grays_via_color_slot(self):
-        assert color("dbt-grays.ink").lower() == "#222222"
-        assert color("dbt-creams.ink").lower() == "#2a2725"
+        assert color("dbt-grays.11").lower() == "#222222"
+        assert color("dbt-creams.11").lower() == "#2a2725"
 
 
 # ============================================================================
@@ -1043,7 +1043,7 @@ class TestMarkInk:
         from dbt_charts.core.compile.resolve.style.palette import mark_ink
 
         assert mark_ink("category[2]", "#ffffff") == "category[2]"
-        assert mark_ink("chrome.ink", "#ffffff") == "chrome.ink"
+        assert mark_ink("chrome[11]", "#ffffff") == "chrome[11]"
 
     def test_bare_identifier_passes_through_unresolved(self):
         from dbt_charts.core.compile.resolve.style.palette import mark_ink

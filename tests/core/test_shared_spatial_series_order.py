@@ -581,16 +581,16 @@ def test_wide_stacked_area_baseline_measure_receives_first_palette_slot():
     )
 
     assert color_by_series == {
-        "zeta": resolved.palette[0],
-        "alpha": resolved.palette[1],
+        "Zeta": resolved.palette[0],
+        "Alpha": resolved.palette[1],
     }
     assert set(spec["hconcat"][1]["encoding"]["color"]["scale"]["domain"]) == {
-        "alpha",
-        "zeta",
+        "Alpha",
+        "Zeta",
     }
     assert {row[WIDE_LABEL_FIELD] for row in spec["hconcat"][1]["data"]["values"]} == {
-        "alpha",
-        "zeta",
+        "Alpha",
+        "Zeta",
     }
     assert "order" in chart_pane(spec)["encoding"]
 
@@ -624,12 +624,12 @@ def test_wide_stacked_area_keeps_an_all_null_declared_measure(stack: str) -> Non
         zip(color_scale["domain"], color_scale["range"], strict=True)
     )
     assert color_by_series == {
-        "zeta": resolved.palette[0],
-        "alpha": resolved.palette[1],
+        "Zeta": resolved.palette[0],
+        "Alpha": resolved.palette[1],
     }
     assert {row[WIDE_LABEL_FIELD] for row in spec["hconcat"][1]["data"]["values"]} == {
-        "alpha",
-        "zeta",
+        "Alpha",
+        "Zeta",
     }
 
 
@@ -1062,7 +1062,7 @@ def test_combo_base_series_legend_order_unaffected_by_overlay():
     # B has the larger sum, so A — on top — is listed first), and the overlay
     # follows them in the now-complete shared scale.
     base_color_scale = layers[0]["encoding"]["color"]["scale"]
-    assert base_color_scale["domain"] == ["A", "B", "target"]
+    assert base_color_scale["domain"] == ["A", "B", "Target"]
 
 
 def test_combo_legend_values_includes_overlay_label():
@@ -1098,4 +1098,4 @@ def test_combo_legend_values_includes_overlay_label():
         chart_style_context=_BOARD_CTX_NO_ENDPOINT_LABELS,
     )
     base_legend = chart_pane(spec)["layer"][0]["encoding"]["color"]["legend"]
-    assert base_legend["values"] == ["A", "B", "target"]
+    assert base_legend["values"] == ["A", "B", "Target"]

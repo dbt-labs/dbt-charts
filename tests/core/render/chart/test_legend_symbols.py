@@ -196,7 +196,7 @@ def test_line_overlay_on_bar_base_gets_stroke_glyph() -> None:
     layer = LineLayer(type="line", y="target")
     vl = _render_bar_with_layers([layer])
 
-    legend = _overlay_legend(vl, "target")
+    legend = _overlay_legend(vl, "Target")
     assert legend is not None, "Line overlay has no legend"
     symbol_type = legend.get("symbolType")
     assert symbol_type is not None, "Line overlay legend has no symbolType"
@@ -225,7 +225,7 @@ def test_bar_overlay_on_bar_base_gets_square_glyph() -> None:
     layer = BarLayer(type="bar", y="target")
     vl = _render_bar_with_layers([layer])
 
-    legend = _overlay_legend(vl, "target")
+    legend = _overlay_legend(vl, "Target")
     assert legend is not None, "Bar overlay has no legend"
     symbol_type = legend.get("symbolType")
     assert symbol_type is not None, (
@@ -296,7 +296,7 @@ def test_author_symbol_shape_override_emits_constant_symbol_type() -> None:
     )
     vl = _render_bar_with_layers([layer], style=style)
 
-    legend = _overlay_legend(vl, "target")
+    legend = _overlay_legend(vl, "Target")
     assert legend is not None, "Line overlay has no legend"
     symbol_type = legend.get("symbolType")
     assert symbol_type == "diamond", (
@@ -321,7 +321,7 @@ def test_author_symbol_fill_false_emits_transparent_fill_color() -> None:
     )
     vl = _render_bar_with_layers([layer], style=style)
 
-    legend = _overlay_legend(vl, "target")
+    legend = _overlay_legend(vl, "Target")
     assert legend is not None, "Line overlay has no legend"
     assert legend.get("symbolFillColor") == "transparent", (
         f"Expected symbolFillColor='transparent', got: {legend.get('symbolFillColor')!r}"
@@ -388,8 +388,8 @@ def test_base_series_appears_in_overlay_legend() -> None:
     vl = _render_vbar_with_layers([layer])
 
     labels = _datum_labels(vl)
-    assert "actual" in labels, f"Base series missing from legend datums: {labels}"
-    assert "target" in labels, f"Overlay series missing from legend datums: {labels}"
+    assert "Actual" in labels, f"Base series missing from legend datums: {labels}"
+    assert "Target" in labels, f"Overlay series missing from legend datums: {labels}"
 
 
 def test_authored_layer_color_drives_shared_scale() -> None:
@@ -420,14 +420,14 @@ def test_authored_layer_color_drives_shared_scale() -> None:
     assert scale is not None, "No explicit shared color scale on overlay spec"
     domain = scale["domain"]
     range_ = scale["range"]
-    assert "actual" in domain and "target" in domain, f"domain: {domain}"
-    assert range_[domain.index("target")] == "#dea628", (
+    assert "Actual" in domain and "Target" in domain, f"domain: {domain}"
+    assert range_[domain.index("Target")] == "#dea628", (
         f"Target swatch color != authored line color; scale={scale}"
     )
     overlay = next(
         sub
         for sub in vl["layer"]
-        if sub.get("encoding", {}).get("color", {}).get("datum") == "target"
+        if sub.get("encoding", {}).get("color", {}).get("datum") == "Target"
     )
     foreground_point = next(
         sub
@@ -460,7 +460,7 @@ def test_authored_area_point_color_wins_over_parent_series_encoding() -> None:
     overlay = next(
         sub
         for sub in vl["layer"]
-        if sub.get("encoding", {}).get("color", {}).get("datum") == "target"
+        if sub.get("encoding", {}).get("color", {}).get("datum") == "Target"
     )
     foreground_point = next(
         sub
@@ -696,7 +696,7 @@ def test_unauthored_base_and_layer_share_one_naming_convention() -> None:
     domain = _color_scale(vl)
     assert domain is not None, "no shared color scale on the overlay spec"
     names = list(domain["domain"])
-    assert names == ["order revenue", "order cost total"], (
+    assert names == ["Order revenue", "Order cost total"], (
         f"base and overlay must share one convention; got {names}"
     )
 

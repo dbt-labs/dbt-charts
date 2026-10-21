@@ -56,7 +56,6 @@ charts:
 rows:
   - title: "Key Metrics"
     grid:
-      columns: 24
       items:
         - item: revenue_kpi
           col_span: 6

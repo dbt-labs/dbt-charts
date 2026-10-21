@@ -576,29 +576,27 @@ def _finalize_chart_style_context(
     )
 
 
-def bake_kpi_support_ink(
-    kpi: KpiChartStyle, tones: KpiTonesStyle, muted: str
-) -> KpiChartStyle:
-    """Replace the support row's ``auto`` inks with concrete colors.
+def unset_auto_support_ink(kpi: KpiChartStyle) -> KpiChartStyle:
+    """Replace the support row's ``auto`` inks with the empty string.
 
-    The row takes the tone's color, else the muted ink. The glyph keeps the tone
-    over an authored row color, and follows the row without one.
+    The renderer picks an unset ink itself (the tone, the sign on a delta
+    format, else muted), so the resolver must not decide it first.
     """
     support = kpi.support
-    tone = None if support.tone is None else getattr(tones, support.tone)
-    row_color = support.font.color
-    if row_color == AUTO:
-        row_color = tone or muted
-    glyph_color = support.glyph.font.color
-    if glyph_color == AUTO:
-        glyph_color = tone or row_color
-    glyph_font = support.glyph.font.model_copy(update={"color": glyph_color})
+    row_color = "" if support.font.color == AUTO else support.font.color
+    glyph_color = "" if support.glyph.font.color == AUTO else support.glyph.font.color
     return kpi.model_copy(
         update={
             "support": support.model_copy(
                 update={
                     "font": support.font.model_copy(update={"color": row_color}),
-                    "glyph": support.glyph.model_copy(update={"font": glyph_font}),
+                    "glyph": support.glyph.model_copy(
+                        update={
+                            "font": support.glyph.font.model_copy(
+                                update={"color": glyph_color}
+                            )
+                        }
+                    ),
                 }
             )
         }
@@ -649,9 +647,7 @@ def concrete_family_defaults(
     pie = chart_context.pie
     return ConcreteFamilyDefaults(
         marks=chart_context.marks,
-        kpi=bake_kpi_support_ink(
-            chart_context.kpi, chart_context.tones, chart_context.cascaded.muted
-        ),
+        kpi=unset_auto_support_ink(chart_context.kpi),
         pie=pie,
         donut=(
             pie

@@ -112,7 +112,7 @@ def test_commands_alphabetical_within_panels() -> None:
     name into its rich_help_panel — so the per-panel order equals the order
     ``list_commands`` returns. The root group's ``list_commands`` override
     sorts the combined list, which interleaves sub-typer groups (e.g. ``init``)
-    with leaf commands (e.g. ``docs``, ``playground``, ``skills``).
+    with leaf commands (e.g. ``doctor``, ``playground``, ``skills``).
     """
     from collections import defaultdict
 
@@ -177,3 +177,10 @@ def test_subcommand_help_unchanged() -> None:
     assert "Usage: " in text
     # Subcommand help still uses Typer's default Options panel.
     assert "Options" in text
+
+
+def test_docs_command_is_retired() -> None:
+    """Agents read `dct skills chart` and people read the docs site."""
+    result = runner.invoke(app, ["docs"])
+    assert result.exit_code == 2
+    assert "No such command 'docs'" in _strip_ansi(result.output)

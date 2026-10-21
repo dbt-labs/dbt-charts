@@ -1615,7 +1615,7 @@ mod resolve_tests {
 
     #[test]
     fn slug_to_text_expands_abbreviations_and_unit_suffixes() {
-        assert_eq!(display_text::slug_to_text("revenue_usd").unwrap(), "revenue ($)");
+        assert_eq!(display_text::slug_to_text("revenue_usd").unwrap(), "Revenue ($)");
         assert_eq!(display_text::slug_to_text("yoy_growth_pct").unwrap(), "YoY growth (%)");
         assert_eq!(display_text::slug_to_text("avg_deal_size").unwrap(), "Avg deal size");
     }
@@ -1660,7 +1660,7 @@ mod resolve_tests {
     #[test]
     fn label_case_matches_production_case_law_for_inline_period_and_name_prefix_tokens() {
         let cases: &[(&str, &str)] = &[
-            ("rev.usd", "rev.usd"),
+            ("rev.usd", "Rev.usd"),
             ("o'brien", "O'Brien"),
             ("mcdonald", "McDonald"),
             ("cpu/memory", "Cpu/Memory"),

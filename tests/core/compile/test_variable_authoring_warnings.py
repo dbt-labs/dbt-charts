@@ -32,7 +32,7 @@ def test_redundant_variable_label_warns() -> None:
     yaml = """
 variables:
   signup_source:
-    label: Signup Source
+    label: Signup source
     options:
       static: [organic, paid]
 queries:
@@ -51,10 +51,10 @@ rows:
     result = compile(yaml)
 
     assert result.success
-    warnings = [w for w in result.warnings if w.code == "WARN-REDUNDANT-AUTHORED-LABEL"]
+    warnings = [w for w in result.warnings if w.code.startswith("WARN-RESTATED-")]
     assert len(warnings) == 1
     assert warnings[0].path == "variables.signup_source.label"
-    assert "already inferred" in warnings[0].message
+    assert "label inferred from the variable name" in warnings[0].message
 
 
 def test_custom_variable_label_does_not_warn() -> None:
@@ -77,7 +77,7 @@ charts:
 rows:
   - c
 """
-    assert "WARN-REDUNDANT-AUTHORED-LABEL" not in _warning_codes(yaml)
+    assert not {c for c in _warning_codes(yaml) if c.startswith("WARN-RESTATED-")}
 
 
 def test_redundant_variable_label_warns_inside_layout_variables_block() -> None:
@@ -105,7 +105,7 @@ rows:
     result = compile(yaml)
 
     assert result.success
-    warnings = [w for w in result.warnings if w.code == "WARN-REDUNDANT-AUTHORED-LABEL"]
+    warnings = [w for w in result.warnings if w.code.startswith("WARN-RESTATED-")]
     assert len(warnings) == 1
     assert warnings[0].path == "rows.0.cols.0.variables.region.label"
 
@@ -133,14 +133,51 @@ rows:
     result = compile(yaml)
 
     assert result.success
-    fields = {
-        w.path for w in result.warnings if w.code == "WARN-REDUNDANT-AUTHORED-DEFAULT"
-    }
+    fields = {w.path for w in result.warnings if w.code.startswith("WARN-RESTATED-")}
     assert fields == {
-        "variables.region.input",
         "variables.region.required",
         "variables.region.visible",
     }
+
+
+_INPUT_BOARD = """
+variables:
+  region:
+    input: {input}
+    options:
+      static: {options}
+queries:
+  q:
+    type: values
+    rows:
+      - {{x: 1}}
+charts:
+  c:
+    query: q
+    type: kpi
+    value: x
+rows:
+  - c
+"""
+
+
+def _input_paths(input: str, options: str) -> list[str | None]:
+    result = compile(_INPUT_BOARD.format(input=input, options=options))
+    assert result.success, result.errors
+    return [w.path for w in result.warnings if w.code.startswith("WARN-RESTATED-")]
+
+
+def test_input_equal_to_the_inferred_input_warns() -> None:
+    assert _input_paths("select", "[a, b]") == ["variables.region.input"]
+
+
+def test_input_that_differs_from_the_inferred_input_does_not_warn() -> None:
+    assert _input_paths("radio", "[a, b]") == []
+
+
+def test_input_is_not_restated_when_options_refine_it_after_load() -> None:
+    """Auto turns yes/no options into a checkbox; an explicit select keeps one."""
+    assert _input_paths("select", "[yes, no]") == []
 
 
 def test_implicit_variable_defaults_do_not_warn() -> None:
@@ -161,7 +198,7 @@ charts:
 rows:
   - c
 """
-    assert "WARN-REDUNDANT-AUTHORED-DEFAULT" not in _warning_codes(yaml)
+    assert not {c for c in _warning_codes(yaml) if c.startswith("WARN-RESTATED-")}
 
 
 def test_allow_null_is_rejected() -> None:
@@ -209,7 +246,7 @@ def test_redundant_label_check_reads_the_language_inherited_from_meta(
         project.path("charts/board.yaml").read_board(), apply_meta=True
     )
     assert result.success, result.errors
-    assert [
-        w.path for w in result.warnings if w.code == "WARN-REDUNDANT-AUTHORED-LABEL"
-    ] == ["variables.avg_days.label"]
+    assert [w.path for w in result.warnings if w.code.startswith("WARN-RESTATED-")] == [
+        "variables.avg_days.label"
+    ]
     reset_config()

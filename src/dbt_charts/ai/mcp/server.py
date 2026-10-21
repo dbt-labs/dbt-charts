@@ -1,10 +1,10 @@
 """MCP Server — thin shim over dbt_charts.agent_api.
 
 Resources: dct://boards, dct://board/{path},
-           dct://docs/all, dct://docs/{topic}, dct://guide/*
+           dct://guide/*
 
 Tools: all tools from dbt_charts.ai.tool_schemas.ALL_TOOLS (render_board,
-       execute_sql, search_files, docs, describe_board, list_skills,
+       execute_sql, search_files, describe_board, list_skills,
        get_skill, list_diagnostic_codes, get_diagnostic_code)
 
 Usage: dct mcp serve
@@ -38,34 +38,10 @@ _BASE_RESOURCES = [
         "List of all dashboards in the project with metadata",
     ),
     (
-        "dct://docs/all",
+        "dct://guide/chart",
         "text/markdown",
-        "dbt charts YAML Reference (full)",
-        "Syntax guide plus the generated field reference — same content as `dct docs all`",
-    ),
-    (
-        "dct://docs/reference",
-        "text/markdown",
-        "dbt charts YAML Field Reference (generated)",
-        "Auto-generated field-level spec for every YAML field, rendered from the compiler's models.",
-    ),
-    (
-        "dct://docs/error-reference",
-        "text/markdown",
-        "dbt charts Error Reference (generated)",
-        "Auto-generated reference of every ERR-* error code.",
-    ),
-    (
-        "dct://docs/warning-reference",
-        "text/markdown",
-        "dbt charts Warning Reference (generated)",
-        "Auto-generated reference of every WARN-* warning code.",
-    ),
-    (
-        "dct://guide/board-design",
-        "text/markdown",
-        "Dashboard Design Guide",
-        "Design principles for creating effective dashboards. Read this when creating a new dashboard, choosing chart types, or designing layouts for at-a-glance monitoring.",
+        "Chart and Board Guide",
+        "The board and chart grammar plus the build-render-fix loop. Read this when creating or editing a board, choosing chart types, or designing layouts.",
     ),
     (
         "dct://guide/report-design",
@@ -73,69 +49,17 @@ _BASE_RESOURCES = [
         "Report Design Guide",
         "Design principles for creating data-driven reports. Read this when creating narrative analyses, answering specific business questions, or writing investigative reports.",
     ),
-    (
-        "dct://guide/board-build",
-        "text/markdown",
-        "Dashboard Build Workflow",
-        "Best practices for building dashboards incrementally. Read this before starting work — covers the recommended build-test-iterate workflow, caching, and tool usage patterns.",
-    ),
-    (
-        "dct://guide/board-review",
-        "text/markdown",
-        "Dashboard Review",
-        "Primary review skill for a dbt charts board — runs structural review (YAML + dct validate) and visual review (PNG + vision-model evaluation), synthesizes a ranked findings list.",
-    ),
 ]
-
-
-def _docs_topic_resources() -> list[tuple[str, str, str, str]]:
-    """One static resource per docs topic, derived from the live topic index.
-
-    The index also carries the generated references, which _BASE_RESOURCES
-    already names with their own titles — skip those rather than advertise
-    the same URI twice.
-    """
-    from dbt_charts.agent_api.docs import docs as docs_verb
-
-    base_uris = {uri for uri, *_ in _BASE_RESOURCES}
-    return [
-        (
-            f"dct://docs/{entry.id}",
-            "text/markdown",
-            f"dbt charts YAML Reference — {entry.title}",
-            entry.description or f"`dct docs {entry.id}` section",
-        )
-        for entry in docs_verb().topics
-        if f"dct://docs/{entry.id}" not in base_uris
-    ]
 
 
 def _read_resource_content(uri: str, context: DbtChartsAIContext) -> str:
     from dbt_charts.agent_api.boards import get_board, list_boards
-    from dbt_charts.agent_api.docs import docs as docs_verb
     from dbt_charts.ai.prompts import load_shared_prompt
 
     if uri == "dct://boards":
         return list_boards(context.project_session.project).model_dump_json(
             indent=2, by_alias=True, exclude_none=True
         )
-
-    # "all" is a topic the docs verb serves like any other — routing it here
-    # keeps this resource and `dct docs all` the same bytes.
-    if uri.startswith("dct://docs/"):
-        slug = uri.replace("dct://docs/", "")
-        result = docs_verb(topic=slug)
-        if result.topic is None:
-            # A missing generated file says which recipe regenerates it —
-            # "Unknown topic" for a topic we ship would send the reader nowhere.
-            return json.dumps(
-                {
-                    "error": result.errors[0]
-                    if result.errors
-                    else f"Unknown topic: {slug}"
-                }
-            )
-        return result.topic.content
 
     if uri.startswith("dct://guide/"):
         slug = uri.removeprefix("dct://guide/")
@@ -205,7 +129,7 @@ def create_server(context: DbtChartsAIContext) -> Any:
     async def handle_list_resources() -> list[Resource]:
         return [
             Resource(uri=_uri(u), mimeType=m, name=n, description=d)
-            for u, m, n, d in (*_BASE_RESOURCES, *_docs_topic_resources())
+            for u, m, n, d in _BASE_RESOURCES
         ]
 
     @server.list_resource_templates()
@@ -216,12 +140,6 @@ def create_server(context: DbtChartsAIContext) -> Any:
                 name="Dashboard Content",
                 description="YAML content and compiled structure of a specific dashboard",
                 mimeType="application/json",
-            ),
-            ResourceTemplate(
-                uriTemplate="dct://docs/{topic}",
-                name="dbt charts YAML Reference Section",
-                description="One H2 section of DBT_CHARTS_SYNTAX.md (e.g. board, charts, cheatsheet, all)",
-                mimeType="text/markdown",
             ),
         ]
 

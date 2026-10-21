@@ -19,7 +19,6 @@ import sys
 from pathlib import Path
 
 from rich.markup import escape
-from rich.panel import Panel
 
 from dbt_charts.agent_api import Diagnostic, posix_relpath
 from dbt_charts.agent_api.diagnostics import REGISTRY, display_message
@@ -119,8 +118,8 @@ def group_diagnostics(
     A diagnostic with no chart, query, range, or caller `path` has nothing to
     tell it apart from its siblings, so it stays its own group rather than being
     folded into a count that hides which one fired. Errors also split on text:
-    their messages are specific enough that collapsing differing ones would hide
-    a problem the reader has to fix, and errors are few. Insertion order is kept.
+    collapsing differing ones would hide a problem the reader has to fix.
+    Insertion order is kept.
     """
     groups: dict[tuple[str, tuple[str, ...] | None, int | None], list[Diagnostic]] = {}
     for index, d in enumerate(diags):
@@ -134,70 +133,135 @@ def group_diagnostics(
     return list(groups.values())
 
 
+_RESTATED_CODES = (
+    "WARN-RESTATED-STYLE",
+    "WARN-RESTATED-FORMAT",
+    "WARN-RESTATED-INFERRED",
+)  # most specific cause first: it wins when one key is reported twice
+
+
+def one_per_path(warnings: list[Diagnostic]) -> list[Diagnostic]:
+    """Keep one RESTATED warning per authored (file, path): the most specific
+    cause. Other warnings pass through, ahead of the restated ones."""
+    best: dict[tuple[str | None, str | None], Diagnostic] = {}
+    others = [w for w in warnings if w.code not in _RESTATED_CODES]
+    for w in warnings:
+        if w.code not in _RESTATED_CODES:
+            continue
+        key = (w.range.file if w.range else None, w.path)
+        held = best.get(key)
+        if held is None or _RESTATED_CODES.index(w.code) < _RESTATED_CODES.index(
+            held.code
+        ):
+            best[key] = w
+    return [*others, *best.values()]
+
+
+def _restated_block(warnings: list[Diagnostic], path: str | None) -> list[str]:
+    n = len(warnings)
+    lines = [
+        f"{n} {'key restates' if n == 1 else 'keys restate'} a default; delete {'it' if n == 1 else 'them'}:"
+    ]
+    rows = []
+    for w in warnings:
+        where = (
+            _display_path(w.range.file, w.range.start_line) if w.range else path or ""
+        )
+        rows.append((where, f"{w.path}: {w.fields['value']}", w.fields["why"]))
+    width = max(len(where) for where, _, _ in rows)
+    lines += [f"  {where:<{width}}  {shown}  ({why})" for where, shown, why in rows]
+    return lines
+
+
+def _error_lines(group: list[Diagnostic], path: str | None) -> list[str]:
+    d = group[0]
+    message = display_message(d)
+    if len(group) == 1 and d.chart:
+        message = f"{d.chart}: {message}"
+    count = f" x{len(group)}" if len(group) > 1 else ""
+    head = f"{d.level}[{d.code}]{count}: " + message.replace("\n", "\n  ")
+    lines = [head]
+    body: list[str] = []
+    if len(group) > 1:
+        names = dict.fromkeys(i.chart or i.query for i in group)
+        if applies_to := [name for name in names if name]:
+            body.append(f"Applies to: {', '.join(applies_to)}")
+        unshown = sum(_signature(i) != _signature(d) for i in group)
+        if unshown:
+            body.append(f"and {unshown} more with different details")
+    if d.hint:
+        body.append(f"Hint: {d.hint}")
+    if d.fix:
+        body.append(f"Fix: {d.fix}")
+    if d.field:
+        body.append(f"Field: {d.field}")
+    for detail in (d.detail, d.fields.get("detail")):
+        text = str(detail or "").strip()
+        if text and text.rstrip(".") not in message:
+            body.append(f"Detail: {text}")
+            break
+    if evidence := d.fields.get("evidence"):
+        body.append(f"Evidence: {'; '.join(evidence)}")
+    locations = dict.fromkeys(
+        _display_path(i.range.file, i.range.start_line) if i.range else path
+        for i in group
+    )
+    if shown := [loc for loc in locations if loc is not None]:
+        if d.level == "error" or len(shown) == 1:
+            body.append(f"At: {', '.join(shown)}")
+        else:
+            body.append(f"At: {shown[0]} (+{len(shown) - 1} more)")
+    return lines + [f"  {line}" for line in body]
+
+
+def render_diagnostics(diags: list[Diagnostic], *, path: str | None = None) -> str:
+    """The human text for `diags`: errors first, then warnings, rustc-style.
+
+    One entry per code and text (repeats share it with an "Applies to:" line),
+    detail lines indented under the headline, a blank line between entries, and
+    one compact block for every WARN-RESTATED-* key. Each distinct code's docs
+    link is printed once at the end. Text only: JSON, LSP and MCP carry every
+    diagnostic with its own code, path, range, fix and docs.
+    """
+    errors = [d for d in diags if d.level == "error"]
+    warnings = [d for d in diags if d.level != "error"]
+    warnings = one_per_path(warnings)
+    restated = [w for w in warnings if w.code in _RESTATED_CODES]
+    others = [w for w in warnings if w.code not in _RESTATED_CODES]
+    entries = [
+        _error_lines(group, path)
+        for group in group_diagnostics([*errors, *others], path=path)
+    ]
+    if restated:
+        entries.append(_restated_block(restated, path))
+    codes = dict.fromkeys(d.code for d in [*errors, *others, *restated])
+    docs = "  ".join(f"{code} {REGISTRY.get(code).doc_url}" for code in codes)
+    text = "\n\n".join("\n".join(entry) for entry in entries)
+    return f"{text}\n\nDocs: {docs}" if entries else ""
+
+
 def print_diagnostics(
     diags: list[Diagnostic],
     *,
     path: str | None = None,
 ) -> None:
-    """Print Diagnostics as Rich panels to stderr, one entry per code.
-
-    Repeats of a code share one entry carrying a count, the chart or query
-    names it applies to, and the first instance's message and fix. Machine
-    consumers (`--json`, `--diagnostics-json`, LSP) keep every instance.
+    """Print Diagnostics to stderr: errors before warnings, one entry per code.
 
     `path` is a fallback "At:" location used only when a diagnostic has no
-    `range` of its own (e.g. compile-time warnings that don't carry position
-    data yet).
+    `range` of its own. Does not hard-wrap.
     """
+    text = render_diagnostics(diags, path=path)
+    if not text:
+        return
     console = dct_console(stderr=True)
-    for group in group_diagnostics(diags, path=path):
-        d = group[0]
-        n = len(group)
-        style = "red" if d.level == "error" else "yellow"
-        if n == 1:
-            chart_prefix = f"{d.chart}: " if d.chart else ""
-            title = f"[bold {style}]{d.code}[/]  {chart_prefix}"
-        else:
-            title = f"[bold {style}]{d.code} ×{n}[/]  "
-        body_parts = [f"{title}{escape(display_message(d))}"]
-        if n > 1:
-            names = dict.fromkeys(i.chart or i.query for i in group)
-            if applies_to := [name for name in names if name]:
-                joined = escape(", ".join(applies_to))
-                body_parts.append(f"[dim]Applies to:[/] {joined}")
-            unshown = sum(_signature(i) != _signature(d) for i in group)
-            if unshown:
-                body_parts.append(f"[dim]and {unshown} more with different details[/]")
-        if d.hint:
-            body_parts.append(f"[dim]Hint:[/] {escape(d.hint)}")
-        if d.fix:
-            body_parts.append(f"[dim]Fix:[/] {escape(d.fix)}")
-        if d.field:
-            body_parts.append(f"[dim]Field:[/] {d.field}")
-        if d.detail:
-            body_parts.append(f"[dim]Detail:[/] {escape(d.detail)}")
-        # `fields` also carries programmatic-only metadata (chart_id,
-        # severity, confidence) that other consumers key off of — only
-        # `detail`/`evidence` are meant for a human to read.
-        if detail := d.fields.get("detail"):
-            body_parts.append(f"[dim]Detail:[/] {escape(str(detail))}")
-        if evidence := d.fields.get("evidence"):
-            body_parts.append(f"[dim]Evidence:[/] {escape('; '.join(evidence))}")
-        locations = dict.fromkeys(
-            _display_path(i.range.file, i.range.start_line) if i.range else path
-            for i in group
+    styled = []
+    for line in text.split("\n"):
+        style = (
+            "bold red"
+            if line.startswith("error[")
+            else "bold yellow"
+            if line.startswith("warning[") or "a default; delete " in line
+            else None
         )
-        if shown := [loc for loc in locations if loc is not None]:
-            # Every error location matters; warnings show the first.
-            if style == "red":
-                body_parts.append(f"[dim]At:[/] {', '.join(shown)}")
-            elif len(shown) > 1:
-                body_parts.append(f"[dim]At:[/] {shown[0]} (+{len(shown) - 1} more)")
-            else:
-                body_parts.append(f"[dim]At:[/] {shown[0]}")
-        body_parts.append(f"[dim]Docs:[/] dct docs {REGISTRY.get(d.code).docs_topic}")
-        body = "\n".join(body_parts)
-        if console.no_color:
-            console.print(body)
-        else:
-            console.print(Panel(body, border_style=style, expand=False))
+        styled.append(f"[{style}]{escape(line)}[/]" if style else escape(line))
+    console.print("\n".join(styled), soft_wrap=True, highlight=False)

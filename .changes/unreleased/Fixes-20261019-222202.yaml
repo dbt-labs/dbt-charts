@@ -1,0 +1,3 @@
+kind: Fixes
+body: '`WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER` is removed: a column name no longer triggers a format suggestion.'
+time: 2026-10-19T22:22:02.91446-07:00

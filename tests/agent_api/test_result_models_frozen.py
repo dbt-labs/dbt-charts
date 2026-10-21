@@ -34,12 +34,6 @@ from dbt_charts.agent_api.diagnostics import (
     DiagnosticCodesListResult,
     DiagnosticCodeSummary,
 )
-from dbt_charts.agent_api.docs._loader import (
-    DocsResult,
-    DocsSearchHit,
-    Topic,
-    TopicEntry,
-)
 from dbt_charts.agent_api.doctor import DoctorCheck, DoctorReport
 from dbt_charts.agent_api.file_refs import ExpandedPrompt, FileRef
 from dbt_charts.agent_api.files import (
@@ -123,7 +117,6 @@ FROZEN_RESULT_INSTANCES: list[tuple[BaseModel, str]] = [
         "updated",
     ),
     (InstallSkillsResult(), "installed"),
-    (DocsResult(mode="index"), "mode"),
     (FileHit(file_path="x", line=1, text="l"), "file_path"),
     (FileEntry(file_path="x"), "file_path"),
     (
@@ -142,12 +135,6 @@ FROZEN_RESULT_INSTANCES: list[tuple[BaseModel, str]] = [
     (ChartDescription(name="n", type="t", query="q"), "name"),
     (VariableDescription(name="n", type="t"), "name"),
     (LayoutDescription(primitive="p"), "primitive"),
-    (Topic(id="i", title="t"), "id"),
-    (TopicEntry(id="i", title="t"), "id"),
-    (
-        DocsSearchHit(topic="t", title="ti", section="ti", score=1.0, content="s"),
-        "topic",
-    ),
     (InspectTemplate(name="n"), "name"),
     (ChartTypeDisplay(label="l", icon="i"), "label"),
     (

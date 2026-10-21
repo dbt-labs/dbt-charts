@@ -1,0 +1,3 @@
+kind: Fixes
+body: BigQuery queries run in the source's own project instead of your default Google Cloud project, and a variable whose options query fails now reports an error instead of showing an empty dropdown.
+time: 2026-10-17T23:44:45.167223-07:00

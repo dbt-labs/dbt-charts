@@ -100,5 +100,5 @@ def test_an_explicit_x_format_keeps_the_scatter_x_plain() -> None:
             }
         }
     )
-    assert any(card.startswith("cost: 500;") for card in cards), cards
-    assert any("cost: EUR 500" in card for card in cards), cards
+    assert any(card.startswith("Cost: 500;") for card in cards), cards
+    assert any("Cost: EUR 500" in card for card in cards), cards

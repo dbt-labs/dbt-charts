@@ -167,7 +167,6 @@ def _load_defaults() -> dict[str, Any]:
     data = _load_yaml_data(_default_config_path)
     for module_path in _MODULE_DEFAULT_PATHS:
         data = deep_merge_dict(data, _load_yaml_data(module_path))
-    data = deep_merge_dict(data, _load_palettes())
     return data
 
 
@@ -705,58 +704,6 @@ def get_project_markdown_metadata_table(project: Project) -> bool:
     return get_project_server_config(project).markdown_metadata_table
 
 
-def _load_palettes() -> dict[str, Any]:
-    """Load scaffold palette YAMLs from defaults/palettes/ into the config tree.
-
-    Returns a dict with ``dbt_grays`` / ``dbt_creams``: flat hex mappings
-    from ``defaults/palettes/scaffold/dbt-grays.yml`` and ``dbt-creams.yml``.
-
-    Categorical, sequential, diverging, and tone palettes are all accessed
-    via ``dbt_charts.core.compile.resolve.style.palette`` — not the config
-    tree. Categorical used to be scanned into ``Config.palettes`` here too;
-    that scan is gone (the resolver's own name index already answers "what
-    categorical palettes exist", and nothing else ever read the config
-    copy) -- ``Config.palettes`` stays declared, unpopulated, for the reason
-    its neighboring dead fields (``sources``, ``dbt_project_dir``) give.
-
-    Shipped YAMLs are expected to be well-formed. Any malformed file raises —
-    no silent skip.
-    """
-    overlay: dict[str, Any] = {}
-
-    for legacy_attr, palette_name in (
-        ("dbt_grays", "dbt-grays"),
-        ("dbt_creams", "dbt-creams"),
-    ):
-        # Use _load_spine (which resolves extends: inheritance) so that child
-        # palettes like dbt-creams inherit the full alias graph from their parent.
-        from dbt_charts.core.compile.resolve.style.palette import (
-            _load_spine,
-            resolve_alias_chain,
-        )
-
-        spine = _load_spine(palette_name)
-        if spine.colors is None or spine.aliases is None:
-            raise ValueError(
-                f"scaffold palette '{palette_name}' must have 'colors:' list and "
-                f"'aliases:' mapping (unified palette shape)"
-            )
-        # Flatten: resolve every alias to a terminal hex for legacy consumers.
-        flat: dict[str, str] = {
-            alias_key: resolve_alias_chain(
-                alias_key, dict(spine.aliases), colors=list(spine.colors)
-            )
-            for alias_key in spine.aliases
-        }
-        if not flat:
-            raise ValueError(
-                f"scaffold palette '{palette_name}' has no aliases — check palette YAML shape"
-            )
-        overlay[legacy_attr] = flat
-
-    return overlay
-
-
 @cache
 def list_built_in_themes() -> list[str]:
     """Return sorted stem names of all built-in unified themes."""
@@ -812,12 +759,9 @@ def get_theme_style(theme_name: str | None = None) -> Any:  # -> Style
     if name in _compiled_theme_cache:
         return _compiled_theme_cache[name]
 
-    from dbt_charts.core.compile.merge import resolve_built_in_theme
+    from dbt_charts.core.compile.merge import built_in_theme_style
 
-    patch = resolve_built_in_theme(name)
-    # resolve_built_in_theme always returns a BoardPatch; BaseModel return type
-    # avoids a circular import.
-    style_obj = patch.style  # type: ignore[attr-defined]
+    style_obj = built_in_theme_style(name)
     if style_obj is None:
         available = list_built_in_themes()
         raise ValueError(

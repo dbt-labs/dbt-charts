@@ -81,8 +81,6 @@ charts:
       - revenue
     style:
       columns:
-        region:
-          label: Region
         Electronics:
           format: currency_whole
         Accessories:
@@ -107,10 +105,8 @@ charts:
     style:
       columns:
         revenue:
-          label: Revenue
           format: currency_whole
         units:
-          label: Units
           format: integer
 
   # 3 — Nested column dimensions. Two `columns` fields stack into a two-row

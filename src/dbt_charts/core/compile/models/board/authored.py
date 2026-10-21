@@ -264,7 +264,7 @@ class GridLayout(BaseModel):
     columns: int = Field(
         default=24,
         gt=0,
-        description="Number of grid columns (default: 24). Positive number only.",
+        description="Grid columns, 24 unless set; write it only when it differs. Positive number only.",
     )
     items: list[GridItem] = Field(
         description="Cells of this grid, each pairing content with its placement."
@@ -503,7 +503,12 @@ class AuthoredBoard(ConstrainedModel):
     )
     notes: Annotated[str | None, Merge(Strategy.OVERRIDE), DisplayText()] = Field(
         default=None,
-        description="Prose summary of what this board covers; read by AI search and board listings.",
+        description=(
+            "What search finds: say what the board is for and which tables or "
+            "sources it reads, in a sentence or two, with the other words "
+            "someone might search for (synonyms of its measures). No dates or "
+            '"as of".'
+        ),
     )
     tags: list[str] | None = Field(
         default=None, description="Keywords for grouping and searching boards."
@@ -726,7 +731,7 @@ class AuthoredBoard(ConstrainedModel):
     ] = Field(
         default=None,
         description=(
-            "Themes or board files to inherit, low to high priority. "
+            "Themes or board files to inherit; the last one wins. "
             "A bare name is a built-in theme; write `./` before a file path "
             "(`./_brand.yml`). One name or a list: `extends: neon`, `extends: [./base.yml, neon]`. The board's own explicit style, a "
             "background included, beats every extended theme, so a dark "

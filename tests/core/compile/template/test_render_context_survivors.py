@@ -39,6 +39,7 @@ from dbt_charts.core.compile.template.labels_env import (
     _format_filter,
     label_jinja_env,
 )
+from dbt_charts.core.compile.template.listings import BoardListing, TextListings
 from dbt_charts.core.compile.template.parameterized import (
     make_filter_date_range_helper,
     make_filter_helper,
@@ -245,6 +246,39 @@ class TestBoardTextQueryResultsContext:
         assert queries["summary"] is results["summary"]
         assert call.new_or_overridden_globals == {}
         assert call.new_or_overridden_tests == {}
+
+    def test_listings_add_exactly_the_two_listing_callables(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = _capture_render_calls(monkeypatch)
+        listings = TextListings(
+            boards={"*": [BoardListing(path="/a", title="A", notes="", tags=[])]}
+        )
+        resolve_jinja_template(
+            "{{ region }}",
+            variables={"region": "north"},
+            strict=False,
+            query_results={},
+            format_cell=_format_cell,
+            listings=listings,
+        )
+        [call] = captured
+        assert call.context_keys == {
+            "region",
+            "queries",
+            "filter",
+            "filter_date_range",
+            "glob_boards",
+            "glob_folders",
+        }
+        assert call.context["glob_boards"]("*") == [
+            {"path": "/a", "title": "A", "notes": "", "tags": []}
+        ]
+        assert call.new_or_overridden_globals == {}
+
+    def test_listings_without_query_results_raise(self) -> None:
+        with pytest.raises(ValueError, match="listings"):
+            resolve_jinja_template("x", strict=False, listings=TextListings())
 
     def test_format_filter_is_the_injected_callable(
         self, monkeypatch: pytest.MonkeyPatch

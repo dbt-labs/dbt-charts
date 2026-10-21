@@ -1,0 +1,5 @@
+kind: Performance
+body: Boards with many nested blocks compile with far less memory.
+time: 2026-10-20T16:16:46.929569-07:00
+custom:
+    DbtChartsIssue: ""

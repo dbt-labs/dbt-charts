@@ -45,7 +45,8 @@ from dbt_charts.core.compile.models.chart.normalized import NON_ASPECT_RATIO_TYP
 from dbt_charts.core.compile.models.chart.resolved._layer import LayeredResolvedChart
 from dbt_charts.core.compile.template.variables import (
     check_option_values,
-    normalize_multiselect_values,
+    daterange_preset_ids,
+    normalize_render_values,
     parse_variable_json_strings,
     variable_value_is_absent,
 )
@@ -59,7 +60,7 @@ from dbt_charts.core.execute.collect import (
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.execute.parallel import execute_queries_parallel
 from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
-from dbt_charts.core.render.board_variables import board_variables
+from dbt_charts.core.render.board_variables import board_variables, daterange_presets
 from dbt_charts.core.render.boards import render_board_svg
 from dbt_charts.core.render.chart.axis_label_collision import (
     collect_axis_label_collisions,
@@ -116,6 +117,10 @@ from dbt_charts.core.render.errors import (
 from dbt_charts.core.render.font_selection import collect_painted_italic_families
 from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.render_result import RenderResult
+from dbt_charts.core.render.restated_auto import (
+    auto_restated_variable_warnings,
+    auto_restated_warnings,
+)
 from dbt_charts.core.render.sizing import resolve_active_tab_index
 from dbt_charts.core.render.svg_utils import strip_pagination_chrome
 from dbt_charts.core.render.thumbnail import cartoonize
@@ -244,6 +249,8 @@ def _collect_render_warnings(
     plot_width_share_warnings: dict[str, PlotWidthShareWarning],
     pie_total_overflows: dict[str, PieTotalOverflow],
     contrast_warnings: list[ContrastRecord],
+    source_board: Board,
+    restated_check: bool,
 ) -> list[Diagnostic]:
     """Build WarningContext from cached query results and run all detectors.
 
@@ -430,7 +437,18 @@ def _collect_render_warnings(
         pie_total_overflows={**pie_total_overflows, **_detection_pie_total_overflows},
         contrast_warnings=contrast_warnings,
     )
-    return run_all(ctx)
+    warnings = run_all(ctx)
+    if restated_check:
+        warnings += auto_restated_warnings(
+            source_board,
+            {chart_id: width for chart_id, (_c, width, _h) in active_charts.items()},
+            executor,
+            variables,
+        )
+        warnings += auto_restated_variable_warnings(
+            source_board, executor, variables, ""
+        )
+    return warnings
 
 
 def render(
@@ -444,13 +462,21 @@ def render(
     warnings_ignore: frozenset[str] = frozenset(),
     max_rows_per_query: int = NO_ROW_CAP,
     strict_variables: bool = True,
+    restated_check: bool = False,
     **options: Any,
 ) -> RenderResult:
-    with regional_scope(
-        board.regional.format_locale,
-        board.regional.time_locale,
-        board.regional.week_start,
-        language=board.regional.resolved_language,
+    overrides = variables or {}  # type-state: silent_fallback — None: no overrides
+    registry = board.variable_registry or {}  # type-state: silent_fallback — none
+    committed = {**board.variable_defaults, **overrides}
+    presets = daterange_preset_ids(committed, registry)
+    with (
+        regional_scope(
+            board.regional.format_locale,
+            board.regional.time_locale,
+            board.regional.week_start,
+            language=board.regional.resolved_language,
+        ),
+        daterange_presets(presets),
     ):
         return _render(
             board,
@@ -463,6 +489,7 @@ def render(
             warnings_ignore,
             max_rows_per_query,
             strict_variables,
+            restated_check,
             **options,
         )
 
@@ -478,6 +505,7 @@ def _render(
     warnings_ignore: frozenset[str],
     max_rows_per_query: int,
     strict_variables: bool,
+    restated_check: bool,
     **options: Any,  # type-state: explicit_any — render()'s own pass-through options
 ) -> RenderResult:
     """Render a compiled board.
@@ -502,6 +530,9 @@ def _render(
         warnings_ignore: Project-level warning codes to suppress. Callers resolve
             these before calling render() — typically via ``ProjectSession.warnings_ignore``
             or get_project_warnings_ignore(). Defaults to frozenset() (no suppression).
+        restated_check: Re-render each chart without its authored keys to find
+            ones that change nothing (WARN-RESTATED-*). Roughly doubles render
+            time, so only authoring surfaces ask for it.
         max_rows_per_query: Cap on rows embedded per chart in the data-bearing
             formats (json/text/yaml); each truncation is declared in the output
             (``rows_truncated`` record / comment header). Defaults to
@@ -555,7 +586,7 @@ def _render(
     # directly — so without this, `{{ v | join(', ') }}` on an unset multiselect
     # raises and the whole board renders as an error. Queries get the same
     # narrowing from coerce_variable_values; this is the render half.
-    merged_variables = normalize_multiselect_values(merged_variables, variable_registry)
+    merged_variables = normalize_render_values(merged_variables, variable_registry)
 
     # Board-level precondition: required variables must have a value before any query runs.
     if variable_registry:
@@ -615,7 +646,9 @@ def _render(
                 if name not in tab_variables
             },
             parsed_variables,
-            lambda var: resolve_option_values(var, executor, merged_variables),
+            lambda name, var: resolve_option_values(
+                name, var, executor, merged_variables
+            ),
         )
 
     # board.resolved_style is trusted here. Compile populated it; if a caller
@@ -775,6 +808,8 @@ def _render(
             plot_width_share_warnings,
             pie_total_overflows,
             contrast_warnings,
+            board,
+            restated_check,
         )
         return _partition_warnings(
             all_warnings,

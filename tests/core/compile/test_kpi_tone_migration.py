@@ -208,11 +208,6 @@ def test_kpi_conflict_when_support_tone_already_set(
     assert raw == original
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=IncompleteMigrationError,
-    reason="0.10.0 moves do not reach a chart in a board nested in a board",
-)
 def test_nested_board_kpi_style_tone_migrates(catalog: YamlSchemaCatalog) -> None:
     """KPI chart nested inside rows→cols→charts is reached by the recursive walk.
 

@@ -115,8 +115,8 @@ class TestInitDoesNotWriteAgentMarkdown:
             catch_exceptions=False,
         )
         assert result.exit_code == 0, result.output
-        assert (dbt_dir / ".agents/skills/dct-board-build/SKILL.md").exists()
-        assert (dbt_dir / ".claude/skills/dct-board-build/SKILL.md").exists()
+        assert (dbt_dir / ".agents/skills/dct-chart/SKILL.md").exists()
+        assert (dbt_dir / ".claude/skills/dct-chart/SKILL.md").exists()
         assert not (dbt_dir / "AGENTS.md").exists()
         assert not (dbt_dir / "CLAUDE.md").exists()
 
@@ -127,7 +127,7 @@ class TestInitDoesNotWriteAgentMarkdown:
         )
         assert result.exit_code == 0, result.output
         lines = [line for line in result.output.splitlines() if line.strip()]
-        assert "dct skills intro" in lines[-1]
+        assert "dct skills chart" in lines[-1]
 
 
 class TestInitWizardFlags:
@@ -458,8 +458,8 @@ class TestInitWizardFlags:
             catch_exceptions=False,
         )
         assert result.exit_code == 0, result.output
-        assert (repo_root / ".agents/skills/dct-board-build/SKILL.md").exists()
-        assert (repo_root / ".claude/skills/dct-board-build/SKILL.md").exists()
+        assert (repo_root / ".agents/skills/dct-chart/SKILL.md").exists()
+        assert (repo_root / ".claude/skills/dct-chart/SKILL.md").exists()
         assert not (subdir / ".agents/skills").exists()
         assert not (subdir / ".claude/skills").exists()
 
@@ -486,7 +486,7 @@ class TestInitWizardFlags:
             catch_exceptions=False,
         )
         assert result.exit_code == 0, result.output
-        assert (subdir / ".claude/skills/dct-board-build/SKILL.md").exists()
+        assert (subdir / ".claude/skills/dct-chart/SKILL.md").exists()
         assert not (repo_root / ".claude").exists()
 
     def test_existing_dbt_charts_project_above_cwd_uses_project_root(
@@ -577,7 +577,7 @@ class TestInitPreservesExistingAgentMarkdown:
         assert result.exit_code == 0, result.output
         assert (dbt_dir / "AGENTS.md").read_text() == "# Pre-existing content\n"
         assert "AGENTS.md" not in result.output
-        assert (dbt_dir / ".agents/skills/dct-board-build/SKILL.md").exists()
+        assert (dbt_dir / ".agents/skills/dct-chart/SKILL.md").exists()
 
     def test_existing_claude_md_is_not_modified(self, dbt_dir: Path) -> None:
         (dbt_dir / "CLAUDE.md").write_text("@AGENTS.md\n# Custom\n")
@@ -598,7 +598,7 @@ class TestInitPreservesExistingAgentMarkdown:
         assert result.exit_code == 0, result.output
         assert (dbt_dir / "CLAUDE.md").read_text() == "@AGENTS.md\n# Custom\n"
         assert "CLAUDE.md" not in result.output
-        assert (dbt_dir / ".claude/skills/dct-board-build/SKILL.md").exists()
+        assert (dbt_dir / ".claude/skills/dct-chart/SKILL.md").exists()
 
     def test_ide_detection_both_found_prompts_on_a_tty(self, dbt_dir: Path) -> None:
         def _which(cmd: str) -> str | None:

@@ -104,6 +104,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_SIGN_BEFORE_ANCHORED_PREFIX,
 )
 from dbt_charts.core.diagnostics.codes_render import (
+    ERR_SUPPORT_TABLE_FORMAT_NOT_NUMERIC,
     ERR_SUPPORT_TABLE_INDEPENDENT_X,
     ERR_SUPPORT_TABLE_NO_X_ENCODING,
     ERR_SUPPORT_TABLE_NO_Y_ENCODING,
@@ -174,6 +175,7 @@ from dbt_charts.core.text.numeral_scale import (
 )
 from dbt_charts.core.utils import (
     VlSortOp,
+    is_vega_numeric_value,
     sorted_series_by_stack_order,
     x_domain_order,
 )
@@ -1267,7 +1269,7 @@ def _vl_format_calc(
 def _default_support_table_label(
     entry: ResolvedSupportTableSource | ResolvedSupportTableAggregate,
 ) -> str:
-    return entry.label or inferred_display_name(entry.source, case="title")
+    return entry.label or inferred_display_name(entry.source)
 
 
 def _per_series_column_header(entry: ResolvedSupportTablePerSeries) -> str:
@@ -1278,9 +1280,9 @@ def _per_series_column_header(entry: ResolvedSupportTablePerSeries) -> str:
     header slot to name a series in — the series themselves are named by the
     chart's own legend, same as an ordinary grouped bar. The column itself
     still needs a name, so it takes the entry's own authored ``label:``, or
-    else the same title-cased default the source/aggregate columns use.
+    else the same default the source/aggregate columns use.
     """
-    return entry.label or inferred_display_name(entry.per_series, case="title")
+    return entry.label or inferred_display_name(entry.per_series)
 
 
 def _series_names_or_empty(series_order: list[str] | None) -> list[str]:
@@ -2474,6 +2476,24 @@ def _numeric_column(data: ChartRenderData, source: str) -> list[float]:
     return values
 
 
+def _require_numeric_source(
+    data: ChartRenderData, source: str, format_spec: str
+) -> None:
+    """Raise on a formatted source column holding a non-number: the strip's
+    number format would paint ``NaN`` for it."""
+    for row in data:
+        raw = row.get(source)
+        if raw is not None and (
+            isinstance(raw, bool) or not is_vega_numeric_value(raw)
+        ):
+            raise ChartDataError.from_code(
+                ERR_SUPPORT_TABLE_FORMAT_NOT_NUMERIC,
+                source=source,
+                format_spec=format_spec,
+                value=raw,
+            )
+
+
 def _entry_values(
     support_table: ResolvedSupportTable,
     data: ChartRenderData,
@@ -2499,6 +2519,8 @@ def _entry_values(
         elif isinstance(entry, ResolvedSupportTableAggregate) and x_field is not None:
             values = _aggregate_by_x(data, entry.source, x_field, entry.aggregate)
         else:
+            if entry.format is not None:
+                _require_numeric_source(data, entry.source, entry.format.spec)
             values = _numeric_column(data, entry.source)
         per_entry.append(values)
     return per_entry

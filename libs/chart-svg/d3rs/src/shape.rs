@@ -122,6 +122,19 @@ pub fn stacked_area_path(runs: &[Vec<(f64, f64, f64)>], curve: Curve) -> String 
     path.into_string()
 }
 
+/// [`stacked_area_path`] for a horizontal area (Vega's `x`/`x2` over a `y` dimension): each
+/// run is `(y, top_x, bottom_x)`, its top edge walked in dimension order, then the bottom edge back.
+pub fn stacked_area_path_horizontal(runs: &[Vec<(f64, f64, f64)>], curve: Curve) -> String {
+    let mut path = Path::rounded(WITH_PATH_DIGITS);
+    for run in runs {
+        let top: Vec<(f64, f64)> = run.iter().map(|&(y, top, _)| (top, y)).collect();
+        append_edge(&mut path, &top, curve, Edge::AreaTop);
+        let bottom: Vec<(f64, f64)> = run.iter().rev().map(|&(y, _, bottom)| (bottom, y)).collect();
+        append_edge(&mut path, &bottom, curve.toggled_for_area_bottom(), Edge::AreaBottom);
+    }
+    path.into_string()
+}
+
 /// Run one `lineStart … point* … lineEnd` cycle of `curve` over `points`.
 fn append_edge(path: &mut Path, points: &[(f64, f64)], curve: Curve, edge: Edge) {
     let drawn = match curve {
@@ -537,6 +550,12 @@ mod tests {
     /// below it), unlike the flat `bottom_y` a plain (unstacked) area draws
     /// against — [`stacked_area_path`] takes a per-point `(x, top, bottom)`
     /// triple instead. `area_path` is the flat-baseline special case.
+    #[test]
+    fn a_horizontal_stacked_area_walks_its_end_edge_down_and_its_start_edge_back() {
+        let run = vec![(38.0, 230.0, 0.0), (114.0, 153.0, 0.0)];
+        assert_eq!(stacked_area_path_horizontal(&[run], Curve::Linear), "M230,38L153,114L0,114L0,38Z");
+    }
+
     #[test]
     fn stacked_area_path_takes_a_per_point_baseline() {
         let runs = vec![vec![(0.0, 1.0, 9.0), (2.0, 3.0, 5.0)], vec![(6.0, 7.0, 9.0)]];

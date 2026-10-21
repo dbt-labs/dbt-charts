@@ -693,7 +693,7 @@ def make_filter_helper(emit: Emitter, dialect: SQLDialect) -> Callable[..., str]
         *,
         none: str = "allow",
     ) -> str:
-        """Generate parameterized filter clause.
+        """Filter clause `{{ filter('col', var) }}`; when the variable is All or unset it is no constraint, so never wrap it in `{% if %}`.
 
         Args:
             column: Column name (must be valid SQL identifier, not user input)

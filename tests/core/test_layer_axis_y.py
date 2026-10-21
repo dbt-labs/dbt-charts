@@ -689,7 +689,7 @@ def test_dual_axis_base_axis_shows_title() -> None:
     for layer in _walk_layers(vl):
         y = layer.get("encoding", {}).get("y", {})
         if y.get("field") == "revenue" and isinstance(y.get("axis"), dict):
-            assert y["axis"].get("title") == "revenue"
+            assert y["axis"].get("title") == "Revenue"
             checked = True
     assert checked, "no layer's y encoding matched revenue/axis — spec shape changed"
 
@@ -1367,7 +1367,7 @@ def test_layer_tooltip_keeps_the_standalone_sign_placement(prefix, painted) -> N
         html.unescape(a)
         for a in re.findall(r'aria-label="([^"]*)"', vlc.vegalite_to_svg(vl))
     ]
-    assert any(f"target: {painted}" in label for label in labels), labels
+    assert any(f"Target: {painted}" in label for label in labels), labels
 
 
 # ── layer axis_y.title needs a split axis to land on ─────────────────────
@@ -1398,3 +1398,35 @@ def test_layer_axis_y_title_with_pinned_position_compiles() -> None:
 def test_layer_axis_y_title_compiles_when_another_layer_pins_a_side() -> None:
     """The axis split is chart-wide: an unpinned layer's title still lands."""
     _resolve_layer_axes({"position": "right"}, {"title": "Target"})
+
+
+def test_layer_axis_follows_the_query_format() -> None:
+    """A layer's own y axis takes the query's `formats:` entry for its measure."""
+    from dbt_charts.core.compile.models.chart.authored._layer import (
+        LayerAxisYStyle,
+        LineLayer,
+    )
+    from dbt_charts.core.compile.models.chart.normalized import BarChart as NBarChart
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+    from dbt_charts.core.compile.resolve import resolve
+
+    rows = [
+        {"date": "2025-01", "revenue": 42000.0, "target": 0.31},
+        {"date": "2025-02", "revenue": 51000.0, "target": 0.34},
+    ]
+    chart = NBarChart(
+        id="bar1",
+        type="bar",
+        x="date",
+        y="revenue",
+        query=SqlQuery(sql="SELECT 1", source="t", formats={"target": "percent"}),
+        query_name="q",
+        variable_dependencies=set(),
+        layers=[
+            LineLayer(type="line", y="target", axis_y=LayerAxisYStyle(position="right"))
+        ],
+    )
+    resolved = resolve(chart, rows, _default_board_style())
+    labels = resolved.layers[0].axis_y.labels
+    assert labels is not None
+    assert "%" in labels.format.spec

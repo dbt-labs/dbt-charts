@@ -4,7 +4,7 @@ Root cause (PR #2308 follow-up): the color/theta channels had no ``title`` set,
 so vl-convert emitted raw ``field: value`` entries from the channel AND a titled
 ``Title: value`` entry from the explicit ``encoding.tooltip`` array.  Different
 keys → vl-convert can't dedupe → both appeared in the aria-label → JS hover
-layer rendered "Kind / Kind", "Status / Status", "User Count / User Count".
+layer rendered "Kind / Kind", "Status / Status", "User count / User count".
 
 Fix: channels carry their own titles (and format strings for quantitative fields);
 the redundant ``encoding.tooltip`` array is removed.
@@ -101,10 +101,10 @@ def test_vertical_stacked_bar_measure_formatted_in_aria_label():
     formatted = [
         lb
         for lb in labels
-        if "count: 5.5" in lb or "count: 3.3" in lb or "count: 2.7" in lb
+        if "Count: 5.5" in lb or "Count: 3.3" in lb or "Count: 2.7" in lb
     ]
     assert formatted, (
-        f"Expected at least one aria-label with formatted count (e.g. 'count: 5.5').\n"
+        f"Expected at least one aria-label with formatted count (e.g. 'Count: 5.5').\n"
         f"Actual aria-labels: {labels!r}"
     )
 
@@ -153,12 +153,12 @@ def test_horizontal_stacked_bar_measure_formatted_in_aria_label():
     formatted = [
         lb
         for lb in labels
-        if "ticket count: 20.5" in lb
-        or "ticket count: 5.5" in lb
-        or "ticket count: 8.3" in lb
+        if "Ticket count: 20.5" in lb
+        or "Ticket count: 5.5" in lb
+        or "Ticket count: 8.3" in lb
     ]
     assert formatted, (
-        f"Expected at least one aria-label with formatted ticket_count (e.g. 'ticket count: 20.5').\n"
+        f"Expected at least one aria-label with formatted ticket_count (e.g. 'Ticket count: 20.5').\n"
         f"Actual aria-labels: {labels!r}"
     )
 
@@ -166,8 +166,8 @@ def test_horizontal_stacked_bar_measure_formatted_in_aria_label():
 def test_pie_with_total_no_duplicate_theta_in_aria_label():
     """Pie with total: theta field (user_count) must not appear twice.
 
-    Before fix: ``user_count: 8.5; User Count: 8.5`` (raw theta channel +
-    titled arc_tooltip entry).  After fix: ``User Count: 8.5`` once.
+    Before fix: ``user_count: 8.5; User count: 8.5`` (raw theta channel +
+    titled arc_tooltip entry).  After fix: ``User count: 8.5`` once.
     """
     chart = PieChart(
         id="t",
@@ -182,7 +182,7 @@ def test_pie_with_total_no_duplicate_theta_in_aria_label():
     duped = [lb for lb in labels if _has_case_insensitive_duplicate(lb)]
     assert not duped, (
         f"Duplicate field keys found in aria-labels: {duped!r}\n"
-        "Expected 'User Count: 8.5' once, not 'user_count: 8.5; User Count: 8.5'"
+        "Expected 'User count: 8.5' once, not 'user_count: 8.5; User count: 8.5'"
     )
 
 
@@ -198,10 +198,10 @@ def test_pie_with_total_measure_formatted_in_aria_label():
     )
     labels = re.findall(r'aria-label="([^"]+)"', render_pie_svg(chart, _PIE_DATA))
     formatted = [
-        lb for lb in labels if "User Count: 8.5" in lb or "User Count: 3.3" in lb
+        lb for lb in labels if "User count: 8.5" in lb or "User count: 3.3" in lb
     ]
     assert formatted, (
-        f"Expected at least one aria-label with formatted user_count (e.g. 'User Count: 8.5').\n"
+        f"Expected at least one aria-label with formatted user_count (e.g. 'User count: 8.5').\n"
         f"Actual aria-labels: {labels!r}"
     )
 

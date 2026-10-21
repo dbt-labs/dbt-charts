@@ -1943,7 +1943,7 @@ def test_render_bar_support_table_missing_cell_and_default_label_in_svg():
         width=600,
         height=320,
     )
-    assert "Sample Size" in svg
+    assert "Sample size" in svg
     assert ">-</text>" in svg
     assert ">NaN<" not in svg
     assert ">null<" not in svg

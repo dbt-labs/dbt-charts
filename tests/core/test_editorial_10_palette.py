@@ -31,7 +31,7 @@ import sys
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.resolve.style.palette import palette
+from dbt_charts.core.compile.resolve.style.palette import color, palette
 
 from .._paths import DBT_CHARTS_DIR as _DBT_CHARTS_DIR
 
@@ -203,8 +203,8 @@ def test_geoshape_basemap_fill_comes_from_the_scaffold_not_a_data_palette():
     ladder is tinted at every step, so the value that reads as neutral
     ground on a gray canvas reads as a tan continent on cream.
     """
-    gray_step = palette("dbt-grays", steps=12)[4]
-    cream_step = palette("dbt-creams", steps=12)[2]
+    gray_step = color("dbt-grays.5")
+    cream_step = color("dbt-creams.3")
     expected = {
         "stark": gray_step,
         "clarity": gray_step,

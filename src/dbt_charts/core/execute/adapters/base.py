@@ -39,6 +39,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_QUERY_INTERRUPTED,
     ERR_RESULT_DUPLICATE_COLUMN,
     ERR_WAREHOUSE_AUTH,
+    ERR_WAREHOUSE_BYTES_CAP_EXCEEDED,
     ERR_WAREHOUSE_CONNECTION,
     ERR_WAREHOUSE_RUNTIME,
     UNKNOWN_RELATION_DIALECT_NOTES,
@@ -376,6 +377,21 @@ _MISSING_RELATION_MESSAGES: dict[str, re.Pattern[str]] = {
     "redshift": re.compile(r'relation ".*" does not exist'),
 }
 
+# BigQuery's refusal of a job whose estimated scan exceeds the source's
+# maximum_bytes_billed, with the cap and the estimate as raw byte counts.
+BIGQUERY_BYTES_CAP_MESSAGE = re.compile(
+    r"Query exceeded limit for bytes billed: (\d+)\. (\d+) or higher required"
+)
+
+
+def _format_gigabytes(byte_count: str) -> str:
+    """Decimal GB (1 GB = 1,000,000,000 bytes), the unit the cap is set in."""
+    gigabytes = int(byte_count) / 1_000_000_000
+    if gigabytes >= 1000:
+        return f"{gigabytes / 1000:.4g} TB"
+    return f"{gigabytes:.4g} GB"
+
+
 # Message forms of rejected or expired credentials, by dialect. Substrings of
 # the text dbt's exception wrapper carries: BigQuery's google.auth
 # RefreshError/DefaultCredentialsError wording, Snowflake's 250001 / 390114
@@ -429,6 +445,16 @@ def classify_warehouse_error(
         # code means the same thing whoever reported it. An unmapped one falls
         # through to the runtime fallback below.
         code = _SQLSTATE_ERROR_CODES[error.sqlstate]
+    elif dialect == "bigquery" and (
+        cap := BIGQUERY_BYTES_CAP_MESSAGE.search(str(error))
+    ):
+        rejected = QueryError.from_code(
+            ERR_WAREHOUSE_BYTES_CAP_EXCEEDED,
+            detail=str(error),
+            cap=_format_gigabytes(cap[1]),
+            required=_format_gigabytes(cap[2]),
+        )
+        return QueryResult(data=[], error=rejected)
     elif dialect in _AUTH_MESSAGES and _AUTH_MESSAGES[dialect].search(str(error)):
         code = ERR_WAREHOUSE_AUTH
     elif dialect in _MISSING_RELATION_MESSAGES and _MISSING_RELATION_MESSAGES[

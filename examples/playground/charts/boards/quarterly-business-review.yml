@@ -280,7 +280,6 @@ charts:
     x: stage_name
     y: pipeline
     style:
-      orientation: horizontal
       axis_y:
         labels:
           format: currency
@@ -300,11 +299,9 @@ charts:
           format: ",.0f"
           align: right
         pipeline:
-          label: Pipeline
           format: "$,.0f"
           align: right
         share:
-          label: Share
           format: ".0%"
           align: right
 
@@ -332,7 +329,6 @@ charts:
     x: plan
     y: accounts
     style:
-      orientation: horizontal
       axis_y:
         labels:
           format: ",.0f"
@@ -365,10 +361,6 @@ charts:
     color: status
     total:
       label: Total tickets
-    style:
-      total:
-        value:
-          format: ",.0f"
 
 rows:
   - text: |

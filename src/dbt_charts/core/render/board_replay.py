@@ -30,6 +30,7 @@ from dbt_charts.core.compile.models.chart.resolved import ResolvedPieChart
 from dbt_charts.core.compile.resolve.chart.label_data import (
     pie_presentation_fingerprint,
 )
+from dbt_charts.core.compile.template.listings import extract_listing_calls
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_BOARD_ARTIFACT_INVALID,
@@ -133,8 +134,8 @@ def render_board_from_artifact(
 
     Raises:
         DbtChartsError: ERR-BOARD-RECORDING-MISMATCH when the recording lacks a
-            query the artifact needs, or was captured under different
-            variable values.
+            query the artifact needs, was captured under different variable
+            values, or the board's text lists boards.
     """
     missing = sorted(set(resolved.queries) - set(recording.rows_by_query))
     if missing:
@@ -156,6 +157,14 @@ def render_board_from_artifact(
         boards.extend(  # noqa: B909 — queue growth: BFS over the board tree
             item.board for item in board.layout.items if item.board is not None
         )
+        if extract_listing_calls(board.text):
+            raise DbtChartsError.from_code(
+                ERR_BOARD_RECORDING_MISMATCH,
+                detail=(
+                    f"board {board.id!r} text lists boards, which a recording "
+                    "does not capture."
+                ),
+            )
         for chart in board.charts.values():
             if not isinstance(chart, ResolvedPieChart) or chart.query_name is None:
                 continue

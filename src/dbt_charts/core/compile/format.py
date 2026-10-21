@@ -446,6 +446,7 @@ def _merge_tiers(
     formats: FormatTable | None,
     tiers: Sequence[AuthoredFormat | _AnyFormat | None],
     engine_default: Callable[[], str] | None,
+    inferred: str | None = None,
 ) -> tuple[_Fields, bool]:
     """The one merge rule: each field comes from the strongest tier that sets it.
 
@@ -465,9 +466,12 @@ def _merge_tiers(
     ]
     from_default = not any(tier["spec"] for tier in resolved)
     if from_default:
-        name = _DEFAULT_NAME[kind]
+        # A board that redefined the default prints it as written, whatever the type.
+        if formats is not None and _DEFAULT_NAME[kind] in formats:
+            inferred = None
+        name = inferred or _DEFAULT_NAME[kind]
         default = format_fields(name, formats)
-        if engine_default is not None and default["raw"] == name:
+        if engine_default is not None and inferred is None and default["raw"] == name:
             # The destination's name resolves through the board like any other,
             # so a board that redefined it (affix included) prints it whole.
             instead = format_fields(engine_default(), formats)
@@ -491,16 +495,21 @@ def column_format(
     fmt: AuthoredFormat | _AnyFormat | None = None,
     *,
     board: AuthoredFormat | _AnyFormat | None = None,
-    column: AuthoredFormat | _AnyFormat | None = None,
+    query_formats: Mapping[str, str] | None = None,
+    columns: str | Collection[str] | None = None,
+    text: bool = False,
     engine_default: Callable[[], str] | None = None,
     values: Iterable[float | None] | None = None,
     notation: Notation | None = None,
+    inferred: str | None = None,
 ) -> ResolvedFormat:
     """The format a value of ``kind`` gets in one slot.
 
     Each layer is its own input, strongest first: ``fmt`` is the chart's own slot
-    format; ``column`` is the format a query's ``formats:`` declares for the
-    column; ``board`` is the board- or theme-level slot format. Below them sits the board's default for the kind, ``number`` or
+    format; the query layer is the format ``query_formats`` (a query's
+    ``formats:``) declares for ``columns``, looked up here so no slot can skip
+    it (``text`` admits a text name such as ``email``); ``board`` is the board-
+    or theme-level slot format. Below them sits the board's default for the kind, ``number`` or
     ``date_short`` through ``formats``, so a name the board redefined supplies
     spec, affix and notation together. Callers never pre-merge layers: every
     field (spec, affix, notation, options) comes from the strongest layer that
@@ -516,10 +525,32 @@ def column_format(
     ``values`` is what a Vega-painted slot will paint: Vega bakes one spec per
     slot, so any value inside the sub-unit band pulls an engine SI member to its
     plain-digit sibling. ``notation`` is the destination's register when the
-    format sets none.
+    format sets none. ``inferred`` is the column's type-default name
+    (``inferred_number_format``): it replaces the kind's default as the weakest
+    layer, so an integer column prints whole instead of compact.
     """
-    fields, _ = _merge_tiers(kind, formats, (fmt, column, board), engine_default)
+    column = declared_column_format(
+        query_formats, columns, formats, time=kind == "time", text=text
+    )
+    fields, _ = _merge_tiers(
+        kind, formats, (fmt, column, board), engine_default, inferred
+    )
     return ResolvedFormat(**_finished(fields, formats, values, notation))
+
+
+def inferred_number_format(
+    name: str,
+    values: Iterable[Any],  # type-state: explicit_any — warehouse cell values
+) -> str | None:
+    """The type-default format name for a column, or None when it has no type
+    to speak of: ``year`` for a *year* column of 1000-2999, ``integer`` for any
+    column of whole Python ints (a DuckDB HUGEINT sum arrives as one)."""
+    cells = [v for v in values if v is not None]
+    if not cells or not all(type(v) is int for v in cells):
+        return None
+    if "year" in name.lower() and all(1000 <= v <= 2999 for v in cells):
+        return PredefinedNumberFormat.year
+    return PredefinedNumberFormat.integer
 
 
 def _finished(
@@ -640,11 +671,15 @@ def kpi_format_native(
     fmt: AuthoredFormat | None = None,
     *,
     board: AuthoredFormat | None = None,
-    column: AuthoredFormat | None = None,
+    query_formats: Mapping[str, str] | None = None,
+    columns: str | None = None,
 ) -> bool:
     """True when the headline's merged format is a literal d3 spec a layer wrote,
     which prints its own raw characters: not one of the engine's house names, not
     what the engine's default supplied, with no authored notation."""
+    column = declared_column_format(
+        query_formats, columns, formats, time=False, text=True
+    )
     fields, from_default = _merge_tiers("number", formats, (fmt, column, board), None)
     return (
         not from_default
@@ -662,7 +697,8 @@ def finalize_kpi_value_format(
     *,
     compact: KpiCompactStyle,
     board: AuthoredFormat | None = None,
-    column: AuthoredFormat | None = None,
+    query_formats: Mapping[str, str] | None = None,
+    columns: str | None = None,
 ) -> ResolvedFormat | None:
     """The headline's final format: ``column_format``'s layers with the KPI's
     policy for the engine's own ``number`` (``compact.spec`` once ``|value|``
@@ -678,8 +714,10 @@ def finalize_kpi_value_format(
         reached = value is not None and abs(value) >= compact.threshold
         return compact.spec if reached else ""
 
-    layers = (fmt, column, board)
-    if all(layer is None for layer in layers):
+    column = declared_column_format(
+        query_formats, columns, formats, time=value is None, text=True
+    )
+    if all(layer is None for layer in (fmt, column, board)):
         if value is None:
             return None
         parts = column_format(
@@ -691,7 +729,9 @@ def finalize_kpi_value_format(
         formats,
         fmt,
         board=board,
-        column=column,
+        query_formats=query_formats,
+        columns=columns,
+        text=True,
         engine_default=None if value is None else compacted,
         notation="narrative",
     )
@@ -768,6 +808,32 @@ def declared_format(
     names = {columns} if isinstance(columns, str) else set(columns)
     entries = {declared.get(name) for name in names}
     return entries.pop() if len(entries) == 1 else None
+
+
+def declared_column_format(
+    query_formats: Mapping[str, str] | None,
+    columns: str | Collection[str] | None,
+    formats: FormatTable | None,
+    *,
+    time: bool,
+    text: bool = False,
+) -> str | None:
+    """The format name a query's ``formats:`` declares for ``columns``, when it is
+    of the asked kind (a time format for ``time``, else a number format).
+
+    A text name (``email``, ``url``) is of no numeric or date kind: it comes
+    back only for a destination that links text (``text=True``, the KPI, a table
+    column), and is no format at all to an axis or label. A number format on a
+    date axis would paint garbage, and a time format has nothing to say about a
+    number, so the other kind is no format at all.
+    """
+    name = declared_format(query_formats, columns)
+    if name is None:
+        return None
+    resolved = resolve_format(name, formats)
+    if resolved in PREDEFINED_TEXT_NAMES:
+        return name if text else None
+    return None if is_time_format(resolved) != time else name
 
 
 def missing_format_columns(

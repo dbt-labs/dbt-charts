@@ -12,7 +12,13 @@ from typing import Any
 import pytest
 
 from dbt_charts.core.compile.models.variable.authored import Variable
-from dbt_charts.core.compile.template.variables import coerce_variable_values
+from dbt_charts.core.compile.template.daterange import resolve_daterange_preset
+from dbt_charts.core.compile.template.jinja import resolve_jinja_template
+from dbt_charts.core.compile.template.variables import (
+    coerce_variable_values,
+    daterange_preset_ids,
+    normalize_render_values,
+)
 from dbt_charts.core.diagnostics.execution import ExecutionError
 
 
@@ -121,6 +127,42 @@ class TestCoerceDaterange:
         reg = _registry(r="daterange")
         with pytest.raises(ExecutionError):
             coerce_variable_values({"r": [datetime(2024, 1, 1, 9), None]}, reg)
+
+    def test_preset_becomes_todays_window(self) -> None:
+        reg = _registry(r="daterange")
+        start, end = resolve_daterange_preset("last_7_days", date.today())
+        assert coerce_variable_values({"r": "last_7_days"}, reg)["r"] == [start, end]
+
+    def test_unknown_preset_names_the_presets(self) -> None:
+        reg = _registry(r="daterange")
+        with pytest.raises(ExecutionError, match="last_90_days"):
+            coerce_variable_values({"r": "last_91_days"}, reg)
+
+
+class TestNormalizeRenderValues:
+    def test_preset_reaches_templates_as_iso_dates(self) -> None:
+        values = normalize_render_values(
+            {"r": "year_to_date"}, _registry(r="daterange")
+        )
+        start, end = resolve_daterange_preset("year_to_date", date.today())
+        assert values["r"] == [start.isoformat(), end.isoformat()]
+        assert type(values["r"]) is list
+        assert resolve_jinja_template("{{ r[0] }}", values) == start.isoformat()
+
+    def test_date_pair_and_blank_pass_through(self) -> None:
+        reg = _registry(r="daterange", s="daterange")
+        values = normalize_render_values({"r": ["2024-01-01", None], "s": ""}, reg)
+        assert values == {"r": ["2024-01-01", None], "s": ""}
+
+    def test_unknown_preset_raises_naming_the_presets(self) -> None:
+        with pytest.raises(ExecutionError, match="last_90_days"):
+            normalize_render_values({"r": "last_91_days"}, _registry(r="daterange"))
+
+
+def test_daterange_preset_ids_maps_only_preset_values() -> None:
+    reg = _registry(a="daterange", b="daterange", c="text")
+    values = {"a": "last_7_days", "b": ["2024-01-01", "2024-01-31"], "c": "today"}
+    assert daterange_preset_ids(values, reg) == {"a": "last_7_days"}
 
 
 class TestCoerceNumber:

@@ -6,6 +6,7 @@
 # per shape, each built using the standard recipe for that shape.
 
 title: Composed chart shapes
+source: examples_db
 notes: shapes an author asks for by name that dbt Charts has no `type:` for. Each cell is the
   natural recipe for one of them, rendered so the verdict is a picture and not an opinion.
 style:
@@ -23,7 +24,6 @@ queries:
   # and steady baselines, each on its own schedule. Keep it when regenerating
   # this board's other sample data.
   flows:
-    source: examples_db
     sql: |
       WITH series AS (
         SELECT
@@ -48,7 +48,6 @@ queries:
       FROM series
       ORDER BY date, category
   entities:
-    source: examples_db
     sql: |
       SELECT
         'Region ' || chr((64 + e)::INTEGER)                        AS category,
@@ -64,7 +63,6 @@ queries:
   # Bullet's qualitative ranges: three cumulative bands per category, stacked to
   # build the background the value bar is read against.
   bullet_bands:
-    source: examples_db
     sql: |
       SELECT 'Unit ' || chr((64 + e)::INTEGER) AS category, band, size, ord
       FROM generate_series(1, 5) t(e)
@@ -72,7 +70,6 @@ queries:
         AS b(band, size, ord)
       ORDER BY e, ord
   bullet_measures:
-    source: examples_db
     sql: |
       SELECT
         'Unit ' || chr((64 + e)::INTEGER)          AS category,
@@ -81,7 +78,6 @@ queries:
       FROM generate_series(1, 5) t(e)
       ORDER BY e
   dots:
-    source: examples_db
     sql: |
       WITH base AS (
         SELECT
@@ -98,7 +94,6 @@ queries:
       SELECT category, '2029', v2029, v2019 FROM base
       ORDER BY rank_by DESC, series
   pairs:
-    source: examples_db
     sql: |
       SELECT 'Region ' || chr((64 + e)::INTEGER) AS entity, 'Before' AS period, 1 AS ord,
              round(20 + 40 * abs(sin(e * 0.9)), 1) AS value
@@ -109,7 +104,6 @@ queries:
       FROM generate_series(1, 6) t(e)
       ORDER BY ord, entity
   ranks:
-    source: examples_db
     sql: |
       SELECT entity, year, rank
       FROM (VALUES
@@ -146,7 +140,6 @@ queries:
       ) AS t(entity, year, rank)
       ORDER BY year, rank
   bridge:
-    source: examples_db
     sql: |
       WITH steps(ord, step, change) AS (
         VALUES
@@ -169,7 +162,6 @@ queries:
       SELECT 'Q2 revenue', 0, SUM(change), 6, 'Total' FROM steps
       ORDER BY ord
   prices:
-    source: examples_db
     sql: |
       WITH days AS (
         SELECT d, DATE '2026-03-02' + d::INTEGER AS trade_date
@@ -192,7 +184,6 @@ queries:
       FROM px
       ORDER BY d
   plan:
-    source: examples_db
     sql: |
       SELECT task, start_date::DATE AS start_date, finish_date::DATE AS finish_date
       FROM (VALUES
@@ -212,7 +203,6 @@ charts:
     x: category
     y: value
     style:
-      orientation: vertical
       legend:
         visible: false
       color:
@@ -240,7 +230,6 @@ charts:
     y: size
     color: band
     style:
-      orientation: vertical
       stack: zero
       # The bands are a semantic ramp, so they stack in the query's own order
       # (poor, satisfactory, good) rather than the default ascending-by-value.
@@ -293,17 +282,9 @@ charts:
     color: entity
     style:
       axis_x:
-        title:
-          visible: false
         grid:
-          visible: true
           color: "#B8BCC4"
           width: 1.5
-      axis_y:
-        title:
-          visible: false
-        grid:
-          visible: true
   bump:
     query: ranks
     type: line
@@ -313,9 +294,6 @@ charts:
     y: rank
     color: entity
     style:
-      axis_x:
-        title:
-          visible: false
       axis_y:
         scale:
           continuous:
@@ -368,7 +346,7 @@ charts:
       color:
         categorical:
           palette:
-          - dbt-grays.muted
+          - dbt-grays.8
           - category[2]
           - category[1]
       marks:
@@ -466,7 +444,6 @@ charts:
     y_start: low
     color: session
     style:
-      orientation: vertical
       # One session per day, so each day's bar fills its band instead of a grouped slot.
       overlap: full
       # Rising and falling read from the marks themselves.
@@ -510,7 +487,6 @@ charts:
     y: high
     y_start: low
     style:
-      orientation: vertical
       overlap: full
       legend:
         visible: false
@@ -518,7 +494,7 @@ charts:
       color:
         categorical:
           palette:
-          - dbt-grays.ink
+          - dbt-grays.11
           - negative.solid
           - positive.solid
       marks:
@@ -539,7 +515,7 @@ charts:
           bar:
             band_width: 0.6
             border:
-              color: dbt-grays.ink
+              color: dbt-grays.11
               width: 1
               radius: 0
   gantt:
@@ -551,7 +527,6 @@ charts:
     y: finish_date
     y_start: start_date
     style:
-      orientation: horizontal
       # Each bar prints its length, in one unit across the chart.
       marks:
         bar:

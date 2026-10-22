@@ -1,5 +1,4 @@
 {
-  "aria.axis": "ось",
   "aria.chart": "диаграмма",
   "aria.container_arc": "контейнер метки дуги",
   "aria.container_group": "контейнер метки группы",
@@ -18,8 +17,6 @@
   "aria.role_text": "метка текста",
   "aria.title": "заголовок",
   "aria.title_text": "Текст заголовка «{header}»",
-  "aria.x_axis": "Ось X",
-  "aria.y_axis": "Ось Y",
   "axis.midnight": "Полночь",
   "axis.noon": "Полдень",
   "case.extra_small_words": "",

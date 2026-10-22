@@ -1,0 +1,101 @@
+//! d3-geo 3.1.1 `src/projection/fit.js`: `fitExtent`, `fitSize`, `fitWidth` and `fitHeight`, which choose the
+//! scale and translate that put a GeoJSON object's projected bounds in a box. d3 hangs them on the projection
+//! (`projection.fitSize`) and `identity` shares them, so they are the provided methods of [`Fit`].
+
+use super::Projection;
+use crate::geo::path::bounds::Bounds;
+use crate::geo::stream::GeoStream;
+use crate::geojson::GeoJson;
+use crate::js_math::js_min;
+
+/// What `fit.js` reads and writes of a projection: its clip extent, scale and translate, and its stream.
+pub trait Fit: Sized {
+    fn clip_extent(&self) -> Option<[[f64; 2]; 2]>;
+    fn set_clip_extent(&mut self, extent: Option<[[f64; 2]; 2]>) -> &mut Self;
+    fn set_scale(&mut self, k: f64) -> &mut Self;
+    fn set_translate(&mut self, translate: [f64; 2]) -> &mut Self;
+    /// `geoStream(object, projection.stream(sink))`, failing with the error d3 would throw instead of
+    /// returning the truncated output as though it were complete.
+    fn stream_object(&self, object: &GeoJson, sink: impl GeoStream) -> Result<(), String>;
+
+    /// d3's `fit`: project `object` at scale 150 with no clip extent, then let `fit_bounds` set the scale and
+    /// translate from the bounds, which must be finite. An error from the pipeline (see [`Fit::stream_object`]) leaves the
+    /// projection as d3 is left by the throw: scale 150, translate [0, 0], clip extent cleared.
+    fn fit(
+        &mut self,
+        object: &GeoJson,
+        fit_bounds: impl FnOnce(&mut Self, [[f64; 2]; 2]),
+    ) -> Result<&mut Self, String> {
+        let clip = self.clip_extent();
+        self.set_scale(150.0).set_translate([0.0, 0.0]);
+        if clip.is_some() {
+            self.set_clip_extent(None);
+        }
+        let mut bounds = Bounds::default();
+        self.stream_object(object, &mut bounds)?;
+        let extent = bounds.result();
+        if extent.iter().flatten().any(|v| !v.is_finite()) {
+            return Err(format!("fit: the projected extent is not finite: {extent:?}"));
+        }
+        fit_bounds(self, extent);
+        if let Some(clip) = clip {
+            self.set_clip_extent(Some(clip));
+        }
+        Ok(self)
+    }
+
+    fn fit_extent(&mut self, extent: [[f64; 2]; 2], object: &GeoJson) -> Result<&mut Self, String> {
+        self.fit(object, |p, b| {
+            let w = extent[1][0] - extent[0][0];
+            let h = extent[1][1] - extent[0][1];
+            let k = js_min(w / (b[1][0] - b[0][0]), h / (b[1][1] - b[0][1]));
+            let x = extent[0][0] + (w - k * (b[1][0] + b[0][0])) / 2.0;
+            let y = extent[0][1] + (h - k * (b[1][1] + b[0][1])) / 2.0;
+            p.set_scale(150.0 * k).set_translate([x, y]);
+        })
+    }
+
+    fn fit_size(&mut self, size: [f64; 2], object: &GeoJson) -> Result<&mut Self, String> {
+        self.fit_extent([[0.0, 0.0], size], object)
+    }
+
+    fn fit_width(&mut self, width: f64, object: &GeoJson) -> Result<&mut Self, String> {
+        self.fit(object, |p, b| {
+            let k = width / (b[1][0] - b[0][0]);
+            let x = (width - k * (b[1][0] + b[0][0])) / 2.0;
+            let y = -k * b[0][1];
+            p.set_scale(150.0 * k).set_translate([x, y]);
+        })
+    }
+
+    fn fit_height(&mut self, height: f64, object: &GeoJson) -> Result<&mut Self, String> {
+        self.fit(object, |p, b| {
+            let k = height / (b[1][1] - b[0][1]);
+            let x = -k * b[0][0];
+            let y = (height - k * (b[1][1] + b[0][1])) / 2.0;
+            p.set_scale(150.0 * k).set_translate([x, y]);
+        })
+    }
+}
+
+impl Fit for Projection {
+    fn clip_extent(&self) -> Option<[[f64; 2]; 2]> {
+        Projection::clip_extent(self)
+    }
+
+    fn set_clip_extent(&mut self, extent: Option<[[f64; 2]; 2]>) -> &mut Self {
+        Projection::set_clip_extent(self, extent)
+    }
+
+    fn set_scale(&mut self, k: f64) -> &mut Self {
+        Projection::set_scale(self, k)
+    }
+
+    fn set_translate(&mut self, translate: [f64; 2]) -> &mut Self {
+        Projection::set_translate(self, translate)
+    }
+
+    fn stream_object(&self, object: &GeoJson, sink: impl GeoStream) -> Result<(), String> {
+        Projection::stream_object(self, object, sink)
+    }
+}

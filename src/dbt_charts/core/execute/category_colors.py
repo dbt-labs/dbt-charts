@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 
 def _observe(
-    chart: _BaseChartFields, rows: ChartRows
+    chart: _BaseChartFields, rows: ChartRows, pinned_fields: frozenset[str]
 ) -> tuple[ChartFieldValues, frozenset[str]]:
     """Return (field → distinct string values this chart draws, disqualified fields).
 
@@ -54,7 +54,10 @@ def _observe(
     is ordered, not a set of names, so binding one would mean the wrong thing
     and burn a palette slot per timestamp. The date test is applied
     **unanimously**, matching ``classify_date_column_align``: one year-shaped
-    value like "2024" among real names must not veto the column.
+    value like "2024" among real names must not veto the column. A field
+    pinned under ``style.charts.category_colors`` skips the date test: the
+    author named its values as categories, and "2020" pinned to a color is
+    a name, not a timestamp.
     """
     observed: dict[str, tuple[str, ...]] = {}
     disqualified_fields: set[str] = set()
@@ -75,7 +78,7 @@ def _observe(
             continue
         if not values:
             continue
-        if all(is_date_like(value) for value in values):
+        if field not in pinned_fields and all(is_date_like(v) for v in values):
             disqualified_fields.add(field)
             continue
         observed[field] = tuple(values)
@@ -95,7 +98,7 @@ def plan_board_category_colors(
 
     A field a chart ENCODES (an authored `color:` naming it) but whose values
     `_observe` genuinely DISQUALIFIED for that chart — non-string, or
-    unanimously date-like — POISONS the field board-wide. `_bound_scales`
+    unanimously date-like and unpinned — POISONS the field board-wide. `_bound_scales`
     (resolve/chart/_kwargs.py) re-attaches any plan-bound scale to every chart
     whose `color:` names the field, regardless of that chart's own values (it
     cannot know them at resolve time), so a scale that cannot seat this
@@ -112,6 +115,7 @@ def plan_board_category_colors(
     change that empties one chart's result (a `dct serve` variable, a filter)
     would silently drop the shared binding for every OTHER chart on the board.
     """
+    pins = _authored_pins(board)
     observations: list[ChartFieldValues] = []
     poisoned: set[str] = set()
     for chart in _placed_charts(board):
@@ -121,14 +125,14 @@ def plan_board_category_colors(
             rows = executor.execute_query(chart.query_name, variables)
         except DbtChartsError:
             continue
-        observed, disqualified_fields = _observe(chart, rows)
+        observed, disqualified_fields = _observe(chart, rows, frozenset(pins))
         poisoned.update(disqualified_fields)
         if observed:
             observations.append(observed)
 
     plan = plan_category_colors(
         observations,
-        _authored_pins(board),
+        pins,
         board.chart_style_context.palette,
     )
     for field in poisoned:

@@ -1,5 +1,4 @@
 {
-  "aria.axis": "as",
   "aria.chart": "grafiek",
   "aria.container_arc": "boogmarkering-container",
   "aria.container_group": "groepsmarkering-container",
@@ -18,8 +17,6 @@
   "aria.role_text": "tekstmarkering",
   "aria.title": "titel",
   "aria.title_text": "Titeltekst ‘{header}’",
-  "aria.x_axis": "X-as",
-  "aria.y_axis": "Y-as",
   "axis.midnight": "Middernacht",
   "axis.noon": "Middag",
   "case.extra_small_words": "",

@@ -1,5 +1,4 @@
 {
-  "aria.axis": "вісь",
   "aria.chart": "діаграма",
   "aria.container_arc": "контейнер мітки дуги",
   "aria.container_group": "контейнер мітки групи",
@@ -18,8 +17,6 @@
   "aria.role_text": "мітка тексту",
   "aria.title": "заголовок",
   "aria.title_text": "Текст заголовка «{header}»",
-  "aria.x_axis": "Вісь X",
-  "aria.y_axis": "Вісь Y",
   "axis.midnight": "Північ",
   "axis.noon": "Полудень",
   "case.extra_small_words": "",

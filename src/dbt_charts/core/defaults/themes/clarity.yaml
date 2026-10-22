@@ -1,18 +1,18 @@
 # Unified theme: clarity
 # The shipped dbt charts default. Serif-forward titles, multi-step gray scaffold
-# ladder — a refined editorial voice applied on top of the
-# `stark` structural root. Pick `stark` directly to opt out of the refined
-# hierarchy; pick `paper` for the same voice on a warm canvas.
+# ladder — a refined editorial voice. Pick `stark` for a flat single-ink
+# look; pick `paper` for the same voice on a warm canvas.
 
-extends: stark
+extends: _base
 notes: the default
 style:
   background: dbt-grays.white
-  # Clarity palette — gray scaffold muted step in place of the stark muted.
+  accent: info.solid-hover
+  # Clarity palette — muted sits one step down the gray scaffold from ink.
   muted: chrome[8]
   # Rebind the categorical role to the editorial-10 family. `_base` binds
   # category to vivid-10; without this rebind, theme-portable refs like
-  # `category[2]` or `category[2].dark` keep resolving to stark's palette
+  # `category[2]` or `category[2].dark` keep resolving to vivid-10
   # after a theme switch. Absolute pins (`vivid-10.2.dark`) stay pinned by
   # design.
   palettes:
@@ -22,22 +22,20 @@ style:
     # read the same palette.
     sequence: dbt-seq-blue
   # Board/card border — subtle gray when a board opts into a visible border.
-  # `stark` collapses this to ink (gray-80); `clarity` restores the
-  # soft separator.
   border:
     color: chrome[4]
-  # Prose ink — gray-90, restored from `stark`'s ink collapse.
+  # Prose ink — gray-90.
   font:
     color: chrome[11]
-  # The editorial voice: serif headlines and prose on top of `stark`'s sans.
+  # The editorial voice: serif headlines and prose over `_base`'s sans.
   fonts:
     heading:
       family: "'Source Serif 4', Georgia, 'Times New Roman', serif"
     body:
       family: &serif "'Source Serif 4', Georgia, 'Times New Roman', serif"
   title:
-    # Serif headlines — the editorial voice the `clarity` theme adds on top
-    # of `stark`. Source Serif 4 is the editorial board; chart-title
+    # Serif headlines — the editorial voice the `clarity` theme adds.
+    # Source Serif 4 is the editorial board; chart-title
     # typography is width-driven (see core/compile/resolve/style/typography.py) and reads
     # this family for medium/wide chart cards.
     #
@@ -78,6 +76,10 @@ style:
         color: chrome[5]
       ticks:
         color: chrome[5]
+    axis_band:
+      labels:
+        font:
+          color: chrome[11]     # category names print in ink; time stays muted via `axis`
     axis_quantitative:
       labels:
         font:
@@ -93,11 +95,8 @@ style:
       title:
         font:
           color: chrome[10]
-    # Resets border.width / shadow.visible / swatch.radius / active_marker --
-    # stark (the structural root) sets 1.5 / false / 0 / triangle for its own
-    # utilitarian look; those values would otherwise leak into every descendant
-    # that doesn't override them. clarity's soft look predates stark's tooltip
-    # rework, so these resets restore it explicitly.
+    # Soft tooltip: no outline, a drop shadow, rounded swatch, and a
+    # background-fill active marker. stark is the hard-outline variant.
     tooltip:
       background: dbt-grays.white
       label:
@@ -126,7 +125,7 @@ style:
     kpi:
       # KPI value font is a serif on clarity-voiced themes — narrative type
       # for the headline number, its affix, and its glyph, while the label
-      # and support row stay on the tabular sans (kpi.font.family from stark).
+      # and support row stay on the tabular sans (kpi.font.family from `_base`).
       value:
         font:
           extends: body
@@ -160,12 +159,6 @@ style:
       color:
         gradient:
           palette: sequence
-    line:
-      endpoint_labels:
-        visible: auto
-    area:
-      endpoint_labels:
-        visible: auto
     pie:
       total:
         value:
@@ -218,11 +211,9 @@ style:
         stripe:
           color: chrome[2]   # subtle zebra (one scaffold stop off canvas)
   variables:
-    # Variable-strip labels track the muted gray rather than the
-    # cooler #666666 stark uses.
+    # Variable-strip labels track the muted gray.
     font:
       color: chrome[8]
-    # Variable-strip input border — subtle gray separator. `stark` collapses
-    # this to ink (gray-80); `clarity` restores the soft separator.
+    # Variable-strip input border — subtle gray separator.
     border:
       color: chrome[5]

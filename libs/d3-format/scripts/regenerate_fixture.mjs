@@ -2,13 +2,11 @@
  * Regenerate the d3_reference.json parity fixture.
  *
  * Usage:
- *   cd libs/d3-format/scripts
- *   npm install d3-format
- *   node regenerate_fixture.mjs
+ *   pnpm add --dir libs/d3-format/scripts --ignore-workspace d3-format
+ *   node libs/d3-format/scripts/regenerate_fixture.mjs
  *
- * Requires d3-format installed in node_modules (npm install d3-format).
- * npm walks up to the repo-root package.json and records the dependency there,
- * so run `git checkout -- package.json package-lock.json` afterwards.
+ * The add writes an untracked package.json and pnpm-lock.yaml beside this
+ * script; delete them afterwards.
  * Output is written to libs/d3-format/tests/fixtures/d3_reference.json
  * relative to the script's location (two directories up).
  */

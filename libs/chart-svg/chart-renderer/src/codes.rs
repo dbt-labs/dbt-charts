@@ -37,6 +37,7 @@ pub const ERR_HISTOGRAM_NON_NUMERIC: Code = Code { id: "ERR-HISTOGRAM-NON-NUMERI
 pub const ERR_HISTOGRAM_PREAGGREGATED: Code = Code { id: "ERR-HISTOGRAM-PREAGGREGATED", params: &["chart_id", "count_fields", "field"] };
 pub const ERR_IMAGE_REF_UNRESOLVED: Code = Code { id: "ERR-IMAGE-REF-UNRESOLVED", params: &["reason", "ref"] };
 pub const ERR_INPUT_INVALID: Code = Code { id: "ERR-INPUT-INVALID", params: &["message"] };
+pub const ERR_INTERNAL: Code = Code { id: "ERR-INTERNAL", params: &["message"] };
 pub const ERR_KPI_FORMAT_KIND_MISMATCH: Code = Code { id: "ERR-KPI-FORMAT-KIND-MISMATCH", params: &["chart_id", "spec"] };
 pub const ERR_KPI_MULTIROW: Code = Code { id: "ERR-KPI-MULTIROW", params: &["chart_id", "row_count"] };
 pub const ERR_KPI_NO_DATA: Code = Code { id: "ERR-KPI-NO-DATA", params: &["chart_id"] };

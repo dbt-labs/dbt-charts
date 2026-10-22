@@ -1,5 +1,4 @@
 {
-  "aria.axis": "축",
   "aria.chart": "차트",
   "aria.container_arc": "호 마크 컨테이너",
   "aria.container_group": "그룹 마크 컨테이너",
@@ -18,8 +17,6 @@
   "aria.role_text": "텍스트 마크",
   "aria.title": "제목",
   "aria.title_text": "제목 텍스트 ‘{header}’",
-  "aria.x_axis": "X축",
-  "aria.y_axis": "Y축",
   "axis.midnight": "자정",
   "axis.noon": "정오",
   "case.extra_small_words": "",

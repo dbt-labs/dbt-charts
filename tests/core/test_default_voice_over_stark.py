@@ -1,8 +1,8 @@
-"""Tests for the `clarity`/`paper` themes' editorial-voice overrides on `stark`.
+"""Tests for the `clarity`/`paper` themes' editorial voice, compared against `stark`.
 
-The `clarity` theme extends `stark` and adds an editorial voice: a serif KPI
-value font, legend disabled, axis-domain lines hidden. `paper` extends
-`clarity` and inherits the same overrides on a warm canvas.
+The `clarity` theme adds an editorial voice, such as a serif KPI value font;
+legend and axis-domain defaults come from `_base`. `paper` extends `clarity`
+and inherits the same overrides on a warm canvas.
 These tests assert the overrides exist (and propagate), without pinning the
 specific aesthetic values they resolve to — those values are tunable and
 shouldn't break the test when re-tuned (per dbt-charts/AGENTS.md: *"Don't pin
@@ -100,8 +100,8 @@ def test_axis_domain_not_visible_by_default(theme_name, axis):
     """Axis domain lines are hidden on the editorial-voiced themes — verified
     through the resolved cascade rather than at the pre-cascade theme layer.
 
-    The hiding now happens at `stark` (axis.line.visible: false cascades to
-    axis_x and axis_y), so default.yaml no longer needs to re-assert it. The
+    The hiding happens at `_base` (axis.line.visible: false, which cascades to
+    axis_x and axis_y), so no theme needs to re-assert it. The
     user-facing contract — "domain lines off by default on the editorial
     themes" — is preserved.
     """

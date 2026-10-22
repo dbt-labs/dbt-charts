@@ -76,8 +76,8 @@ def _board_with_dashes(dashes: list[list[int]]) -> tuple:
     Resolves against `stark` with line/area endpoint labels seeded OFF and the
     legend seeded ON: these tests observe the merged color+dash legend, which
     endpoint labels would replace (they suppress the color legend) and which
-    stark's own root default would hide. Seeding both flags explicitly keeps the
-    test independent of either tunable.
+    the `_base` endpoint-label default would hide. Seeding both flags
+    explicitly keeps the test independent of either tunable.
     """
     from dbt_charts.core.compile.config import get_theme_style
 

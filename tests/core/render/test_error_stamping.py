@@ -40,6 +40,9 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # fully-resolved support-table style), identical in kind to the
         # allowlisted _entry_cell_widths font.size guard above.
         ("chart/support_table_attachment.py", "resolved_pad_font_family"),
+        # layouts.py: same theme-cascade guarantee (layout.tabs.font.case is
+        # inherited from style.font, so a resolved style always carries it).
+        ("layouts.py", "render_tabs_layout"),
         # chart/table_support.py
         ("chart/table_support.py", "resolve_palette_stops"),
         ("chart/table_support.py", "interpolate_scale_color"),

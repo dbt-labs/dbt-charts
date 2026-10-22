@@ -1,5 +1,4 @@
 {
-  "aria.axis": "軸",
   "aria.chart": "チャート",
   "aria.container_arc": "円弧マークのコンテナ",
   "aria.container_group": "グループマークのコンテナ",
@@ -18,8 +17,6 @@
   "aria.role_text": "テキストマーク",
   "aria.title": "タイトル",
   "aria.title_text": "タイトルテキスト「{header}」",
-  "aria.x_axis": "X軸",
-  "aria.y_axis": "Y軸",
   "axis.midnight": "午前0時",
   "axis.noon": "正午",
   "case.extra_small_words": "",

@@ -334,7 +334,7 @@ class TestItalicOutsideMarkdownEmphasis:
         assert _ITALIC_BOARD.search(html) is not None
 
     def test_theme_default_blockquote(self, tmp_path, local_project) -> None:
-        """stark sets text.blockquote.font.style: italic, so every built-in theme
+        """_base sets text.blockquote.font.style: italic, so every built-in theme
         paints a blockquote italic — through a CSS class rule, not a measured run."""
         html = self._export(_BLOCKQUOTE_YAML, tmp_path, local_project)
         assert re.search(r"md-[0-9a-f]{8}-blockquote", html), (

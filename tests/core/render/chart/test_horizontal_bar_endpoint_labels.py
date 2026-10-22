@@ -841,6 +841,7 @@ def test_categorical_axis_gutter_is_zero_when_labels_are_hidden() -> None:
         None,
         chart.y,
         has_quantitative_axis=True,
+        temporal_band_axes=frozenset(),
     )
     hidden_labels = plan.axes.x.style.labels.model_copy(update={"visible": False})
     hidden = plan.axes.x.style.model_copy(update={"labels": hidden_labels})

@@ -1,0 +1,5 @@
+kind: Fixes
+body: A board without an authored width now hugs a lone chart wide enough to draw its title on one line, up to the board's max width.
+time: 2026-10-21T16:34:06.370352-07:00
+custom:
+    DbtChartsIssue: "42"

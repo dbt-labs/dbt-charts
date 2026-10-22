@@ -58,8 +58,15 @@ impl BandGeometry {
         BandGeometry {
             step,
             bandwidth: step * (1.0 - padding_inner),
-            origin: range_start + step * padding_outer,
+            // d3 centers the bands in what the step leaves (`align` 0.5): `step * paddingOuter` unless the
+            // denominator was clamped to 1.
+            origin: range_start + (range_w - step * (n - padding_inner)) * 0.5,
         }
+    }
+
+    /// Distance between the leading edges of two neighboring bands.
+    pub fn step(&self) -> f64 {
+        self.step
     }
 
     /// Pixel position `frac` of the way across band `i` (`0` leading, `1` trailing).
@@ -70,6 +77,11 @@ impl BandGeometry {
     /// Bandwidth: the pixel extent available to a mark within its band.
     pub fn bandwidth(&self) -> f64 {
         self.bandwidth
+    }
+
+    /// The d3 `(paddingInner, paddingOuter)` fractions of a geometry over a range that starts at 0.
+    pub fn paddings(&self) -> (f64, f64) {
+        (1.0 - self.bandwidth / self.step, self.origin / self.step)
     }
 }
 
@@ -1050,5 +1062,20 @@ mod rail_weight_tests {
     #[test]
     fn an_unparseable_series_label_weight_leaves_the_rail_at_the_regular_width() {
         assert_eq!(pane("semibold"), pane("400"));
+    }
+}
+
+#[cfg(test)]
+mod band_geometry_tests {
+    use super::*;
+
+    #[test]
+    fn a_denominator_clamped_to_one_centers_the_bands_like_d3() {
+        // One band with 0.1 inner padding: `1 - 0.1 + 0` < 1, so d3 divides by 1 and centers the 0.9-wide band.
+        let g = BandGeometry::new(1, 0.0, 100.0, 0.1, 0.0);
+        assert_eq!((g.step(), g.bandwidth(), g.edge(0, 0.0)), (100.0, 90.0, 5.0));
+        // Unclamped, the leading edge is `step * paddingOuter`.
+        let g = BandGeometry::new(4, 0.0, 100.0, 0.2, 0.1);
+        assert!((g.edge(0, 0.0) - g.step() * 0.1).abs() < 1e-12);
     }
 }

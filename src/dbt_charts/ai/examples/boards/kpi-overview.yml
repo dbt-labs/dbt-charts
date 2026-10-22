@@ -74,7 +74,7 @@ charts:
   aov_kpi:
     type: kpi
     query: headline
-    label: Avg Order Value
+    label: Avg order value
     value: avg_order
     style:
       value:

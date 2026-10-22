@@ -3,8 +3,8 @@ theme own-side-align switch (see dbt-charts/tests/core/test_bar_chart_style.py's
 TestBarAxisXLabelAlignInward for the bar half).
 
 Path 2's design: the switch lives on the existing per-family
-``charts.heatmap.axis_y`` slot (Layer 4), not a global ``axis_band`` field
-(which has no theme-resolved representation). ``inward``/``outward`` resolve
+``charts.heatmap.axis_y`` slot (Layer 4), not ``charts.axis_band`` (which would
+set it on every family). ``inward``/``outward`` resolve
 to concrete left/right at resolve time (see
 dbt-charts/tests/core/compile/test_style_cascade.py's
 TestOwnSideAlignEdgeMapping for the mapping itself) — the emitter only ever

@@ -1,0 +1,5 @@
+kind: Fixes
+body: A query's `formats:` now reaches a layer's own y axis and support-table `aggregate:` and `per_series:` rows.
+time: 2026-10-21T23:25:46.627529209Z
+custom:
+    DbtChartsIssue: "74"

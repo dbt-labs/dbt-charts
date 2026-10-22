@@ -227,6 +227,7 @@ def _bake_cartesian_axes(
     axis_overrides: AxisOverrides,
     multiples: MultiplesConfig | None = None,
     y: str | list[str] | None = None,
+    temporal_band_axes: frozenset[Literal["axis_x", "axis_y"]] = frozenset(),
 ) -> BakedCartesianAxes:
     """Walk the axis cascade for axis_x and axis_y: each merged,
     theme-typed axis with its band_position and baked format.
@@ -242,6 +243,9 @@ def _bake_cartesian_axes(
 
     ``chart`` supplies each axis's column-format layer via ``axis_layer_format()``: the
     query's declared format for the axis column.
+
+    ``temporal_band_axes`` names the band-typed axes whose column is a date (see
+    ``_axis_layers``); only heatmap, whose axes are always nominal, passes any.
 
     ``multiples`` / ``y`` are the small-multiples inputs. This is the home
     for the multiples↔mirror interaction (bar defers it: its default depends on
@@ -275,6 +279,7 @@ def _bake_cartesian_axes(
         axis_overrides=axis_overrides,
         chart_type=chart_type,
         labeled=bool(chart.x_label),
+        temporal_band="axis_x" in temporal_band_axes,
     )
     ay, ay_band_position = _merge_axis_cascade(
         chart_style_context,
@@ -289,6 +294,7 @@ def _bake_cartesian_axes(
         axis_overrides=axis_overrides,
         chart_type=chart_type,
         labeled=bool(chart.y_label),
+        temporal_band="axis_y" in temporal_band_axes,
     )
     # labels.values (the label-cadence filter) lives only on DimensionLabelStyle,
     # used solely by AxisXStyle.labels — axis_y structurally cannot author it,

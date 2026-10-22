@@ -77,7 +77,7 @@ def test_cascade_fills_spark_bar_color_from_single_series_palette():
 
 
 def test_cascade_keeps_the_theme_pinned_spark_bar_track():
-    """stark pins the spark-bar track on the grid step; muted does not override it."""
+    """_base pins the spark-bar track on the grid step; muted does not override it."""
     base = get_theme_style().model_copy(update={"muted": "#123456"})
     cascaded = apply_inherit(base, get_inherit_graph())
     assert cascaded.charts.table.spark.bar.background == resolve_palette_color(
@@ -186,7 +186,7 @@ def test_muted_override_does_not_touch_spark_bar_track():
     """muted is the secondary-TEXT token; bar tracks are theme-pinned fills.
 
     The old muted → spark_bar.bar.background Inherit conflated fill-grade
-    and text-grade grays (invisible KPI support rows on stark descendants).
+    and text-grade grays (invisible KPI support rows).
     """
     from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 

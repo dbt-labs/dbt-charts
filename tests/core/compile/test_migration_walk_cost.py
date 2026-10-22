@@ -1,12 +1,10 @@
 """Migration walks cost what the document holds, not what the registry declares.
 
-Assertions count calls or cache entries; only the ``slow`` test reads the clock.
+Assertions count calls or cache entries, never the clock.
 """
 
 from __future__ import annotations
 
-import statistics
-import time
 import warnings
 from collections.abc import Callable
 
@@ -132,15 +130,12 @@ def test_compiling_nested_boards_retains_no_walk_state(
     assert migrations._schema_branches_cached.cache_info().currsize == settled
 
 
-@pytest.mark.slow
-@pytest.mark.parametrize("source", [_editing, _old])
-def test_a_nested_board_compiles_within_a_preview_keystroke(
-    source: Callable[[int, int], str],
-) -> None:
-    compile(source(3, 0))
-    seconds = []
-    for edit in range(1, 6):
-        start = time.perf_counter()
-        compile(source(3, edit))
-        seconds.append(time.perf_counter() - start)
-    assert statistics.median(seconds) < 1.0
+def test_an_old_nested_board_migrates_in_walks_linear_in_its_boards() -> None:
+    def per_board(depth: int) -> float:
+        _calls("_child_positions", lambda: compile(_old(depth, 0)))  # warm caches
+        walks = _calls("_child_positions", lambda: compile(_old(depth, 1)))
+        root_and_nested = 1 + sum(3**level for level in range(depth))
+        return walks / root_and_nested
+
+    # Per-document overhead lets per-board cost drift; a quadratic walk is ~7x.
+    assert per_board(3) < 2 * per_board(1)

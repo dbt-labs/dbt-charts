@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, TypeAlias
 
 import yaml
 
+from dbt_charts import _engine
 from dbt_charts.core.compile.models.primitives import LanguageCode
 from dbt_charts.core.compile.restated import restated_diagnostic
 from dbt_charts.core.diagnostics import (
     WARN_FLAT_COLS_UNSIZED_OVERFLOW,
+    WARN_HEADING_TRAILING_PERIOD,
+    WARN_LABEL_TITLE_CASE,
     WARN_RESTATED_INFERRED,
     Diagnostic,
 )
@@ -22,6 +26,19 @@ from dbt_charts.core.utils import YAML_LOADER
 # taller). KPI cards are height-stable — a row of them is a deliberate scorecard, not
 # this anti-pattern — so they are carved out of the count (see _is_kpi_cell).
 _MAX_UNSIZED_FLAT_COLS = 4
+
+# Keys whose string value is label-tier text (sentence case, printed as typed).
+_LABEL_KEYS = frozenset({"label", "x_label", "y_label"})
+
+# Query data: a values row's ``label`` column is a value, not a label.
+_DATA_KEYS = frozenset({"queries", "query"})
+
+# Lists whose mapping items are layout sections or tabs.
+_LAYOUT_LISTS = frozenset({"rows", "cols", "items"})
+
+# A plain Title Case word: one capital then lowercase only (`Region`, not `iOS`,
+# `SpaceX`, `ARR` or `Q3`).
+_TITLE_WORD = re.compile(r"[A-Z][a-z]+")
 
 # Precise recursive type for one `yaml.safe_load()` node — every shape PyYAML can
 # produce, with no boundary `Any`. Public (no leading underscore): reused by
@@ -51,7 +68,106 @@ def detect_authoring_warnings(
     warnings: list[Diagnostic] = []
     with language_scope(language):
         _walk_board_like_mapping(raw, chart_types, [], warnings, inherited_source)
+    _walk_casing(raw, [], warnings)
     return warnings
+
+
+def _is_title_case_label(text: str) -> bool:
+    """Title-case-shaped: a headline, not prose with proper nouns.
+
+    The second word is a plain capitalized word, every non-initial word that is
+    not a small word (``small_words``/``extra_small_words`` in the English
+    catalog) is one too, and at least two non-initial words are. ``Avg Order
+    Value`` and ``Revenue By Region`` fire; ``Sales in North America`` (lowercase
+    second word) and ``Griddle Royale launched in March`` (lowercase content
+    word) do not.
+    """
+    words = [word.strip("()[]{}\"'.,:;!?") for word in text.split()[1:]]
+    if not words or not _TITLE_WORD.fullmatch(words[0]):
+        return False
+    small = _small_words()
+    content = [word for word in words if word.lower() not in small]
+    return all(_TITLE_WORD.fullmatch(word) for word in content) and (
+        sum(1 for word in words if _TITLE_WORD.fullmatch(word)) >= 2
+    )
+
+
+def _small_words() -> frozenset[str]:
+    return frozenset(
+        f"{_engine.message('en', 'case.small_words')},"
+        f"{_engine.message('en', 'case.extra_small_words')}".split(",")
+    )
+
+
+def _is_heading_title(path: list[str]) -> bool:
+    """Whether a ``title`` key at mapping *path* is a heading.
+
+    Headings are the board's own title, a chart's, and a layout item's (section
+    or tab). Any other ``title`` is a label (axis, legend) or a style block.
+    """
+    return (
+        not path
+        or path[-2:-1] == ["charts"]
+        or (len(path) > 1 and path[-1].isdigit() and path[-2] in _LAYOUT_LISTS)
+    )
+
+
+def _walk_casing(node: YamlValue, path: list[str], warnings: list[Diagnostic]) -> None:
+    """Flag Title Case label-tier text and headings that end with a period.
+
+    Query data is skipped: a row's ``label`` column is a value, not a label.
+    """
+    if isinstance(node, list):
+        for index, item in enumerate(node):
+            _walk_casing(item, [*path, str(index)], warnings)
+        return
+    if not isinstance(node, dict):
+        return
+    for key, value in node.items():
+        if key in _DATA_KEYS:
+            continue
+        child_path = [*path, str(key)]
+        dotted = ".".join(child_path)
+        if key == "field_labels" and isinstance(value, dict):
+            labeled = {f"{dotted}.{name}": text for name, text in value.items()}
+        elif key in _LABEL_KEYS and isinstance(value, str):
+            labeled = {dotted: value}
+        else:
+            labeled = {}
+        for label_path, text in labeled.items():
+            if isinstance(text, str) and _is_title_case_label(text):
+                warnings.append(
+                    Diagnostic.from_code(
+                        WARN_LABEL_TITLE_CASE,
+                        path=label_path,
+                        message=WARN_LABEL_TITLE_CASE.message_template.format(
+                            text=text
+                        ),
+                        fix=WARN_LABEL_TITLE_CASE.fix_template,
+                        fields={"text": text},
+                    )
+                )
+        if key == "field_labels":
+            continue
+        if (
+            key == "title"
+            and isinstance(value, str)
+            and _is_heading_title(path)
+            and value.endswith(".")
+            and not value.endswith("..")
+        ):
+            warnings.append(
+                Diagnostic.from_code(
+                    WARN_HEADING_TRAILING_PERIOD,
+                    path=dotted,
+                    message=WARN_HEADING_TRAILING_PERIOD.message_template.format(
+                        text=value
+                    ),
+                    fix=WARN_HEADING_TRAILING_PERIOD.fix_template,
+                    fields={"text": value},
+                )
+            )
+        _walk_casing(value, child_path, warnings)
 
 
 def _collect_chart_types(node: YamlValue, out: dict[str, str]) -> None:

@@ -320,51 +320,52 @@ def test_layered_line_absent_y_does_not_fire_pane_or_flip_axis():
 
 
 # --------------------------------------------------------------------------
-# Endpoint-labels theme defaults — `line/bar.endpoint_labels.visible: true`
-# lands on stark.yaml (the structural root) and is inherited by every theme
-# that extends it. Line/area label directly everywhere; bar labels directly
-# when stacked and falls back to a top legend when grouped (the grouped
-# exclusion lives in `_bar_endpoint_labels_for_stack`, resolve-time — not a
-# theme default at all).
+# Endpoint-labels theme defaults — `line/area/bar.endpoint_labels.visible: auto`
+# lands on _base.yaml (the structural root) and is inherited by every theme.
+# Line/area label directly everywhere; bar labels directly when stacked and
+# falls back to a top legend when grouped (the grouped exclusion lives in
+# `_bar_endpoint_labels_for_stack`, resolve-time — not a theme default at all).
 # --------------------------------------------------------------------------
 
 
 def test_clarity_line_endpoint_labels_on_by_default():
-    """clarity enables line endpoint labels by default (editorial voice)."""
+    """clarity inherits line endpoint labels on from `_base`."""
     from dbt_charts.core.compile.config import get_theme_style
 
     compiled = get_theme_style("clarity")
     assert compiled.charts.line.endpoint_labels.visible == "auto", (
-        "clarity.charts.line.endpoint_labels.visible should be 'auto' after "
-        "clarity theme sets line.endpoint_labels.visible: auto"
+        "clarity.charts.line.endpoint_labels.visible should be 'auto', "
+        "inherited from _base"
     )
 
 
 def test_paper_line_endpoint_labels_on_by_default():
-    """`paper` extends clarity; inherits `line.endpoint_labels.visible: true`."""
+    """`paper` extends clarity; inherits `line.endpoint_labels.visible: auto`."""
     from dbt_charts.core.compile.config import get_theme_style
 
     compiled = get_theme_style("paper")
     assert compiled.charts.line.endpoint_labels.visible == "auto", (
         f"paper.charts.line.endpoint_labels.visible is "
-        f"{compiled.charts.line.endpoint_labels.visible!r}; expected 'auto' (inherited from clarity)."
+        f"{compiled.charts.line.endpoint_labels.visible!r}; expected 'auto' (inherited from _base)."
     )
 
 
 def test_clarity_and_paper_bar_endpoint_labels_on_by_default():
-    """`clarity` and `paper` inherit `bar.endpoint_labels.visible: true` from stark."""
+    """`clarity` and `paper` inherit bar/area `endpoint_labels.visible: auto` from `_base`."""
     from dbt_charts.core.compile.config import get_theme_style
 
     for theme_name in ("clarity", "paper"):
         compiled = get_theme_style(theme_name)
-        assert compiled.charts.bar.endpoint_labels.visible == "auto", (
-            f"{theme_name}.charts.bar.endpoint_labels.visible is "
-            f"{compiled.charts.bar.endpoint_labels.visible!r}; expected 'auto'."
-        )
+        for family in ("bar", "area"):
+            visible = getattr(compiled.charts, family).endpoint_labels.visible
+            assert visible == "auto", (
+                f"{theme_name}.charts.{family}.endpoint_labels.visible is "
+                f"{visible!r}; expected 'auto'."
+            )
 
 
-def test_structural_root_bar_endpoint_labels_on_by_default():
-    """stark (the structural root) turns bar endpoint labels on by default.
+def test_stark_bar_endpoint_labels_on_by_default():
+    """stark inherits bar endpoint labels on from `_base`.
 
     Whether a given bar actually renders them depends on stack mode — see
     ``_bar_endpoint_labels_for_stack`` — this only pins the theme value.
@@ -381,7 +382,7 @@ def test_structural_root_bar_endpoint_labels_on_by_default():
 def test_single_series_paper_bar_pane_does_not_fire():
     """Single-series bar in paper: pane does NOT fire.
 
-    Theme defaults `bar.endpoint_labels.visible: true`, but the color-channel
+    Theme defaults `bar.endpoint_labels.visible: auto`, but the color-channel
     gate in endpoint_label_pane_will_fire() suppresses the pane when there is
     no multi-series color encoding.
     """

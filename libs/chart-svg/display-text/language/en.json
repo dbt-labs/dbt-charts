@@ -1,5 +1,4 @@
 {
-  "aria.axis": "axis",
   "aria.chart": "chart",
   "aria.container_arc": "arc mark container",
   "aria.container_group": "group mark container",
@@ -18,8 +17,6 @@
   "aria.role_text": "text mark",
   "aria.title": "title",
   "aria.title_text": "Title text '{header}'",
-  "aria.x_axis": "X-axis",
-  "aria.y_axis": "Y-axis",
   "axis.midnight": "Midnight",
   "axis.noon": "Noon",
   "case.extra_small_words": "per,with,from,into,onto,upon,out,off,down,up",

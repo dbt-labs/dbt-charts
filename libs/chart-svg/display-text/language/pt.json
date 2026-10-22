@@ -1,5 +1,4 @@
 {
-  "aria.axis": "eixo",
   "aria.chart": "gráfico",
   "aria.container_arc": "contêiner de marca de arco",
   "aria.container_group": "contêiner de marca de grupo",
@@ -18,8 +17,6 @@
   "aria.role_text": "marca de texto",
   "aria.title": "título",
   "aria.title_text": "Texto do título “{header}”",
-  "aria.x_axis": "Eixo X",
-  "aria.y_axis": "Eixo Y",
   "axis.midnight": "Meia-noite",
   "axis.noon": "Meio-dia",
   "case.extra_small_words": "",

@@ -1430,3 +1430,55 @@ def test_layer_axis_follows_the_query_format() -> None:
     labels = resolved.layers[0].axis_y.labels
     assert labels is not None
     assert "%" in labels.format.spec
+
+
+def test_layer_axis_follows_its_own_query_format() -> None:
+    """A layer reading its own query takes that query's `formats:`, not the base's."""
+    from dbt_charts.core.compile import compile
+    from dbt_charts.core.compile.resolve import resolve
+
+    result = compile(
+        """
+queries:
+  base:
+    columns: [x, n]
+    values:
+      - [a, 1200]
+      - [b, 1500]
+    formats:
+      n: integer
+  lay:
+    columns: [x, share]
+    values:
+      - [a, 0.123]
+      - [b, 0.2567]
+    formats:
+      share: percent_whole
+charts:
+  bars:
+    type: bar
+    query: base
+    x: x
+    y: n
+    layers:
+      - type: line
+        query: lay
+        y: share
+        axis_y:
+          position: right
+rows:
+  - bars
+"""
+    )
+    assert result.success, result.errors
+    assert result.board is not None
+    chart = result.board.charts["bars"]
+    resolved = resolve(
+        chart,
+        [{"x": "a", "n": 1200}, {"x": "b", "n": 1500}],
+        result.board.chart_style_context,
+        datasets={"lay": [{"x": "a", "share": 0.123}, {"x": "b", "share": 0.2567}]},
+    )
+    labels = resolved.layers[0].axis_y.labels
+    assert labels is not None
+    assert "%" in labels.format.spec

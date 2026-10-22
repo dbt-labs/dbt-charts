@@ -80,6 +80,7 @@ use std::fmt::Write as _;
 use serde_json::Value;
 
 use crate::common::{AxisStyle, AxisTitle};
+use crate::families::axis_caption::AxisCaption;
 use crate::families::bar::{BandXAxis, ContinuousXAxis, HorizontalValueAxis};
 use crate::families::legend::{stack_legends, VEGA_LEGEND_OFFSET};
 use crate::families::facet_layout;
@@ -147,6 +148,15 @@ impl PanelXAxis {
         })
     }
 
+    /// How far a facet's shared top axis hangs off the first row's plot: Vega offsets a point,
+    /// continuous or temporal x axis one pixel there, a band or heatmap axis not at all.
+    pub(crate) fn top_offset(&self) -> f64 {
+        match self {
+            PanelXAxis::Line(_) | PanelXAxis::Plain(_) | PanelXAxis::Temporal(_) => 1.0,
+            PanelXAxis::Band(_) | PanelXAxis::Continuous(_) | PanelXAxis::Heat(_) | PanelXAxis::Value(_) => 0.0,
+        }
+    }
+
     /// Paints at the CALLER's own `plot_left`/`plot_w`/`plot_bottom` — the
     /// facet composite's own footer-band geometry, not the panel's own.
     pub(crate) fn paint(
@@ -161,7 +171,7 @@ impl PanelXAxis {
         match self {
             PanelXAxis::Band(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom),
             PanelXAxis::Continuous(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom),
-            PanelXAxis::Line(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom),
+            PanelXAxis::Line(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom, fonts),
             PanelXAxis::Temporal(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom, fonts),
             PanelXAxis::Plain(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom, fonts),
             PanelXAxis::Heat(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom),
@@ -177,6 +187,8 @@ impl PanelXAxis {
 /// label style; `mirror_axis.py`'s own contract is `dict(primary_axis)`
 /// verbatim except `orient`/`grid`/`title`).
 pub(crate) struct GhostStyle {
+    /// The value (or shared category) axis's description, titled as the primary.
+    pub(crate) caption: AxisCaption,
     pub(crate) val_font_size: f64,
     pub(crate) val_weight: String,
     pub(crate) val_color: String,
@@ -359,6 +371,28 @@ fn max_y_attr(svg: &str) -> f64 {
     max
 }
 
+/// The highest `y`/`y1`/`y2` drawn in an SVG fragment, a text's by its ink box
+/// top (`y - round(0.8 * font_size)`): how far a top axis reaches above the
+/// `plot_bottom` it was painted at.
+fn min_ink_y(svg: &str) -> f64 {
+    let attr = |element: &str, name: &str| -> Option<f64> { element.split(name).nth(1)?.split('"').next()?.parse().ok() };
+    let mut min = 0.0_f64;
+    for element in svg.split("<line ").skip(1) {
+        for name in ["y1=\"", "y2=\""] {
+            if let Some(y) = attr(element, name) {
+                min = min.min(y);
+            }
+        }
+    }
+    for element in svg.split("<text ").skip(1) {
+        let element = element.split("</text>").next().unwrap_or(element);
+        if let (Some(y), Some(size)) = (attr(element, " y=\""), attr(element, "font-size=\"")) {
+            min = min.min(y - (0.8 * size).round());
+        }
+    }
+    min
+}
+
 /// Display text for one small-multiples panel-axis value — the facet
 /// header's own label. `Panel.key` entries are the ORIGINAL (non-
 /// canonicalized) `serde_json::Value`s `regroup` carries alongside the
@@ -422,6 +456,9 @@ pub(crate) struct FacetSpec<'a> {
     /// the cell's ink (an independent measure scale), so no shared
     /// `row_footer` reserve follows the grid.
     pub(crate) own_value_axes: bool,
+    /// Each panel draws its own y axis inside its cell, which Vega lists after
+    /// the shared x footer.
+    pub(crate) y_axes_in_cells: bool,
     /// Every panel draws its own x axis inside its cell and no shared
     /// `column-footer` exists (a narrowed x domain): `gridLayout` then runs
     /// `align: none` across the columns.
@@ -942,8 +979,22 @@ fn compose_facet_at(
     let panel_title_w = probe.last().map_or(0.0, |(_, g)| g.value_title_w);
     let overshoot = |title_w: f64, plot_h: f64| ((title_w - plot_h) / 2.0).max(0.0).ceil();
     let title_top = |plot_h: f64, plot_top: f64| overshoot(panel_title_w, plot_h).max(overshoot(row_title_w, plot_h) - plot_top);
+    // A top x axis hangs in the `column-header` role above the first row, reserving nothing
+    // below the grid; how far it reaches above the plot is measured off a painted axis.
+    let top_axis = spec.axis_x.x_edge() == crate::common::XEdge::Top && !spec.cell_x_axis;
+    let top_reach_at = |plot_w: f64| -> Result<f64, String> {
+        if !top_axis {
+            return Ok(0.0);
+        }
+        let mut painted = String::new();
+        let axis = &probe.last().expect("panels is non-empty (checked by the caller)").1.axis;
+        axis.paint(&mut painted, spec.axis_x, 0.0, plot_w, -axis.top_offset(), fonts)?;
+        Ok((AXIS_TRANSLATE - min_ink_y(&painted)).max(probe[0].1.axis.rotated_footer_reach(plot_w, fonts)?.unwrap_or(0.0)))
+    };
+    let probe_top_reach = top_reach_at(panel_w_guess)?;
+    let probe_ink_top = |y1: f64| if top_axis { y1.min(-probe_top_reach) } else { y1 };
     let probe_stack = stack_chrome_above(
-        (header_band + (-probe_bounds.y1 - probe[0].1.plot_top).max(0.0)).max(title_top(panel_h_guess, probe[0].1.plot_top)).max(probe[0].1.top_axis_overhang - probe[0].1.plot_top),
+        (header_band + (-probe_ink_top(probe_bounds.y1) - probe[0].1.plot_top).max(0.0)).max(title_top(panel_h_guess, probe[0].1.plot_top)).max(probe[0].1.top_axis_overhang - probe[0].1.plot_top),
         chrome,
         panel_h_guess,
     );
@@ -1160,11 +1211,21 @@ fn compose_facet_at(
     // The axis group is drawn `AXIS_TRANSLATE` past its layout position, but its
     // bounds are translated by `x`/`y` alone (`vega-view-transforms/src/layout/
     // axis.js:77`), so the measured reach drops that half pixel for every arm.
-    let footer_reach = if spec.cell_x_axis {
+    let footer_reach = if spec.cell_x_axis || top_axis {
         0.0
     } else {
         (max_y_attr(&footer_probe) + label_descent - AXIS_TRANSLATE)
             .max(probe[0].1.axis.rotated_footer_reach(panel_w, fonts)?.unwrap_or(0.0))
+    };
+    let top_axis_reach = top_reach_at(panel_w)?;
+    // The cell ink above a plot, widened by the top axis's reach.
+    let ink_top = |y1: f64| if top_axis { y1.min(-top_axis_reach) } else { y1 };
+    // With the x axis above, nothing lies below the grid but the shared value axis's lowest label,
+    // which hangs past the last row's plot (`row_footer` bounds union into the view).
+    let value_label_overflow = |g: &PanelGeometry, last_row_dy: f64, base: f64| -> f64 {
+        let fs = spec.axis_y.labels.font.size_or(11.0);
+        let hang = g.val_ticks.iter().map(|(y, _)| vega_fit::text_ink(0.0, y - g.plot_top, 0.0, fs, "right", "alphabetic").y2).fold(0.0_f64, f64::max);
+        if top_axis { (last_row_dy + hang - AXIS_TRANSLATE - base).max(0.0).ceil() } else { 0.0 }
     };
 
     // Vega's own view-level `autosize: {type: "pad"}` arithmetic
@@ -1299,15 +1360,14 @@ fn compose_facet_at(
     // panels instead of the corrected-height final ones, matching
     // production's own "probe pass, then real pass" shape rather than a
     // second, hand-derived formula.
+    let probe_last_dy = probe_offsets[panel_rows_n.saturating_sub(1) * panel_cols_n].1;
+    let probe_cell_bottom = footer_bottom(probe_bounds.y2 + probe[0].1.plot_top) + footer_reach;
+    let probe_ink_bottom = probe_cell_bottom + value_label_overflow(&probe[0].1, probe_last_dy, probe_cell_bottom - probe[0].1.plot_top);
     let (_, probed_canvas_h) = canvas_for(
         probe_bounds.x2 - probe_bounds.x1 + composite_axis_reserve,
-        footer_bottom(probe_bounds.y2 + probe[0].1.plot_top) - (probe_bounds.y1 + probe[0].1.plot_top).max(0.0) + footer_reach,
+        probe_ink_bottom - (probe_ink_top(probe_bounds.y1) + probe[0].1.plot_top).max(0.0),
         probe_margin_top,
-        legend_bottom(
-            panel_h_guess,
-            probe_stack.frame_top,
-            footer_bottom(probe_bounds.y2 + probe[0].1.plot_top) + footer_reach,
-        ),
+        legend_bottom(panel_h_guess, probe_stack.frame_top, probe_ink_bottom),
     );
     // Production's own probe height (`probe["height"]`, `vlc.
     // vegalite_to_scenegraph`) is Vega's own integer VIEW height —
@@ -1365,7 +1425,7 @@ fn compose_facet_at(
     // on, never `probe_margin_top`. `bounds.y1` re-measures the SAME
     // topmost-row cell-ink union `probe_margin_top` folds in above.
     let chrome_stack = stack_chrome_above(
-        (header_band + (-bounds.y1 - top0).max(0.0)).max(title_top(child_height, top0)).max(final_panels[0].1.top_axis_overhang - top0),
+        (header_band + (-ink_top(bounds.y1) - top0).max(0.0)).max(title_top(child_height, top0)).max(final_panels[0].1.top_axis_overhang - top0),
         chrome,
         child_height,
     );
@@ -1373,10 +1433,11 @@ fn compose_facet_at(
     // A panel's canvas top: its plot origin lands at the cell origin, so a
     // panel with more ink above its plot starts higher.
     let canvas_y = |dy: f64, g: &PanelGeometry| pad_t + margin_top + top0 + dy - g.plot_top;
-    let ink_bottom = (footer_bottom(bounds.y2 + top0) + footer_reach).max(bounds.y2 + top0 + overshoot(row_title_w.max(panel_title_w), child_height));
+    let cell_bottom = (footer_bottom(bounds.y2 + top0) + footer_reach).max(bounds.y2 + top0 + overshoot(row_title_w.max(panel_title_w), child_height));
+    let ink_bottom = cell_bottom + value_label_overflow(&final_panels[0].1, offsets[panel_rows_n.saturating_sub(1) * panel_cols_n].1, cell_bottom - top0);
     let (canvas_w, canvas_h) = canvas_for(
         bounds.x2 - bounds.x1 + composite_axis_reserve,
-        ink_bottom - (bounds.y1 + top0).max(0.0),
+        ink_bottom - (ink_top(bounds.y1) + top0).max(0.0),
         margin_top,
         legend_bottom(child_height, chrome_stack.frame_top, ink_bottom),
     );
@@ -1404,12 +1465,12 @@ fn compose_facet_at(
     if spec.col_axis_idx.is_some() {
         // The header band sits above the first row's topmost cell ink
         // (`layoutHeaders`), which may reach above its plot.
-        let first_row_top = cells.iter().take(panel_cols_n).map(|c| c.bounds.y1).fold(0.0_f64, f64::min);
+        let first_row_top = ink_top(cells.iter().take(panel_cols_n).map(|c| c.bounds.y1).fold(0.0_f64, f64::min));
         let header_top = pad_t + margin_top + top0 + first_row_top - COLUMN_HEADER_BAND_HEIGHT;
         for col_i in 0..panel_cols_n {
             let (dx, _) = offsets[col_i];
             let text_x = plot_x(dx) + panel_w / 2.0;
-            let text_y = header_top + vega_fit::baseline_shift("top", HEADER_FONT_SIZE);
+            let text_y = header_top + crate::measure::baseline_shift("top", HEADER_FONT_SIZE);
             crate::contract::facet_header_open(&mut svg, &col_labels[col_i])?;
             let _ = write!(
                 svg,
@@ -1441,7 +1502,12 @@ fn compose_facet_at(
                 .mirror_style
                 .as_ref()
                 .expect("has_mirror: true requires every panel to supply its own mirror_style");
-            crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (canvas_x(dx, geom) + 0.5, canvas_y(dy, geom)))?;
+            crate::contract::axis_group_open(
+                &mut svg,
+                crate::contract::AxisChannel::Y,
+                &style.caption.untitled(),
+                (canvas_x(dx, geom) + 0.5, canvas_y(dy, geom)),
+            )?;
             for ((abs_y, _), label) in geom.val_ticks.iter().zip(ghost_texts(geom)) {
                 let text_y = canvas_y(dy, geom) + abs_y;
                 let _ = write!(
@@ -1488,7 +1554,12 @@ fn compose_facet_at(
                 .mirror_style
                 .as_ref()
                 .expect("a shared row axis requires every panel to supply its own label style");
-            crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (canvas_x(dx, geom), canvas_y(dy, geom)))?;
+            crate::contract::axis_group_open(
+                &mut svg,
+                crate::contract::AxisChannel::Y,
+                &style.caption,
+                (canvas_x(dx, geom), canvas_y(dy, geom)),
+            )?;
             crate::common::emit_value_ticks(
                 &mut svg,
                 &spec.axis_y.ticks,
@@ -1536,7 +1607,7 @@ fn compose_facet_at(
             let (_, dy) = offsets[row_i * panel_cols_n];
             let text_x = header_right_edge - row_label_widths[row_i];
             let cy = pad_t + margin_top + top0 + dy + child_height / 2.0;
-            let text_y = cy + vega_fit::baseline_shift("middle", HEADER_FONT_SIZE);
+            let text_y = cy + crate::measure::baseline_shift("middle", HEADER_FONT_SIZE);
             crate::contract::facet_header_open(&mut svg, &row_labels[row_i])?;
             let _ = write!(
                 svg,
@@ -1548,10 +1619,51 @@ fn compose_facet_at(
             crate::contract::mark_group_close(&mut svg);
         }
     }
+    // The shared x-axis (`column_footer`) precedes the cells when each panel
+    // owns its value axis, and follows them otherwise.
+    let last_row_start = panel_rows_n.saturating_sub(1) * panel_cols_n;
+    let footer_bottom = pad_t + margin_top + top0 + footer_y(&cells, &offsets, last_row_start);
+    let paint_footer = |svg: &mut String| -> Result<(), String> {
+        for col_i in 0..panel_cols_n {
+            if spec.cell_x_axis {
+                break;
+            }
+            if top_axis {
+                let (dx, dy) = offsets[col_i];
+                let axis = &final_panels[col_i.saturating_sub(missing)].1.axis;
+                axis.paint(svg, spec.axis_x, plot_x(dx), panel_w, pad_t + margin_top + top0 + dy - axis.top_offset(), fonts)?;
+                continue;
+            }
+            let slot = last_row_start + col_i;
+            let (dx, _) = offsets[slot];
+            let footer_left = plot_x(dx);
+            final_panels[slot.saturating_sub(missing)].1.axis.paint(svg, spec.axis_x, footer_left, panel_w, footer_bottom, fonts)?;
+        }
+        Ok(())
+    };
+    if spec.y_axes_in_cells {
+        paint_footer(&mut svg)?;
+    }
     let mut cell = String::new();
+    // With an x axis in every cell, Vega lists the shared value axis (`row_footer`)
+    // ahead of the cells, so it leaves its panel here.
+    let mut row_footers = String::new();
     for (i, (panel_svg, geom)) in final_panels.iter().enumerate() {
         let (dx, dy) = offsets[missing + i];
-        let content = &panel_svg[geom.content_start..geom.svg_end];
+        let hoisted = geom.value_axis.as_ref().filter(|_| spec.cell_x_axis && !spec.y_axes_in_cells);
+        let content = match hoisted {
+            Some(axis) => {
+                let _ = write!(
+                    row_footers,
+                    "<g transform=\"translate({:.2},{:.2})\">{}</g>",
+                    canvas_x(dx, geom) + axis.origin.0,
+                    canvas_y(dy, geom) + axis.origin.1,
+                    &panel_svg[axis.range.clone()]
+                );
+                format!("{}{}", &panel_svg[geom.content_start..axis.range.start], &panel_svg[axis.range.end..geom.svg_end])
+            }
+            None => panel_svg[geom.content_start..geom.svg_end].to_string(),
+        };
         let _ = write!(
             cell,
             "<g transform=\"translate({:.2},{:.2})\">{content}</g>",
@@ -1559,6 +1671,7 @@ fn compose_facet_at(
             canvas_y(dy, geom)
         );
     }
+    svg.push_str(&row_footers);
     svg.push_str(&format!(
         "<g class=\"mark-group role-scope cell\" role=\"graphics-object\" aria-roledescription=\"{}\">",
         xml_escape_attr(&display_text::language::tr("aria.container_group", None, &[])?)
@@ -1595,7 +1708,7 @@ fn compose_facet_at(
                 .as_ref()
                 .expect("has_mirror: true requires every panel to supply its own mirror_style");
             let anchor_x = plot_x(dx) + panel_w + row_footer_overhang;
-            crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (anchor_x + 0.5, canvas_y(dy, geom)))?;
+            crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, &style.caption.untitled(), (anchor_x + 0.5, canvas_y(dy, geom)))?;
             for (abs_y, label) in &geom.val_ticks {
                 let _ = write!(
                     svg,
@@ -1630,16 +1743,8 @@ fn compose_facet_at(
     // the CELL's own declared x (`canvas_x(dx) + left_mark_overhang`) — the
     // same plot-origin correction the column header above applies, never
     // the panel's own canvas edge `canvas_x` alone returns.
-    let last_row_start = panel_rows_n.saturating_sub(1) * panel_cols_n;
-    let footer_bottom = pad_t + margin_top + top0 + footer_y(&cells, &offsets, last_row_start);
-    for col_i in 0..panel_cols_n {
-        if spec.cell_x_axis {
-            break;
-        }
-        let slot = last_row_start + col_i;
-        let (dx, _) = offsets[slot];
-        let footer_left = plot_x(dx);
-        final_panels[slot.saturating_sub(missing)].1.axis.paint(&mut svg, spec.axis_x, footer_left, panel_w, footer_bottom, fonts)?;
+    if !spec.y_axes_in_cells {
+        paint_footer(&mut svg)?;
     }
 
     if let Some(chrome) = chrome {

@@ -35,12 +35,13 @@ const UNIT_SUFFIXES: &[(&str, Display)] = &[
     ("seconds", Display::Symbol("(s)")),
     ("mins", Display::Symbol("(min)")),
     ("hrs", Display::Symbol("(h)")),
+    ("ms", Display::Symbol("(ms)")),
 ];
 
 /// The parenthesized unit symbols of [`UNIT_SUFFIXES`] whose letters title case
 /// must leave alone: `(kg)` is a symbol, not a word to capitalize.
 pub(crate) const CASED_UNIT_SYMBOLS: &[&str] =
-    &["(lb)", "(kg)", "(km)", "(mi)", "(mph)", "(s)", "(min)", "(h)"];
+    &["(lb)", "(kg)", "(km)", "(mi)", "(mph)", "(s)", "(min)", "(h)", "(ms)"];
 
 const ABBREVIATIONS: &[(&str, Display)] = &[
     ("yoy", Display::Word("humanize.yoy")),
@@ -64,6 +65,12 @@ const ABBREVIATIONS: &[(&str, Display)] = &[
     ("hr", Display::Symbol("HR")),
     ("mpg", Display::Symbol("MPG")),
     ("ip", Display::Symbol("IP")),
+    ("gdp", Display::Symbol("GDP")),
+    ("kpi", Display::Symbol("KPI")),
+    ("sku", Display::Symbol("SKU")),
+    ("cpu", Display::Symbol("CPU")),
+    ("ebitda", Display::Symbol("EBITDA")),
+    ("ios", Display::Symbol("iOS")),
 ];
 
 fn lookup(table: &[(&str, Display)], key: &str) -> Result<Option<String>, String> {
@@ -204,6 +211,11 @@ mod tests {
             ("usd", "Usd"),
             ("weight_in_lbs", "Weight (lb)"),
             ("avg_mpg", "Avg MPG"),
+            ("gdp_per_capita", "GDP per capita"),
+            ("ios_users", "iOS users"),
+            ("total_kpi_count", "Total KPI count"),
+            ("cpu_hrs", "CPU (h)"),
+            ("p95_latency_ms", "P95 latency (ms)"),
             ("", ""),
         ] {
             assert_eq!(slug_to_text(slug).unwrap(), expected, "{slug}");

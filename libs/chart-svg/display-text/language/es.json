@@ -1,5 +1,4 @@
 {
-  "aria.axis": "eje",
   "aria.chart": "gráfico",
   "aria.container_arc": "contenedor de marca de arco",
   "aria.container_group": "contenedor de marca de grupo",
@@ -18,8 +17,6 @@
   "aria.role_text": "marca de texto",
   "aria.title": "título",
   "aria.title_text": "Texto del título «{header}»",
-  "aria.x_axis": "Eje X",
-  "aria.y_axis": "Eje Y",
   "axis.midnight": "Medianoche",
   "axis.noon": "Mediodía",
   "case.extra_small_words": "",

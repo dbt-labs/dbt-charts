@@ -388,14 +388,17 @@ pub(crate) struct DateAxis {
 /// ticks at the axis's authored `tickCount` (`_temporal_measure_encoding`
 /// forwards it; Vega's `tickCount` passes a number through, `vega.js:14514`). The layers'
 /// own dates (`extra`) share the scale, so they widen it.
-pub(crate) fn date_axis(rows: &[Row], fields: [&str; 2], extra: &[f64], tick_count: usize) -> Result<DateAxis, String> {
+///
+/// `None` when the dates span no time: the scale has no extent and every bar draws
+/// zero-sized, which production reports as `ERR-CHART-PAINTED-NO-MARKS`.
+pub(crate) fn date_axis(rows: &[Row], fields: [&str; 2], extra: &[f64], tick_count: usize) -> Option<DateAxis> {
     let days = rows.iter().flat_map(|row| fields.iter().map(|f| row.get(*f).and_then(Value::as_f64)));
     let (lo, hi) = days.flatten().chain(extra.iter().copied()).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), d| (lo.min(d), hi.max(d)));
     if !(hi > lo) {
-        return Err(crate::refuse!("bar: a date measure whose dates span no time is not supported (it has no scale)").into());
+        return None;
     }
     let ticks = utc_instants(lo, hi, tick_count);
-    Ok(DateAxis { domain: (lo, hi), labels: ticks.iter().map(|&t| date_tick_label(t.floor() as i64)).collect(), ticks })
+    Some(DateAxis { domain: (lo, hi), labels: ticks.iter().map(|&t| date_tick_label(t.floor() as i64)).collect(), ticks })
 }
 
 /// `payload` with each row's date columns as day numbers (a time of day as the
@@ -568,7 +571,7 @@ mod tests {
     #[test]
     fn a_span_of_no_time_has_no_scale() {
         let rows: Vec<Row> = vec![serde_json::json!({"start": 5.0, "end": 5.0}).as_object().unwrap().clone()];
-        assert!(date_axis(&rows, ["end", "start"], &[], 6).is_err());
+        assert!(date_axis(&rows, ["end", "start"], &[], 6).is_none());
     }
 
     fn bars(pairs: &[(f64, f64)], temporal: bool) -> RangedBars {

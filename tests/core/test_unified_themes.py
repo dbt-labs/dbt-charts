@@ -20,10 +20,10 @@ DBT_CHARTS_PKG_DIR = Path(_dbt_charts_pkg.__file__).resolve().parent
 _THEMES_DIR = DBT_CHARTS_PKG_DIR / "core" / "defaults" / "themes"
 
 
-def test_structural_root_theme_parses_as_compiled_style():
+def test_stark_theme_parses_as_compiled_style():
     """themes/stark.yaml compiles to a valid Style through the inheritance chain.
 
-    stark.yaml now extends _base — the raw YAML only contains color/font overrides.
+    stark.yaml extends _base and holds only stark's own identity values.
     Compilation via get_theme_style() merges _base + stark into a full Style.
     """
     from dbt_charts.core.compile.config import get_theme_style
@@ -34,6 +34,24 @@ def test_structural_root_theme_parses_as_compiled_style():
 
     cs = get_theme_style("stark")
     assert isinstance(cs, Style)
+
+
+@pytest.mark.parametrize(
+    "theme", [t for t in user_facing_theme_names() if t != "stark"]
+)
+def test_stark_is_a_leaf(theme: str) -> None:
+    """No user-facing theme inherits from stark, so a stark choice stays on stark."""
+    import yaml
+
+    from dbt_charts.core.utils import YAML_LOADER
+
+    chain: list[str] = []
+    name = theme
+    while name != "_base":
+        chain.append(name)
+        text = (_THEMES_DIR / f"{name}.yaml").read_text()
+        name = yaml.load(text, Loader=YAML_LOADER)["extends"]
+    assert "stark" not in chain, f"{theme} extends stark via {chain}"
 
 
 def test_get_theme_style_returns_compiled_style():
@@ -54,11 +72,10 @@ def test_get_theme_style_default_is_dbt_charts_default():
     assert isinstance(cs, Style)
 
 
-def test_unified_theme_extends_chain():
-    """A theme that extends another gets its parent's values filled in."""
+def test_sibling_themes_resolve_their_own_background():
+    """Sibling leaves each bind their own canvas."""
     from dbt_charts.core.compile.config import get_theme_style
 
-    # neon theme extends stark; background is overridden
     neon = get_theme_style("neon")
     stark = get_theme_style("stark")
     assert neon.background != stark.background

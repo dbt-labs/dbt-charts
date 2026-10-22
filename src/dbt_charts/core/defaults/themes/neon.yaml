@@ -24,7 +24,7 @@
 # other theme; "which variant reads well on a dark canvas" is the
 # dark-mode-theming follow-on's question, not this theme's to answer here.
 # All color from vivid-10 marks only. Confident marks, flat fills.
-extends: stark
+extends: _base
 notes: saturated, glowing colors
 style:
   background: chrome[12]
@@ -77,7 +77,7 @@ style:
     color:
       categorical:
         single_series_palette: ['vivid-10.1']   # brand-blue single series (data color, not chrome)
-    # Bar tracks on the FAINT tier — stark pins these to the light-canvas
+    # Bar tracks on the FAINT tier — `_base` pins these to the light-canvas
     # fill gray, which would glare on the near-black canvas. (Table twin
     # sits in the table block below.)
     spark_bar:
@@ -112,6 +112,10 @@ style:
         # category tier while sitting on the measure axis.
         color: *measure_grid
         width: 1                   # the hairline this theme's grid is drawn at
+    axis_band:
+      labels:
+        font:
+          color: *value            # category names POP; time labels stay MID via `axis`
     axis_quantitative:
       grid:
         color: *measure_grid       # a quantitative x (scatter) is a measure too
@@ -128,12 +132,6 @@ style:
       title:
         font:
           color: *high
-    line:
-      endpoint_labels:
-        visible: auto
-    area:
-      endpoint_labels:
-        visible: auto
     bar:
       axis_x:                      # inward-align horizontal-bar row labels (resolve scopes to left/right edge)
         labels:
@@ -208,10 +206,8 @@ style:
       row:
         divider:
           color: *faint
-    # Resets border.width / shadow.visible / swatch.radius / active_marker --
-    # stark (the structural root) sets 1.5 / false / 0 / triangle for its own
-    # utilitarian look; those values would otherwise leak into neon, which
-    # extends stark directly and keeps its own soft dark tooltip look unchanged.
+    # Soft dark tooltip: no outline, a drop shadow, rounded swatch, and a
+    # background-fill active marker. stark is the hard-outline variant.
     tooltip:
       background: *panel
       label:

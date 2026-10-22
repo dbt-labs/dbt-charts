@@ -369,13 +369,12 @@ def test_get_theme_style_returns_full_style() -> None:
     assert style.font is not None
 
 
-def test_get_theme_style_chain_clarity_differs_from_structural_root() -> None:
-    """clarity and stark should have different background colors."""
+def test_get_theme_style_loads_clarity_and_stark() -> None:
+    """clarity and stark both load as valid Style instances."""
     from dbt_charts.core.compile.config import get_theme_style
 
     clarity = get_theme_style("clarity")
     stark = get_theme_style("stark")
-    # clarity extends stark and overrides typography/colors
     # At minimum, they must produce valid Style objects. If they differ, good.
     # If they happen to share background, the test is still valid — we just
     # confirm both load without error and produce Style instances.

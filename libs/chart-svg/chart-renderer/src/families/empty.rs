@@ -208,7 +208,7 @@ impl Head {
     }
 
     pub(crate) fn parse(family: &str, resolved: &Value) -> Result<Head, String> {
-        serde_json::from_value(resolved.clone()).map_err(|e| format!("{family} payload: {e}"))
+        Deserialize::deserialize(resolved).map_err(|e| format!("{family} payload: {e}"))
     }
 
     /// The chart's own palette, which only a layered chart's claims read.

@@ -287,7 +287,7 @@ fn emit_block(
 /// (`max(MIN_HEIGHT, content)`), which core's sizing pass reads.
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<(String, f64), String> {
     let _ = fonts; // measurement runs through mdsvg's own font loading, not FontBook
-    let r: Resolved = serde_json::from_value(payload.resolved.clone())
+    let r: Resolved = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("callout: payload.resolved: {e}"))?;
     let fonts_dir = payload
         .fonts_dir
@@ -898,7 +898,7 @@ mod tests {
     fn natural_height_is_independent_of_the_slot_height() {
         let mut json = callout_payload(Some("Title"), "Message.");
         json["height"] = serde_json::json!(0.0);
-        let small: Payload = serde_json::from_value(json.clone()).unwrap();
+        let small: Payload = Deserialize::deserialize(&json).unwrap();
         json["height"] = serde_json::json!(500.0);
         let tall: Payload = serde_json::from_value(json).unwrap();
         let (small_svg, small_height) = render(&small, &test_fonts()).unwrap();

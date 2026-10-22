@@ -136,6 +136,7 @@ use crate::common::{
     axis_title_text,
     emit_axis_title_rotated, format_y_label, row_num, AxisStyle, Font, TitleStyle,
 };
+use crate::families::axis_caption::value_axis_caption;
 use crate::families::legend;
 use crate::diagnostic::Diagnostic;
 use crate::families::cartesian::{d3_nice_domain, vl_default_tick_count, LinearScale};
@@ -505,15 +506,12 @@ fn legend_entries(
 }
 
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
-    let mut r: Resolved = serde_json::from_value(payload.resolved.clone())
+    let mut r: Resolved = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("histogram: payload.resolved: {e}"))?;
     r.series_palette = payload.series_palette(&r.palette);
     let ax_x = &r.style.axis_x;
     let ax_y = &r.style.axis_y;
-    ax_x.refuse_unpainted_affix("histogram", "axis_x", None)?;
-    ax_x.refuse_x_tick_cadence("histogram")?;
     let x_edge = ax_x.x_edge();
-    ax_y.refuse_unpainted_affix("histogram", "axis_y", None)?;
     // `_emit_histogram` bakes `orient` from the resolved `axis_y.position`
     // via `measure_axis_to_vl` (`emitters/bar.py:480-484`) — this arm models
     // both left and right; any other position (the theme resolves an
@@ -626,8 +624,9 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             .iter()
             .enumerate()
             .map(|(i, &tv)| {
-                format_y_label(tv, ax_x.ruler.as_ref(), ax_x.tick_label.as_ref(), Some(slot), i, x_ticks_domain.len())
-                    .map_err(|e| format!("histogram x label format: {e}"))
+                let label = format_y_label(tv, ax_x.ruler.as_ref(), ax_x.tick_label.as_ref(), Some(slot), i, x_ticks_domain.len())
+                    .map_err(|e| format!("histogram x label format: {e}"))?;
+                ax_x.labels.apply_expr("x", tv, label, i, x_ticks_domain.len())
             })
             .collect::<Result<_, _>>()?
     };
@@ -809,7 +808,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                 let y_labels: Vec<String> = y_ticks
                     .iter()
                     .enumerate()
-                    .map(|(i, &tv)| format_y_label(tv, None, None, y_fmt, i, y_ticks.len()))
+                    .map(|(i, &tv)| ax_y.labels.apply_expr("y", tv, format_y_label(tv, None, None, y_fmt, i, y_ticks.len())?, i, y_ticks.len()))
                     .collect::<Result<_, _>>()?;
                 let y_label_ws: Vec<f64> = y_labels
                     .iter()
@@ -853,7 +852,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                         b.union(&if y_angle == 0.0 { ink } else { ink.rotate(y_angle, x, y) });
                     }
                 }
-                for (&lw, &tv) in y_label_ws.iter().zip(&y_ticks) {
+                for ((&lw, &tv), lbl) in y_label_ws.iter().zip(&y_ticks).zip(&y_labels) {
                     let x = if val_on_right {
                         pw + y_tick_eff + y_label_gap
                     } else {
@@ -861,7 +860,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                     };
                     let y = ph * (1.0 - tv / y_domain_max);
                     if y_angle == 0.0 {
-                        b.union(&vega_fit::text_ink(x, y, lw.min(y_limit), y_font_size, y_align, "middle"));
+                        b.union(&vega_fit::text_ink_rows(x, y, lw.min(y_limit), y_font_size, y_align, "middle", crate::text::line_count(lbl)));
                     } else {
                         let ink = vega_fit::text_ink(x, y, lw.min(y_limit), y_font_size, y_align, y_baseline);
                         b.union(&ink.rotate(y_angle, x, y));
@@ -869,10 +868,10 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                 }
                 let row_y = x_edge.at(ph, x_axis_offset + x_tick_eff + x_label_pad);
                 let pass_x_scale = LinearScale::new(bin_start, bin_stop, 0.0, pw);
-                for (&tv, &lw) in x_ticks_domain.iter().zip(x_label_ws.iter()) {
+                for ((&tv, &lw), lbl) in x_ticks_domain.iter().zip(x_label_ws.iter()).zip(&x_tick_labels) {
                     let pos = pass_x_scale.position(tv);
                     let align = crate::families::line::flush_align(pos, pw);
-                    b.union(&vega_fit::text_ink(pos, row_y, lw.min(x_limit), x_font_size, align, x_edge.baseline()));
+                    b.union(&vega_fit::text_ink_rows(pos, row_y, lw.min(x_limit), x_font_size, align, x_edge.baseline(), crate::text::line_count(lbl)));
                 }
                 // The x axis's own vertical extent, plot rect included.
                 let (mut x_axis_y1, mut x_axis_y2) = match x_edge {
@@ -932,11 +931,25 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     }
     let (plot_w, plot_h) = (m.plot_w, m.plot_h);
     let x_scale = LinearScale::new(bin_start, bin_stop, 0.0, plot_w);
+    if crate::labels_expr::view::active() {
+        use crate::labels_expr::view::{register_axis, register_linear, AxisSpec, Orient, Span};
+        register_linear("x", bin_start, bin_stop, Span::Width);
+        register_linear("y", 0.0, y_domain_max, Span::Height);
+        let x_spec = AxisSpec { orient: Orient::Bottom, offset: x_tick_eff + x_label_pad, shift: 0.0, align: None, baseline: None, angle: 0.0, flush: Some(1.0), style: ax_x.labels.item_style()? };
+        if ax_x.labels.upright() {
+            register_axis("x", x_spec);
+        }
+        if y_angle == 0.0 {
+            let orient = if val_on_right { Orient::Right } else { Orient::Left };
+            let y_spec = AxisSpec { orient, offset: y_tick_eff + y_label_gap, shift: 0.0, align: Some(y_align), baseline: None, angle: 0.0, flush: None, style: ax_y.labels.item_style()? };
+            register_axis("y", y_spec);
+        }
+    }
     let y_ticks = unbaked_y_ticks(plot_h);
     let y_labels: Vec<String> = y_ticks
         .iter()
         .enumerate()
-        .map(|(i, &tv)| format_y_label(tv, None, None, y_fmt, i, y_ticks.len()))
+        .map(|(i, &tv)| ax_y.labels.apply_expr("y", tv, format_y_label(tv, None, None, y_fmt, i, y_ticks.len())?, i, y_ticks.len()))
         .collect::<Result<_, _>>()?;
     let y_label_ws: Vec<f64> = y_labels
         .iter()
@@ -1070,13 +1083,18 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         let legend = at.legend(&r.legend, color, &gradient_id, &legend_title, fonts)?;
         let block = (legend.box_width(at.length), legend.height(at.length));
         let (dx, dy) = legend::slide_block(&r.id, &r.legend.position, block, (plot_w, plot_h))?;
-        legend.paint(&mut svg, lx + dx, ly + dy, at.length);
+        svg.push_str(&crate::print::print(&legend.nodes(lx + dx, ly + dy, at.length)));
     }
 
     // X ticks + labels.
     // Vega's crisp half pixel shifts the axis group down on either edge.
     let x_group_y = x_edge.at(plot_h, x_axis_offset) + 0.5;
-    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::X, (0.5, x_group_y))?;
+    crate::contract::axis_group_open(
+        &mut svg,
+        crate::contract::AxisChannel::X,
+        &value_axis_caption(&x_title_paint, &ax_x.title, ax_x, (bin_start, bin_stop), false)?,
+        (0.5, x_group_y),
+    )?;
     if x_ticks_visible {
         let tc = crate::common::required_ink(ax_x.ticks.color.as_deref(), "histogram", "axis_x.ticks.color")?;
         let tw = ax_x.ticks.width.unwrap_or(1.0);
@@ -1094,7 +1112,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     let x_label_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
     let x_label_weight = ax_x.labels.font.weight_str();
     let x_label_y =
-        x_group_y + x_edge.sign() * (x_tick_eff + x_label_pad) + vega_fit::baseline_shift(x_edge.baseline(), x_font_size);
+        x_group_y + x_edge.sign() * (x_tick_eff + x_label_pad) + crate::measure::baseline_shift(x_edge.baseline(), x_font_size);
     for (&tv, lbl) in x_ticks_domain.iter().zip(x_tick_labels.iter()) {
         let pos = x_scale.position(tv);
         // labelOverlap: allow (module doc) — every tick always draws; the
@@ -1112,16 +1130,17 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
              font-family=\"{}\" font-size=\"{x_font_size}\" font-weight=\"{x_label_weight}\" \
              fill=\"{x_label_color}\">{}</text>",
             vega_escape_attr(x_family),
-            xml_escape(lbl), anchor = xml_escape_attr(anchor), x_label_weight = xml_escape_attr(&x_label_weight), x_label_color = xml_escape_attr(x_label_color)
+            xml_escape(&ax_x.labels.clip(lbl, fonts)?), anchor = xml_escape_attr(anchor), x_label_weight = xml_escape_attr(&x_label_weight), x_label_color = xml_escape_attr(x_label_color)
         );
     }
 
+    let x_label_rows = x_tick_labels.iter().map(|l| crate::text::line_count(l)).max().unwrap_or(1);
     crate::common::emit_axis_title_flat(
         &mut svg,
         &x_title_paint,
         &ax_x.title,
         plot_w / 2.0,
-        x_label_y,
+        x_label_y + (x_label_rows - 1) as f64 * crate::text::line_height(x_font_size),
         x_font_size,
         Some(crate::contract::LabelKey::X),
         x_edge,
@@ -1130,7 +1149,8 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
 
     // Y ticks + labels — left or right, per `val_on_right` (module doc: a
     // right-side value axis mirrors the left one exactly, no breathing room).
-    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (if val_on_right { plot_w + 0.5 } else { 0.5 }, 0.0))?;
+    let y_caption = value_axis_caption(&y_title_paint, &ax_y.title, ax_y, (0.0, y_domain_max), false)?;
+    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, &y_caption, (if val_on_right { plot_w + 0.5 } else { 0.5 }, 0.0))?;
     if y_tick_eff > 0.0 {
         let tc = crate::common::required_ink(ax_y.ticks.color.as_deref(), "histogram", "axis_y.ticks.color")?;
         let tw = ax_y.ticks.width.unwrap_or(1.0);
@@ -1155,13 +1175,13 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     } else {
         -(y_tick_eff + y_label_gap) + 0.5
     };
-    let paint_y_label = |svg: &mut String, x: f64, (align, baseline): (&str, &str), tv: f64, lbl: &str| {
+    let paint_y_label = |svg: &mut String, x: f64, (align, baseline): (&str, &str), tv: f64, lbl: &str| -> Result<(), String> {
         let anchor = match align {
             "left" => "start",
             "right" => "end",
             _ => "middle",
         };
-        let shift = vega_fit::baseline_shift(baseline, y_font_size);
+        let shift = crate::measure::baseline_shift(baseline, y_font_size);
         let placement = if y_angle != 0.0 {
             format!("text-anchor=\"{anchor}\" transform=\"translate({x:.3},{:.3}) rotate({y_angle}) translate(0,{shift})\"", y_pos(tv) + 0.5)
         } else {
@@ -1172,11 +1192,12 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             "<text {placement} font-family=\"{}\" font-size=\"{y_font_size}\" \
              font-weight=\"{y_label_weight}\" fill=\"{y_label_color}\">{}</text>",
             vega_escape_attr(y_family),
-            xml_escape(lbl), y_label_weight = xml_escape_attr(&y_label_weight), y_label_color = xml_escape_attr(y_label_color)
+            xml_escape(&ax_y.labels.clip(lbl, fonts)?), y_label_weight = xml_escape_attr(&y_label_weight), y_label_color = xml_escape_attr(y_label_color)
         );
+        Ok(())
     };
     for (&tv, lbl) in y_ticks.iter().zip(y_labels.iter()) {
-        paint_y_label(&mut svg, y_label_x, (y_align, if y_angle == 0.0 { "middle" } else { y_baseline }), tv, lbl);
+        paint_y_label(&mut svg, y_label_x, (y_align, if y_angle == 0.0 { "middle" } else { y_baseline }), tv, lbl)?;
     }
 
     // `label_edge_x` is the gutter's OUTER edge: `y_label_x`'s own INNER
@@ -1205,6 +1226,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         crate::contract::axis_group_open(
             &mut svg,
             crate::contract::AxisChannel::Y,
+            &y_caption.untitled(),
             (if val_on_right { 0.5 } else { plot_w + 0.5 }, 0.0),
         )?;
         if y_tick_eff > 0.0 {
@@ -1225,7 +1247,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         let ghost_x = if val_on_right { -(y_tick_eff + y_label_gap) + 0.5 } else { plot_w + y_tick_eff + y_label_gap + 0.5 };
         let ghost_texts = ghost.as_ref().map_or(Ok(Vec::new()), |g| g.texts(&y_ticks, &y_labels))?;
         for (&tv, lbl) in y_ticks.iter().zip(ghost_texts.iter()) {
-            paint_y_label(&mut svg, ghost_x, (ghost_align, ghost_baseline), tv, lbl);
+            paint_y_label(&mut svg, ghost_x, (ghost_align, ghost_baseline), tv, lbl)?;
         }
         crate::contract::axis_group_close(&mut svg);
     }
@@ -1575,7 +1597,7 @@ mod tests {
             "palette": ["#3164a3", "#779bc9", "#608470"],
             "legend": {
                 "visible": false, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
-                "title": {"font": {"family": TEST_FONT, "size": 12.0, "weight": "600", "color": "#313233"}},
+                "title": {"font": {"case": "title", "family": TEST_FONT, "size": 12.0, "weight": "600", "color": "#313233"}},
                 "label": {"font": {"family": TEST_FONT, "size": 11.0, "weight": "400", "color": "#626366"}, "padding": 8.0}
             },
             "style": {

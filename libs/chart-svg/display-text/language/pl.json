@@ -1,5 +1,4 @@
 {
-  "aria.axis": "oś",
   "aria.chart": "wykres",
   "aria.container_arc": "kontener znacznika łuku",
   "aria.container_group": "kontener znacznika grupy",
@@ -18,8 +17,6 @@
   "aria.role_text": "znacznik tekstu",
   "aria.title": "tytuł",
   "aria.title_text": "Tekst tytułu „{header}”",
-  "aria.x_axis": "Oś X",
-  "aria.y_axis": "Oś Y",
   "axis.midnight": "Północ",
   "axis.noon": "Południe",
   "case.extra_small_words": "",

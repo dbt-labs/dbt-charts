@@ -2123,6 +2123,54 @@ WARN_FLAT_COLS_UNSIZED_OVERFLOW = REGISTRY.register(
     )
 )
 
+WARN_LABEL_TITLE_CASE = REGISTRY.register(
+    WarningCode(
+        code="WARN-LABEL-TITLE-CASE",
+        domain="compile",
+        title="Authored label is in Title Case",
+        message_template=(
+            "{text!r} capitalizes its words like a heading; labels print as written, "
+            "so it will show in Title Case."
+        ),
+        fix_template=(
+            "Write the label in sentence case, keeping proper nouns and acronyms "
+            "capitalized. Leave it as is if the capitals are proper nouns."
+        ),
+        doc=(
+            "Fires when an authored `label`, `x_label`, `y_label` or `field_labels` "
+            "entry is shaped like a headline: its second word is a plain capitalized "
+            "word, every later word that is not a small word (`by`, `of`, `per`, ...) "
+            "is one too, and at least two words after the first are capitalized "
+            "(`Avg Order Value`, `Revenue By Region`). `Sales in North America` and "
+            "`Griddle Royale launched in March` do not fire. Subtitles and query "
+            "data are never checked. Headings are title-cased for you; every other "
+            "label is sentence case, and an authored label prints exactly as typed. "
+            "Acronyms (`ARR`) and mixed-case words (`iOS`) are not plain capitalized "
+            "words. Emitted by `compile/validate/authoring_warnings.py`."
+        ),
+        summary="Fired when an authored label is shaped like a headline in Title Case.",
+        docs_topic="styling",
+    )
+)
+
+WARN_HEADING_TRAILING_PERIOD = REGISTRY.register(
+    WarningCode(
+        code="WARN-HEADING-TRAILING-PERIOD",
+        domain="compile",
+        title="Heading ends with a period",
+        message_template="Title {text!r} ends with a period; headings do not take one.",
+        fix_template="Delete the trailing period from the title.",
+        doc=(
+            "Fires when a board, section, tab, or chart `title:` ends with a period; "
+            "axis and legend titles are labels and are not checked. "
+            "Headings are title-cased and carry no closing punctuation; the engine "
+            "never strips an authored period for you. An ellipsis does not count. "
+            "Emitted by `compile/validate/authoring_warnings.py`."
+        ),
+        docs_topic="styling",
+    )
+)
+
 WARN_DOUBLE_HEADER = REGISTRY.register(
     WarningCode(
         code="WARN-DOUBLE-HEADER",

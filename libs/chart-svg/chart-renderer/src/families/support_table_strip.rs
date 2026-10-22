@@ -188,7 +188,7 @@ pub struct SupportTableStyle {
 /// Parse `resolved.support_table` (already `Option<Value>` on the family
 /// payload) into a `SupportTableConfig`.
 pub fn parse_config(value: &Value, family: &str) -> Result<SupportTableConfig, String> {
-    let config: SupportTableConfig = serde_json::from_value(value.clone())
+    let config: SupportTableConfig = Deserialize::deserialize(value)
         .map_err(|e| format!("{family}: support_table payload: {e}"))?;
     if config.entries.iter().any(|e| e.aggregate.is_none() && e.source.is_none() && e.per_series.is_none())
     {
@@ -379,7 +379,7 @@ fn entry_values(
     rows: &[serde_json::Map<String, Value>],
     x_field: &str,
     domain: &[String],
-) -> Result<Vec<Option<CellValue>>, String> {
+) -> Result<Vec<Option<CellValue>>, Diagnostic> {
     let field = entry
         .source
         .as_deref()
@@ -436,6 +436,17 @@ fn entry_values(
         // source entry: exactly one row per x (cardinality checked once by
         // `build_rows` before any entry is resolved).
         let mut by_x: std::collections::HashMap<String, CellValue> = std::collections::HashMap::new();
+        // `_require_numeric_source`: a baked number format over a source holding
+        // anything but a number (a boolean included) paints `NaN`, so production raises.
+        if let Some(format) = &entry.format {
+            let non_numeric = rows.iter().filter_map(|row| row.get(field)).find(|raw| !raw.is_null() && !raw.is_number());
+            if let Some(value) = non_numeric {
+                return Err(Diagnostic::new(
+                    &codes::ERR_SUPPORT_TABLE_FORMAT_NOT_NUMERIC,
+                    [("format_spec", Value::from(format.spec.as_str())), ("source", Value::from(field)), ("value", value.clone())],
+                ));
+            }
+        }
         for row in rows {
             let Some(x) = row.get(x_field) else { continue };
             let Some(raw) = row.get(field) else { continue };
@@ -454,18 +465,9 @@ fn entry_values(
                 ),
                 // No baked format: paint verbatim, matching production's
                 // `_vl_format_calc` with `format_spec is None` — a string is
-                // *valid* and painted as-is, never coerced or dashed.
-                _ if entry.format.is_none() => CellValue::Text(row_str(row, field)),
-                // A baked format over a non-number: production raises
-                // `ERR-SUPPORT-TABLE-FORMAT-NOT-NUMERIC` (`_require_numeric_source`)
-                // before any payload reaches here, so the cell has no painting.
-                other => {
-                    return Err(crate::refuse!(
-                        "support_table: source {field:?} with a baked format ({:?}) over the non-numeric \
-                         value {other:?} is not supported: production number-formats it into nonsense",
-                        entry.format
-                    ));
-                }
+                // *valid* and painted as-is, never coerced or dashed. A baked
+                // format over a non-number raised above.
+                _ => CellValue::Text(row_str(row, field)),
             };
             by_x.insert(value_to_key(x), cell);
         }
@@ -1399,7 +1401,7 @@ pub fn build_rows_composed(
             Some(l) => l,
             None => slug_to_display(
                 entry.source.as_deref().expect("entry_values already required a source"),
-                "title",
+                "none",
             )?,
         };
         let label = truncate_label(fonts, label_family, label_size, &label, true)?;
@@ -1745,7 +1747,7 @@ pub fn render_rows_composed(
     let (label_family, label_size) = label_font_resolved(style);
     let label_color = style.label.font.color.as_deref().unwrap_or(font_color);
     let label_weight = style.label.font.weight_str();
-    let baseline = crate::vega_fit::baseline_shift("middle", font_size);
+    let baseline = crate::measure::baseline_shift("middle", font_size);
 
     if style.divider.line.visible {
         let y = origin_y + divider_y_base(style, axis_offset);
@@ -2626,7 +2628,7 @@ mod tests {
     }
 
     #[test]
-    fn build_rows_defaults_label_to_title_cased_source() {
+    fn build_rows_defaults_label_to_sentence_cased_source() {
         let config = SupportTableConfig {
             entries: vec![SupportTableEntry {
                 source: Some("avg_order_revenue".into()),
@@ -2643,12 +2645,12 @@ mod tests {
         let domain = vec!["2024-01-01".to_string()];
         let strip_rows =
             build_rows(&config, &rows, "week", &domain, &[10.0], &test_fonts(), &label_style(), None, &[], &[]).unwrap();
-        // Title-cased ("Avg Order Revenue") overruns `LABEL_STUB_LIMIT_PX`
+        // Sentence-cased ("Avg order revenue") overruns `LABEL_STUB_LIMIT_PX`
         // (80px) at real Inter Variable 11px metrics, so this also exercises
         // `truncate_label` on a realistic corpus label — exact expected
         // string, not just "ends with … and fits" (see the truncation test
         // above for why an exact pin matters).
-        assert_eq!(strip_rows[0].label, "Avg Order Re…");
+        assert_eq!(strip_rows[0].label, "Avg order rev…");
     }
 
     #[test]
@@ -2832,11 +2834,9 @@ mod tests {
         );
     }
 
-    /// A bare `source:` entry with a baked `format` (only possible when
-    /// `entry.source == y_field`, which should always be numeric) over a
-    /// non-numeric value is an invariant break — this must be a named `Err`,
-    /// never a silent text fallback that quietly ignores the format, and
-    /// never a coercion guess.
+    /// A bare `source:` entry with a baked `format` over a non-number raises
+    /// production's code, never a silent text fallback that ignores the format;
+    /// a boolean is no number either.
     #[test]
     fn source_entry_with_format_over_non_numeric_value_errors() {
         let config = SupportTableConfig {
@@ -2854,7 +2854,15 @@ mod tests {
             vec![serde_json::json!({"week": "2024-01-01", "revenue": "not-a-number"}).as_object().unwrap().clone()];
         let domain = vec!["2024-01-01".to_string()];
         let err = build_rows(&config, &rows, "week", &domain, &[10.0], &test_fonts(), &label_style(), None, &[], &[]).unwrap_err();
-        assert!(err.contains("revenue") && err.contains("not-a-number"), "names the field and value: {err}");
+        assert_eq!(err.code, "ERR-SUPPORT-TABLE-FORMAT-NOT-NUMERIC");
+        assert_eq!(err.params["source"], serde_json::json!("revenue"));
+        assert_eq!(err.params["format_spec"], serde_json::json!(",d"));
+        assert_eq!(err.params["value"], serde_json::json!("not-a-number"));
+
+        let rows: Vec<serde_json::Map<String, Value>> =
+            vec![serde_json::json!({"week": "2024-01-01", "revenue": true}).as_object().unwrap().clone()];
+        let err = build_rows(&config, &rows, "week", &domain, &[10.0], &test_fonts(), &label_style(), None, &[], &[]).unwrap_err();
+        assert_eq!(err.params["value"], serde_json::json!(true));
     }
 
     /// HIGH: a non-numeric value under a numeric aggregate is a query

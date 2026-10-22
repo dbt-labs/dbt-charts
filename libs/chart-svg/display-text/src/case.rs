@@ -137,22 +137,9 @@ static APOS_SECOND: LazyLock<Regex> = LazyLock::new(|| {
     ))
 });
 
-/// Tokens forced lowercase regardless of the library's acronym heuristic
-/// ("dbt" is a stylized-lowercase brand name, not an
-/// acronym, but its three consonants would otherwise trip the
-/// all-consonant uppercase rule).
+/// Tokens forced lowercase ("dbt" is a stylized-lowercase brand name).
 fn force_lowercase(word_lower: &str) -> bool {
     word_lower == "dbt"
-}
-
-/// Consonants per the library's acronym heuristic — English alphabet minus
-/// vowels *and* "y" (the Python set explicitly excludes "y" as neither
-/// vowel nor consonant for this rule).
-fn is_all_consonants(word: &str) -> bool {
-    !word.is_empty()
-        && word
-            .chars()
-            .all(|c| c.is_ascii_alphabetic() && !"aeiouyAEIOUY".contains(c))
 }
 
 /// A slug or path (`dbt-labs/dbt-charts`, `src/core/case.py`, a URL), as
@@ -428,10 +415,6 @@ fn process_line(small: &Small, line: &str, small_first_last: bool) -> String {
         if all_caps {
             w = w.to_lowercase();
         }
-        if w.chars().count() > 2 && is_all_consonants(&w) {
-            tc.push((w.to_uppercase(), false));
-            continue;
-        }
         tc.push((capfirst(&w), false));
     }
 
@@ -691,6 +674,19 @@ mod inline_period_tests {
             ("total mass (kg) by year", "Total Mass (kg) by Year"),
             ("top speed (mph)", "Top Speed (mph)"),
             ("wait (s)", "Wait (s)"),
+            ("p95 latency (ms)", "P95 Latency (ms)"),
+        ] {
+            assert_eq!(apply_case(input, "title").unwrap(), expected, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn title_case_does_not_guess_acronyms_from_missing_vowels() {
+        for (input, expected) in [
+            ("weight in lbs", "Weight in Lbs"),
+            ("cpu hrs", "Cpu Hrs"),
+            ("total kpi count", "Total Kpi Count"),
+            ("SpaceX since 2006", "SpaceX Since 2006"),
         ] {
             assert_eq!(apply_case(input, "title").unwrap(), expected, "{input:?}");
         }

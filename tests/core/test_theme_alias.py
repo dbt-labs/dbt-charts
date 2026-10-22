@@ -63,8 +63,7 @@ class TestBuiltInThemesAsBoardFragments:
 
         raw = yaml.safe_load(neon_path.read_text(encoding="utf-8"))
         patch = BOARD_PATCH_ADAPTER.validate_python(raw)
-        # neon extends stark
-        assert patch.extends == "stark"
+        assert patch.extends == "_base"
 
     def test_all_built_in_themes_parse_as_board_patch(self) -> None:
         """Every built-in theme YAML validates as a BoardPatch."""

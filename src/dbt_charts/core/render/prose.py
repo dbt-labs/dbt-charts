@@ -84,7 +84,7 @@ def _fit_tables(
     char_px: float,
     slot: float,
 ) -> tuple[tuple[tuple[float, float], ...], float]:
-    """Fewest spans per column, and the measure, that hold every table unwrapped.
+    """Fewest spans per column, and the table measure, that hold every table unwrapped.
 
     A table cannot reflow and draws equal columns across whatever width it is
     given, so it is unwrapped once its height stops shrinking. Candidates are
@@ -164,31 +164,45 @@ def _columns_of(
     board_width: float,
     gap: float,
 ) -> tuple[
-    tuple[tuple[float, float], ...], float, tuple[BlockMetrics, ...], list[Table], int
+    tuple[tuple[float, float], ...],
+    float,
+    float,
+    tuple[BlockMetrics, ...],
+    list[Table],
+    int,
 ]:
-    """Boxes, measure, per-block metrics, tables and column count of one block.
+    """Boxes, prose and table measures, metrics, tables and columns of one block.
 
     The render pass and the board-level plan both decide how many columns a
-    block earns through this, at the block's real slot ``width``.
+    block earns through this, at the block's real slot ``width``. Tables alone
+    take the width that holds them unwrapped; every other block keeps the
+    capped reading measure, so a wide table never stretches its paragraphs.
     """
     boxes = span_boxes(width + 2 * pad, board_width, grid, gap)
     tables = [b for b in blocks if isinstance(b, Table)]
+    table_measure: float | None = None
     if tables:
-        boxes, measure = _fit_tables(
+        boxes, table_measure = _fit_tables(
             renderer, tables, boxes, pad, col.max_chars, char_px, width
         )
-    else:
-        # Columns share one measure, so a box a hair short of its span sets it.
-        measure = _measure(
-            min(box_width for _, box_width in boxes) - 2 * pad, col.max_chars, char_px
-        )
+    # Columns share one measure, so a box a hair short of its span sets it.
+    measure = _measure(
+        min(box_width for _, box_width in boxes) - 2 * pad, col.max_chars, char_px
+    )
     # Every column is equal width, so a block wraps identically wherever it
     # lands -- the line list is sliced, never re-flowed.
     metrics = renderer.measure_blocks(blocks, width=measure)
+    if table_measure is not None and table_measure != measure:
+        at_table_width = renderer.measure_blocks(blocks, width=table_measure)
+        metrics = tuple(
+            at_table_width[i] if isinstance(b, Table) else m
+            for i, (b, m) in enumerate(zip(blocks, metrics, strict=True))
+        )
     spans = len(boxes)
     ceiling = spans if col.max_number is None else min(spans, col.max_number)
     n_cols = columns_earned(sum(len(m.line_advances) for m in metrics), ceiling)
-    return boxes, measure, metrics, tables, n_cols
+    table_width = measure if table_measure is None else table_measure
+    return boxes, measure, table_width, metrics, tables, n_cols
 
 
 def render_prose_svg(
@@ -253,7 +267,7 @@ def render_prose_svg(
     )
 
     pad = float(resolved_style.frame.card_padding)
-    boxes, measure, metrics, tables, n_cols = _columns_of(
+    boxes, measure, table_measure, metrics, tables, n_cols = _columns_of(
         blocks,
         renderer,
         width,
@@ -264,6 +278,7 @@ def render_prose_svg(
         plan.board_width,
         plan.gap,
     )
+    tables_differ = table_measure != measure
     if n_cols == 1 and not tables and not plan.snap:
         # Columns are for text long enough to earn them. On a board where no
         # block goes multi-column, a lone column wraps at least as wide as sizing
@@ -284,7 +299,7 @@ def render_prose_svg(
         for box_x, box_width in boxes
     ]
 
-    if n_cols <= 1:
+    if n_cols <= 1 and not tables_differ:
         result = renderer.render_content(blocks, width=measure, padding=0.0)
         inset = insets[0]
         w = format_svg_numeric(width)
@@ -300,6 +315,9 @@ def render_prose_svg(
         )
         record_painted_faces(effective_family, renderer.used_faces)
         return svg, result.height
+
+    def block_measure(block: AnyBlock) -> float:
+        return table_measure if isinstance(block, Table) else measure
 
     units: list[PackUnit] = []
     origin: list[tuple[int, int]] = []  # (block index, line index) per unit
@@ -350,15 +368,23 @@ def render_prose_svg(
             if not opens_column:
                 y += m.space_before
             lift = m.leading_margin if opens_column else 0.0
+            block_width = block_measure(blocks[block_index])
             rendered = renderer.render_block_window(
                 blocks[block_index],
-                width=measure,
+                width=block_width,
                 start=first,
                 count=last - first + 1,
             )
             if not style_block:
                 style_block = rendered.style_block
-            col_elements.append(translate_group(0, px(y - lift), rendered.elements))
+            # A block narrower or wider than the column's measure re-aligns
+            # itself within the span; the column itself is placed by `measure`.
+            dx = _measure_offset(
+                align, boxes[ci][1] - 2 * pad, block_width
+            ) - _measure_offset(align, boxes[ci][1] - 2 * pad, measure)
+            col_elements.append(
+                translate_group(px(dx), px(y - lift), rendered.elements)
+            )
             y += sum(m.line_advances[first : last + 1]) - lift
         column_heights.append(y)
         if col_elements:

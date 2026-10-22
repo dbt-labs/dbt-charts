@@ -38,6 +38,7 @@ use crate::common::{
     format_y_label, row_num, row_str, symbol_radius, AxisStyle, ChartSort, Font,
     FormatSlot, RulerConfig, StyleChannel, TickLabelConfig, TitleStyle,
 };
+use crate::families::axis_caption::{vega_axis_format, AxisCaption, CaptionScale, NumericScale};
 use crate::families::layers::{
     placed_bar_layer_marks, claim_layers, layers_value_extent, panel_layer_rows, resolve_layer_rows,
     DualAxisTitles, LayerAxis, LayerAxisFrame, LayerAxisInk, LayerLabelStyle, LayerSide, OverlayBarLayer, OverlayLayer,
@@ -45,7 +46,7 @@ use crate::families::layers::{
 };
 use crate::families::facet_compose::{self, GhostStyle, PanelGeometry, PanelXAxis};
 use crate::families::temporal::{infer_vega_type, VegaType};
-use crate::families::color_scale::{tick_precision, ContinuousColor, GradientAt};
+use crate::families::color_scale::{ContinuousColor, GradientAt};
 use crate::families::legend;
 use crate::families::facet_title::{layout_title, TitleLayout, TitleSource};
 use crate::families::multiples;
@@ -68,6 +69,8 @@ type PointDatum<'a> = (f64, f64, String, f64, &'a serde_json::Map<String, Value>
 struct XFrame {
     ticks: Vec<f64>,
     labels: Vec<String>,
+    /// The scale Vega's axis description reads; a temporal axis owns its own caption.
+    scale: Option<CaptionScale>,
     points: Vec<f64>,
     /// The x threshold rules (`datum: 0`, `datum: 1`) that fired, where they land.
     rules: [Option<f64>; 2],
@@ -92,11 +95,15 @@ struct LinearX {
     pad: f64,
     bend: vega_fit::Bend,
     tick_count: usize,
+    /// The axis's `tickMinStep`, capping `tick_count` at the domain's span.
+    min_step: Option<f64>,
     /// The authored label format; unset, d3's default tick format.
     format: Option<FormatSlot>,
     /// The baked ruler / tick-label ladder `inject_axis_numeral_expr` paints the format through.
     ruler: Option<RulerConfig>,
     tick_label: Option<TickLabelConfig>,
+    /// The authored `labels.expr`, spoken over each tick's digits.
+    expr: Option<String>,
     /// The `datum` of each threshold rule that fires.
     rule_datums: [Option<f64>; 2],
 }
@@ -130,8 +137,9 @@ impl LinearX {
         if domain.0.is_nan() || domain.1.is_nan() {
             return Ok((Vec::new(), Vec::new(), self.rule_datums.map(|_| None), domain));
         }
-        let values = d3rs::ticks::d3_ticks(domain.0, domain.1, self.tick_count);
-        let labels = match &self.format {
+        let count = d3rs::ticks::vega_tick_count(domain.0, domain.1, self.tick_count, self.min_step);
+        let values = d3rs::ticks::d3_ticks(domain.0, domain.1, count);
+        let labels: Vec<String> = match &self.format {
             Some(slot) => values
                 .iter()
                 .enumerate()
@@ -143,8 +151,8 @@ impl LinearX {
             // d3's `tickFormat` default: comma-grouped fixed point at the
             // precision the tick step implies.
             None => {
-                let step = d3rs::ticks::d3_tick_step(domain.0, domain.1, self.tick_count);
-                let spec = format!(",.{}f", tick_precision(step));
+                let step = d3rs::ticks::d3_tick_step(domain.0, domain.1, count);
+                let spec = format!(",.{}f", d3rs::format::precision_fixed(step));
                 values
                     .iter()
                     .map(|&tv| {
@@ -152,6 +160,22 @@ impl LinearX {
                     })
                     .collect::<Result<_, _>>()?
             }
+        };
+        let labels = match self.expr.as_deref() {
+            // The expression speaks over the format's digits alone: the affix is dropped.
+            Some(src) => labels
+                .iter()
+                .zip(&values)
+                .enumerate()
+                .map(|(i, (label, &tv))| {
+                    let digits = match &self.format {
+                        Some(slot) => crate::number_locale::d3_format(&slot.spec, tv).map_err(|e| format!("scatter x label format: {e}"))?,
+                        None => label.clone(),
+                    };
+                    crate::labels_expr::speak_value("x", src, tv, &digits, i, values.len())
+                })
+                .collect::<Result<Vec<String>, String>>()?,
+            None => labels,
         };
         let ticks = values.iter().map(|&tv| self.frac(domain, tv)).collect();
         Ok((ticks, labels, self.rule_datums.map(|d| d.map(|datum| self.frac(domain, datum))), domain))
@@ -323,16 +347,15 @@ fn validate_scatter_layers(r: &ScatterResolved, payload: &Payload) -> Result<Vec
             Ok(overlay)
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let own_axes = YSides::of(&overlays).is_some();
     for raw in &r.layers {
-        crate::families::layers::refuse_unpainted_layer_affix("scatter", raw, own_axes)?;
+        crate::families::layers::refuse_unpainted_layer_affix("scatter", raw)?;
     }
     Ok(overlays)
 }
 
 impl ScatterResolved {
     pub(crate) fn from_payload(payload: &Payload) -> Result<Self, String> {
-        let mut r: Self = serde_json::from_value(payload.resolved.clone()).map_err(|e| format!("scatter payload: {e}"))?;
+        let mut r: Self = Deserialize::deserialize(&payload.resolved).map_err(|e| format!("scatter payload: {e}"))?;
         r.series_palette = payload.series_palette(&r.palette);
         r.link_y = r.y.clone();
         r.link_color = r.color.clone();
@@ -343,9 +366,6 @@ impl ScatterResolved {
 
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
     let mut r = ScatterResolved::from_payload(payload)?;
-    r.style.axis_x.refuse_unpainted_affix("scatter", "axis_x", None)?;
-    r.style.axis_x.refuse_x_tick_cadence("scatter")?;
-    r.style.axis_y.refuse_unpainted_affix("scatter", "axis_y", None)?;
 
     let overlays = validate_scatter_layers(&r, payload)?;
     if r.style.point_mark.shape.as_ref().is_some_and(|v| !v.is_string()) {
@@ -400,8 +420,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             }
         }
         wide_series = raw_names.iter().map(|raw| shown[raw].clone()).collect();
-        let mut cloned = payload.clone();
-        cloned.rows = crate::common::unfold_wide_rows(&payload.rows, &fold_order, dimension.as_deref())
+        let folded = crate::common::unfold_wide_rows(&payload.rows, &fold_order, dimension.as_deref())
             .into_iter()
             .map(|mut row| {
                 if let Some(Value::String(raw)) = row.remove(crate::common::WIDE_LABEL_FIELD) {
@@ -410,6 +429,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                 row
             })
             .collect();
+        let cloned = payload.with_inputs(payload.resolved.clone(), folded);
         r.link_color = Some(r.color.clone().unwrap_or_else(|| crate::common::WIDE_KEY_FIELD.to_string()));
         r.link_y = r.wide_measures[0].clone();
         r.color = Some(crate::common::WIDE_LABEL_FIELD.to_string());
@@ -421,7 +441,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     // A labeled bucket reads as its ISO start, as production rewrites the column.
     let payload_labeled;
     let payload: &Payload = if r.link_x_labeled {
-        payload_labeled = Payload { rows: crate::families::temporal::normalize_labeled_temporal(&payload.rows, &r.x)?, ..payload.clone() };
+        payload_labeled = payload.with_inputs(payload.resolved.clone(), crate::families::temporal::normalize_labeled_temporal(&payload.rows, &r.x)?.into_owned());
         &payload_labeled
     } else {
         payload
@@ -550,7 +570,7 @@ impl SizeLegend {
         // step implies (d3-format's `precisionFixed`).
         let ticks = d3rs::ticks::d3_ticks(domain.0, domain.1, SIZE_LEGEND_TICK_COUNT);
         let step = ticks.get(1).map_or(1.0, |&v| v - ticks[0]);
-        let precision = tick_precision(step);
+        let precision = d3rs::format::precision_fixed(step);
         let labels: Vec<String> = ticks
             .iter()
             .map(|&v| crate::number_locale::d3_format(&format!(",.{precision}f"), v))
@@ -616,7 +636,7 @@ impl SizeLegend {
                 svg,
                 "<text x=\"{x:.2}\" y=\"{:.2}\" font-family=\"{}\" font-size=\"{title_size}\" \
                  font-weight=\"{}\" fill=\"{}\">{}</text>",
-                y + vega_fit::baseline_shift("top", title_size),
+                y + crate::measure::baseline_shift("top", title_size),
                 vega_escape_attr(title_font.family_or("sans-serif")),
                 xml_escape_attr(&title_font.weight_str()),
                 xml_escape_attr(title_font.color.as_deref().unwrap_or("#313233")),
@@ -636,13 +656,13 @@ impl SizeLegend {
                 row_y + cell.c,
                 self.glyphs[i]
             );
-            crate::contract::legend_label_open(svg, "");
+            crate::contract::legend_label_open(svg);
             let _ = write!(
                 svg,
                 "<text x=\"{:.2}\" y=\"{:.2}\" font-family=\"{}\" font-size=\"{label_size}\" \
                  font-weight=\"{}\" fill=\"{}\">{}</text>",
                 x + cell.label_x,
-                row_y + cell.c + vega_fit::baseline_shift("middle", label_size),
+                row_y + cell.c + crate::measure::baseline_shift("middle", label_size),
                 vega_escape_attr(label_font.family_or("sans-serif")),
                 xml_escape_attr(&label_font.weight_str()),
                 xml_escape_attr(label_font.color.as_deref().unwrap_or("#626366")),
@@ -787,7 +807,7 @@ struct LogAxis {
 }
 
 impl LogAxis {
-    fn new(ax: &AxisStyle, data_min: f64, data_max: f64, count: usize, extent: f64) -> Result<Self, String> {
+    fn new(ax: &AxisStyle, data_min: f64, data_max: f64, count: usize, min_step: Option<f64>, extent: f64) -> Result<Self, String> {
         // The authored pair reaches Vega verbatim, so a descending one keeps its
         // order and inverts the axis; resolve rejects a non-positive bound. Only
         // an authored `nice` rounds it out to powers of ten. `scale.padding`
@@ -815,6 +835,7 @@ impl LogAxis {
         };
         // d3 hands a descending domain's ticks back reversed, and labelOverlap
         // walks them in that order.
+        let count = d3rs::ticks::vega_tick_count(lo, hi, count, min_step);
         let scale_ticks = crate::families::cartesian::log_ticks(base, lo.min(hi), lo.max(hi), count);
         let mut ticks = match ax.authored_scale_values() {
             Some(values) => crate::families::cartesian::ladder_within_domain(&values, lo, hi),
@@ -1171,9 +1192,11 @@ fn linear_x_scale(r: &ScatterResolved, x_min: f64, x_max: f64, rules: (bool, boo
         pad: ax_x.scale.get("padding").and_then(Value::as_f64).unwrap_or(0.0),
         bend: ax_x.bend(),
         tick_count: ax_x.ticks.count.unwrap_or(6.0) as usize,
+        min_step: ax_x.ticks.step,
         format: ax_x.labels.format.clone(),
         ruler: ax_x.ruler.clone(),
         tick_label: ax_x.tick_label.clone(),
+        expr: ax_x.labels.expr.clone(),
         rule_datums: [(0.0, rules.0), (1.0, rules.1)].map(|(datum, fires)| fires.then_some(datum)),
     })
 }
@@ -1183,16 +1206,23 @@ fn linear_x_scale(r: &ScatterResolved, x_min: f64, x_max: f64, rules: (bool, boo
 /// d3 drops the mantissa of.
 fn log_x_axis(ax_x: &AxisStyle, x_min: f64, x_max: f64, pw: f64) -> Result<(LogAxis, Vec<String>), String> {
     let x_tick_count = ax_x.ticks.count.unwrap_or(6.0) as usize;
-    let ladder = LogAxis::new(ax_x, x_min, x_max, x_tick_count, pw)?;
+    let ladder = LogAxis::new(ax_x, x_min, x_max, x_tick_count, ax_x.ticks.step, pw)?;
     let labels = ladder
         .ticks
         .iter()
         .enumerate()
         .map(|(i, &tv)| match (ladder.mantissa_visible[i], ax_x.labels.format.as_ref()) {
             (false, _) => Ok(String::new()),
-            (true, Some(slot)) => slot.paint_tick(tv).map_err(|e| format!("scatter x label format: {e}")),
-            // Vega labels an unformatted log axis with d3's bare `,` specifier.
-            (true, None) => crate::number_locale::d3_format(",", tv).map_err(|e| format!("scatter x label format: {e}")),
+            (true, slot) => {
+                // Vega labels an unformatted log axis with d3's bare `,` specifier.
+                let label = match slot {
+                    Some(slot) if ax_x.labels.expr.is_some() => crate::number_locale::d3_format(&slot.spec, tv),
+                    Some(slot) => slot.paint_tick(tv),
+                    None => crate::number_locale::d3_format(",", tv),
+                }
+                .map_err(|e| format!("scatter x label format: {e}"))?;
+                ax_x.labels.apply_expr("x", tv, label, i, ladder.ticks.len())
+            }
         })
         .collect::<Result<_, String>>()?;
     Ok((ladder, labels))
@@ -1255,6 +1285,7 @@ struct PlainXPaint<'a> {
     /// center (`scale(d) - 0.5` under it).
     point_label_crisp: f64,
     title: &'a str,
+    caption: &'a AxisCaption,
     title_key: Option<crate::contract::LabelKey>,
 }
 
@@ -1276,7 +1307,18 @@ fn paint_plain_x_axis(svg: &mut String, p: &PlainXPaint, fonts: &FontBook) -> Re
     let (plot_left, plot_w, plot_bottom) = (p.plot_left, p.plot_w, p.plot_bottom);
     let x_pos = |frac: f64| frac * plot_w;
     let label_crisp = if p.flush { 0.5 } else { p.point_label_crisp };
-    crate::contract::axis_group_open(svg, crate::contract::AxisChannel::X, (plot_left + 0.5, plot_bottom + x_axis_drop))?;
+    // Only a lone chart's axis: a facet's shared footer is laid out by the composer.
+    if crate::labels_expr::view::active() && p.title_key.is_some() {
+        use crate::labels_expr::view::{anchor, register_axis, AxisSpec, Orient};
+        let (align, baseline, flush) = if p.angle == 0.0 {
+            (None, None, p.flush.then_some(1.0))
+        } else {
+            (Some(anchor(p.align)?), Some(anchor(p.baseline)?), None)
+        };
+        let spec = AxisSpec { orient: Orient::Bottom, offset: x_tick_eff + x_label_pad, shift: label_crisp - 0.5, align, baseline, angle: p.angle, flush, style: ax_x.labels.item_style()? };
+        register_axis("x", spec);
+    }
+    crate::contract::axis_group_open(svg, crate::contract::AxisChannel::X, p.caption, (plot_left + 0.5, plot_bottom + x_axis_drop))?;
     if x_ticks_visible {
         let tc = crate::common::required_ink(ax_x.ticks.color.as_deref(), "scatter", "axis_x.ticks.color")?;
         let tw = ax_x.ticks.width.unwrap_or(1.0);
@@ -1298,7 +1340,7 @@ fn paint_plain_x_axis(svg: &mut String, p: &PlainXPaint, fonts: &FontBook) -> Re
         // anchor, rotate, then the baseline shift — bar's own
         // `BandXAxis::paint` rotated arm (`bar.rs`), reused verbatim.
         let anchor_y = plot_bottom + x_axis_drop + sign * (x_tick_eff + x_label_pad);
-        let dy = vega_fit::baseline_shift(p.baseline, x_font_size);
+        let dy = crate::measure::baseline_shift(p.baseline, x_font_size);
         let text_anchor = match p.align {
             "left" => "start",
             "right" => "end",
@@ -1314,11 +1356,11 @@ fn paint_plain_x_axis(svg: &mut String, p: &PlainXPaint, fonts: &FontBook) -> Re
                  font-weight=\"{x_label_weight}\" fill=\"{x_label_color}\">{}</text>",
                 p.angle,
                 vega_escape_attr(x_family),
-                xml_escape(lbl), text_anchor = xml_escape_attr(text_anchor), x_label_weight = xml_escape_attr(&x_label_weight), x_label_color = xml_escape_attr(x_label_color)
+                xml_escape(&ax_x.labels.clip(lbl, fonts)?), text_anchor = xml_escape_attr(text_anchor), x_label_weight = xml_escape_attr(&x_label_weight), x_label_color = xml_escape_attr(x_label_color)
             );
         }
     } else {
-        let x_label_y = plot_bottom + x_axis_drop + sign * (x_tick_eff + x_label_pad) + vega_fit::baseline_shift(edge.baseline(), x_font_size);
+        let x_label_y = plot_bottom + x_axis_drop + sign * (x_tick_eff + x_label_pad) + crate::measure::baseline_shift(edge.baseline(), x_font_size);
         let x_flush_align = |pos: f64, pw: f64| if p.flush { crate::families::line::flush_align(pos, pw) } else { "center" };
         let x_label_visible = ax_x.is_quantitative.then(|| {
             let widths: Result<Vec<f64>, String> =
@@ -1326,13 +1368,14 @@ fn paint_plain_x_axis(svg: &mut String, p: &PlainXPaint, fonts: &FontBook) -> Re
             let widths = widths?;
             Ok::<Vec<bool>, String>(visible_tick_labels(p.labels, ax_x.labels.min_gap.unwrap_or(0.0), ax_x.is_log_scale(), |i| {
                 let pos = p.ticks[i] * plot_w;
-                vega_fit::text_ink(
+                vega_fit::text_ink_rows(
                     pos,
                     plot_bottom + x_axis_drop + sign * (x_tick_eff + x_label_pad),
                     widths[i].min(x_limit),
                     x_font_size,
                     x_flush_align(pos, plot_w),
                     edge.baseline(),
+                    crate::text::line_count(&p.labels[i]),
                 )
             }))
         });
@@ -1349,7 +1392,7 @@ fn paint_plain_x_axis(svg: &mut String, p: &PlainXPaint, fonts: &FontBook) -> Re
                  font-family=\"{}\" font-size=\"{x_font_size}\" \
                  font-weight=\"{x_label_weight}\" fill=\"{x_label_color}\">{}</text>",
                 vega_escape_attr(x_family),
-                xml_escape(lbl), anchor = xml_escape_attr(anchor), x_label_weight = xml_escape_attr(&x_label_weight), x_label_color = xml_escape_attr(x_label_color)
+                xml_escape(&ax_x.labels.clip(lbl, fonts)?), anchor = xml_escape_attr(anchor), x_label_weight = xml_escape_attr(&x_label_weight), x_label_color = xml_escape_attr(x_label_color)
             );
         }
     }
@@ -1361,7 +1404,7 @@ fn paint_plain_x_axis(svg: &mut String, p: &PlainXPaint, fonts: &FontBook) -> Re
         let anchor_y = plot_bottom + x_axis_drop + sign * (x_tick_eff + x_label_pad);
         let reach = p.labels.iter().try_fold(0.0_f64, |acc, lbl| {
             let w = fonts.measure_shaped(lbl, x_family, x_font_size)?.min(x_limit);
-            let ink = crate::common::rotated_category_label_ink(0.0, 0.0, w, x_font_size, p.align, p.baseline, p.angle, false);
+            let ink = crate::common::rotated_category_label_ink(0.0, 0.0, w, x_font_size, p.align, p.baseline, p.angle, crate::text::line_count(lbl) - 1);
             Ok::<f64, String>(acc.max(match edge {
                 crate::common::XEdge::Bottom => ink.y2,
                 crate::common::XEdge::Top => -ink.y1,
@@ -1369,15 +1412,20 @@ fn paint_plain_x_axis(svg: &mut String, p: &PlainXPaint, fonts: &FontBook) -> Re
         })?;
         let title_fs = ax_x.title.font.size_or(11.0);
         let title_padding = ax_x.title.padding.unwrap_or(10.0);
-        let title_y = anchor_y + sign * (reach + title_padding) + vega_fit::baseline_shift(edge.baseline(), title_fs);
+        let title_y = anchor_y + sign * (reach + title_padding) + crate::measure::baseline_shift(edge.baseline(), title_fs);
         crate::common::emit_axis_title_at(svg, p.title, &ax_x.title, plot_left + plot_w / 2.0, title_y, p.title_key);
     } else if p.ticks.is_empty() {
         // An axis with no ticks has no label bounds to clear: the title sits one padding below the axis origin.
         let title_fs = ax_x.title.font.size_or(11.0);
-        let title_y = plot_bottom + x_axis_drop + sign * ax_x.title.padding.unwrap_or(10.0) + vega_fit::baseline_shift(edge.baseline(), title_fs);
+        let title_y = plot_bottom + x_axis_drop + sign * ax_x.title.padding.unwrap_or(10.0) + crate::measure::baseline_shift(edge.baseline(), title_fs);
         crate::common::emit_axis_title_at(svg, p.title, &ax_x.title, plot_left + plot_w / 2.0, title_y, p.title_key);
     } else {
-        let x_label_baseline = plot_bottom + x_axis_drop + sign * (x_tick_eff + x_label_pad) + vega_fit::baseline_shift(edge.baseline(), x_font_size);
+        let label_rows = p.labels.iter().map(|l| crate::text::line_count(l)).max().unwrap_or(1);
+        let x_label_baseline = plot_bottom
+            + x_axis_drop
+            + sign * (x_tick_eff + x_label_pad)
+            + crate::measure::baseline_shift(edge.baseline(), x_font_size)
+            + sign * (label_rows - 1) as f64 * crate::text::line_height(x_font_size);
         crate::common::emit_axis_title_flat(svg, p.title, &ax_x.title, plot_left + plot_w / 2.0, x_label_baseline, x_font_size, p.title_key, edge);
     }
     crate::contract::axis_group_close(svg);
@@ -1408,7 +1456,7 @@ pub(crate) struct PlainXAxis {
 enum PlainXScale {
     /// A point scale over the sorted distinct categories (the layers' union in paint order),
     /// or a band scale beside a band-needing layer, whose `bandwidth` is a fraction of the plot.
-    Point { domain: Vec<String>, fracs: Vec<f64>, bandwidth: Option<f64> },
+    Point { domain: Vec<String>, shown: Vec<String>, fracs: Vec<f64>, bandwidth: Option<f64>, padding: f64 },
     Linear(LinearX),
     Log { ax: Box<AxisStyle>, extent: (f64, f64) },
 }
@@ -1436,9 +1484,11 @@ impl PlainXAxis {
                 pad: 0.0,
                 bend: vega_fit::Bend::Linear,
                 tick_count: 0,
+                min_step: None,
                 format: None,
                 ruler: None,
                 tick_label: None,
+                expr: None,
                 rule_datums: [None, None],
             }),
             angle: 0.0,
@@ -1492,7 +1542,8 @@ impl PlainXAxis {
                 let inner = if mirrored || layers.band { padding } else { 1.0 };
                 axis.nominal_round = Some(NominalRound { inner, outer: padding, n: domain.len() });
             }
-            axis.scale = PlainXScale::Point { domain, fracs, bandwidth: bandwidth.filter(|_| layers.band) };
+            let shown = crate::labels_expr::band_texts("x", &domain, ax_x.labels.expr.as_deref()).map_err(|e| format!("scatter: {e}"))?;
+            axis.scale = PlainXScale::Point { domain, shown, fracs, bandwidth: bandwidth.filter(|_| layers.band), padding: point_x_padding(ax_x) };
             return Ok(axis);
         }
         // Every layer's x column joins the scale's extent.
@@ -1509,11 +1560,51 @@ impl PlainXAxis {
         Ok(axis)
     }
 
+    /// Registers the x scale for the `labels.expr`s that read it, over a plot `pw` wide.
+    fn register(&self, pw: f64) -> Result<(), String> {
+        use crate::labels_expr::view::{register_band, register_bent, register_log, register_point_padded, Span};
+        match &self.scale {
+            PlainXScale::Point { domain, bandwidth: Some(_), padding, .. } => register_band("x", domain, *padding, *padding, Span::Width)?,
+            PlainXScale::Point { domain, padding, .. } => register_point_padded("x", domain, *padding, Span::Width)?,
+            PlainXScale::Linear(lin) => {
+                let (lo, hi) = lin.domain_at(pw);
+                register_bent("x", lin.bend, lo, hi, Span::Width);
+            }
+            PlainXScale::Log { ax, extent } => {
+                let (ladder, _) = log_x_axis(ax, extent.0, extent.1, pw)?;
+                register_log("x", ladder.lo, ladder.hi, Span::Width);
+            }
+        }
+        Ok(())
+    }
+
     /// The ticks (plot-width fractions), their labels and the threshold rules'
     /// fractions at a plot `pw` wide.
+    /// The scale Vega's axis description reads, on a plot `pw` wide.
+    fn caption_scale(&self, ax_x: &AxisStyle, pw: f64) -> Result<CaptionScale, String> {
+        Ok(match &self.scale {
+            PlainXScale::Point { domain, .. } => {
+                CaptionScale::Discrete { values: domain.clone(), format: vega_axis_format(ax_x, false)? }
+            }
+            PlainXScale::Linear(lin) => CaptionScale::Numeric {
+                kind: NumericScale::of_axis(ax_x)?,
+                domain: lin.domain_at(pw),
+                format: vega_axis_format(ax_x, true)?,
+            },
+            PlainXScale::Log { ax, extent } => {
+                let ladder = log_x_axis(ax, extent.0, extent.1, pw)?.0;
+                CaptionScale::Numeric {
+                    kind: NumericScale::Log,
+                    domain: (ladder.lo, ladder.hi),
+                    format: vega_axis_format(ax_x, true)?,
+                }
+            }
+        })
+    }
+
     pub(crate) fn ticks_at(&self, pw: f64) -> Result<(Vec<f64>, Vec<String>, [Option<f64>; 2]), String> {
         let (mut ticks, labels, mut rules) = match &self.scale {
-            PlainXScale::Point { domain, fracs, .. } => (fracs.clone(), domain.clone(), [None, None]),
+            PlainXScale::Point { shown, fracs, .. } => (fracs.clone(), shown.clone(), [None, None]),
             PlainXScale::Linear(lin) => lin.at(pw).map(|(ticks, labels, rules, _)| (ticks, labels, rules))?,
             PlainXScale::Log { ax, extent } => {
                 let (ladder, labels) = log_x_axis(ax, extent.0, extent.1, pw)?;
@@ -1611,7 +1702,7 @@ impl PlainXAxis {
             let w = fonts.measure_shaped(label, family, size)?.min(limit);
             if self.angle != 0.0 {
                 let ink = crate::common::rotated_category_label_ink(
-                    frac * pw, 0.0, w, size, self.align, self.baseline, self.angle, false,
+                    frac * pw, 0.0, w, size, self.align, self.baseline, self.angle, crate::text::line_count(label) - 1,
                 );
                 sized.left_reach = sized.left_reach.max(-ink.x1);
                 below = below.max(ink.y2);
@@ -1643,6 +1734,7 @@ impl PlainXAxis {
         fonts: &FontBook,
     ) -> Result<(), String> {
         let (ticks, labels, _) = self.ticks_at(plot_w)?;
+        let caption = AxisCaption::new(&self.title, &ax_x.title, self.caption_scale(ax_x, plot_w)?).bare_if_undrawn(ax_x);
         paint_plain_x_axis(
             svg,
             &PlainXPaint {
@@ -1658,6 +1750,7 @@ impl PlainXAxis {
                 flush: !matches!(self.scale, PlainXScale::Point { .. }),
                 point_label_crisp: 0.0,
                 title: &self.title,
+                caption: &caption,
                 title_key: None,
             },
             fonts,
@@ -1817,14 +1910,19 @@ fn date_axis(
         dates.dedup();
     }
     let timed = crate::families::subday::SubdaySource::of(&ladder.iter().map(String::as_str).collect::<Vec<_>>());
-    crate::families::scatter_axis::TemporalXAxis::resolve(
-        &crate::families::scatter_axis::DateColumn { ladder: &ladder, kept: &kept, law, band_layer: layers.band, bucket_aligned: false, timed: &timed, chart_width: slot_w },
+    let mut axis = crate::families::scatter_axis::TemporalXAxis::resolve(
+        &crate::families::scatter_axis::DateColumn { ladder: &ladder, kept: &kept, law, band_layer: layers.band, indexed: None, bucket_aligned: false, timed: &timed, chart_width: slot_w },
         &r.style.axis_x,
         slot_w * usable_ratio,
         title_text,
         title_key,
         fonts,
-    )
+    )?;
+    if let Some(src) = r.style.axis_x.labels.expr.as_deref() {
+        let expr = crate::labels_expr::Expr::parse(src).map(|e| e.on("x")).map_err(|e| format!("scatter: labels.expr {src:?}: {e:?}"))?;
+        axis.speak(expr, &ladder)?;
+    }
+    Ok(axis)
 }
 
 /// The raw `(min, max)` of a numeric column across every payload row —
@@ -2178,7 +2276,6 @@ fn render_facet(
     shape: FacetShape,
 ) -> Result<String, Diagnostic> {
     let mc = r.multiples.as_ref().expect("render dispatched on multiples");
-    r.style.axis_x.refuse_top_x_axis("scatter")?;
     let legend_cfg = &r.legend;
     if !shape.y_nominal && !shape.y_measure {
         return Err("scatter: multiples needs a baked measure y ladder".into());
@@ -2258,6 +2355,9 @@ fn render_facet(
         .x_dates
         .then(|| date_axis(payload, r, &drawn, &date_layers, naive_panel_w, x_title.clone(), None, fonts))
         .transpose()?;
+    if date_x.as_ref().is_some_and(crate::families::scatter_axis::TemporalXAxis::raises_no_marks) {
+        return Err(crate::labels_expr::throw_diagnostic(payload));
+    }
     if let Some(label_count) = date_x.as_ref().and_then(|axis| axis.collision) {
         crate::families::cartesian::warn_axis_label_collision(&r.id, &r.x, label_count);
     }
@@ -2278,8 +2378,7 @@ fn render_facet(
     let panel_payloads: Vec<Payload> = panels
         .iter()
         .map(|panel| {
-            let mut panel_payload = payload.clone();
-            panel_payload.rows = panel
+            let panel_rows = panel
                 .rows
                 .iter()
                 .map(|row| {
@@ -2290,7 +2389,7 @@ fn render_facet(
                     row
                 })
                 .collect();
-            panel_payload
+            payload.with_inputs(payload.resolved.clone(), panel_rows)
         })
         .collect();
     let render_panels = |plot_w: f64, plot_h: f64, value_axis_right_overhang: f64, left_overhang: f64| {
@@ -2528,6 +2627,7 @@ fn render_facet(
         left_title: None,
         mirror_in_panel: false,
         own_value_axes: embedded_y,
+        y_axes_in_cells: embedded_y,
         extra_axis_px,
         cell_x_axis: false,
         axis_x: &r.style.axis_x,
@@ -2865,6 +2965,8 @@ fn render_fit(
     // fraction, index-parallel with `kept`.
     let mut x_ticks: Vec<f64> = Vec::new();
     let mut x_labels: Vec<String> = Vec::new();
+    // What the category axis paints: the categories, or what an authored `labels.expr` makes of each.
+    let mut x_shown: Vec<String> = Vec::new();
     // Nominal-x category tilt ladder: bar's own law
     // (`vega_fit::category_label_layout`'s crowding ladder,
     // `vega_fit::vl_x_label_anchor`'s anchor — both already shared
@@ -2904,6 +3006,9 @@ fn render_fit(
             panel.is_none().then_some(crate::contract::LabelKey::X),
             fonts,
         )?;
+        if axis.raises_no_marks() {
+            return Err(crate::labels_expr::throw_diagnostic(payload));
+        }
         if let Some(label_count) = axis.collision {
             crate::families::cartesian::warn_axis_label_collision(&r.id, &r.x, label_count);
         }
@@ -2948,6 +3053,7 @@ fn render_fit(
             x_ticks.push(frac);
             x_labels.push(category.clone());
         }
+        x_shown = crate::labels_expr::band_texts("x", &x_labels, ax_x.labels.expr.as_deref()).map_err(|e| format!("scatter: {e}"))?;
         // `resolve_axis_x_overlap` (`emitters/_label_overlap.py:718-731`)
         // short-circuits on an AUTHORED `labels.angle` before the crowding
         // ladder ever runs — bar's own category axis reads it the same way
@@ -3106,6 +3212,7 @@ fn render_fit(
     let mut points_data: Vec<PointDatum> = Vec::new();
     // A layer's value as a fraction of the plot height from its top.
     let mut layer_y_frac: Box<dyn Fn(f64) -> f64> = Box::new(|_| f64::NAN);
+    let y_scale_caption: CaptionScale;
     if y_nominal {
         // A facet's panels share the whole chart's categories unless each
         // draws its own.
@@ -3115,6 +3222,7 @@ fn render_fit(
         } else {
             point_scale_domain(&payload.rows, &kept, &r.y, r.sort.as_ref())?
         };
+        y_scale_caption = CaptionScale::Discrete { values: domain.clone(), format: vega_axis_format(ax_y, false)? };
         let bands = domain.len() as f64;
         let band = |i: usize| (0.5 + i as f64) / bands;
         let time_format = r
@@ -3126,11 +3234,13 @@ fn render_fit(
             .map(|spec| crate::families::temporal::AuthoredTimeFormat::parse("scatter", Some(spec)))
             .transpose()?
             .flatten();
+        let spoken = crate::labels_expr::band_texts("y", &domain, ax_y.labels.expr.as_deref()).map_err(|e| format!("scatter: {e}"))?;
         for (i, category) in domain.iter().enumerate() {
             y_ticks.push(band(i));
             y_tick_values.push(crate::common::js_number(category));
-            y_labels.push(match (time_format, crate::families::temporal::parse_iso_date(category)) {
-                (Some(format), Some((y, m, d))) => format.text(y, m, d),
+            y_labels.push(match (ax_y.labels.expr.as_ref(), time_format, crate::families::temporal::parse_iso_date(category)) {
+                (Some(_), ..) => spoken[i].clone(),
+                (None, Some(format), Some((y, m, d))) => format.text(y, m, d),
                 _ => category.clone(),
             });
         }
@@ -3156,19 +3266,23 @@ fn render_fit(
         // A layered spec reads the axis's own baked count where a lone chart's
         // log axis keeps d3's default.
         let y_tick_count = if overlays.is_empty() { 10 } else { ax_y.ticks.count.unwrap_or(6.0) as usize };
-        let ladder = LogAxis::new(ax_y, y_lo, y_hi, y_tick_count, y_ladder_pass.2)?;
+        let ladder = LogAxis::new(ax_y, y_lo, y_hi, y_tick_count, None, y_ladder_pass.2)?;
+        if crate::labels_expr::view::active() {
+            crate::labels_expr::view::register_log("y", ladder.lo, ladder.hi, crate::labels_expr::view::Span::Height);
+        }
+        y_scale_caption = CaptionScale::Numeric { kind: NumericScale::Log, domain: (ladder.lo, ladder.hi), format: vega_axis_format(ax_y, true)? };
         for (i, &tv) in ladder.ticks.iter().enumerate() {
             y_ticks.push(ladder.frac_from_top(tv));
             y_tick_values.push(tv);
             y_labels.push(if ladder.mantissa_visible[i] {
-                format_y_label(
+                ax_y.labels.apply_expr("y", tv, format_y_label(
                     tv,
                     ax_y.ruler.as_ref(),
                     ax_y.tick_label.as_ref(),
                     ax_y.labels.format.as_ref(),
                     i,
                     ladder.ticks.len(),
-                )?
+                )?, i, ladder.ticks.len())?
             } else {
                 String::new()
             });
@@ -3195,11 +3309,15 @@ fn render_fit(
             Some(pair) => pair,
             None => unauthored_measure_domain(ax_y, y_dmin, y_dmax, y_ladder_pass.2, !shared_layers.is_empty()),
         };
+        y_scale_caption = CaptionScale::Numeric { kind: NumericScale::of_axis(ax_y)?, domain: (y_min, y_max), format: vega_axis_format(ax_y, true)? };
         // d3 maps a collapsed domain onto the range's midpoint with the one
         // value as its only tick; a `NaN` one (an unparsable authored pair)
         // has neither ticks nor positions.
         let y_span = y_max - y_min;
         let y_bend = ax_y.bend();
+        if crate::labels_expr::view::active() {
+            crate::labels_expr::view::register_bent("y", y_bend, y_min, y_max, crate::labels_expr::view::Span::Height);
+        }
         let y_frac = move |v: f64| -> f64 {
             if y_span == 0.0 {
                 return 0.5;
@@ -3235,14 +3353,14 @@ fn render_fit(
         for (i, &tv) in ladder.iter().enumerate() {
             y_ticks.push(y_frac(tv));
             y_tick_values.push(tv);
-            y_labels.push(format_y_label(
+            y_labels.push(ax_y.labels.apply_expr("y", tv, format_y_label(
                 tv,
                 ax_y.ruler.as_ref(),
                 ax_y.tick_label.as_ref(),
                 ax_y.labels.format.as_ref(),
                 i,
                 ladder.len(),
-            )?);
+            )?, i, ladder.len())?);
         }
         for (idx, (&(_, row), &yv)) in kept.iter().zip(kept_y.iter()).enumerate() {
             points_data.push((kept_x_frac[idx], y_frac(yv), series_of(row), mark_radii[idx], row));
@@ -3304,14 +3422,14 @@ fn render_fit(
         }
         let drawn = crate::common::drawn_tick_values(ax_y);
         for (i, &tv) in drawn.iter().enumerate() {
-            let lbl = format_y_label(
+            let lbl = ax_y.labels.apply_expr("y", tv, format_y_label(
                 tv,
                 ax_y.ruler.as_ref(),
                 ax_y.tick_label.as_ref(),
                 ax_y.labels.format.as_ref(),
                 i,
                 drawn.len(),
-            )?;
+            )?, i, drawn.len())?;
             max_w = max_w.max(fonts.measure(&lbl, mf, y_font_size)?);
         }
         Ok(y_tick_eff + max_w.min(y_limit) + crate::common::VALUE_AXIS_BREATHING_ROOM)
@@ -3333,7 +3451,7 @@ fn render_fit(
         let off = y_tick_eff + y_label_pad;
         let widest = y_label_ws.iter().fold(0.0_f64, |acc, &w| acc.max(w)).min(y_limit);
         (off, "right", "end", off + widest)
-    } else if y_nominal || ax_y.labels.align.is_none() || base_moved {
+    } else if y_nominal || ax_y.labels.align_kept("right").is_none() || base_moved {
         let off = y_tick_eff + y_label_pad;
         let widest = y_label_ws.iter().fold(0.0_f64, |acc, &w| acc.max(w)).min(y_limit);
         (off, "left", "start", off + widest)
@@ -3341,6 +3459,11 @@ fn render_fit(
         let off = measured_off()?;
         (off, "right", "end", off)
     };
+    if crate::labels_expr::view::active() && panel.is_none() && ax_y.labels.upright() {
+        use crate::labels_expr::view::{register_axis, AxisSpec, Orient};
+        let orient = if y_left { Orient::Left } else { Orient::Right };
+        register_axis("y", AxisSpec { orient, offset: y_label_off, shift: 0.0, align: Some(y_label_align), baseline: None, angle: 0.0, flush: None, style: ax_y.labels.item_style()? });
+    }
 
     // `axis_y.mirror: true`: a ghost axis on the opposite edge repeating the
     // primary's labels and ticks at the primary's own reserved offset
@@ -3370,7 +3493,7 @@ fn render_fit(
     // The ink of rung `i`'s label on a plot `pw` wide and `ph` tall.
     let y_label_ink = |pw: f64, ph: f64, i: usize| {
         let anchor_x = if y_left { -y_label_off } else { pw + y_label_off };
-        vega_fit::text_ink(anchor_x, y_px(ph, y_ticks[i], y_round), y_label_ws[i].min(y_limit), y_font_size, y_label_align, "middle")
+        vega_fit::text_ink_rows(anchor_x, y_px(ph, y_ticks[i], y_round), y_label_ws[i].min(y_limit), y_font_size, y_label_align, "middle", crate::text::line_count(&y_labels[i]))
     };
     // Vega's `labelOverlap` thins a measure axis (parity, greedy on a log one); a point scale's
     // categories all draw.
@@ -3718,36 +3841,51 @@ fn render_fit(
     // axis was placed above.
     let x_frame_unrounded = |pw: f64| -> Result<XFrame, String> {
         if let Some(axis) = &temporal_x {
+            if crate::labels_expr::view::active() {
+                axis.register(pw);
+            }
             return Ok(XFrame {
                 ticks: axis.tick_fracs(pw, fonts)?,
                 labels: Vec::new(),
+                scale: None,
                 points: kept.iter().map(|&(_, row)| axis.frac(&row_str(row, &r.x), pw)).collect(),
                 rules: [None, None],
             });
         }
         if let Some(axis) = plain_x {
+            if crate::labels_expr::view::active() {
+                axis.register(pw)?;
+            }
             let (mut ticks, labels, rules) = axis.ticks_at(pw)?;
             // A band axis sits half a pixel left of its band centers.
             if axis.bandwidth().is_some() {
                 ticks.iter_mut().for_each(|t| *t -= 0.5 / pw);
             }
             let points = kept.iter().map(|&(xv, row)| axis.frac(xv, row, &r.x, pw)).collect::<Result<_, String>>()?;
-            return Ok(XFrame { ticks, labels, points, rules });
+            return Ok(XFrame { ticks, labels, scale: Some(axis.caption_scale(ax_x, pw)?), points, rules });
         }
         if let Some((lo, hi)) = log_x {
             let (ladder, labels) = log_x_axis(ax_x, lo, hi, pw)?;
+            if crate::labels_expr::view::active() {
+                crate::labels_expr::view::register_log("x", ladder.lo, ladder.hi, crate::labels_expr::view::Span::Width);
+            }
             return Ok(XFrame {
                 ticks: ladder.ticks.iter().map(|&tv| ladder.frac_from_left(tv)).collect(),
                 labels,
+                scale: Some(CaptionScale::Numeric { kind: NumericScale::Log, domain: (ladder.lo, ladder.hi), format: vega_axis_format(ax_x, true)? }),
                 points: kept.iter().map(|&(xv, _)| ladder.frac_from_left(xv)).collect(),
                 rules: [None, None],
             });
         }
         if let Some(lin) = &linear_x {
             let (ticks, labels, rules, domain) = lin.at(pw)?;
+            if crate::labels_expr::view::active() {
+                crate::labels_expr::view::register_bent("x", lin.bend, domain.0, domain.1, crate::labels_expr::view::Span::Width);
+            }
             return Ok(XFrame {
                 ticks,
                 labels,
+                scale: Some(CaptionScale::Numeric { kind: NumericScale::of_axis(ax_x)?, domain, format: vega_axis_format(ax_x, true)? }),
                 points: kept.iter().map(|&(xv, _)| lin.frac(domain, xv)).collect(),
                 rules,
             });
@@ -3755,9 +3893,19 @@ fn render_fit(
         // A band axis sits half a pixel left of its band centers (Vega places a
         // band tick at `scale(d) + bandwidth / 2` under the axis's own +0.5 shift).
         let band_shift = if x_bandwidth.is_some() { 0.5 / pw } else { 0.0 };
+        if crate::labels_expr::view::active() && x_nominal {
+            use crate::labels_expr::view::{register_band, register_point_padded, Span};
+            let padding = if mirror_wants_band && x_bandwidth.is_none() { 0.5 } else { point_x_padding(ax_x) };
+            if x_bandwidth.is_some() {
+                register_band("x", &x_labels, padding, padding, Span::Width)?;
+            } else {
+                register_point_padded("x", &x_labels, padding, Span::Width)?;
+            }
+        }
         Ok(XFrame {
             ticks: x_ticks.iter().map(|t| t - band_shift).collect(),
-            labels: x_labels.clone(),
+            labels: x_shown.clone(),
+            scale: Some(CaptionScale::Discrete { values: x_labels.clone(), format: vega_axis_format(ax_x, false)? }),
             points: kept_x_frac.clone(),
             rules: [None, None],
         })
@@ -3942,13 +4090,14 @@ fn render_fit(
                         .collect::<Result<Vec<f64>, _>>()?;
                     Ok::<Vec<bool>, String>(visible_tick_labels(&xf.labels, ax_x.labels.min_gap.unwrap_or(0.0), ax_x.is_log_scale(), |i| {
                         let pos = xf.ticks[i] * pw;
-                        vega_fit::text_ink(
+                        vega_fit::text_ink_rows(
                             pos,
                             row_y,
                             widths[i].min(x_limit),
                             x_font_size,
                             x_flush_align(pos, pw),
                             x_edge.baseline(),
+                            crate::text::line_count(&xf.labels[i]),
                         )
                     }))
                 });
@@ -3971,18 +4120,19 @@ fn render_fit(
                             x_cat_align,
                             x_cat_baseline,
                             x_cat_angle,
-                            false,
+                            crate::text::line_count(lbl) - 1,
                         ));
                         continue;
                     }
                     let align = x_flush_align(pos, pw);
-                    x_axis.union(&vega_fit::text_ink(
+                    x_axis.union(&vega_fit::text_ink_rows(
                         pos,
                         row_y,
                         w.min(x_limit),
                         x_font_size,
                         align,
                         x_edge.baseline(),
+                        crate::text::line_count(lbl),
                     ));
                 }
                 // Outermost drawn tick strokes.
@@ -4514,7 +4664,7 @@ fn render_fit(
     if !value_label_marks.is_empty() {
         let weight = value_label_font.map(|f| f.weight_str()).unwrap_or_else(|| "400".into());
         let font_style = value_label_font.map(crate::common::Font::style_attr).unwrap_or_default();
-        let baseline = value_label_dy + vega_fit::baseline_shift(value_label_baseline, value_label_size);
+        let baseline = value_label_dy + crate::measure::baseline_shift(value_label_baseline, value_label_size);
         if tooltip_labels {
             crate::contract::value_label_group_open(&mut svg, &format!("layer_{}_marks", fired_rule_count + 1))?;
         }
@@ -4757,6 +4907,7 @@ crate::families::layers::layer_link(datum_link.as_ref(), (sl.query_name.as_deref
                 flush: x_label_flush,
                 point_label_crisp: 0.5,
                 title: &x_title_text,
+                caption: &AxisCaption::new(&x_title_text, &ax_x.title, xf.scale.clone().expect("a plain x axis names its scale")).bare_if_undrawn(ax_x),
                 title_key: panel.is_none().then_some(crate::contract::LabelKey::X),
             },
             fonts,
@@ -4770,8 +4921,9 @@ crate::families::layers::layer_link(datum_link.as_ref(), (sl.query_name.as_deref
     // The axis group's origin and the direction its ticks, labels and title run.
     let (y_axis_x, y_outward) = if y_left { (0.5, -1.0) } else { (plot_w + value_axis_dx + 0.5, 1.0) };
     let value_axis_start = svg.len();
+    let y_caption = AxisCaption::new(&y_title_text, val_title_style, y_scale_caption).bare_if_undrawn(ax_y);
     if paint_value_axis {
-        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (y_axis_x, 0.0))?;
+        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, &y_caption, (y_axis_x, 0.0))?;
     }
     // Y tick marks: 6px lines between the plot edge and the label gutter.
     if y_tick_eff > 0.0 && paint_value_axis {
@@ -4798,14 +4950,14 @@ crate::families::layers::layer_link(datum_link.as_ref(), (sl.query_name.as_deref
         if log_visible.as_ref().is_some_and(|v| !v[i]) {
             continue;
         }
-        let gy = y_pos(frac) + 0.5 + vega_fit::baseline_shift("middle", y_font_size);
+        let gy = y_pos(frac) + 0.5 + crate::measure::baseline_shift("middle", y_font_size);
         let _ = write!(
             svg,
             "<text x=\"{y_label_x:.3}\" y=\"{gy:.3}\" text-anchor=\"{y_label_anchor}\" \
              font-family=\"{}\" font-size=\"{y_font_size}\" \
              font-weight=\"{y_label_weight}\" fill=\"{y_label_color}\">{}</text>",
             vega_escape_attr(y_family),
-            xml_escape(lbl), y_label_anchor = xml_escape_attr(y_label_anchor), y_label_weight = xml_escape_attr(&y_label_weight), y_label_color = xml_escape_attr(y_label_color)
+            xml_escape(&ax_y.labels.clip(lbl, fonts)?), y_label_anchor = xml_escape_attr(y_label_anchor), y_label_weight = xml_escape_attr(&y_label_weight), y_label_color = xml_escape_attr(y_label_color)
         );
     }
 
@@ -4854,7 +5006,7 @@ crate::families::layers::layer_link(datum_link.as_ref(), (sl.query_name.as_deref
         // its ticks and labels repeat the primary's on the opposite edge, in
         // that edge's own 0.5 crisp frame.
         let (ghost_x, ghost_out) = if y_left { (plot_w + 0.5, 1.0) } else { (0.5, -1.0) };
-        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (ghost_x, 0.0))?;
+        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, &y_caption.untitled(), (ghost_x, 0.0))?;
         if y_tick_eff > 0.0 {
             let tc = crate::common::required_ink(ax_y.ticks.color.as_deref(), "scatter", "axis_y.ticks.color")?;
             let tw = ax_y.ticks.width.unwrap_or(1.0);
@@ -4872,14 +5024,14 @@ crate::families::layers::layer_link(datum_link.as_ref(), (sl.query_name.as_deref
             if log_visible.as_ref().is_some_and(|v| !v[i]) {
                 continue;
             }
-            let gy = y_pos(frac) + 0.5 + vega_fit::baseline_shift("middle", y_font_size);
+            let gy = y_pos(frac) + 0.5 + crate::measure::baseline_shift("middle", y_font_size);
             let _ = write!(
                 svg,
                 "<text x=\"{:.3}\" y=\"{gy:.3}\" text-anchor=\"{ghost_anchor}\" font-family=\"{}\" font-size=\"{y_font_size}\" \
                  font-weight=\"{y_label_weight}\" fill=\"{y_label_color}\">{}</text>",
                 ghost_x + ghost_out * ghost_off,
                 vega_escape_attr(y_family),
-                xml_escape(lbl),
+                xml_escape(&ax_y.labels.clip(lbl, fonts)?),
                 y_label_weight = xml_escape_attr(&y_label_weight),
                 y_label_color = xml_escape_attr(y_label_color)
             );
@@ -5024,12 +5176,16 @@ crate::families::layers::layer_link(datum_link.as_ref(), (sl.query_name.as_deref
                 value_label_baseline,
             ));
         }
-        // The cell's x gridlines run down to `axis.offset` below the plot
+        // The cell's x gridlines run to `axis.offset` past the plot, on the side its axis hangs from
         // (`bboxFull` counts a cell's axis-grid child), whatever their stroke.
         if ax_x.grid.visible.unwrap_or(false) {
             for &frac in &xf.ticks {
                 let gx = plot_left + x_pos(frac);
-                ink.union(&vega_fit::Bounds::new(gx, plot_top, gx, plot_bottom + x_axis_offset));
+                let (y1, y2) = match ax_x.x_edge() {
+                    crate::common::XEdge::Bottom => (plot_top, plot_bottom + x_axis_offset),
+                    crate::common::XEdge::Top => (plot_top - x_axis_offset, plot_bottom),
+                };
+                ink.union(&vega_fit::Bounds::new(gx, y1, gx, y2));
             }
         }
         if o.fold_axis_gutter {
@@ -5058,7 +5214,7 @@ crate::families::layers::layer_link(datum_link.as_ref(), (sl.query_name.as_deref
                 );
             }
         }
-        let label_shift = vega_fit::baseline_shift("middle", y_font_size) + 0.5;
+        let label_shift = crate::measure::baseline_shift("middle", y_font_size) + 0.5;
         PanelGeometry {
             content_start,
             svg_end,
@@ -5101,6 +5257,7 @@ crate::families::layers::layer_link(datum_link.as_ref(), (sl.query_name.as_deref
                 Vec::new()
             },
             mirror_style: Some(GhostStyle {
+                caption: y_caption.clone(),
                 val_font_size: y_font_size,
                 val_weight: y_label_weight.clone(),
                 val_color: y_label_color.to_string(),
@@ -5255,7 +5412,7 @@ mod tests {
             "multiples": null, "layers": [], "size": null, "shape": null,
             "legend": {
                 "visible": with_color, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
-                "title": {"font": {"family": TEST_FONT, "size": 12.0, "weight": "600", "color": "#313233"}},
+                "title": {"font": {"case": "title", "family": TEST_FONT, "size": 12.0, "weight": "600", "color": "#313233"}},
                 "label": {"font": {"family": TEST_FONT, "size": 11.0, "weight": "400", "color": "#626366"}, "padding": 8.0}
             },
             "style": {
@@ -5323,7 +5480,7 @@ mod tests {
     fn top_and_bottom_legends_anchor_on_the_x_axis_bounds() {
         let title_top = |svg: &str| {
             let end = svg.find(">Segment</text>").unwrap();
-            attr(&svg[svg[..end].rfind("<text").unwrap()..end], "y") - crate::vega_fit::baseline_shift("top", 12.0)
+            attr(&svg[svg[..end].rfind("<text").unwrap()..end], "y") - crate::measure::baseline_shift("top", 12.0)
         };
         let (svg, _, (_, box_h)) = edge_legend("top", "horizontal");
         assert_eq!(title_top(&svg), -(18.0 + box_h), "{svg}");
@@ -6953,8 +7110,8 @@ mod tests {
             }
             json["resolved"]["style"]["axis_y"]["scale"] = scale;
             let payload: Payload = serde_json::from_value(json).unwrap();
-            let r: ScatterResolved = serde_json::from_value(payload.resolved.clone()).unwrap();
-            LogAxis::new(&r.style.axis_y, 1e8, 1e10, 10, 300.0).unwrap().mantissa_visible
+            let r: ScatterResolved = serde::Deserialize::deserialize(&payload.resolved).unwrap();
+            LogAxis::new(&r.style.axis_y, 1e8, 1e10, 10, None, 300.0).unwrap().mantissa_visible
         };
         assert!(ladder(None).contains(&false), "the default ladder blanks its minors");
         assert!(ladder(Some(serde_json::json!([2e8, 6e8, 1e9]))).iter().all(|v| *v));
@@ -6968,7 +7125,7 @@ mod tests {
         json["resolved"]["style"]["axis_y"]["scale"] = serde_json::json!({"continuous": {"type": "log", "domain": [1000.0, 10.0]}});
         let payload: Payload = serde_json::from_value(json).unwrap();
         let r = ScatterResolved::from_payload(&payload).unwrap();
-        let ladder = LogAxis::new(&r.style.axis_y, 140.0, 250.0, 10, 100.0).unwrap();
+        let ladder = LogAxis::new(&r.style.axis_y, 140.0, 250.0, 10, None, 100.0).unwrap();
         assert_eq!(ladder.ticks.first(), Some(&1000.0));
         assert_eq!(ladder.ticks.last(), Some(&10.0));
         assert_eq!(ladder.frac_from_top(1000.0), 1.0, "the large end sits at the bottom of an inverted axis");
@@ -6987,9 +7144,11 @@ mod tests {
             pad: 10.0,
             bend: crate::vega_fit::Bend::Linear,
             tick_count: 5,
+            min_step: None,
             format: None,
             ruler: None,
             tick_label: None,
+            expr: None,
             rule_datums: [None, None],
         };
         let (ticks, labels, _, domain) = lin.at(120.0).unwrap();
@@ -7004,10 +7163,10 @@ mod tests {
     /// fixed point at the precision the tick step implies.
     #[test]
     fn an_x_without_a_label_format_reads_d3s_default_tick_format() {
-        let lin = LinearX { raw: (0.0, 3000.0), zero: false, nice: true, pad: 0.0, bend: crate::vega_fit::Bend::Linear, tick_count: 3, format: None, ruler: None, tick_label: None, rule_datums: [None, None] };
+        let lin = LinearX { raw: (0.0, 3000.0), zero: false, nice: true, pad: 0.0, bend: crate::vega_fit::Bend::Linear, tick_count: 3, min_step: None, format: None, ruler: None, tick_label: None, expr: None, rule_datums: [None, None] };
         let (_, labels, _, _) = lin.at(400.0).unwrap();
         assert_eq!(labels, ["0", "1,000", "2,000", "3,000"]);
-        let lin = LinearX { raw: (0.0, 1.0), zero: false, nice: true, pad: 0.0, bend: crate::vega_fit::Bend::Linear, tick_count: 2, format: None, ruler: None, tick_label: None, rule_datums: [None, None] };
+        let lin = LinearX { raw: (0.0, 1.0), zero: false, nice: true, pad: 0.0, bend: crate::vega_fit::Bend::Linear, tick_count: 2, min_step: None, format: None, ruler: None, tick_label: None, expr: None, rule_datums: [None, None] };
         let (_, labels, _, _) = lin.at(400.0).unwrap();
         assert_eq!(labels, ["0.0", "0.5", "1.0"]);
     }
@@ -7149,7 +7308,7 @@ mod tests {
         res["style"]["axis_y"]["domain_max"] = serde_json::json!(75.0);
         res["legend"] = serde_json::json!({
             "visible": true, "position": {"edge": "right", "align": "start", "overlay": false}, "direction": "vertical",
-            "title": {"font": {"family": TEST_FONT, "size": 12.0, "weight": "600", "color": "#313233"}},
+            "title": {"font": {"case": "title", "family": TEST_FONT, "size": 12.0, "weight": "600", "color": "#313233"}},
             "label": {"font": {"family": TEST_FONT, "size": 11.0, "weight": "400", "color": "#626366"}, "padding": 8.0}
         });
         json["rows"] = serde_json::json!([
@@ -8561,40 +8720,54 @@ mod tests {
     }
 
     /// Both quantitative axes wear an authored suffix on every non-zero tick;
-    /// beside an authored `labels.expr` it refuses by name.
+    /// beside an authored `labels.expr` the expression wins and the suffix is dropped.
     #[test]
     fn an_axis_affix_paints_and_yields_to_an_authored_labels_expr() {
         for axis in ["axis_x", "axis_y"] {
             let mut p = make_scatter_payload(false);
             p["resolved"]["style"][axis]["labels"]["format"] = serde_json::json!({"spec": ",.0f", "suffix": " CHF"});
-            let payload: Payload = serde_json::from_value(p.clone()).unwrap();
+            let payload: Payload = serde::Deserialize::deserialize(&p).unwrap();
             let svg = render(&payload, &test_fonts()).unwrap_or_else(|e| panic!("{axis}: {e}"));
             assert!(svg.contains(" CHF</text>"), "{axis}: {svg}");
             p["resolved"]["style"][axis]["labels"]["expr"] = serde_json::json!("datum.label");
             let payload: Payload = serde_json::from_value(p).unwrap();
-            let err = render(&payload, &test_fonts()).expect_err("refuses");
-            assert!(err.contains(&format!("scatter: {axis}.labels.format")) && err.contains("labels.expr"), "{err}");
+            let svg = render(&payload, &test_fonts()).unwrap_or_else(|e| panic!("{axis}: {e}"));
+            assert!(!svg.contains(" CHF"), "{axis}: {svg}");
         }
     }
 
-    /// An authored x `ticks.time_unit` is a tickCount interval in production
-    /// (`type_inference.py:1026-1052`) that the scatter does not draw.
+    /// A bare `ticks.step` is the axis's `tickMinStep` (`apply_x_tick_cadence`):
+    /// the count is capped at `floor(span / step) + 1`.
     #[test]
-    fn an_authored_x_tick_cadence_refuses_by_name() {
-        let mut p = make_scatter_payload(false);
-        p["resolved"]["style"]["axis_x"]["ticks"]["time_unit"] = serde_json::json!("yearmonth");
-        let payload: Payload = serde_json::from_value(p).unwrap();
-        let err = render(&payload, &test_fonts()).expect_err("refuses");
-        assert!(err.contains("scatter: axis_x.ticks.time_unit \"yearmonth\""), "{err}");
+    fn a_bare_x_tick_step_caps_the_linear_tick_count() {
+        let lin = |min_step| LinearX {
+            raw: (0.0, 55.0),
+            zero: false,
+            nice: false,
+            pad: 0.0,
+            bend: crate::vega_fit::Bend::Linear,
+            tick_count: 6,
+            min_step,
+            format: None,
+            ruler: None,
+            tick_label: None,
+            expr: None,
+            rule_datums: [None, None],
+        };
+        assert_eq!(lin(None).at(400.0).unwrap().0.len(), 6);
+        let (ticks, labels, _, _) = lin(Some(20.0)).at(400.0).unwrap();
+        assert_eq!(ticks.len(), 3);
+        assert_eq!(labels, ["0", "20", "40"]);
     }
 
     #[test]
-    fn a_bare_x_tick_step_refuses_by_name() {
-        let mut p = make_scatter_payload(false);
-        p["resolved"]["style"]["axis_x"]["ticks"]["step"] = serde_json::json!(5.0);
-        let payload: Payload = serde_json::from_value(p).unwrap();
-        let err = render(&payload, &test_fonts()).expect_err("refuses");
-        assert!(err.contains("scatter: axis_x.ticks.step"), "{err}");
+    fn a_bare_x_tick_step_caps_the_log_tick_count() {
+        let payload: Payload = serde_json::from_value(make_scatter_payload(false)).unwrap();
+        let r: ScatterResolved = serde::Deserialize::deserialize(&payload.resolved).unwrap();
+        let ax = &r.style.axis_x;
+        let free = LogAxis::new(ax, 1.0, 100000.0, 10, None, 400.0).unwrap();
+        let capped = LogAxis::new(ax, 1.0, 100000.0, 10, Some(50000.0), 400.0).unwrap();
+        assert!(capped.ticks.len() < free.ticks.len(), "{:?} vs {:?}", capped.ticks, free.ticks);
     }
 
     /// The fill of the legend swatch that precedes `label`'s `.role-legend-label`

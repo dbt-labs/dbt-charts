@@ -696,6 +696,7 @@ class ResolvedChartDefaults:
     font_family: str | None
     title: TitleStyle
     heading_sizes: list[float]
+    section_sizes: list[float]
     pagination: PaginationConfig | None
     formats: FormatTable | None
     background: str

@@ -2,6 +2,7 @@
 //! resolved payload before any cartesian family models it. Each check names
 //! the production raise site it ports; Rust carries the code and params only.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 
 use serde::Deserialize;
@@ -223,7 +224,7 @@ pub fn check(payload: &Payload, chart_type: &str) -> Result<(), Diagnostic> {
     if !matches!(chart_type, "bar" | "line" | "area" | "scatter" | "heatmap" | "histogram") {
         return Ok(());
     }
-    let facts: Facts = serde_json::from_value(payload.resolved.clone()).map_err(|e| format!("{chart_type} payload: {e}"))?;
+    let facts = Facts::deserialize(&payload.resolved).map_err(|e| format!("{chart_type} payload: {e}"))?;
     // Faceted against zero rows at resolve, rendered with rows: no panel axes to split by. Rendered
     // against zero rows too, it is the empty facet.
     if facts.multiples.is_some() && facts.panel_axes.is_empty() && !payload.rows.is_empty() {
@@ -235,32 +236,36 @@ pub fn check(payload: &Payload, chart_type: &str) -> Result<(), Diagnostic> {
         // itself be the multiples field), and a panel's rows carry no partition column.
         let checked = match (chart_type, facts.x.as_deref()) {
             ("bar", Some(x)) => super::temporal::normalize_labeled_temporal(&payload.rows, x)?,
-            _ => payload.rows.clone(),
+            _ => Cow::Borrowed(payload.rows.as_slice()),
         };
-        let indexed: Vec<Row> = payload
-            .rows
-            .iter()
-            .enumerate()
-            .map(|(i, row)| {
-                let mut row = row.clone();
-                row.insert(ROW_INDEX.to_string(), json!(i));
-                row
-            })
-            .collect();
-        for panel in multiples::regroup(&facts.panel_axes, &indexed)? {
-            let rows: Vec<Row> = panel
+        if facts.panel_axes.is_empty() {
+            duplicate_rows(&facts, &checked)?;
+        } else {
+            let indexed: Vec<Row> = payload
                 .rows
                 .iter()
-                .filter_map(|row| row.get(ROW_INDEX).and_then(Value::as_u64))
-                .map(|i| {
-                    let mut row = checked[i as usize].clone();
-                    for axis in &facts.panel_axes {
-                        row.remove(&axis.field);
-                    }
+                .enumerate()
+                .map(|(i, row)| {
+                    let mut row = row.clone();
+                    row.insert(ROW_INDEX.to_string(), json!(i));
                     row
                 })
                 .collect();
-            duplicate_rows(&facts, &rows)?;
+            for panel in multiples::regroup(&facts.panel_axes, &indexed)? {
+                let rows: Vec<Row> = panel
+                    .rows
+                    .iter()
+                    .filter_map(|row| row.get(ROW_INDEX).and_then(Value::as_u64))
+                    .map(|i| {
+                        let mut row = checked[i as usize].clone();
+                        for axis in &facts.panel_axes {
+                            row.remove(&axis.field);
+                        }
+                        row
+                    })
+                    .collect();
+                duplicate_rows(&facts, &rows)?;
+            }
         }
         null_series(&facts, &payload.rows)?;
     }
@@ -471,7 +476,7 @@ fn mirror_format(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
         _ => return Ok(()),
     };
     let slot: crate::common::FormatSlot =
-        serde_json::from_value(format.clone()).map_err(|e| format!("{}: axis_y.mirror.format is not a ResolvedFormat: {e}", facts.chart_type))?;
+        Deserialize::deserialize(format).map_err(|e| format!("{}: axis_y.mirror.format is not a ResolvedFormat: {e}", facts.chart_type))?;
     let move_it_to = match facts.chart_type.as_str() {
         "heatmap" => super::cartesian_x_errors::HEATMAP_FORMAT_REMEDY,
         "scatter" => "Remove axis_y.mirror.format; to format the measure instead, author it on style.axis_x.labels.format.",

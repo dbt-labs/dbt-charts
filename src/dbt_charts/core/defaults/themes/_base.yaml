@@ -1,9 +1,12 @@
 # Internal base theme: _base
-# Internal-only root for the built-in theme cascade. Defines all structural
-# defaults (layout, spacing, sizing, chart geometry) but intentionally omits
-# font families and color values — those are supplied by each named theme.
-# Not meant for direct use; extend this via a named theme that fills in
-# font and color. Exception: a hidden element's color (frame.border) is set
+# Internal-only root for the built-in theme cascade: every named theme
+# (stark, clarity, vivid, neon) extends this file directly, or through one
+# of them (paper via clarity). It holds every shared default: layout,
+# spacing, sizing, chart geometry, font families, and the chrome-relative
+# neutrals (code blocks, blockquotes, dividers, paginator, spark tracks)
+# that read correctly on any theme's own chrome ramp. Each named theme
+# supplies its identity on top: canvas, ink, accent, and palettes.
+# Not meant for direct use. A hidden element's color (frame.border) is set
 # here as a literal "transparent" — resolve requires a concrete value even
 # for chrome nothing ever draws, and that fact belongs in one place, not six.
 # axis.line.color is NOT one of these: `line.visible` is an authored,
@@ -54,6 +57,7 @@ style:
     card_gap: 8.0
 
   font:
+    family: &font_sans '''Inter Variable'', Inter, system-ui, sans-serif'
     # Chrome floor 11px. Anchored — the `subtitle` named font below reads it.
     # Body prose is NOT one of them; it has its own size on the `body` font.
     size:   &size_body 11
@@ -68,13 +72,15 @@ style:
     line_height: 1.25
 
   # Named fonts. Slots bind by name (`font: label`, or `font: {extends: label,
-  # ...}` with overrides); themes add families here, once, instead of patching
-  # slots. A name sets only the fields written on it, so a slot bound to one
-  # still inherits everything else from its parent slot.
+  # ...}` with overrides); families live here, once, instead of on slots,
+  # and a theme rebinds a family by naming the font. A name sets only the
+  # fields written on it, so a slot bound to one still inherits everything
+  # else from its parent slot.
   fonts:
-    # The H1–H6 ramp, indexed by heading level - 1. Only `heading` takes sizes,
-    # and it takes no `size`.
+    # The H1–H6 ramp, indexed by heading level - 1. Only `heading` and
+    # `section` take sizes, and neither takes `size`.
     heading:
+      family: *font_sans
       weight: 500
       case: title
       # Tight headline leading. Convention: larger type wants tighter line-height.
@@ -88,7 +94,17 @@ style:
         - 14
         - 11
         - 11
+    # Section titles (nested board titles), H2 first: a section sits one step
+    # above the widest chart title. Markdown headings keep the H ramp above.
+    section:
+      sizes:
+        - 21
+        - 18
+        - 14
+        - 11
+        - 11
     subtitle:
+      family: *font_sans
       size: *size_body
       weight: 400
     # Body prose: sized and led independently of `style.font.*` (the 11-unit
@@ -96,6 +112,7 @@ style:
     # the series-label and H3/H4 rungs. Root 1.25 is label leading — too tight
     # for prose, so it is led at 1.4.
     body:
+      family: *font_sans
       size: 14
       line_height: 1.4
     label:
@@ -103,9 +120,11 @@ style:
     caption:
       size: 11
       color: "#999999"
-    numeral: {}
+    numeral:
+      family: '''dbt Sans Tabular'', Inter, system-ui, sans-serif'
     # No size: mdsvg's code_font_scale keeps code proportional to the text it sits in.
-    code: {}
+    code:
+      family: '''Source Code Pro'', ''ui-monospace'', ''SFMono-Regular'', Menlo, Consolas, monospace'
 
   border:
     width: 0.0
@@ -349,6 +368,7 @@ style:
         entry_gap: 16.0
       label:
         font: label
+        max_width: 200
         # Gap between a legend symbol and its label text (VL labelOffset).
         # Must clear wide stroke symbols (target lines in mixed bar+line
         # legends), which overflow VL's default offset of 4.
@@ -412,6 +432,9 @@ style:
         weight_inactive: 400
         weight_chevron: 800  # heavier than the active page so chevrons read as affordances
         item_width: 18.0  # per-item slot width (hit-rect is narrower; see render code)
+        color_active: chrome[11]
+        color_inactive: chrome[9]
+        color_disabled: chrome[6]
       empty_state:
         font:
           extends: label
@@ -427,6 +450,8 @@ style:
           stroke:
             width: 1.0
             dasharray: '4 2'
+            # Gray on every theme: the cream themes keep this stop too.
+            color: dbt-grays.5
         single_value:
           inset_x: 4.0
           marker_radius: 2.5
@@ -446,6 +471,7 @@ style:
           height: 24.0
         bar:
           default_max: 100.0
+          background: chrome[3]
           border:
             radius: 0.0
           label:
@@ -527,6 +553,8 @@ style:
         min_size: 4.0
         opacity: auto
         labels:
+          visible: false
+          position: top
           dx: auto
           dy: auto
           stacked: auto
@@ -551,6 +579,8 @@ style:
         connect: auto
         halo_multiplier: 2.0
         labels:
+          visible: false
+          position: top
           dx: auto
           dy: auto
       area:
@@ -600,6 +630,8 @@ style:
         filled: true
         fill: theme.background
         labels:
+          visible: false
+          position: top
           dx: auto
           dy: auto
       slice:
@@ -669,8 +701,12 @@ style:
       # Authors who want a stacked bar chart opt in via ``chart.style.stack: "zero"``.
       # Side-by-side (grouped) is the default when a color channel is present.
       stack: none
+      # A vertical bar's labels anchor to the last column's per-series stack
+      # midpoints; a horizontal bar's take the top-row rail instead. Resolve
+      # turns this back off wherever the rail cannot name every series — see
+      # _bar_endpoint_labels_for_stack.
       endpoint_labels:
-        visible: false
+        visible: auto
         label_offset: 6.0
         height: 20.0
       grouped:
@@ -682,9 +718,11 @@ style:
         ticks:
           visible: false
 
+    # Direct-label multi-series lines/areas at their endpoints rather than
+    # leaning on a side legend.
     line:
       endpoint_labels:
-        visible: false
+        visible: auto
         label_offset: 6.0
         height: 20.0
 
@@ -692,7 +730,7 @@ style:
       # Authors who want a stacked area chart opt in via ``chart.style.stack: "zero"``.
       stack: none
       endpoint_labels:
-        visible: false
+        visible: auto
         label_offset: 6.0
         height: 20.0
       axis_y:
@@ -792,6 +830,7 @@ style:
       bar:
         height: 18.0
         padding: 2.0
+        background: chrome[3]
       label:
         visible: true
         width: 80.0
@@ -1002,7 +1041,6 @@ style:
           # weight (a literal `bold`/700 base + 600 prose-bold inline runs
           # would invert emphasis on the same text line).
           weight: *weight_bold
-          case: title
         y_offset: 0.0
       message:
         font:
@@ -1034,15 +1072,38 @@ style:
     # than the rest of the type system).
     bold:
       weight: *weight_bold
+    code:
+      highlight: true
+      theme: default
+      font:
+        extends: code
+        color: chrome[10]
+        # No size: code is sized as a fraction of the text it sits in (mdsvg's
+        # code_font_scale), so it tracks prose and headings instead of pinning a
+        # px value that silently desyncs the next time body prose is retuned.
+      background: chrome[2]
+      border:
+        color: chrome[4]
+        width: 1
+        radius: 4
+    blockquote:
+      font:
+        color: chrome[8]
+        style: italic
+      background: ''
+      border:
+        color: chrome[4]
+        width: 2
+        radius: 0
     # Markdown `---` lines and markdown-table gridlines.
     divider:
       visible: true
-      color: '#e0e0e0'
+      color: chrome[4]
       width: 1
     column:
       divider:
         visible: false
-        color: '#e0e0e0'
+        color: chrome[4]
         width: 1
 
   layout:
@@ -1059,7 +1120,7 @@ style:
       inactive_weight: '400'
       title_baseline_offset: 5.0
       font:
-        extends: label
+        extends: heading
         size: 14.0
       border:
         width: 0.0
@@ -1141,10 +1202,13 @@ style:
     opacity: 0.4
     overlay:
       text: auto
+      background: 'rgba(255, 255, 255, 0.5)'
       font:
         extends: label
         size: 16
         weight: 500
+        # Gray on every theme, like the empty spark track.
+        color: dbt-grays.8
 
   footer:
     visible: true

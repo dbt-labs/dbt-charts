@@ -1,5 +1,4 @@
 {
-  "aria.axis": "Achse",
   "aria.chart": "Diagramm",
   "aria.container_arc": "Bogen-Markierungscontainer",
   "aria.container_group": "Gruppen-Markierungscontainer",
@@ -18,8 +17,6 @@
   "aria.role_text": "Text-Markierung",
   "aria.title": "Titel",
   "aria.title_text": "Titeltext „{header}“",
-  "aria.x_axis": "X-Achse",
-  "aria.y_axis": "Y-Achse",
   "axis.midnight": "Mitternacht",
   "axis.noon": "Mittag",
   "case.extra_small_words": "",

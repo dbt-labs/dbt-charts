@@ -450,7 +450,7 @@ charts:
           glyph_color: "#ae6349"
     style:
       # No `pagination:` override — defaults to enabled with page_rows 20
-      # from stark.yaml. The "+ N more rows" truncation footer is a separate
+      # from _base.yaml. The "+ N more rows" truncation footer is a separate
       # viewport-overflow behavior; pagination alone doesn't suppress it
       # when the cell can't fit page_rows rows.
       columns:

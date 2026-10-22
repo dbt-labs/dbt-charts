@@ -6,10 +6,82 @@
 //! the advance `mdsvg::fonts::FontMeasurer::measure` books (an emoji cluster
 //! at one emoji advance, otherwise `unmapped_advance_em`), as in production.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+
+/// Joins the lines of a label that paints on several (an array a `labels.expr` returns): a noncharacter, so no
+/// text meets it by accident. Measuring takes the widest line; the SVG finishes as Vega's `tspan` per line
+/// ([`expand_lines`]).
+pub const LINE_SEP: char = '\u{FDD0}';
+
+/// The number of lines a label paints on.
+pub fn line_count(text: &str) -> usize {
+    text.matches(LINE_SEP).count() + 1
+}
+
+/// Vega's default line height for text of `font_size`.
+pub fn line_height(font_size: f64) -> f64 {
+    font_size + 2.0
+}
+
+/// Rewrites every `<text>` whose content joins lines with [`LINE_SEP`] into Vega's multi-line form: one `tspan`
+/// per line, each after the first dropped a line height below the one before.
+pub fn expand_lines(svg: String) -> String {
+    if !svg.contains(LINE_SEP) {
+        return svg;
+    }
+    let mut out = String::with_capacity(svg.len() + 64);
+    let mut rest = svg.as_str();
+    while let Some(open) = rest.find("<text") {
+        let (head, tail) = rest.split_at(open);
+        out.push_str(head);
+        let Some(tag_end) = tail.find('>') else { break };
+        if tail[..tag_end].ends_with('/') {
+            out.push_str(&tail[..=tag_end]);
+            rest = &tail[tag_end + 1..];
+            continue;
+        }
+        let Some(close) = tail.find("</text>") else { break };
+        let (tag, content) = (&tail[..=tag_end], &tail[tag_end + 1..close]);
+        if content.contains(LINE_SEP) && !content.contains('<') {
+            let size = tag
+                .split("font-size=\"")
+                .nth(1)
+                .and_then(|v| v.split('"').next())
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(11.0);
+            let dy = crate::svg::num_full(line_height(size));
+            // Vega positions a text with a transform, so its lines return to `x = 0`; a text placed by its own `x`
+            // returns to that.
+            let x = tag
+                .split(" x=\"")
+                .nth(1)
+                .and_then(|v| v.split('"').next())
+                .unwrap_or("0");
+            out.push_str(tag);
+            for (i, line) in content.split(LINE_SEP).enumerate() {
+                if i == 0 {
+                    out.push_str("<tspan>");
+                } else {
+                    out.push_str(&format!("<tspan x=\"{x}\" dy=\"{dy}\">"));
+                }
+                out.push_str(line);
+                out.push_str("</tspan>");
+            }
+        } else {
+            out.push_str(tag);
+            out.push_str(content);
+        }
+        out.push_str("</text>");
+        rest = &tail[close + "</text>".len()..];
+    }
+    out.push_str(rest);
+    out
+}
 
 pub struct Face {
-    data: Vec<u8>,
+    data: Box<[u8]>,
     path: String,
     norm_name: String,
 }
@@ -65,10 +137,20 @@ fn book_zero_advance_clusters(
         })
 }
 
+/// A parsed face lives as long as the book, so measuring never re-parses
+/// font tables or recompiles a shape plan.
 pub struct FontBook {
-    faces: Vec<Face>,
+    shapers: Vec<OnceLock<rustybuzz::Face<'static>>>,
+    /// Default instances only: a weighted measurement instances a copy, so
+    /// no authored weight becomes a key in a book that lives for the process.
+    parsed: Vec<OnceLock<ttf_parser::Face<'static>>>,
+    /// Keyed by closed enums and a face index, so bounded by the fonts.
+    plans: Mutex<HashMap<(usize, rustybuzz::Direction, rustybuzz::Script), Arc<rustybuzz::ShapePlan>>>,
     /// (face index, units_per_em) resolved per normalized family key.
-    cache: std::sync::Mutex<HashMap<String, Option<usize>>>,
+    cache: Mutex<HashMap<String, Option<usize>>>,
+    /// Declared last: every parsed face above borrows these bytes, and
+    /// fields drop in declaration order.
+    faces: Vec<Face>,
 }
 
 /// The width usvg books for a zero-advance glyph cluster
@@ -87,10 +169,27 @@ fn norm(s: &str) -> String {
 
 impl FontBook {
     pub fn empty() -> Self {
+        Self::new(Vec::new())
+    }
+
+    fn new(faces: Vec<Face>) -> Self {
         FontBook {
-            faces: Vec::new(),
+            shapers: faces.iter().map(|_| OnceLock::new()).collect(),
+            parsed: faces.iter().map(|_| OnceLock::new()).collect(),
+            plans: Default::default(),
             cache: Default::default(),
+            faces,
         }
+    }
+
+    fn face_data(&self, i: usize) -> &'static [u8] {
+        let data: &[u8] = &self.faces[i].data;
+        // SAFETY: `faces` is never mutated after construction and a boxed
+        // slice's heap buffer does not move with the book, so the bytes
+        // outlive every parsed face cached in `shapers`, `parsed` and
+        // `plans`, which drop before `faces` and never leave the book
+        // except behind `&self`.
+        unsafe { std::slice::from_raw_parts(data.as_ptr(), data.len()) }
     }
 
     pub fn load_dir(dir: &str) -> Result<Self, String> {
@@ -108,7 +207,7 @@ impl FontBook {
             if let Ok(data) = std::fs::read(&p) {
                 if ttf_parser::Face::parse(&data, 0).is_ok() {
                     faces.push(Face {
-                        data,
+                        data: data.into_boxed_slice(),
                         path: p.to_string_lossy().into_owned(),
                         norm_name: norm(stem),
                     });
@@ -120,10 +219,7 @@ impl FontBook {
         }
         // Stable sort by norm_name → deterministic matching regardless of readdir order.
         faces.sort_by(|a, b| a.norm_name.cmp(&b.norm_name));
-        Ok(FontBook {
-            faces,
-            cache: Default::default(),
-        })
+        Ok(Self::new(faces))
     }
 
     /// Pick a face for a CSS font-family list like
@@ -231,6 +327,20 @@ impl FontBook {
         size: f64,
         weight: Option<f32>,
     ) -> Result<f64, String> {
+        let mut widest = 0.0_f64;
+        for line in text.split(LINE_SEP) {
+            widest = widest.max(self.measure_line_at_weight(line, family_list, size, weight)?);
+        }
+        Ok(widest)
+    }
+
+    fn measure_line_at_weight(
+        &self,
+        text: &str,
+        family_list: &str,
+        size: f64,
+        weight: Option<f32>,
+    ) -> Result<f64, String> {
         let face = self.instanced_face(family_list, weight)?;
         let codepoints: Vec<u32> = text.chars().map(|c| c as u32).collect();
         let mut units = 0.0_f64;
@@ -249,19 +359,21 @@ impl FontBook {
         &self,
         family_list: &str,
         weight: Option<f32>,
-    ) -> Result<ttf_parser::Face<'_>, String> {
+    ) -> Result<Cow<'_, ttf_parser::Face<'static>>, String> {
         let i = self.face_for(family_list).ok_or_else(|| {
             format!("text: no font face resolved for {family_list:?}")
         })?;
-        let mut face = ttf_parser::Face::parse(&self.faces[i].data, 0)
-            .expect("validated at load");
-        if let Some(w) = weight {
-            face.set_variation(ttf_parser::Tag::from_bytes(b"wght"), w)
-                .ok_or_else(|| {
-                    format!("text: {family_list:?} has no wght axis to instance at {w}")
-                })?;
-        }
-        Ok(face)
+        let face = self.parsed[i]
+            .get_or_init(|| ttf_parser::Face::parse(self.face_data(i), 0).expect("validated at load"));
+        let Some(w) = weight else {
+            return Ok(Cow::Borrowed(face));
+        };
+        let mut face = face.clone();
+        face.set_variation(ttf_parser::Tag::from_bytes(b"wght"), w)
+            .ok_or_else(|| {
+                format!("text: {family_list:?} has no wght axis to instance at {w}")
+            })?;
+        Ok(Cow::Owned(face))
     }
 
     /// Shaped width of `text` at `size` px — what vl-convert's own layout
@@ -284,15 +396,48 @@ impl FontBook {
         family_list: &str,
         size: f64,
     ) -> Result<f64, String> {
+        let mut widest = 0.0_f64;
+        for line in text.split(LINE_SEP) {
+            widest = widest.max(self.measure_shaped_line(line, family_list, size)?);
+        }
+        Ok(widest)
+    }
+
+    fn measure_shaped_line(
+        &self,
+        text: &str,
+        family_list: &str,
+        size: f64,
+    ) -> Result<f64, String> {
         let i = self
             .face_for(family_list)
             .ok_or_else(|| format!("text: no font face resolved for {family_list:?}"))?;
-        let face = rustybuzz::Face::from_slice(&self.faces[i].data, 0)
-            .ok_or_else(|| format!("text: rustybuzz refused face for {family_list:?}"))?;
+        let face = match self.shapers[i].get() {
+            Some(face) => face,
+            None => {
+                let face = rustybuzz::Face::from_slice(self.face_data(i), 0)
+                    .ok_or_else(|| format!("text: rustybuzz refused face for {family_list:?}"))?;
+                self.shapers[i].get_or_init(|| face)
+            }
+        };
         let upem = face.units_per_em() as f64;
         let mut buf = rustybuzz::UnicodeBuffer::new();
         buf.push_str(text);
-        let glyphs = rustybuzz::shape(&face, &[], buf);
+        buf.guess_segment_properties();
+        let key = (i, buf.direction(), buf.script());
+        let plan = self.plans.lock().expect("plan cache poisoned").get(&key).cloned();
+        let plan = match plan {
+            Some(plan) => plan,
+            None => {
+                // `script()` reads an unguessed script as UNKNOWN; the plan
+                // `rustybuzz::shape` builds takes it as `None`.
+                let script = Some(key.2).filter(|s| *s != rustybuzz::script::UNKNOWN);
+                let plan = Arc::new(rustybuzz::ShapePlan::new(face, key.1, script, None, &[]));
+                self.plans.lock().expect("plan cache poisoned").insert(key, plan.clone());
+                plan
+            }
+        };
+        let glyphs = rustybuzz::shape_with_plan(face, &plan, buf);
         let mut pen_units = 0_i64;
         let mut zero_cluster_pens = Vec::new();
         // A cluster is the run of glyphs sharing a `cluster` value; harfbuzz
@@ -319,5 +464,34 @@ impl FontBook {
         }
         close(cluster);
         Ok(book_zero_advance_clusters(pen_units as f64, zero_cluster_pens, upem, size))
+    }
+}
+
+
+#[cfg(test)]
+mod line_tests {
+    use super::*;
+
+    #[test]
+    fn labels_that_paint_several_lines_become_a_tspan_each() {
+        let svg = format!("<g><text x=\"10\" y=\"5\" font-size=\"11\">a{LINE_SEP}b{LINE_SEP}c</text><text font-size=\"9\">plain</text></g>");
+        assert_eq!(
+            expand_lines(svg),
+            "<g><text x=\"10\" y=\"5\" font-size=\"11\"><tspan>a</tspan><tspan x=\"10\" dy=\"13\">b</tspan><tspan x=\"10\" dy=\"13\">c</tspan></text><text font-size=\"9\">plain</text></g>"
+        );
+        let beside_empty = format!("<text x=\"1\"/><text x=\"2\" font-size=\"11\">a{LINE_SEP}b</text>");
+        assert_eq!(expand_lines(beside_empty), "<text x=\"1\"/><text x=\"2\" font-size=\"11\"><tspan>a</tspan><tspan x=\"2\" dy=\"13\">b</tspan></text>");
+        let rotated = format!("<text transform=\"rotate(30)\" font-size=\"10\">a{LINE_SEP}b</text>");
+        assert_eq!(expand_lines(rotated), "<text transform=\"rotate(30)\" font-size=\"10\"><tspan>a</tspan><tspan x=\"0\" dy=\"12\">b</tspan></text>");
+    }
+
+    #[test]
+    fn a_wide_line_measures_the_whole_label() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../src/dbt_charts/core/render/fonts");
+        let fonts = FontBook::load_dir(dir).expect("shipped fonts load");
+        let (short, long) = (fonts.measure("ab", "Inter", 11.0).unwrap(), fonts.measure("abcdef", "Inter", 11.0).unwrap());
+        assert_eq!(fonts.measure(&format!("ab{LINE_SEP}abcdef"), "Inter", 11.0).unwrap(), long);
+        assert!(short < long);
+        assert_eq!(line_count(&format!("a{LINE_SEP}b{LINE_SEP}c")), 3);
     }
 }

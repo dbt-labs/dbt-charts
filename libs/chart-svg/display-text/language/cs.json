@@ -1,5 +1,4 @@
 {
-  "aria.axis": "osa",
   "aria.chart": "graf",
   "aria.container_arc": "kontejner značky oblouku",
   "aria.container_group": "kontejner značky skupiny",
@@ -18,8 +17,6 @@
   "aria.role_text": "značka textu",
   "aria.title": "název",
   "aria.title_text": "Text názvu „{header}“",
-  "aria.x_axis": "Osa X",
-  "aria.y_axis": "Osa Y",
   "axis.midnight": "Půlnoc",
   "axis.noon": "Poledne",
   "case.extra_small_words": "",

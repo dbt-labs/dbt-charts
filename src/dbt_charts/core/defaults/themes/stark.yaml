@@ -1,7 +1,7 @@
 # Theme: stark
-# A minimal, achromatic theme — and the structural root for the built-in
-# theme cascade: every other built-in theme transitively extends this file
-# (`clarity` extends `stark`; `paper` via `clarity`; `vivid`/`neon` directly).
+# A minimal, achromatic theme: one black ink on every text and chrome slot.
+# A leaf like its siblings (clarity, vivid, neon): shared defaults live in
+# `_base`, so a choice made here reaches stark and nothing else.
 #
 # Best for: the mono-color palette, once pattern fills exist to carry series
 # distinction without hue. Stark's own single-series ink is pure black today
@@ -21,32 +21,17 @@ style:
   # Secondary text (KPI support rows, table more-rows/empty-state lines —
   # table subtitles read title.subtitle.font.color instead, the same source
   # chart-family subtitles use). Stark is single-tier — every text slot is
-  # the same ink, muted included; multi-tier descendants (clarity, paper,
-  # neon) rebind it to a rung of their own ladders. The fill-grade
-  # gray the old value carried lives on the bar-track pins below
-  # (spark_bar.bar.background, table.spark.bar.background), which no longer
-  # borrow this token.
+  # the same ink, muted included; multi-tier themes (clarity, paper, neon)
+  # bind it to a rung of their own ladders. The bar tracks
+  # (spark_bar.bar.background, table.spark.bar.background) carry their own
+  # fill-grade gray in `_base` rather than borrowing this token.
   muted: chrome[10]
 
   font:
-    family: &font_sans '''Inter Variable'', Inter, system-ui, sans-serif'
     color: &color_ink chrome[10]
 
   border:
     color: *color_ink
-
-  # Families live here, once; `_base` binds every font slot to one of these.
-  fonts:
-    heading:
-      family: *font_sans
-    subtitle:
-      family: *font_sans
-    body:
-      family: *font_sans
-    numeral:
-      family: '''dbt Sans Tabular'', Inter, system-ui, sans-serif'
-    code:
-      family: '''Source Code Pro'', ''ui-monospace'', ''SFMono-Regular'', Menlo, Consolas, monospace'
 
   title:
     subtitle:
@@ -59,8 +44,8 @@ style:
         # Single-series ink palette. Today: one element; every single-series
         # chart on the board uses slot 0. Follow-up rhythm pass cycles through
         # multiple slots per chart-id in reading order.
-        # Stark commits to pure black; every named descendant (clarity, paper,
-        # vivid, neon) overrides this with its own single-series ink.
+        # Stark commits to pure black; every other theme binds its own
+        # single-series ink.
         single_series_palette: [dbt-grays.black]
     axis:
       line:
@@ -82,28 +67,16 @@ style:
       label:
         font:
           color: *color_ink
-        max_width: 200
       title:
         font:
           color: *color_ink
 
     table:
-      paginator:
-        color_active: chrome[11]
-        color_inactive: chrome[9]
-        color_disabled: chrome[6]
       header:
         divider:
           color: *color_ink
         font:
           color: *color_ink
-      spark:
-        empty:
-          stroke:
-            # Gray on every theme: the cream themes keep this stop too.
-            color: dbt-grays.5
-        bar:
-          background: chrome[3]
       row:
         divider:
           color: *color_ink
@@ -115,23 +88,7 @@ style:
             divider:
               color: *color_ink
 
-    spark_bar:
-      bar:
-        background: chrome[3]
-
     marks:
-      bar:
-        labels:
-          visible: false
-          position: top
-      line:
-        labels:
-          visible: false
-          position: top
-      point:
-        labels:
-          visible: false
-          position: top
       text:
         font:
           color: *color_ink
@@ -198,24 +155,6 @@ style:
         font:
           color: *color_ink
 
-    # Direct-label multi-series lines/areas/bars at their endpoints rather
-    # than leaning on a side legend. Set here so every descendant inherits
-    # it by default; the crafted themes (clarity/vivid/neon) restate their
-    # own true anyway.
-    line:
-      endpoint_labels:
-        visible: auto
-    area:
-      endpoint_labels:
-        visible: auto
-    # A vertical bar's labels anchor to the last column's per-series stack
-    # midpoints; a horizontal bar's take the top-row rail instead. Resolve
-    # turns this back off wherever the rail cannot name every series — see
-    # _bar_endpoint_labels_for_stack.
-    bar:
-      endpoint_labels:
-        visible: auto
-
     pie:
       total:
         value:
@@ -225,48 +164,8 @@ style:
           font:
             color: *color_ink
 
-  text:
-    # Color inherits from `font.color` (InheritSlot) — no pin here so a
-    # board-root style.font.color override reaches prose.
-    code:
-      highlight: true
-      theme: default
-      font:
-        extends: code
-        color: *color_ink
-        # No size: code is sized as a fraction of the text it sits in (mdsvg's
-        # code_font_scale), so it tracks prose and headings instead of pinning a
-        # px value that silently desyncs the next time body prose is retuned.
-      background: chrome[2]
-      border:
-        color: chrome[4]
-        width: 1
-        radius: 4
-
-    blockquote:
-      font:
-        color: chrome[8]
-        style: italic
-      background: ''
-      border:
-        color: chrome[4]
-        width: 2
-        radius: 0
-    divider:
-      color: chrome[4]
-    column:
-      divider:
-        color: chrome[4]
-
   variables:
     font:
       color: *color_ink
     border:
       color: *color_ink
-
-  placeholder:
-    overlay:
-      background: 'rgba(255, 255, 255, 0.5)'
-      font:
-        # Gray on every theme, like the empty spark track.
-        color: dbt-grays.8

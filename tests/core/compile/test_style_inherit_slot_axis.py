@@ -127,18 +127,16 @@ def test_axis_x_explicit_override_wins_over_axis() -> None:
 # materialized or left None to inherit the global axis at merge time.
 
 
-def test_bar_category_axis_label_color_matches_global_axis() -> None:
-    """Default theme: the bar x-axis (category) label color == the global axis."""
-
+def test_bar_category_axis_label_color_matches_band_axis() -> None:
     rs = resolve_chart_style_context(get_theme_style())
     emitted = resolved_axis_style(
         rs, "axis_x", "ordinal", chart_type="bar", labeled=False
     )
-    assert emitted.labels.font.color == rs.axis.labels.font.color
+    assert emitted.labels.font.color == rs.axis_band.labels.font.color
 
 
-def test_bar_category_axis_label_color_is_axis_not_prose_font() -> None:
-    """bar x-axis label color follows the axis color, not the prose font color.
+def test_bar_category_axis_label_color_is_band_axis_not_prose_font() -> None:
+    """bar x-axis label color follows the band axis color, not the prose font color.
 
     Distinct axis color and prose font color prove the emitted bar category axis
     label follows the axis cascade rather than Style.font (the ink-leak source).
@@ -151,7 +149,7 @@ def test_bar_category_axis_label_color_is_axis_not_prose_font() -> None:
           font:
             color: '#123456'
           charts:
-            axis:
+            axis_band:
               labels:
                 font:
                   color: '#aa1122'

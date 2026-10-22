@@ -8,14 +8,15 @@
 //! an earlier wave: symbol radius 5px, label gap 8px, row height 16px, title
 //! band 17px.
 
-use std::fmt::Write as _;
-
 use serde::Deserialize;
 
 use crate::codes;
 use crate::diagnostic::Diagnostic;
 use crate::common::{field_display_text, truncate_label, FieldLabels, Font};
-use crate::svg::{xml_escape, xml_escape_attr, vega_escape_attr};
+use crate::contract;
+use crate::measure::baseline_shift;
+use crate::node::{Attrs, Node};
+use crate::print::print;
 use crate::text::FontBook;
 use crate::vega_fit;
 
@@ -694,131 +695,6 @@ pub(crate) fn gradient_legend_box(
     (title_w.max(bar_w).ceil(), band + length)
 }
 
-/// The `<linearGradient>` of a continuous legend: a stop at each end and at
-/// each of the scale's 15 ticks, each in the scale's own color.
-pub(crate) fn emit_scale_gradient_def(
-    out: &mut String,
-    id: &str,
-    (min, max): (f64, f64),
-    ticks: &[f64],
-    color: impl Fn(f64) -> String,
-    vertical: bool,
-) {
-    let axis = if vertical { "x1=\"0\" x2=\"0\" y1=\"1\" y2=\"0\"" } else { "x1=\"0\" x2=\"1\" y1=\"0\" y2=\"0\"" };
-    let _ = write!(out, "<defs><linearGradient id=\"{id}\" {axis}>", id = xml_escape_attr(id));
-    let lead = ticks.first().is_none_or(|&t| t != min).then_some(min);
-    let tail = ticks.last().is_none_or(|&t| t != max).then_some(max);
-    for v in lead.into_iter().chain(ticks.iter().copied()).chain(tail) {
-        let _ = write!(out, "<stop offset=\"{}\" stop-color=\"{}\"/>", (v - min) / (max - min), color(v));
-    }
-    out.push_str("</linearGradient></defs>");
-}
-
-/// The `<linearGradient>` of a legend over a one-value domain, which has no
-/// ticks to sample: Vega runs its whole ramp across the bar in 20 even steps.
-pub(crate) fn emit_ramp_gradient_def(out: &mut String, id: &str, vertical: bool, color_at: impl Fn(f64) -> String) {
-    let axis = if vertical { "x1=\"0\" x2=\"0\" y1=\"1\" y2=\"0\"" } else { "x1=\"0\" x2=\"1\" y1=\"0\" y2=\"0\"" };
-    let _ = write!(out, "<defs><linearGradient id=\"{id}\" {axis}>", id = xml_escape_attr(id));
-    for step in 0..=20 {
-        let t = f64::from(step) / 20.0;
-        let _ = write!(out, "<stop offset=\"{t}\" stop-color=\"{}\"/>", color_at(t));
-    }
-    out.push_str("</linearGradient></defs>");
-}
-
-/// A vertical gradient legend: title, color bar (min at the bottom), and the
-/// labeled values beside it.
-pub(crate) struct VerticalGradient<'a> {
-    pub gradient_id: &'a str,
-    pub title: &'a str,
-    pub range: (f64, f64),
-    pub values: &'a [f64],
-    pub labels: &'a [String],
-    pub length: f64,
-}
-
-impl VerticalGradient<'_> {
-    /// Paint into `svg` with the group's top-left at `(x, y)`.
-    pub(crate) fn paint(&self, svg: &mut String, cfg: &LegendConfig, x: f64, y: f64) -> Result<(), String> {
-        let label_font = &cfg.label.font;
-        let label_size = label_font.size_or(11.0);
-        let label_family = label_font.family_or("sans-serif");
-        let label_offset = cfg.label.padding.ok_or("legend.label.padding absent (theme required)")?;
-        let title_size = cfg.title.font.size_or(12.0);
-        let mut bar_y = y;
-        if !self.title.is_empty() {
-            let _ = write!(
-                svg,
-                "<text x=\"{x:.2}\" y=\"{:.2}\" text-anchor=\"start\" font-family=\"{}\" \
-                 font-size=\"{title_size}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
-                y + vega_fit::baseline_shift("top", title_size),
-                vega_escape_attr(cfg.title.font.family_or("sans-serif")),
-                xml_escape_attr(&cfg.title.font.weight_str()),
-                xml_escape_attr(cfg.title.font.color.as_deref().unwrap_or("#313233")),
-                xml_escape(self.title),
-            );
-            bar_y += title_size + VEGA_LEGEND_TITLE_PADDING;
-        }
-        let _ = write!(
-            svg,
-            "<rect x=\"{x:.2}\" y=\"{bar_y:.2}\" width=\"{VEGA_GRADIENT_THICKNESS}\" height=\"{}\" fill=\"url(#{})\"/>",
-            self.length,
-            xml_escape_attr(self.gradient_id),
-        );
-        let label_color = label_font.color.as_deref().unwrap_or("#626366");
-        let label_weight = label_font.weight_str();
-        let label_x = x + VEGA_GRADIENT_THICKNESS + label_offset;
-        let (min, max) = self.range;
-        crate::contract::legend_label_open(svg, "");
-        // A label at the bar's bottom end tucks inside as `bottom`, one at the
-        // top end as `top`, every other `middle`. A date `NaN` has no
-        // position: Vega draws it at the group's origin.
-        let placed: Vec<(&str, f64)> = self
-            .values
-            .iter()
-            .map(|v| {
-                let t = unit_position(*v, min, max);
-                let baseline = if t <= 0.0 {
-                    "bottom"
-                } else if t >= 1.0 {
-                    "top"
-                } else {
-                    "middle"
-                };
-                (baseline, bar_y + if t.is_nan() { 0.0 } else { self.length * (1.0 - t) })
-            })
-            .collect();
-        // Every label starts at one x, so only the vertical gaps decide an overlap.
-        let ink: Vec<vega_fit::Bounds> = placed
-            .iter()
-            .map(|&(baseline, y)| {
-                let top = match baseline {
-                    "bottom" => y - label_size,
-                    "top" => y,
-                    _ => y - label_size / 2.0,
-                };
-                vega_fit::Bounds::new(label_x, top, label_x + 1.0, top + label_size)
-            })
-            .collect();
-        let visible = vega_fit::parity_visible(&ink, 0.0);
-        for ((text, &(baseline, y)), shown) in self.labels.iter().zip(&placed).zip(visible) {
-            let label_y = y + vega_fit::baseline_shift(baseline, label_size);
-            let opacity = if shown { "" } else { " opacity=\"0\"" };
-            let _ = write!(
-                svg,
-                "<text x=\"{label_x:.2}\" y=\"{label_y:.2}\" text-anchor=\"start\" font-family=\"{}\" \
-                 font-size=\"{label_size}\" font-weight=\"{}\" fill=\"{}\"{opacity}>{}</text>",
-                vega_escape_attr(label_family),
-                xml_escape_attr(&label_weight),
-                xml_escape_attr(label_color),
-                xml_escape(text),
-            );
-        }
-        crate::contract::mark_group_close(svg);
-        Ok(())
-    }
-}
-
 /// Vega's default legend `offset` from the anchoring edge (a right legend's
 /// `ceil(x2) + offset`, a bottom's `ceil(y2) + offset`, a top's own
 /// `offset` above the plot below) — `vega-view-transforms/src/layout/
@@ -1129,15 +1005,6 @@ pub enum LegendSymbol<'a> {
     Glyph(crate::families::scatter_shape::Bounds),
 }
 
-/// A legend dash sample's ` stroke-dasharray` attribute; empty for a solid one.
-fn dasharray_attr(pattern: &str) -> String {
-    if pattern.is_empty() {
-        String::new()
-    } else {
-        format!(" stroke-dasharray=\"{}\"", xml_escape_attr(pattern))
-    }
-}
-
 /// The legend Vega draws for a scale no theme styles: `themed`'s fonts at Vega's own
 /// defaults (`labelFontSize` 10, `titleFontSize` 11 bold, `labelOffset` 4, black text) in
 /// a vertical column at the right.
@@ -1163,7 +1030,7 @@ pub fn vega_default_legend(themed: &LegendConfig) -> LegendConfig {
     }
 }
 
-/// Draw a legend the way Vega lays out a symbol legend (`VegaLegend`): the
+/// The legend Vega lays out for a symbol legend (`VegaLegend`): the
 /// title (when the band is reserved) at baseline top, then each entry's
 /// 10px symbol (stroke 1.5) centered at `size/2` in its cell, the label
 /// `size + labelOffset` in at middle baseline, entries at the grid's
@@ -1172,6 +1039,147 @@ pub fn vega_default_legend(themed: &LegendConfig) -> LegendConfig {
 /// layered chart's mixed legend (`_mixed_mark_legend_symbols`,
 /// `_overlay.py:649`), one entry per paint layer with that layer's own
 /// mark's glyph.
+#[allow(clippy::too_many_arguments)]
+pub fn symbol_legend(
+    entries: &[LegendEntry],
+    legend: &VegaLegend,
+    cfg: &LegendConfig,
+    default_symbol: LegendSymbol,
+    legend_x: f64,
+    legend_y: f64,
+    stamp_series: bool,
+) -> Node {
+    let mut children = Vec::new();
+    if !legend.title.is_empty() {
+        let tf = &cfg.title.font;
+        let tfs = tf.size_or(12.0);
+        let title = Node::text(
+            Attrs::new()
+                .set("x", format!("{legend_x:.2}"))
+                .set("y", format!("{:.2}", legend_y + baseline_shift("top", tfs)))
+                .set("text-anchor", "start")
+                .vega("font-family", tf.family_or("sans-serif"))
+                .set("font-size", tfs.to_string())
+                .set("font-weight", tf.weight_str())
+                .set("fill", tf.color.as_deref().unwrap_or("#313233")),
+            legend.title.as_str(),
+        );
+        children.push(Node::group(contract::legend_title_attrs(), vec![title]));
+    }
+    let legend_y = legend_y + legend.title_band;
+    let grid = &legend.grid;
+    let label_font = &cfg.label.font;
+    let size = label_font.size_or(11.0);
+    let family = label_font.family.as_deref().unwrap_or("sans-serif");
+    let color = label_font.color.as_deref().unwrap_or("#626366");
+    let weight = label_font.weight_str();
+    let columns = grid.col_x.len();
+    let mut cells = Vec::new();
+    for (i, entry) in legend.order.iter().map(|&idx| &entries[idx]).enumerate() {
+        let x = legend_x + grid.col_x[i % columns];
+        let y = legend_y + grid.row_y[i / columns];
+        let c = grid.size / 2.0;
+        let symbol = symbol_node(entry.symbol.unwrap_or(default_symbol), entry.fill, (x + c, y + c));
+        cells.push(Node::group(contract::legend_symbol_attrs(), vec![symbol]));
+        // `data-dbt-series` -- the untruncated join key `_stamp_series_keys`
+        // (converters/chart.py:367-385, :457-461: the label's text, stripped) stamps -- fires exactly when
+        // `stamp_series` is true: a series row was promoted with NO
+        // `ROLE_ORDER` rank baked alongside it (the caller computes this once
+        // from the SAME `order_domain`/series-promotion facts its own tooltip
+        // already derived, never a second scan of the SVG).
+        let series_key = stamp_series.then(|| entry.series_key.unwrap_or(entry.label).trim());
+        let label = Node::text(
+            Attrs::new()
+                .set("x", format!("{:.2}", x + grid.label_x))
+                .set("y", format!("{:.2}", y + c + baseline_shift("middle", size)))
+                .set("text-anchor", "start")
+                .vega("font-family", family)
+                .set("font-size", size.to_string())
+                .set("font-weight", weight.clone())
+                .set("fill", color),
+            entry.label,
+        );
+        cells.push(Node::group(contract::legend_label_attrs(series_key), vec![label]));
+    }
+    children.push(Node::group(contract::legend_entries_attrs(), cells));
+    Node::group(contract::legend_attrs(), children)
+}
+
+/// One legend swatch drawn centered on `(cx, cy)`.
+fn symbol_node(symbol: LegendSymbol, fill: &str, (cx, cy): (f64, f64)) -> Node {
+    const CIRCLE: &str = "M5,0A5,5,0,1,1,-5,0A5,5,0,1,1,5,0";
+    let at = format!("translate({cx:.2},{cy:.2})");
+    let square = |attrs: Attrs| {
+        Node::Rect(
+            Attrs::new()
+                .set("x", format!("{:.2}", cx - 5.0))
+                .set("y", format!("{:.2}", cy - 5.0))
+                .set("width", "10")
+                .set("height", "10")
+                .extend(attrs),
+        )
+    };
+    let path = |d: String, attrs: Attrs| Node::Path(Attrs::new().set("transform", at.clone()).set("d", d).extend(attrs));
+    let dashed = |pattern: &str, attrs: Attrs| {
+        attrs.set("stroke-linecap", "round").set_if(!pattern.is_empty(), "stroke-dasharray", pattern)
+    };
+    match symbol {
+        LegendSymbol::Square(stroke) => {
+            square(Attrs::new().set("fill", fill).set("stroke", stroke).set("stroke-width", "1.5"))
+        }
+        LegendSymbol::SquareInFill => {
+            square(Attrs::new().set("fill", fill).set("stroke", fill).set("stroke-width", "1.5"))
+        }
+        circle @ (LegendSymbol::Circle | LegendSymbol::ThinCircle) => {
+            let stroke_width = if matches!(circle, LegendSymbol::Circle) { "1.5" } else { "1" };
+            path(CIRCLE.into(), Attrs::new().set("fill", fill).set("stroke", fill).set("stroke-width", stroke_width))
+        }
+        LegendSymbol::ShortStroke => path(
+            "M-5,0L5,0".into(),
+            Attrs::new().set("fill", fill).set("stroke", fill).set("stroke-width", "1.5"),
+        ),
+        LegendSymbol::FadedCircle(opacity) => path(
+            CIRCLE.into(),
+            Attrs::new()
+                .set("fill", fill)
+                .set("stroke", fill)
+                .set("stroke-width", "1.5")
+                .set("opacity", opacity.to_string()),
+        ),
+        LegendSymbol::StrokedCircle(stroke) | LegendSymbol::BorderedCircle(stroke) => {
+            path(CIRCLE.into(), Attrs::new().set("fill", fill).set("stroke", stroke).set("stroke-width", "1.5"))
+        }
+        LegendSymbol::FilledCircle => path(CIRCLE.into(), Attrs::new().set("fill", fill).set("stroke-width", "1.5")),
+        LegendSymbol::FilledGlyph(d) => path(d.into(), Attrs::new().set("fill", fill).set("stroke-width", "1.5")),
+        LegendSymbol::Ring(d, interior, opacity, bounds) => path(
+            d.into(),
+            Attrs::new()
+                .set("fill", interior)
+                .set("stroke", fill)
+                .set("stroke-width", "1.5")
+                .set_if(bounds.sharp, "stroke-miterlimit", "10")
+                .set("opacity", opacity.to_string()),
+        ),
+        LegendSymbol::FilledSquare => square(Attrs::new().set("fill", fill).set("stroke-width", "1.5")),
+        LegendSymbol::Dash(pattern) => {
+            let half = VEGA_DASH_SYMBOL_SIZE.sqrt() / 2.0;
+            let attrs = Attrs::new().set("fill", fill).set("stroke", fill).set("stroke-width", "1.5");
+            path(format!("M-{half:.3},0L{half:.3},0"), dashed(pattern, attrs))
+        }
+        LegendSymbol::DashCircle(pattern) => {
+            let attrs = Attrs::new().set("fill", "none").set("stroke", fill).set("stroke-width", "1.5");
+            path(CIRCLE.into(), dashed(pattern, attrs))
+        }
+        LegendSymbol::Glyph(..) => unreachable!("a glyph symbol is laid out, never emitted here"),
+        LegendSymbol::Stroke(width) => path(
+            "M-10,0L10,0".into(),
+            Attrs::new().set("fill", fill).set("stroke", fill).set("stroke-width", width.to_string()),
+        ),
+    }
+}
+
+/// [`symbol_legend`] printed onto `out`, the sink the string-building callers
+/// still hold.
 #[allow(clippy::too_many_arguments)]
 pub fn emit_vega_legend(
     out: &mut String,
@@ -1183,188 +1191,8 @@ pub fn emit_vega_legend(
     legend_y: f64,
     stamp_series: bool,
 ) {
-    crate::contract::legend_open(out);
-    if !legend.title.is_empty() {
-        crate::contract::legend_title_open(out);
-        let tf = &cfg.title.font;
-        let tfs = tf.size_or(12.0);
-        let _ = write!(
-            out,
-            "<text x=\"{legend_x:.2}\" y=\"{:.2}\" text-anchor=\"start\" \
-             font-family=\"{}\" font-size=\"{tfs}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
-            legend_y + vega_fit::baseline_shift("top", tfs),
-            vega_escape_attr(tf.family_or("sans-serif")),
-            xml_escape_attr(&tf.weight_str()),
-            xml_escape_attr(tf.color.as_deref().unwrap_or("#313233")),
-            xml_escape(&legend.title)
-        );
-        crate::contract::mark_group_close(out);
-    }
-    let legend_y = legend_y + legend.title_band;
-    let grid = &legend.grid;
-    let label_font = &cfg.label.font;
-    let size = label_font.size_or(11.0);
-    let family = label_font.family.as_deref().unwrap_or("sans-serif");
-    let color = label_font.color.as_deref().unwrap_or("#626366");
-    let weight = label_font.weight_str();
-    let columns = grid.col_x.len();
-    crate::contract::legend_entries_open(out);
-    for (i, entry) in legend.order.iter().map(|&idx| &entries[idx]).enumerate() {
-        let x = legend_x + grid.col_x[i % columns];
-        let y = legend_y + grid.row_y[i / columns];
-        let c = grid.size / 2.0;
-        let fill = entry.fill;
-        crate::contract::legend_symbol_open(out);
-        match entry.symbol.unwrap_or(default_symbol) {
-            symbol @ (LegendSymbol::Square(_) | LegendSymbol::SquareInFill) => {
-                let stroke = match symbol {
-                    LegendSymbol::Square(stroke) => stroke,
-                    _ => fill,
-                };
-                let _ = write!(
-                    out,
-                    "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"10\" height=\"10\" \
-                     fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"1.5\"/>",
-                    x + c - 5.0,
-                    y + c - 5.0, fill = xml_escape_attr(fill), stroke = xml_escape_attr(stroke)
-                );
-            }
-            circle @ (LegendSymbol::Circle | LegendSymbol::ThinCircle) => {
-                let stroke_w = if matches!(circle, LegendSymbol::Circle) { "1.5" } else { "1" };
-                let _ = write!(
-                    out,
-                    "<path transform=\"translate({:.2},{:.2})\" \
-                     d=\"M5,0A5,5,0,1,1,-5,0A5,5,0,1,1,5,0\" \
-                     fill=\"{fill}\" stroke=\"{fill}\" stroke-width=\"{stroke_w}\"/>",
-                    x + c,
-                    y + c, fill = xml_escape_attr(fill)
-                );
-            }
-            LegendSymbol::ShortStroke => {
-                let _ = write!(
-                    out,
-                    "<path transform=\"translate({:.2},{:.2})\" d=\"M-5,0L5,0\" \
-                     fill=\"{fill}\" stroke=\"{fill}\" stroke-width=\"1.5\"/>",
-                    x + c,
-                    y + c, fill = xml_escape_attr(fill)
-                );
-            }
-            LegendSymbol::FadedCircle(opacity) => {
-                let _ = write!(
-                    out,
-                    "<path transform=\"translate({:.2},{:.2})\" \
-                     d=\"M5,0A5,5,0,1,1,-5,0A5,5,0,1,1,5,0\" \
-                     fill=\"{fill}\" stroke=\"{fill}\" stroke-width=\"1.5\" opacity=\"{opacity}\"/>",
-                    x + c,
-                    y + c, fill = xml_escape_attr(fill)
-                );
-            }
-            LegendSymbol::StrokedCircle(stroke) | LegendSymbol::BorderedCircle(stroke) => {
-                let _ = write!(
-                    out,
-                    "<path transform=\"translate({:.2},{:.2})\" \
-                     d=\"M5,0A5,5,0,1,1,-5,0A5,5,0,1,1,5,0\" \
-                     fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"1.5\"/>",
-                    x + c,
-                    y + c, fill = xml_escape_attr(fill), stroke = xml_escape_attr(stroke)
-                );
-            }
-            LegendSymbol::FilledCircle => {
-                let _ = write!(
-                    out,
-                    "<path transform=\"translate({:.2},{:.2})\" \
-                     d=\"M5,0A5,5,0,1,1,-5,0A5,5,0,1,1,5,0\" \
-                     fill=\"{fill}\" stroke-width=\"1.5\"/>",
-                    x + c,
-                    y + c, fill = xml_escape_attr(fill)
-                );
-            }
-            LegendSymbol::FilledGlyph(d) => {
-                let _ = write!(
-                    out,
-                    "<path transform=\"translate({:.2},{:.2})\" d=\"{d}\" fill=\"{fill}\" stroke-width=\"1.5\"/>",
-                    x + c,
-                    y + c,
-                    fill = xml_escape_attr(fill)
-                );
-            }
-            LegendSymbol::Ring(d, interior, opacity, bounds) => {
-                let _ = write!(
-                    out,
-                    "<path transform=\"translate({:.2},{:.2})\" d=\"{d}\" fill=\"{}\" stroke=\"{}\" \
-                     stroke-width=\"1.5\"{} opacity=\"{opacity}\"/>",
-                    x + c,
-                    y + c, xml_escape_attr(interior), xml_escape_attr(fill),
-                    crate::families::scatter_shape::miter_attr(bounds),
-                );
-            }
-            LegendSymbol::FilledSquare => {
-                let _ = write!(
-                    out,
-                    "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"10\" height=\"10\" \
-                     fill=\"{fill}\" stroke-width=\"1.5\"/>",
-                    x + c - 5.0,
-                    y + c - 5.0, fill = xml_escape_attr(fill)
-                );
-            }
-            LegendSymbol::Dash(pattern) => {
-                let dash = dasharray_attr(pattern);
-                let half = VEGA_DASH_SYMBOL_SIZE.sqrt() / 2.0;
-                let _ = write!(
-                    out,
-                    "<path transform=\"translate({:.2},{:.2})\" d=\"M-{half:.3},0L{half:.3},0\" \
-                     fill=\"{fill}\" stroke=\"{fill}\" stroke-width=\"1.5\" stroke-linecap=\"round\"{dash}/>",
-                    x + c,
-                    y + c, fill = xml_escape_attr(fill)
-                );
-            }
-            LegendSymbol::DashCircle(pattern) => {
-                let dash = dasharray_attr(pattern);
-                let _ = write!(
-                    out,
-                    "<path transform=\"translate({:.2},{:.2})\" d=\"M5,0A5,5,0,1,1,-5,0A5,5,0,1,1,5,0\" \
-                     fill=\"none\" stroke=\"{fill}\" stroke-width=\"1.5\" stroke-linecap=\"round\"{dash}/>",
-                    x + c,
-                    y + c, fill = xml_escape_attr(fill)
-                );
-            }
-            LegendSymbol::Glyph(..) => unreachable!("a glyph symbol is laid out, never emitted here"),
-            LegendSymbol::Stroke(width) => {
-                let _ = write!(
-                    out,
-                    "<path transform=\"translate({:.2},{:.2})\" d=\"M-10,0L10,0\" \
-                     fill=\"{fill}\" stroke=\"{fill}\" stroke-width=\"{width}\"/>",
-                    x + c,
-                    y + c, fill = xml_escape_attr(fill)
-                );
-            }
-        }
-        crate::contract::mark_group_close(out);
-        // `.role-legend-label` -- `chart_interactivity.js`'s `legendSeriesOrder`
-        // reads this class + join key off Vega's own legend-label group
-        // (`chart_svg_dev/contract.py::extract_contract`'s `legend_labels`
-        // key). `data-dbt-series` -- the untruncated join key
-        // `_stamp_series_keys` (converters/chart.py:367-385) stamps -- fires
-        // exactly when `stamp_series` is true: a series row was promoted
-        // with NO `ROLE_ORDER` rank baked alongside it (the caller computes
-        // this once from the SAME `order_domain`/series-promotion facts its
-        // own tooltip already derived, never a second scan of the SVG).
-        let series_attr = entry.series_attr(stamp_series);
-        crate::contract::legend_label_open(out, &series_attr);
-        let _ = write!(
-            out,
-            "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"start\" \
-             font-family=\"{}\" font-size=\"{size}\" font-weight=\"{weight}\" \
-             fill=\"{color}\">{}</text>",
-            x + grid.label_x,
-            y + c + vega_fit::baseline_shift("middle", size),
-            vega_escape_attr(family),
-            xml_escape(entry.label), weight = xml_escape_attr(&weight), color = xml_escape_attr(color)
-        );
-        out.push_str("</g>");
-    }
-    crate::contract::mark_group_close(out);
-    crate::contract::mark_group_close(out);
+    let node = symbol_legend(entries, legend, cfg, default_symbol, legend_x, legend_y, stamp_series);
+    out.push_str(&print(&[node]));
 }
 
 #[derive(Deserialize)]
@@ -1388,20 +1216,6 @@ pub struct LegendEntry<'a> {
     /// the ellipsized form Vega draws past `labelLimit`; `None` when `label`
     /// is the whole name.
     pub series_key: Option<&'a str>,
-}
-
-impl LegendEntry<'_> {
-    /// The ` data-dbt-series` attribute (`_stamp_series_keys`,
-    /// `converters/chart.py:457-461`: the label's text, stripped), or nothing
-    /// when `stamp_series` is off.
-    fn series_attr(&self, stamp_series: bool) -> String {
-        if stamp_series {
-            let key = self.series_key.unwrap_or(self.label).trim();
-            format!(" data-dbt-series=\"{}\"", xml_escape_attr(key))
-        } else {
-            String::new()
-        }
-    }
 }
 
 /// Title text for a legend: the color field's display name, cased per the
@@ -1429,7 +1243,13 @@ pub fn color_channel_title(
     cfg: &LegendConfig,
     field_labels: &FieldLabels,
 ) -> Result<String, String> {
-    field_display_text(color_field, field_labels, cfg.title.font.case.as_deref().unwrap_or("title"))
+    let case = cfg
+        .title
+        .font
+        .case
+        .as_deref()
+        .ok_or("legend: color channel title requires legend.title.font.case")?;
+    field_display_text(color_field, field_labels, case)
 }
 
 #[cfg(test)]
@@ -1993,5 +1813,63 @@ mod tests {
         assert_eq!(labels(Some(&["web", "ghost", "store"])), ["web", "store"]);
         assert_eq!(labels(Some(&["ghost"])), ["store", "web", "revenue"]);
         assert!(labels(Some(&[])).is_empty());
+    }
+
+    /// Every symbol a legend can paint, in a titled, series-stamped legend whose
+    /// strings need escaping, as bytes: the legend's markup is pinned across the
+    /// move from string emission to nodes.
+    fn symbol_legend_markup() -> String {
+        use crate::families::scatter_shape::Bounds;
+        let bounds = Bounds { x: 5.0, up: 5.0, down: 5.0, sharp: true };
+        let symbols = [
+            LegendSymbol::Square("#fff"),
+            LegendSymbol::SquareInFill,
+            LegendSymbol::Circle,
+            LegendSymbol::ThinCircle,
+            LegendSymbol::StrokedCircle("#123456"),
+            LegendSymbol::BorderedCircle("#654321"),
+            LegendSymbol::FilledCircle,
+            LegendSymbol::ShortStroke,
+            LegendSymbol::FadedCircle(0.5),
+            LegendSymbol::FilledSquare,
+            LegendSymbol::FilledGlyph("M0,-5L5,5L-5,5Z"),
+            LegendSymbol::Ring("M0,0L1,1", "#eeeeee", 0.7, bounds),
+            LegendSymbol::Stroke(2.5),
+            LegendSymbol::Dash(""),
+            LegendSymbol::Dash("4 2"),
+            LegendSymbol::DashCircle("3 3"),
+        ];
+        let entries: Vec<LegendEntry> = symbols
+            .iter()
+            .enumerate()
+            .map(|(i, &symbol)| LegendEntry {
+                label: ["a<b", "c&d", "e\"f'g"][i % 3],
+                fill: "#40639c",
+                symbol: Some(symbol),
+                series_key: (i % 2 == 0).then_some(" key'\"<1 "),
+            })
+            .collect();
+        let mut cfg = legend_cfg("vertical", None);
+        cfg.title.visible = Some(true);
+        cfg.label.font.family = Some("'Q', \"R\"\t".to_string());
+        let legend = vega_legend(&entries, true, "T<&'\"", &cfg, &test_fonts()).unwrap();
+        let mut svg = String::new();
+        emit_vega_legend(&mut svg, &entries, &legend, &cfg, LegendSymbol::Circle, 3.0, 4.5, true);
+        // Entries on the shared default symbol, untitled, a series key left unstamped.
+        let plain = ["one", "two", "three"].map(|label| LegendEntry {
+            label,
+            fill: "#abc",
+            symbol: None,
+            series_key: Some(" k "),
+        });
+        let cfg = legend_cfg("horizontal", Some(2));
+        let legend = vega_legend(&plain, false, "", &cfg, &test_fonts()).unwrap();
+        emit_vega_legend(&mut svg, &plain, &legend, &cfg, LegendSymbol::Square("#fff"), 0.0, 0.0, false);
+        svg
+    }
+
+    #[test]
+    fn symbol_legend_markup_is_pinned() {
+        assert_eq!(symbol_legend_markup(), include_str!("legend_symbols_golden.svg"));
     }
 }

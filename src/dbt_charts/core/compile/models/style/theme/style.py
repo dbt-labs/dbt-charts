@@ -53,11 +53,13 @@ from dbt_charts.core.compile.models.style.theme.variables import (
     VariablesStyle,
 )
 
+_RAMP_FONTS = {"heading": "H1–H6", "section": "H2–H6"}
+
 
 class Style(BaseModel):
     """Authoritative compiled style. Built from a single theme YAML file.
 
-    All sections present with defaults matching themes/stark.yaml.
+    All sections present with defaults matching themes/_base.yaml.
     This is the 'compiled from theme' layer — not yet resolved/cascaded.
     """
 
@@ -148,7 +150,8 @@ class Style(BaseModel):
             "Named fonts as ``<name>: {family, size, weight, color}``, never a bare "
             "family string; other font slots reference one as ``font: <name>`` or "
             "``font: {extends: <name>, ...}``. ``heading`` carries the H1–H6 "
-            "ramp in ``sizes``. An entry no slot references paints nothing."
+            "ramp in ``sizes`` and ``section`` the H2–H6 section-title sizes. "
+            "Any other entry no slot references paints nothing."
         ),
     )
     # Theme palette role assignments.
@@ -209,14 +212,17 @@ class Style(BaseModel):
     @model_validator(mode="after")
     def _validate_fonts(self) -> Style:
         for name, font in self.fonts.items() if self.fonts is not None else ():
-            if name != "heading" and font.sizes is not None:
+            if name not in _RAMP_FONTS and font.sizes is not None:
                 raise ValueError(
-                    f"Only the 'heading' font takes sizes (the H1–H6 ramp); "
+                    f"Only the 'heading' and 'section' fonts take sizes; "
                     f"'{name}' sets size."
                 )
-            if name == "heading" and font.size is not None:
-                raise ValueError("The 'heading' font takes sizes (H1–H6), not size.")
+            if name in _RAMP_FONTS and font.size is not None:
+                raise ValueError(
+                    f"The '{name}' font takes sizes ({_RAMP_FONTS[name]}), not size."
+                )
         ramp = self.heading_ramp()
+        self.section_ramp()
         level = self.title.level
         if isinstance(level, int) and level > len(ramp):
             raise ValueError(
@@ -234,3 +240,13 @@ class Style(BaseModel):
                 "headings and chart titles read the H1–H6 ramp from it."
             )
         return heading.sizes
+
+    def section_ramp(self) -> list[float]:
+        """The H2–H6 section-title sizes from ``style.fonts.section.sizes``."""
+        section = self.fonts.get("section") if self.fonts is not None else None
+        if section is None or section.sizes is None:
+            raise ValueError(
+                "style.fonts.section.sizes is required: section titles read "
+                "their H2–H6 sizes from it."
+            )
+        return section.sizes

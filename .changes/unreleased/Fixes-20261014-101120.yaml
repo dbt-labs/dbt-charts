@@ -1,0 +1,3 @@
+kind: Fixes
+body: Board text with a markdown table keeps its paragraphs at the reading width instead of stretching them to the table's width.
+time: 2026-10-14T10:11:20.729301-07:00

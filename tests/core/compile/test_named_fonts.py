@@ -26,7 +26,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 
 from .._board_utils import merged_patch
 
-KNOWN = "body, caption, code, heading, label, numeral, subtitle"
+KNOWN = "body, caption, code, heading, label, numeral, section, subtitle"
 
 
 def _pre_style(*patches: dict[str, Any]):
@@ -36,7 +36,7 @@ def _pre_style(*patches: dict[str, Any]):
     )[1].pre_style
 
 
-def test_theme_ships_the_seven_named_fonts() -> None:
+def test_theme_ships_the_eight_named_fonts() -> None:
     fonts = get_theme_style().fonts
     assert fonts is not None
     assert sorted(fonts) == sorted(KNOWN.split(", "))
@@ -193,7 +193,7 @@ def test_registry_unknown_parent_names_entry_and_known_fonts() -> None:
         _pre_style({"fonts": {"h2": {"extends": "nope", "size": 9}}})
     assert (
         "Unknown font 'nope' at style.fonts.h2. "
-        "Known fonts: body, caption, code, h2, heading, label, numeral, subtitle."
+        "Known fonts: body, caption, code, h2, heading, label, numeral, section, subtitle."
         in str(err.value)
     )
 
@@ -234,29 +234,35 @@ def test_upper_layer_patch_without_extends_keeps_the_lower_extends() -> None:
     )
 
 
-def test_only_heading_takes_sizes() -> None:
-    with pytest.raises(ValidationError, match="Only the 'heading' font takes sizes"):
+def test_only_heading_and_section_take_sizes() -> None:
+    with pytest.raises(
+        ValidationError, match="Only the 'heading' and 'section' fonts take sizes"
+    ):
         merge_onto_base(
             get_theme_style(),
             StylePatch.model_validate({"fonts": {"label": {"sizes": [1] * 6}}}),
         )
 
 
-def test_heading_rejects_size() -> None:
+@pytest.mark.parametrize(
+    ("name", "levels"), [("heading", "H1–H6"), ("section", "H2–H6")]
+)
+def test_ramp_font_rejects_size(name: str, levels: str) -> None:
     with pytest.raises(
-        ValidationError, match="The 'heading' font takes sizes \\(H1–H6\\), not size"
+        ValidationError, match=f"The '{name}' font takes sizes \\({levels}\\), not size"
     ):
         merge_onto_base(
             get_theme_style(),
-            StylePatch.model_validate({"fonts": {"heading": {"size": 20}}}),
+            StylePatch.model_validate({"fonts": {name: {"size": 20}}}),
         )
 
 
-def test_heading_sizes_is_required() -> None:
-    with pytest.raises(ValidationError, match="style.fonts.heading.sizes is required"):
+@pytest.mark.parametrize("name", ["heading", "section"])
+def test_ramp_sizes_are_required(name: str) -> None:
+    with pytest.raises(ValidationError, match=f"style.fonts.{name}.sizes is required"):
         merge_onto_base(
             get_theme_style(),
-            StylePatch.model_validate({"fonts": {"heading": {"sizes": None}}}),
+            StylePatch.model_validate({"fonts": {name: {"sizes": None}}}),
         )
 
 
@@ -491,7 +497,7 @@ def test_board_charts_style_named_font_reaches_a_rendered_chart() -> None:
         )
         .replace(
             "style:\n  fonts:",
-            "style:\n  charts:\n    axis:\n      labels:\n        font: mine\n  fonts:",
+            "style:\n  charts:\n    axis_band:\n      labels:\n        font: mine\n  fonts:",
         )
         .format(font="")
     )
@@ -631,3 +637,15 @@ def test_font_reset_fields_equal_font_style_fields() -> None:
     from dbt_charts.core.compile.models.factories import FontSlotBase
 
     assert FontSlotBase.merge_reset.resets == FontStyle.model_fields.keys()
+
+
+@pytest.mark.parametrize(
+    ("name", "levels"), [("heading", "H1-H6"), ("section", "H2-H6")]
+)
+def test_a_ramp_font_inheriting_a_size_is_an_error(name: str, levels: str) -> None:
+    with pytest.raises(CompilationError) as err:
+        _pre_style({"fonts": {"wide": {"size": 14}, name: {"extends": "wide"}}})
+    assert (
+        f"The '{name}' font takes sizes ({levels}), not size, but inherits size 14"
+        in str(err.value)
+    )

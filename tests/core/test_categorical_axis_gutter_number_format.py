@@ -36,6 +36,7 @@ def _plan(data: list[dict]):
         None,
         chart.y,
         has_quantitative_axis=True,
+        temporal_band_axes=frozenset(),
     )
 
 

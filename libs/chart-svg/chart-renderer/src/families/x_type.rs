@@ -228,12 +228,8 @@ fn fields_len(b: &[u8], colon: bool) -> usize {
 
 /// `detect_time_unit`: raises at 10% or more unparseable distinct values.
 fn detect(cells: &[&Value]) -> Result<Option<TimeUnit>, String> {
-    let mut distinct: Vec<&str> = Vec::new();
-    for cell in cells.iter().filter_map(|c| c.as_str()) {
-        if !distinct.contains(&cell) {
-            distinct.push(cell);
-        }
-    }
+    let mut seen = HashSet::new();
+    let distinct: Vec<&str> = cells.iter().filter_map(|c| c.as_str()).filter(|cell| seen.insert(*cell)).collect();
     let non_string = cells.iter().filter(|c| !c.is_null() && !c.is_string()).map(|c| py_scalar_key(c)).collect::<HashSet<_>>().len();
     let total = distinct.len() + non_string;
     if total < 2 {

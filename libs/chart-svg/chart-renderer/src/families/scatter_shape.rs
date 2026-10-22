@@ -8,7 +8,7 @@ use crate::families::legend::{legend_grid, LegendGrid, LegendSymbol};
 use crate::svg::{vega_escape_attr, xml_escape, xml_escape_attr};
 use crate::text::FontBook;
 use crate::Payload;
-use crate::vega_fit::baseline_shift;
+use crate::measure::baseline_shift;
 
 /// Vega's default `range.symbol` — the named range a Vega-Lite shape scale
 /// takes (`vega-lite compile/scale/range.ts:341`;

@@ -16,6 +16,7 @@
 
 use std::collections::BTreeMap;
 
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
@@ -267,7 +268,7 @@ impl Walk<'_> {
 
 fn parse_nested(item: &ItemDoc) -> Result<BoardDoc, String> {
     let json = item.board.as_ref().ok_or("board item missing its resolved board")?;
-    serde_json::from_value(json.clone()).map_err(|e| format!("nested board payload deserialize: {e}"))
+    Deserialize::deserialize(json).map_err(|e| format!("nested board payload deserialize: {e}"))
 }
 
 fn nested_boxes(item_box: &Value) -> Result<&[Value], String> {
@@ -284,7 +285,7 @@ pub fn derive_title_shifts(
     fonts: &FontBook,
     items: &[Value],
 ) -> Result<Vec<RowShift>, String> {
-    let board: BoardDoc = serde_json::from_value(payload.resolved.clone())
+    let board: BoardDoc = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("board payload deserialize: {e}"))?;
     payload.board_style.scoped(|| derive(&board, payload, fonts, items))
 }

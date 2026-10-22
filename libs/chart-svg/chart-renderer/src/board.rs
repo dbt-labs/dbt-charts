@@ -455,7 +455,7 @@ struct LayoutStyleDoc {
 struct TabsStyleDoc {
     bar_height: f64,
     border: BorderStyleDoc,
-    font: FontSizeOnlyDoc,
+    font: TabsFontDoc,
     active_weight: String,
     inactive_weight: String,
     title_baseline_offset: f64,
@@ -481,6 +481,12 @@ struct DetailsArrowDoc {
 #[derive(Deserialize)]
 struct FontSizeOnlyDoc {
     size: f64,
+}
+
+#[derive(Deserialize)]
+struct TabsFontDoc {
+    size: f64,
+    case: String,
 }
 
 #[derive(Deserialize)]
@@ -1183,7 +1189,7 @@ fn card_border(
                 .ok_or_else(|| {
                     format!("chart {id:?}: style.{chart_type}.border missing from the chart")
                 })?;
-            serde_json::from_value(own.clone())
+            Deserialize::deserialize(own)
                 .map(Some)
                 .map_err(|e| format!("chart {id:?}: style.{chart_type}.border: {e}"))
         }
@@ -1581,6 +1587,7 @@ struct TabsChrome {
     border_width: f64,
     border_dash_attrs: String,
     font_size: f64,
+    font_case: String,
     active_weight: String,
     inactive_weight: String,
     title_baseline_offset: f64,
@@ -1609,6 +1616,7 @@ fn tabs_chrome_from_style(style: &StyleDoc) -> TabsChrome {
             tabs.border.dash_offset,
         ),
         font_size: tabs.font.size,
+        font_case: tabs.font.case.clone(),
         active_weight: tabs.active_weight.clone(),
         inactive_weight: tabs.inactive_weight.clone(),
         title_baseline_offset: tabs.title_baseline_offset,
@@ -2752,7 +2760,7 @@ fn render_tabs_layout(
             py_float_str(x + tab_width / 2.0),
             py_float_str(tabs.bar_height / 2.0 + tabs.title_baseline_offset),
             py_float_str(tabs.font_size),
-            html_escape(title), text_fill = xml_escape_attr(text_fill), weight = xml_escape_attr(weight),
+            html_escape(&display_text::case::apply_case(title, &tabs.font_case)?), text_fill = xml_escape_attr(text_fill), weight = xml_escape_attr(weight),
         );
         if let Some(tab_variable) = layout.tab_variable.as_deref() {
             if !is_active {
@@ -3141,7 +3149,7 @@ fn nested_board_total_height(
     payload: &BoardPayload,
     fonts: &FontBook,
 ) -> Result<f64, String> {
-    let nested: BoardDoc = serde_json::from_value(nested_json.clone())
+    let nested: BoardDoc = Deserialize::deserialize(nested_json)
         .map_err(|e| format!("nested board payload deserialize: {e}"))?;
     let (content_width, non_layout_height, child_gap) =
         nested_board_sizing_context(&nested, width, card_gap, payload)?;
@@ -3246,7 +3254,7 @@ pub fn nested_board_item_boxes(
     fonts: &FontBook,
     chart_height_overrides: &HashMap<String, f64>,
 ) -> Result<Vec<Value>, String> {
-    let nested: BoardDoc = serde_json::from_value(nested_json.clone())
+    let nested: BoardDoc = Deserialize::deserialize(nested_json)
         .map_err(|e| format!("nested board payload deserialize: {e}"))?;
     if nested.layout.items.is_empty() {
         return Ok(Vec::new());
@@ -3388,7 +3396,7 @@ fn active_tab_index(layout: &LayoutDoc, payload: &BoardPayload) -> Result<Option
 /// function reproduces that shape structurally rather than computing real
 /// (and therefore wrong) boxes for a branch production never sized.
 fn zeroed_nested_item_boxes(nested_json: &Value) -> Result<Vec<Value>, String> {
-    let nested: BoardDoc = serde_json::from_value(nested_json.clone())
+    let nested: BoardDoc = Deserialize::deserialize(nested_json)
         .map_err(|e| format!("nested board payload deserialize: {e}"))?;
     let mut out = Vec::with_capacity(nested.layout.items.len());
     for item in &nested.layout.items {
@@ -3425,7 +3433,7 @@ fn board_chart_target_contribution(
     payload: &BoardPayload,
     fonts: &FontBook,
 ) -> Result<f64, String> {
-    let nested: BoardDoc = serde_json::from_value(nested_json.clone())
+    let nested: BoardDoc = Deserialize::deserialize(nested_json)
         .map_err(|e| format!("nested board payload deserialize: {e}"))?;
     if is_all_vega_rows_board(&nested) {
         return Ok(row_height);
@@ -3513,7 +3521,7 @@ fn board_alignment_overrides(
         payload,
         fonts,
     } = *ctx;
-    let nested: BoardDoc = serde_json::from_value(nested_json.clone())
+    let nested: BoardDoc = Deserialize::deserialize(nested_json)
         .map_err(|e| format!("nested board payload deserialize: {e}"))?;
     let vega_count = nested
         .layout
@@ -3643,7 +3651,7 @@ pub fn size_board(payload: &BoardPayload, fonts: &FontBook) -> Result<SizedBoard
 }
 
 fn size_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<SizedBoard, String> {
-    let board: BoardDoc = serde_json::from_value(payload.resolved.clone())
+    let board: BoardDoc = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("board payload deserialize: {e}"))?;
     let card_padding = board
         .card_padding
@@ -3760,7 +3768,7 @@ fn size_board_items_json_in_scope(
     boxes: &[ItemBox],
     chart_height_overrides: &HashMap<String, f64>,
 ) -> Result<Vec<Value>, String> {
-    let board: BoardDoc = serde_json::from_value(payload.resolved.clone())
+    let board: BoardDoc = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("board payload deserialize: {e}"))?;
     let card_padding = board.card_padding.ok_or("board card_padding missing")?;
     let card_gap = board.card_gap.ok_or("board card_gap missing")?;
@@ -3902,7 +3910,7 @@ fn render_nested_board(
     chart_height_overrides: &HashMap<String, f64>,
     title_shift: crate::TitleShift,
 ) -> Result<RenderedItem, String> {
-    let nested: BoardDoc = serde_json::from_value(nested_json.clone())
+    let nested: BoardDoc = Deserialize::deserialize(nested_json)
         .map_err(|e| format!("nested board payload deserialize: {e}"))?;
 
     let ep = effective_padding(&nested.style);
@@ -4396,7 +4404,7 @@ pub fn render_board(payload: &BoardPayload, fonts: &FontBook) -> Result<(String,
 }
 
 fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(String, String), String> {
-    let mut board: BoardDoc = serde_json::from_value(payload.resolved.clone())
+    let mut board: BoardDoc = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("board payload deserialize: {e}"))?;
 
     let page_padding = board
@@ -5550,7 +5558,7 @@ mod nested_box_sidecar_tests {
                     "tabs": {
                         "bar_height": 40.0,
                         "border": {"width": 0.0, "color": "transparent", "radius": 4.0},
-                        "font": {"size": 14.0},
+                        "font": {"size": 14.0, "case": "title"},
                         "active_weight": "600", "inactive_weight": "400",
                         "title_baseline_offset": 5.0
                     },

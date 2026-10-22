@@ -37,7 +37,7 @@ def _non_default_themes() -> list[str]:
 
     Uses ``user_facing_theme_names()``, not ``list_built_in_themes()`` — the
     latter includes ``_base`` and the diagnostics-only fixtures, which
-    extend the structural root without overriding fields like
+    extend ``stark`` without overriding fields like
     ``background``, so two of them can collide on every field this test
     diffs on.
     """

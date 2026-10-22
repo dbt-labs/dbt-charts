@@ -7,7 +7,7 @@
 # All visual/authorable config (style, theme, board layout) belongs in the
 # Board cascade via charts/meta.yml — NOT here. A stray style:/theme: key
 # in dbt_charts.yml raises a ValidationError pointing at charts/meta.yml.
-# See: themes/stark.yaml for the structural root style; themes/clarity.yaml
+# See: themes/_base.yaml for the structural root style; themes/clarity.yaml
 # is the shipped default.
 
 

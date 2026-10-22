@@ -1,5 +1,4 @@
 {
-  "aria.axis": "axel",
   "aria.chart": "diagram",
   "aria.container_arc": "båge-markeringsbehållare",
   "aria.container_group": "grupp-markeringsbehållare",
@@ -18,8 +17,6 @@
   "aria.role_text": "textmarkering",
   "aria.title": "rubrik",
   "aria.title_text": "Rubriktext ”{header}”",
-  "aria.x_axis": "X-axel",
-  "aria.y_axis": "Y-axel",
   "axis.midnight": "Midnatt",
   "axis.noon": "Middag",
   "case.extra_small_words": "",

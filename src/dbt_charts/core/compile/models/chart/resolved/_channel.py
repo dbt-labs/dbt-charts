@@ -38,3 +38,9 @@ class ResolvedStyleChannel:
     # (compile/resolve/chart/_channels.py); False for every other mode and
     # for every family that never binds a data-backed color channel.
     quantitative_data: bool = False
+    # True when a board category-color scale binds this channel's field. A
+    # binding means the field's values are categories, so the emitter types
+    # the encoding nominal instead of inferring from data -- year-shaped text
+    # like "2020" would otherwise infer ordinal, which paints a sequential
+    # ramp and never reads the bound scale.
+    categorical: bool = False

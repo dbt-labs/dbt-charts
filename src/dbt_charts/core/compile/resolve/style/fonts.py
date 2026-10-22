@@ -28,15 +28,16 @@ if TYPE_CHECKING:
 
 T = TypeVar("T", bound=BaseModel)
 
-# `sizes` is the heading ramp, read from the registry; a slot never carries it.
+# `sizes` is a heading ramp, read from the registry; a slot never carries it.
 _REGISTRY_ONLY = frozenset({"extends", "sizes"})
+_RAMP_LEVELS = {"heading": "H1-H6", "section": "H2-H6"}
 
 
 def resolve_registry(registry: Mapping[str, NamedFont]) -> dict[str, NamedFont]:
     """Return ``registry`` with every entry's ``extends`` chain folded in.
 
     An entry is its parent's resolved fields plus its own, own fields winning.
-    ``sizes`` is the heading ramp and is never inherited.
+    ``sizes`` is a heading ramp and is never inherited.
     """
     resolved: dict[str, NamedFont] = {}
 
@@ -59,11 +60,12 @@ def resolve_registry(registry: Mapping[str, NamedFont]) -> dict[str, NamedFont]:
             **parent.model_dump(exclude_unset=True, exclude=set(_REGISTRY_ONLY)),
             **entry.model_dump(exclude_unset=True, exclude={"extends"}),
         }
-        if name == "heading" and fields.get("size") is not None:
+        if name in _RAMP_LEVELS and fields.get("size") is not None:
             raise CompilationError.from_code(
                 ERR_FONT_REGISTRY,
                 message=(
-                    f"The 'heading' font takes sizes (H1-H6), not size, but "
+                    f"The '{name}' font takes sizes ({_RAMP_LEVELS[name]}), not "
+                    f"size, but "
                     f"inherits size {fields['size']} from '{entry.extends}'."
                 ),
             )

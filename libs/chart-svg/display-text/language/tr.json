@@ -1,5 +1,4 @@
 {
-  "aria.axis": "eksen",
   "aria.chart": "grafik",
   "aria.container_arc": "yay işareti kapsayıcısı",
   "aria.container_group": "grup işareti kapsayıcısı",
@@ -18,8 +17,6 @@
   "aria.role_text": "metin işareti",
   "aria.title": "başlık",
   "aria.title_text": "Başlık metni “{header}”",
-  "aria.x_axis": "X ekseni",
-  "aria.y_axis": "Y ekseni",
   "axis.midnight": "Gece yarısı",
   "axis.noon": "Öğle",
   "case.extra_small_words": "",

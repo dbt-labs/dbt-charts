@@ -8,6 +8,8 @@ use std::fmt::Write as _;
 use serde::Deserialize;
 
 use crate::common::{AxisStyle, AxisTitle, FieldLabels};
+use crate::contract::AxisChannel;
+use crate::families::axis_caption::{vega_axis_format, AxisCaption, CaptionScale, NumericScale};
 use crate::diagnostic::Diagnostic;
 use crate::families::bar::{flush_edge, flush_threshold, format_tick_labels};
 use crate::families::cartesian::{vl_default_tick_count, LinearScale};
@@ -306,7 +308,7 @@ pub(crate) fn render(
         ValueAxis::Point { pins_domain } => (false, false, Some(pins_domain)),
     };
     let head = Head::parse(family, &payload.resolved)?;
-    let extra: Extra = serde_json::from_value(payload.resolved.clone()).map_err(|e| format!("{family} payload: {e}"))?;
+    let extra: Extra = Deserialize::deserialize(&payload.resolved).map_err(|e| format!("{family} payload: {e}"))?;
     let (ax_x, ax_y) = (&head.style.axis_x, &head.style.axis_y);
     let position_right = crate::families::empty::value_axis_on_right(family, ax_y)?;
     let facet = head.facet();
@@ -395,7 +397,7 @@ pub(crate) fn render(
     let base_pad = if moved { 2.0 } else { st.pad };
     let gutter = if side_right && !away && baked {
         let measure_family = crate::common::measure_family_stand_in(st.family);
-        let drawn = format_tick_labels(&crate::common::drawn_tick_values(ax_y), ax_y, false)?;
+        let drawn = format_tick_labels(&crate::common::drawn_tick_values(ax_y), ax_y, false, if horizontal { "x" } else { "y" })?;
         let widest = drawn.iter().try_fold(0.0_f64, |acc, s| fonts.measure(s, measure_family, st.size).map(|w| acc.max(w)))?;
         widest.min(st.limit) + VALUE_AXIS_BREATHING_ROOM
     } else if side_right && !away {
@@ -449,7 +451,7 @@ pub(crate) fn render(
     // Each layer's own axis beside the base's, overlaying it on a shared side.
     let mut layer_axes: Vec<ValueAxisPlan> = Vec::new();
     if !horizontal && facet.is_none() && (ysides.is_some() || family == "scatter") {
-        let zero_label = format_tick_labels(&[0.0], ax_y, false)?.remove(0);
+        let zero_label = format_tick_labels(&[0.0], ax_y, false, "y")?.remove(0);
         let zero_width = fonts.measure_shaped(&zero_label, st.family, st.size)?;
         for (i, layer) in layers.iter().enumerate() {
             let layer_side = ysides.as_ref().map_or(side, |s| if s.layers[i] == LayerSide::Right { 1.0 } else { -1.0 });
@@ -508,7 +510,7 @@ pub(crate) fn render(
         };
         let texts = match &point_labels {
             Some(labels) => labels.clone(),
-            None => format_tick_labels(&rungs, ax_y, normalized_rail)?,
+            None => format_tick_labels(&rungs, ax_y, normalized_rail, if horizontal { "x" } else { "y" })?,
         };
         let labels = texts
             .iter()
@@ -662,7 +664,7 @@ pub(crate) fn render(
         } else {
             crate::families::cartesian::unbaked_ticks(ax_y, 0.0, 1.0, vl_default_tick_count(payload.height))
         };
-        format_tick_labels(&rungs, ax_y, head.normalized())?
+        format_tick_labels(&rungs, ax_y, head.normalized(), "y")?
             .iter()
             .map(|label| fonts.measure_shaped(label, st.family, st.size))
             .collect::<Result<Vec<_>, _>>()?
@@ -742,14 +744,14 @@ pub(crate) fn render(
     let mut svg = String::new();
     framed.open(&mut svg);
     title.paint(&mut svg, m.title_pos, (plot_left, plot_top));
-    paint_axes(&mut svg, family, &axes, &category, &st, ax_y, (plot_left, plot_top), m, horizontal, value_axes_drawn(facet), category_drawn(facet))?;
+    paint_axes(&mut svg, family, &axes, &category, &st, (ax_x, ax_y), (plot_left, plot_top), m, horizontal, value_axes_drawn(facet), category_drawn(facet))?;
     if let Some(rail) = &rail_labels {
         let (_, top) = pinned_cell.get().expect("a rail pins the scale");
         let (family, size, weight, style) = &rail.font;
         let _ = write!(svg, "<g transform=\"translate({:.3},{plot_top:.3})\">", plot_left + m.plot_w + rail.offset);
         for (i, (name, ink)) in rail.series.iter().enumerate() {
             let value = rail.gap_px * i as f64 / m.plot_h;
-            let y = m.plot_h * (1.0 - value / top) + vega_fit::baseline_shift("middle", *size);
+            let y = m.plot_h * (1.0 - value / top) + crate::measure::baseline_shift("middle", *size);
             let _ = write!(
                 svg,
                 "<text x=\"0\" y=\"{y:.3}\" text-anchor=\"start\" font-family=\"{}\" font-size=\"{size}\" font-weight=\"{}\" font-style=\"{}\" fill=\"{}\">{}</text>",
@@ -790,7 +792,7 @@ fn paint_axes(
     axes: &[ValueAxisPlan],
     category: &CategoryAxis,
     st: &LabelStyle,
-    ax_y: &AxisStyle,
+    (ax_x, ax_y): (&AxisStyle, &AxisStyle),
     (plot_left, plot_top): (f64, f64),
     m: &vega_fit::FitMargins,
     horizontal: bool,
@@ -802,136 +804,172 @@ fn paint_axes(
         Some(dash) => format!(" stroke-dasharray=\"{}\"", dash.iter().map(f64::to_string).collect::<Vec<_>>().join(",")),
     };
     let grid_opacity = ax_y.grid.opacity.filter(|&o| o != 1.0).map_or(String::new(), |o| format!(" stroke-opacity=\"{o}\""));
-    let _ = write!(svg, "<g transform=\"translate({plot_left:.2},{plot_top:.2})\">");
     let line = |svg: &mut String, (x1, y1, x2, y2): (f64, f64, f64, f64), color: &str, width: f64| {
         let _ = write!(
             svg,
             "<line x1=\"{x1:.2}\" y1=\"{y1:.2}\" x2=\"{x2:.2}\" y2=\"{y2:.2}\" stroke=\"{color}\" stroke-width=\"{width}\"/>"
         );
     };
-    if paint_category {
-        if let Some((width, color)) = &category.line {
-            let ends = if horizontal {
-                let x = if category.side > 0.0 { m.plot_w + category.offset + 0.5 } else { 0.5 - category.offset };
-                (x, 0.5, x, m.plot_h + 0.5)
-            } else {
-                let y = m.plot_h + category.offset + 0.5;
-                (0.5, y, m.plot_w + 0.5, y)
-            };
-            line(svg, ends, color, *width);
-        }
-    }
     let axis_x0 = |axis: &ValueAxisPlan| if axis.side > 0.0 { m.plot_w + axis.offset + 0.5 } else { 0.5 - axis.offset };
+    // Gridlines belong to the plot; the axes' own ink follows in their groups.
+    let _ = write!(svg, "<g transform=\"translate({plot_left:.2},{plot_top:.2})\">");
     if paint_value_axes {
-        for axis in axes {
-            if let Some((width, color)) = &axis.line {
-                let ends = if horizontal {
-                    let y = m.plot_h + axis.offset + 0.5;
-                    (0.5, y, m.plot_w + 0.5, y)
-                } else {
-                    let x = axis_x0(axis);
-                    (x, 0.5, x, m.plot_h + 0.5)
-                };
-                line(svg, ends, color, *width);
-            }
+        for axis in axes.iter().filter(|axis| axis.grid) {
             for &value in &axis.rungs {
                 let at = axis.pos(value, m.plot_w, m.plot_h).round() + 0.5;
-                if axis.grid {
-                    let ends = if horizontal {
-                        format!("x1=\"{at:.2}\" y1=\"0.5\" x2=\"{at:.2}\" y2=\"{:.2}\"", m.plot_h + 0.5)
-                    } else {
-                        format!("x1=\"0.5\" y1=\"{at:.2}\" x2=\"{:.2}\" y2=\"{at:.2}\"", m.plot_w + 0.5)
-                    };
-                    let _ = write!(
-                        svg,
-                        "<line {ends} stroke=\"{}\" stroke-width=\"{}\"{grid_dash}{grid_opacity}/>",
-                        xml_escape_attr(ax_y.grid.color.as_deref().ok_or_else(|| format!("{family}: axis_y.grid.color absent (theme required)"))?),
-                        ax_y.grid.width.ok_or_else(|| format!("{family}: axis_y.grid.width absent (theme required)"))?
-                    );
-                }
-                if axis.tick_len > 0.0 {
-                    let ticks = &ax_y.ticks;
-                    let (x1, y1, x2, y2) = if horizontal {
-                        let y = m.plot_h + axis.offset + 0.5;
-                        (at, y, at, y + axis.tick_len)
-                    } else {
-                        let x = axis_x0(axis);
-                        (x, at, x + axis.side * axis.tick_len, at)
-                    };
-                    let _ = write!(
-                        svg,
-                        "<line x1=\"{x1:.2}\" y1=\"{y1:.2}\" x2=\"{x2:.2}\" y2=\"{y2:.2}\" stroke=\"{}\" stroke-width=\"{}\"/>",
-                        xml_escape_attr(ticks.color.as_deref().ok_or_else(|| format!("{family}: axis_y.ticks.color absent (theme required)"))?),
-                        ticks.width.ok_or_else(|| format!("{family}: axis_y.ticks.width absent (theme required)"))?
-                    );
-                }
+                let ends = if horizontal {
+                    format!("x1=\"{at:.2}\" y1=\"0.5\" x2=\"{at:.2}\" y2=\"{:.2}\"", m.plot_h + 0.5)
+                } else {
+                    format!("x1=\"0.5\" y1=\"{at:.2}\" x2=\"{:.2}\" y2=\"{at:.2}\"", m.plot_w + 0.5)
+                };
+                let _ = write!(
+                    svg,
+                    "<line {ends} stroke=\"{}\" stroke-width=\"{}\"{grid_dash}{grid_opacity}/>",
+                    xml_escape_attr(ax_y.grid.color.as_deref().ok_or_else(|| format!("{family}: axis_y.grid.color absent (theme required)"))?),
+                    ax_y.grid.width.ok_or_else(|| format!("{family}: axis_y.grid.width absent (theme required)"))?
+                );
             }
         }
     }
     svg.push_str("</g>");
-    if paint_value_axes {
-        for axis in axes {
-            if axis.labels_shown {
-                let visible = axis.label_inks(st, m.plot_w, m.plot_h).1;
-                for ((&value, label), _) in axis.rungs.iter().zip(&axis.labels).zip(&visible).filter(|(_, &v)| v) {
-                    let along = axis.pos(value, m.plot_w, m.plot_h);
-                    let (align, baseline) = axis.anchor(st, along, m.plot_w);
-                    let text_anchor = match align {
-                        "left" => "start",
-                        "right" => "end",
-                        _ => "middle",
-                    };
-                    let shift = vega_fit::baseline_shift(baseline, st.size);
-                    let (anchor_x, anchor_y) = if horizontal {
-                        (plot_left + 0.5 + along, plot_top + m.plot_h + axis.offset + 0.5 + axis.tick_len + axis.pad)
-                    } else {
-                        (plot_left + axis_x0(axis) + axis.label_dx(), plot_top + along + 0.5)
-                    };
-                    let position = if st.angle == 0.0 {
-                        format!("x=\"{anchor_x:.2}\" y=\"{:.2}\"", anchor_y + shift)
-                    } else {
-                        format!("transform=\"translate({anchor_x:.2},{anchor_y:.2}) rotate({}) translate(0,{shift})\"", st.angle)
-                    };
-                    let _ = write!(
-                        svg,
-                        "<text {position} text-anchor=\"{text_anchor}\" font-family=\"{}\" \
-                         font-size=\"{}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
-                        vega_escape_attr(st.family),
-                        st.size,
-                        xml_escape_attr(&ax_y.labels.font.weight_str()),
-                        xml_escape_attr(
-                            ax_y.labels.font.color.as_deref().ok_or_else(|| format!("{family}: axis_y.labels.font.color absent (theme required)"))?
-                        ),
-                        xml_escape(label)
-                    );
-                }
-            }
-            if let Some(t) = &axis.title {
-                let reach = axis.reach(st);
-                if horizontal {
-                    crate::common::emit_axis_title_at(
-                        svg,
-                        &t.text,
-                        &t.style,
-                        plot_left + m.plot_w / 2.0,
-                        plot_top + m.plot_h + axis.offset + 0.5 + reach + t.pad + vega_fit::baseline_shift("top", t.size),
-                        None,
-                    );
+
+    // Vega's description of an axis over this empty scale: no category, or the degenerate domain.
+    let described = |title: &Option<Title>, style: &AxisTitle, axis: &AxisStyle, scale: CaptionScale| match title {
+        Some(t) => AxisCaption::new(&t.text, &t.style, scale),
+        None => AxisCaption::new("", style, scale),
+    }
+    .bare_if_undrawn(axis);
+    let no_values = |axis: &AxisStyle| -> Result<CaptionScale, String> {
+        Ok(CaptionScale::Discrete { values: Vec::new(), format: vega_axis_format(axis, false)? })
+    };
+
+    let paint_value = |svg: &mut String, axis: &ValueAxisPlan| -> Result<(), String> {
+        let scale = if axis.point {
+            CaptionScale::Discrete { values: axis.labels.clone(), format: vega_axis_format(ax_y, false)? }
+        } else {
+            // A scale with no rung folds an extent over nothing: Vega's inverted infinite domain.
+            let domain = if axis.rungs.is_empty() { (f64::INFINITY, f64::NEG_INFINITY) } else { axis.domain };
+            CaptionScale::Numeric { kind: NumericScale::of_axis(ax_y)?, domain, format: vega_axis_format(ax_y, true)? }
+        };
+        let caption = described(&axis.title, &ax_y.title, ax_y, scale);
+        let edge = if horizontal {
+            (plot_left + 0.5, plot_top + m.plot_h + axis.offset + 0.5)
+        } else {
+            (plot_left + axis_x0(axis), plot_top)
+        };
+        let channel = if horizontal { AxisChannel::X } else { AxisChannel::Y };
+        crate::contract::axis_group_open(svg, channel, &if axis.ghost { caption.untitled() } else { caption }, edge)?;
+        if let Some((width, color)) = &axis.line {
+            let ends = if horizontal {
+                let y = plot_top + m.plot_h + axis.offset + 0.5;
+                (plot_left + 0.5, y, plot_left + m.plot_w + 0.5, y)
+            } else {
+                let x = plot_left + axis_x0(axis);
+                (x, plot_top + 0.5, x, plot_top + m.plot_h + 0.5)
+            };
+            line(svg, ends, color, *width);
+        }
+        if axis.tick_len > 0.0 {
+            let ticks = &ax_y.ticks;
+            for &value in &axis.rungs {
+                let at = axis.pos(value, m.plot_w, m.plot_h).round() + 0.5;
+                let (x1, y1, x2, y2) = if horizontal {
+                    let y = plot_top + m.plot_h + axis.offset + 0.5;
+                    (plot_left + at, y, plot_left + at, y + axis.tick_len)
                 } else {
-                    crate::common::emit_axis_title_rotated(
-                        svg,
-                        &t.text,
-                        &t.style,
-                        plot_left + axis_x0(axis) + axis.side * reach,
-                        plot_top + m.plot_h / 2.0,
-                        axis.side,
-                        None,
-                    );
-                }
+                    let x = plot_left + axis_x0(axis);
+                    (x, plot_top + at, x + axis.side * axis.tick_len, plot_top + at)
+                };
+                let _ = write!(
+                    svg,
+                    "<line x1=\"{x1:.2}\" y1=\"{y1:.2}\" x2=\"{x2:.2}\" y2=\"{y2:.2}\" stroke=\"{}\" stroke-width=\"{}\"/>",
+                    xml_escape_attr(ticks.color.as_deref().ok_or_else(|| format!("{family}: axis_y.ticks.color absent (theme required)"))?),
+                    ticks.width.ok_or_else(|| format!("{family}: axis_y.ticks.width absent (theme required)"))?
+                );
             }
         }
-    }
-    if paint_category {
+        if axis.labels_shown {
+            let visible = axis.label_inks(st, m.plot_w, m.plot_h).1;
+            for ((&value, label), _) in axis.rungs.iter().zip(&axis.labels).zip(&visible).filter(|(_, &v)| v) {
+                let along = axis.pos(value, m.plot_w, m.plot_h);
+                let (align, baseline) = axis.anchor(st, along, m.plot_w);
+                let text_anchor = match align {
+                    "left" => "start",
+                    "right" => "end",
+                    _ => "middle",
+                };
+                let shift = crate::measure::baseline_shift(baseline, st.size);
+                let (anchor_x, anchor_y) = if horizontal {
+                    (plot_left + 0.5 + along, plot_top + m.plot_h + axis.offset + 0.5 + axis.tick_len + axis.pad)
+                } else {
+                    (plot_left + axis_x0(axis) + axis.label_dx(), plot_top + along + 0.5)
+                };
+                let position = if st.angle == 0.0 {
+                    format!("x=\"{anchor_x:.2}\" y=\"{:.2}\"", anchor_y + shift)
+                } else {
+                    format!("transform=\"translate({anchor_x:.2},{anchor_y:.2}) rotate({}) translate(0,{shift})\"", st.angle)
+                };
+                let _ = write!(
+                    svg,
+                    "<text {position} text-anchor=\"{text_anchor}\" font-family=\"{}\" \
+                     font-size=\"{}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
+                    vega_escape_attr(st.family),
+                    st.size,
+                    xml_escape_attr(&ax_y.labels.font.weight_str()),
+                    xml_escape_attr(
+                        ax_y.labels.font.color.as_deref().ok_or_else(|| format!("{family}: axis_y.labels.font.color absent (theme required)"))?
+                    ),
+                    xml_escape(label)
+                );
+            }
+        }
+        if let Some(t) = &axis.title {
+            let reach = axis.reach(st);
+            if horizontal {
+                crate::common::emit_axis_title_at(
+                    svg,
+                    &t.text,
+                    &t.style,
+                    plot_left + m.plot_w / 2.0,
+                    plot_top + m.plot_h + axis.offset + 0.5 + reach + t.pad + crate::measure::baseline_shift("top", t.size),
+                    None,
+                );
+            } else {
+                crate::common::emit_axis_title_rotated(
+                    svg,
+                    &t.text,
+                    &t.style,
+                    plot_left + axis_x0(axis) + axis.side * reach,
+                    plot_top + m.plot_h / 2.0,
+                    axis.side,
+                    None,
+                );
+            }
+        }
+        crate::contract::axis_group_close(svg);
+        Ok(())
+    };
+
+    let paint_category_axis = |svg: &mut String| -> Result<(), String> {
+        let caption = described(&category.title, &ax_x.title, ax_x, no_values(ax_x)?);
+        let edge = if horizontal {
+            let x = if category.side > 0.0 { m.plot_w + category.offset + 0.5 } else { 0.5 - category.offset };
+            (plot_left + x, plot_top)
+        } else {
+            (plot_left + 0.5, plot_top + m.plot_h + category.offset + 0.5)
+        };
+        let channel = if horizontal { AxisChannel::Y } else { AxisChannel::X };
+        crate::contract::axis_group_open(svg, channel, &caption, edge)?;
+        if let Some((width, color)) = &category.line {
+            let ends = if horizontal {
+                let x = plot_left + if category.side > 0.0 { m.plot_w + category.offset + 0.5 } else { 0.5 - category.offset };
+                (x, plot_top + 0.5, x, plot_top + m.plot_h + 0.5)
+            } else {
+                let y = plot_top + m.plot_h + category.offset + 0.5;
+                (plot_left + 0.5, y, plot_left + m.plot_w + 0.5, y)
+            };
+            line(svg, ends, color, *width);
+        }
         if let Some(t) = &category.title {
             if horizontal {
                 let x = if category.side > 0.0 { m.plot_w + category.offset + 0.5 } else { 0.5 - category.offset };
@@ -942,11 +980,26 @@ fn paint_axes(
                     &t.text,
                     &t.style,
                     plot_left + m.plot_w / 2.0,
-                    plot_top + m.plot_h + category.offset + 0.5 + t.pad + vega_fit::baseline_shift("top", t.size),
+                    plot_top + m.plot_h + category.offset + 0.5 + t.pad + crate::measure::baseline_shift("top", t.size),
                     None,
                 );
             }
         }
+        crate::contract::axis_group_close(svg);
+        Ok(())
+    };
+
+    // Vega lists the x axis before the y axis.
+    if !horizontal && paint_category {
+        paint_category_axis(svg)?;
+    }
+    if paint_value_axes {
+        for axis in axes {
+            paint_value(svg, axis)?;
+        }
+    }
+    if horizontal && paint_category {
+        paint_category_axis(svg)?;
     }
     Ok(())
 }

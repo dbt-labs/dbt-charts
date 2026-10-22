@@ -35,6 +35,9 @@ use super::table_dates::{strftime, Moment};
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
+use crate::codes;
+use crate::diagnostic::Diagnostic;
+
 use regex::Regex;
 
 /// Detected or authored calendar bucketing grain.
@@ -77,14 +80,11 @@ pub fn is_time_format(fmt: &str) -> bool {
 #[derive(Debug, Clone, Copy)]
 pub struct AuthoredTimeFormat<'a>(&'a str);
 
-/// The directives Vega paints (`utcFormat` of a UTC-midnight date, d3-time-format
-/// en-US) and `portable_strftime` measures (`text/format_d3.py`, C locale)
-/// identically, all inside production's compile-time gate
-/// (`VEGA_SAFE_TIME_DIRECTIVES`). Every other letter refuses by name: it differs
-/// between the two (`%Z %z %c %x %X`, the Python-only `%C %D %F ...`), is outside
-/// the gate (`%g`, `%s`), is not ported to `table_dates::strftime` (`%q %L %Q`),
-/// or is a time-of-day field a date-bucketed x axis does not carry.
-const AUTHORED_DIRECTIVES: &str = "aAbBdeGjmuUVwWyY";
+/// Production's compile-time gate (`VEGA_SAFE_TIME_DIRECTIVES`): the directives
+/// Vega's `utcFormat` and `portable_strftime` (`text/format_d3.py`) paint
+/// byte-identically. A date-bucketed tick is a UTC midnight, so its time-of-day
+/// directives read zeros.
+const AUTHORED_DIRECTIVES: &str = "aAbBcdeGHIjLmMpqQSuUVwWxXyY";
 
 impl<'a> AuthoredTimeFormat<'a> {
     /// `None` for an absent format or a number format; `Some` for a d3 time
@@ -107,10 +107,7 @@ impl<'a> AuthoredTimeFormat<'a> {
                 letter = chars.next();
             }
             if let Some(l) = letter.filter(|l| l.is_ascii_alphabetic() && !AUTHORED_DIRECTIVES.contains(*l)) {
-                return Err(crate::refuse!(
-                    "{family}: authored time format {fmt:?} using %{l} is not supported on a temporal x axis (supported directives: {})",
-                    AUTHORED_DIRECTIVES.chars().map(|d| format!("%{d}")).collect::<Vec<_>>().join(" ")
-                ));
+                return Err(format!("{family}: authored time format {fmt:?} uses %{l}, which production's compile-time gate rejects"));
             }
         }
         // The modifier and trailing-`%` faults `portable_strftime` rejects.
@@ -120,11 +117,20 @@ impl<'a> AuthoredTimeFormat<'a> {
     }
 
     /// The text one tick paints: `portable_strftime` of the tick's date.
+    pub fn text(self, year: i32, month: u8, day: u8) -> String {
+        self.text_of(Moment::midnight(year as u32, month.into(), day.into()), year)
+    }
+
+    /// The text of a tick at an instant in fractional days, its clock included.
+    pub fn text_at(self, at: f64) -> String {
+        let moment = clock_moment(at).expect("a plotted instant lies in the years a moment holds");
+        self.text_of(moment, civil_from_days(at.floor() as i64).0)
+    }
+
     /// d3 pads `%Y` to four digits where strftime does not, so a year before
     /// 1000 paints its `%Y` padded (`%-Y` bare, `%_Y` space-padded, `%0Y`
     /// zero-padded).
-    pub fn text(self, year: i32, month: u8, day: u8) -> String {
-        let moment = Moment::midnight(year as u32, month.into(), day.into());
+    fn text_of(self, moment: Moment, year: i32) -> String {
         if year >= 1000 {
             return strftime(moment, self.0).expect("the spec was validated at parse");
         }
@@ -193,19 +199,6 @@ pub fn axis_time_format<'a>(
     labels_format.filter(|f| is_time_format(f)).or_else(|| grain_format(formats, tu))
 }
 
-/// A time `labels.format` on a standard date no calendar grain explains: the band
-/// arm of a family (bar) refuses by name instead of painting raw band strings
-/// where production labels every tick through the format.
-pub fn refuse_authored_time_format(family: &str, labels_format: Option<&str>) -> Result<(), String> {
-    match labels_format {
-        Some(fmt) if is_time_format(fmt) => Err(crate::refuse!(
-            "{family}: an authored time `axis_x.labels.format` ({fmt:?}) on a temporal x is not \
-             supported; production paints it as the label text"
-        )),
-        _ => Ok(()),
-    }
-}
-
 /// What `resolve_label_time_unit` leaves an ordinal calendar axis to paint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LabelUnit {
@@ -266,6 +259,18 @@ impl TimePart {
             TimePart::DayOfMonth => days_from_civil(2012, 1, d) as f64,
             TimePart::DayOfYear => (base + days_from_civil(y, m, d) - days_from_civil(y, 1, 1)) as f64,
             TimePart::HourOfDay => base as f64 + f64::from(clock_hour(day)) / 24.0,
+        }
+    }
+
+    /// The strftime spec Vega-Lite's own axis format paints the part with
+    /// (`timeUnitSpecifier`).
+    pub fn format_spec(self) -> &'static str {
+        match self {
+            TimePart::MonthOfYear => "%b",
+            TimePart::DayOfWeek => "%a",
+            TimePart::DayOfMonth => "%d",
+            TimePart::DayOfYear => "%j",
+            TimePart::HourOfDay => "%H:00",
         }
     }
 
@@ -446,6 +451,9 @@ pub fn next_coarser(tu: TimeUnit) -> Option<TimeUnit> {
     }
 }
 
+/// The grains `_TEMPORAL_TICK_INTERVAL` maps to a tick interval.
+const AUTHORED_TICK_GRAINS: [&str; 5] = ["year", "yearquarter", "yearmonth", "yearweek", "yearmonthdate"];
+
 /// Parse `axis_x.time_unit` JSON string to `TimeUnit`.
 /// Returns `None` for unrecognized values (Rust renderer will skip temporal
 /// formatting and fall back to raw string labels for unknown grains).
@@ -571,7 +579,7 @@ fn parse_digits2(b: &[u8]) -> Option<u8> {
 }
 
 /// Day-of-week (0=Mon..6=Sun) using Zeller's formula for the Gregorian calendar.
-fn weekday(year: i32, month: u8, day: u8) -> u8 {
+pub(crate) fn weekday(year: i32, month: u8, day: u8) -> u8 {
     let mut y = year;
     let mut m = month as i32;
     if m < 3 {
@@ -1304,13 +1312,14 @@ pub(crate) fn parse_bucket_string(s: &str) -> Option<(i32, u32, u32)> {
 /// a column of one labeled-bucket family becomes each bucket's first day;
 /// anything else is returned unchanged. The errors are the `ValueError`s
 /// production raises for a mixed or unrecognized column.
-pub fn normalize_labeled_temporal(
-    rows: &[serde_json::Map<String, serde_json::Value>],
+pub fn normalize_labeled_temporal<'a>(
+    rows: &'a [serde_json::Map<String, serde_json::Value>],
     field: &str,
-) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, String> {
+) -> Result<std::borrow::Cow<'a, [serde_json::Map<String, serde_json::Value>]>, String> {
     use serde_json::Value;
+    use std::borrow::Cow;
     let present: Vec<&Value> = rows.iter().filter_map(|r| r.get(field)).filter(|v| !v.is_null()).collect();
-    let rewrite = |convert: &dyn Fn(&Value) -> Result<String, String>| -> Result<Vec<_>, String> {
+    let rewrite = |convert: &dyn Fn(&Value) -> Result<String, String>| -> Result<Cow<'a, [_]>, String> {
         rows.iter()
             .map(|row| {
                 let mut row = row.clone();
@@ -1319,10 +1328,11 @@ pub fn normalize_labeled_temporal(
                 }
                 Ok(row)
             })
-            .collect()
+            .collect::<Result<Vec<_>, _>>()
+            .map(Cow::Owned)
     };
     if present.is_empty() {
-        return Ok(rows.to_vec());
+        return Ok(Cow::Borrowed(rows));
     }
     if crate::common::is_year_shaped(rows, field) {
         return rewrite(&|cell| {
@@ -1348,7 +1358,7 @@ pub fn normalize_labeled_temporal(
     let family = |v: &Value| v.as_str().filter(|_| !is_iso(v)).and_then(classify_bucket);
     let labeled: Vec<&Value> = present.iter().copied().filter(|v| family(v).is_some()).collect();
     if labeled.is_empty() {
-        return Ok(rows.to_vec());
+        return Ok(Cow::Borrowed(rows));
     }
     let mixed = "Couldn't auto-detect timeUnit: column contains mixed label and non-label values. Set style.axis_x.time_unit explicitly.";
     if present.iter().any(|v| is_iso(v)) || labeled.len() < present.len() {
@@ -1374,23 +1384,17 @@ pub fn normalize_labeled_temporal(
 /// downstream (type inference, tick/label positions) ever runs, and this
 /// is the port's one seam for that same rewrite — callers that need
 /// year-shaped x parsed as a calendar date (position fractions, label
-/// text) read this instead of the raw domain. `None` when any value
-/// cannot anchor (a null x value, which `row_str` renders as `""`, is the
-/// only shape `x_is_year_shaped` admits that still fails here) — the
-/// caller refuses by name rather than silently fall through to even
-/// nominal spacing.
-pub fn year_shaped_iso_domain(domain_strs: &[&str]) -> Option<Vec<String>> {
-    domain_strs.iter().map(|v| year_from_row_str(v).map(|y| format!("{y:04}-01-01"))).collect()
+/// text) read this instead of the raw domain. `is_year_shaped` admits only
+/// values that anchor, and a null x is no bucket, so none is in the domain.
+pub fn year_shaped_iso_domain(domain_strs: &[&str]) -> Vec<String> {
+    domain_strs.iter().map(|v| format!("{:04}-01-01", year_from_row_str(v).expect("a year-shaped x anchors to a calendar year"))).collect()
 }
 
 /// Parses a year from its `row_str`-rendered form — a bare integer
 /// (`"2019"`) or an integral float (`"2019.0"`, the shape a warehouse
 /// DECIMAL/NUMERIC year takes once `Decimal` round-trips through JSON as a
 /// float, matching `common::is_year_shaped`'s own Decimal arm,
-/// `utils.py:284-313`). A non-integral value, an empty string (a null x
-/// value — `row_str` renders that as `""`), or any other unparseable
-/// string returns `None` so the caller can refuse rather than silently
-/// treat the domain as evenly spaced.
+/// `utils.py:284-313`).
 fn year_from_row_str(s: &str) -> Option<i32> {
     if let Ok(y) = s.trim().parse::<i32>() {
         return Some(y);
@@ -1932,11 +1936,117 @@ pub fn fold_steep(labels: Vec<TemporalLabel>, angle: Option<f64>, format_tu: Tim
 }
 
 /// An authored `labels.expr` rewrites each label's text from the raw band
-/// (`datum.value`): one row, no calendar vocabulary.
-pub fn rewrite_with_expr(labels: Vec<TemporalLabel>, domain: &[String], n: i64) -> Vec<TemporalLabel> {
+/// (`datum.value`): one row, no calendar vocabulary. `datum.index` counts the buckets of the axis's ticks: the
+/// whole domain, or only the labels the ladder kept.
+pub fn rewrite_with_expr(
+    labels: Vec<TemporalLabel>,
+    domain: &[String],
+    expr: &crate::labels_expr::Expr,
+    bands: ExprBands,
+) -> Result<Vec<TemporalLabel>, String> {
+    let count = match bands {
+        ExprBands::AllBuckets => domain.len(),
+        ExprBands::KeptByLadder => labels.len(),
+    };
     labels
         .into_iter()
-        .map(|l| TemporalLabel { row1: crate::common::apply_labels_expr(&domain[l.domain_idx], n), row2: String::new(), ..l })
+        .enumerate()
+        .map(|(kept, l)| {
+            let index = match bands {
+                ExprBands::AllBuckets => l.domain_idx,
+                ExprBands::KeptByLadder => kept,
+            };
+            Ok(TemporalLabel { row1: expr.rewrite_band(&domain[l.domain_idx], index, count)?, row2: String::new(), ..l })
+        })
+        .collect()
+}
+
+/// `datum.label`: the text Vega formats a tick with when the axis authors no format, which Vega-Lite takes
+/// from the grain the field is bucketed to.
+pub fn datum_label(grain: Option<TimeUnit>, day: i64) -> Result<String, String> {
+    let (y, m, d) = civil_from_days(day);
+    let fmt = |spec: &str| -> Result<String, String> {
+        Ok(AuthoredTimeFormat::parse("bar", Some(spec))?.expect("a time format").text(y, m, d))
+    };
+    match grain {
+        Some(TimeUnit::Year) => fmt("%Y"),
+        Some(TimeUnit::YearQuarter) => Ok(format!("Q{} {y}", (m - 1) / 3 + 1)),
+        Some(TimeUnit::YearMonth) => fmt("%b %Y"),
+        Some(TimeUnit::YearWeek) => fmt("W%U %Y"),
+        Some(TimeUnit::YearMonthDate) => fmt("%b %d, %Y"),
+        None => Ok(d3_multi_format(y, m, d)),
+    }
+}
+
+/// An authored `labels.expr` on a date axis speaks at each tick's instant: `datum.value` the date, `datum.label`
+/// the ladder's own text. An ordinal calendar axis reads the raw band instead ([`rewrite_with_expr`]).
+pub fn speak_labels(
+    labels: Vec<TemporalLabel>,
+    domain: &[String],
+    expr: &crate::labels_expr::Expr,
+    grain: Option<TimeUnit>,
+    ordinal: bool,
+) -> Result<Vec<TemporalLabel>, String> {
+    use crate::labels_expr::{describe, Tick, Val};
+    labels
+        .into_iter()
+        .map(|l| {
+            let date = &domain[l.domain_idx];
+            let (y, m, d) = parse_iso_date(date).ok_or_else(|| format!("line: x value {date:?} is not an ISO date"))?;
+            let day = days_from_civil(y, m, d);
+            let (value, label) = if ordinal {
+                (Val::string(date.clone()).map_err(|e| describe(&e, &format!("{date:?}")))?, date.clone())
+            } else {
+                (Val::Date(day as f64 * MS_PER_DAY), if expr.uses_label() { datum_label(grain, day)? } else { String::new() })
+            };
+            let text = expr
+                .eval(&Tick::at(l.domain_idx, domain.len(), value, &label))
+                .map_err(|e| describe(&e, &format!("{date:?}")))?;
+            Ok(TemporalLabel { row1: text, row2: String::new(), ..l })
+        })
+        .collect()
+}
+
+/// Evaluates `expr` at each of `dates`, as a date axis speaks it at its ticks: at the date's instant, or, on an
+/// `ordinal` calendar axis, at the raw band. `Some` is the first throw, described: Vega's whole view fails there,
+/// whichever dates the ticks land on. `Err` is any other failure.
+pub fn first_throw_at_dates(
+    expr: &crate::labels_expr::Expr,
+    dates: &[String],
+    ordinal: bool,
+    day_of: impl Fn(&str) -> Result<f64, String>,
+    label: impl Fn(i64) -> Result<String, String>,
+) -> Result<Option<String>, String> {
+    use crate::labels_expr::{describe, EvalError, Tick, Val};
+    for (i, date) in dates.iter().enumerate() {
+        let day = day_of(date)?;
+        let (value, text) = if ordinal {
+            (Val::string(date.clone()).map_err(|e| describe(&e, &format!("{date:?}")))?, date.clone())
+        } else {
+            (Val::Date(day * MS_PER_DAY), if expr.uses_label() { label(day.floor() as i64)? } else { String::new() })
+        };
+        match expr.eval(&Tick::at(i, dates.len(), value, &text)) {
+            Ok(_) => {}
+            Err(e @ EvalError::Throws(_)) => return Ok(Some(describe(&e, &format!("{date:?}")))),
+            Err(e) => return Err(describe(&e, &format!("{date:?}"))),
+        }
+    }
+    Ok(None)
+}
+
+/// [`speak_labels`] for a continuous axis' own ticks.
+pub fn speak_bare(ticks: Vec<BareTick>, expr: &crate::labels_expr::Expr) -> Result<Vec<BareTick>, String> {
+    use crate::labels_expr::{describe, Tick, Val};
+    let n = ticks.len();
+    ticks
+        .into_iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let text = expr
+                .eval(&Tick::at(i, n, Val::Date(t.day as f64 * MS_PER_DAY), &t.text))
+                .map_err(|e| describe(&e, &format!("the tick on day {}", t.day)))?;
+            Ok(BareTick { text, ..t })
+        })
         .collect()
 }
 
@@ -1978,7 +2088,7 @@ pub fn ordinal_date_labels(
     ladder_w: f64,
     chart_w: f64,
     usable_ratio: Option<f64>,
-    expr_n: Option<i64>,
+    expr: Option<&crate::labels_expr::Expr>,
     expr_bands: ExprBands,
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
     font_size: f64,
@@ -2035,7 +2145,7 @@ pub fn ordinal_date_labels(
             (labels, visibility_tu != data_tu, None, false)
         }
     };
-    if let Some(n) = expr_n {
+    if let Some(expr) = expr {
         labels = match (unit, expr_bands) {
             (_, ExprBands::KeptByLadder) => labels,
             (LabelUnit::Calendar(label_tu), ExprBands::AllBuckets) if label_tu != data_tu => {
@@ -2045,7 +2155,12 @@ pub fn ordinal_date_labels(
                 .map(|domain_idx| TemporalLabel { domain_idx, row1: String::new(), row2: String::new() })
                 .collect(),
         };
-        labels = rewrite_with_expr(labels, domain, n);
+        labels = rewrite_with_expr(labels, domain, expr, expr_bands)?;
+    }
+    // An authored `labels.values` blanks the label of every band outside the set.
+    if let Some(values) = &labels_cfg.values {
+        let listed: Vec<f64> = values.iter().filter_map(|v| v.as_str().and_then(iso_format_day)).collect();
+        labels.retain(|l| date_text_day(&domain[l.domain_idx]).is_none_or(|day| listed.iter().any(|d| (d - day).abs() < 1e-9)));
     }
     Ok(OrdinalDateLabels { labels, ticks_restored, angle, parity })
 }
@@ -2545,8 +2660,7 @@ fn resolve_vega_bucketed(
 /// per-timeUnit default single-row format (`type_inference.py:256`; probe-
 /// pinned in `test_vl_probe.py::vl_default_temporal_format_by_grain`). Every
 /// bucket keeps a label (no cadence coarsening — visibility stays at
-/// `data_tu`); `YearWeek` is refused since this port carries no ISO
-/// week-number arithmetic, and no corpus case authors `none` on weekly data.
+/// `data_tu`).
 pub fn vl_default_format(y: i32, m: u8, d: u8, tu: TimeUnit) -> Result<String, String> {
     match tu {
         TimeUnit::Year => Ok(format!("{y:04}")),
@@ -2557,8 +2671,11 @@ pub fn vl_default_format(y: i32, m: u8, d: u8, tu: TimeUnit) -> Result<String, S
         ),
         TimeUnit::YearMonth => Ok(format!("{} {y:04}", MONTH_ABBR[(m - 1) as usize])),
         TimeUnit::YearMonthDate => Ok(format!("{} {d:02}, {y:04}", MONTH_ABBR[(m - 1) as usize])),
+        // A week bucket starts on a Sunday, and Vega-Lite names it `%Y W%U`.
         TimeUnit::YearWeek => {
-            Err(crate::refuse!("line: labels.time_unit: none on weekly data is not supported (no ISO week arithmetic)").into())
+            let day = days_from_civil(y, m, d);
+            let (y, m, d) = civil_from_days(day - (day + 4).rem_euclid(7));
+            Ok(AuthoredTimeFormat("%Y W%U").text(y, m, d))
         }
     }
 }
@@ -2605,6 +2722,7 @@ fn resolve_none_layout(
     tilt_increments: Option<&[f64]>,
     font_size: f64,
     authored: Option<AuthoredTimeFormat>,
+    part: Option<TimePart>,
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
 ) -> Result<(Vec<TemporalLabel>, GenericLayout), String> {
     let dated: Vec<(usize, (i32, u8, u8))> = domain
@@ -2626,7 +2744,7 @@ fn resolve_none_layout(
     let mut labels = Vec::with_capacity(openers.len());
     for &p in &openers {
         let (domain_idx, (y, m, d)) = dated[p];
-        widths.push(measure(&LabelUnit::Raw(None).raw_measure_text(&domain[domain_idx], authored)?)? + gap);
+        widths.push(measure(&LabelUnit::Raw(part).raw_measure_text(&domain[domain_idx], authored)?)? + gap);
         labels.push(TemporalLabel { domain_idx, row1: none_label_text(y, m, d, data_tu, authored)?, row2: String::new() });
     }
     let gl = generic_layout(&widths, usable_width, skip, tilt, tilt_increments, font_size)?;
@@ -2710,9 +2828,16 @@ pub fn resolve_vega_x_labels(
     authored_angle: Option<f64>,
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
 ) -> Result<ResolvedVegaLabels, String> {
-    if authored_label_tu_str == Some("none") {
+    // `none` and a time part both leave Vega its own per-grain format; the part
+    // names the vocabulary the crowding test measures instead.
+    let raw_part = match authored_label_tu_str {
+        Some("none") => Some(None),
+        Some(s) => TimePart::parse(s).map(Some),
+        None => None,
+    };
+    if let Some(part) = raw_part {
         let (labels, gl) = resolve_none_layout(
-            domain, data_tu, fiscal_start, usable_width, skip, tilt, tilt_increments, font_size, authored, measure,
+            domain, data_tu, fiscal_start, usable_width, skip, tilt, tilt_increments, font_size, authored, part, measure,
         )?;
         return match authored_angle {
             None => Ok(ResolvedVegaLabels {
@@ -2740,23 +2865,6 @@ pub fn resolve_vega_x_labels(
                 })
             }
         };
-    }
-    // A time-PART grain (`monthofyear`/`dayofweek`/`dayofmonth`/
-    // `dayofyear`/`hourofday` — `style/theme/axis.py`'s
-    // `_TIME_UNIT_LITERAL`, alongside `auto`/`none`/the five calendar
-    // grains this module already models) is legal to author but unmodeled
-    // here: production routes it through `_generic_temporal_labels`, not
-    // this bucketed calendar ladder (`_label_overlap.py:339-360` — that
-    // format is not in `BUCKETED_CALENDAR_UNITS`). `parse_authored_time_unit`
-    // returning `None` for it must not be read as "unauthored" (which
-    // would silently misroute it into the bucketed ladder below, keyed on
-    // `data_tu`'s vocabulary instead of refusing).
-    if let Some(s) = authored_label_tu_str {
-        if s != "auto" && parse_authored_time_unit(s).is_none() {
-            return Err(crate::refuse!(
-                "line: axis_x.labels.time_unit {s:?} (a time-part grain) is not supported on the Vega arms"
-            ));
-        }
     }
     let authored_label_tu = authored_label_tu_str.and_then(parse_authored_time_unit);
     let format_tu = authored_label_tu.unwrap_or(data_tu);
@@ -2859,6 +2967,14 @@ pub struct TemporalLabel {
     pub row1: String,
     /// Context row — year or "Mon'YY" anchor, empty for inner ticks.
     pub row2: String,
+}
+
+impl TemporalLabel {
+    /// The lines the label paints on: its two rows, or the lines an authored `labels.expr` returned (which has no
+    /// context row).
+    pub fn rows(&self) -> usize {
+        if self.row2.is_empty() { crate::text::line_count(&self.row1) } else { 2 }
+    }
 }
 
 /// Build the label sequence for a temporal x-axis.
@@ -3445,12 +3561,17 @@ pub fn default_time_unit_text(date: &str, unit: Option<TimeUnit>) -> Result<Stri
     let (y, m, d) = parse_iso_date(&bucket).ok_or_else(unparsed)?;
     let year = u32::try_from(y).map_err(|_| format!("year {y} out of range"))?;
     let moment = super::table_dates::Moment::midnight(year, u32::from(m), u32::from(d));
+    super::table_dates::strftime(moment, unit.map_or("%b %d, %Y", time_unit_specifier))
+}
+
+/// Vega-Lite's default format for a `utc` timeUnit (`timeUnitSpecifier` over the unit's parts).
+pub fn time_unit_specifier(unit: TimeUnit) -> &'static str {
     match unit {
-        Some(TimeUnit::Year) => super::table_dates::strftime(moment, "%Y"),
-        Some(TimeUnit::YearQuarter) => Ok(format!("{y:04} Q{}", (m - 1) / 3 + 1)),
-        Some(TimeUnit::YearMonth) => super::table_dates::strftime(moment, "%b %Y"),
-        Some(TimeUnit::YearWeek) => super::table_dates::strftime(moment, "%Y W%U"),
-        Some(TimeUnit::YearMonthDate) | None => super::table_dates::strftime(moment, "%b %d, %Y"),
+        TimeUnit::Year => "%Y",
+        TimeUnit::YearQuarter => "%Y Q%q",
+        TimeUnit::YearMonth => "%b %Y",
+        TimeUnit::YearWeek => "%Y W%U",
+        TimeUnit::YearMonthDate => "%b %d, %Y",
     }
 }
 
@@ -3498,6 +3619,13 @@ pub struct BareTick {
     pub text: String,
     /// The date row a sub-day axis stacks under a midnight's label.
     pub row2: Option<String>,
+}
+
+impl BareTick {
+    /// The lines the label paints on.
+    pub fn rows(&self) -> usize {
+        if self.row2.is_some() { 2 } else { crate::text::line_count(&self.text) }
+    }
 }
 
 const MS_PER_DAY: f64 = 864e5;
@@ -3705,7 +3833,7 @@ const WEEKDAY_ABBR: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"
 /// : month<t ? (week<t ? "%a %d" : "%b %d") : year<t ? "%B" : "%Y"`), whose
 /// day-grained tail is all this module can reach: a year start takes `%Y`,
 /// any other month start `%B`, a Sunday `%b %d`, any other day `%a %d`.
-fn d3_multi_format(y: i32, m: u8, d: u8) -> String {
+pub(crate) fn d3_multi_format(y: i32, m: u8, d: u8) -> String {
     if d != 1 {
         if weekday(y, m, d) == 6 {
             format!("{} {d:02}", MONTH_ABBR[(m - 1) as usize])
@@ -3740,32 +3868,33 @@ fn tick_interval_entry(unit: TimeUnit) -> (fn(i64) -> UtcTickInterval, i64) {
 /// authored (`:1043-1047`) — so the table's own step (3 for `yearquarter`)
 /// belongs to the unauthored default cadence ([`native_tick_interval`]),
 /// never to this one. Vega turns the pair into `timeInterval(interval)` and
-/// `.every(step)` when a step is set (vega-scale `tickCount`), d3's
-/// `interval.every` flooring the step.
+/// `.every(step)` when a step is set (vega-scale `tickCount`: `if (step)`, so a
+/// step of 0 is the bare interval). `every` returns null for a negative step
+/// and d3's `ticks(null)` falls back to its default ten ticks, which is the
+/// count cadence returned then.
 ///
-/// A unit outside the table is a `ChartDataError` in production
-/// (`:1036-1041`); a step d3 cannot apply (`every` returns null below 1 and
-/// floors a fraction) is refused rather than floored.
+/// A unit outside the table is `ERR-TICKS-TIME-UNIT-NO-CADENCE`
+/// (`:1085-1099`), ahead of any step; a step below 1 is the bare interval and
+/// a negative one an uncapped count, a fraction floors like d3's `every`.
 pub fn authored_tick_interval(
     time_unit: &str,
     step: Option<f64>,
-) -> Result<UtcTickInterval, String> {
-    let step = match step {
-        None => 1,
-        Some(s) if s.is_finite() && s >= 1.0 && s.fract() == 0.0 => s as i64,
-        Some(s) => {
-            return Err(crate::refuse!(
-                "axis_x.ticks.step {s}, not a whole number of at least 1, is not supported: \
-                 d3's interval.every floors it and returns no interval below 1"
-            ))
-        }
+) -> Result<AuthoredTickCadence, Diagnostic> {
+    let Some(unit) = parse_authored_time_unit(time_unit) else {
+        return Err(Diagnostic::new(
+            &codes::ERR_TICKS_TIME_UNIT_NO_CADENCE,
+            [
+                ("grains", serde_json::json!(AUTHORED_TICK_GRAINS.join(", "))),
+                ("time_unit", serde_json::json!(time_unit)),
+            ],
+        ));
     };
-    match parse_authored_time_unit(time_unit) {
-        Some(unit) => Ok(tick_interval_entry(unit).0(step)),
-        None => Err(crate::refuse!(
-            "axis_x.ticks.time_unit {time_unit:?} without a step-anchored cadence is not supported: production (type_inference.py:1036) raises for all but year, yearquarter, yearmonth, yearweek and yearmonthdate"
-        )),
-    }
+    let interval = tick_interval_entry(unit).0;
+    Ok(match step {
+        Some(s) if s < 0.0 => AuthoredTickCadence::UncappedCount(10),
+        Some(s) if s >= 1.0 => AuthoredTickCadence::Interval(interval(s as i64)),
+        _ => AuthoredTickCadence::Interval(interval(1)),
+    })
 }
 
 /// The interval of production's default cadence: with no authored
@@ -3926,6 +4055,9 @@ fn step_months(y: i32, m: u8, by: u8) -> (i32, u8, u8) {
 pub enum AuthoredTickCadence {
     Interval(UtcTickInterval),
     Count(usize),
+    /// A count d3 takes as is, with no `tickMinStep` cap: the ten ticks of a
+    /// null interval.
+    UncappedCount(usize),
 }
 
 impl AuthoredTickCadence {
@@ -3937,8 +4069,14 @@ impl AuthoredTickCadence {
         let (lo, hi) = extent;
         match self {
             Self::Interval(interval) => day_instants(interval, lo, hi),
-            Self::Count(count) => {
-                let capped = count.min(min_step_ticks(hi - lo, tick_min_step_days(grain)));
+            Self::Count(count) | Self::UncappedCount(count) => {
+                let capped = match self {
+                    Self::Count(_) => count.min(min_step_ticks(hi - lo, tick_min_step_days(grain))),
+                    _ => count,
+                };
+                if capped == 0 {
+                    return Vec::new();
+                }
                 match utc_tick_interval(lo, hi, capped) {
                     Some(UtcTickInterval::Day(2)) => day_instants(UtcTickInterval::EpochDay(2), lo, hi),
                     Some(interval) => day_instants(interval, lo, hi),
@@ -3970,14 +4108,24 @@ fn tick_min_step_days(grain: TimeUnit) -> f64 {
 }
 
 /// An authored `ticks.count` as the count d3 asks for. The model types it
-/// `int`; d3 would also take a fraction or zero, which no board can author,
-/// so one that arrives is refused rather than rounded.
-pub fn authored_tick_count(count: f64) -> Result<usize, String> {
-    if count.is_finite() && count >= 1.0 && count.fract() == 0.0 {
-        Ok(count as usize)
-    } else {
-        Err(crate::refuse!("axis_x.ticks.count {count}, not a whole number of at least 1, is not supported"))
-    }
+/// `int`; d3's ticks of a count below 1 are none.
+pub fn authored_tick_count(count: f64) -> usize {
+    count.max(0.0) as usize
+}
+
+/// [`bare_temporal_ticks`] of a time-part axis: Vega's ticks of the part's own
+/// scale ([`time_part_ticks`]), each as a bare tick.
+pub fn part_temporal_ticks(
+    domain: (f64, f64),
+    plot_w: f64,
+    part: TimePart,
+    count: Option<usize>,
+    format: Option<AuthoredTimeFormat>,
+) -> Result<Vec<BareTick>, String> {
+    Ok(time_part_ticks(domain, plot_w, part, count, format)?
+        .into_iter()
+        .map(|t| BareTick { day: t.at, frac: t.frac, text: t.text, row2: None })
+        .collect())
 }
 
 /// Vega's own ticks for a temporal axis carrying no `values`, multi-scale
@@ -3997,9 +4145,8 @@ pub fn bare_temporal_ticks(
 ) -> Result<Vec<BareTick>, String> {
     let (lo, hi) = domain;
     let tick = |at: f64, index: usize, frac: f64| -> Result<BareTick, String> {
-        let (y, m, d) = civil_from_days(at.floor() as i64);
         let (text, row2) = match (format, subday) {
-            (Some(f), _) => (f.text(y, m, d), None),
+            (Some(f), _) => (f.text_at(at), None),
             (None, Some(plan)) => match plan.label(at, index)? {
                 Some((text, row2)) => (text, row2),
                 None => (multi_format_at(at)?, None),
@@ -4015,7 +4162,8 @@ pub fn bare_temporal_ticks(
     let instants: Vec<f64> = match (subday.and_then(|plan| plan.ladder), authored) {
         (Some(step), _) => step.instants(lo, hi),
         (None, Some(AuthoredTickCadence::Interval(interval))) => day_instants(interval, lo, hi),
-        (None, Some(AuthoredTickCadence::Count(count))) => utc_instants(lo, hi, count),
+        (None, Some(AuthoredTickCadence::Count(0))) => Vec::new(),
+        (None, Some(AuthoredTickCadence::Count(count) | AuthoredTickCadence::UncappedCount(count))) => utc_instants(lo, hi, count),
         (None, None) => utc_instants(lo, hi, crate::families::cartesian::vl_default_tick_count(plot_w).max(1)),
     };
     instants.into_iter().enumerate().map(|(index, at)| tick(at, index, (at - lo) / (hi - lo))).collect()
@@ -4023,7 +4171,7 @@ pub fn bare_temporal_ticks(
 
 /// d3's multi-scale format of a tick instant (`d3-scale`'s `calendar`): the finest unit the tick is not whole in
 /// picks the specifier.
-fn multi_format_at(at: f64) -> Result<String, String> {
+pub(crate) fn multi_format_at(at: f64) -> Result<String, String> {
     let ms = (at * MS_PER_DAY).round() as i64;
     let clock = ms.rem_euclid(864_00_000);
     let (y, m, d) = civil_from_days(ms.div_euclid(864_00_000));
@@ -4041,6 +4189,45 @@ fn multi_format_at(at: f64) -> Result<String, String> {
         "%I %p"
     };
     strftime(clock_moment(at)?, spec)
+}
+
+/// `strftime` of an instant in milliseconds since the epoch (UTC), to the second.
+pub fn format_ms(ms: f64, spec: &str) -> Result<String, String> {
+    if !ms.is_finite() {
+        return Err("an invalid date has no text".into());
+    }
+    strftime(clock_moment(ms / MS_PER_DAY)?, spec)
+}
+
+/// A date as `datetime.fromisoformat` reads it, in days: the extended form
+/// [`date_text_day`] reads, the basic `YYYYMMDD`, or an ISO week date.
+pub fn iso_format_day(text: &str) -> Option<f64> {
+    if let Some(day) = date_text_day(text) {
+        return Some(day);
+    }
+    let digits = |s: &str| s.bytes().all(|b| b.is_ascii_digit()).then(|| s.parse::<i64>().ok()).flatten();
+    if text.len() == 8 && text.bytes().all(|b| b.is_ascii_digit()) {
+        let (y, m, d) = (digits(&text[..4])?, digits(&text[4..6])?, digits(&text[6..])?);
+        return parse_iso_date(&format!("{y:04}-{m:02}-{d:02}")).map(|(y, m, d)| days_from_civil(y, m, d) as f64);
+    }
+    let rest = text.replace('-', "");
+    let (year, week, day) = (digits(rest.get(..4)?)?, digits(rest.get(5..7)?)?, rest.get(7..8).map_or(Some(1), digits)?);
+    if rest.get(4..5)? != "W" {
+        return None;
+    }
+    let jan4 = days_from_civil(year as i32, 1, 4);
+    let week1_monday = jan4 - (jan4 + 3).rem_euclid(7);
+    Some((week1_monday + (week - 1) * 7 + day - 1) as f64)
+}
+
+/// An instant in fractional days as an ISO date, with its clock when it has one.
+pub fn instant_iso(at: f64) -> String {
+    let (y, m, d) = civil_from_days(at.floor() as i64);
+    let ms = ((at - at.floor()) * MS_PER_DAY).round() as i64;
+    if ms == 0 {
+        return format!("{y:04}-{m:02}-{d:02}");
+    }
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60)
 }
 
 /// The naive wall-clock moment of an instant in fractional days, to the second.
@@ -5315,8 +5502,8 @@ mod tests {
         let x = |rows: Vec<serde_json::Map<String, serde_json::Value>>| -> Vec<String> {
             rows.iter().map(|r| r["x"].as_str().unwrap().to_string()).collect()
         };
-        assert_eq!(x(normalize_labeled_temporal(&rows(&["2024-Q1", "2024-Q2"]), "x").unwrap()), ["2024-01-01", "2024-04-01"]);
-        assert_eq!(x(normalize_labeled_temporal(&rows(&["2019", "2020"]), "x").unwrap()), ["2019-01-01", "2020-01-01"]);
+        assert_eq!(x(normalize_labeled_temporal(&rows(&["2024-Q1", "2024-Q2"]), "x").unwrap().into_owned()), ["2024-01-01", "2024-04-01"]);
+        assert_eq!(x(normalize_labeled_temporal(&rows(&["2019", "2020"]), "x").unwrap().into_owned()), ["2019-01-01", "2020-01-01"]);
         assert!(normalize_labeled_temporal(&rows(&["2023-W51", "2023-W53"]), "x").is_err(), "an out-of-range ISO week raises");
         assert!(normalize_labeled_temporal(&rows(&["2024-Q1", "2024-01-05"]), "x").is_err(), "a mix of label and date raises");
     }
@@ -5685,47 +5872,31 @@ mod tests {
         assert_eq!(vl_default_format(2024, 4, 1, TimeUnit::YearQuarter).unwrap(), "2024 Q2");
         assert_eq!(vl_default_format(2024, 2, 1, TimeUnit::YearMonth).unwrap(), "Feb 2024");
         assert_eq!(vl_default_format(2024, 1, 5, TimeUnit::YearMonthDate).unwrap(), "Jan 05, 2024");
-        assert!(vl_default_format(2024, 1, 1, TimeUnit::YearWeek).is_err());
+        assert_eq!(vl_default_format(2023, 12, 31, TimeUnit::YearWeek).unwrap(), "2023 W53");
+        assert_eq!(vl_default_format(2024, 1, 7, TimeUnit::YearWeek).unwrap(), "2024 W01");
+        assert_eq!(vl_default_format(2024, 1, 1, TimeUnit::YearWeek).unwrap(), "2023 W53", "a Monday names its Sunday's bucket");
     }
 
-    /// MEDIUM(b) round-2 regression: `axis_x.labels.time_unit` also
-    /// accepts the five time-PART grains (`monthofyear`, `dayofweek`,
-    /// `dayofmonth`, `dayofyear`, `hourofday` — `style/theme/axis.py`'s
-    /// `_TIME_UNIT_LITERAL`), which production routes through
-    /// `_generic_temporal_labels`, not the bucketed calendar ladder
-    /// (`_label_overlap.py:339-360`: that format is not in
-    /// `BUCKETED_CALENDAR_UNITS`). `parse_authored_time_unit` doesn't
-    /// recognize them, so `format_tu` silently fell back to `data_tu` and
-    /// `label_auto` stayed false — the SAME shape as an unauthored axis,
-    /// drawing the wrong (bucketed) vocabulary instead of refusing an
-    /// unmodeled combination.
+    /// `axis_x.labels.time_unit` also accepts the five time-PART grains
+    /// (`style/theme/axis.py`'s `_TIME_UNIT_LITERAL`), which leave Vega its own
+    /// per-grain format like `none` and are measured in the part's vocabulary.
     #[test]
-    fn a_time_part_labels_time_unit_refuses_rather_than_misrouting_to_the_bucketed_ladder() {
-        let dates: Vec<(i32, u8, u8)> = (1..=12).map(|m| (2024, m, 1)).collect();
+    fn a_time_part_labels_time_unit_paints_vegas_own_format_like_none() {
+        let _locale = crate::time_locale::en_us_scope();
+        let domain: Vec<String> = (1..=12).map(|m| format!("2024-{m:02}-01")).collect();
+        let resolve = |tu: &str| {
+            resolve_vega_x_labels(
+                &domain, TimeUnit::YearMonth, Some(tu), 1000.0, true, false, false, 1, true, true, Some(&TILT_LADDER),
+                11.0, None, None, &mut char_measure,
+            )
+            .expect("resolves")
+        };
+        let none = resolve("none");
         for tu in ["monthofyear", "dayofweek", "dayofmonth", "dayofyear", "hourofday"] {
-            let domain: Vec<String> =
-                dates.iter().map(|&(y, m, d)| format!("{y:04}-{m:02}-{d:02}")).collect();
-            let result = resolve_vega_x_labels(
-                &domain,
-                TimeUnit::YearMonth,
-                Some(tu),
-                1000.0,
-                true,
-                false,
-                false,
-                1,
-                true,
-                true,
-                Some(&TILT_LADDER),
-                11.0,
-                None,
-                None,
-                &mut char_measure,
-            );
-            match result {
-                Ok(_) => panic!("{tu:?} must refuse, not silently draw the bucketed ladder"),
-                Err(err) => assert!(err.contains(tu), "expected {tu:?} named in the refusal, got: {err}"),
-            }
+            let part = resolve(tu);
+            let texts = |r: &ResolvedVegaLabels| r.labels.iter().map(|l| l.row1.clone()).collect::<Vec<_>>();
+            assert_eq!(texts(&part), texts(&none), "{tu}");
+            assert_eq!(part.labels[0].row1, "Jan 2024");
         }
     }
 
@@ -5875,18 +6046,20 @@ mod tests {
     }
 
     #[test]
-    fn an_authored_count_d3_cannot_apply_is_refused_by_name() {
-        assert_eq!(authored_tick_count(8.0), Ok(8));
-        for bad in [0.0, -3.0, 2.5, f64::NAN, f64::INFINITY] {
-            let err = authored_tick_count(bad).expect_err("not a whole count of at least 1");
-            assert!(err.contains("axis_x.ticks.count"), "{bad}: {err}");
+    fn an_authored_count_below_one_ticks_nothing() {
+        assert_eq!(authored_tick_count(8.0), 8);
+        for count in [0.0, -3.0] {
+            assert_eq!(authored_tick_count(count), 0);
         }
+        let extent = utc_domain_extent(&["2022-03-17".to_string(), "2024-12-19".to_string()]).unwrap();
+        let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), 600.0, Some(AuthoredTickCadence::Count(0)), None, None).expect("ticks");
+        assert!(ticks.is_empty());
+        assert!(AuthoredTickCadence::Count(0).bucketed_ticks(TimeUnit::YearMonth, (0.0, 90.0)).is_empty());
     }
 
     fn authored_tick_texts(lo: &str, hi: &str, unit: &str, step: Option<f64>) -> Vec<String> {
         let extent = utc_domain_extent(&[lo.to_string(), hi.to_string()]).unwrap();
-        let interval = authored_tick_interval(unit, step).expect("modeled interval");
-        let authored = Some(AuthoredTickCadence::Interval(interval));
+        let authored = Some(authored_tick_interval(unit, step).expect("modeled interval"));
         let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), 600.0, authored, None, None).expect("ticks");
         ticks.into_iter().map(|t| t.text).collect()
     }
@@ -5957,22 +6130,22 @@ mod tests {
     }
 
     #[test]
-    fn an_authored_tick_unit_production_has_no_interval_for_refuses_by_name() {
+    fn an_authored_tick_unit_production_has_no_interval_for_raises_its_code() {
         for unit in ["month", "quarter", "week", "day", "none", "yearmonthdatehours"] {
             let err = authored_tick_interval(unit, None).expect_err(unit);
-            assert!(
-                err.contains("ticks.time_unit") && err.contains(unit),
-                "names the setting and the value: {err}"
-            );
+            assert_eq!(err.code, "ERR-TICKS-TIME-UNIT-NO-CADENCE");
+            assert_eq!(err.params["time_unit"], serde_json::json!(unit));
+            assert_eq!(err.params["grains"], serde_json::json!("year, yearquarter, yearmonth, yearweek, yearmonthdate"));
         }
     }
 
+    /// vega-scale `tickCount` reads `if (step)`: a step of 0 is the bare
+    /// interval, and a negative one makes `every` null, so d3 ticks its default ten.
     #[test]
-    fn an_authored_tick_step_d3_cannot_apply_refuses_by_name() {
-        for step in [0.0, -2.0, 2.5, f64::NAN] {
-            let err = authored_tick_interval("year", Some(step)).expect_err("bad step");
-            assert!(err.contains("ticks.step"), "{err}");
-        }
+    fn an_authored_tick_step_below_one_follows_vega_tick_count() {
+        let bare = authored_tick_texts("2022-03-17", "2024-12-19", "yearmonth", None);
+        assert_eq!(authored_tick_texts("2022-03-17", "2024-12-19", "yearmonth", Some(0.0)), bare);
+        assert_eq!(authored_tick_interval("year", Some(-2.0)), Ok(AuthoredTickCadence::UncappedCount(10)));
     }
 
     fn civil_iso(day: i64) -> String {
@@ -6251,22 +6424,41 @@ mod tests {
         assert!(AuthoredTimeFormat::parse("bar", Some("100%%")).unwrap().is_none());
     }
 
-    /// A directive whose Vega paint (d3-time-format, en-US) and cadence
-    /// measurement (`portable_strftime`) can differ, a d3-only one, and a time
-    /// of day refuse naming the directive; so do a modifier on a non-numeric
-    /// directive and a trailing `%`.
+    /// A letter outside production's compile-time gate is a payload fault; so
+    /// are a modifier on a non-numeric directive and a trailing `%`.
     #[test]
-    fn an_authored_format_refuses_what_vega_and_the_measurement_may_paint_differently() {
-        for letter in ['q', 'g', 'H', 'M', 'c', 'x', 'X', 'Z', 'z', 's', 'F', 'C', 'p', 'L'] {
+    fn an_authored_format_names_what_production_gates_out() {
+        for letter in ['g', 'Z', 'z', 's', 'F', 'C'] {
             let fmt = format!("%b %{letter}");
             let err = AuthoredTimeFormat::parse("bar", Some(&fmt)).expect_err(&fmt);
             assert!(err.starts_with("bar: authored time format"), "{err}");
-            assert!(err.contains(&format!("using %{letter} is not supported")), "{fmt}: {err}");
+            assert!(err.contains(&format!("uses %{letter}")), "{fmt}: {err}");
         }
         for (fmt, named) in [("%-b", "%-b"), ("%Y%", "trailing")] {
             let err = AuthoredTimeFormat::parse("bar", Some(fmt)).expect_err(fmt);
             assert!(err.contains(named), "{fmt}: {err}");
         }
+    }
+
+    /// Every directive of the gate paints: a bucket is a UTC midnight, and an
+    /// instant within a day carries its clock.
+    #[test]
+    fn iso_format_day_reads_the_basic_and_week_forms() {
+        let feb1 = days_from_civil(2024, 2, 1) as f64;
+        assert_eq!(iso_format_day("2024-02-01"), Some(feb1));
+        assert_eq!(iso_format_day("20240201"), Some(feb1));
+        assert_eq!(iso_format_day("2024-W05-4"), Some(feb1));
+        assert_eq!(iso_format_day("2024W054"), Some(feb1));
+        assert_eq!(iso_format_day("soon"), None);
+    }
+
+    #[test]
+    fn an_authored_format_paints_the_time_of_day_directives() {
+        let _locale = crate::time_locale::en_us_scope();
+        let fmt = authored("%b %d %H:%M:%S %I %p %L %q").unwrap();
+        assert_eq!(fmt.text(2024, 3, 5), "Mar 05 00:00:00 12 AM 000 1");
+        let at = days_from_civil(2024, 3, 5) as f64 + (14.0 * 3600.0 + 30.0 * 60.0 + 15.0) / 86_400.0;
+        assert_eq!(fmt.text_at(at), "Mar 05 14:30:15 02 PM 000 1");
     }
 
     #[test]
@@ -6608,5 +6800,41 @@ mod tests {
         let first: Vec<&serde_json::Value> = filled.iter().take(3).map(|r| &r["seg"]).collect();
         assert_eq!(first, [&serde_json::json!(false), &serde_json::json!(true), &serde_json::Value::Null]);
         assert_eq!(filled.len(), 9);
+    }
+}
+
+#[cfg(test)]
+mod speak_tests {
+    use super::*;
+    use crate::labels_expr::Expr;
+
+    fn label(domain_idx: usize, row1: &str) -> TemporalLabel {
+        TemporalLabel { domain_idx, row1: row1.into(), row2: "ctx".into() }
+    }
+
+    #[test]
+    fn a_date_tick_speaks_its_instant_and_the_grain_formatted_label() {
+        let _locale = crate::time_locale::en_us_scope();
+        let domain = vec!["2000-01-01".to_string(), "2000-02-01".to_string()];
+        let expr = Expr::parse("datum.label + timeFormat(datum.value, '/%m')").unwrap();
+        let spoken = speak_labels(vec![label(1, "Feb")], &domain, &expr, Some(TimeUnit::Year), false).unwrap();
+        assert_eq!((spoken[0].row1.as_str(), spoken[0].row2.as_str()), ("2000/02", ""));
+    }
+
+    #[test]
+    fn an_ordinal_axis_reads_the_raw_band_and_a_throwing_expression_errors() {
+        let domain = vec!["2000-01-01".to_string()];
+        let upper = Expr::parse("datum.value + '!'").unwrap();
+        assert_eq!(speak_labels(vec![label(0, "x")], &domain, &upper, None, true).unwrap()[0].row1, "2000-01-01!");
+        let slice = Expr::parse("slice(datum.value, 2)").unwrap();
+        assert!(speak_labels(vec![label(0, "x")], &domain, &slice, None, false).is_err());
+    }
+
+    #[test]
+    fn bare_ticks_speak_their_day() {
+        let _locale = crate::time_locale::en_us_scope();
+        let expr = Expr::parse("timeFormat(datum.value, '%Y') + datum.label").unwrap();
+        let tick = BareTick { day: 10957.0, frac: 0.0, text: "Jan".into(), row2: None };
+        assert_eq!(speak_bare(vec![tick], &expr).unwrap()[0].text, "2000Jan");
     }
 }

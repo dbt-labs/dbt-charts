@@ -4,8 +4,10 @@ eight chart families with no per-chart card render surface.
 bar, line, area, scatter, histogram, heatmap, pie, and donut structurally
 reject style.font/style.border (extra_forbidden): they render via Vega-Lite
 with no card surface distinct from the board frame, so neither field has
-anywhere to paint. A bare extra_forbidden names the field but not the reason;
-this hint says both.
+anywhere to paint. A 0.5.0 board's key is stripped by migration; where the
+migration cannot finish (an unrelated unknown key strands the board), the
+author meets the extra_forbidden instead. A bare one names the field but not
+the reason; this hint says both.
 
 The hint must be anchored to the slot, not merely to a path containing
 ``style``: ``font`` and ``border`` are among the most reused key names in the
@@ -38,8 +40,14 @@ _CHART_BODY_BY_TYPE = {
 }
 
 
-def _board(chart_type: str, style_key: str) -> str:
+# An unknown key no migration declares: it strands the whole board, so the
+# card-style key is reported as authored rather than stripped.
+_STRANDING_KEY = "not_a_chart_field: 1"
+
+
+def _board(chart_type: str, style_key: str, stranded: bool = True) -> str:
     body = _CHART_BODY_BY_TYPE[chart_type]
+    stranding = f"\n    {_STRANDING_KEY}" if stranded else ""
     return f"""
 title: T
 {_QUERY}
@@ -47,7 +55,7 @@ charts:
   c:
     type: {chart_type}
     query: q
-    {body}
+    {body}{stranding}
     style:
       {style_key}:
         {"size" if style_key == "font" else "width"}: 2
@@ -58,13 +66,29 @@ rows:
 
 @pytest.mark.parametrize("chart_type", sorted(_CHART_BODY_BY_TYPE))
 @pytest.mark.parametrize("style_key", ["font", "border"])
+def test_card_style_field_alone_is_migrated_away(
+    chart_type: str, style_key: str
+) -> None:
+    result = compile_board(_board(chart_type, style_key, stranded=False))
+
+    assert result.success, [e.message for e in result.errors]
+
+
+@pytest.mark.parametrize("chart_type", sorted(_CHART_BODY_BY_TYPE))
+@pytest.mark.parametrize("style_key", ["font", "border"])
 def test_card_style_field_raises_with_hint(chart_type: str, style_key: str) -> None:
     """style.font / style.border on the 8 card-less families names the field
     and says it is unsupported on that family — not a bare extra_forbidden dump."""
     result = compile_board(_board(chart_type, style_key))
 
     assert not result.success
-    all_text = " ".join((e.message or "") + " " + (e.hint or "") for e in result.errors)
+    errors = [
+        e
+        for e in result.errors
+        if (e.fields or {}).get("field_path", "").endswith(f"style.{style_key}")
+    ]
+    assert errors, [e.message for e in result.errors]
+    all_text = " ".join((e.message or "") + " " + (e.hint or "") for e in errors)
     assert style_key in all_text
     assert chart_type in all_text
     expected = "delete `" if style_key == "border" else "not supported"
@@ -139,12 +163,10 @@ def test_wrong_nested_font_path_keeps_its_allowed_keys_guidance() -> None:
 # --- board-level position: style.charts.<family>.<field> ---
 
 
-def _board_level(family: str, field: str, *, also_chart_local: bool = False) -> str:
+def _board_level(family: str, field: str, stranded: bool = False) -> str:
     value = "size: 40" if field == "font" else "width: 2"
     body = _CHART_BODY_BY_TYPE[family]
-    chart_local = (
-        "    style:\n      font:\n        size: 40\n" if also_chart_local else ""
-    )
+    stranding = f"    {_STRANDING_KEY}\n" if stranded else ""
     return f"""
 title: T
 {_QUERY}
@@ -158,7 +180,7 @@ charts:
     type: {family}
     query: q
     {body}
-{chart_local}rows:
+{stranding}rows:
   - c
 """
 
@@ -178,12 +200,10 @@ def test_board_level_slot_is_migrated_away_not_failed(family: str, field: str) -
 def test_board_level_slot_gets_the_hint_when_migration_cannot_finish(
     field: str,
 ) -> None:
-    """A board carrying the chart-local key too cannot reach the current
-    grammar (that half ships no Deletion), so the original mapping is reported
-    and the board-level position surfaces as an error after all — which is the
-    position that needs the hint. Same shape as the grid.gap block documented
-    in migrations/versions/v0_6_0.py."""
-    result = compile_board(_board_level("bar", field, also_chart_local=True))
+    """A stranded board cannot reach the current grammar, so the original
+    mapping is reported and the board-level position surfaces as an error after
+    all — which is the position that needs the hint."""
+    result = compile_board(_board_level("bar", field, stranded=True))
 
     assert not result.success
     board_level = [

@@ -777,8 +777,8 @@ class TestBarAxisXLabelAlignInward:
     measured-padding path (see vl_field_maps.py / bar.py's own-side gate).
 
     Path 2's design: the switch lives on the existing per-family
-    ``charts.bar.axis_x`` slot (Layer 4), not a global ``axis_band`` field
-    (which has no theme-resolved representation). ``inward``/``outward``
+    ``charts.bar.axis_x`` slot (Layer 4), not ``charts.axis_band`` (which
+    would set it on every family). ``inward``/``outward``
     resolve to concrete left/right at resolve time (see
     dbt-charts/tests/core/compile/test_style_cascade.py's
     TestOwnSideAlignEdgeMapping for the mapping itself) — the emitter only

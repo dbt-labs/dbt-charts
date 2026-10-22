@@ -249,7 +249,7 @@ fn natural_width_in_scope(payload: &MeasurePayload, fonts: &FontBook) -> Result<
         };
         return measure_natural_width(&lowered, fonts);
     }
-    let r: Resolved = serde_json::from_value(payload.resolved.clone())
+    let r: Resolved = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("table payload: {e}"))?;
     let th = &r.style.table;
     if th.transpose && !query_rows.is_empty() {

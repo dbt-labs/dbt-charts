@@ -24,6 +24,7 @@ use serde_json::Value;
 
 use crate::diagnostic::Diagnostic;
 use crate::common::{row_num, row_str, FormatSlot, MarkLabels};
+use crate::families::axis_caption::{slot_format, AxisCaption, CaptionScale, NumericScale};
 use crate::families::color_scale::ContinuousColor;
 use crate::families::legend::{LegendConfig, LegendEntry, LegendSymbol};
 use crate::svg::xml_escape_attr;
@@ -93,20 +94,11 @@ pub(crate) struct OverlayPointMark {
     pub labels: MarkLabels,
 }
 
-/// A layer's own axis paints its `labels.format` affix (`_overlay.py:1583`);
-/// every other layer format affix reaches no painter here and refuses by name
-/// instead of vanishing.
-/// `own_axis` is whether the chart's layers own their axes (`YSides`).
-pub(crate) fn refuse_unpainted_layer_affix(family: &str, raw: &Value, own_axis: bool) -> Result<(), String> {
-    #[derive(Deserialize)]
-    struct Labels {
-        #[serde(default)]
-        format: Option<FormatSlot>,
-    }
+/// A layer's `labels.format` is painted on its own axis, and a layer on the base's scale paints
+/// the same tick labels (`_overlay.py:1583`); only the tooltip's affix has no painter and refuses.
+pub(crate) fn refuse_unpainted_layer_affix(family: &str, raw: &Value) -> Result<(), String> {
     #[derive(Deserialize)]
     struct Axis {
-        #[serde(default)]
-        labels: Option<Labels>,
         #[serde(default)]
         tooltip_format: Option<FormatSlot>,
     }
@@ -115,26 +107,8 @@ pub(crate) fn refuse_unpainted_layer_affix(family: &str, raw: &Value, own_axis: 
         #[serde(default)]
         axis_y: Option<Axis>,
     }
-    let layer: Layer = serde_json::from_value(raw.clone()).map_err(|e| format!("{family}: layer payload: {e}"))?;
+    let layer: Layer = Deserialize::deserialize(raw).map_err(|e| format!("{family}: layer payload: {e}"))?;
     let Some(axis) = layer.axis_y else { return Ok(()) };
-    // A layer's own right axis paints its `labels.format` affix on every
-    // non-zero tick (`format_y_label` through `FormatSlot::paint_tick`,
-    // `compose_axis_format`, which composes `repeat: every` the same way) and
-    // the `tick_label` resolve bakes for a house SI layer format (`_layers.py`,
-    // painted through `inject_axis_numeral_expr`); a layer on the base's scale
-    // has no axis to paint it on, an anchor ladder has no layer law, and
-    // neither has the tooltip's affix.
-    if let Some(slot) = axis.labels.and_then(|labels| labels.format) {
-        let anchors = slot.repeat.as_deref() == Some("anchor");
-        if let Some(key) = slot.carried().find(|key| !own_axis || (*key == "repeat" && anchors)) {
-            let reason = if !own_axis {
-                "a layer on the base's scale paints no axis of its own"
-            } else {
-                "a layer axis bakes no anchor ladder"
-            };
-            return Err(crate::refuse!("{family}: layer axis_y.labels.format {key:?} is not supported: {reason}"));
-        }
-    }
     if let Some(key) = axis.tooltip_format.as_ref().and_then(|slot| slot.carried().next()) {
         return Err(format!("{family}: layer axis_y.tooltip_format {key:?} is not painted: a layer tooltip's affix is unprobed against production"));
     }
@@ -345,7 +319,7 @@ impl OverlayLineLayer {
     /// Parses a `line` or `area` layer, whose `area_mark` must agree with its type.
     pub(crate) fn parse(raw: &Value, family: &str) -> Result<Self, String> {
         let layer: OverlayLineLayer =
-            serde_json::from_value(raw.clone()).map_err(|e| format!("{family}: layer payload: {e}"))?;
+            Deserialize::deserialize(raw).map_err(|e| format!("{family}: layer payload: {e}"))?;
         let is_area = raw.get("type").and_then(Value::as_str) == Some("area");
         if is_area != layer.area_mark.is_some() {
             return Err(format!("{family}: a layer's type and its area_mark disagree: an area layer carries the one, a line layer neither"));
@@ -1772,7 +1746,7 @@ pub(crate) fn paint_layer_value_labels(
         crate::common::write_value_label(
             svg,
             m.x + spot.dx,
-            m.y + spot.dy + crate::vega_fit::baseline_shift(spot.baseline, style.font.size),
+            m.y + spot.dy + crate::measure::baseline_shift(spot.baseline, style.font.size),
             spot.align,
             &style.font.family,
             style.font.size,
@@ -1875,7 +1849,7 @@ impl OverlayScatterLayer {
     /// always bakes its size (`0` draws a zero-radius point, as production's
     /// `M0,0` symbol does).
     pub(crate) fn parse(raw: &Value, family: &str) -> Result<Self, String> {
-        let layer: Self = serde_json::from_value(raw.clone()).map_err(|e| format!("{family}: layer payload: {e}"))?;
+        let layer: Self = Deserialize::deserialize(raw).map_err(|e| format!("{family}: layer payload: {e}"))?;
         match layer.point_mark.size {
             None => Err(format!("{family}: layer payload: a scatter layer has no point_mark.size")),
             Some(size) if size < 0.0 => {
@@ -1996,7 +1970,7 @@ pub(crate) struct OverlayBarLayer {
 
 impl OverlayBarLayer {
     pub(crate) fn parse(raw: &Value, family: &str) -> Result<Self, String> {
-        serde_json::from_value(raw.clone()).map_err(|e| format!("{family}: layer payload: {e}"))
+        Deserialize::deserialize(raw).map_err(|e| format!("{family}: layer payload: {e}"))
     }
 }
 
@@ -2172,6 +2146,8 @@ pub(crate) struct LayerAxis {
     /// Whether the layer's own grid paints: its authored `grid.visible`, else the base's.
     pub grid_visible: bool,
     pub title_text: String,
+    /// Vega's description of the layer's axis.
+    pub caption: AxisCaption,
     /// The fit ink this title reserves (0.0 when the theme suppresses axis
     /// titles or `title_text` is empty) — the SAME formula the base's own
     /// `val_title_extra` uses, gated on this layer's own band since the
@@ -2647,6 +2623,17 @@ impl<'a> ScaledLayer<'a> {
             None => crate::common::axis_title_text(self.y, self.label, field_labels)?,
         };
         let title_extra = crate::common::y_title_extra(title_style, &title_text);
+        let caption = AxisCaption::new(
+            &title_text,
+            title_style,
+            CaptionScale::Numeric {
+                kind: NumericScale::Linear,
+                domain: (domain_min, domain_max),
+                // An authored layer format is the layer encoding's own `format`, which the axis description reads
+                // whatever the affix.
+                format: layer_format.map_or(Ok(None), |slot| slot_format(slot, base_bare || own_format.is_some(), true))?,
+            },
+        );
         let own_scale = self.axis_y.scale.as_ref().filter(|scale| scale.domain.is_some());
         let cut = match own_scale {
             Some(scale) if self.rows.iter().filter_map(|row| row_num(row, self.y)).any(|v| {
@@ -2671,6 +2658,7 @@ impl<'a> ScaledLayer<'a> {
             gutter,
             grid_visible: self.grid_visible(ax_y),
             title_text,
+            caption,
             title_extra,
         })
     }
@@ -2711,7 +2699,7 @@ pub(crate) fn paint_layer_axis(
     };
     let label_x = edge_x + outward * la.label_offset;
     let title_x = edge_x + outward * la.gutter;
-    crate::contract::axis_group_open(svg, crate::contract::AxisChannel::Y, (edge_x, top))?;
+    crate::contract::axis_group_open(svg, crate::contract::AxisChannel::Y, &la.caption, (edge_x, top))?;
     for (&tv, label) in la.tick_values.iter().zip(&la.tick_labels) {
         let tick_y = top + scale.position(tv) + 0.5;
         if tick_y < top - 1.0 || tick_y > bottom + 1.0 {
@@ -2725,7 +2713,7 @@ pub(crate) fn paint_layer_axis(
             outward,
             ink.tick_size,
         )?;
-        let y = tick_y + crate::vega_fit::baseline_shift("middle", ink.font_size);
+        let y = tick_y + crate::measure::baseline_shift("middle", ink.font_size);
         let _ = std::fmt::Write::write_fmt(
             svg,
             format_args!(
@@ -2931,6 +2919,11 @@ mod tests {
             gutter: 20.0,
             grid_visible: false,
             title_text: String::new(),
+            caption: AxisCaption {
+                bare: false,
+                title: None,
+                scale: CaptionScale::Numeric { kind: NumericScale::Linear, domain: (0.0, 10.0), format: None },
+            },
             title_extra: 15.0,
             cut: DomainCut::Within,
         }

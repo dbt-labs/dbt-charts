@@ -171,7 +171,7 @@ EXPECTED_ASSETS: list[tuple[str, str]] = [
     ("dbt_charts/core/defaults/default_config.yml", "default project config"),
     (
         "dbt_charts/core/defaults/themes/_base.yaml",
-        "_base theme — structural root, no colors/fonts",
+        "_base theme — structural root every theme extends",
     ),
     (
         "dbt_charts/core/defaults/themes/clarity.yaml",
@@ -179,7 +179,7 @@ EXPECTED_ASSETS: list[tuple[str, str]] = [
     ),
     (
         "dbt_charts/core/defaults/themes/stark.yaml",
-        "stark (structural-root) theme — required by every render",
+        "stark theme — user-facing pick and diagnostics parent",
     ),
     # Palette tree — one anchor per subdirectory catches whole-subdirectory drops.
     (

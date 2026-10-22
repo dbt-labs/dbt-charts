@@ -27,6 +27,7 @@ _UNIT_SUFFIXES: dict[str, tuple[Literal["symbol", "word"], str]] = {
     "seconds": ("symbol", "(s)"),
     "mins": ("symbol", "(min)"),
     "hrs": ("symbol", "(h)"),
+    "ms": ("symbol", "(ms)"),
 }
 
 _ABBREVIATIONS: dict[str, tuple[Literal["symbol", "word"], str]] = {
@@ -54,10 +55,16 @@ _ABBREVIATIONS: dict[str, tuple[Literal["symbol", "word"], str]] = {
                 "hr",
                 "mpg",
                 "ip",
+                "gdp",
+                "kpi",
+                "sku",
+                "cpu",
+                "ebitda",
             ]
         )
     },
     "enps": ("symbol", "eNPS"),
+    "ios": ("symbol", "iOS"),
 }
 
 

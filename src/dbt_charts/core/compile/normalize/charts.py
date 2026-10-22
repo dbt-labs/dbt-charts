@@ -705,6 +705,11 @@ def _build_cartesian(
         expand_composed_variable_dependencies(query_registry, layer_queries)
         for name in layer_queries:
             base["variable_dependencies"] |= query_registry[name].variable_dependencies
+        extra["layer_query_formats"] = {
+            name: formats
+            for name in layer_queries
+            if (formats := query_registry[name].formats)
+        }
     return cls(
         **base,
         **shared,

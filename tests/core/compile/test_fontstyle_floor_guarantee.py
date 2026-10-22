@@ -2,8 +2,7 @@
 
 The render layer previously used `field if field else <hardcoded>` ternaries on
 FontStyle fields.  These are unreachable after a normal theme resolution because
-_base.yaml guarantees font.size/weight and stark.yaml guarantees font.family for
-every built-in theme.
+_base.yaml guarantees font.size/weight/family for every built-in theme.
 
 These tests lock the invariant so the asserts that replaced the ternaries are safe.
 The parameterized test covers every shipped theme so a regression in any single
@@ -21,7 +20,7 @@ from dbt_charts.core.compile.config import (
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
 # All named (non-infrastructure) themes.  _base is the abstract root — it has no
-# font.family or font.color and is never used directly at render time.
+# font.color and is never used directly at render time.
 _RENDERABLE_THEMES = [t for t in list_built_in_themes() if t != "_base"]
 
 
@@ -32,7 +31,7 @@ def test_table_floor_holds_for_theme(theme_name: str) -> None:
     Covers the four fields asserted by the table render layer:
       - charts.table.font.size       (_base.yaml floor)
       - charts.table.font.weight     (_base.yaml floor)
-      - charts.table.font.family     (stark.yaml floor, inherited by all named themes)
+      - charts.table.font.family     (_base.yaml floor)
       - charts.table.header.font.weight  (_base.yaml floor)
     """
     rs = resolve_chart_style_context(get_theme_style(theme_name))

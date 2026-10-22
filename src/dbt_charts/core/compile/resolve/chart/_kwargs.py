@@ -45,7 +45,10 @@ from dbt_charts.core.compile.models.style.theme import (
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     CategoryColorScale,
 )
-from dbt_charts.core.compile.resolve.chart._channels import _column_numeric_values
+from dbt_charts.core.compile.resolve.chart._channels import (
+    _column_numeric_values,
+    flag_categorical_color,
+)
 from dbt_charts.core.compile.resolve.style.category_colors import (
     categorical_channel_fields,
 )
@@ -294,6 +297,7 @@ def _base_kwargs(
         if normalized.conditional_formatting
         else None
     )
+    category_colors = _bound_scales(normalized, chart_style_context, effective_palette)
     return {
         "id": normalized.id,
         "source_path": normalized.source_path,
@@ -312,10 +316,10 @@ def _base_kwargs(
             if requested_alias_palette is not None
             else None
         ),
-        "category_colors": _bound_scales(
-            normalized, chart_style_context, effective_palette
+        "category_colors": category_colors,
+        "resolved_channels": flag_categorical_color(
+            channels, frozenset(s.field for s in category_colors)
         ),
-        "resolved_channels": channels,
         "legend": legend,
         "layout_padding": to_padding_style(layout_padding),
     }

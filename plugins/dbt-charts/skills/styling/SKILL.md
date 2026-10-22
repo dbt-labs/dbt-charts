@@ -21,7 +21,7 @@ For no border, omit `border`; `border: none` is rejected.
 - `accent`: Accent color token cascaded to sparklines, bars, and focus rings
 - `muted`: Muted secondary-text color token (KPI support rows, table and spark subtitles)
 - `font` (mapping): Root font: literal family, size, weight, color; never a `fonts` name
-- `fonts` (map of mapping): Named fonts as ``<name>: {family, size, weight, color}``, never a bare family string; other font slots reference one as ``font: <name>`` or ``font: {extends: <name>, ...}``. ``heading`` carries the H1–H6 ramp in ``sizes``. An entry no slot references paints nothing
+- `fonts` (map of mapping): Named fonts as ``<name>: {family, size, weight, color}``, never a bare family string; other font slots reference one as ``font: <name>`` or ``font: {extends: <name>, ...}``. ``heading`` carries the H1–H6 ramp in ``sizes`` and ``section`` the H2–H6 section-title sizes. Any other entry no slot references paints nothing
 - `formats` (map of text|{spec, prefix, suffix, notation, sign_placement, repeat}): Format alias map; None means no aliases at this cascade level
 - `palettes` (map of name): Theme palette role assignments: role name to a built-in palette name, never a color. Custom colors go in ``charts.color.categorical.palette: [hex, ...]``. Default seed: chrome, info, negative, positive, warning, category, sequence, diverge
 - `border` (text|{radius, color, width, dash_array, line_cap, dash_offset}): Frame drawn around the whole board: `{width, color, radius}` or `'2px solid #333'`. Omit the key for no border
@@ -79,7 +79,7 @@ Also exist: `sign_placement`, `repeat`.
 - `default_table_height` (number): Placeholder table height in pixels
 - `marks` (mapping): Global mark defaults (tier-1 of the marks cascade)
 - `font` (mapping): Chart-level font overrides
-Also exist: `legend`, `preferred_width`, `padding`, `background`, `aspect_ratio`, `min_height`, `max_height`, `color`, `title`, `hover_emphasis`, `dashes`, `label_usable_ratio`, `axis`, `axis_x`, `axis_y`, `axis_quantitative`, `view`, `bar`, `line`, `area`, `scatter`, `histogram`, `heatmap`, `geoshape`, `point_map`, `pie`, `donut`, `series_label`, `kpi`, `table`, `spark_bar`, `support_table`, `callout`.
+Also exist: `legend`, `preferred_width`, `padding`, `background`, `aspect_ratio`, `min_height`, `max_height`, `color`, `title`, `hover_emphasis`, `dashes`, `label_usable_ratio`, `axis`, `axis_x`, `axis_y`, `axis_quantitative`, `axis_band`, `view`, `bar`, `line`, `area`, `scatter`, `histogram`, `heatmap`, `geoshape`, `point_map`, `pie`, `donut`, `series_label`, `kpi`, `table`, `spark_bar`, `support_table`, `callout`.
 
 `style.charts.bar, a bar chart's style`:
 - `background`: Chart-local background color override; None inherits from theme

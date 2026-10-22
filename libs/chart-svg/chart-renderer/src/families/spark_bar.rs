@@ -291,7 +291,7 @@ pub(crate) fn title_geometry(resolved: &Value, geometry: &SparkBarTitle) -> Resu
 }
 
 pub fn render(payload: &Payload, _fonts: &FontBook) -> Result<String, Diagnostic> {
-    let r: Resolved = serde_json::from_value(payload.resolved.clone())
+    let r: Resolved = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("spark_bar: resolved payload: {e}"))?;
     let sc = &r.style.spark_bar;
     let rows = &payload.rows;

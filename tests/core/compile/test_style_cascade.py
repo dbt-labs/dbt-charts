@@ -61,8 +61,7 @@ from ..conftest import baked_format
 
 # `_base` is the hidden completeness floor beneath every built-in theme, not
 # itself an author-facing pick; `diagnostics-*` themes are render-diagnostic
-# fixtures. Everything else -- including `stark`, the structural root every
-# user-facing theme extends -- gets the unresolved-token property check.
+# fixtures. Everything else gets the unresolved-token property check.
 _RESOLVABLE_BUILT_IN_THEMES = [
     name
     for name in list_built_in_themes()
@@ -354,12 +353,10 @@ class TestChartTypeGapHandlingCascade:
 
 class TestChartTypeAxisAlignCascade:
     """``label.align: inward`` is theme-settable via the existing Layer-4
-    chart-type axis patch (``charts.<family>.axis_x``/``axis_y``) — not a
-    global ``axis_band`` slice, which has no theme-resolved representation
-    (see ``resolved_axis_style``'s comment: "axis_band has no theme-resolved
-    representation; only chart-local applies"). Reusing the live per-family
-    wiring means a theme default reaches the categorical axis with no cascade
-    surgery.
+    chart-type axis patch (``charts.<family>.axis_x``/``axis_y``), not through
+    ``charts.axis_band``, which sets the same value on every family. Reusing the
+    live per-family wiring means a theme default reaches the categorical axis
+    with no cascade surgery.
 
     ``inward``/``outward`` only resolve to a concrete left/right once the
     axis's final edge is known — ``resolved_axis_style()``'s default

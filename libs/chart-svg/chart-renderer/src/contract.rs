@@ -7,7 +7,9 @@
 //! See `docs/laws-shared.md#front-end-contract`.
 
 use display_text::language::tr;
+use crate::families::axis_caption::AxisCaption;
 use crate::common::FormatSlot;
+use crate::node::Attrs;
 use crate::svg::xml_escape_attr;
 use std::fmt::Write as _;
 
@@ -76,10 +78,12 @@ pub enum AxisChannel {
 }
 
 /// Open the labeled axis group Vega draws around an axis's ticks, labels and
-/// domain: `.role-axis` carrying the `X-axis` / `Y-axis` description, whose
-/// first child `<g>` is the axis's own coordinate frame. The runtime reads that
-/// frame's origin as the x-axis baseline (`panelXAxis`, the drop line's foot)
-/// and the group's rendered box as the y-axis's vertical band (`yAxisBands`).
+/// domain: `.role-axis` carrying Vega's description of the axis (`caption`),
+/// which Vega writes in English whatever the board's language,
+/// whose first child `<g>` is the axis's own coordinate frame. The runtime reads
+/// that frame's origin as the x-axis baseline (`panelXAxis`, the drop line's
+/// foot) and the group's rendered box as the y-axis's vertical band
+/// (`yAxisBands`).
 ///
 /// This engine draws axis items in plot-card coordinates, so the frame is
 /// opened at `origin` and the items sit in a second `<g>` that undoes the
@@ -88,19 +92,20 @@ pub enum AxisChannel {
 pub fn axis_group_open(
     out: &mut String,
     channel: AxisChannel,
+    caption: &AxisCaption,
     origin: (f64, f64),
 ) -> Result<(), String> {
-    let (label_id, key) = match channel {
-        AxisChannel::X => ("aria.x_axis", "x-axis"),
-        AxisChannel::Y => ("aria.y_axis", "y-axis"),
+    let key = match channel {
+        AxisChannel::X => "x-axis",
+        AxisChannel::Y => "y-axis",
     };
-    let label = xml_escape_attr(&tr(label_id, None, &[])?);
-    let axis = xml_escape_attr(&tr("aria.axis", None, &[])?);
+    let label = xml_escape_attr(&caption.describe(channel)?);
     let (ox, oy) = origin;
+    let bare = if caption.bare { BARE_AXIS_MARK } else { "" };
     let _ = write!(
         out,
-        "<g class=\"mark-group role-axis\" data-dct-role=\"{key}\" role=\"graphics-symbol\" \
-         aria-roledescription=\"{axis}\" aria-label=\"{label}\"><g transform=\"translate({ox:.3},{oy:.3})\">\
+        "<g class=\"mark-group role-axis\"{bare} data-dct-role=\"{key}\" role=\"graphics-symbol\" \
+         aria-roledescription=\"axis\" aria-label=\"{label}\"><g transform=\"translate({ox:.3},{oy:.3})\">\
          <g transform=\"translate({nx:.3},{ny:.3})\">",
         nx = -ox,
         ny = -oy,
@@ -108,8 +113,22 @@ pub fn axis_group_open(
     Ok(())
 }
 
+/// Marks the opener of an axis group Vega-Lite drops; [`axis_group_close`]
+/// unwraps it.
+const BARE_AXIS_MARK: &str = " data-dct-bare=\"1\"";
+
 pub fn axis_group_close(out: &mut String) {
-    out.push_str("</g></g></g>");
+    let opener = out.rfind("<g class=\"mark-group role-axis\"").expect("an axis group is open");
+    if !out[opener..].starts_with(&format!("<g class=\"mark-group role-axis\"{BARE_AXIS_MARK}")) {
+        out.push_str("</g></g></g>");
+        return;
+    }
+    // The wrapper is three tags, none with a `>` inside.
+    let mut end = opener;
+    for _ in 0..3 {
+        end += out[end..].find('>').expect("an axis opener has three tags") + 1;
+    }
+    out.replace_range(opener..end, "");
 }
 
 /// The authored label an axis title edits: the key a click-to-edit writes back.
@@ -133,35 +152,46 @@ pub fn axis_title_group_open(out: &mut String, key: Option<LabelKey>) {
     let _ = write!(out, "<g class=\"mark-text role-axis-title\" pointer-events=\"none\"{kind}>");
 }
 
-/// Open Vega's symbol-legend group (`role-legend`): the thumbnail strips it
-/// and the hover runtime skips a cursor inside it. It holds the title and
-/// the entries group. Close each legend opener with [`mark_group_close`].
-pub fn legend_open(out: &mut String) {
-    out.push_str("<g class=\"mark-group role-legend\">");
+/// Vega's symbol-legend group (`role-legend`): the thumbnail strips it and
+/// the hover runtime skips a cursor inside it. It holds the title and the
+/// entries group.
+pub fn legend_attrs() -> Attrs {
+    Attrs::new().set("class", "mark-group role-legend")
 }
 
-/// Open a legend's title group (`role-legend-title`).
-pub fn legend_title_open(out: &mut String) {
-    out.push_str("<g class=\"mark-text role-legend-title\" pointer-events=\"none\">");
+/// A legend's title group (`role-legend-title`).
+pub fn legend_title_attrs() -> Attrs {
+    Attrs::new().set("class", "mark-text role-legend-title").set("pointer-events", "none")
 }
 
-/// Open the one group holding every legend entry (`role-legend-entry`).
-pub fn legend_entries_open(out: &mut String) {
-    out.push_str("<g class=\"mark-group role-legend-entry\">");
+/// The one group holding every legend entry (`role-legend-entry`).
+pub fn legend_entries_attrs() -> Attrs {
+    Attrs::new().set("class", "mark-group role-legend-entry")
 }
 
-/// Open one entry's swatch group (`role-legend-symbol`).
-pub fn legend_symbol_open(out: &mut String) {
-    out.push_str("<g class=\"mark-symbol role-legend-symbol\" pointer-events=\"none\">");
+/// One entry's swatch group (`role-legend-symbol`).
+pub fn legend_symbol_attrs() -> Attrs {
+    Attrs::new().set("class", "mark-symbol role-legend-symbol").set("pointer-events", "none")
 }
 
-/// Open the group Vega draws around legend label text (`role-legend-label`):
-/// the runtime reads a legend's labels from it. A gradient legend has one for
-/// all its tick labels, a size legend one per row. `series_attr` is the
-/// `data-dbt-series` join key (`_stamp_series_keys`), empty when none is baked.
-/// Close with [`mark_group_close`].
-pub fn legend_label_open(out: &mut String, series_attr: &str) {
-    let _ = write!(out, "<g class=\"mark-text role-legend-label\" pointer-events=\"none\"{series_attr}>");
+const LEGEND_LABEL_CLASS: &str = "mark-text role-legend-label";
+
+/// The group Vega draws around legend label text (`role-legend-label`): the
+/// runtime reads a legend's labels from it. A gradient legend has one for all
+/// its tick labels, a symbol legend one per entry. `series_key` is the
+/// `data-dbt-series` join key (`_stamp_series_keys`), `None` when none is baked.
+pub fn legend_label_attrs(series_key: Option<&str>) -> Attrs {
+    let attrs = Attrs::new().set("class", LEGEND_LABEL_CLASS).set("pointer-events", "none");
+    match series_key {
+        Some(key) => attrs.set("data-dbt-series", key),
+        None => attrs,
+    }
+}
+
+/// [`legend_label_attrs`] as an open tag, for `SizeLegend::paint`, which builds
+/// its markup as a string. Close with [`mark_group_close`].
+pub fn legend_label_open(out: &mut String) {
+    let _ = write!(out, "<g class=\"{LEGEND_LABEL_CLASS}\" pointer-events=\"none\">");
 }
 
 /// Open the group Vega draws around a facet header (`role-title-text`). The
@@ -183,7 +213,15 @@ pub fn facet_header_open(out: &mut String, header: &str) -> Result<(), String> {
 /// Whether `svg` announces nothing but axes: no mark carries an `aria-label`.
 #[cfg(test)]
 pub(crate) fn has_no_mark_labels(svg: &str) -> bool {
-    !svg.replace(" aria-label=\"X-axis\"", "").replace(" aria-label=\"Y-axis\"", "").contains("aria-label")
+    let mut rest = svg;
+    while let Some(at) = rest.find("aria-label=\"") {
+        let label = &rest[at + "aria-label=\"".len()..];
+        if !(label.starts_with("X-axis") || label.starts_with("Y-axis")) {
+            return false;
+        }
+        rest = &label[label.find('"').expect("an attribute value closes")..];
+    }
+    true
 }
 
 /// Open the group Vega draws around a connected series' path (`kind` is `line`
@@ -1273,10 +1311,34 @@ mod tests {
     #[test]
     fn axis_groups_carry_a_machine_role_key() {
         let mut out = String::new();
-        axis_group_open(&mut out, AxisChannel::X, (0.0, 0.0)).unwrap();
-        axis_group_open(&mut out, AxisChannel::Y, (0.0, 0.0)).unwrap();
+        axis_group_open(&mut out, AxisChannel::X, &empty_caption(false), (0.0, 0.0)).unwrap();
+        axis_group_open(&mut out, AxisChannel::Y, &empty_caption(false), (0.0, 0.0)).unwrap();
         assert_eq!(out.matches(" data-dct-role=\"x-axis\"").count(), 1);
         assert_eq!(out.matches(" data-dct-role=\"y-axis\"").count(), 1);
+    }
+
+    fn empty_caption(bare: bool) -> AxisCaption {
+        AxisCaption {
+            title: None,
+            scale: crate::families::axis_caption::CaptionScale::Discrete { values: Vec::new(), format: None },
+            bare,
+        }
+    }
+
+    #[test]
+    fn a_bare_axis_group_unwraps_and_keeps_what_it_held() {
+        let mut out = String::from("<g>");
+        axis_group_open(&mut out, AxisChannel::X, &empty_caption(true), (1.0, 2.0)).unwrap();
+        out.push_str("<text>t</text>");
+        axis_group_close(&mut out);
+        assert_eq!(out, "<g><text>t</text>");
+    }
+
+    #[test]
+    fn an_axis_group_describes_its_scale() {
+        let mut out = String::new();
+        axis_group_open(&mut out, AxisChannel::Y, &empty_caption(false), (0.0, 0.0)).unwrap();
+        assert!(out.contains(" aria-label=\"Y-axis for a discrete scale with 0 values: \""), "{out}");
     }
 
     // ── authored_kind_attr / safe_svg_id ────────────────────────────────

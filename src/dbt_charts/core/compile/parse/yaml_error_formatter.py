@@ -891,10 +891,9 @@ def _extra_field_diagnostic(
             fields=fields,
         )
 
-    # Authored grid.gap is inert (resolve reads style.layout.grid.gap instead)
-    # and declarable but unconverted: the ("grid", "gap") tail also matches the
-    # live style key, so it is legal only root-anchored. Until it is declared,
-    # this hint is the whole author-facing story.
+    # Authored grid.gap is inert (resolve reads style.layout.grid.gap instead).
+    # A 0.5.0 board's gap is stripped by migration; this hint is what an author
+    # sees where migration cannot finish, or past the support window.
     # `grid:` also names axis-gridline blocks, which are a different key
     # entirely -- so ask the schema which model the parent is rather than
     # guessing from the path's names.

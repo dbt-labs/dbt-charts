@@ -277,6 +277,7 @@ def _build_chart_style_context(
     cascaded: Style,
     card_padding: float,
     heading_sizes: list[float],
+    section_sizes: list[float],
     formats: FormatTable | None = None,
 ) -> ChartStyleContext:
     # Deferred: a module-level import here would cycle back through
@@ -312,6 +313,7 @@ def _build_chart_style_context(
         "cascaded",
         "card_padding",
         "heading_sizes",
+        "section_sizes",
     }
     # Chart-local-only fields that have no representation on ChartsStyle —
     # they're populated only by build_chart_style_context from a chart's
@@ -419,6 +421,7 @@ def _build_chart_style_context(
         cascaded=cascaded,
         card_padding=card_padding,
         heading_sizes=heading_sizes,
+        section_sizes=section_sizes,
     )
 
 
@@ -573,6 +576,7 @@ def _finalize_chart_style_context(
         formats=_format_table(cascaded, currency),
         card_padding=cascaded.frame.card_padding,
         heading_sizes=pre_style.heading_ramp(),
+        section_sizes=pre_style.section_ramp(),
     )
 
 

@@ -346,6 +346,27 @@ class WarningsConfig(ConfigMappingBase):
     ignore: list[str] | None = None  # None = `ignore:` absent or left empty
 
 
+class ExposureOwner(ConfigMappingBase):
+    name: str | None = None  # None = email-only owner
+    email: str | None = None  # None = name-only owner
+
+    @model_validator(mode="after")
+    def _name_or_email(self) -> ExposureOwner:
+        # dbt rejects an exposure owner with neither.
+        if self.name is None and self.email is None:
+            raise ValueError("exposures.owner needs a name or email")
+        return self
+
+
+class ExposuresConfig(ConfigMappingBase):
+    owner: ExposureOwner
+    path: str = Field(
+        default="models/dbt_charts/exposures.yml",
+        description="Output file, relative to the dbt project root; must sit "
+        "under one of dbt_project.yml's model-paths.",
+    )
+
+
 class Config(ConfigMappingBase):
     """Authoritative required runtime settings model.
 
@@ -410,6 +431,8 @@ class Config(ConfigMappingBase):
     # and validates the whole file, so dropping the field would fail
     # load_config for every project that sets it. None = no block.
     warnings: WarningsConfig | None = None
+    # None = exposure emission not configured; `dct exposures` refuses to run.
+    exposures: ExposuresConfig | None = None
 
     @field_validator("published_to")
     @classmethod

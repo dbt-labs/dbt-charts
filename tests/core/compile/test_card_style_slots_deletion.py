@@ -3,9 +3,9 @@
 Board-level ``style.charts.<family>.font`` / ``.border`` were accepted by the
 0.5.0 grammar and are auto-stripped by ``dct migrate`` (Deletion declared at
 the 0.5.0 -> 0.6.0 boundary in ``versions/v0_6_0.py``). The chart-local
-position (``charts.<id>.style.font`` / ``.border``) is declarable but
-unconverted -- its only available tails are live on the families that keep
-theirs, so it needs per-family ``chart_type`` scoping -- and fails loud today.
+position (``charts.<id>.style.font`` / ``.border``) has no family segment of
+its own, and its tails stay live on kpi, table and callout, so each family's
+Deletion is scoped by ``chart_type`` and confined by ``_live_declares_tail``.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import warnings
 from typing import Any
 
 import pytest
+import yaml
 
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
@@ -28,6 +29,7 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
 )
+from dbt_charts.core.utils import YAML_LOADER
 
 from ._migration_declarations import schema_has_tail
 
@@ -156,31 +158,71 @@ def test_live_marks_bar_border_survives_migration(
     AuthoredBoard.model_validate(migrated)
 
 
-@pytest.mark.parametrize("field", ["font", "border"])
-def test_chart_local_position_is_not_migrated(field: str) -> None:
-    """The chart-local half ships no Deletion, so the key still fails loud.
+CHART_LOCAL_CARD_LESS_FAMILIES = (*CARD_LESS_FAMILIES, "donut")
 
-    Pinned at ``compile()``, where an author meets it: asserting the tail is
-    live would say nothing, since a scoped declaration is legal on a live tail.
-    The hint's wording is covered by test_card_style_hint_font_border.py.
-    """
-    result = compile(
-        f"""title: Test
+
+def _chart_local_board(family: str, field: str) -> str:
+    channels = "theta: n" if family in ("pie", "donut") else "x: n\n    y: n"
+    value = "{size: 14}" if field == "font" else "{width: 2}"
+    return f"""title: Test
 queries:
-  q: {{type: values, rows: [{{n: 1}}]}}
+  q:
+    type: values
+    rows:
+    - n: 1
 charts:
   c:
-    type: bar
+    type: {family}
     query: q
-    x: n
-    y: n
+    {channels}
     style:
-      {field}: {{}}
+      {field}: {value}
+  k:
+    type: kpi
+    query: q
+    value: n
+    style:
+      {field}: {value}
 rows:
 - c
+- k
 """
-    )
 
-    assert not result.success
-    unknown = {e.fields.get("unknown_field") for e in result.errors if e.fields}
-    assert field in unknown
+
+@pytest.mark.parametrize("family", CHART_LOCAL_CARD_LESS_FAMILIES)
+@pytest.mark.parametrize("field", ["font", "border"])
+def test_chart_local_card_style_key_migrates_and_kpi_keeps_its_own(
+    family: str, field: str, catalog: YamlSchemaCatalog
+) -> None:
+    """The card-less chart loses the key and the kpi beside it keeps its live
+    one; ``compile()`` succeeding is what proves nothing else is stranded."""
+    text = _chart_local_board(family, field)
+
+    migrated = _migrate(yaml.load(text, Loader=YAML_LOADER), catalog)
+
+    assert "style" not in migrated["charts"]["c"]
+    assert field in migrated["charts"]["k"]["style"]
+    result = compile(text)
+    assert result.success, result.errors
+
+
+@pytest.mark.parametrize("field", ["font", "border"])
+def test_chart_local_strip_says_the_family_has_no_card(
+    field: str, catalog: YamlSchemaCatalog
+) -> None:
+    _, registry = _board_migration_context()
+    raw = {
+        "charts": {
+            "c": {
+                "type": "line",
+                "query": "q",
+                "x": "n",
+                "y": "n",
+                "style": {field: {}},
+            }
+        },
+        "rows": ["c"],
+    }
+
+    with pytest.warns(SchemaMigrationWarning, match="line has no per-chart card"):
+        migrate_mapping(raw, catalog=catalog, registry=registry)

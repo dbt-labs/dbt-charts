@@ -280,6 +280,7 @@ def _resolve_area(
         normalized.multiples,
         normalized.y,
         has_quantitative_axis=True,
+        temporal_band_axes=frozenset(),
     )
     area = chart_local_style_context.area
     primary = plan.primary
@@ -695,6 +696,7 @@ def _resolve_area(
         datasets,
         normalized.id,
         normalized.query.formats if normalized.query else None,
+        normalized.layer_query_formats,
     )
     if authored_y_domain is not None:
         _check_layers_y_domain(normalized.id, resolved_layers, authored_y_domain)

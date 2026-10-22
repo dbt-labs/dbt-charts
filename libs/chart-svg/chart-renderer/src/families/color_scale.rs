@@ -10,8 +10,14 @@ use crate::families::heatmap_facet::{GradientLegend, GradientPaint};
 use crate::families::table::{arm_denominators, resolve_hinge};
 use crate::families::legend::{
     gradient_labeled_values, gradient_tick_count, unit_position, LegendConfig, GRADIENT_STOP_TICKS,
+    VEGA_GRADIENT_THICKNESS, VEGA_LEGEND_TITLE_PADDING,
 };
+use crate::contract;
+use crate::measure::baseline_shift;
+use crate::node::{Attrs, Node};
+use crate::print::print;
 use crate::text::FontBook;
+use crate::vega_fit;
 
 /// How a value in the scale's domain becomes a color.
 enum Ramp {
@@ -186,7 +192,7 @@ impl ContinuousColor {
             Some(tokens) => tokens.iter().map(|t| crate::common::js_string_to_number(t).unwrap_or(f64::NAN)).collect(),
             None => gradient_labeled_values(d3rs::ticks::d3_ticks(self.lo, self.hi, count), self.lo, self.hi),
         };
-        let precision = tick_precision(d3rs::ticks::d3_tick_step(self.lo, self.hi, count));
+        let precision = d3rs::format::precision_fixed(d3rs::ticks::d3_tick_step(self.lo, self.hi, count));
         let labels = values
             .iter()
             .map(|&v| match format {
@@ -206,22 +212,6 @@ impl ContinuousColor {
         }
         Ok(d3rs::ticks::d3_ticks(self.lo, self.hi, GRADIENT_STOP_TICKS))
     }
-}
-
-/// d3-format's `precisionFixed`: the fixed-point decimal precision a tick
-/// STEP implies (`Math.max(0, -exponent(step))`) — Vega's own default
-/// legend/axis number formatter derives its precision this way when no
-/// format is authored. `exponent` reads the value's OWN decimal exponent
-/// (`x.toExponential()`'s parsed power), not a `log10().floor()` — which
-/// drifts on exact powers of ten under float error — so this mirrors that
-/// via Rust's `{:e}` formatting instead.
-pub(crate) fn tick_precision(step: f64) -> usize {
-    if step == 0.0 {
-        return 0;
-    }
-    let formatted = format!("{:e}", step.abs());
-    let exp: i32 = formatted.split('e').nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-    (-exp).max(0) as usize
 }
 
 /// The d3 spec `compose_axis_format` hands Vega-Lite as a legend's own `format`
@@ -511,7 +501,7 @@ impl GradientAt {
         (svg, x, y): (&mut String, f64, f64),
     ) -> Result<(), String> {
         let at = Self::new(legend, color_format, color, unit)?;
-        at.legend(legend, color, id, title, fonts)?.paint(svg, x, y, at.length);
+        svg.push_str(&print(&at.legend(legend, color, id, title, fonts)?.nodes(x, y, at.length)));
         Ok(())
     }
 
@@ -535,7 +525,7 @@ const SYMBOL_LEGEND_TICKS: usize = 5;
 impl ContinuousColor {
     /// A symbol legend's entries over this scale: each tick's text and color.
     pub(crate) fn symbol_ladder(&self) -> Result<Vec<(String, String)>, String> {
-        let precision = tick_precision(d3rs::ticks::d3_tick_step(self.lo, self.hi, SYMBOL_LEGEND_TICKS));
+        let precision = d3rs::format::precision_fixed(d3rs::ticks::d3_tick_step(self.lo, self.hi, SYMBOL_LEGEND_TICKS));
         d3rs::ticks::d3_ticks(self.lo, self.hi, SYMBOL_LEGEND_TICKS)
             .into_iter()
             .map(|v| Ok((crate::number_locale::d3_format(&format!(",.{precision}f"), v)?, self.fill(v))))
@@ -730,6 +720,179 @@ impl NumericPart<'_> {
             .collect();
         let legend = crate::families::legend::vega_legend(&entries, false, &self.title, cfg, fonts)?;
         Ok((legend, ladder))
+    }
+}
+
+/// A `<linearGradient>` in `<defs>`: vertical (y1=1 bottom, y2=0 top) for a
+/// legend beside the plot, horizontal (x1=0 left, x2=1 right) for one above
+/// or below it. `stops` are `(offset, color)` as printed.
+fn gradient_def(id: &str, vertical: bool, stops: Vec<(String, String)>) -> Node {
+    let (x2, y1, y2) = if vertical { ("0", "1", "0") } else { ("1", "0", "0") };
+    let attrs = Attrs::new().set("id", id).set("x1", "0").set("x2", x2).set("y1", y1).set("y2", y2);
+    let stops = stops
+        .into_iter()
+        .map(|(offset, color)| Node::Stop(Attrs::new().set("offset", offset).set("stop-color", color)))
+        .collect();
+    Node::Defs(vec![Node::LinearGradient { attrs, stops }])
+}
+
+/// The gradient of a continuous legend: a stop at each end and at each of the
+/// scale's 15 ticks, each in the scale's own color.
+fn scale_gradient_def(
+    id: &str,
+    (min, max): (f64, f64),
+    ticks: &[f64],
+    color: impl Fn(f64) -> String,
+    vertical: bool,
+) -> Node {
+    let lead = ticks.first().is_none_or(|&t| t != min).then_some(min);
+    let tail = ticks.last().is_none_or(|&t| t != max).then_some(max);
+    let stops = lead
+        .into_iter()
+        .chain(ticks.iter().copied())
+        .chain(tail)
+        .map(|v| (((v - min) / (max - min)).to_string(), color(v)))
+        .collect();
+    gradient_def(id, vertical, stops)
+}
+
+/// The gradient of a legend over a one-value domain, which has no ticks to
+/// sample: Vega runs its whole ramp across the bar in 20 even steps.
+fn ramp_gradient_def(id: &str, vertical: bool, color_at: impl Fn(f64) -> String) -> Node {
+    let stops = (0..=20)
+        .map(|step| {
+            let t = f64::from(step) / 20.0;
+            (t.to_string(), color_at(t))
+        })
+        .collect();
+    gradient_def(id, vertical, stops)
+}
+
+/// The gradient of a continuous `color` sampled at `ticks`; a one-value domain
+/// has none to sample, so its whole ramp runs across the bar.
+pub(crate) fn continuous_gradient_def(id: &str, color: &ContinuousColor, ticks: &[f64], vertical: bool) -> Node {
+    if color.lo == color.hi {
+        ramp_gradient_def(id, vertical, |t| color.fill_at(t))
+    } else {
+        scale_gradient_def(id, (color.lo, color.hi), ticks, |v| color.fill(v), vertical)
+    }
+}
+
+/// The gradient of resolved `stops`, evenly spaced along the bar.
+pub(crate) fn stops_gradient_def(id: &str, stops: &[String], vertical: bool) -> Node {
+    let n = stops.len();
+    let stops = stops
+        .iter()
+        .enumerate()
+        .map(|(i, stop)| {
+            let offset = if n == 1 { 0.0 } else { i as f64 / (n - 1) as f64 };
+            (format!("{offset:.4}"), stop.clone())
+        })
+        .collect();
+    gradient_def(id, vertical, stops)
+}
+
+/// A vertical gradient legend: title, color bar (min at the bottom), and the
+/// labeled values beside it.
+pub(crate) struct VerticalGradient<'a> {
+    pub gradient_id: &'a str,
+    pub title: &'a str,
+    pub range: (f64, f64),
+    pub values: &'a [f64],
+    pub labels: &'a [String],
+    pub length: f64,
+}
+
+impl VerticalGradient<'_> {
+    /// The legend's nodes with the group's top-left at `(x, y)`; the bar's
+    /// gradient def is the caller's.
+    pub(crate) fn nodes(&self, cfg: &LegendConfig, x: f64, y: f64) -> Result<Vec<Node>, String> {
+        let label_font = &cfg.label.font;
+        let label_size = label_font.size_or(11.0);
+        let label_family = label_font.family_or("sans-serif");
+        let label_offset = cfg.label.padding.ok_or("legend.label.padding absent (theme required)")?;
+        let title_size = cfg.title.font.size_or(12.0);
+        let mut nodes = Vec::new();
+        let mut bar_y = y;
+        if !self.title.is_empty() {
+            nodes.push(Node::text(
+                Attrs::new()
+                    .set("x", format!("{x:.2}"))
+                    .set("y", format!("{:.2}", y + baseline_shift("top", title_size)))
+                    .set("text-anchor", "start")
+                    .vega("font-family", cfg.title.font.family_or("sans-serif"))
+                    .set("font-size", title_size.to_string())
+                    .set("font-weight", cfg.title.font.weight_str())
+                    .set("fill", cfg.title.font.color.as_deref().unwrap_or("#313233")),
+                self.title,
+            ));
+            bar_y += title_size + VEGA_LEGEND_TITLE_PADDING;
+        }
+        nodes.push(Node::Rect(
+            Attrs::new()
+                .set("x", format!("{x:.2}"))
+                .set("y", format!("{bar_y:.2}"))
+                .set("width", VEGA_GRADIENT_THICKNESS.to_string())
+                .set("height", self.length.to_string())
+                .set("fill", format!("url(#{})", self.gradient_id)),
+        ));
+        let label_color = label_font.color.as_deref().unwrap_or("#626366");
+        let label_weight = label_font.weight_str();
+        let label_x = x + VEGA_GRADIENT_THICKNESS + label_offset;
+        let (min, max) = self.range;
+        // A label at the bar's bottom end tucks inside as `bottom`, one at the
+        // top end as `top`, every other `middle`. A date `NaN` has no
+        // position: Vega draws it at the group's origin.
+        let placed: Vec<(&str, f64)> = self
+            .values
+            .iter()
+            .map(|v| {
+                let t = unit_position(*v, min, max);
+                let baseline = if t <= 0.0 {
+                    "bottom"
+                } else if t >= 1.0 {
+                    "top"
+                } else {
+                    "middle"
+                };
+                (baseline, bar_y + if t.is_nan() { 0.0 } else { self.length * (1.0 - t) })
+            })
+            .collect();
+        // Every label starts at one x, so only the vertical gaps decide an overlap.
+        let ink: Vec<vega_fit::Bounds> = placed
+            .iter()
+            .map(|&(baseline, y)| {
+                let top = match baseline {
+                    "bottom" => y - label_size,
+                    "top" => y,
+                    _ => y - label_size / 2.0,
+                };
+                vega_fit::Bounds::new(label_x, top, label_x + 1.0, top + label_size)
+            })
+            .collect();
+        let visible = vega_fit::parity_visible(&ink, 0.0);
+        let labels = self
+            .labels
+            .iter()
+            .zip(&placed)
+            .zip(visible)
+            .map(|((text, &(baseline, y)), shown)| {
+                Node::text(
+                    Attrs::new()
+                        .set("x", format!("{label_x:.2}"))
+                        .set("y", format!("{:.2}", y + baseline_shift(baseline, label_size)))
+                        .set("text-anchor", "start")
+                        .vega("font-family", label_family)
+                        .set("font-size", label_size.to_string())
+                        .set("font-weight", label_weight.clone())
+                        .set("fill", label_color)
+                        .set_if(!shown, "opacity", "0"),
+                    text.as_str(),
+                )
+            })
+            .collect();
+        nodes.push(Node::group(contract::legend_label_attrs(None), labels));
+        Ok(nodes)
     }
 }
 
@@ -934,15 +1097,6 @@ mod tests {
         assert_eq!(bad.fill(20.0), "rgb(255, 0, 0)");
     }
 
-    /// A tick step's decimal exponent sets the legend's precision, read the way
-    /// d3's `precisionFixed` does: exact powers of ten do not drift.
-    #[test]
-    fn a_tick_step_sets_the_decimal_precision() {
-        for (step, precision) in [(0.0, 0), (5.0, 0), (20.0, 0), (1.0, 0), (0.5, 1), (0.1, 1), (0.05, 2), (0.001, 3), (1000.0, 0)] {
-            assert_eq!(tick_precision(step), precision, "{step}");
-        }
-    }
-
     /// A diverging scale's bounds: both authored win; neither authored takes the
     /// nice-widened extent when `nice`; otherwise the raw extent.
     #[test]
@@ -986,5 +1140,76 @@ mod tests {
         assert_eq!(opaque.a, 1.0);
         assert!(blended(stop("notacolor"), stop("red"), 0.5).is_err());
         assert!(python_color("hsl(0 80% 50% / 50%)").is_some_and(|c| c.a == 0.5));
+    }
+
+    /// The gradient legends in every orientation, a titled one with
+    /// characters that need escaping, a one-value domain, a date legend and a
+    /// resolved-stops bar, as bytes: their markup is pinned across the move
+    /// from string emission to nodes.
+    fn gradient_legend_markup() -> String {
+        let fonts = {
+            let manifest = env!("CARGO_MANIFEST_DIR");
+            FontBook::load_dir(&format!("{manifest}/../../../src/dbt_charts/core/render/fonts")).unwrap()
+        };
+        let cfg = |edge: &str, direction: &str| -> LegendConfig {
+            serde_json::from_value(serde_json::json!({
+                "visible": true, "position": {"edge": edge, "align": "start", "overlay": false},
+                "direction": direction,
+                "label": {"font": {"family": "'Q', \"R\"", "size": 11.0}, "padding": 8.0},
+                "title": {"font": {"family": "'Inter Variable', Inter, sans-serif"}, "visible": true},
+            }))
+            .unwrap()
+        };
+        let mut svg = String::new();
+        let scale = ContinuousColor::blues(2.5, 20.0);
+        for (edge, direction, title) in [("right", "vertical", "Ti<&'\"tle"), ("top", "horizontal", "Title"), ("top", "horizontal", "")] {
+            let cfg = cfg(edge, direction);
+            GradientAt::paint(&cfg, None, &scale, ("g<'1", title), &fonts, (300.0, 200.0), (&mut svg, 5.0, 7.5)).unwrap();
+        }
+        let flat = ContinuousColor::blues(5.0, 5.0);
+        GradientAt::paint(&cfg("right", "vertical"), None, &flat, ("flat", "T"), &fonts, (300.0, 200.0), (&mut svg, 1.0, 2.0)).unwrap();
+        let dates = ContinuousColor::dates(&BLUES, 0.0, 152.0);
+        GradientAt::paint(&cfg("right", "vertical"), None, &dates, ("dates", "D"), &fonts, (300.0, 200.0), (&mut svg, 1.0, 2.0)).unwrap();
+        let stops: Vec<String> = ["#ffffcc", "#41b6c4", "#0c2c84"].map(String::from).to_vec();
+        let labels = ["0".to_string(), "5".to_string()];
+        for (edge, direction) in [("right", "vertical"), ("top", "horizontal")] {
+            let cfg = cfg(edge, direction);
+            let legend = GradientLegend::over(&cfg, GradientPaint::Stops(&stops), "st<ops", (0.0, 5.0, &[0.0, 5.0]), &labels, &fonts).unwrap();
+            svg.push_str(&print(&legend.nodes(3.0, 4.0, 120.0)));
+        }
+        let vertical = cfg("right", "vertical");
+        let bar = VerticalGradient {
+            gradient_id: "vg",
+            title: "VG",
+            range: (0.0, 10.0),
+            values: &[0.0, 2.5, 10.0, f64::NAN],
+            labels: &["a".to_string(), "b".to_string(), "c".to_string(), "NaN".to_string()],
+            length: 90.0,
+        };
+        svg.push_str(&print(&bar.nodes(&vertical, 6.0, 8.0).unwrap()));
+        for (min, max) in [(0.0, 152.0), (5.0, 5.0)] {
+            svg.push_str(&print(&[crate::families::heatmap::date_gradient_def("dg", min, max).unwrap()]));
+        }
+        // Labels too close to all be drawn hide every other one.
+        let crowded = VerticalGradient {
+            gradient_id: "vh",
+            title: "",
+            range: (0.0, 10.0),
+            values: &[4.9, 5.0, 5.1, 5.2],
+            labels: &["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()],
+            length: 20.0,
+        };
+        svg.push_str(&print(&crowded.nodes(&vertical, 0.0, 0.0).unwrap()));
+        let horizontal = cfg("top", "horizontal");
+        let labels: Vec<String> = (0..6).map(|i| format!("{i}000000")).collect();
+        let values = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
+        let legend = GradientLegend::over(&horizontal, GradientPaint::Stops(&stops), "hh", (0.0, 5.0, &values), &labels, &fonts).unwrap();
+        svg.push_str(&print(&legend.nodes(0.0, 0.0, 60.0)));
+        svg
+    }
+
+    #[test]
+    fn gradient_legend_markup_is_pinned() {
+        assert_eq!(gradient_legend_markup(), include_str!("gradient_legends_golden.svg"));
     }
 }

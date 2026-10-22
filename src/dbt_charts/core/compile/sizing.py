@@ -10,6 +10,7 @@ source.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -23,7 +24,11 @@ from dbt_charts.core.compile.models.board.normalized import (
     LayoutItem,
     VariableValues,
 )
-from dbt_charts.core.compile.models.chart.normalized import Chart, TableChart
+from dbt_charts.core.compile.models.chart.normalized import (
+    PAINTS_MARKS,
+    Chart,
+    TableChart,
+)
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedStyle,
@@ -31,13 +36,23 @@ from dbt_charts.core.compile.models.style.resolved import (
 )
 from dbt_charts.core.compile.models.style.theme.page import FooterStyle
 from dbt_charts.core.compile.resolve import preferred_chart_width
+from dbt_charts.core.compile.resolve.chart._kwargs import _FAMILY_SLOT
+from dbt_charts.core.compile.resolve.style.chart_context import (
+    build_chart_style_context,
+)
+from dbt_charts.core.compile.resolve.style.inherit_resolver import settled
 from dbt_charts.core.compile.resolve.style.markdown_style import (
     prose_content_widths,
     prose_measure,
     title_max_content_width,
     title_min_content_width,
 )
+from dbt_charts.core.compile.resolve.style.typography import (
+    concrete_title_style,
+    resolve_title_font,
+)
 from dbt_charts.core.font_measure import get_font_measurer, get_weighted_font_measurer
+from dbt_charts.core.text.case import apply_case
 from dbt_charts.core.text.format_d3 import portable_strftime
 
 DEFAULT_GRID_COLUMNS = 24
@@ -78,8 +93,64 @@ def config_chart_width(
     _resolved_style: ResolvedStyle,
     chart_style_context: ChartStyleContext,
 ) -> IntrinsicWidth:
-    """The data-free chart answer: authored width, else the theme family estimate."""
-    return IntrinsicWidth(None, preferred_chart_width(chart, chart_style_context))
+    """The data-free chart answer: authored width, else the theme family estimate.
+
+    The estimate grows to fit a one-line title, so a board hugging its charts
+    does not cut a title the chart would draw whole at the board's full width.
+    """
+    preferred = preferred_chart_width(chart, chart_style_context)
+    if _chart_width_is_pinned(chart):
+        return IntrinsicWidth(None, preferred)
+    grown = max(preferred, _one_line_title_width(chart, chart_style_context, preferred))
+    if grown > preferred:
+        # Growing can cross a width tier, which re-sizes the title.
+        grown = max(grown, _one_line_title_width(chart, chart_style_context, grown))
+    return IntrinsicWidth(None, grown)
+
+
+# Python's title pre-pass decides truncation by measuring in Inter; the drawn
+# row is clipped again in its own family. A title fits when it fits both.
+_TITLE_WRAP_MEASURE_FAMILY = "Inter"
+
+
+def _chart_width_is_pinned(chart: Chart) -> bool:
+    """True when the author fixed this chart's width: ``width:`` or its own ``preferred_width``."""
+    if chart.__dict__.get("width") is not None:
+        return True
+    style = chart.style
+    return style is not None and "preferred_width" in style.model_fields_set
+
+
+def _one_line_title_width(
+    chart: Chart, chart_style_context: ChartStyleContext, width: float
+) -> float:
+    """Width ``chart`` needs to draw its title uncut on one line, chrome included; 0 when none.
+
+    Only a mark family's title whose overflow cuts it to one line counts. A
+    title templated on variables or data has no text to measure before a render.
+    ``width`` picks the title's width tier.
+    """
+    title = chart.__dict__.get("title")
+    slot = _FAMILY_SLOT.get(chart.type)
+    if slot not in PAINTS_MARKS or not isinstance(title, str) or not title:
+        return 0.0
+    if "{{" in title or "{%" in title:
+        return 0.0
+    ctx = build_chart_style_context(chart_style_context, chart)
+    if ctx.title.overflow not in ("truncate", "clip"):
+        return 0.0
+    font = resolve_title_font(ctx, width)
+    text = apply_case(title, font.case)
+    wrap_size = float(settled(concrete_title_style(ctx).font.size))
+    needed = max(
+        get_font_measurer(_TITLE_WRAP_MEASURE_FAMILY).measure(text, wrap_size),
+        get_weighted_font_measurer(font.family, font.weight).measure(
+            text, float(font.size)
+        ),
+    )
+    padding = getattr(ctx, slot).padding
+    # The pre-pass limit is the integer floor of the space inside the padding.
+    return math.ceil(needed) + 2 * ctx.card_padding + padding.left + padding.right
 
 
 ChartWidth = Callable[[Chart, ResolvedStyle, ChartStyleContext], IntrinsicWidth]

@@ -23,7 +23,7 @@
 
 {# The popover card. Background uses a dedicated --dbt-popover-bg token rather
    than --dbt-system-input-background: the variables-bar input background is
-   intentionally `transparent` in the `stark` cascade root so it inherits the
+   intentionally `transparent` in the `_base` cascade root so it inherits the
    page canvas, and a popover needs an OPAQUE surface. #}
 .dbt-popover {
   display: none;

@@ -12,7 +12,9 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+import yaml
 
+from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import migrate_mapping
 from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
@@ -134,3 +136,52 @@ def test_live_borders_survive_the_narrowed_slot_deletions(
         "radius": 2.0
     }
     AuthoredBoard.model_validate(migrated)
+
+
+INERT_BORDER_FIELDS = ("width", "color", "dash_array", "line_cap", "dash_offset")
+
+
+def test_chart_local_spark_bar_border_keeps_only_radius_and_kpi_keeps_its_own(
+    catalog: YamlSchemaCatalog,
+) -> None:
+    """The chart-local slot has no ``spark_bar`` segment, so the declaration is
+    scoped by ``chart_type``: a kpi's full ``style.border`` must survive."""
+    legacy = {"width": 2.0, "color": "red", "radius": 3.0}
+    raw: dict[str, Any] = {
+        "charts": {
+            "spark": {
+                "type": "spark_bar",
+                "query": "q1",
+                "x": "x",
+                "y": "x",
+                "style": {"border": dict(legacy)},
+            },
+            "k": {
+                "type": "kpi",
+                "query": "q1",
+                "value": "x",
+                "style": {"border": dict(legacy)},
+            },
+        },
+        "queries": {"q1": {"sql": "SELECT 1 AS x", "source": "test"}},
+        "rows": ["spark", "k"],
+    }
+
+    text = yaml.safe_dump(raw)
+
+    migrated = _migrate(raw, catalog)
+
+    assert migrated["charts"]["spark"]["style"]["border"] == {"radius": 3.0}
+    assert migrated["charts"]["k"]["style"]["border"] == legacy
+    result = compile(text)
+    assert result.success, [e.message for e in result.errors]
+
+
+def test_registry_declares_the_chart_local_spark_bar_border_deletions() -> None:
+    _, registry = _board_migration_context()
+
+    declared = {
+        d.path for d in registry.deletions_from("0.5.0") if d.chart_type == "spark_bar"
+    }
+
+    assert declared == {("style", "border", field) for field in INERT_BORDER_FIELDS}

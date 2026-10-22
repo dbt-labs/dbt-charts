@@ -17,7 +17,11 @@ pub mod frame;
 pub mod href;
 pub mod js_date;
 pub mod label_template;
+pub mod measure;
+pub mod labels_expr;
+pub mod node;
 pub mod number_locale;
+pub mod print;
 pub mod prose;
 pub mod sizing;
 pub mod step_band;
@@ -437,6 +441,33 @@ pub struct Payload {
 }
 
 impl Payload {
+    /// This payload over `resolved` and `rows`, without copying the ones it replaces.
+    pub(crate) fn with_inputs(&self, resolved: Value, rows: Vec<serde_json::Map<String, Value>>) -> Payload {
+        let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, filter_variables, interactive_controls, link_context, datasets, measuring, title_shift, is_placeholder, authored_height, max_template_output_bytes, cell_text } = self;
+        Payload {
+            resolved,
+            rows,
+            width: *width,
+            height: *height,
+            background: background.clone(),
+            fonts_dir: fonts_dir.clone(),
+            padding: padding.clone(),
+            board_style: board_style.clone(),
+            language: language.clone(),
+            variables: variables.clone(),
+            filter_variables: filter_variables.clone(),
+            interactive_controls: *interactive_controls,
+            link_context: link_context.clone(),
+            datasets: datasets.clone(),
+            measuring: *measuring,
+            title_shift: title_shift.clone(),
+            is_placeholder: *is_placeholder,
+            authored_height: *authored_height,
+            max_template_output_bytes: *max_template_output_bytes,
+            cell_text: cell_text.clone(),
+        }
+    }
+
     /// The id of the chart this payload renders, for the diagnostics it raises.
     pub(crate) fn chart_id(&self) -> Result<&str, String> {
         self.resolved
@@ -551,11 +582,33 @@ fn render_in_scope(
     payload: &Payload,
     fonts: &text::FontBook,
 ) -> Result<(String, Option<f64>), Diagnostic> {
+    let draw = || {
+        render_family(payload, fonts)
+            .map(|(svg, extra)| (text::expand_lines(svg), extra))
+            .map_err(|d| labels_expr::recode(d, payload))
+    };
+    let needs = labels_expr::needs(&payload.resolved);
+    if needs.scales {
+        labels_expr::view::render_passes(&payload.rows, draw)
+    } else if needs.data {
+        let _open = labels_expr::view::enter();
+        labels_expr::view::set_rows(&payload.rows)?;
+        draw()
+    } else {
+        draw()
+    }
+}
+
+fn render_family(
+    payload: &Payload,
+    fonts: &text::FontBook,
+) -> Result<(String, Option<f64>), Diagnostic> {
     let chart_type = payload
         .resolved
         .get("chart_type")
         .and_then(Value::as_str)
         .ok_or("payload.resolved.chart_type missing")?;
+    labels_expr::validate(&payload.resolved)?;
     families::legend::refuse_unmodeled_slide(chart_type, &payload.resolved)?;
     let shifted = title_shift::for_family(payload, chart_type)?;
     let payload: &Payload = &shifted;
@@ -572,7 +625,7 @@ fn render_in_scope(
         && payload.datasets.as_ref().is_none_or(|sets| sets.values().all(Vec::is_empty));
     if every_dataset_empty && chart_type != "callout" {
         // The empty chart still raises what production raises of its resolved model.
-        if matches!(chart_type, "bar" | "line" | "area" | "scatter" | "heatmap") {
+        if matches!(chart_type, "bar" | "line" | "area" | "scatter" | "heatmap" | "histogram") {
             families::cartesian_errors::check(payload, chart_type)?;
         }
         return families::empty::render(chart_type, payload, fonts).map(|svg| (svg, None));
@@ -678,7 +731,7 @@ fn render_width_fitted(
     // The first render wears the resolve production measured its overhead from;
     // the payload's own is the shrunk width's, which the second render wears.
     let slot_resolved = payload.resolved.get("slot_resolved").filter(|v| !v.is_null());
-    let first_pass = slot_resolved.map(|resolved| Payload { resolved: resolved.clone(), ..payload.clone() });
+    let first_pass = slot_resolved.map(|resolved| payload.with_inputs(resolved.clone(), payload.rows.clone()));
     let svg = render(first_pass.as_ref().unwrap_or(payload), fonts)?;
     if !is_support_table_arm(payload)? {
         return Ok((svg, None));

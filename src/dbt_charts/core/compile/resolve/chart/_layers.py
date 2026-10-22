@@ -106,6 +106,7 @@ def _resolve_one_layer(
     chart_id: str,
     index: int,
     query_formats: Mapping[str, str] | None,
+    layer_query_formats: Mapping[str, Mapping[str, str]],
 ) -> ResolvedLayer:
     """Resolve a single typed authored layer into its resolved counterpart.
 
@@ -166,9 +167,11 @@ def _resolve_one_layer(
     raw_format = (
         authored_axis_y.labels.format if authored_axis_y.labels is not None else None
     )
-    # The query's `formats:` describes the base query's columns only.
     own_query_formats = (
-        query_formats if layer.query is None or layer.query == base_query_name else None
+        query_formats
+        if layer.query is None
+        # Only a query that declares `formats:` has an entry.
+        else layer_query_formats.get(layer.query)
     )
     if raw_format is not None or (
         declared_column_format(
@@ -432,6 +435,7 @@ def _resolve_layer_list(
     datasets: LayerDatasets,
     chart_id: str,
     query_formats: Mapping[str, str] | None,
+    layer_query_formats: Mapping[str, Mapping[str, str]],
 ) -> tuple[ResolvedLayer, ...]:
     """Resolve a list of authored typed layers to their resolved counterparts.
 
@@ -453,6 +457,9 @@ def _resolve_layer_list(
 
     ``data``/``datasets``: the base rows and layer-query map, for each layer's
     label format vote.
+
+    ``query_formats`` is the base query's ``formats:``; a layer naming its own
+    query reads that query's from ``layer_query_formats`` instead.
     """
     if not layers:
         return ()
@@ -482,6 +489,7 @@ def _resolve_layer_list(
             chart_id,
             index,
             query_formats,
+            layer_query_formats,
         )
         for index, layer in enumerate(layers)
     )

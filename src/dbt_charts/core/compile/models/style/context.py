@@ -60,6 +60,7 @@ from dbt_charts.core.compile.models.style.theme import (
     AreaChartStyle,
     AxisXStyle,
     AxisYStyle,
+    BandAxisStyle,
     BarChartStyle,
     BaseAxisStyle,
     CalloutChartStyle,
@@ -180,7 +181,7 @@ class ChartStyleContext:
 
     # --- Axis cascade state (theme layers, not yet chart-merged) ---
     # `axis` is the cascade's channel-agnostic base (BaseAxisStyle — raw passthrough,
-    # not eagerly resolved). `axis_x`/`axis_y`/`axis_quantitative` are
+    # not eagerly resolved). `axis_x`/`axis_y`/`axis_quantitative`/`axis_band` are
     # authored-only overlays — sparse by design (SkipInheritSlots means
     # apply_inherit never fills their None leaves from `axis`).
     # resolved_axis_style() merges them onto a starting AxisXStyle/AxisYStyle
@@ -189,6 +190,7 @@ class ChartStyleContext:
     axis_x: AxisXStyle
     axis_y: AxisYStyle
     axis_quantitative: QuantitativeAxisStyle
+    axis_band: BandAxisStyle
 
     # --- Global mark/legend/label defaults (tier 1 of the three-tier cascade) ---
     legend: ResolvedLegendStyle
@@ -234,6 +236,8 @@ class ChartStyleContext:
 
     # H1–H6 font sizes from `style.fonts.heading.sizes`, indexed by level - 1.
     heading_sizes: list[float]
+    # H2–H6 section-title sizes from `style.fonts.section.sizes`.
+    section_sizes: list[float]
 
     # --- Pre-`apply_inherit` Style tree ---
     # Per-chart style patches use this to re-run the full inherit graph

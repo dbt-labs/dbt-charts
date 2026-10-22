@@ -369,6 +369,41 @@ class TestFaceTitleSpec:
         nested_size, _ = board_title_spec(level=2)
         assert root_size >= nested_size
 
+    def test_section_title_reads_section_font_sizes(self):
+        from dbt_charts.core.compile.resolve.style.typography import board_title_spec
+
+        base = get_theme_style()
+        assert base.fonts is not None
+        fonts = dict(base.fonts)
+        fonts["section"] = fonts["section"].model_copy(update={"sizes": [23, 17]})
+        style = resolve_style(base.model_copy(update={"fonts": fonts}))
+
+        assert board_title_spec(level=2, resolved_style=style)[0] == 23
+        assert board_title_spec(level=3, resolved_style=style)[0] == 17
+        assert board_title_spec(level=4, resolved_style=style)[0] == 17
+        ladder = style.chart_defaults.heading_sizes
+        assert board_title_spec(level=1, resolved_style=style)[0] == int(ladder[0])
+
+    def test_explicit_title_level_reads_heading_ladder(self):
+        from dbt_charts.core.compile.resolve.style.typography import board_title_spec
+
+        base = get_theme_style()
+        title = base.title.model_copy(update={"level": 2})
+        style = resolve_style(base.model_copy(update={"title": title}))
+
+        ladder = style.chart_defaults.heading_sizes
+        assert board_title_spec(level=2, resolved_style=style)[0] == int(ladder[1])
+
+    def test_section_title_larger_than_wide_chart_title(self):
+        from dbt_charts.core.compile.resolve.style.typography import (
+            board_title_spec,
+            chart_title_spec,
+        )
+
+        section_size, _ = board_title_spec(level=2)
+        chart_size, _, _ = chart_title_spec(1200.0, chart_style_context=_EFF)
+        assert section_size > chart_size
+
     def test_weight_from_config(self):
         """board_title_spec returns the configured title weight."""
         from dbt_charts.core.compile.resolve.style.typography import board_title_spec

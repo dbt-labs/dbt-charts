@@ -35,6 +35,12 @@ Changes in this release:
   hex-identical. A board older than 0.10.0 is renamed to the 0.10.0 spelling
   first (`row.rule.color` becomes `row.divider.color`) and respelled after. A
   field added after 0.10.0 holds no retired spelling, so none is declared for it.
+- **`style.fonts.section` is reserved for the section-title size ramp.** A board
+  that named one of its own fonts `section` now has it merged over the
+  theme's `section`, whose `sizes` size every section title. The name is valid
+  in both grammars, so it cannot be migrated or recognized. The detectable
+  case, an authored `section` with a `size`, raises `The 'section' font takes
+  sizes (H2–H6), not size.`
 """
 
 from __future__ import annotations

@@ -257,7 +257,7 @@ struct TableTheme {
     more_rows: Option<EmptyState>,
     // `style.charts.table.spark` — theme tokens for in-cell spark marks.
     // No `#[serde(default)]`: every shipped theme carries the full block (added
-    // alongside every other structural default in `stark.yaml`), so an
+    // alongside every other structural default in `_base.yaml`), so an
     // absent block is a stale fixture, not a legitimate "spark unused"
     // state — deserialization fails loudly rather than silently drawing
     // with a made-up default.
@@ -745,7 +745,7 @@ fn board_alias_format(name: &str) -> Result<Option<FormatSlot>, String> {
             .0
             .get(name)
             .map(|alias| {
-                serde_json::from_value(alias.clone())
+                Deserialize::deserialize(alias)
                     .map_err(|e| format!("table: board format {name:?}: {e}"))
             })
             .transpose()
@@ -3101,7 +3101,7 @@ fn transposed_inputs(
     let mut flat = resolved.clone();
     flat["style"]["table"]["transpose"] = json!(false);
     let flat_resolved: Resolved =
-        serde_json::from_value(flat.clone()).map_err(|e| format!("table payload: {e}"))?;
+        Deserialize::deserialize(&flat).map_err(|e| format!("table payload: {e}"))?;
     check_transpose_input(&flat_resolved.columns, rows)?;
     let (cols, ..) = visible_columns(&flat_resolved, rows, &None)?;
     let row_roles = resolve_row_roles(rows, flat_resolved.style.table.row.role.as_deref());
@@ -5849,7 +5849,7 @@ struct EmptyState {
 /// A table with resolved columns draws their header band too, so it takes the
 /// ordinary render, as does one with row numbers.
 pub fn render_empty(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
-    let r: EmptyResolved = serde_json::from_value(payload.resolved.clone())
+    let r: EmptyResolved = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("table payload: {e}"))?;
     if r.columns.as_ref().is_some_and(|c| !c.is_empty()) || r.style.table.row_numbers.visible {
         return render(payload, fonts).map_err(|d| d.to_string());
@@ -5990,7 +5990,14 @@ fn visible_columns<'a>(
         return Err("table: no columns".into());
     }
 
-    let header_font_case = r.style.table.header.font.case.as_deref().unwrap_or("title");
+    let header_font_case = r
+        .style
+        .table
+        .header
+        .font
+        .case
+        .as_deref()
+        .ok_or("table: header requires table.header.font.case")?;
 
     // Build column metadata.
     let cols: Vec<ColMeta> = col_names
@@ -6042,7 +6049,7 @@ fn visible_columns<'a>(
             let levels_nonempty = pivot.as_ref().is_some_and(|p| !p.levels.is_empty());
             let is_fanned_leaf = is_leaf && (fan_out_via_measure || levels_nonempty);
             let mut cfg: ColConfig = match raw_cfg {
-                Some(v) => serde_json::from_value(v.clone())
+                Some(v) => Deserialize::deserialize(v)
                     .map_err(|e| format!("table: column '{config_key}' config parse error: {e}"))?,
                 None => ColConfig::default(),
             };
@@ -6454,11 +6461,10 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     );
     let query_rows = &payload.rows;
     if let Some((resolved, rows)) = text_format::lower(&payload.resolved, query_rows) {
-        let mut lowered = payload.clone();
-        (lowered.resolved, lowered.rows) = (resolved, rows);
+        let lowered = payload.with_inputs(resolved, rows);
         return render(&lowered, fonts);
     }
-    let r: Resolved = serde_json::from_value(payload.resolved.clone())
+    let r: Resolved = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("table payload: {e}"))?;
 
     let pagination_control_height = payload
@@ -6473,8 +6479,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     let chart_id = r.id.as_deref().unwrap_or_default();
     if r.style.table.transpose && !query_rows.is_empty() {
         let (resolved, rows) = transposed_inputs(&payload.resolved, query_rows)?;
-        let mut flat = payload.clone();
-        (flat.resolved, flat.rows) = (resolved, rows);
+        let flat = payload.with_inputs(resolved, rows);
         return render(&flat, fonts);
     }
 
@@ -7851,7 +7856,7 @@ pub(crate) mod tests {
             "header": {
                 "height": 39.0,
                 "overflow": "wrap-two",
-                "font": {"family": "Inter, sans-serif", "size": 11.0, "weight": "600"},
+                "font": {"family": "Inter, sans-serif", "size": 11.0, "weight": "600", "case": "title"},
                 "divider": table_divider(true, "#222222", 1.0)
             },
             "row": {

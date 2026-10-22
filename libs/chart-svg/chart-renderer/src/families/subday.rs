@@ -180,7 +180,7 @@ impl SubdayPlan {
         let extent = source.extent(axis.domain)?;
         let span_ms = extent.span_ms();
         let (ladder, count, ceiling) = match axis.cadence {
-            Some(AuthoredTickCadence::Count(n)) => (None, Some(n), Some(n)),
+            Some(AuthoredTickCadence::Count(n) | AuthoredTickCadence::UncappedCount(n)) => (None, Some(n), Some(n)),
             // An authored interval is a day or coarser: every tick lands on midnight.
             Some(AuthoredTickCadence::Interval(_)) => return None,
             None => match default_ladder(&extent, axis.available_width).filter(|_| !axis.authored_values) {

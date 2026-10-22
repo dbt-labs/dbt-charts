@@ -135,6 +135,7 @@ def plan_cartesian(
     y: str | list[str] | None,
     *,
     has_quantitative_axis: bool,
+    temporal_band_axes: frozenset[Literal["axis_x", "axis_y"]],
 ) -> CartesianPlan:
     """Run the shared cartesian prelude: channels, axis bake.
 
@@ -170,6 +171,7 @@ def plan_cartesian(
         axis_overrides,
         multiples=multiples,
         y=y,
+        temporal_band_axes=temporal_band_axes,
     )
     return CartesianPlan(primary=primary, channels=channels, axes=baked)
 

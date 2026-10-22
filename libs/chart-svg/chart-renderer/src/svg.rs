@@ -1,16 +1,46 @@
 //! Tiny SVG emission helpers shared by all families.
 
-pub fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+use std::borrow::Cow;
+
+/// `s` with each character `escape` maps replaced by its reference, in one
+/// pass; borrowed when nothing needs escaping.
+fn escape_with(s: &str, escape: impl Fn(char) -> Option<&'static str>) -> Cow<'_, str> {
+    let Some(first) = s.find(|c| escape(c).is_some()) else {
+        return Cow::Borrowed(s);
+    };
+    let mut out = String::with_capacity(s.len() + 16);
+    out.push_str(&s[..first]);
+    for c in s[first..].chars() {
+        match escape(c) {
+            Some(reference) => out.push_str(reference),
+            None => out.push(c),
+        }
+    }
+    Cow::Owned(out)
+}
+
+fn xml_reference(c: char) -> Option<&'static str> {
+    match c {
+        '&' => Some("&amp;"),
+        '<' => Some("&lt;"),
+        '>' => Some("&gt;"),
+        _ => None,
+    }
+}
+
+pub fn xml_escape(s: &str) -> Cow<'_, str> {
+    escape_with(s, xml_reference)
 }
 
 /// Text content escaped the way production's bare `html.escape(text)` does:
 /// `xml_escape` plus both quote characters, and no whitespace references — a
 /// text node keeps its literal newline, an attribute value does not.
-pub fn html_escape(s: &str) -> String {
-    xml_escape(s).replace('"', "&quot;").replace('\'', "&#x27;")
+pub fn html_escape(s: &str) -> Cow<'_, str> {
+    escape_with(s, |c| match c {
+        '"' => Some("&quot;"),
+        '\'' => Some("&#x27;"),
+        _ => xml_reference(c),
+    })
 }
 
 /// The one attribute-value escaper — `mdsvg::utils::escape_xml`, production's
@@ -25,12 +55,14 @@ pub use mdsvg::utils::escape_xml as xml_escape_attr;
 /// newline, and CR as hex references, `'` left bare. A Vega-drawn chart body's
 /// `font-family` keeps its single-quoted stack byte-for-byte; every other
 /// attribute value, and every Python-drawn one, uses `xml_escape_attr`.
-pub fn vega_escape_attr(s: &str) -> String {
-    xml_escape(s)
-        .replace('"', "&quot;")
-        .replace('\t', "&#x9;")
-        .replace('\n', "&#xA;")
-        .replace('\r', "&#xD;")
+pub fn vega_escape_attr(s: &str) -> Cow<'_, str> {
+    escape_with(s, |c| match c {
+        '"' => Some("&quot;"),
+        '\t' => Some("&#x9;"),
+        '\n' => Some("&#xA;"),
+        '\r' => Some("&#xD;"),
+        _ => xml_reference(c),
+    })
 }
 
 /// Return `name` when it can follow `data-var-`/`data-dbt-` as an attribute
@@ -54,8 +86,9 @@ pub fn num(v: f64) -> String {
     if v == v.trunc() && v.abs() < 1e12 {
         format!("{}", v as i64)
     } else {
-        let s = format!("{v:.2}");
-        s.trim_end_matches('0').trim_end_matches('.').to_string()
+        let mut s = format!("{v:.2}");
+        s.truncate(s.trim_end_matches('0').trim_end_matches('.').len());
+        s
     }
 }
 

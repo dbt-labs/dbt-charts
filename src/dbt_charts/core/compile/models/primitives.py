@@ -942,8 +942,8 @@ class NamedFont(FontStyle):
     sizes: list[float] | None = Field(
         default=None,
         description=(
-            "The H1–H6 heading ramp (six sizes, indexed by heading level - 1). "
-            "Valid only on the ``heading`` font."
+            "A heading ramp: H1–H6 on ``heading``, H2–H6 section titles on "
+            "``section``. Valid only on those two fonts."
         ),
     )
 

@@ -1,5 +1,4 @@
 {
-  "aria.axis": "轴",
   "aria.chart": "图表",
   "aria.container_arc": "弧形标记容器",
   "aria.container_group": "分组标记容器",
@@ -18,8 +17,6 @@
   "aria.role_text": "文本标记",
   "aria.title": "标题",
   "aria.title_text": "标题文本“{header}”",
-  "aria.x_axis": "X 轴",
-  "aria.y_axis": "Y 轴",
   "axis.midnight": "午夜",
   "axis.noon": "正午",
   "case.extra_small_words": "",

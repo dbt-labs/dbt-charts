@@ -26,7 +26,7 @@ def test_built_in_themes_load_via_get_theme_style():
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.resolve.style.board import resolve_style
 
-    # `vivid` extends `stark` (the structural root) and inherits vivid-10.
+    # `vivid` extends `_base` and inherits vivid-10.
     vivid = resolve_style(get_theme_style("vivid"))
     assert vivid.chart_defaults.palette == shipped_palette("vivid-10")
 

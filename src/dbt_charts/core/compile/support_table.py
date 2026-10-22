@@ -29,7 +29,6 @@ from dbt_charts.core.compile.models.chart.authored import (
     ChartSupportTable,
     ChartSupportTableAggregate,
     ChartSupportTablePerSeries,
-    ChartSupportTableSource,
 )
 from dbt_charts.core.compile.models.chart.authored._support_table import (
     ChartSupportTableEntry,
@@ -322,7 +321,7 @@ def resolve_support_table(
                 )
                 if voted.spec != fmt.spec:
                     fmt = voted.model_copy(update={"raw": None})
-        elif isinstance(entry, ChartSupportTableSource) and declared_column_format(
+        elif _keeps_column_unit(entry) and declared_column_format(
             query_formats, column, formats, time=False
         ):
             fmt = column_format(
@@ -334,6 +333,14 @@ def resolve_support_table(
             reject_native(fmt, f"support_table[{len(entries)}].format")
         entries.append(_with_resolved_format(entry, fmt))
     return ResolvedSupportTable(entries=entries)
+
+
+def _keeps_column_unit(entry: ChartSupportTableEntry) -> bool:
+    """A count reads rows, so only the other entries share their column's unit."""
+    return not (
+        isinstance(entry, ChartSupportTableAggregate)
+        and entry.aggregate in ("count", "count_distinct")
+    )
 
 
 def _with_resolved_format(

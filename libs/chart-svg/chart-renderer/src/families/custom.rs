@@ -878,14 +878,14 @@ fn require_font<'a>(font: &'a Font, what: &str) -> Result<(&'a str, f64, &'a str
 /// the frame's, fitted with no ink; the template's checked output fills the
 /// body box.
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
-    let r: Resolved = serde_json::from_value(payload.resolved.clone())
+    let r: Resolved = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("custom: resolved payload: {e}"))?;
     require_font(&r.style.title_font, "style.title_font")?;
     if r.subtitle.is_some() {
         let subtitle = r.title_style.subtitle.as_ref().map(|s| &s.font);
         require_font(subtitle.ok_or("custom: title_style.subtitle absent")?, "title_style.subtitle.font")?;
     }
-    let body_font: Font = serde_json::from_value(r.style.tree["font"].clone())
+    let body_font: Font = Deserialize::deserialize(&r.style.tree["font"])
         .map_err(|e| format!("custom: style.font: {e}"))?;
     let (body_family, body_size, body_color) = require_font(&body_font, "style.font")?;
     let frame = ChartFrame::of(payload, &r.background);

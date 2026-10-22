@@ -1,5 +1,4 @@
 {
-  "aria.axis": "akseli",
   "aria.chart": "kaavio",
   "aria.container_arc": "kaarimerkin säilö",
   "aria.container_group": "ryhmämerkin säilö",
@@ -18,8 +17,6 @@
   "aria.role_text": "tekstimerkki",
   "aria.title": "otsikko",
   "aria.title_text": "Otsikkoteksti ”{header}”",
-  "aria.x_axis": "X-akseli",
-  "aria.y_axis": "Y-akseli",
   "axis.midnight": "Keskiyö",
   "axis.noon": "Keskipäivä",
   "case.extra_small_words": "",

@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::common::{row_num, row_str, AxisStyle};
-use crate::families::scatter_axis::{DateColumn, TemporalXAxis};
+use crate::families::scatter_axis::{authored_day_domain, DateColumn, Indexed, TemporalXAxis};
 use crate::families::subday::SubdaySource;
 use crate::families::support_table_strip::label_period_keep;
 use crate::families::temporal::{
@@ -18,6 +18,7 @@ use crate::families::temporal::{
     parse_iso_date, time_unit_floor, TimeUnit,
 };
 use crate::families::x_type::{Grain, XResolution};
+use crate::labels_expr::Expr;
 use crate::text::FontBook;
 
 use crate::common::RAW_X;
@@ -38,6 +39,11 @@ enum Sizing {
     /// A bar centered on its instant, sized by the law over `closest`, the closest pair of distinct dates
     /// (none for a lone instant, which takes the law's ceiling).
     Instant { width: ContinuousWidth, closest: Option<(String, String)> },
+    /// A bar centered on its date of a point scale, at Vega-Lite's own step size whatever the dates' spacing.
+    Stepped { width: ContinuousWidth },
+    /// Grouped bars under value labels sit on the band scale the labels' categories make, over the axis's bands:
+    /// side by side on dates a grain explains (`None`), else every series on one extent the law sizes.
+    Band { width: Option<ContinuousWidth> },
 }
 
 /// The dates a layer puts on the shared time scale. Every layer's dates extend the scale; only those of a
@@ -65,6 +71,11 @@ pub(super) struct TimeX {
     law: XResolution,
     scale_ax: AxisStyle,
     pub(super) grain: Option<TimeUnit>,
+    /// Value labels type the field nominal beside the temporal bars: the axis is a point or band scale over the dates.
+    indexed: Option<Indexed>,
+    /// A point scale holds only the dates a bar's width is measured between: where the first date and the
+    /// closest one it is measured against are not neighbors the width is NaN and nothing paints.
+    pub(super) width_is_nan: bool,
     /// How many distinct x values the chart's rows carry, before any bucket folds them.
     distinct: usize,
     /// The grain production's tooltip detects over the rows' own dates, which an authored `time_unit` on the
@@ -134,7 +145,8 @@ fn closest_pair(dates: &[String]) -> Option<(String, String)> {
 pub(super) fn at_bucket_starts<'a>(rows: Cow<'a, [Row]>, field: &str, grain: Option<TimeUnit>) -> Cow<'a, [Row]> {
     let start_of = |row: &Row| {
         let cell = row.get(field)?;
-        let instant = instant_text(cell)?;
+        // A far instant is refused where `plot_rows` reads the same cell.
+        let instant = instant_text(cell).ok()??;
         let key = match grain {
             Some(tu) => time_unit_floor(&instant, tu)?,
             None => instant,
@@ -158,28 +170,23 @@ pub(super) fn at_bucket_starts<'a>(rows: Cow<'a, [Row]>, field: &str, grain: Opt
     )
 }
 
-/// The shapes of a time-axis bar this arm does not draw: each names what it declines.
-fn refuse_unported_shape(r: &BarResolved) -> Result<(), String> {
-    if r.style.axis_x.labels.expr.is_some() {
-        return Err(crate::refuse!("bar: authored `axis_x.labels.expr` on a time x axis is not supported").into());
-    }
-    Ok(())
-}
-
 /// A date or timestamp cell as the text the scale keys it by: a plain date as it is, a timestamp as its UTC
 /// instant (`YYYY-MM-DDTHH:MM:SS[.mmm]`), which folds an offset into the clock the way Vega-Lite reads it.
-fn instant_text(cell: &Value) -> Option<String> {
-    let text = cell.as_str()?;
-    let day = date_text_day(text)?;
+fn instant_text(cell: &Value) -> Result<Option<String>, String> {
+    let Some(text) = cell.as_str() else { return Ok(None) };
+    let Some(day) = date_text_day(text) else { return Ok(None) };
     if text.len() == 10 {
-        return Some(text.to_string());
+        return Ok(Some(text.to_string()));
     }
     let (midnight, millis) = (day.floor(), ((day - day.floor()) * 86_400_000.0).round() as i64);
     let (y, m, d) = civil_from_days(midnight as i64 + millis.div_euclid(86_400_000));
+    if !(0..=9999).contains(&y) {
+        return Err(crate::refuse!("bar: a timestamp whose UTC instant falls outside years 0000 to 9999 on a time x axis is not supported").into());
+    }
     let millis = millis.rem_euclid(86_400_000);
     let (hours, minutes, seconds, ms) = (millis / 3_600_000, millis / 60_000 % 60, millis / 1000 % 60, millis % 1000);
     let fraction = if ms == 0 { String::new() } else { format!(".{ms:03}") };
-    Some(format!("{y:04}-{m:02}-{d:02}T{hours:02}:{minutes:02}:{seconds:02}{fraction}"))
+    Ok(Some(format!("{y:04}-{m:02}-{d:02}T{hours:02}:{minutes:02}:{seconds:02}{fraction}")))
 }
 
 /// Vega's `timeunit` transform yields NaN for a year below 100, so no bar of the chart has a position and
@@ -207,12 +214,12 @@ fn plot_rows(r: &BarResolved, rows: &[Row], filled: Option<TimeUnit>, grain: Opt
     let normalized = normalize_labeled_temporal(rows, &r.x)?;
     let mut dated: Vec<Row> = Vec::with_capacity(normalized.len());
     let mut originals: Vec<String> = Vec::with_capacity(normalized.len());
-    for row in normalized {
+    for row in normalized.into_owned() {
         match row.get(&r.x) {
             None | Some(Value::Null) => {}
             Some(cell) => {
                 originals.extend(cell.as_str().map(str::to_string));
-                let instant = instant_text(cell).ok_or_else(|| format!("bar: x value {cell} is not a date or timestamp on a time x axis"))?;
+                let instant = instant_text(cell)?.ok_or_else(|| format!("bar: x value {cell} is not a date or timestamp on a time x axis"))?;
                 let mut row = row;
                 row.insert(r.x.clone(), Value::String(instant));
                 dated.push(row);
@@ -245,8 +252,7 @@ fn plot_rows(r: &BarResolved, rows: &[Row], filled: Option<TimeUnit>, grain: Opt
 impl TimeX {
     /// The time axis's rows and buckets; a shape it does not model refuses by name
     /// (`docs/laws-bar.md#bucketed-temporal-domain` lists the shapes).
-    pub(super) fn read(r: &BarResolved, rows: &[Row], chart_rows: &[Row], layer_x: &[LayerX]) -> Result<Self, String> {
-        refuse_unported_shape(r)?;
+    pub(super) fn read(r: &BarResolved, rows: &[Row], chart_rows: &[Row], layer_x: &[LayerX], value_labels: bool) -> Result<Self, String> {
         let ax_x = &r.style.axis_x;
         let filled_x = x_resolution(r, chart_rows)?;
         let law = filled_x.resolution;
@@ -269,7 +275,7 @@ impl TimeX {
         let range_dates = if filled_x.filled.is_some() { &ladder } else { raw_dates };
         // Each layer date sits where its own bucket does.
         let layer_start = |date: &String| -> Result<String, String> {
-            let instant = instant_text(&Value::String(date.clone())).ok_or_else(|| format!("bar: layer x value {date:?} is not a date or timestamp on a time x axis"))?;
+            let instant = instant_text(&Value::String(date.clone()))?.ok_or_else(|| format!("bar: layer x value {date:?} is not a date or timestamp on a time x axis"))?;
             Ok(grain.map_or(Some(instant.clone()), |tu| time_unit_floor(&instant, tu)).expect("a date floors to its bucket"))
         };
         let mut cats: BTreeSet<String> = ladder.iter().cloned().collect();
@@ -290,6 +296,16 @@ impl TimeX {
             Some(tu) => cats.iter().map(|date| bucket_end(date, tu)).collect(),
             None => Vec::new(),
         };
+        let signs = |keep: fn(f64) -> bool| scale_plotted.iter().filter_map(|row| row_num(row, &r.y)).any(keep);
+        let mixed_sign = signs(|y| y > 0.0) && signs(|y| y < 0.0);
+        // Vega-Lite splits a mixed-sign bar into the rows `>= 0` (a null counts) and the rows `< 0`, and a
+        // discrete scale reads the dates of one then the other.
+        let sign_split_order: Vec<String> = {
+            let (below, above): (Vec<&Row>, Vec<&Row>) =
+                scale_plotted.iter().partition(|row| row_num(row, &r.y).is_some_and(|y| y < 0.0));
+            let mut seen = BTreeSet::new();
+            above.into_iter().chain(below).map(|row| row_str(row, &r.x)).filter(|date| seen.insert(date.clone())).collect()
+        };
         let rows: Vec<Row> = plotted.into_iter().filter(|row| row_num(row, &r.y).is_some()).collect();
 
         let mark = &r.style.mark;
@@ -303,8 +319,16 @@ impl TimeX {
         }
         // The scale spans every datum, and a bar to the end of its bucket: a layer's own last date is a point.
         let mut kept: BTreeSet<String> = cats.iter().cloned().collect();
+        let grouped = r.color.as_deref().is_some_and(|color| r.stack == "none" && !super::color_1to1_with_cat(&rows, &r.x, color));
+        let mut days: Vec<(f64, &str)> = ladder
+            .iter()
+            .map(|d| (date_text_day(d).expect("a plain date parsed above"), d.as_str()))
+            .collect();
+        days.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut indexed = None;
+        let mut width_is_nan = false;
         let sizing = match grain {
-            Some(grain) => {
+            Some(grain) if !value_labels => {
                 kept.insert(bucket_end(ladder.last().expect("a plotted date"), grain));
                 for layer in layer_x.iter().filter(|layer| layer.spans_buckets) {
                     let last = layer.dates.iter().map(|date| layer_start(date)).collect::<Result<BTreeSet<_>, _>>()?;
@@ -312,11 +336,43 @@ impl TimeX {
                 }
                 Sizing::Bucket { size: mark.size, grain, band_width: mark.band_width }
             }
-            None => {
-                let closest = closest_pair(&ladder);
-                let width = ContinuousWidth::of(mark)?;
-                scale_ax.scale["padding"] = Value::from(continuous_pad_px(mark, ax_x));
-                Sizing::Instant { width, closest }
+            _ => {
+                if value_labels {
+                    let padding = match grain {
+                        Some(_) => ax_x.scale.get("padding").and_then(Value::as_f64).ok_or("bar: axis_x.scale.padding absent (theme required for a date x axis)")?,
+                        None => continuous_pad_px(mark, ax_x)?,
+                    };
+                    // Vega-Lite sizes a bar on a point scale at the view step less two; a point scale pads at most a step.
+                    indexed = Some(if grouped && grain.is_none() {
+                        Indexed::Band { padding_inner: 0.0, padding_outer: padding.min(1.0) }
+                    } else if grouped {
+                        Indexed::Band { padding_inner: r.style.grouped.padding_inner, padding_outer: r.style.grouped.padding_outer }
+                    } else {
+                        Indexed::Point { padding: padding.min(1.0) }
+                    });
+                }
+                match grain {
+                    Some(_) if value_labels && grouped => Sizing::Band { width: None },
+                    Some(_) => Sizing::Stepped { width: ContinuousWidth::stepped(mark) },
+                    None => {
+                        let closest = closest_pair(&ladder);
+                        let width = ContinuousWidth::of(mark)?;
+                        if value_labels {
+                            if let (Some(_), true) = (&closest, days.len() >= 2) {
+                                let first_is_closest = days[1].0 - days[0].0 <= days.windows(2).map(|w| w[1].0 - w[0].0).fold(f64::INFINITY, f64::min);
+                                // An authored domain is the scale's two ends alone; the pair must both be among them.
+                                let in_domain = authored_day_domain(ax_x, "bar")?.is_none_or(|(lo, hi)| [days[0].0, days[1].0].iter().all(|d| *d == lo || *d == hi));
+                                width_is_nan = !first_is_closest || !in_domain;
+                            }
+                        } else {
+                            scale_ax.scale["padding"] = Value::from(continuous_pad_px(mark, ax_x)?);
+                        }
+                        match (value_labels && grouped, closest.clone()) {
+                            (true, Some(_)) => Sizing::Band { width: Some(width) },
+                            _ => Sizing::Instant { width, closest },
+                        }
+                    }
+                }
             }
         };
         let distinct = raw_dates.iter().collect::<BTreeSet<_>>().len();
@@ -329,7 +385,17 @@ impl TimeX {
         };
         let own_dates: Vec<&str> = originals.iter().map(String::as_str).chain(layer_x.iter().flat_map(|l| l.dates.iter().map(String::as_str))).collect();
         let timed = SubdaySource::of(&own_dates);
-        Ok(Self { rows, cats, ends, sizing, ladder: label_ladder, kept: kept.into_iter().collect(), law, scale_ax, grain, distinct, tooltip_grain, timed })
+        let mut cats = cats;
+        let mut kept: Vec<String> = kept.into_iter().collect();
+        if indexed.is_some() {
+            if mixed_sign {
+                let ordered: BTreeSet<&String> = sign_split_order.iter().collect();
+                cats = sign_split_order.iter().cloned().chain(cats.iter().filter(|c| !ordered.contains(c)).cloned()).collect();
+            }
+            kept = cats.clone();
+        }
+        let ladder = if indexed.is_some() { cats.clone() } else { label_ladder };
+        Ok(Self { rows, cats, ends, sizing, ladder, kept, law, scale_ax, grain, indexed, width_is_nan, distinct, tooltip_grain, timed })
     }
 
     pub(super) fn axis(
@@ -342,7 +408,7 @@ impl TimeX {
     ) -> Result<TemporalXAxis, String> {
         let usable = r.style.label_usable_ratio.ok_or("bar: label_usable_ratio absent (theme required for a date x axis)")?;
         let mut axis = TemporalXAxis::resolve(
-            &DateColumn { ladder: &self.ladder, kept: &self.kept, law: self.law, band_layer: false, bucket_aligned: true, timed: &self.timed, chart_width: svg_w },
+            &DateColumn { ladder: &self.ladder, kept: &self.kept, law: self.law, band_layer: false, indexed: self.indexed, bucket_aligned: true, timed: &self.timed, chart_width: svg_w },
             &self.scale_ax,
             svg_w * usable,
             title_text,
@@ -352,6 +418,10 @@ impl TimeX {
         if self.grain.is_some() && r.style.axis_x.ticks.count.is_none() {
             axis.show_injected_ticks();
         }
+        if let Some(src) = r.style.axis_x.labels.expr.as_deref() {
+            let expr = Expr::parse(src).map(|e| e.on("x")).map_err(|e| crate::labels_expr::describe(&e, src))?;
+            axis.speak(expr, &self.ladder)?;
+        }
         Ok(axis)
     }
 
@@ -359,6 +429,50 @@ impl TimeX {
     /// the band bar is, whose stroke antialiases twice.
     pub(super) fn spans_buckets(&self) -> bool {
         matches!(self.sizing, Sizing::Bucket { .. })
+    }
+
+    /// Whether a bar is the clipped group the band bar is, whose stroke antialiases twice: one that keeps
+    /// its calendar grain, bucketed or on the value labels' point scale.
+    pub(super) fn double_stroke(&self) -> bool {
+        self.grain.is_some()
+    }
+
+    /// Whether the x scale is discrete: value labels make it a point or band scale over the dates.
+    pub(super) fn is_discrete(&self) -> bool {
+        self.indexed.is_some()
+    }
+
+    /// Whether the bars sit on the axis's band scale rather than at positions of their own.
+    pub(super) fn bars_on_band(&self) -> bool {
+        matches!(self.sizing, Sizing::Band { .. })
+    }
+
+    pub(super) fn band_starts(&self, axis: &TemporalXAxis, pw: f64) -> Vec<f64> {
+        axis.band_starts(&self.cats, pw)
+    }
+
+    /// The columns of every date's band bars, a band holding one per series. A date outside an authored domain has no
+    /// band: Vega draws its columns on one extent at the plot's left edge, labels included.
+    pub(super) fn band_columns(&self, axis: &TemporalXAxis, pw: f64, split: &ColumnSplit) -> HashMap<String, BandColumns> {
+        let band_w = axis.bandwidth().expect("a band's bars sit on a band axis") * pw;
+        let columns = match &self.sizing {
+            Sizing::Band { width: None } => BandColumns::left_aligned(band_w, split),
+            Sizing::Band { width: Some(width) } => BandColumns::centered_in_band(band_w, width.at(band_w), split),
+            _ => unreachable!("only band bars take band columns"),
+        };
+        self.cats
+            .iter()
+            .map(|cat| (cat.clone(), if axis.knows(cat) { columns.clone() } else { columns.unplaced() }))
+            .collect()
+    }
+
+    /// Each category centered on its date at `width`; a date outside a discrete domain has no position, and Vega
+    /// places its bar at the plot's left edge.
+    fn centered(&self, axis: &TemporalXAxis, pw: f64, width: f64) -> Vec<(f64, f64)> {
+        self.cats
+            .iter()
+            .map(|date| if axis.knows(date) { (axis.frac(date, pw) * pw - width / 2.0, width) } else { (0.0, width) })
+            .collect()
     }
 
     /// Each category's leading edge and extent at a plot `pw` wide: a bucket's own span, or the width
@@ -384,8 +498,10 @@ impl TimeX {
                     Some((from, to)) => width.at((px(to) - px(from)).abs()),
                     None => width.lone(),
                 };
-                self.cats.iter().map(|date| (px(date) - width / 2.0, width)).collect()
+                self.centered(axis, pw, width)
             }
+            Sizing::Stepped { width } => self.centered(axis, pw, width.at(0.0)),
+            Sizing::Band { .. } => unreachable!("a support-table strip under bars on the band scale is refused before it paints")
         }
     }
 
@@ -412,7 +528,8 @@ impl TimeX {
     pub(super) fn anchors(&self, axis: &TemporalXAxis, pw: f64) -> Vec<f64> {
         match self.sizing {
             Sizing::Bucket { .. } => self.starts(axis, pw),
-            Sizing::Instant { .. } => self.centers(axis, pw),
+            Sizing::Instant { .. } | Sizing::Stepped { .. } => self.centers(axis, pw),
+            Sizing::Band { .. } => self.band_starts(axis, pw),
         }
     }
 
@@ -455,6 +572,8 @@ impl TimeX {
             Sizing::Bucket { grain, .. } => Sizing::Bucket { size: mark.size, grain: *grain, band_width: mark.band_width },
             // The layer's own dates size its bars.
             Sizing::Instant { .. } => Sizing::Instant { width: ContinuousWidth::of(mark)?, closest: closest_pair(own_dates) },
+            Sizing::Stepped { .. } => Sizing::Stepped { width: ContinuousWidth::stepped(mark) },
+            Sizing::Band { .. } => unreachable!("production paints no marks for a bar layer over grouped bars, which the chart refuses before it paints"),
         };
         Ok(self.columns_sized(&sizing, axis, pw, None))
     }
@@ -477,8 +596,9 @@ impl TimeX {
             .zip(extents)
             .map(|(cat, (_, span))| {
                 let columns = match (sizing, split) {
-                    (Sizing::Instant { .. }, None) => BandColumns::unsplit(span, 0.0, span, span / 2.0),
-                    (Sizing::Instant { .. }, Some(_)) => BandColumns::coincident(span),
+                    (Sizing::Band { .. }, _) => unreachable!("production paints no marks for a bar layer over grouped bars, which the chart refuses before it paints"),
+                    (Sizing::Instant { .. } | Sizing::Stepped { .. }, None) => BandColumns::unsplit(span, 0.0, span, if axis.knows(cat) { span / 2.0 } else { 0.0 }),
+                    (Sizing::Instant { .. } | Sizing::Stepped { .. }, Some(_)) => BandColumns::coincident(span),
                     (Sizing::Bucket { size: Some(size), .. }, None) => BandColumns::centered(span, *size),
                     // Vega-Lite offsets both edges by half a pixel, inward on a bucket
                     // narrower than a quarter pixel.
@@ -542,10 +662,11 @@ mod tests {
 
     #[test]
     fn a_timestamp_with_an_offset_folds_into_utc() {
-        assert_eq!(instant_text(&json!("2024-01-03T23:00:00-05:00")).as_deref(), Some("2024-01-04T04:00:00"));
-        assert_eq!(instant_text(&json!("2024-01-03 08:15")).as_deref(), Some("2024-01-03T08:15:00"));
-        assert_eq!(instant_text(&json!("2024-01-03")).as_deref(), Some("2024-01-03"));
-        assert_eq!(instant_text(&json!("soon")), None);
+        assert_eq!(instant_text(&json!("2024-01-03T23:00:00-05:00")).unwrap().as_deref(), Some("2024-01-04T04:00:00"));
+        assert_eq!(instant_text(&json!("2024-01-03 08:15")).unwrap().as_deref(), Some("2024-01-03T08:15:00"));
+        assert_eq!(instant_text(&json!("2024-01-03")).unwrap().as_deref(), Some("2024-01-03"));
+        assert_eq!(instant_text(&json!("soon")), Ok(None));
+        assert!(instant_text(&json!("9999-12-31T23:00:00-05:00")).unwrap_err().contains("outside years 0000 to 9999"));
     }
 
     #[test]

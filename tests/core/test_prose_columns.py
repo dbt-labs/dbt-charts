@@ -12,6 +12,7 @@ import dataclasses
 import html
 import re
 from typing import Any, Literal
+from xml.etree import ElementTree
 
 import pytest
 
@@ -298,6 +299,73 @@ class TestATableKeepsItsNaturalWidth:
         svg = render(self.TABLE, 1096.0)
         assert "A short sentence introducing the table." in svg
         assert column_count(svg) == 1
+
+    def test_a_wide_table_does_not_widen_the_paragraphs_around_it(self) -> None:
+        paragraph = LONG.split("\n\n")[0]
+        table = (
+            "| Key | What it does |\n|---|---|\n"
+            f"| `aggregate` | {'a long cell that cannot shrink ' * 8}|\n"
+        )
+        alone = render(paragraph, 1096.0, max_number=1)
+        mixed = render(f"{paragraph}\n\n{table}", 1096.0, max_number=1)
+        border = max(
+            float(w)
+            for w in re.findall(r'<rect[^>]*width="([\d.]+)"[^>]*fill="none"', mixed)
+        )
+        assert border > self._span_text(1096.0, 1)
+        prose_lines = [
+            re.sub(r"<[^>]+>", "", t).strip()
+            for t in re.findall(r"<text[^>]*>(.*?)</text>", mixed, re.S)
+        ]
+        wrapped = [
+            re.sub(r"<[^>]+>", "", t).strip()
+            for t in re.findall(r"<text[^>]*>(.*?)</text>", alone, re.S)
+        ]
+        assert prose_lines[: len(wrapped)] == wrapped
+
+    @pytest.mark.parametrize("align", ["left", "center", "right"])
+    def test_a_slot_wide_table_stays_on_the_span_edges_whatever_the_align(
+        self, align: Literal["left", "center", "right"]
+    ) -> None:
+        width = 1096.0
+        paragraph = LONG.split("\n\n")[0]
+        wide = (
+            "| " + " | ".join(f"Column heading number {i}" for i in range(8)) + " |\n"
+        )
+        wide += "|" + "---|" * 8 + "\n| " + " | ".join("x" for _ in range(8)) + " |\n"
+        resolved = resolve_style(get_theme_style("clarity"))
+        text_style = resolved.text.model_copy(
+            update={
+                "align": align,
+                "column": resolved.text.column.model_copy(update={"max_number": 1}),
+            }
+        )
+        svg, _ = render_prose_svg(
+            f"{paragraph}\n\n{wide}",
+            width,
+            text_style,
+            resolved,
+            plan_for(width, 3),
+            authored=wide,
+            base_dir=None,
+            error_collector=None,
+        )
+        root = ElementTree.fromstring(svg)
+        painted: list[tuple[float, float]] = []
+
+        def walk(node: ElementTree.Element, dx: float) -> None:
+            moved = re.match(r"translate\(([-\d.]+)", node.get("transform", ""))
+            dx += float(moved.group(1)) if moved else 0.0
+            if node.tag.endswith("rect") and node.get("fill") == "none":
+                x = dx + float(node.get("x", 0))
+                painted.append((x, x + float(node.get("width", 0))))
+            for child in node:
+                walk(child, dx)
+
+        walk(root, 0.0)
+        left, right = max(painted, key=lambda extent: extent[1] - extent[0])
+        assert left == pytest.approx(0.0, abs=0.5)
+        assert right <= width + 0.5
 
     def test_a_table_wider_than_the_slot_takes_the_whole_slot(self) -> None:
         wide = (

@@ -172,6 +172,7 @@ class TestTableRendererStyleConsumption:
             color="#ee00ee",
             size=base_font.size,
             weight=base_font.weight,
+            case=base_font.case,
         )
         table_style = base.table.model_copy(
             update={"header": base.table.header.model_copy(update={"font": new_font})}

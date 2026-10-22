@@ -1,5 +1,4 @@
 {
-  "aria.axis": "asse",
   "aria.chart": "grafico",
   "aria.container_arc": "contenitore di indicatore ad arco",
   "aria.container_group": "contenitore di indicatore di gruppo",
@@ -18,8 +17,6 @@
   "aria.role_text": "indicatore di testo",
   "aria.title": "titolo",
   "aria.title_text": "Testo del titolo «{header}»",
-  "aria.x_axis": "Asse X",
-  "aria.y_axis": "Asse Y",
   "axis.midnight": "Mezzanotte",
   "axis.noon": "Mezzogiorno",
   "case.extra_small_words": "",

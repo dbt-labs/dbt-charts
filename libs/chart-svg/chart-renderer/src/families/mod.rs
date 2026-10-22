@@ -1,4 +1,5 @@
 pub mod area;
+pub(crate) mod axis_caption;
 pub mod bar;
 mod bar_hover_band;
 pub mod color_scale;

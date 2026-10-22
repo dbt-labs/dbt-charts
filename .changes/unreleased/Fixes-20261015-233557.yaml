@@ -1,0 +1,3 @@
+kind: Fixes
+body: Category axis labels print in ink like the numeric ruler; time axis labels stay muted. Style every category axis with `style.charts.axis_band`.
+time: 2026-10-15T23:35:57.772979-07:00

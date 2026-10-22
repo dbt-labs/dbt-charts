@@ -105,6 +105,30 @@ def _flag_quantitative_color(
             rules=color.rules,
             fallback_scale=color.fallback_scale,
             quantitative_data=True,
+            categorical=color.categorical,
+        ),
+    }
+
+
+def flag_categorical_color(
+    channels: dict[str, ResolvedStyleChannel], bound_fields: frozenset[str]
+) -> dict[str, ResolvedStyleChannel]:
+    """Mark the series ``color:`` channel whose field a category scale binds."""
+    color = channels.get("color")
+    if color is None or color.mode != "series" or color.data_field not in bound_fields:
+        return channels
+    return {
+        **channels,
+        "color": ResolvedStyleChannel(
+            channel=color.channel,
+            mode=color.mode,
+            data_field=color.data_field,
+            literal_value=color.literal_value,
+            scale=color.scale,
+            rules=color.rules,
+            fallback_scale=color.fallback_scale,
+            quantitative_data=color.quantitative_data,
+            categorical=True,
         ),
     }
 

@@ -140,9 +140,8 @@ fixtures.
 To regenerate when the spec matrix changes:
 
 ```bash
-cd libs/d3-format/scripts
-npm install d3-format
-node regenerate_fixture.mjs
+pnpm add --dir libs/d3-format/scripts --ignore-workspace d3-format
+node libs/d3-format/scripts/regenerate_fixture.mjs
 ```
 
 The script writes directly to `tests/fixtures/d3_reference.json` — do not use `>` redirection (that would overwrite the file with the console status line).

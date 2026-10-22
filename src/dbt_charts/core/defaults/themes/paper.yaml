@@ -106,11 +106,6 @@ style:
       ticks:
         color: chrome[5]
     axis_quantitative:
-      # Overrides clarity's chrome[11] quantitative-label color — paper's
-      # axis chrome stays on the dbt-creams ladder throughout.
-      labels:
-        font:
-          color: chrome[8]
       grid:
         color: chrome[5]
       ticks:
@@ -134,7 +129,7 @@ style:
       color:
         gradient:
           palette: sequence
-    # Standalone spark-bar track on the warm fill gray — stark pins the
+    # Standalone spark-bar track on the warm fill gray — `_base` pins the
     # cool-gray fill, which would sit as a cool cast on the cream canvas.
     spark_bar:
       bar:
@@ -198,7 +193,7 @@ style:
     font:
       color: chrome[8]
     placeholder:
-      # Cream-toned hint for warm-canvas themes (overrides stark's
+      # Cream-toned hint for warm-canvas themes (overrides `_base`'s
       # gray disabled token so unselected text stays in the cream ramp).
       font:
         color: chrome[6]

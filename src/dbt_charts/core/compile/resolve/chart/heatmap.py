@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Literal
 
 from dbt_charts.core.compile.format import reject_native
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -26,8 +27,11 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     estimate_cartesian_plot_height,
     legend_row_fits,
 )
-from dbt_charts.core.compile.resolve.chart._channels import _column_numeric_values
-from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset
+from dbt_charts.core.compile.resolve.chart._channels import (
+    _classify_to_channel_type,
+    _column_numeric_values,
+)
+from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset, ChartRows
 from dbt_charts.core.compile.resolve.chart._domain import _CartesianTickResolution
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
@@ -60,6 +64,15 @@ __all__ = [
 ]
 
 
+def _is_temporal(column: str | list[str] | None, data: ChartRows) -> bool:
+    """Whether a heatmap axis column holds dates. A wide ``y`` list names measures,
+    never a date axis."""
+    return (
+        isinstance(column, str)
+        and _classify_to_channel_type(column, data, is_dimension=True) == "temporal"
+    )
+
+
 def _resolve_heatmap(
     normalized: HeatmapChart,
     dataset: ChartDataset,
@@ -73,6 +86,11 @@ def _resolve_heatmap(
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
     )
+    temporal_axes: set[Literal["axis_x", "axis_y"]] = set()
+    if _is_temporal(normalized.x, data):
+        temporal_axes.add("axis_x")
+    if _is_temporal(normalized.y, data):
+        temporal_axes.add("axis_y")
     plan = plan_cartesian(
         normalized,
         data,
@@ -83,6 +101,7 @@ def _resolve_heatmap(
         normalized.multiples,
         normalized.y,
         has_quantitative_axis=False,
+        temporal_band_axes=frozenset(temporal_axes),
     )
     primary = plan.primary
     heatmap = merge_unset(chart_style_context.heatmap, primary)

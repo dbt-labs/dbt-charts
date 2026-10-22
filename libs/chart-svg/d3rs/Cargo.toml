@@ -6,3 +6,7 @@ description = "Spike-scoped ports of d3 functions used by dbt charts: d3-path, d
 
 [dependencies]
 display-text = { path = "../display-text" }
+libm = "0.2.16"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+

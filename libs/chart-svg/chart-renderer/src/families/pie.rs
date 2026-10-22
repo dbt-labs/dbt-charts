@@ -888,7 +888,7 @@ fn draw_pie_fit(
             let value_family = value_font.family_or("sans-serif");
             let value_weight = value_font.weight_str();
             let value_color = value_font.color.as_deref().unwrap_or("#000");
-            let value_y = cy + vega_fit::baseline_shift("bottom", value_size);
+            let value_y = cy + crate::measure::baseline_shift("bottom", value_size);
             crate::contract::hidden_mark_group_open(&mut svg, "text", "layer_1_marks");
             svg.push_str(&crate::href::anchor_open(r.link_open.anchor(total_href.as_deref())));
             let _ = write!(
@@ -907,7 +907,7 @@ fn draw_pie_fit(
                 let label_family = label_font.family_or("sans-serif");
                 let label_weight = label_font.weight_str();
                 let label_color = label_font.color.as_deref().unwrap_or("#000");
-                let label_y = cy + vega_fit::baseline_shift("top", label_size);
+                let label_y = cy + crate::measure::baseline_shift("top", label_size);
                 crate::contract::hidden_mark_group_open(&mut svg, "text", "layer_2_marks");
                 svg.push_str(&crate::href::anchor_open(r.link_open.anchor(total_href.as_deref())));
                 let _ = write!(
@@ -937,7 +937,7 @@ fn draw_pie_fit(
             let y_anchored = cy - sl.mid.cos() * (radius + label_offset)
                 + if top { -(sl.lines.len() as f64 * label_lh) } else { 0.0 };
             let anchor = if right { "start" } else { "end" };
-            let first_dy = vega_fit::baseline_shift("top", label_fs);
+            let first_dy = crate::measure::baseline_shift("top", label_fs);
             let label_aria: Option<String> = match &value_title {
                 Some(value_title) => {
                     Some(pie_row_aria(r, payload_rows, thetas, total, value_title, sl.idx)?)
@@ -1003,7 +1003,7 @@ fn draw_pie_fit(
 /// empty dataset's, not a chart of zero-valued slices — that stays refused in
 /// [`render`].
 pub fn render_empty(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
-    let r: Resolved = serde_json::from_value(payload.resolved.clone())
+    let r: Resolved = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("pie payload: {e}"))?;
     if r.attached_table.as_ref().is_some_and(|v| !v.is_null()) {
         return Err("pie: empty result set not supported with an attached table".into());
@@ -1061,7 +1061,7 @@ fn vega_title_block_height(r: &Resolved) -> Result<f64, String> {
 
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
     let r: Resolved =
-        serde_json::from_value(payload.resolved.clone()).map_err(|e| format!("pie payload: {e}"))?;
+        Deserialize::deserialize(&payload.resolved).map_err(|e| format!("pie payload: {e}"))?;
 
     // Fired here, in the shared entry gate ahead of the attached-table /
     // fit-path dispatch below — pie's authored surface can no longer
@@ -1242,7 +1242,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
                 if titled {
                     let shift = crate::TitleShift { title_dy: 0.0, body_dy: room };
                     let shifted = crate::title_shift::shift_vega_payload(payload, shift)?;
-                    let pushed: Resolved = serde_json::from_value(shifted.resolved.clone())
+                    let pushed: Resolved = Deserialize::deserialize(&shifted.resolved)
                         .map_err(|e| format!("pie payload: {e}"))?;
                     let pushed_pad_t = shifted
                         .padding
@@ -2861,7 +2861,7 @@ mod tests {
     /// own legend config: `(box_w, box_h)`.
     fn legend_box(payload: &Value, labels: &[&str]) -> (f64, f64) {
         use crate::families::legend::{legend_title_text, vega_legend, LegendConfig, LegendEntry};
-        let cfg: LegendConfig = serde_json::from_value(payload["resolved"]["legend"].clone()).unwrap();
+        let cfg: LegendConfig = Deserialize::deserialize(&payload["resolved"]["legend"]).unwrap();
         let entries: Vec<LegendEntry> =
             labels.iter().map(|label| LegendEntry {
                 label,

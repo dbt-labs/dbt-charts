@@ -1149,11 +1149,12 @@ def channel_to_encoding(
     if ch.mode == "series":
         # Plain field binding only — palette goes in spec.config.range.category,
         # not in encoding.color.scale.range.
-        # Type is inferred from data: quantitative for numeric columns, nominal
-        # otherwise.
+        # Type is inferred from data unless a category scale binds the field.
         enc: dict[str, Any] = {
             "field": ch.data_field,
-            "type": infer_vega_type_from_data(data, ch.data_field),
+            "type": "nominal"
+            if ch.categorical
+            else infer_vega_type_from_data(data, ch.data_field),
         }
         if axis_style is not None:
             ax = axis_to_vl(axis_style)

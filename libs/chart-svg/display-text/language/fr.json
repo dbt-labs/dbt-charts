@@ -1,5 +1,4 @@
 {
-  "aria.axis": "axe",
   "aria.chart": "graphique",
   "aria.container_arc": "conteneur de marque en arc",
   "aria.container_group": "conteneur de marque de groupe",
@@ -18,8 +17,6 @@
   "aria.role_text": "marque de texte",
   "aria.title": "titre",
   "aria.title_text": "Texte du titre « {header} »",
-  "aria.x_axis": "Axe X",
-  "aria.y_axis": "Axe Y",
   "axis.midnight": "Minuit",
   "axis.noon": "Midi",
   "case.extra_small_words": "",

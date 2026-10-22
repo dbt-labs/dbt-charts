@@ -258,7 +258,7 @@ pub(crate) fn de_de() -> NumberLocale {
     let fixture: serde_json::Value =
         serde_json::from_str(include_str!("../../fixtures/regional/styling_6_revenue_bar.json"))
             .expect("fixture json parses");
-    serde_json::from_value(fixture["payload"]["board_style"]["format_locale"].clone())
+    Deserialize::deserialize(&fixture["payload"]["board_style"]["format_locale"])
         .expect("fixture locale parses")
 }
 
@@ -268,7 +268,7 @@ pub(crate) fn de_de() -> NumberLocale {
 pub(crate) fn fr_fr() -> NumberLocale {
     let fixtures: serde_json::Value =
         serde_json::from_str(include_str!("../../fixtures/regional/table_lanes.json")).expect("fixture json parses");
-    serde_json::from_value(fixtures["fr-FR/lanes_all"]["payload"]["board_style"]["format_locale"].clone())
+    Deserialize::deserialize(&fixtures["fr-FR/lanes_all"]["payload"]["board_style"]["format_locale"])
         .expect("fixture locale parses")
 }
 

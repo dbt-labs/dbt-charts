@@ -858,7 +858,7 @@ def _full_model_as_overlay(model: BaseModel, patch_cls: type[P]) -> P:
 
     ``merge_onto_base``'s presence contract is ``model_fields_set``-based: a
     field the patch explicitly sets to ``None`` clears the base, it does not
-    inherit. ``effective.axis_x``/``axis_y``/``axis_quantitative`` are full
+    inherit. ``effective.axis_x``/``axis_y``/``axis_quantitative``/``axis_band`` are full
     theme models (every field populated by ``model_validate`` at cascade
     time, so every field is "set") where an unauthored field is simply
     ``None`` and must still inherit from the layer below — the old contract
@@ -902,14 +902,19 @@ def _axis_layers(
     chart_type: str,
     column_layer_format: AuthoredFormat | None,
     local: AxisOverrides,
+    temporal_band: bool,
 ) -> list[BaseModel | None]:
     """The cascade's layers above ``charts.axis``, lowest first.
 
     Specificity decides, whichever file set a path: the channel slot beats the
     general one, the type slot beats the channel slot, a chart family beats the
     whole ``charts`` tier, and the chart's own style beats both. The axis
-    column's declared format sits between the family and the chart. There is
-    no ``charts.axis_band``: a band axis styles itself per family or per chart.
+    column's declared format sits between the family and the chart.
+
+    ``temporal_band`` marks a band-typed axis whose column is really a date (a
+    heatmap's nominal month axis): it skips ``charts.axis_band`` so time stays on
+    the muted ``charts.axis`` voice; a family's or chart's own ``axis_band`` still
+    styles it.
     """
     channel_patch_cls = AxisXStylePatch if axis_name == "axis_x" else AxisYStylePatch
     channel_axis = getattr(chart_style_context, axis_name)
@@ -939,6 +944,10 @@ def _axis_layers(
             chart_style_context.axis_quantitative, QuantitativeAxisStylePatch
         )
         if type_slot == "axis_quantitative"
+        else _without_band_position(
+            _full_model_as_overlay(chart_style_context.axis_band, BandAxisStylePatch)
+        )
+        if type_slot == "axis_band" and not temporal_band
         else None,
         family_slot("axis"),
         family_slot(axis_name),
@@ -964,6 +973,7 @@ def _merge_axis_cascade(
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     labeled: bool,
+    temporal_band: bool = False,
 ) -> tuple[AxisXStyle, float | None]: ...
 
 
@@ -977,6 +987,7 @@ def _merge_axis_cascade(
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     labeled: bool,
+    temporal_band: bool = False,
 ) -> tuple[AxisYStyle, float | None]: ...
 
 
@@ -989,6 +1000,7 @@ def _merge_axis_cascade(
     axis_overrides: AxisOverrides | None = None,
     chart_type: str,
     labeled: bool,
+    temporal_band: bool = False,
 ) -> tuple[AxisXStyle | AxisYStyle, float | None]:
     """Walk the axis cascade and return the merged, channel-typed axis, plus any
     band_position the chart's own band patch sets.
@@ -1019,6 +1031,9 @@ def _merge_axis_cascade(
     after the last layer; a concrete ``true``/``false`` from any tier is never
     touched.
 
+    ``temporal_band`` is ``_axis_layers``'s flag for a band-typed axis whose
+    column is a date.
+
     Chart-local patches come from ``axis_overrides`` when given, else from the
     context's ``axis_overrides_*``.
     """
@@ -1046,6 +1061,7 @@ def _merge_axis_cascade(
         chart_type,
         column_layer_format,
         local,
+        temporal_band,
     ):
         base = merge_onto_base(base, layer)
 
@@ -1065,7 +1081,14 @@ def _merge_axis_cascade(
     band_position = None
     if channel_type in _BAND_CHANNEL_TYPES:
         family_band = _family_axis_slot(chart_style_context, chart_type, "axis_band")
-        for band_patch in (local.band, family_band):
+        charts_band = (
+            None
+            if temporal_band
+            else _full_model_as_overlay(
+                chart_style_context.axis_band, BandAxisStylePatch
+            )
+        )
+        for band_patch in (local.band, family_band, charts_band):
             if isinstance(band_patch, BandAxisStylePatch) and (
                 band_patch.band_position is not None
             ):
@@ -1096,7 +1119,7 @@ def resolved_axis_style(
     a quantitative channel, ``axis_band`` on a band channel, no slot otherwise):
       1.  ``charts.axis``
       2.  ``charts.axis_x`` / ``axis_y``
-      3.  ``charts.axis_quantitative`` (no ``charts.axis_band`` exists)
+      3.  ``charts.axis_quantitative`` / ``charts.axis_band``, whichever is ``T``
       4.  ``charts.<chart_type>.axis``
       5.  ``charts.<chart_type>.axis_x`` / ``axis_y``
       6.  ``charts.<chart_type>.T``

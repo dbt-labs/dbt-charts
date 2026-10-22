@@ -1,0 +1,5 @@
+kind: Fixes
+body: Board-wide category color pins on year-like text values such as "2020" now apply.
+time: 2026-10-21T23:34:59.837856293Z
+custom:
+    DbtChartsIssue: "75"

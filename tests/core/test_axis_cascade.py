@@ -237,8 +237,7 @@ def test_axis_line_visible_cascades():
 def test_axis_line_color_is_not_transparent_when_visible(theme: str) -> None:
     """A board authoring `style.charts.axis.line.visible: true` must draw a
     real, visible domain line under every shipped theme -- including
-    `stark`, the structural root every user-facing theme extends and one
-    of the five that lost its own bound color.
+    `stark`, one of the five that lost its own bound color.
 
     `axis.line.color` is a hidden-chrome default `_base.yaml` keeps
     `transparent` only for the line's *own* inert, invisible-by-default

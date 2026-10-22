@@ -77,8 +77,7 @@ Changes in this release:
   three-line board override rather than a theme. ``editorial`` is renamed
   ``clarity`` (the shipped default — ``SHIPPED_DEFAULT_THEME_NAME``).
   ``cream`` is renamed ``paper``. ``stark`` is untouched — still a
-  schema-offered pick and still the structural root every other built-in
-  theme transitively extends.
+  schema-offered pick.
 
   ``theme:`` *is* expressible as a ``Move``, despite carrying no declared key
   path of its own: it validates against ``ThemeName``, a real JSON Schema
@@ -208,21 +207,16 @@ Changes in this release:
   were schema-valid and inert: ``row_height`` reached the normalized layout and
   no render path ever read it, and the two ``default_*`` spans were never even
   copied — grid item spans default to 1 unconditionally. Auto-stripped by
-  ``dct migrate`` **when authored without** ``gap``: a board carrying all four
-  cannot reach the current schema (``gap`` below has no Deletion), so the
-  migration cannot finish and the original mapping is reported instead — the
-  author sees one unknown-field error per key rather than one for ``gap``. That
-  is the canonical five-key block this release deletes, so it is the likely
-  shape, not an edge case.
+  ``dct migrate``.
 
   ``gap`` was removed from GridLayout for the same reason (the normalized value
-  is discarded at resolve, which reads ``style.layout.grid.gap`` instead) but is
-  fail-loud: the parser raises an unknown-field error hinting at
-  ``style.layout.grid.gap``. Declarable but unconverted — the tail also matches
-  that live key, so it is legal only root-anchored (``validate_declarations``'s
-  ``retired_at_root``), with ``_live_declares_tail`` holding the firing off the
-  layout slot. The enum → pixel mapping is not lossless either way, so the
-  successor is a hint rather than a value a migration could carry over.
+  is discarded at resolve, which reads ``style.layout.grid.gap`` instead) and is
+  auto-stripped too, with a reason naming ``style.layout.grid.gap``. Its tail
+  also matches that live key, so it is legal only root-anchored
+  (``validate_declarations``'s ``retired_at_root``), with
+  ``_live_declares_tail`` holding the firing off the layout slot. The enum →
+  pixel mapping is not lossless, so the value is dropped rather than carried
+  over.
 
 - ``width``/``color``/``dash_array``/``line_cap``/``dash_offset`` removed from
   four ``border:`` slots that typed the full ``BorderStyle`` but whose renderer
@@ -239,13 +233,13 @@ Changes in this release:
   ...)``) since a bare ``("bar", "border", ...)`` also matches the live
   ``charts.marks.bar.border``.
 
-  Not covered: a chart-local style override on a ``type: spark_bar`` chart
+  The chart-local override on a ``type: spark_bar`` chart
   (``charts.<id>.style.border.<field>``) shares the same ``SparkBarChartStyle``
   Patch class as the board-level ``style.charts.spark_bar.border`` slot but has
   no ``spark_bar`` segment in its own path, so it cannot be slot-qualified
-  without also matching every other chart-local ``style.border.<field>``.
-  Fail-loud, and declarable but unconverted like ``grid.gap`` above:
-  ``chart_type="spark_bar"`` is the scope it needs.
+  without also matching every other chart-local ``style.border.<field>``. It is
+  scoped by ``chart_type="spark_bar"`` in ``DELETED_CHART_FAMILY_TAILS``
+  instead.
 
 - KPI text styling reconciliation (task: kpi-text-styling-style-color-is-a-
   family-outlier-tones-live-in-the-wrong-family-and-align-is-hardcoded).
@@ -309,16 +303,15 @@ Changes in this release:
   is a chart ``type:`` only, styled through ``charts.pie``, and has no
   board-level slot of its own in any released grammar.
 
-  Not covered: the chart-local position (``charts.<id>.style.font`` /
-  ``charts.<id>.style.border``). It shares the narrowed per-family Patch
-  classes but has no family segment in its own path, so the only available
-  tails are ``("style", "font")`` and ``("style", "border")`` — both still
-  live (the board-frame ``style.border``, and ``style.font`` on kpi/table/
-  callout). Fail-loud, and declarable but unconverted like ``grid.gap`` and the
-  spark_bar chart-local border above: per-family ``chart_type`` scoping is what
-  confines these — the gate never sees them, since the ``type:`` check short-
-  circuits first. The parser raises an unknown-field error naming the field and
-  saying it is unsupported on that chart family.
+  The chart-local position (``charts.<id>.style.font`` /
+  ``charts.<id>.style.border``) shares the narrowed per-family Patch classes
+  but has no family segment in its own path, so the only available tails are
+  ``("style", "font")`` and ``("style", "border")`` — both still live (the
+  board-frame ``style.border``, and ``style.font``/``style.border`` on kpi,
+  table and callout). Each card-less family, ``donut`` included (a chart
+  ``type:`` here, unlike at the board level), is a ``Deletion`` scoped by
+  ``chart_type`` in ``DELETED_CHART_FAMILY_TAILS``, carrying the same
+  no-card reason as the board-level tails.
 
 - ``axis_quantitative`` removed from heatmap's per-family style surface (task:
   surface-accepts-axis-fields-a-family-cannot-honor). Heatmap's axes are both
@@ -528,6 +521,10 @@ DELETED_TAILS: tuple[YamlKeyPath, ...] = (
     ("grid", "row_height"),
     ("grid", "default_width"),
     ("grid", "default_height"),
+    # Root grid.gap was inert too (resolve reads style.layout.grid.gap). The tail
+    # also matches that live key, so it is declarable only because the root
+    # position retired it; `_live_declares_tail` keeps the walk off the style.
+    ("grid", "gap"),
     # BorderStyle -> CornerStyle narrowing on four radius-only slots. Each
     # slot-qualified so the tail can't also strip a fully-applied border
     # elsewhere (see the module docstring).
@@ -590,6 +587,28 @@ DELETED_CHART_FAMILY_TAILS: tuple[tuple[YamlKeyPath, str], ...] = (
     # heatmap has no quantitative axis (both are nominal); the five other
     # cartesian families keep their chart-local override.
     (("style", "axis_quantitative"), "heatmap"),
+    # Chart-local font/border on the families with no card to paint them onto;
+    # kpi, table and callout keep theirs.
+    *(
+        (("style", field), family)
+        for family in (
+            "bar",
+            "line",
+            "area",
+            "scatter",
+            "histogram",
+            "heatmap",
+            "pie",
+            "donut",
+        )
+        for field in ("font", "border")
+    ),
+    # A spark_bar chart's own style.border narrowed to radius only, like the
+    # board-level style.charts.spark_bar.border.
+    *(
+        (("style", "border", field), "spark_bar")
+        for field in ("width", "color", "dash_array", "line_cap", "dash_offset")
+    ),
 )
 
 # KpiTonesStyle moved from charts.kpi.tones to board-level tones, shared with
@@ -676,6 +695,10 @@ def _card_style_deletion_reason(tail: YamlKeyPath) -> str | None:
     family = tail[1]
     if family not in _CARD_STYLE_UNSUPPORTED_CHART_TYPES:
         return None
+    return _no_card_reason(family)
+
+
+def _no_card_reason(family: str) -> str:
     return (
         f"{family} has no per-chart card to paint it onto (it renders via "
         "Vega-Lite with no card surface separate from the board frame). The "
@@ -684,6 +707,10 @@ def _card_style_deletion_reason(tail: YamlKeyPath) -> str | None:
 
 
 _RETIRED_PAINT_REASONS: dict[YamlKeyPath, str] = {
+    ("grid", "gap"): (
+        "grid.gap never had any effect; grid spacing is set by "
+        "style.layout.grid.gap (pixels)."
+    ),
     ("style", "color"): (
         "kpi's style.color is gone; style.value.font.color paints the value "
         "text instead. Every other chart family keeps its own style.color, "
@@ -725,7 +752,9 @@ def deletions(
             source_schema,
             target_schema,
             tail,
-            reason=_RETIRED_PAINT_REASONS[tail],
+            reason=_no_card_reason(chart_type)
+            if tail in (("style", "font"), ("style", "border"))
+            else _RETIRED_PAINT_REASONS.get(tail),
             chart_type=chart_type,
         )
         for tail, chart_type in DELETED_CHART_FAMILY_TAILS

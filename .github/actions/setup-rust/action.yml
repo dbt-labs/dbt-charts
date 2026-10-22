@@ -43,6 +43,12 @@ runs:
         echo "version=$version" >> "$GITHUB_OUTPUT"
       shell: bash
 
+    # The save runs as a post step, which sees an empty `inputs` context when
+    # this action is nested (setup-python); env survives, so paths read it.
+    - name: Pin the cached target dir
+      run: echo "SETUP_RUST_TARGET=${{ inputs.target }}" >> "$GITHUB_ENV"
+      shell: bash
+
     # Only main saves (a PR's or merge group's entries are unreadable elsewhere
     # and evict main's); both restore main's exact entry, else the newest of the
     # prefix so only changed crates rebuild. Keyed on every build input, so an
@@ -57,8 +63,8 @@ runs:
           ~/.cargo/registry
           !~/.cargo/registry/src
           ~/.cargo/git
-          ${{ inputs.target }}
-          !${{ inputs.target }}/**/incremental
+          ${{ env.SETUP_RUST_TARGET }}
+          !${{ env.SETUP_RUST_TARGET }}/**/incremental
         key: cargo-${{ runner.os }}-${{ inputs.profile }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-${{ hashFiles('.github/actions/setup-rust/action.yml', 'libs/chart-svg/**', 'dbt-charts/src/dbt_charts/core/defaults/palettes/tone/*.yml') }}
         restore-keys: cargo-${{ runner.os }}-${{ inputs.profile }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-
 
@@ -71,8 +77,8 @@ runs:
           ~/.cargo/registry
           !~/.cargo/registry/src
           ~/.cargo/git
-          ${{ inputs.target }}
-          !${{ inputs.target }}/**/incremental
+          ${{ env.SETUP_RUST_TARGET }}
+          !${{ env.SETUP_RUST_TARGET }}/**/incremental
         key: cargo-${{ runner.os }}-${{ inputs.profile }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-${{ hashFiles('.github/actions/setup-rust/action.yml', 'libs/chart-svg/**', 'dbt-charts/src/dbt_charts/core/defaults/palettes/tone/*.yml') }}
         restore-keys: cargo-${{ runner.os }}-${{ inputs.profile }}-py${{ steps.python.outputs.version }}-${{ inputs.key-suffix }}-
 

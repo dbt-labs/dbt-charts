@@ -80,6 +80,7 @@ use crate::common::{
     AxisStyle, ChartSort, FormatSlot, Font, MarkLabels, SortAggregate, StyleChannel, TitleStyle,
     VALUE_AXIS_BREATHING_ROOM,
 };
+use crate::families::axis_caption::{category_axis_caption, date_value_caption, value_axis_caption, AxisCaption};
 use crate::families::bar_hover_band::HoverBand;
 use crate::families::cartesian::{vl_default_tick_count, BandScale, LinearScale};
 use crate::families::empty_cartesian::ValueAxis;
@@ -102,7 +103,7 @@ use crate::families::temporal::{
     detect_time_unit, parse_authored_time_unit,
     axis_time_format, grain_format,
     resolve_vega_label_layout,
-    AuthoredTimeFormat, LabelUnit, TemporalLabel, TimeUnit, complete_buckets, parse_domain_dates};
+    AuthoredTimeFormat, LabelUnit, TemporalLabel, TimeUnit, complete_buckets, parse_domain_dates, parse_iso_date};
 use crate::contract::Reads;
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::svg::{num_full, py_float_str, xml_escape, xml_escape_attr, vega_escape_attr};
@@ -364,6 +365,12 @@ enum Overlap {
     Keyword(String),
 }
 
+/// Vega-Lite's floor under a grouped bar's `width` expression.
+const MIN_COLUMN_WIDTH: f64 = 0.25;
+
+/// Vega-Lite's default view step (20 px) less two: the width of a bar on a point scale.
+const VIEW_STEP_BAR_SIZE: f64 = 18.0;
+
 /// Mirrors Python's `continuous_bar_max_size`: the authored ceiling, else the
 /// engine's.
 fn continuous_max_size(mark: &MarkStyle) -> f64 {
@@ -390,6 +397,11 @@ impl ContinuousWidth {
             )),
         };
         Ok(Self { size: mark.size, ladder })
+    }
+
+    /// The width of a bar on a point scale: the authored `size`, else Vega-Lite's view step less two.
+    pub(crate) fn stepped(mark: &MarkStyle) -> Self {
+        Self { size: Some(mark.size.unwrap_or(VIEW_STEP_BAR_SIZE)), ladder: None }
     }
 
     /// The width with no pair of x positions to measure a step from: `continuous_bar_size_prop`'s literal
@@ -430,9 +442,10 @@ pub(crate) fn bucket_bar_extent(start: f64, end: f64, band_width: f64) -> (f64, 
 /// The share of a bucket a bar spans when no `band_width` is authored.
 pub(crate) const DEFAULT_BAND_WIDTH: f64 = 0.8;
 
-fn continuous_pad_px(mark: &MarkStyle, ax_x: &AxisStyle) -> f64 {
+fn continuous_pad_px(mark: &MarkStyle, ax_x: &AxisStyle) -> Result<f64, String> {
     let widest = mark.size.unwrap_or_else(|| continuous_max_size(mark));
-    ax_x.scale.get("padding").and_then(Value::as_f64).unwrap_or(0.0).max(widest / 2.0)
+    let padding = ax_x.scale.get("padding").and_then(Value::as_f64).ok_or("bar: axis_x.scale.padding absent (theme required for a date x axis)")?;
+    Ok(padding.max(widest / 2.0))
 }
 
 #[derive(Deserialize)]
@@ -816,9 +829,8 @@ fn validate_layers(r: &BarResolved, payload: &Payload) -> Result<Vec<OverlayLaye
             }
         }
     }
-    let own_axes = YSides::of(&layers).is_some();
     for raw in &r.layers {
-        crate::families::layers::refuse_unpainted_layer_affix("bar", raw, own_axes)?;
+        crate::families::layers::refuse_unpainted_layer_affix("bar", raw)?;
     }
     Ok(layers)
 }
@@ -884,7 +896,7 @@ fn capped_thickness(size: f64, max_size: Option<f64>) -> f64 {
 /// decided ahead of `render` so the engine reports the same code and params.
 pub fn production_errors(payload: &Payload) -> Result<(), Diagnostic> {
     // An unparseable payload is `render`'s own error to report.
-    let Ok(r) = serde_json::from_value::<BarResolved>(payload.resolved.clone()) else { return Ok(()) };
+    let Ok(r) = BarResolved::deserialize(&payload.resolved) else { return Ok(()) };
     overlap_errors(&r, payload)
 }
 
@@ -920,14 +932,20 @@ fn overlap_errors(r: &BarResolved, payload: &Payload) -> Result<(), Diagnostic> 
             return Err(Diagnostic::new(&codes::ERR_BAR_OVERLAP_CONTINUOUS_AXIS, [("axis", Value::from("x")), ("chart_id", chart_id())]));
         }
     }
-    // `auto` never reaches 1, so its series-count value does not matter here.
-    if overlap_fraction(r.style.overlap.as_ref(), 0.0)? < 1.0 {
-        return Ok(());
+    // `auto` is excluded above, so the series-count default does not matter here.
+    let fraction = overlap_fraction(r.style.overlap.as_ref(), 0.0)?;
+    if fraction >= 1.0 {
+        return Err(Diagnostic::new(
+            &codes::ERR_BAR_OVERLAP_FULL_NON_UNIQUE_COLOR,
+            [("chart_id", chart_id()), ("series", Value::from(series))],
+        ));
     }
-    Err(Diagnostic::new(
-        &codes::ERR_BAR_OVERLAP_FULL_NON_UNIQUE_COLOR,
-        [("chart_id", chart_id()), ("series", Value::from(series))],
-    ))
+    // `_count_series`: the distinct color values, one for a chart with none.
+    let n_series = if wide { r.wide_measures.len() } else { crate::common::color_domain_of(&payload.rows, &series).len().max(1) };
+    if fraction > 0.0 && n_series != 2 {
+        return Err(Diagnostic::new(&codes::ERR_BAR_OVERLAP_SERIES_COUNT, [("chart_id", chart_id()), ("n_series", Value::from(n_series))]));
+    }
+    Ok(())
 }
 
 /// `_is_color_1to1_with_x` over the chart's data: pooled for a single chart,
@@ -951,7 +969,7 @@ fn facet_panels(r: &BarResolved, rows: &[serde_json::Map<String, Value>]) -> Res
 
 impl BarResolved {
     pub(crate) fn from_payload(payload: &Payload) -> Result<Self, String> {
-        let mut r: Self = serde_json::from_value(payload.resolved.clone()).map_err(|e| format!("bar payload: {e}"))?;
+        let mut r: Self = Deserialize::deserialize(&payload.resolved).map_err(|e| format!("bar payload: {e}"))?;
         r.series_palette = payload.series_palette(&r.palette);
         r.link_y = r.y.clone();
         r.link_color = r.color.clone();
@@ -967,17 +985,6 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         if let Some(labels) = r.style.mark.labels.as_mut().filter(|l| l.stacked == Some(false)) {
             labels.visible = false;
         }
-    }
-    r.style.axis_x.refuse_unpainted_affix("bar", "axis_x", None)?;
-    r.style.axis_x.refuse_x_tick_cadence("bar")?;
-    // A top x axis is drawn by the single-chart arms; a facet composite lays out against a bottom one.
-    if r.orientation == "vertical" && r.multiples.is_some() {
-        r.style.axis_x.refuse_top_x_axis("bar")?;
-    }
-    // A normalize stack pins its value axis to `.0%` (`pin_normalize_axis_format`),
-    // so production wears no authored affix there either.
-    if r.stack != "normalize" {
-        r.style.axis_y.refuse_unpainted_affix("bar", "axis_y", None)?;
     }
     // Ahead of every arm: a payload with no label slot errors here.
     zero_label(&r, &payload.rows)?;
@@ -1001,8 +1008,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     let payload: &Payload = if !r.wide_measures.is_empty() {
         wide_series =
             crate::common::wide_series_names(&r.wide_measures, r.color.as_deref(), &payload.rows);
-        let mut cloned = payload.clone();
-        cloned.rows = crate::common::unfold_wide_rows(&payload.rows, &r.wide_measures, r.color.as_deref());
+        let cloned = payload.with_inputs(payload.resolved.clone(), crate::common::unfold_wide_rows(&payload.rows, &r.wide_measures, r.color.as_deref()));
         r.series_from_measures = r.color.is_none();
         r.prefold_rows = payload.rows.clone();
         r.link_color = Some(r.color.clone().unwrap_or_else(|| crate::common::WIDE_KEY_FIELD.to_string()));
@@ -1301,7 +1307,7 @@ struct EmptyBarExtra {
 ///   when the chart has no rows (`baseline.py:354`).
 pub fn render_empty(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
     let head = crate::families::empty::Head::parse("bar", &payload.resolved)?;
-    let extra: EmptyBarExtra = serde_json::from_value(payload.resolved.clone())
+    let extra: EmptyBarExtra = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("bar payload: {e}"))?;
     let horizontal = extra.orientation.as_deref() == Some("horizontal");
     let zero_rung = extra.y_start.is_none() && (horizontal || !head.stacked());
@@ -1401,6 +1407,8 @@ pub(crate) struct BarStripGeometry {
     pub(crate) val_weight: String,
     pub(crate) val_color: String,
     pub(crate) val_family: String,
+    /// The value axis's description, which the ghost copy repeats untitled.
+    pub(crate) val_caption: AxisCaption,
     /// Everything needed to paint this panel's own x-axis a SECOND time, at
     /// a facet composite's own footer-band geometry — see `PanelXAxis`'s
     /// own doc comment. The single-chart path never reads this.
@@ -2026,8 +2034,8 @@ fn value_domain_and_ticks(
         return Ok((0.0, max, ticks, 0.0));
     }
     if let Some((lo, hi)) = ax_y.authored_continuous_domain() {
-        return authored_domain_and_ticks(ax_y, vertical || start_field.is_some(), lo, hi)
-            .map(|(floor, top, ticks)| (floor, top, ticks, floor));
+        let (floor, top, ticks) = authored_domain_and_ticks(ax_y, vertical || start_field.is_some(), lo, hi);
+        return Ok((floor, top, ticks, floor));
     }
 
     let raw_max = rows
@@ -2240,16 +2248,8 @@ fn value_domain_and_ticks(
 /// (`zero: true`), so a pair that excludes it is widened; a vertical or ranged one
 /// keeps the authored pair (its scale carries `zero: false`) and the zero-based
 /// bars run past the plot edge unclipped.
-fn authored_domain_and_ticks(
-    ax_y: &AxisStyle,
-    keeps_pair: bool,
-    lo: f64,
-    hi: f64,
-) -> Result<(f64, f64, Vec<f64>), String> {
+fn authored_domain_and_ticks(ax_y: &AxisStyle, keeps_pair: bool, lo: f64, hi: f64) -> (f64, f64, Vec<f64>) {
     let (lo, hi) = crate::families::cartesian::authored_domain_pair(ax_y, lo, hi);
-    if hi == lo {
-        return Err(crate::refuse!("bar: an empty authored y-axis domain [{lo}, {hi}] is not supported"));
-    }
     let (axis_lo, axis_hi) = if keeps_pair {
         (lo, hi)
     } else if lo < hi {
@@ -2262,7 +2262,17 @@ fn authored_domain_and_ticks(
     } else {
         crate::families::cartesian::ladder_within_domain(&ax_y.tick_values, lo, hi)
     };
-    Ok((axis_lo, axis_hi, ticks))
+    (axis_lo, axis_hi, ticks)
+}
+
+/// An authored pair that pins one value gives the value scale no extent: every
+/// bar's two ends land on the same pixel, and production raises
+/// `ERR-CHART-PAINTED-NO-MARKS` once a bar has a nonzero value to draw.
+fn collapsed_authored_domain(ax_y: &AxisStyle, rows: &[serde_json::Map<String, Value>], val_field: &str) -> bool {
+    ax_y.authored_continuous_domain().is_some_and(|(lo, hi)| {
+        let (lo, hi) = crate::families::cartesian::authored_domain_pair(ax_y, lo, hi);
+        lo == hi
+    }) && rows.iter().any(|row| row_num(row, val_field).is_some_and(|v| v != 0.0))
 }
 
 /// The `(lowest, highest)` end a layer's per-category zero stack reaches
@@ -2329,6 +2339,7 @@ pub(crate) fn format_tick_labels(
     tick_values: &[f64],
     ax_y: &AxisStyle,
     normalize: bool,
+    scale: &'static str,
 ) -> Result<Vec<String>, String> {
     if normalize {
         return tick_values.iter().map(|&tv| crate::common::normalize_percent_label(tv)).collect();
@@ -2337,14 +2348,15 @@ pub(crate) fn format_tick_labels(
         .iter()
         .enumerate()
         .map(|(i, &tv)| {
-            format_y_label(
+            let label = format_y_label(
                 tv,
                 ax_y.ruler.as_ref(),
                 ax_y.tick_label.as_ref(),
                 ax_y.labels.format.as_ref(),
                 i,
                 tick_values.len(),
-            )
+            )?;
+            ax_y.labels.apply_expr(scale, tv, label, i, tick_values.len())
         })
         .collect()
 }
@@ -2453,6 +2465,46 @@ fn stacked_rail_anchors(
         .collect())
 }
 
+
+/// A grouped bar's rail anchors (`endpoint_labels.py`'s non-stacked branch): each series at its own last
+/// non-null value, in the order the series first appear, and the bounds the cascade packs into: the authored
+/// domain, else the raw data extent (`_y_domain`).
+fn grouped_rail_anchors(
+    rows: &[serde_json::Map<String, Value>],
+    cat_domain: &[String],
+    cat_field: &str,
+    val_field: &str,
+    color_field: &str,
+    authored: Option<(f64, f64)>,
+) -> Result<(Vec<(String, f64)>, (f64, f64)), String> {
+    // The walk-back reads the axis's own order, not raw x.
+    let rank: HashMap<&str, usize> = cat_domain.iter().enumerate().map(|(i, x)| (x.as_str(), i)).collect();
+    let ranked: Vec<serde_json::Map<String, Value>> = rows
+        .iter()
+        .filter_map(|row| {
+            let i = *rank.get(row_str(row, cat_field).as_str())?;
+            let mut ranked = row.clone();
+            ranked.insert(cat_field.to_string(), Value::from(i));
+            Some(ranked)
+        })
+        .collect();
+    let last = crate::common::last_nonnull_value_per_series(&ranked, cat_field, val_field, color_field)?;
+    let mut seen = HashSet::new();
+    let anchors = rows
+        .iter()
+        .map(|row| row_str(row, color_field))
+        .filter(|series| seen.insert(series.clone()))
+        .filter_map(|series| last.get(&series).map(|v| (series, *v)))
+        .collect();
+    let values = rows.iter().filter_map(|row| row_num(row, val_field));
+    let extent = values.clone().reduce(f64::min).zip(values.reduce(f64::max));
+    let bounds = match (authored, extent) {
+        (Some((lo, hi)), _) if hi >= lo => (lo, hi),
+        (_, Some(extent)) => extent,
+        (_, None) => (0.0, 1.0),
+    };
+    Ok((anchors, bounds))
+}
 
 /// Sum of `val_field` across all series, per category — the stacked total a
 /// `stack = "normalize"` segment divides into — the same group total the
@@ -3028,6 +3080,8 @@ pub(crate) struct RightEdge {
 pub(crate) struct HorizontalValueAxis {
     ticks: Vec<f64>,
     labels: Vec<String>,
+    /// The text each label paints: cut to the axis's `labelLimit`, which its ink (measured on `labels`) is not.
+    shown: Vec<String>,
     /// `labelOverlap: parity`'s verdict per tick; `None` draws every label.
     visible: Option<Vec<bool>>,
     domain: (f64, f64),
@@ -3035,9 +3089,11 @@ pub(crate) struct HorizontalValueAxis {
     pad: f64,
     font_size: f64,
     family: String,
+    limit: f64,
     color: String,
     weight: String,
     title: String,
+    caption: AxisCaption,
     /// How far the leftmost drawn label reaches left of the plot origin.
     left_reach: f64,
     /// How far the rightmost drawn label reaches right of the plot's end.
@@ -3055,7 +3111,7 @@ impl HorizontalValueAxis {
 
     /// The labels drawn at `plot_w`: each tick's range position, its text and its anchor
     /// (Vega's own `flush` never sees the +0.5 crispness delta).
-    fn drawn(&self, plot_w: f64) -> Vec<(f64, &str, &'static str)> {
+    fn drawn(&self, plot_w: f64) -> Vec<(f64, &str, &str, &'static str)> {
         let linear = LinearScale::new(self.domain.0, self.domain.1, 0.0, plot_w);
         self.ticks
             .iter()
@@ -3069,7 +3125,7 @@ impl HorizontalValueAxis {
                     Some(false) => "end",
                     None => "middle",
                 };
-                (!hidden).then_some((x, label.as_str(), anchor))
+                (!hidden).then_some((x, label.as_str(), self.shown[i].as_str(), anchor))
             })
             .collect()
     }
@@ -3078,9 +3134,9 @@ impl HorizontalValueAxis {
     /// `column-footer` role's bounds, which widen the view's margins.
     fn with_reach(mut self, plot_w: f64, fonts: &FontBook) -> Result<Self, String> {
         let (mut left, mut right) = (0.0_f64, 0.0_f64);
-        for (x, label, anchor) in self.drawn(plot_w) {
+        for (x, label, _, anchor) in self.drawn(plot_w) {
             if anchor == "middle" {
-                let half = fonts.measure_shaped(label, &self.family, self.font_size)? / 2.0;
+                let half = fonts.measure_shaped(label, &self.family, self.font_size)?.min(self.limit) / 2.0;
                 left = left.max(half - x);
                 right = right.max(x + half - plot_w);
             }
@@ -3102,10 +3158,10 @@ impl HorizontalValueAxis {
         // The bottom axis group sits at (0.5, ph + 0.5): Vega's crispness
         // translate shifts the whole label row half a pixel right and down.
         let delta = 0.5;
-        crate::contract::axis_group_open(svg, crate::contract::AxisChannel::X, (plot_left + 0.5, plot_bottom + delta))?;
+        crate::contract::axis_group_open(svg, crate::contract::AxisChannel::X, &self.caption, (plot_left + 0.5, plot_bottom + delta))?;
         // Baseline one `round(0.79·fs)` below the label row's top.
-        let label_y = plot_bottom + delta + self.pad + vega_fit::baseline_shift("top", self.font_size);
-        for (x, label, anchor) in self.drawn(plot_w) {
+        let label_y = plot_bottom + delta + self.pad + crate::measure::baseline_shift("top", self.font_size);
+        for (x, _, label, anchor) in self.drawn(plot_w) {
             let _ = write!(
                 svg,
                 "<text x=\"{:.2}\" y=\"{label_y:.2}\" text-anchor=\"{anchor}\" \
@@ -3218,32 +3274,23 @@ fn render_horizontal_panel(
 
     // Front-end contract: computed here (ahead of `legend_entries_typed`
     // below) since the legend's own `data-dbt-series` stamp gate needs it.
-    // See the module doc above `tooltip_header_text` for the full law. This
-    // arm models no temporal x for its geometry at all (band axis
-    // regardless of content), but `header_tooltip_field`
-    // (orientation-independent in production) still formats a date header
-    // -- rather than emit the raw ISO string as an approximate label, refuse
-    // the whole render when the x domain detects as a calendar grain (no
-    // corpus row hits this: every horizontal-bar temporal x in the corpus
-    // is a `render_vertical` shape).
+    // See the module doc above `tooltip_header_text` for the full law. The
+    // category axis is a band axis regardless of content, but the tooltip
+    // header still reads the x as production does: formatted by the grain its
+    // dates detect.
     let tooltip_labels = !r.style.tooltip_format.spec.is_empty();
     // A wide fold names its series by the measure's display label.
     let wide_labels = display_text::wide_measure_labels_for(&r.wide_measures, &r.field_labels)?;
     let series_text = |s: &str| crate::common::wide_series_display(s, &wide_labels);
     let horizontal_domain_strs: Vec<&str> = cat_domain.iter().map(String::as_str).collect();
-    // Same STRICT `all_temporal` fact `render_vertical` derives
-    // (`x_values_are_standard_dates`) -- a standard-date x with no
-    // detected bucket still needs the continuous-date header below, even
-    // though this arm's own refusal just above only covers a DETECTED
-    // calendar grain.
+    // The STRICT `all_temporal` fact `render_vertical` derives
+    // (`x_values_are_standard_dates`): a standard-date x with no detected
+    // bucket still headers through the continuous-date fallback.
     let x_is_standard_date =
         crate::families::temporal::x_values_are_standard_dates(&horizontal_domain_strs);
-    if tooltip_labels && detect_time_unit(&horizontal_domain_strs).is_some() {
-        return Err(
-            crate::refuse!("bar: a temporal x on the horizontal orientation is not supported (no structured-tooltip header law is ported; refusing rather than emit a raw ISO date)")
-                .into(),
-        );
-    }
+    let tooltip_tu = detect_time_unit(&horizontal_domain_strs);
+    let grain_header_format =
+        AuthoredTimeFormat::parse("bar", grain_format(&r.style.axis_x.grain_formats, tooltip_tu))?;
     let order_domain =
         tooltip_order_domain(is_stacked, is_grouped, false, &stack_order, &color_domain, &r.legend, category_scale);
     // A wide fold bakes its measure order into the color scale's domain, which
@@ -3379,11 +3426,16 @@ fn render_horizontal_panel(
     let layer_days = layer_day_numbers(layers.iter().map(|(layer, rows)| (*layer, *rows)));
     let date_axis_at = |count: usize| match (r.measure_type.as_deref(), r.y_start.as_deref()) {
         (Some("temporal"), Some(start_field)) => {
-            span::date_axis(value_rows, [val_field.as_str(), start_field], &layer_days, count).map(Some)
+            span::date_axis(value_rows, [val_field.as_str(), start_field], &layer_days, count)
+                .map(Some)
+                .ok_or_else(|| crate::painted_no_marks(w, json!(chart_id), rows.len()))
         }
         _ => Ok(None),
     };
     let mut date_axis = date_axis_at(ax_y.ticks.count.map_or_else(|| vl_default_tick_count(w), |count| count as usize))?;
+    if date_axis.is_none() && collapsed_authored_domain(ax_y, value_rows, &val_field) {
+        return Err(crate::painted_no_marks(w, json!(chart_id), rows.len()));
+    }
     let (mut linear_domain_min, mut linear_domain_max, mut tick_values) = match &date_axis {
         Some(axis) => (axis.domain.0, axis.domain.1, axis.ticks.clone()),
         None => value_domain_and_ticks(
@@ -3414,15 +3466,37 @@ fn render_horizontal_panel(
     }
     let mut val_tick_labels = match &date_axis {
         Some(axis) => axis.labels.clone(),
-        None => format_tick_labels(&tick_values, ax_y, normalize)?,
+        None => format_tick_labels(&tick_values, ax_y, normalize, "x")?,
     };
 
 
     let cat_family = ax_x.labels.font.family.as_deref().unwrap_or("sans-serif");
+    let h_labels_expr = ax_x
+        .labels
+        .expr
+        .as_deref()
+        .map(|expr| crate::labels_expr::Expr::parse(expr).map(|e| e.on("y")).map_err(|e| format!("bar: labels.expr {expr:?}: {e:?}")))
+        .transpose()?;
+    let shown_cat = |c: &str| -> Result<String, String> {
+        match &h_labels_expr {
+            Some(expr) => expr
+                .rewrite_band(c, cat_domain.iter().position(|d| d == c).ok_or_else(|| format!("bar: category {c:?} is not on the domain"))?, cat_domain.len())
+                .map_err(|e| format!("bar: {e}")),
+            None => Ok(c.to_string()),
+        }
+    };
     let max_cat_w = base_cat_domain
         .iter()
         .try_fold(0.0_f64, |acc, s| {
-            fonts.measure(s, cat_family, cat_font_size).map(|w| acc.max(w))
+            let shown = shown_cat(s)?;
+            // An authored expr drops the flip gutter production measured in
+            // Python, so Vega's own (shaped) text measure sizes the labels.
+            let w = if h_labels_expr.is_some() {
+                fonts.measure_shaped(&shown, cat_family, cat_font_size)
+            } else {
+                fonts.measure(&shown, cat_family, cat_font_size)
+            }?;
+            Ok::<f64, String>(acc.max(w))
         })?;
     // Hoisted ahead of the plot-rect negotiation: the fit closure below
     // needs each single-series bar's own value (and its label's measured
@@ -3891,10 +3965,11 @@ fn render_horizontal_panel(
     let ax_off = ax_x.ticks.offset.unwrap_or(0.0);
     let cat_limit = ax_x.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
     let cat_w = max_cat_w.min(cat_limit);
+    let val_limit = ax_y.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
     // A label aligned to the axis's own side is the flip model; production maps
     // every other align, and an absent one, to the default.
     let (own_side, opposite_side) = if cat_on_right { ("right", "left") } else { ("left", "right") };
-    let cat_flip = ax_x.labels.align.as_deref() == Some(own_side);
+    let cat_flip = ax_x.labels.align_kept(own_side) == Some(own_side);
     let anchor_at = |side: &str, own_aligned: bool| if (side == "left") == own_aligned { "start" } else { "end" };
     // `axis_y.mirror`: a ghost copy of the category axis on the right edge
     // (`mirror_axis.py` reflects the spec's y encoding, the category here).
@@ -3943,7 +4018,7 @@ fn render_horizontal_panel(
             )?
         } else {
             let family = crate::common::measure_family_stand_in(val_family);
-            let widest = format_tick_labels(&crate::common::drawn_tick_values(ax_y), ax_y, normalize)?
+            let widest = format_tick_labels(&crate::common::drawn_tick_values(ax_y), ax_y, normalize, "x")?
                 .iter()
                 .try_fold(0.0_f64, |acc, label| fonts.measure(label, family, val_font_size).map(|w| acc.max(w)))?;
             widest.min(val_limit) + VALUE_AXIS_BREATHING_ROOM
@@ -3978,7 +4053,10 @@ fn render_horizontal_panel(
     let cat_axis_in_panel = facet.map_or(true, |f| f.cell_cat_axis);
     let val_axis_in_panel = facet.map_or(true, |f| f.independent_scale);
     let (plot_left, plot_top, plot_w, plot_h, vega_title_pos, vega_legend, canvas_w, canvas_h, cell_ink) = {
+        // The lines each value label paints on, kept beside the widths the last call returned.
+        let val_label_rows = std::cell::RefCell::new(Vec::<usize>::new());
         let measure_labels = |labels: &[String]| -> Result<Vec<f64>, String> {
+            *val_label_rows.borrow_mut() = labels.iter().map(|l| crate::text::line_count(l)).collect();
             labels.iter().map(|l| fonts.measure_shaped(l, val_family, val_font_size)).collect()
         };
         let mut val_label_ws = measure_labels(&val_tick_labels)?;
@@ -4025,10 +4103,12 @@ fn render_horizontal_panel(
                 // Bottom value axis labels (flush-aligned at the range ends);
                 // Vega's parity overlap hides every other one under the
                 // theme's min_gap, and only the visible labels' ink counts.
+                let rows = val_label_rows.borrow();
                 let label_ink: Vec<vega_fit::Bounds> = tick_values
                     .iter()
                     .zip(val_label_ws.iter())
-                    .map(|(&tv, &lw)| {
+                    .zip(rows.iter())
+                    .map(|((&tv, &lw), &lines)| {
                         let span = linear_domain_max - linear_domain_min;
                         let x = if span > 0.0 { pw * (tv - linear_domain_min) / span } else { 0.0 };
                         let align = match flush_edge(x, pw, flush_thr) {
@@ -4036,7 +4116,7 @@ fn render_horizontal_panel(
                             Some(false) => "right",
                             None => "center",
                         };
-                        vega_fit::text_ink(x, ph + val_pad, lw, val_font_size, align, "top")
+                        vega_fit::text_ink_rows(x, ph + val_pad, lw.min(val_limit), val_font_size, align, "top", lines)
                     })
                     .collect();
                 let visible = vega_fit::parity_visible(&label_ink, val_separation);
@@ -4208,7 +4288,7 @@ fn render_horizontal_panel(
         if let Some(rungs) = unbaked_rungs(ax_y, normalize, false, linear_domain_min, linear_domain_max, m.plot_w) {
             if rungs != tick_values {
                 tick_values = rungs;
-                val_tick_labels = format_tick_labels(&tick_values, ax_y, normalize)?;
+                val_tick_labels = format_tick_labels(&tick_values, ax_y, normalize, "x")?;
                 val_label_ws = measure_labels(&val_tick_labels)?;
                 m = fit(&tick_values, &val_label_ws);
             }
@@ -4267,24 +4347,50 @@ fn render_horizontal_panel(
     let plot_right = plot_left + plot_w;
     let plot_bottom = plot_top + plot_h;
     let linear = LinearScale::new(linear_domain_min, linear_domain_max, 0.0, plot_w);
+    if crate::labels_expr::view::active() {
+        use crate::labels_expr::view::{register_axis, register_band, register_linear, AxisSpec, Orient, Span};
+        register_linear("x", linear_domain_min, linear_domain_max, Span::Width);
+        register_band("y", &cat_domain, band_pi, band_po, Span::HeightDown)?;
+        if facet.is_none() && ax_y.labels.upright() {
+            let spec = AxisSpec { orient: Orient::Bottom, offset: val_pad, shift: 0.0, align: None, baseline: None, angle: 0.0, flush: flush_thr, style: ax_y.labels.item_style()? };
+            register_axis("x", spec);
+        }
+        if facet.is_none() && ax_x.labels.upright() {
+            let orient = if cat_on_right { Orient::Right } else { Orient::Left };
+            let align = crate::labels_expr::view::anchor(match cat_anchor {
+                "start" => "left",
+                "end" => "right",
+                other => return Err(format!("bar: category axis anchor {other:?} has no label align").into()),
+            })?;
+            let spec = AxisSpec { orient, offset: cat_label_pad, shift: -0.5, align: Some(align), baseline: None, angle: 0.0, flush: None, style: ax_x.labels.item_style()? };
+            register_axis("y", spec);
+        }
+    }
 
     let corner_r = r.style.mark.border.radius.unwrap_or(0.0);
     let value_axis = HorizontalValueAxis {
         ticks: tick_values.clone(),
         labels: val_tick_labels.clone(),
+        shown: val_tick_labels.iter().map(|l| ax_y.labels.clip(l, fonts)).collect::<Result<_, _>>()?,
         visible: val_visible.take(),
         domain: (linear_domain_min, linear_domain_max),
         flush_threshold: flush_thr,
         pad: val_pad,
         font_size: val_font_size,
         family: val_family.to_string(),
+        limit: val_limit,
         color: ax_y.labels.font.color.as_deref().unwrap_or("#626366").to_string(),
         weight: ax_y.labels.font.weight_str(),
         title: val_title_paint.clone(),
+        caption: match &date_axis {
+            Some(axis) => date_value_caption(&val_title_paint, ax_y, axis.domain)?,
+            None => value_axis_caption(&val_title_paint, &ax_y.title, ax_y, (linear_domain_min, linear_domain_max), normalize)?,
+        },
         left_reach: 0.0,
         right_reach: 0.0,
     }
     .with_reach(plot_w, fonts)?;
+    let cat_caption = category_axis_caption(&cat_title_paint, ax_x, &cat_domain)?;
 
     // ── SVG emission ───────────────────────────────────────────────────────
     let mut svg = String::with_capacity(16384);
@@ -4465,7 +4571,7 @@ fn render_horizontal_panel(
                     let total_row =
                         if has_negative || center { None } else { Some(stack_group_total(&category_totals_all, cat)?) };
                     bar_datum_aria(
-                        tooltip_labels, cat, None, x_is_standard_date, None, Some(series_text(base_series(series)).as_str()),
+                        tooltip_labels, cat, tooltip_tu, x_is_standard_date, grain_header_format, Some(series_text(base_series(series)).as_str()),
                         order_domain.as_deref().map(|d| crate::contract::tooltip_order_rank(d, base_series(series))),
                         value_title, tooltip_fmt, raw_val,
                         (normalize && !has_negative).then_some(raw_val / total), total_row, None,
@@ -4539,13 +4645,13 @@ fn render_horizontal_panel(
             let order = order_domain.as_deref().map(|d| crate::contract::tooltip_order_rank(d, base_series(series)));
             let plain = || {
                 bar_datum_aria(
-                    tooltip_labels, cat, None, x_is_standard_date, None, Some(series_text(base_series(series)).as_str()), order,
+                    tooltip_labels, cat, tooltip_tu, x_is_standard_date, grain_header_format, Some(series_text(base_series(series)).as_str()), order,
                     value_title, tooltip_fmt, val, None, None, None,
                 )
             };
             let aria = match (&ranged, start) {
                 (Some(rb), Some(Some(start))) => rb.aria(
-                    tooltip_labels, cat, None, x_is_standard_date, None, Some(series_text(base_series(series)).as_str()), order,
+                    tooltip_labels, cat, tooltip_tu, x_is_standard_date, grain_header_format, Some(series_text(base_series(series)).as_str()), order,
                     (value_title, tooltip_fmt), (start, val), plain,
                 )?,
                 _ => plain()?,
@@ -4611,21 +4717,21 @@ fn render_horizontal_panel(
             let fill = r.style.single_series_fill.as_str();
             let plain = || {
                 bar_datum_aria(
-                    tooltip_labels, cat, None, x_is_standard_date, None, (!layers.is_empty()).then_some(value_title), None, value_title, tooltip_fmt, val, None, None, None,
+                    tooltip_labels, cat, tooltip_tu, x_is_standard_date, grain_header_format, (!layers.is_empty()).then_some(value_title), None, value_title, tooltip_fmt, val, None, None, None,
                 )
             };
             let aria = match (&ranged, start, &span_block) {
                 (Some(_), Some(_), Some(block)) => {
                     let datum = rows.iter().find(|row| row_str(row, cat_field) == *cat).expect("a ranged bar has its row");
                     Some(block.label(
-                        &crate::contract::tooltip_header_text(cat, None, x_is_standard_date, None)?,
+                        &crate::contract::tooltip_header_text(cat, tooltip_tu, x_is_standard_date, grain_header_format)?,
                         layer_series.get(cat).map(String::as_str),
                         datum,
                         tooltip_fmt,
                     )?)
                 }
                 (Some(rb), Some(start), None) => {
-                    rb.aria(tooltip_labels, cat, None, x_is_standard_date, None, None, None, (value_title, tooltip_fmt), (start, val), plain)?
+                    rb.aria(tooltip_labels, cat, tooltip_tu, x_is_standard_date, grain_header_format, None, None, (value_title, tooltip_fmt), (start, val), plain)?
                 }
                 _ => plain()?,
             };
@@ -4668,7 +4774,7 @@ fn render_horizontal_panel(
                 let describe = |row: &serde_json::Map<String, Value>, val: f64| {
                     if let Some(block) = &span_block {
                         let cat = row_str(row, bl.x.as_deref().unwrap_or(cat_field));
-                        let header = crate::contract::tooltip_header_text(&cat, None, x_is_standard_date, None)?;
+                        let header = crate::contract::tooltip_header_text(&cat, tooltip_tu, x_is_standard_date, grain_header_format)?;
                         let series = layer_series.get(&cat).map(String::as_str);
                         let label = if bl.y_start.is_some() {
                             block.layer_bar_label(&header, series, row, tooltip_fmt)
@@ -4679,13 +4785,13 @@ fn render_horizontal_panel(
                     }
                     if let Some(own) = own_aria.as_ref().filter(|_| tooltip_labels) {
                         let cat = row_str(row, bl.x.as_deref().unwrap_or(cat_field));
-                        let header = crate::contract::tooltip_header_text(&cat, None, x_is_standard_date, None)?;
+                        let header = crate::contract::tooltip_header_text(&cat, tooltip_tu, x_is_standard_date, grain_header_format)?;
                         return own.label(bl, &header, row, bl.axis_y.tooltip_format_or(tooltip_fmt)).map(Some);
                     }
                     let color_value = bl.color.as_deref().filter(|_| color_promoted).map(|cf| layer_color_text(row, cf));
                     let series = layer_series_text(&layer_name, color_value.as_deref());
                     bar_datum_aria(
-                        tooltip_labels, &row_str(row, bl.x.as_deref().unwrap_or(cat_field)), None, x_is_standard_date, None,
+                        tooltip_labels, &row_str(row, bl.x.as_deref().unwrap_or(cat_field)), tooltip_tu, x_is_standard_date, grain_header_format,
                         Some(series.as_str()), None, layer_name.as_str(), bl.axis_y.tooltip_format_or(tooltip_fmt), val, None,
                         None, None,
                     )
@@ -4760,12 +4866,12 @@ fn render_horizontal_panel(
                             let color_value = sl.color.as_deref().filter(|_| color_promoted).map(|cf| layer_color_text(row, cf));
                             let series = layer_series_text(&layer_name, color_value.as_deref());
                             return bar_datum_aria(
-                                tooltip_labels, &row_str(row, sl.x.as_deref().unwrap_or(cat_field)), None, x_is_standard_date, None, Some(series.as_str()), None,
+                                tooltip_labels, &row_str(row, sl.x.as_deref().unwrap_or(cat_field)), tooltip_tu, x_is_standard_date, grain_header_format, Some(series.as_str()), None,
                                 layer_name.as_str(), sl.axis_y.tooltip_format_or(tooltip_fmt), val, None, None, None,
                             );
                         };
                         let cat = row_str(row, sl.x.as_deref().unwrap_or(cat_field));
-                        let header = crate::contract::tooltip_header_text(&cat, None, x_is_standard_date, None)?;
+                        let header = crate::contract::tooltip_header_text(&cat, tooltip_tu, x_is_standard_date, grain_header_format)?;
                         block.label(&header, layer_series.get(&cat).map(String::as_str), row, tooltip_fmt).map(Some)
                     },
                     match &claim.fill {
@@ -4803,7 +4909,7 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
                         r.canvas.as_str(),
                         |row, val| {
                             bar_datum_aria(
-                                tooltip_labels, &row_str(row, l.x.as_deref().unwrap_or(cat_field)), None, x_is_standard_date, None, Some(series.as_str()), None,
+                                tooltip_labels, &row_str(row, l.x.as_deref().unwrap_or(cat_field)), tooltip_tu, x_is_standard_date, grain_header_format, Some(series.as_str()), None,
                                 layer_name, l.axis_y.tooltip_format_or(tooltip_fmt), val, None, None, None,
                             )
                         },
@@ -4885,7 +4991,7 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
     for layer in &label_layers {
         let points = layer.points(&geom, None, &label_decors, |site| {
             bar_datum_aria(
-                tooltip_labels, &site.cat, None, x_is_standard_date, None, None, None, value_title,
+                tooltip_labels, &site.cat, tooltip_tu, x_is_standard_date, grain_header_format, None, None, value_title,
                 tooltip_fmt, site.value, None, None, None,
             )
         })?;
@@ -4923,8 +5029,12 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
     };
     let cat_edge_x = if cat_on_right { plot_right + ax_off } else { plot_left - ax_off };
     let cat_side = if cat_on_right { 1.0 } else { -1.0 };
+    // Vega lists the x axis before the y axis.
+    if val_axis_in_panel {
+        value_axis.paint(&mut svg, ax_y, plot_left, plot_w, plot_bottom)?;
+    }
     if cat_axis_in_panel {
-        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (cat_edge_x + 0.5, plot_top))?;
+        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, &cat_caption, (cat_edge_x + 0.5, plot_top))?;
     }
     let mut cat_labels: Vec<(f64, f64, String)> = Vec::new();
     let mut ghost_labels: Vec<String> = Vec::new();
@@ -4935,13 +5045,13 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
         // axis label's encoded y bakes the −0.5 back out, so only x
         // shifts (bc0 scenegraph, flip model: label abs x = plot_left
         // − 52.974, baseline y = band center + 3 exactly).
-        let label_y = center_y + vega_fit::baseline_shift("middle", cat_font_size);
+        let label_y = center_y + crate::measure::baseline_shift("middle", cat_font_size);
         let (label_x, anchor) = (cat_edge_x + cat_side * cat_label_pad + 0.5, cat_anchor);
         // B6 — Vega's labelLimit: draw the SAME truncated measure the
         // gutter above (`cat_w = max_cat_w.min(cat_limit)`) reserved, so
         // the drawn string never overhangs its own gutter.
         let drawn =
-            crate::common::truncate_label(cat, cat_limit, cat_family, cat_font_size, fonts, false)
+            crate::common::truncate_label(&shown_cat(cat)?, cat_limit, cat_family, cat_font_size, fonts, false)
                 .map_err(|e| format!("bar: {e}"))?;
         if cat_axis_in_panel {
             paint_cat_label(&mut svg, label_x, label_y, anchor, &drawn);
@@ -4968,7 +5078,7 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
     }
     if mirror_active && cat_axis_in_panel {
         let ghost_edge_x = if cat_on_right { plot_left - ax_off } else { plot_right + ax_off };
-        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (ghost_edge_x + 0.5, plot_top))?;
+        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, &cat_caption.untitled(), (ghost_edge_x + 0.5, plot_top))?;
         let ghost_x = ghost_edge_x - cat_side * ghost_gutter + 0.5;
         for ((label_y, _, _), drawn) in cat_labels.iter().zip(&ghost_labels) {
             paint_cat_label(&mut svg, ghost_x, *label_y, ghost_anchor, drawn);
@@ -4990,7 +5100,7 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
     let right_edge = facet.map(|f| &f.right_edge);
     if let (Some(copy), Some(edge)) = (&right_copy, right_edge.filter(|e| e.paint && !cat_axis_in_panel)) {
         let edge_x = plot_left + plot_w + edge.overhang + ax_off;
-        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (edge_x + 0.5, plot_top))?;
+        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, &cat_caption, (edge_x + 0.5, plot_top))?;
         let right_labels = if cat_on_right { cat_labels.iter().map(|(_, _, l)| l).collect::<Vec<_>>() } else { ghost_labels.iter().collect() };
         for ((label_y, _, _), drawn) in cat_labels.iter().zip(right_labels) {
             paint_cat_label(&mut svg, edge_x + copy.dx, *label_y, copy.anchor, drawn);
@@ -5007,9 +5117,6 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
         cat_labels.iter().zip(left_labels).map(|((y, _, _), label)| (*y, label.clone())).collect()
     };
 
-    if val_axis_in_panel {
-        value_axis.paint(&mut svg, ax_y, plot_left, plot_w, plot_bottom)?;
-    }
 
     let svg_end = svg.len();
     svg.push_str("</svg>");
@@ -5042,6 +5149,7 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
             val_tick_marks: Vec::new(),
             ghost_labels: Vec::new(),
             mirror_style: Some(GhostStyle {
+                caption: cat_caption.clone(),
                 val_font_size: cat_font_size,
                 val_weight: cat_weight,
                 val_color: cat_color.to_string(),
@@ -5105,7 +5213,8 @@ fn rotated_rows_reach(
     };
     rows.iter().try_fold(0.0_f64, |acc, (row1, row2)| {
         let width = row_w(row1)?.max(row_w(row2)?).min(limit);
-        let ink = crate::common::rotated_category_label_ink(0.0, 0.0, width, font_size, align, baseline, angle, !row2.is_empty());
+        let extra = crate::text::line_count(row1) - 1 + usize::from(!row2.is_empty());
+        let ink = crate::common::rotated_category_label_ink(0.0, 0.0, width, font_size, align, baseline, angle, extra);
         Ok(acc.max(match edge {
             crate::common::XEdge::Bottom => ink.y2,
             crate::common::XEdge::Top => -ink.y1,
@@ -5125,7 +5234,7 @@ fn bar_temporal_labels(
     ladder_w: f64,
     chart_w: f64,
     usable_ratio: Option<f64>,
-    expr_n: Option<i64>,
+    expr: Option<&crate::labels_expr::Expr>,
     fonts: &FontBook,
     font_size: f64,
 ) -> Result<crate::families::temporal::OrdinalDateLabels, String> {
@@ -5140,7 +5249,7 @@ fn bar_temporal_labels(
         ladder_w,
         chart_w,
         usable_ratio,
-        expr_n,
+        expr,
         crate::families::temporal::ExprBands::AllBuckets,
         &mut measure,
         font_size,
@@ -5160,7 +5269,8 @@ fn bar_temporal_labels(
 pub(crate) struct BandXAxis {
     band: BandScale,
     cat_domain: Vec<String>,
-    cat_labels: Vec<String>,
+    /// The category labels as drawn: cut to the axis's `labelLimit`, which their ink is not.
+    cat_shown: Vec<String>,
     temporal_labels: Option<Vec<TemporalLabel>>,
     cat_angle: f64,
     cat_baseline: String,
@@ -5170,11 +5280,12 @@ pub(crate) struct BandXAxis {
     cat_pad: f64,
     cat_font_size: f64,
     cat_family: String,
-    has_two_row_labels: bool,
+    label_rows: usize,
     /// `labelOverlap: parity` over the drawn temporal labels: the separation
     /// and each label's capped width. Label text only; ticks stay.
     parity: Option<(f64, Vec<f64>)>,
     cat_title_text: String,
+    caption: AxisCaption,
     title_key: Option<crate::contract::LabelKey>,
     edge: crate::common::XEdge,
     /// The drawn rotated label column's reach past the axis pivot — the
@@ -5205,6 +5316,7 @@ pub(crate) struct ContinuousXAxis {
     x_family: String,
     x_font_size: f64,
     x_title_text: String,
+    caption: AxisCaption,
     title_key: Option<crate::contract::LabelKey>,
 }
 
@@ -5221,8 +5333,8 @@ impl ContinuousXAxis {
         let x_label_y = plot_bottom
             + x_axis_drop
             + sign * (x_tick_eff + x_label_pad)
-            + vega_fit::baseline_shift(self.edge.baseline(), x_font_size);
-        crate::contract::axis_group_open(svg, crate::contract::AxisChannel::X, (plot_left + 0.5, plot_bottom + x_axis_drop))?;
+            + crate::measure::baseline_shift(self.edge.baseline(), x_font_size);
+        crate::contract::axis_group_open(svg, crate::contract::AxisChannel::X, &self.caption, (plot_left + 0.5, plot_bottom + x_axis_drop))?;
         if x_ticks_visible {
             let tc = crate::common::required_ink(ax_x.ticks.color.as_deref(), "bar", "axis_x.ticks.color")?;
             let tw = ax_x.ticks.width.unwrap_or(1.0);
@@ -5341,7 +5453,7 @@ pub(crate) fn emit_layer_bar(
     let href = link.map(|link| link.href(mark.row)).transpose()?;
     emit_column_passes(
         svg, at.0, top, at.1, h, fill, border.color.as_deref().unwrap_or("none"), border.width.unwrap_or(0.0),
-        radius, ends, radius > 0.0, aria, link.and_then(|link| link.open.anchor(href.as_deref())),
+        radius, ends, radius > 0.0, None, aria, link.and_then(|link| link.open.anchor(href.as_deref())),
     )
 }
 
@@ -5602,7 +5714,7 @@ fn render_vertical_continuous_x_panel(
     // ── Width ladder + scale padding ─────────────────────────────────────
     let mark = &r.style.mark;
     let width = ContinuousWidth::of(mark)?;
-    let pad_px = continuous_pad_px(mark, ax_x);
+    let pad_px = continuous_pad_px(mark, ax_x)?;
     // Vega padLinear + nice, per candidate plot width: the pixel padding
     // expands the RAW domain by span·p/(pw − 2p), then d3's nice loop
     // (count 10) rounds the padded extent.
@@ -5689,7 +5801,7 @@ fn render_vertical_continuous_x_panel(
     let y_labels: Vec<String> = y_ticks
         .iter()
         .enumerate()
-        .map(|(i, &tv)| format_y_label(tv, y_ruler, y_tick_label, y_fmt, i, y_ticks.len()))
+        .map(|(i, &tv)| ax_y.labels.apply_expr("y", tv, format_y_label(tv, y_ruler, y_tick_label, y_fmt, i, y_ticks.len())?, i, y_ticks.len()))
         .collect::<Result<_, _>>()?;
 
     // ── Fonts, gutters, titles ───────────────────────────────────────────
@@ -5718,7 +5830,7 @@ fn render_vertical_continuous_x_panel(
         let drawn = crate::common::drawn_tick_values(ax_y);
         let mut max_w = 0.0_f64;
         for (i, &tv) in drawn.iter().enumerate() {
-            let lbl = format_y_label(tv, y_ruler, y_tick_label, y_fmt, i, drawn.len())?;
+            let lbl = ax_y.labels.apply_expr("y", tv, format_y_label(tv, y_ruler, y_tick_label, y_fmt, i, drawn.len())?, i, drawn.len())?;
             max_w = max_w.max(fonts.measure(&lbl, mf, y_font_size)?);
         }
         max_w.min(y_limit) + VALUE_AXIS_BREATHING_ROOM
@@ -5730,7 +5842,7 @@ fn render_vertical_continuous_x_panel(
     // above sizes; with none, Vega-Lite's default grows the labels away from
     // the plot, left-anchored at `labelPadding` (`render_vertical_panel`'s
     // `val_away`).
-    let val_away = val_on_right && ax_y.labels.align.is_none();
+    let val_away = val_on_right && ax_y.labels.align_kept("right").is_none();
     let y_label_gutter = if val_away { 0.0 } else { y_gutter };
     let ghost_pad = if val_away { y_label_pad } else { y_gutter };
     // `axis_y.mirror`: a ghost axis on the left edge repeating the labels at
@@ -6178,7 +6290,7 @@ fn render_vertical_continuous_x_panel(
     let (plot_w, plot_h) = (m.plot_w, m.plot_h);
     let placed = place(plot_w);
     let (x_lo, x_hi) = x_domain_at(plot_w);
-    let x_ticks = d3rs::ticks::d3_ticks(x_lo, x_hi, x_tick_count);
+    let x_ticks = crate::families::cartesian::unbaked_ticks(ax_x, x_lo, x_hi, x_tick_count);
     let x_labels: Vec<String> = x_ticks
         .iter()
         .map(|&tv| {
@@ -6199,6 +6311,7 @@ fn render_vertical_continuous_x_panel(
         x_family: x_family.to_string(),
         x_font_size,
         x_title_text: x_title_paint.clone(),
+        caption: value_axis_caption(&x_title_paint, &ax_x.title, ax_x, (x_lo, x_hi), false)?,
         title_key: (!suppress_x_axis).then_some(crate::contract::LabelKey::X),
     });
 
@@ -6311,6 +6424,7 @@ fn render_vertical_continuous_x_panel(
             corner_r,
             Rounded::Positive, // this arm's own negative-value corner law is unmodeled (out of scope)
             false,
+            None,
             aria.as_deref(),
             r.link_open.anchor(hrefs.get(&key).map(String::as_str)),
         )?;
@@ -6554,9 +6668,10 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
     let y_label_color = ax_y.labels.font.color.as_deref().unwrap_or("#626366");
     let y_label_weight = ax_y.labels.font.weight_str();
     let value_axis_start = svg.len();
+    let y_caption = value_axis_caption(&y_title_paint, val_title_style, ax_y, (y_min, y_max), false)?;
     if paint_value_axis {
     let (edge_x, outward) = if val_on_right { (plot_w + value_axis_right_overhang + 0.5, 1.0) } else { (0.5, -1.0) };
-    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (edge_x, 0.0))?;
+    crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, &y_caption, (edge_x, 0.0))?;
     crate::common::emit_value_ticks(
         &mut svg,
         &ax_y.ticks,
@@ -6572,7 +6687,7 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
     };
     let y_label_anchor = if val_away { "start" } else { "end" };
     for (&tv, lbl) in y_ticks.iter().zip(right_texts.iter()) {
-        let gy = y_pos(tv) + 0.5 + vega_fit::baseline_shift("middle", y_font_size);
+        let gy = y_pos(tv) + 0.5 + crate::measure::baseline_shift("middle", y_font_size);
         let _ = write!(
             svg,
             "<text x=\"{y_label_x:.3}\" y=\"{gy:.3}\" text-anchor=\"{y_label_anchor}\" \
@@ -6597,7 +6712,7 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
     let value_axis = paint_value_axis
         .then(|| facet_compose::ValueAxisInk { range: value_axis_start..svg.len(), origin: (group_x, group_y) });
     if mirror_active {
-        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (0.5, 0.0))?;
+        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, &y_caption.untitled(), (0.5, 0.0))?;
         crate::common::emit_value_ticks(
             &mut svg,
             &ax_y.ticks,
@@ -6607,7 +6722,7 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
             y_tick_eff,
         )?;
         for (&tv, lbl) in y_ticks.iter().zip(ghost_texts.iter()) {
-            let gy = y_pos(tv) + 0.5 + vega_fit::baseline_shift("middle", y_font_size);
+            let gy = y_pos(tv) + 0.5 + crate::measure::baseline_shift("middle", y_font_size);
             let _ = write!(
                 svg,
                 "<text x=\"{:.3}\" y=\"{gy:.3}\" text-anchor=\"end\" font-family=\"{}\" font-size=\"{y_font_size}\" \
@@ -6715,7 +6830,7 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
                 .iter()
                 .zip(y_labels.iter())
                 .map(|(&tv, lbl)| {
-                    (group_y + y_pos(tv) + 0.5 + vega_fit::baseline_shift("middle", y_font_size), lbl.clone())
+                    (group_y + y_pos(tv) + 0.5 + crate::measure::baseline_shift("middle", y_font_size), lbl.clone())
                 })
                 .collect(),
             val_tick_marks: crate::common::value_tick_rows(
@@ -6726,6 +6841,7 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
             ),
             ghost_labels: if r.multiples.is_some() && !left_flip && ghost.is_some() { ghost_texts.clone() } else { Vec::new() },
             mirror_style: Some(facet_compose::GhostStyle {
+                caption: y_caption.clone(),
                 val_font_size: y_font_size,
                 val_weight: y_label_weight.to_string(),
                 val_color: y_label_color.to_string(),
@@ -7096,6 +7212,7 @@ fn render_facet(
                         val_tick_marks: geom.val_tick_marks,
                         ghost_labels: geom.ghost_labels,
                         mirror_style: Some(GhostStyle {
+                            caption: geom.val_caption,
                             val_font_size: geom.val_font_size,
                             val_weight: geom.val_weight,
                             val_color: geom.val_color,
@@ -7135,6 +7252,7 @@ fn render_facet(
         left_title: left_primary.then_some((left_title_text.as_str(), &left_title_style)),
         mirror_in_panel: horizontal,
         own_value_axes: independent && !horizontal,
+        y_axes_in_cells: if horizontal { cat_narrowed } else { independent },
         extra_axis_px,
         // A horizontal bar swaps the screen axes: the value axis runs along the
         // footer, the category axis down the row header.
@@ -7250,7 +7368,7 @@ fn rekey_to_enclosing_buckets(
     };
     let (rows, changed) = rekey(&payload.rows);
     let (prefold_rows, prefold_changed) = rekey(&r.prefold_rows);
-    Ok((changed || prefold_changed).then(|| (Payload { rows, ..payload.clone() }, prefold_rows)))
+    Ok((changed || prefold_changed).then(|| (payload.with_inputs(payload.resolved.clone(), rows), prefold_rows)))
 }
 
 /// The one x-type law over the whole chart's rows and panel fields, as
@@ -7322,7 +7440,7 @@ impl BandXAxis {
             .map(|(tl, &w)| {
                 let cx = self.band.position(&self.cat_domain[tl.domain_idx]).map_or(0.0, |x| x + self.band.bandwidth() / 2.0);
                 crate::common::rotated_category_label_ink(
-                    cx, 0.0, w, self.cat_font_size, &self.cat_align, &self.cat_baseline, self.cat_angle, !tl.row2.is_empty(),
+                    cx, 0.0, w, self.cat_font_size, &self.cat_align, &self.cat_baseline, self.cat_angle, usize::from(!tl.row2.is_empty()),
                 )
             })
             .collect();
@@ -7332,14 +7450,14 @@ impl BandXAxis {
     /// Paints at the CALLER's own `plot_left`/`plot_w`/`plot_bottom` —
     /// the panel's own, or a facet composite's footer band.
     pub(crate) fn paint(&self, svg: &mut String, ax_x: &AxisStyle, plot_left: f64, plot_w: f64, plot_bottom: f64) -> Result<(), String> {
-        let Self { band, cat_domain, cat_labels, .. } = self;
+        let Self { band, cat_domain, cat_shown: cat_labels, .. } = self;
         let (cat_baseline, cat_align, cat_family, cat_title_text) = (
             self.cat_baseline.as_str(),
             self.cat_align.as_str(),
             self.cat_family.as_str(),
             self.cat_title_text.as_str(),
         );
-        let Self { cat_angle, x_tick_len, ax_off_x, cat_pad, cat_font_size, has_two_row_labels, .. } =
+        let Self { cat_angle, x_tick_len, ax_off_x, cat_pad, cat_font_size, label_rows, .. } =
             *self;
         let temporal_labels = self.temporal_labels.as_deref();
         let cat_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
@@ -7350,14 +7468,14 @@ impl BandXAxis {
         let sign = self.edge.sign();
         // `plot_bottom` is the y of the plot edge the axis hangs from; Vega's crisp half pixel shifts the group down on either edge.
         let group_y = plot_bottom + sign * ax_off_x + 0.5;
-        let cat_label_y = group_y + sign * (x_tick_len + cat_pad) + vega_fit::baseline_shift(self.edge.baseline(), cat_font_size);
+        let cat_label_y = group_y + sign * (x_tick_len + cat_pad) + crate::measure::baseline_shift(self.edge.baseline(), cat_font_size);
         // The rotated labels' anchor, and the pivot the rotated title measures from.
-        let anchor_y = cat_label_y - vega_fit::baseline_shift(self.edge.baseline(), cat_font_size);
+        let anchor_y = cat_label_y - crate::measure::baseline_shift(self.edge.baseline(), cat_font_size);
         let rows_at = |anchor: f64, two: bool| match (self.edge, two) {
             (crate::common::XEdge::Top, true) => (anchor - vega_fit::label_row_advance(cat_font_size), anchor),
             _ => (anchor, anchor + vega_fit::label_row_advance(cat_font_size)),
         };
-        crate::contract::axis_group_open(svg, crate::contract::AxisChannel::X, (plot_left + 0.5, group_y))?;
+        crate::contract::axis_group_open(svg, crate::contract::AxisChannel::X, &self.caption, (plot_left + 0.5, group_y))?;
         // Restored tick marks: one per band, at the rounded label-center x
         // (Vega's tickRound in the crisp axis frame — the tick rounds
         // `center − 0.5`, the label does not; wk_26 scenegraph: label x 9.15,
@@ -7409,7 +7527,7 @@ impl BandXAxis {
         } else if cat_angle != 0.0 {
             // Vega's SVG text transform for a rotated item: translate to the
             // anchor, rotate, then the baseline shift.
-            let dy = vega_fit::baseline_shift(cat_baseline, cat_font_size);
+            let dy = crate::measure::baseline_shift(cat_baseline, cat_font_size);
             let text_anchor = match cat_align {
                 "left" => "start",
                 "right" => "end",
@@ -7453,11 +7571,10 @@ impl BandXAxis {
             let title_fs = ax_x.title.font.size_or(11.0);
             let title_y = anchor_y
                 + sign * (reach + ax_x.title.padding.unwrap_or(10.0))
-                + vega_fit::baseline_shift(self.edge.baseline(), title_fs);
+                + crate::measure::baseline_shift(self.edge.baseline(), title_fs);
             emit_axis_title_at(svg, cat_title_text, &ax_x.title, title_center_x, title_y, self.title_key);
         } else {
-            let cat_title_baseline =
-                cat_label_y + if has_two_row_labels { sign * vega_fit::label_row_advance(cat_font_size) } else { 0.0 };
+            let cat_title_baseline = cat_label_y + sign * (label_rows - 1) as f64 * vega_fit::label_row_advance(cat_font_size);
             crate::common::emit_axis_title_flat(
                 svg, cat_title_text, &ax_x.title, title_center_x, cat_title_baseline, cat_font_size, self.title_key, self.edge,
             );
@@ -7534,7 +7651,7 @@ struct PlotRect {
     val_gutter: f64,
     temporal_labels: Option<Vec<TemporalLabel>>,
     x_tick_len: f64,
-    has_two_row_labels: bool,
+    label_rows: usize,
     /// See `BarStripGeometry.top_axis_overhang`'s own doc comment. `0.0` on
     /// every non-facet arm (the same "a facet panel is always the fit arm"
     /// reasoning `raw_right_reach` below already states).
@@ -7677,7 +7794,7 @@ pub(crate) fn render_vertical_panel(
     // before anything reads it; a layer reading its own query is rewritten
     // the same way below.
     let rows_normalized = crate::families::temporal::normalize_labeled_temporal(rows, &r.x)?;
-    let rows = rows_normalized.as_slice();
+    let rows = &*rows_normalized;
     let chart_rows_normalized =
         facet.map(|f| crate::families::temporal::normalize_labeled_temporal(f.chart_rows, &r.x)).transpose()?;
     let value_domain_rows = facet.and_then(|f| f.value_domain_rows);
@@ -7731,7 +7848,7 @@ pub(crate) fn render_vertical_panel(
             return Ok(Cow::Borrowed(rows));
         }
         let own_rows = resolve_layer_rows(payload, query_name, r.query_name.as_deref(), "bar")?;
-        crate::families::temporal::normalize_labeled_temporal(own_rows, x.unwrap_or(cat_field)).map(Cow::Owned)
+        crate::families::temporal::normalize_labeled_temporal(own_rows, x.unwrap_or(cat_field))
     };
     let filled_x = x_resolution(r, chart_rows)?;
     let law = filled_x.resolution;
@@ -7953,16 +8070,11 @@ pub(crate) fn render_vertical_panel(
     // ONLY valid for the base's own un-re-pinned side.
     let base_label_pad = if val_on_right != baked_on_right { MOVED_BASE_LABEL_PAD } else { ax_y.labels.padding.unwrap_or(6.0) };
 
-    // Authored time_unit must name a supported grain — never silently fall back
-    // to raw string labels for a grain the caller explicitly requested.
-    if let Some(tu_val) = &ax_x.time_unit {
-        if let Some(s) = tu_val.as_str() {
-            if parse_authored_time_unit(s).is_none() {
-                return Err(crate::refuse!(
-                    "bar: authored time_unit {s:?}, not a calendar grain, is not supported"
-                ).into());
-            }
-        }
+    // A time-part grain draws bars on the part's cycle, which this arm does not.
+    if let Some(s) = ax_x.time_unit.as_ref().and_then(|v| v.as_str()).filter(|s| crate::families::temporal::TimePart::parse(s).is_some()) {
+        return Err(crate::refuse!(
+            "bar: authored time_unit {s:?}, not a calendar grain, is not supported"
+        ).into());
     }
     let time: Option<TimeX> = if law.vl_type == crate::families::temporal::VegaType::Temporal {
         if time_x::has_year_below_100(rows, &r.x) {
@@ -7978,7 +8090,7 @@ pub(crate) fn render_vertical_panel(
                 (!dates.is_empty()).then(|| time_x::LayerX { dates, on_base_x: field == r.x, spans_buckets: matches!(layer.layer_type(), crate::families::layers::LayerType::Bar) })
             })
             .collect();
-        Some(TimeX::read(r, rows, chart_rows, &layer_x)?)
+        Some(TimeX::read(r, rows, chart_rows, &layer_x, r.style.mark.labels.as_ref().is_some_and(|ml| ml.visible) && r.wide_measures.is_empty())?)
     } else {
         None
     };
@@ -7999,7 +8111,7 @@ pub(crate) fn render_vertical_panel(
     let gutter_unmeasurable = ax_y.tick_values.is_empty()
         && ax_y.authored_continuous_domain().is_none()
         && (date_measure || !rows.iter().any(|row| row_num(row, val_field).is_some()));
-    let val_away = val_on_right && (ax_y.labels.align.is_none() || gutter_unmeasurable);
+    let val_away = val_on_right && (ax_y.labels.align_kept("right").is_none() || gutter_unmeasurable);
     let domain_strs: Vec<&str> = cat_domain.iter().map(String::as_str).collect();
     // The authored strings, ahead of the labeled-bucket normalization.
     let authored_x: Vec<String> =
@@ -8019,9 +8131,11 @@ pub(crate) fn render_vertical_panel(
         .transpose()
         .map_err(|e| format!("bar: {e}"))?;
     // A standard date no calendar grain explains paints as raw bands here.
-    if time.is_none() && detected_data_tu.is_none() && x_is_standard_date {
-        crate::families::temporal::refuse_authored_time_format("bar", ax_x.labels.spec())?;
-    }
+    let raw_date_format = if time.is_none() && detected_data_tu.is_none() && x_is_standard_date {
+        AuthoredTimeFormat::parse("bar", ax_x.labels.spec())?
+    } else {
+        None
+    };
     let authored_time_format = match label_unit {
         Some(unit) => AuthoredTimeFormat::parse("bar", axis_time_format(ax_x.labels.spec(), &ax_x.grain_formats, unit.grain()))?,
         None => None,
@@ -8058,15 +8172,29 @@ pub(crate) fn render_vertical_panel(
     // itself stays raw: it is still the BandScale/data-lookup key. A
     // calendar-grain axis draws `temporal_labels` instead, which rewrite their
     // own text from the same expression.
-    let labels_expr_n = ax_x
+    let labels_expr = ax_x
         .labels
         .expr
         .as_deref()
-        .map(|expr| crate::common::parse_labels_expr_slice_n(expr).map_err(|e| format!("bar: {e}")))
+        .filter(|_| time.is_none())
+        .map(|expr| crate::labels_expr::Expr::parse(expr).map(|e| e.on("x")).map_err(|e| format!("bar: labels.expr {expr:?}: {e:?}")))
         .transpose()?;
-    let cat_labels: Vec<String> = match labels_expr_n {
-        None => cat_domain.clone(),
-        Some(n) => cat_domain.iter().map(|c| crate::common::apply_labels_expr(c, n)).collect(),
+    let cat_labels: Vec<String> = match &labels_expr {
+        None => match raw_date_format {
+            Some(format) => cat_domain
+                .iter()
+                .map(|c| {
+                    let (y, m, d) = parse_iso_date(c).ok_or_else(|| format!("bar: x value {c:?} is not an ISO date"))?;
+                    Ok::<String, String>(format.text(y, m, d))
+                })
+                .collect::<Result<_, _>>()?,
+            None => cat_domain.clone(),
+        },
+        Some(expr) => cat_domain
+            .iter()
+            .enumerate()
+            .map(|(i, c)| expr.rewrite_band(c, i, cat_domain.len()).map_err(|e| format!("bar: {e}")))
+            .collect::<Result<_, _>>()?,
     };
 
     // An independent facet scale bakes no stacked domain: each panel stacks to
@@ -8078,18 +8206,24 @@ pub(crate) fn render_vertical_panel(
     let layer_days = layer_day_numbers(layers.iter().zip(layer_rows.iter().copied()));
     let date_axis_at = |count: usize| match (date_measure, r.y_start.as_deref()) {
         (true, Some(start_field)) => {
-            span::date_axis(value_domain_rows.unwrap_or(rows), [val_field, start_field], &layer_days, count).map(Some)
+            span::date_axis(value_domain_rows.unwrap_or(rows), [val_field, start_field], &layer_days, count)
+                .map(Some)
+                .ok_or_else(|| payload.painted_no_marks())
         }
         _ => Ok(None),
     };
     let date_axis = date_axis_at(ax_y.ticks.count.map_or_else(|| vl_default_tick_count(h), |count| count as usize))?;
     // A date axis with no authored count re-ticks at the final plot height, like an unbaked numeric one.
-    let date_rungs = |plot_h: f64| -> Result<Option<(Vec<f64>, Vec<String>)>, String> {
+    let date_rungs = |plot_h: f64| -> Result<Option<(Vec<f64>, Vec<String>)>, Diagnostic> {
         match (&date_axis, ax_y.ticks.count) {
             (Some(_), None) => Ok(date_axis_at(vl_default_tick_count(plot_h))?.map(|axis| (axis.ticks, axis.labels))),
             _ => Ok(None),
         }
     };
+    let rail_pins_domain = r.stack == "center" && r.style.endpoint_labels.visible;
+    if date_axis.is_none() && !rail_pins_domain && collapsed_authored_domain(ax_y, value_domain_rows.unwrap_or(rows), val_field) {
+        return Err(payload.painted_no_marks());
+    }
     let (mut v_domain_min, mut linear_domain_max, mut tick_values, emitted_floor) = match &date_axis {
         Some(axis) => (axis.domain.0, axis.domain.1, axis.ticks.clone(), axis.domain.0),
         None => value_domain_and_ticks(
@@ -8101,7 +8235,7 @@ pub(crate) fn render_vertical_panel(
             stacked_domain_max,
             true,
             r.y_start.as_deref(),
-            r.stack == "center" && r.style.endpoint_labels.visible,
+            rail_pins_domain,
             labels_on_zero_stack(r),
         )?,
     };
@@ -8169,7 +8303,7 @@ pub(crate) fn render_vertical_panel(
     }
     let val_tick_labels = match &date_axis {
         Some(axis) => axis.labels.clone(),
-        None => format_tick_labels(&tick_values, ax_y, normalize)?,
+        None => format_tick_labels(&tick_values, ax_y, normalize, "y")?,
     };
 
     // ── Layout geometry ────────────────────────────────────────────────────
@@ -8341,7 +8475,7 @@ pub(crate) fn render_vertical_panel(
     let val_title_paint = crate::common::wrapped_axis_title(&r.id, "y_label", &val_title_text, &ax_y.title.font, y_extent, y_panels, fonts)?;
     let cat_title_w = crate::common::widest_title_line(&ax_x.title, &cat_title_paint, fonts)?;
     let val_title_w = crate::common::widest_title_line(val_title_style, &val_title_paint, fonts)?;
-    let show_rail_v = is_stacked && r.style.endpoint_labels.visible && color_field.is_some();
+    let show_rail_v = r.style.endpoint_labels.visible && color_field.is_some();
     let sl = &r.style.series_label;
     let el = &r.style.endpoint_labels;
     let rail_pane_w = if show_rail_v {
@@ -8371,6 +8505,9 @@ pub(crate) fn render_vertical_panel(
     let time_axis_w = w - rail_span;
     let time_axis: Option<TemporalXAxis> =
         time.as_ref().map(|t| t.axis(r, time_axis_w, cat_title_paint.clone(), Some(crate::contract::LabelKey::X), fonts)).transpose()?;
+    if time.as_ref().is_some_and(|t| t.width_is_nan) || time_axis.as_ref().is_some_and(TemporalXAxis::raises_no_marks) {
+        return Err(payload.painted_no_marks());
+    }
 
     let cat_font_size = ax_x.labels.font.size.ok_or(
         "bar: axis_x.labels.font.size absent (theme required)",
@@ -8418,7 +8555,7 @@ pub(crate) fn render_vertical_panel(
                 avail_w,
                 w,
                 r.style.label_usable_ratio,
-                labels_expr_n,
+                labels_expr.as_ref(),
                 fonts,
                 cat_font_size,
             )?;
@@ -8433,14 +8570,14 @@ pub(crate) fn render_vertical_panel(
             let mut tls = resolved.labels;
             if ax_x.labels.angle.is_none()
                 && matches!(unit, LabelUnit::Calendar(_))
-                && labels_expr_n.is_none()
+                && labels_expr.is_none()
                 && (bottom_strip
                     || (facet.is_some()
                         && matches!(data_tu, TimeUnit::Year | TimeUnit::YearQuarter | TimeUnit::YearMonth)))
             {
                 // Production lays the labels out at the card width less the endpoint
                 // rail's span (`reserved_width`).
-                let layout_w = if is_stacked && r.style.endpoint_labels.visible && color_field.is_some() {
+                let layout_w = if show_rail_v {
                     let sl = &r.style.series_label;
                     let pane_w = crate::families::cartesian::rail_pane_width(
                         &color_domain,
@@ -8486,7 +8623,7 @@ pub(crate) fn render_vertical_panel(
                         temporal_tilt = layout.angle;
                         temporal_fold_tu = Some(layout.format_tu);
                         for tl in &mut tls {
-                            let (text, rows, ..) = super::line::tilted_temporal_label(tl, layout.angle, layout.format_tu, crate::common::XEdge::Bottom);
+                            let (text, rows, ..) = super::line::tilted_temporal_label(tl, layout.angle, layout.format_tu, x_edge);
                             let row2 = if rows == 2 { tl.row2.clone() } else { String::new() };
                             *tl = TemporalLabel { domain_idx: tl.domain_idx, row1: text, row2 };
                         }
@@ -8497,8 +8634,10 @@ pub(crate) fn render_vertical_panel(
         }
         _ => None,
     };
-    let has_two_row_labels =
-        temporal_labels.as_ref().is_some_and(|ls| ls.iter().any(|l| !l.row2.is_empty()));
+    let label_rows = match &temporal_labels {
+        Some(ls) => ls.iter().map(|l| l.rows()).max().unwrap_or(1),
+        None => cat_labels.iter().map(|c| crate::text::line_count(c)).max().unwrap_or(1),
+    };
     // An authored angle wins before any type routing
     // (`resolve_axis_x_overlap`); then a date-valued axis (every value parses
     // as a date, the temporal verdict) takes production's `_temporal_layout`,
@@ -8509,7 +8648,9 @@ pub(crate) fn render_vertical_panel(
         Some(angle) => angle,
         None if all_dates => temporal_tilt,
         None => {
-            category_label_layout(&ax_x.labels, &cat_labels, decision_w, r.style.label_usable_ratio, fonts, cat_font_size)?.angle
+            // Production's tilt is picked in Python from the raw band values, before Vega runs any `labelExpr`.
+            let measured = if labels_expr.is_some() { &cat_domain } else { &cat_labels };
+            category_label_layout(&ax_x.labels, measured, decision_w, r.style.label_usable_ratio, fonts, cat_font_size)?.angle
         }
     };
     let mut cat_angle = vega_fit::normalize_angle(cat_angle_raw);
@@ -8588,6 +8729,7 @@ pub(crate) fn render_vertical_panel(
         (0.0, 0.0)
     };
     let make_band = |pw: f64| match (&time, &time_axis) {
+        (Some(t), Some(axis)) if t.bars_on_band() => BandScale::anchored(cat_domain.clone(), t.band_starts(axis, pw), t.band_starts(axis, pw)),
         (Some(t), Some(axis)) => BandScale::anchored(cat_domain.clone(), t.starts(axis, pw), t.anchors(axis, pw)),
         _ => BandScale::new(cat_domain.clone(), 0.0, pw, band_pi, band_po),
     };
@@ -8647,7 +8789,7 @@ pub(crate) fn render_vertical_panel(
     // and a stacked arm's `stacked_domain_max` drops one, but production
     // sized the gutter before either happened.
     let drawn_gutter_labels: Vec<String> =
-        format_tick_labels(&crate::common::drawn_tick_values(ax_y), ax_y, normalize)?;
+        format_tick_labels(&crate::common::drawn_tick_values(ax_y), ax_y, normalize, "y")?;
     let gutter_of = |max_w: f64| -> Result<f64, String> {
         if val_on_right && !val_away {
             let gutter_labels = &drawn_gutter_labels;
@@ -8900,10 +9042,6 @@ pub(crate) fn render_vertical_panel(
         );
     }
     let shape = shape(show_rail_v);
-    // The rail's concat panes and a support_table strip lay out against a bottom x axis.
-    if x_edge == crate::common::XEdge::Top && (shape == Shape::RailConcat || r.support_table.is_some()) {
-        ax_x.refuse_top_x_axis("bar")?;
-    }
     if r.support_table.is_some() && r.effective_support_table_style.is_none() {
         return Err("bar: support_table present but effective_support_table_style absent".into());
     }
@@ -8956,6 +9094,7 @@ pub(crate) fn render_vertical_panel(
     // The cascade's packing bounds — production's raw stacked extent, not
     // the rendered domain (see `tallest_total`). Set by the rail arm.
     let mut rail_cascade_max: f64 = 0.0;
+    let mut rail_cascade_min: f64 = 0.0;
 
     // Vega's parity overlap on the value labels (`labelSeparation` is the
     // theme's min_gap; production forwards none when unset, Vega's 0).
@@ -9051,15 +9190,14 @@ pub(crate) fn render_vertical_panel(
         link: link.as_ref(),
     })?;
     // Vega-Lite refuses an `xOffset` over a continuous x: production's own grouped bar under a strip crashes there.
-    if time.is_some() && is_grouped && !is_stacked && r.support_table.is_some() {
+    if time.as_ref().is_some_and(|t| !t.is_discrete()) && is_grouped && !is_stacked && r.support_table.is_some() {
         return Err(crate::refuse!("bar: grouped bars on a time x axis under a support table are not supported").into());
     }
-    let layer_labels = bar_layers.iter().any(|bl| bl.bar_mark.labels.as_ref().is_some_and(|ml| ml.visible));
-    if time.is_some() && (authored_labels.is_some() || layer_labels) {
-        return Err(crate::refuse!("bar: value labels on a time x axis are not supported").into());
+    if time.as_ref().is_some_and(TimeX::bars_on_band) && r.support_table.is_some() {
+        return Err(crate::refuse!("bar: a support table under grouped value labels on a time x axis is not supported").into());
     }
-    if time.is_some() && r.style.endpoint_labels.visible && color_field.is_some() && !is_stacked {
-        return Err(crate::refuse!("bar: endpoint labels on grouped series over a time x axis are not supported").into());
+    if time.as_ref().is_some_and(TimeX::bars_on_band) && !bar_layers.is_empty() {
+        return Err(crate::refuse!("bar: a bar layer over grouped value labels on a time x axis is not supported").into());
     }
     // A step layer's xOffset is a point scale over its band edges and the base's
     // series: it replaces a grouped base's offset band scale, so the base's bars
@@ -9067,7 +9205,12 @@ pub(crate) fn render_vertical_panel(
     // first slots with the layer's edges on its last two.
     let step_over_grouped = layer_band_step && is_grouped && !is_stacked;
     let columns_for = |band: &BandScale, pw: f64| match (&time, &time_axis) {
-        (Some(t), Some(axis)) => Columns::Timed(t.columns(axis, pw, column_split.as_ref())),
+        (Some(t), Some(axis)) if !t.bars_on_band() => Columns::Timed(t.columns(axis, pw, column_split.as_ref())),
+        (Some(t), Some(axis)) => Columns::Timed(t.band_columns(
+            axis,
+            pw,
+            column_split.as_ref().expect("a band on a time axis splits its columns"),
+        )),
         _ if step_over_grouped => Columns::Banded(BandColumns::point_slots(band.bandwidth(), color_domain.len())),
         _ => Columns::Banded(BandColumns::new(band.bandwidth(), mark_band_width, r.style.mark.max_size, column_split.as_ref())),
     };
@@ -9148,11 +9291,8 @@ pub(crate) fn render_vertical_panel(
             .iter()
             .map(|tl| {
                 let w1 = fonts.measure_shaped(&tl.row1, cat_family, cat_font_size)?;
-                let (w2, rows) = if tl.row2.is_empty() {
-                    (0.0, 1)
-                } else {
-                    (fonts.measure_shaped(&tl.row2, cat_family, cat_font_size)?, 2)
-                };
+                let w2 = if tl.row2.is_empty() { 0.0 } else { fonts.measure_shaped(&tl.row2, cat_family, cat_font_size)? };
+                let rows = tl.rows();
                 Ok((tl.domain_idx, w1.max(w2).min(cat_limit), rows))
             })
             .collect::<Result<_, String>>()?,
@@ -9165,7 +9305,7 @@ pub(crate) fn render_vertical_panel(
             .iter()
             .enumerate()
             .map(|(i, c)| {
-                fonts.measure_shaped(c, cat_family, cat_font_size).map(|lw| (i, lw.min(cat_limit), 1))
+                fonts.measure_shaped(c, cat_family, cat_font_size).map(|lw| (i, lw.min(cat_limit), crate::text::line_count(c)))
             })
             .collect::<Result<_, String>>()?,
     };
@@ -9291,7 +9431,7 @@ pub(crate) fn render_vertical_panel(
         // with an anchored "$" prefix — move the symbol to a kept rung).
         let (linear_domain_max, tick_values, val_tick_labels, max_val_w) = if !normalize && !(r.stack == "center" && ax_y.authored_continuous_domain().is_some()) {
             let (domain_max, ticks) = niced_rail_domain(ax_y, linear_domain_max);
-            let labels = format_tick_labels(&ticks, ax_y, normalize)?;
+            let labels = format_tick_labels(&ticks, ax_y, normalize, "y")?;
             let max_w = labels.iter().try_fold(0.0_f64, |acc, l| {
                 fonts.measure_shaped(l, val_family, val_font_size).map(|lw| acc.max(lw))
             })?;
@@ -9313,7 +9453,7 @@ pub(crate) fn render_vertical_panel(
                     cadence_w,
                     cadence_w,
                     r.style.label_usable_ratio,
-                    labels_expr_n,
+                    labels_expr.as_ref(),
                     fonts,
                     cat_font_size,
                 )?;
@@ -9333,18 +9473,21 @@ pub(crate) fn render_vertical_panel(
             _ => (None, x_ticks_restored),
         };
         let x_tick_len = if x_ticks_restored { ax_x.ticks.length.unwrap_or(6.0) } else { 0.0 };
-        let has_two_row_labels =
-            temporal_labels.as_ref().is_some_and(|ls| ls.iter().any(|l| !l.row2.is_empty()));
+        let label_rows = match &temporal_labels {
+            Some(ls) => ls.iter().map(|l| l.rows()).max().unwrap_or(1),
+            None => cat_labels.iter().map(|c| crate::text::line_count(c)).max().unwrap_or(1),
+        };
         let cat_label_row_h = if cat_angle != 0.0 {
             let rows: Vec<(String, String)> = match &temporal_labels {
                 Some(tls) => tls.iter().map(|tl| (tl.row1.clone(), tl.row2.clone())).collect(),
                 None => cat_labels.iter().map(|c| (c.clone(), String::new())).collect(),
             };
             rotated_rows_reach(&rows, fonts, cat_family, cat_font_size, ax_x.labels.max_width, (cat_align, cat_baseline, cat_angle), false, x_edge)?
-        } else if has_two_row_labels {
-            cat_font_size * 2.0 + 2.0
-        } else {
+        } else if x_edge == crate::common::XEdge::Top {
+            // A second row hangs below the first, into the plot.
             cat_font_size
+        } else {
+            cat_font_size + (label_rows - 1) as f64 * (cat_font_size + 2.0)
         };
 
         // support_table (S7/S8): the strip's rows are pane-0 ink too — built
@@ -9435,14 +9578,26 @@ pub(crate) fn render_vertical_panel(
             0.0
         }
         .max(x_tick_len);
-        let x_band = match &time_axis {
+        let x_reach = match &time_axis {
             Some(axis) => {
                 let mut ink = vega_fit::Bounds::empty_new();
                 axis.union_label_ink(cadence_w, 0.0, &mut ink, fonts)?;
-                ink.y2 + cat_title_extra
+                let reach = match x_edge {
+                    crate::common::XEdge::Bottom => ink.y2,
+                    crate::common::XEdge::Top => -ink.y1,
+                };
+                reach + cat_title_extra
             }
             None => ax_off_x + x_tick_eff + cat_pad + cat_label_row_h + cat_title_extra,
         };
+        // The value axis's lowest tick label hangs below the plot where the x axis paints nothing under it.
+        let value_label_hang = vega_fit::text_ink(0.0, 0.0, 0.0, val_font_size, "right", "middle").y2;
+        let (x_band_above, x_band) = match x_edge {
+            crate::common::XEdge::Bottom => (0.0, x_reach.max(value_label_hang)),
+            crate::common::XEdge::Top => (x_reach, value_label_hang),
+        };
+        // The ink above pane 0's plot: the x axis band over a top axis.
+        let above = |top_ink: f64| top_ink.max(x_band_above);
         // Only the block's vertical stack reaches this arm's chrome. UNPORTED
         // GAP, not a law: Vega's gridLayout unions the title's ink into
         // pane 0's bound and ceils the pane's own bound before adding
@@ -9466,7 +9621,7 @@ pub(crate) fn render_vertical_panel(
         let plot_h0 = if rail_strip_rows.is_some() {
             h
         } else {
-            h - (pad_t + pad_b + title_stack + x_band).ceil()
+            h - (pad_t + pad_b + title_stack + x_band_above + x_band).ceil()
         };
         // A legend kept beside the rail sits inside pane 0 (`legendParams`'
         // `xBounds`/`yBounds`: the plot rect and the axes of its own
@@ -9483,7 +9638,10 @@ pub(crate) fn render_vertical_panel(
         let legend_y_reach = |ph: f64| -> (f64, f64) {
             let Some(lg) = &legend else { return (0.0, 0.0) };
             let size = (lg.box_w, lg.box_h());
-            let origin = legend_origin(&r.legend.position, (0.0, 0.0), (0.0, ph + x_band), (w, ph), size);
+            let mut origin = legend_origin(&r.legend.position, (0.0, 0.0), (0.0, ph + x_band), (w, ph), size);
+            if r.legend.position.edge == "top" && !r.legend.position.overlay {
+                origin.1 -= x_band_above;
+            }
             legend_fit_bounds(&r.legend.position, origin, size).map_or((0.0, 0.0), |reach| (-reach.y1, (reach.y2 - ph).max(0.0)))
         };
         // The value labels' ink unioned into pane 0's own bounds at a pane
@@ -9518,6 +9676,18 @@ pub(crate) fn render_vertical_panel(
         // The probe measures them at the declared width `w`.
         let label_ink_of = |ph: f64| label_ink_at(w, ph);
         let label_top_ink = |ph: f64| (-label_ink_of(ph).y1).max(0.0);
+        // A time axis centers its bars on instants the plot's own edges can sit on, so the last bar's
+        // half width and stroke hang past a pane `pw` wide.
+        let time_bars_overhang_at = |pw: f64| -> f64 {
+            match drawn_ends {
+                Some(ends) if time.is_some() && drawn_stroke_w > 0.0 => {
+                    let band = make_band(pw);
+                    let cols = columns_for(&band, pw);
+                    (cols.x_extent(&band, &cat_domain, ends).1 + drawn_stroke_w - pw).max(0.0)
+                }
+                _ => 0.0,
+            }
+        };
         // Top ink at probe time: the top y tick's label half, reduced by its
         // distance from the plot top; the stacked marks stay under the
         // headroomed domain max, reaching at most their border stroke. A value
@@ -9563,8 +9733,8 @@ pub(crate) fn render_vertical_panel(
                 h
             } else {
                 let top_ink = top_ink_of(tick_values, h);
-                let provisional = h - (pad_t + pad_b + top_ink + title_stack + x_band).ceil();
-                let chrome_h = pad_t + pad_b + top_ink + title_stack + bottom_band_of(provisional);
+                let provisional = h - (pad_t + pad_b + above(top_ink) + title_stack + x_band).ceil();
+                let chrome_h = pad_t + pad_b + above(top_ink) + title_stack + bottom_band_of(provisional);
                 let shrunk = h - chrome_h.ceil();
                 if shrunk > 0.0 { shrunk } else { h }
             }
@@ -9581,7 +9751,7 @@ pub(crate) fn render_vertical_panel(
             let Some((rungs, labels)) = (match date_rungs(plot_h)? {
                 Some(dated) => Some(dated),
                 None => unbaked_rungs(ax_y, normalize, false, 0.0, linear_domain_max, plot_h)
-                    .map(|rungs| format_tick_labels(&rungs, ax_y, normalize).map(|labels| (rungs, labels)))
+                    .map(|rungs| format_tick_labels(&rungs, ax_y, normalize, "y").map(|labels| (rungs, labels)))
                     .transpose()?,
             }) else { break };
             if rungs == tick_values {
@@ -9640,7 +9810,11 @@ pub(crate) fn render_vertical_panel(
                 } else {
                     pane_w
                 };
-                let origin = legend_origin(&r.legend.position, (axis_x1, axis_x2), (0.0, plot_h + x_band), (pane_w, plot_h), size);
+                let mut origin = legend_origin(&r.legend.position, (axis_x1, axis_x2), (0.0, plot_h + x_band), (pane_w, plot_h), size);
+                // A top legend sits above the x axis hung over the plot.
+                if r.legend.position.edge == "top" && !r.legend.position.overlay {
+                    origin.1 -= x_band_above;
+                }
                 (origin, legend_fit_bounds(&r.legend.position, origin, size))
             })
         };
@@ -9650,7 +9824,7 @@ pub(crate) fn render_vertical_panel(
         }
         let pane0_x2 = |pane_w: f64| {
             let legend_x2 = legend_reach(pane_w).map_or(0.0, |reach| reach.x2);
-            (pane_w + right_ink.max(label_ink_at(pane_w, h).x2 - pane_w)).max(stub_x2).max(legend_x2)
+            (pane_w + right_ink.max(label_ink_at(pane_w, h).x2 - pane_w).max(time_bars_overhang_at(pane_w))).max(stub_x2).max(legend_x2)
         };
         let uncorrected_x2 = pane0_x2(w);
         if let Some(e) = time_axis_err.take() {
@@ -9684,7 +9858,7 @@ pub(crate) fn render_vertical_panel(
         // One ceil over the whole overhang, as `pad_plot` takes it
         // (`ViewLayout.js:165-168`): the plot origin is a whole pixel.
         let legend_top = legend_reach(w).map_or(0.0, |reach| -reach.y1);
-        let top_margin = (top_ink.max(ink_ext).max(legend_top) + title_stack).ceil();
+        let top_margin = (above(top_ink).max(ink_ext).max(legend_top) + title_stack).ceil();
         // The correction re-runs the SAME grid layout on the shrunk pane:
         // ceil pane 0's own bound, add `spacing` raw. Every other term of
         // the canvas sum is unchanged, so the canvas moves by exactly what
@@ -9754,7 +9928,7 @@ pub(crate) fn render_vertical_panel(
         } else {
             // The shipped height is the corrected pane's real chrome around it: the
             // spec's own `h` unless the final pane's top ink moved off the probe's.
-            (plot_h + (pad_t + pad_b + top_ink + title_stack + bottom_band_of(plot_h)).ceil(), None)
+            (plot_h + (pad_t + pad_b + above(top_ink) + title_stack + bottom_band_of(plot_h)).ceil(), None)
         };
         // Vega anchors the title group at the view bounds' own left edge —
         // the axis's unrounded ink extent — while the plot group's translate
@@ -9777,7 +9951,7 @@ pub(crate) fn render_vertical_panel(
             } else {
                 // The hoisted title anchors at pane 0's bounds, a left legend included.
                 let left = legend_reach(plot_w).map_or(-y_extent_ink, |reach| reach.x1.min(-y_extent_ink));
-                (left, -top_ink - ti.ink_h - ti.offset)
+                (left, -above(top_ink) - ti.ink_h - ti.offset)
             }
         });
         PlotRect {
@@ -9805,11 +9979,13 @@ pub(crate) fn render_vertical_panel(
             val_gutter,
             temporal_labels,
             x_tick_len,
-            has_two_row_labels,
+            label_rows,
         }
     } else {
         // Per-label measurements for the ink closure.
+        let val_label_rows = std::cell::RefCell::new(Vec::<usize>::new());
         let measure_labels = |labels: &[String]| -> Result<Vec<f64>, String> {
+            *val_label_rows.borrow_mut() = labels.iter().map(|l| crate::text::line_count(l)).collect();
             labels.iter().map(|l| fonts.measure_shaped(l, val_family, val_font_size)).collect()
         };
         let mut val_label_ws = measure_labels(&val_tick_labels)?;
@@ -9898,10 +10074,12 @@ pub(crate) fn render_vertical_panel(
                 // top; on a left axis the label widths set the gutter.
                 // Vega's parity overlap hides every other label under the
                 // theme's min_gap; only the visible labels' ink counts.
+                let rows = val_label_rows.borrow();
                 let label_ink: Vec<vega_fit::Bounds> = tick_values
                     .iter()
                     .zip(val_label_ws.iter())
-                    .map(|(&tv, &lw)| {
+                    .zip(rows.iter())
+                    .map(|((&tv, &lw), &lines)| {
                         let y = y_at(tv);
                         let (x, align) = if val_away {
                             (pw + ax_off_y + val_tick_size + base_label_pad, "left")
@@ -9910,7 +10088,7 @@ pub(crate) fn render_vertical_panel(
                         } else {
                             (-(ax_off_y + val_tick_size + base_label_pad), "right")
                         };
-                        vega_fit::text_ink(x, y, lw.min(val_limit), val_font_size, align, "middle")
+                        vega_fit::text_ink_rows(x, y, lw.min(val_limit), val_font_size, align, "middle", lines)
                     })
                     .collect();
                 let visible = vega_fit::parity_visible(&label_ink, val_separation);
@@ -10103,7 +10281,7 @@ pub(crate) fn render_vertical_panel(
                                 cat_align,
                                 cat_baseline,
                                 cat_angle,
-                                rows == 2,
+                                rows - 1,
                             ));
                         }
                         let shown = match x_parity_separation {
@@ -10349,7 +10527,7 @@ pub(crate) fn render_vertical_panel(
             let Some((rungs, labels)) = (match date_rungs(m.plot_h)? {
                 Some(dated) => Some(dated),
                 None => unbaked_rungs(ax_y, normalize, independent_scale && layers.is_empty(), v_domain_min, linear_domain_max, m.plot_h)
-                    .map(|rungs| format_tick_labels(&rungs, ax_y, normalize).map(|labels| (rungs, labels)))
+                    .map(|rungs| format_tick_labels(&rungs, ax_y, normalize, "y").map(|labels| (rungs, labels)))
                     .transpose()?,
             }) else { break };
             if rungs == tick_values {
@@ -10428,7 +10606,7 @@ pub(crate) fn render_vertical_panel(
             val_gutter,
             temporal_labels,
             x_tick_len,
-            has_two_row_labels,
+            label_rows,
         }
     };
     let PlotRect {
@@ -10454,7 +10632,7 @@ pub(crate) fn render_vertical_panel(
         val_gutter,
         temporal_labels,
         x_tick_len,
-        has_two_row_labels,
+        label_rows,
     } = plot;
     let plot_right = plot_left + plot_w;
     let plot_bottom = plot_top + plot_h;
@@ -10513,6 +10691,19 @@ pub(crate) fn render_vertical_panel(
     // strip band to the plot, never between the title and the legend).
 
     let linear = LinearScale::new(v_domain_min, linear_domain_max, plot_h, 0.0);
+    if crate::labels_expr::view::active() {
+        use crate::labels_expr::view::{register_band, register_linear, AxisSpec, Orient, Span};
+        register_linear("y", v_domain_min, linear_domain_max, Span::Height);
+        match &time_axis {
+            Some(axis) => axis.register(plot_w),
+            None => register_band("x", &cat_domain, band_pi, band_po, Span::Width)?,
+        }
+        if facet.is_none() && time.is_none() && !all_dates {
+            let (align, baseline) = (crate::labels_expr::view::anchor(&cat_align)?, crate::labels_expr::view::anchor(&cat_baseline)?);
+            let spec = AxisSpec { orient: Orient::Bottom, offset: x_tick_len + cat_pad, shift: -0.5, align: Some(align), baseline: Some(baseline), angle: cat_angle, flush: None, style: ax_x.labels.item_style()? };
+            crate::labels_expr::view::register_axis("x", spec);
+        }
+    }
 
     // S10: anchors and cascade bounds are drawn regardless of which arm
     // resolved the plot rect — `rail_concat`'s own gate can refuse the
@@ -10522,12 +10713,16 @@ pub(crate) fn render_vertical_panel(
     // Neither term depends on the plot rect: `stacked_rail_anchors` and
     // `tallest_total` are value-space, off the raw stack, not the rendered
     // (niced/normalized) domain.
-    if show_rail_v {
+    if show_rail_v && is_stacked {
         let tallest = tallest_total(&category_totals(rows, cat_field, val_field));
         rail_anchors = stacked_rail_anchors(
             &cat_domain, &stack_order, &data_map, normalize, (r.stack == "center").then_some(tallest),
         )?;
         rail_cascade_max = if normalize { 1.0 } else { tallest };
+    } else if show_rail_v {
+        let color = color_field.expect("a rail names its series by a color field");
+        (rail_anchors, (rail_cascade_min, rail_cascade_max)) =
+            grouped_rail_anchors(rows, &cat_domain, cat_field, val_field, color, ax_y.authored_continuous_domain())?;
     }
 
     let band = make_band(plot_w);
@@ -10824,7 +11019,9 @@ pub(crate) fn render_vertical_panel(
 
     // Columns (bars growing upward from baseline)
     let cols = columns_for(&band, plot_w);
-    let double_stroke = time.as_ref().map_or(true, TimeX::spans_buckets);
+    let continuous_time = time.as_ref().is_some_and(|t| !t.is_discrete());
+    let double_stroke = time.as_ref().map_or(true, TimeX::double_stroke);
+    let clip_ns = time.as_ref().filter(|t| t.double_stroke()).map(|_| crate::contract::safe_svg_id(&r.id));
     if is_stacked {
         for cat in &cat_domain {
             let Some(band_x) = band.position(cat) else { continue };
@@ -10901,15 +11098,15 @@ pub(crate) fn render_vertical_panel(
                 // bottom.
                 // A time axis's stack is one clipped group: only its top segment keeps the rounded end.
                 let is_top = stack_paint_order.iter().rev().find(|s| data_map.contains_key(&(cat.clone(), (*s).clone()))) == Some(series);
-                let segment_r = if time.is_some() && !is_top { 0.0 } else { corner_r };
+                let segment_r = if continuous_time && !is_top { 0.0 } else { corner_r };
                 stack_ends = Some(stack_ends.map_or((top_y, bottom_y), |(top, bottom)| (top.min(top_y), bottom.max(bottom_y))));
                 emit_column_passes(
                     &mut svg, col_x, top_y, columns.width, seg_h, &fill, stroke_color, stroke_w,
                     segment_r,
-                    Rounded::by_sign(raw_val), double_stroke && time.is_none(), aria.as_deref(), anchor_of(&key),
+                    Rounded::by_sign(raw_val), double_stroke && !continuous_time, clip_ns.as_deref(), aria.as_deref(), anchor_of(&key),
                 )?;
             }
-            if let (Some((top, bottom)), true) = (stack_ends, time.is_some() && stroke_color != "none" && stroke_w > 0.0) {
+            if let (Some((top, bottom)), true) = (stack_ends, continuous_time && stroke_color != "none" && stroke_w > 0.0) {
                 let (r, x2) = (corner_r.min(columns.width / 2.0).min((bottom - top) / 2.0), col_x + columns.width);
                 let _ = write!(
                     svg,
@@ -10932,8 +11129,7 @@ pub(crate) fn render_vertical_panel(
             let fill = crate::common::series_color(base_series(series), &color_domain, &r.series_palette, category_scale)?;
             let Some(band_x) = band.position(cat) else { continue };
             let columns = cols.of(cat);
-            let sub_start = columns.sub_start(band_x, *si);
-            let col_x = sub_start + columns.pad;
+            let col_x = columns.left(band_x, *si);
             let key = (cat.clone(), series.clone());
             let Some(&val) = data_map.get(&key) else { continue };
             let start = ranged.as_ref().map(|rb| rb.starts.get(&key).copied());
@@ -10977,7 +11173,7 @@ pub(crate) fn render_vertical_panel(
             emit_column_passes(
                 &mut svg, col_x, bar_top, columns.width, bar_h, &fill, stroke_color, stroke_w,
                 corner_r,
-                ends, double_stroke, aria.as_deref(), anchor_of(&key),
+                ends, double_stroke, clip_ns.as_deref(), aria.as_deref(), anchor_of(&key),
             )?;
         }
     } else {
@@ -11041,7 +11237,7 @@ pub(crate) fn render_vertical_panel(
             }
             emit_column_passes(
                 &mut svg, col_x, bar_top, columns.width, bar_h, fill, stroke_color, stroke_w, corner_r,
-                ends, double_stroke, aria.as_deref(), anchor_of(&key),
+                ends, double_stroke, clip_ns.as_deref(), aria.as_deref(), anchor_of(&key),
             )?;
         }
     }
@@ -11221,7 +11417,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
         let spec = LabelSpec::new(ml, false, bl.label_is_house, bar_layer_rows, &bl.y);
         let sites = plain_sites(bar_layer_rows, (bl_x, &bl.y), crate::families::layers::layer_link(link.as_ref(), (bl.query_name.as_deref(), r.query_name.as_deref())), &spec, None, None, false)?;
         let label_layer = LabelLayer::new(spec, sites, false, false, false, false, false, fonts, payload.board_style.as_ref())?;
-        let center = |_: &str, band_x: f64, _: Option<usize>| band_x + band.bandwidth() / 2.0;
+        let center = |cat: &str, _: f64, _: Option<usize>| band.center(cat).expect("a labeled category is on the band scale");
         let geom = LabelGeometry { band: &band, center: &center, linear };
         let points = label_layer.points(&geom, None, &LabelDecors::new(), |site| {
             Ok(tooltip_labels.then(|| {
@@ -11248,7 +11444,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
             .as_ref()
             .zip(time_axis.as_ref())
             .map(|(t, axis)| {
-                let own_dates: Vec<String> = bar_layer_rows.iter().filter(|row| row_num(row, &bl.y).is_some()).map(|row| row_str(row, bl_x)).collect();
+                let own_dates: Vec<String> = bar_layer_rows.iter().filter(|row| row_num(row, &bl.y).is_some() && row.get(bl_x).is_some_and(|v| !v.is_null())).map(|row| row_str(row, bl_x)).collect();
                 t.layer_columns(axis, plot_w, &bl.bar_mark, column_split.as_ref(), &own_dates).map(Columns::Timed)
             })
             .transpose()?;
@@ -11689,7 +11885,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
         None => facet_compose::PanelXAxis::Band(BandXAxis {
         band: band.clone(),
         cat_domain: cat_domain.clone(),
-        cat_labels: cat_labels.clone(),
+        cat_shown: cat_labels.iter().map(|l| ax_x.labels.clip(l, fonts)).collect::<Result<_, _>>()?,
         temporal_labels: temporal_labels.clone(),
         cat_angle,
         cat_baseline: cat_baseline.to_string(),
@@ -11699,7 +11895,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
         cat_pad,
         cat_font_size,
         cat_family: cat_family.to_string(),
-        has_two_row_labels,
+        label_rows,
         parity: match (x_parity_separation, &temporal_labels) {
             (Some(separation), Some(tls)) => {
                 let cat_limit = ax_x.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
@@ -11713,6 +11909,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
             _ => None,
         },
         cat_title_text: cat_title_paint.clone(),
+        caption: category_axis_caption(&cat_title_paint, ax_x, &cat_domain)?,
         title_key: facet.is_none().then_some(crate::contract::LabelKey::X),
         edge: x_edge,
         cat_title_reach,
@@ -11736,7 +11933,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
     } else {
         (plot_left - ax_off_y + 0.5 - val_tick_size - base_label_pad, "end")
     };
-    let val_baseline_shift = vega_fit::baseline_shift("middle", val_font_size);
+    let val_baseline_shift = crate::measure::baseline_shift("middle", val_font_size);
     let val_y_delta = 0.5;
     // One mark per rung, from the axis edge outward; label overlap thins the
     // labels, never the marks.
@@ -11747,13 +11944,28 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
         tick_values.iter().map(|&tv| linear.position(tv)),
     );
     let value_axis_start = svg.len();
-    if paint_value_axis {
-        let (edge_x, outward) = if val_on_right {
-            (facet_axis_right_base + value_axis_right_overhang + ax_off_y + 0.5, 1.0)
-        } else {
-            (plot_left - ax_off_y + 0.5, -1.0)
+    let (edge_x, outward) = if val_on_right {
+        (facet_axis_right_base + value_axis_right_overhang + ax_off_y + 0.5, 1.0)
+    } else {
+        (plot_left - ax_off_y + 0.5, -1.0)
+    };
+    if crate::labels_expr::view::active() && facet.is_none() && ax_y.labels.upright() {
+        use crate::labels_expr::view::{AxisSpec, Orient};
+        let orient = if val_on_right { Orient::Right } else { Orient::Left };
+        let align = match val_anchor {
+            "start" => "left",
+            "end" => "right",
+            other => return Err(format!("bar: value axis anchor {other:?} has no label align").into()),
         };
-        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (edge_x, plot_top))?;
+        let spec = AxisSpec { orient, offset: outward * (val_label_x - edge_x), shift: 0.0, align: Some(align), baseline: None, angle: 0.0, flush: None, style: ax_y.labels.item_style()? };
+        crate::labels_expr::view::register_axis("y", spec);
+    }
+    let val_caption = match &date_axis {
+        Some(_) => date_value_caption(&val_title_paint, ax_y, (v_domain_min, linear_domain_max))?,
+        None => value_axis_caption(&val_title_paint, val_title_style, ax_y, (v_domain_min, linear_domain_max), normalize)?,
+    };
+    if paint_value_axis {
+        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, &val_caption, (edge_x, plot_top))?;
         crate::common::emit_value_ticks(
             &mut svg,
             &ax_y.ticks,
@@ -11815,7 +12027,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
                  font-family=\"{}\" font-size=\"{val_font_size}\" font-weight=\"{val_weight}\" \
                  fill=\"{val_color}\">{}</text>",
                 vega_escape_attr(val_family),
-                xml_escape(if left_flip { &ghost_texts[i] } else { label }), val_anchor = xml_escape_attr(val_anchor), val_weight = xml_escape_attr(&val_weight), val_color = xml_escape_attr(val_color)
+                xml_escape(&ax_y.labels.clip(if left_flip { &ghost_texts[i] } else { label }, fonts)?), val_anchor = xml_escape_attr(val_anchor), val_weight = xml_escape_attr(&val_weight), val_color = xml_escape_attr(val_color)
             );
         }
     }
@@ -11852,7 +12064,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
         } else {
             (plot_right + ax_off_y + 0.5, 1.0, plot_right + ax_off_y + 0.5 + val_tick_size + base_label_pad, "start")
         };
-        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, (edge_x, plot_top))?;
+        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, &val_caption.untitled(), (edge_x, plot_top))?;
         crate::common::emit_value_ticks(&mut svg, &ax_y.ticks, val_tick_marks.iter().copied(), edge_x, outward, val_tick_size)?;
         for (abs_y, label) in &ghost_ticks {
             let _ = write!(
@@ -11861,7 +12073,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
                  font-family=\"{}\" font-size=\"{val_font_size}\" font-weight=\"{val_weight}\" \
                  fill=\"{val_color}\">{}</text>",
                 vega_escape_attr(val_family),
-                xml_escape(label), val_weight = xml_escape_attr(&val_weight), val_color = xml_escape_attr(val_color)
+                xml_escape(&ax_y.labels.clip(label, fonts)?), val_weight = xml_escape_attr(&val_weight), val_color = xml_escape_attr(val_color)
             );
         }
         crate::contract::axis_group_close(&mut svg);
@@ -11906,13 +12118,13 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
         // production measures px-per-unit on the drawn scale while holding
         // every nudged label inside the raw data extent, so none escapes
         // into the headroom and the branch midpoint is the data's own.
-        let px_per_unit = (linear_domain_max > 0.0).then(|| (plot_h / linear_domain_max).abs());
+        let px_per_unit = (linear_domain_max > v_domain_min).then(|| (plot_h / (linear_domain_max - v_domain_min)).abs());
         let cascaded = crate::families::cartesian::recascade_rail_anchors(
             &r.id,
             &rail_anchors,
             gap_px,
             px_per_unit,
-            0.0,
+            rail_cascade_min,
             rail_cascade_max,
         );
         let rail_x = plot_left + rail_x_rel.expect("the rail arm places its labels");
@@ -11920,11 +12132,13 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
         if tooltip_labels {
             crate::contract::mark_group_open(&mut svg, "text", "concat_1_marks")?;
         }
+        // A grouped bar has no stack order: its series take the palette in color-domain order.
+        let rail_palette: &[String] = if is_stacked { palette_domain } else { &color_domain };
         for (series, v) in &cascaded {
-            let ry = linear.position(*v) + vega_fit::baseline_shift("middle", sl.font_size);
+            let ry = linear.position(*v) + crate::measure::baseline_shift("middle", sl.font_size);
             let rcolor = crate::common::series_ink(
                 series,
-                palette_domain,
+                rail_palette,
                 &r.series_palette,
                 &sl.dark_companion_palette,
                 &sl.pin_companions,
@@ -12002,6 +12216,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
             val_weight,
             val_color: val_color.to_string(),
             val_family: val_family.to_string(),
+            val_caption,
             axis: x_axis,
             top_axis_overhang,
             value_title_w: if paint_value_axis && crate::common::y_title_extra(val_title_style, &val_title_paint) > 0.0 { val_title_w } else { 0.0 },
@@ -12629,7 +12844,7 @@ fn emit_column(
     aria_label: Option<&str>,
     href: Option<crate::href::Anchor<'_>>,
 ) -> Result<(), String> {
-    emit_column_passes(out, x, y, w, h, fill, stroke, stroke_w, r, ends, true, aria_label, href)
+    emit_column_passes(out, x, y, w, h, fill, stroke, stroke_w, r, ends, true, None, aria_label, href)
 }
 
 /// `emit_column` with the stroke double-paint switchable: the BAND bar's
@@ -12656,6 +12871,7 @@ fn emit_column_passes(
     r: f64,
     ends: Rounded,
     double_stroke: bool,
+    clip_ns: Option<&str>,
     aria_label: Option<&str>,
     href: Option<crate::href::Anchor<'_>>,
 ) -> Result<(), String> {
@@ -12725,14 +12941,21 @@ fn emit_column_passes(
             y + r,      // end of top-right arc (y coord)
         )
     };
+    // The compiled group clips the rect's own stroke to the rounded shape and strokes the outline on top, so
+    // an overlapping neighbor's edge is crossed by the outline alone.
+    let clip = clip_ns.filter(|_| stroke_repeat).map(|ns| format!("bar-{x:.2}-{y:.2}-{w:.2}-{h:.2}-{ns}"));
+    let clip_attr = clip.as_ref().map(|id| format!(" clip-path=\"url(#{id})\"")).unwrap_or_default();
     out.push_str(&crate::href::anchor_open(href));
     let _ = write!(
         out,
-        "<path d=\"{d}\" fill=\"{fill}\"{stroke_attrs}{label_attr}/>",
+        "<path d=\"{d}\" fill=\"{fill}\"{stroke_attrs}{clip_attr}{label_attr}/>",
         fill = xml_escape_attr(fill)
     );
     out.push_str(crate::href::anchor_close(href));
     if stroke_repeat {
+        if let Some(id) = &clip {
+            let _ = write!(out, "<clipPath id=\"{id}\"><path d=\"{d}\"/></clipPath>");
+        }
         let _ = write!(out, "<path d=\"{d}\" fill=\"none\"{stroke_attrs}/>");
     }
     if aria_label.is_some() {
@@ -13838,7 +14061,7 @@ fn emit_mark_labels(
              font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\"{} \
              fill=\"{}\"{}{}",
             plot_left + spot.x,
-            plot_top + spot.y + vega_fit::baseline_shift(spot.baseline, style.font.size),
+            plot_top + spot.y + crate::measure::baseline_shift(spot.baseline, style.font.size),
             spot.anchor,
             vega_escape_attr(&style.font.family),
             style.font.size,
@@ -13877,16 +14100,10 @@ fn overlap_fraction(overlap: Option<&Overlap>, auto: f64) -> Result<f64, String>
 /// Production's grouped-bar overlap fraction (`_resolve_overlap_fraction`):
 /// unauthored (or `auto`) is −0.1 — a gap — for any series count but
 /// two, and +0.25 for exactly two; keywords map through its table and a
-/// number passes through. Production refuses a positive overlap off two
-/// series; a full overlap is raised ahead of `render` by `production_errors`.
+/// number passes through. A positive overlap off two series and a full overlap
+/// are raised ahead of `render` by `production_errors`.
 fn grouped_overlap_fraction(overlap: Option<&Overlap>, n_series: usize) -> Result<f64, String> {
-    let fraction = overlap_fraction(overlap, if n_series == 2 { 0.25 } else { -0.1 })?;
-    if fraction > 0.0 && n_series != 2 {
-        return Err(crate::refuse!(
-            "bar: positive overlap off exactly 2 series is not supported (got {n_series})"
-        ));
-    }
-    Ok(fraction)
+    overlap_fraction(overlap, if n_series == 2 { 0.25 } else { -0.1 })
 }
 
 /// A color split that lays a band's columns side by side: `width_steps` is
@@ -13916,13 +14133,15 @@ struct BandColumns {
     /// on a time axis, where Vega-Lite's text mark sits at the bucket's start or the instant itself.
     anchor: f64,
     split: bool,
+    /// Every series' column sits on the same extent, though each value label keeps its series' sub-band.
+    coincident: bool,
 }
 
 impl BandColumns {
     fn new(band_w: f64, mark_band_width: f64, max_size: Option<f64>, split: Option<&ColumnSplit>) -> Self {
         let Some(split) = split else {
             let width = capped_thickness((band_w * mark_band_width).min(band_w), max_size);
-            return Self { step: band_w, lead: 0, width, pad: (band_w - width) / 2.0, anchor: band_w / 2.0, split: false };
+            return Self { step: band_w, lead: 0, width, pad: (band_w - width) / 2.0, anchor: band_w / 2.0, split: false, coincident: false };
         };
         let step = support_table_strip::sub_band_step(band_w, split.n_series + split.lead, false);
         // `_fix_bar_band_width` (`_overlay.py:778`) runs ONLY inside a
@@ -13940,12 +14159,32 @@ impl BandColumns {
         // An authored ceiling makes the width explicit, so it centers on the
         // sub-band instead of resolving the shorthand against the outer band.
         let pad = if max_size.is_some() { (step - width) / 2.0 } else { (1.0 - split.width_steps) / 2.0 * pad_band_w };
-        Self { step, lead: split.lead, width, pad, anchor: step / 2.0, split: true }
+        Self { step, lead: split.lead, width, pad, anchor: step / 2.0, split: true, coincident: false }
+    }
+
+    /// The grouped columns of a time axis under value labels: Vega-Lite sizes them against the offset scale
+    /// and leaves each at its sub-band's own leading edge.
+    fn left_aligned(band_w: f64, split: &ColumnSplit) -> Self {
+        let step = support_table_strip::sub_band_step(band_w, split.n_series + split.lead, false);
+        let width = (split.width_steps * step).max(MIN_COLUMN_WIDTH);
+        Self { step, lead: split.lead, width, pad: 0.0, anchor: step / 2.0, split: true, coincident: false }
+    }
+
+    /// The grouped columns of a point-dated time axis under value labels: every series' column is `width` wide
+    /// at the band's center, and each value label sits in its series' sub-band.
+    fn centered_in_band(band_w: f64, width: f64, split: &ColumnSplit) -> Self {
+        let step = support_table_strip::sub_band_step(band_w, split.n_series + split.lead, false);
+        Self { step, lead: split.lead, width, pad: (band_w - width) / 2.0, anchor: step / 2.0, split: true, coincident: true }
+    }
+
+    /// The same columns of a date with no band: on one extent at the plot's left edge, the label there too.
+    fn unplaced(&self) -> Self {
+        Self { step: 0.0, pad: 0.0, anchor: 0.0, coincident: false, ..self.clone() }
     }
 
     /// A time-axis column `width` wide, `pad` in from its bucket's leading edge, its value label `anchor` in.
     fn unsplit(span: f64, pad: f64, width: f64, anchor: f64) -> Self {
-        Self { step: span, lead: 0, width, pad, anchor, split: false }
+        Self { step: span, lead: 0, width, pad, anchor, split: false, coincident: false }
     }
 
     /// A time-axis column of an authored `size`, centered on its `span`.
@@ -13955,7 +14194,7 @@ impl BandColumns {
 
     /// The grouped columns of an instant: every series on the same extent.
     fn coincident(span: f64) -> Self {
-        Self { step: 0.0, lead: 0, width: span, pad: 0.0, anchor: 0.0, split: true }
+        Self { step: 0.0, lead: 0, width: span, pad: 0.0, anchor: 0.0, split: true, coincident: false }
     }
 
     /// The grouped columns of a time bucket: Vega-Lite divides `0.8` of the grain's `reference` bucket
@@ -13963,7 +14202,7 @@ impl BandColumns {
     fn offset_bucket(reference: f64, split: &ColumnSplit) -> Self {
         let step = 0.8 * reference / (split.n_series + split.lead) as f64;
         let width = split.width_steps * step;
-        Self { step, lead: split.lead, width, pad: 0.1 * reference + (step - width) / 2.0, anchor: step / 2.0, split: true }
+        Self { step, lead: split.lead, width, pad: 0.1 * reference + (step - width) / 2.0, anchor: step / 2.0, split: true, coincident: false }
     }
 
     /// The columns of a grouped base whose xOffset a step layer turned into a
@@ -13971,7 +14210,7 @@ impl BandColumns {
     /// columns on the first slots, `band_w / (n_series + 1)` apart.
     fn point_slots(band_w: f64, n_series: usize) -> Self {
         let step = band_w / (n_series as f64 + 1.0);
-        Self { step, lead: 0, width: 0.0, pad: 0.0, anchor: step / 2.0, split: true }
+        Self { step, lead: 0, width: 0.0, pad: 0.0, anchor: step / 2.0, split: true, coincident: false }
     }
 
     /// Where a value label of series `slot` centers.
@@ -13985,7 +14224,11 @@ impl BandColumns {
     }
 
     fn left(&self, band_x: f64, slot: usize) -> f64 {
-        self.sub_start(band_x, slot) + self.pad
+        if self.coincident {
+            band_x + self.pad
+        } else {
+            self.sub_start(band_x, slot) + self.pad
+        }
     }
 }
 
@@ -14200,7 +14443,7 @@ mod tests {
             "position": null,
             "mirror": null,
             "band_position": 0.5,
-            "scale": {},
+            "scale": {"padding": 0.0},
             "tick_values": [],
             "domain_max": null,
             "domain_min": null,
@@ -14232,7 +14475,7 @@ mod tests {
             "position": "left",
             "mirror": null,
             "band_position": 0.5,
-            "scale": {},
+            "scale": {"padding": 0.0},
             "tick_values": [0.0, 500.0, 1000.0, 1500.0, 2000.0],
             "domain_max": 2000.0,
             "domain_min": null,
@@ -14268,7 +14511,7 @@ mod tests {
                 "visible": grouped,
                 "position": {"edge": "top", "align": "start", "overlay": false},
                 "direction": "horizontal",
-                "title": {"font": {"family": TEST_FONT}},
+                "title": {"font": {"case": "title", "family": TEST_FONT}},
                 "label": {
                     "padding": 8.0,
                     "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"}
@@ -15141,6 +15384,7 @@ mod tests {
         /// centers.
         #[test]
         fn a_line_layer_over_a_continuous_time_x_vertexes_on_its_instants() {
+            let _locale = crate::time_locale::en_us_scope();
             let rows = [("2020-01-05", 10.0, 5.0), ("2020-01-06", 20.0, 6.0), ("2023-08-29", 30.0, 7.0), ("2023-08-30", 25.0, 8.0)];
             let mut payload_json = payload_with_layer(&rows, line_layer_json("#dea628"));
             payload_json["resolved"]["style"]["axis_x"]["fill"] = serde_json::json!("null");
@@ -15963,6 +16207,7 @@ mod tests {
         /// `width(8, Inter stand-in) + VALUE_AXIS_BREATHING_ROOM(4) = 12`.
         #[test]
         fn a_layer_axis_uses_the_themed_label_padding_not_the_base_s_val_on_right_hack() {
+            let _locale = crate::time_locale::en_us_scope();
             let mut payload_json = payload_with_layer(
                 &[("Jan", 1000.0, 3.1), ("Feb", 1500.0, 3.4), ("Mar", 1200.0, 4.2)],
                 dual_axis_layer_json(),
@@ -15996,7 +16241,7 @@ mod tests {
             let expected_x = plot_right + 0.5 + widest + 6.0;
             let buggy_x = plot_right + 0.5 + widest + VALUE_AXIS_BREATHING_ROOM;
 
-            let title_i = svg.find("Conversion (%)").expect("layer title draws");
+            let title_i = svg.find(">Conversion (%)</text>").expect("layer title draws");
             let title_tag = &svg[svg[..title_i].rfind("<text").unwrap()..title_i];
             let title_x: f64 = title_tag
                 .split("x=\"")
@@ -16093,6 +16338,7 @@ mod tests {
         /// law never reaches the layer.
         #[test]
         fn a_dual_axis_layer_s_labels_start_anchor_at_the_theme_padding() {
+            let _locale = crate::time_locale::en_us_scope();
             let payload_json = payload_with_layer(
                 &[("Jan", 1000.0, 3.1), ("Feb", 1500.0, 3.4), ("Mar", 1200.0, 4.2)],
                 dual_axis_layer_json(),
@@ -16116,7 +16362,7 @@ mod tests {
                     "the layer label {t} at x={x} sits at the theme padding past plot_right({right}): {svg}"
                 );
             }
-            let title_i = svg.find("Conversion (%)").expect("layer title draws");
+            let title_i = svg.find(">Conversion (%)</text>").expect("layer title draws");
             let tag = &svg[svg[..title_i].rfind("<text").unwrap()..title_i];
             let title_x: f64 = tag.split("x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
             let (label_x, _) = label("4");
@@ -17423,6 +17669,7 @@ mod tests {
     /// though the theme hides the axis's ticks.
     #[test]
     fn a_bucketed_time_axis_spans_each_bucket_and_draws_its_opener_ticks() {
+        let _locale = crate::time_locale::en_us_scope();
         let svg = render(&make_payload(make_time_payload(&months_from_2000(72))), &test_fonts()).expect("renders");
         let ext = bar_extents(&svg);
         assert_eq!(ext.len(), 72);
@@ -17459,6 +17706,7 @@ mod tests {
     /// (31 days) over n, whatever the bucket's own length.
     #[test]
     fn grouped_series_on_a_time_axis_share_one_offset_step() {
+        let _locale = crate::time_locale::en_us_scope();
         let svg = render(&make_payload(make_time_series_payload("none")), &test_fonts()).expect("renders");
         let fills = bar_fills(&svg);
         assert_eq!(fills.len(), 144);
@@ -17472,6 +17720,7 @@ mod tests {
     /// A stacked series piles in one bar per bucket, so every sub-bar shares the unsplit bucket width.
     #[test]
     fn stacked_series_on_a_time_axis_share_the_bucket_bar() {
+        let _locale = crate::time_locale::en_us_scope();
         let svg = render(&make_payload(make_time_series_payload("zero")), &test_fonts()).expect("renders");
         let ext = bar_extents(&svg);
         assert_eq!(ext.len(), 72);
@@ -17479,26 +17728,104 @@ mod tests {
         assert!((span(0) / span(1) - 31.0 / 29.0).abs() < 0.01, "Jan 2000 over Feb 2000: {}", span(0) / span(1));
     }
 
+    /// Grouped series under endpoint labels take the right rail a stack does: each series' name at its own last value.
     #[test]
-    fn endpoint_labels_on_grouped_series_over_a_time_axis_refuse_by_name() {
+    fn endpoint_labels_on_grouped_series_over_a_time_axis_draw_the_rail() {
+        let _locale = crate::time_locale::en_us_scope();
         let mut p = make_time_series_payload("none");
         p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "label_offset": 6.0, "height": 20.0});
-        assert!(refusal(p).contains("endpoint labels on grouped series over a time x axis"));
+        p["resolved"]["style"]["series_label"]["gap_px"] = serde_json::json!(8.0);
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        assert!(svg.contains(">x</text>") && svg.contains(">y</text>"), "{svg}");
     }
 
-    #[test]
-    fn value_labels_on_a_time_axis_refuse_by_name() {
-        let mut p = make_time_payload(&months_from_2000(72));
+    fn with_value_labels(mut p: serde_json::Value) -> serde_json::Value {
         p["resolved"]["style"]["mark"]["labels"] = serde_json::json!({
             "visible": true, "field": null, "format": ",.0f", "dx": null, "dy": null, "font": null, "position": null
         });
+        p["resolved"]["style"]["axis_x"]["scale"] = serde_json::json!({"padding": 0.0});
+        p
+    }
+
+    /// Value labels beside a `timeFormat` expression speak the format at every tick, on the point scale's categories.
+    #[test]
+    fn value_labels_beside_a_time_format_expr_speak_it_at_every_category_tick() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut p = with_value_labels(make_time_payload(&months_from_2000(72)));
+        p["resolved"]["style"]["axis_x"]["labels"]["expr"] = serde_json::json!("timeFormat(datum.value, '%m/%y')");
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        assert!(svg.contains(">01/05</text>"), "{svg}");
+    }
+
+    /// A date axis under value labels needs the theme's scale padding: an absent one is a payload fault.
+    #[test]
+    fn value_labels_on_a_time_axis_require_the_scale_padding() {
+        let mut p = with_value_labels(make_time_payload(&months_from_2000(72)));
+        p["resolved"]["style"]["axis_x"]["scale"] = serde_json::json!({});
         let err = render(&make_payload(p), &test_fonts()).expect_err("refuses").to_string();
-        assert!(err.contains("value labels on a time x axis"), "{err}");
+        assert!(err.contains("axis_x.scale.padding absent"), "{err}");
+    }
+
+    /// Value labels type the field nominal beside the bars: the dates become the categories of a point scale,
+    /// evenly spaced whatever the days between them, and each bar is Vega-Lite's 18px step bar centered on its date.
+    #[test]
+    fn value_labels_put_a_time_axis_on_a_point_scale_of_18px_bars() {
+        let svg = render(&make_payload(with_value_labels(make_time_payload(&months_from_2000(72)))), &test_fonts()).expect("renders");
+        let ext = bar_extents(&svg);
+        assert_eq!(ext.len(), 72);
+        assert!(ext.iter().all(|&(_, w)| (w - 18.0).abs() < 0.011), "{ext:?}");
+        let center = |i: usize| ext[i].0 + ext[i].1 / 2.0;
+        let (step0, step1) = (center(1) - center(0), center(2) - center(1));
+        assert!((step0 - step1).abs() < 0.011, "Jan to Feb and Feb to Mar are one step apart: {step0} {step1}");
+        assert!(center(0).abs() < 0.011, "the first date sits on the plot's left edge: {}", center(0));
+    }
+
+    /// A point scale over the dates leaves a bar of an authored size at that size.
+    #[test]
+    fn value_labels_keep_an_authored_bar_size_on_the_point_scale() {
+        let mut p = with_value_labels(make_time_payload(&months_from_2000(72)));
+        p["resolved"]["style"]["mark"]["size"] = serde_json::json!(3.0);
+        let ext = bar_extents(&render(&make_payload(p), &test_fonts()).expect("renders"));
+        assert!(ext.iter().all(|&(_, w)| (w - 3.0).abs() < 0.011), "{ext:?}");
+    }
+
+    /// An authored x domain is the point scale's whole domain: a date it does not name has no position, and Vega
+    /// draws its bar at the plot's left edge.
+    #[test]
+    fn value_labels_with_an_authored_domain_draw_unnamed_dates_at_the_left_edge() {
+        let mut p = with_value_labels(make_time_payload(&months_from_2000(72)));
+        p["resolved"]["style"]["axis_x"]["scale"] =
+            serde_json::json!({"padding": 0.0, "continuous": {"domain": ["1999-01-01", "2007-01-01"]}});
+        let ext = bar_extents(&render(&make_payload(p), &test_fonts()).expect("renders"));
+        assert_eq!(ext.len(), 72);
+        assert!(ext.iter().all(|&(x, w)| x.abs() < 0.011 && (w - 18.0).abs() < 0.011), "{ext:?}");
+    }
+
+    /// A column past the ordinal budget whose labels Vega would tick by interval: the point scale throws, so the
+    /// chart paints no marks.
+    #[test]
+    fn value_labels_over_unthinned_ticks_raise_painted_no_marks() {
+        let dates: Vec<String> = (0..130).map(|i| format!("{}-01-01", 1900 + i)).collect();
+        let mut p = with_value_labels(make_time_payload(&dates));
+        p["resolved"]["style"]["axis_x"]["labels"]["tilt_increments"] = serde_json::json!([0.0, -30.0, -45.0, -60.0, -90.0]);
+        let err = render(&make_payload(p), &test_fonts()).expect_err("raises");
+        assert_eq!(err.code, "ERR-CHART-PAINTED-NO-MARKS", "{err:?}");
+    }
+
+    /// A point scale measures a bar's width against the date after the first: when that date is not the closest
+    /// to it, the width is NaN and nothing paints.
+    #[test]
+    fn value_labels_on_dates_whose_first_gap_is_not_the_closest_raise_painted_no_marks() {
+        let dates: Vec<String> =
+            ["2024-01-03", "2024-01-20", "2024-02-14", "2024-02-21", "2024-05-21", "2024-06-09"].map(String::from).to_vec();
+        let err = render(&make_payload(with_value_labels(make_time_payload(&dates))), &test_fonts()).expect_err("raises");
+        assert_eq!(err.code, "ERR-CHART-PAINTED-NO-MARKS", "{err:?}");
     }
 
     /// An authored size centers a bucketed bar on its bucket at the literal width.
     #[test]
     fn an_authored_size_centers_a_bucketed_bar_on_its_bucket() {
+        let _locale = crate::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(72));
         p["resolved"]["style"]["mark"]["size"] = serde_json::json!(3.0);
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
@@ -17517,6 +17844,7 @@ mod tests {
     /// ladder's one width: the clamp over the closest pair of distinct dates.
     #[test]
     fn irregular_dates_sit_on_their_instants_at_one_width() {
+        let _locale = crate::time_locale::en_us_scope();
         let dates: Vec<String> =
             ["2024-01-03", "2024-01-10", "2024-02-14", "2024-03-02", "2024-05-21", "2024-06-09"].map(String::from).to_vec();
         let svg = render(&make_payload(make_time_payload(&dates)), &test_fonts()).expect("renders");
@@ -17539,6 +17867,7 @@ mod tests {
     /// A negative bucket hangs below the zero baseline on the signed value ladder.
     #[test]
     fn a_negative_value_on_a_time_axis_draws_below_the_baseline() {
+        let _locale = crate::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(72));
         p["rows"][3]["revenue"] = serde_json::json!(-5.0);
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
@@ -17549,6 +17878,7 @@ mod tests {
 
     #[test]
     fn a_ranged_bar_on_a_time_axis_draws_one_bar_per_bucket() {
+        let _locale = crate::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(72));
         p["resolved"]["y_start"] = serde_json::json!("start");
         for row in p["rows"].as_array_mut().unwrap() {
@@ -17561,6 +17891,7 @@ mod tests {
     /// A second row of one bucket stacks over the first, where the bar chart's stack groups by the bucket.
     #[test]
     fn two_rows_in_one_bucket_stack() {
+        let _locale = crate::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(72));
         p["rows"].as_array_mut().unwrap().push(serde_json::json!({"product": "2000-02-01", "revenue": 5.0}));
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
@@ -17569,6 +17900,7 @@ mod tests {
 
     #[test]
     fn two_rows_at_one_instant_stack() {
+        let _locale = crate::time_locale::en_us_scope();
         let dates: Vec<String> =
             ["2024-01-03", "2024-01-10", "2024-02-14", "2024-03-02", "2024-05-21", "2024-05-21"].map(String::from).to_vec();
         let svg = render(&make_payload(make_time_payload(&dates)), &test_fonts()).expect("renders");
@@ -17579,6 +17911,7 @@ mod tests {
     /// month does inside it rather than at the plot's left edge.
     #[test]
     fn a_date_filtered_bar_pins_its_domain_to_the_range() {
+        let _locale = crate::time_locale::en_us_scope();
         let plain = bar_extents(&render(&make_payload(make_time_payload(&months_from_2000(72))), &test_fonts()).expect("renders"));
         let mut p = make_time_payload(&months_from_2000(72));
         p["resolved"]["x_date_range"] = serde_json::json!({"start": "1999-01-01", "end": "2007-01-01"});
@@ -17591,6 +17924,7 @@ mod tests {
     /// its stack total sums the rows of that date.
     #[test]
     fn a_time_axis_tooltip_names_the_rows_own_date() {
+        let _locale = crate::time_locale::en_us_scope();
         let mut p = make_time_payload(&["2024-01-03".to_string(), "2024-01-10".to_string(), "2024-02-14".to_string(), "2024-03-02".to_string()]);
         p["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.0f");
         p["resolved"]["style"]["axis_x"]["time_unit"] = serde_json::json!("yearmonth");
@@ -17622,6 +17956,7 @@ mod tests {
     /// bars, which only an unlayered bar declares, are absent.
     #[test]
     fn a_genuine_zero_leaves_the_bar_no_hover_band() {
+        let _locale = crate::time_locale::en_us_scope();
         let hover = |zero: bool| {
             let mut p = make_time_payload(&months_from_2000(72));
             p["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.0f");
@@ -17639,6 +17974,7 @@ mod tests {
     /// With one date there is no pair to size a bar from: it takes the width ceiling, centered.
     #[test]
     fn a_single_instant_draws_one_bar_at_the_width_ceiling() {
+        let _locale = crate::time_locale::en_us_scope();
         let svg = render(&make_payload(make_time_payload(&["2000-01-03".to_string()])), &test_fonts()).expect("renders");
         let bars = bar_extents(&svg);
         assert_eq!(bars.len(), 1);
@@ -17648,6 +17984,7 @@ mod tests {
     /// A time of day is a fraction of its day: two instants a half day apart sit a half day's pixels apart.
     #[test]
     fn timestamps_sit_at_their_instant_within_a_day() {
+        let _locale = crate::time_locale::en_us_scope();
         let dates: Vec<String> =
             ["2024-01-03T06:00:00", "2024-01-03T18:00:00", "2024-02-14T00:00:00"].map(String::from).to_vec();
         let bars = bar_extents(&render(&make_payload(make_time_payload(&dates)), &test_fonts()).expect("renders"));
@@ -17660,6 +17997,7 @@ mod tests {
     /// A measure with no number leaves the time axis and no bars.
     #[test]
     fn a_time_axis_with_no_numeric_measure_draws_no_bars() {
+        let _locale = crate::time_locale::en_us_scope();
         let mut p = make_time_payload(&months_from_2000(72));
         for row in p["rows"].as_array_mut().unwrap() {
             row["revenue"] = serde_json::Value::Null;
@@ -18002,6 +18340,19 @@ mod tests {
             let mut payload_json = make_authored_domain_payload(horizontal);
             payload_json["resolved"]["style"]["axis_y"]["scale"] =
                 serde_json::json!({"continuous": {"domain": [0.0, 1.0]}});
+            let err = render(&make_payload(payload_json), &test_fonts()).expect_err("collapses");
+            assert!(err.contains("ERR-CHART-PAINTED-NO-MARKS"), "horizontal={horizontal}: {err}");
+        }
+    }
+
+    /// An authored pair pinning one value gives the scale no extent: every bar is
+    /// zero-sized, in either orientation, and `nice` rounds the pair first.
+    #[test]
+    fn an_authored_domain_pinning_one_value_raises_painted_no_marks() {
+        for horizontal in [false, true] {
+            let mut payload_json = make_authored_domain_payload(horizontal);
+            payload_json["resolved"]["style"]["axis_y"]["scale"] =
+                serde_json::json!({"continuous": {"domain": [5.0, 5.0]}});
             let err = render(&make_payload(payload_json), &test_fonts()).expect_err("collapses");
             assert!(err.contains("ERR-CHART-PAINTED-NO-MARKS"), "horizontal={horizontal}: {err}");
         }
@@ -19355,7 +19706,7 @@ mod tests {
             "multiples": null,
             "field_labels": {}, "wide_measures": [],
             "layers": [],
-            "legend": {"visible": false, "position": {"edge": "top", "align": "start", "overlay": false}, "direction": "horizontal", "title": {"font": {"family": TEST_FONT}}, "label": {"padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}},
+            "legend": {"visible": false, "position": {"edge": "top", "align": "start", "overlay": false}, "direction": "horizontal", "title": {"font": {"case": "title", "family": TEST_FONT}}, "label": {"padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}},
             "style": {
                 "axis_x": {
                     "grid": {"visible": false, "threshold": null, "width": 1.0, "color": "#D0D3D9", "opacity": 1.0},
@@ -19436,23 +19787,20 @@ mod tests {
         assert!(tag.contains("fill=\"#d9a45b\""), "top label paints the chart's own canvas: {tag}");
     }
 
-    /// `render_horizontal` has no ported date-header law
-    /// (`header_tooltip_field` is orientation-independent in production);
-    /// rather than emit the raw ISO string as an approximate tooltip
-    /// header, a detected calendar-grain x refuses the whole render.
+    /// A horizontal bar's tooltip headers a detected calendar-grain x by that grain,
+    /// as the vertical arm does (`header_tooltip_field` is orientation-independent).
     #[test]
-    fn horizontal_bar_over_a_temporal_x_refuses_rather_than_emit_a_raw_iso_header() {
+    fn horizontal_bar_over_a_temporal_x_headers_its_tooltip_by_the_detected_grain() {
         use serde_json::json;
+        let _locale = crate::time_locale::en_us_scope();
         let mut payload_json = make_horizontal_payload();
         payload_json["resolved"]["style"]["tooltip_format"] = json!(",.2~f");
         payload_json["rows"] = json!([
             {"product": "2024-01-01", "revenue": 800.0},
             {"product": "2024-02-01", "revenue": 600.0}
         ]);
-        let payload = make_payload(payload_json);
-        let fonts = test_fonts();
-        let err = render(&payload, &fonts).expect_err("a temporal x must refuse, not mislabel");
-        assert!(err.contains("temporal x"), "{err}");
+        let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
+        assert!(svg.contains("Jan 2024") && !svg.contains("aria-label=\"\u{2061}2024-01-01"), "{svg}");
     }
 
     /// Same law as `vertical_bar_standard_date_with_no_detected_bucket_
@@ -19495,7 +19843,7 @@ mod tests {
         p["resolved"]["wide_measures"] = json!(["revenue", "profit"]);
         p["resolved"]["legend"] = json!({
             "visible": true, "position": {"edge": "top", "align": "start", "overlay": false}, "direction": "horizontal",
-            "title": {"font": {"family": TEST_FONT}},
+            "title": {"font": {"case": "title", "family": TEST_FONT}},
             "label": {"padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}
         });
         p["rows"] = json!([
@@ -20030,7 +20378,7 @@ mod tests {
             "multiples": null,
             "field_labels": {}, "wide_measures": [],
             "layers": [],
-            "legend": {"visible": false, "position": {"edge": "top", "align": "start", "overlay": false}, "direction": "horizontal", "title": {"font": {"family": TEST_FONT}}, "label": {"padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}},
+            "legend": {"visible": false, "position": {"edge": "top", "align": "start", "overlay": false}, "direction": "horizontal", "title": {"font": {"case": "title", "family": TEST_FONT}}, "label": {"padding": 8.0, "font": {"family": TEST_FONT, "size": 11.0}}},
             "style": {
                 "axis_x": {
                     "grid": {"visible": false, "threshold": null, "width": 1.0, "color": "#D0D3D9", "opacity": 1.0},
@@ -20708,7 +21056,7 @@ mod tests {
         let pad_t = 16.0;
         assert_eq!(
             title_y(&without),
-            pad_t + crate::vega_fit::baseline_shift("top", 18.0),
+            pad_t + crate::measure::baseline_shift("top", 18.0),
             "title baseline must use Vega's real top-baseline shift, not the 0.85 approximation: {without}"
         );
     }
@@ -20840,12 +21188,88 @@ mod tests {
         );
     }
 
+    /// An authored `timeFormat(datum.value, F)` on a time axis speaks `F` of every tick's instant.
+    #[test]
+    fn a_time_format_label_expr_speaks_its_format_at_every_tick() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut p = make_time_payload(&months_from_2000(72));
+        p["resolved"]["style"]["axis_x"]["labels"]["expr"] = serde_json::json!("timeFormat(datum.value, '%m/%y')");
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        assert!(svg.contains(">01/05</text>") && !svg.contains(">2005</text>"), "{svg}");
+    }
+
+    /// The expression evaluator composes builtins: an upper-cased, concatenated date text.
+    #[test]
+    fn a_composed_label_expr_evaluates_at_every_tick() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut p = make_time_payload(&months_from_2000(72));
+        p["resolved"]["style"]["axis_x"]["labels"]["expr"] =
+            serde_json::json!("'Q' + (quarter(datum.value) + 1) + upper(timeFormat(datum.value, ' %y'))");
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        assert!(svg.contains(">Q2 05</text>"), "Vega's quarter() counts from 1, so January plus one is Q2: {svg}");
+    }
+
+    /// An axis expression that reads the plot's scales paints them at the size the layout settles on: the second
+    /// band starts halfway across what `range('x')` names as the plot's width.
+    #[test]
+    fn a_scale_reading_expr_paints_the_final_plot() {
+        let labels = |expr: &str| -> Vec<String> {
+            let mut p = make_vertical_payload(&[("a", 10.0), ("b", 20.0)], false);
+            p["resolved"]["style"]["axis_x"]["labels"]["expr"] = serde_json::json!(expr);
+            let (svg, _) = crate::render_sized(&make_payload(p), &test_fonts()).expect("renders");
+            let mut found = Vec::new();
+            for tag in svg.split("<text ").skip(1) {
+                let text = tag.split('>').nth(1).unwrap_or("").split('<').next().unwrap_or("");
+                if text.parse::<f64>().is_ok() && tag.contains("text-anchor=\"middle\"") {
+                    found.push(text.to_string());
+                }
+            }
+            found
+        };
+        let width: f64 = labels("range('x')[1] + ''")[0].parse().unwrap();
+        let starts = labels("scale('x', datum.value) + ''");
+        assert_eq!(starts[0], "0");
+        assert_eq!(starts[1].parse::<f64>().unwrap(), width / 2.0, "{starts:?} over a plot {width} wide");
+    }
+
+    /// An array an expression returns paints a line per element, as Vega's `tspan`s.
+    #[test]
+    fn an_array_expr_paints_a_line_per_element() {
+        let mut p = make_vertical_payload(&[("a", 10.0), ("b", 20.0)], false);
+        p["resolved"]["style"]["axis_x"]["labels"]["expr"] = serde_json::json!("[datum.label, 'zz']");
+        let (svg, _) = crate::render_sized(&make_payload(p), &test_fonts()).expect("renders");
+        assert!(svg.contains("<tspan>a</tspan><tspan x=") && svg.contains("dy=\"13\">zz</tspan>"), "{svg}");
+    }
+
+    /// Vega evaluates the slice ternary on a time tick's number, which throws: nothing paints.
+    #[test]
+    fn the_slice_label_expr_on_a_time_axis_raises_painted_no_marks() {
+        let mut p = make_time_payload(&months_from_2000(72));
+        p["resolved"]["style"]["axis_x"]["labels"]["expr"] = serde_json::json!("datum.value ? slice(datum.value, 2) : ''");
+        let err = render(&make_payload(p), &test_fonts()).expect_err("raises");
+        assert_eq!(err.code, "ERR-CHART-PAINTED-NO-MARKS", "{err:?}");
+    }
+
+    /// A time format on a band axis over dates no grain explains labels every band with the formatted date.
+    #[test]
+    fn a_time_format_on_ungrained_band_dates_labels_each_band() {
+        let dates = ["2024-01-01", "2024-01-29", "2024-02-26", "2024-03-25"];
+        let cats: Vec<(&str, f64)> = dates.iter().map(|d| (*d, 20.0)).collect();
+        let mut p = make_vertical_payload(&cats, false);
+        p["resolved"]["style"]["axis_x"]["type"] = serde_json::json!("ordinal");
+        p["resolved"]["style"]["axis_x"]["labels"]["format"] = serde_json::json!({"spec": "%d/%m/%Y"});
+        p["resolved"]["style"]["label_usable_ratio"] = serde_json::json!(0.8);
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        assert!(svg.contains(">29/01/2024</text>") && svg.contains(">25/03/2024</text>"), "{svg}");
+    }
+
     /// B5 — authored `axis_x.labels.expr`: dundersign-support-operations'
     /// hero_queue_age strips a `"N · "` SQL ordering prefix
     /// (`datum.value ? slice(datum.value, 4) : ''`); the reference draws
     /// `≤7 days`/`8–30 days`, never the raw `"1 · ≤7 days"`.
     #[test]
     fn authored_labels_expr_rewrites_category_labels_before_drawing() {
+        let _locale = crate::time_locale::en_us_scope();
         use serde_json::json;
         let mut payload_json =
             make_vertical_payload(&[("1 · ≤7 days", 800.0), ("2 · 8–30 days", 600.0)], false);
@@ -20857,8 +21281,8 @@ mod tests {
 
         assert!(svg.contains(">≤7 days<"), "prefix stripped from the drawn label: {svg}");
         assert!(svg.contains(">8–30 days<"), "prefix stripped from the drawn label: {svg}");
-        assert!(!svg.contains("1 · "), "raw prefix must not reach the drawn SVG: {svg}");
-        assert!(!svg.contains("2 · "), "raw prefix must not reach the drawn SVG: {svg}");
+        assert!(!svg.contains(">1 · "), "raw prefix must not reach the drawn SVG: {svg}");
+        assert!(!svg.contains(">2 · "), "raw prefix must not reach the drawn SVG: {svg}");
     }
 
     /// The FIT ink for the non-temporal band arm must measure `cat_labels`
@@ -20905,19 +21329,15 @@ mod tests {
         assert!(!svg.contains(">Jan<"), "no calendar vocabulary: {svg}");
     }
 
-    /// An unmodeled `labels.expr` shape refuses rather than silently
-    /// drawing the raw label the author explicitly rewrote.
+    /// Any Vega expression rewrites a band's label: here a regex replace over `datum.label` and an upper case.
     #[test]
-    fn unmodeled_labels_expr_refuses() {
+    fn a_composed_labels_expr_rewrites_band_labels() {
         use serde_json::json;
-        let mut payload_json = make_vertical_payload(&[("Alpha", 800.0)], false);
+        let mut payload_json = make_vertical_payload(&[("Alpha-1", 800.0)], false);
         payload_json["resolved"]["style"]["axis_x"]["labels"]["expr"] =
-            json!("format(datum.value, '.0f')");
-        let payload = make_payload(payload_json);
-        let fonts = test_fonts();
-        let err = render(&payload, &fonts).expect_err("unmodeled labels.expr refuses");
-        assert!(err.contains("labels.expr"), "error names the unsupported field: {err}");
-        assert!(err.contains("not supported"), "{err}");
+            json!("upper(replace(datum.label, /-/g, ' '))");
+        let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
+        assert!(svg.contains(">ALPHA 1<"), "{svg}");
     }
 
     #[test]
@@ -21144,6 +21564,7 @@ mod tests {
     /// this fact regardless of the actual x shape.
     #[test]
     fn vertical_bar_standard_date_with_no_detected_bucket_formats_a_full_header() {
+        let _locale = crate::time_locale::en_us_scope();
         use serde_json::json;
         let mut payload_json = make_vertical_payload(
             &[
@@ -22075,10 +22496,10 @@ mod tests {
                 "orientation": "diagonal",
                 "stack": "none", "palette": [], "multiples": null,
                 "field_labels": {}, "wide_measures": [], "layers": [],
-                "legend": {"visible": false, "position": {"edge": "top", "align": "start", "overlay": false}, "direction": "horizontal", "title": {"font": {}}, "label": {"font": {}}},
+                "legend": {"visible": false, "position": {"edge": "top", "align": "start", "overlay": false}, "direction": "horizontal", "title": {"font": {"case": "title"}}, "label": {"font": {}}},
                 "style": {
-                    "axis_x": {"grid": {"visible": false}, "ticks": {"color": "#D0D3D9"}, "labels": {"font": {}}, "title": {"font": {}}, "scale": {}, "tick_values": [], "fiscal_year_start_month": 1, "is_quantitative": true, "zero_anchored": false},
-                    "axis_y": {"grid": {"visible": false}, "ticks": {"color": "#D0D3D9"}, "labels": {"font": {}}, "title": {"font": {}}, "scale": {}, "tick_values": [], "fiscal_year_start_month": 1, "is_quantitative": true, "zero_anchored": false},
+                    "axis_x": {"grid": {"visible": false}, "ticks": {"color": "#D0D3D9"}, "labels": {"font": {}}, "title": {"font": {"case": "title"}}, "scale": {}, "tick_values": [], "fiscal_year_start_month": 1, "is_quantitative": true, "zero_anchored": false},
+                    "axis_y": {"grid": {"visible": false}, "ticks": {"color": "#D0D3D9"}, "labels": {"font": {}}, "title": {"font": {"case": "title"}}, "scale": {}, "tick_values": [], "fiscal_year_start_month": 1, "is_quantitative": true, "zero_anchored": false},
                     "mark": {"band_width": 0.7, "size": 20.0, "border": {}},
                     "grouped": {"padding_inner": 0.2, "padding_outer": 0.2},
                     "single_series_fill": "#000",
@@ -22155,7 +22576,7 @@ mod tests {
                 "visible": false,
                 "position": {"edge": "top", "align": "start", "overlay": false},
                 "direction": "horizontal",
-                "title": {"font": {"family": TEST_FONT}},
+                "title": {"font": {"case": "title", "family": TEST_FONT}},
                 "label": {"padding": 8.0, "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"}}
             },
             "style": {
@@ -22978,7 +23399,7 @@ mod tests {
         let pos = svg.find(">Region Signups<").expect("title text present");
         let tag_start = svg[..pos].rfind("<text").unwrap();
         let y: f64 = svg[tag_start..pos].split("y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
-        assert_eq!(y, pad_t + crate::vega_fit::baseline_shift("top", 18.0), "title pad-anchors: {svg}");
+        assert_eq!(y, pad_t + crate::measure::baseline_shift("top", 18.0), "title pad-anchors: {svg}");
     }
 
     /// S8, both directions: the strip's own right-reaching cell competes
@@ -23831,7 +24252,7 @@ mod tests {
             let reach = vega_fit::text_ink(0.0, 0.0, widest, 11.0, align, baseline)
                 .rotate(rot, 0.0, 0.0)
                 .y2;
-            let expected = anchor_y + reach + title_padding + vega_fit::baseline_shift("top", title_fs);
+            let expected = anchor_y + reach + title_padding + crate::measure::baseline_shift("top", title_fs);
             let title_tag = {
                 let end = svg.find(">Product<").expect("title drawn");
                 let start = svg[..end].rfind("<text").unwrap();
@@ -23893,6 +24314,7 @@ mod tests {
     /// flat, as production draws them.
     #[test]
     fn temporal_category_labels_never_take_the_ordinal_ladder() {
+        let _locale = crate::time_locale::en_us_scope();
         use serde_json::json;
         let dates = [
             "2025-01-06", "2025-02-03", "2025-03-03", "2025-03-31", "2025-04-28", "2025-05-26",
@@ -24031,6 +24453,7 @@ mod tests {
     /// 62 coarse buckets, past the 60-bucket cap: a time axis too.
     #[test]
     fn the_scaffold_gate_follows_production_s_budget_fill_and_authored_grain_branches() {
+        let _locale = crate::time_locale::en_us_scope();
         use serde_json::json;
         let bar_xs = |p: serde_json::Value| -> Vec<f64> {
             let svg = render(&make_payload(p), &test_fonts()).expect("renders");
@@ -24269,8 +24692,8 @@ mod tests {
         payload_json["rows"] = json!([
             {"cat": "A", "series": "x", "val": 10.0}, {"cat": "A", "series": "y", "val": 30.0}, {"cat": "A", "series": "z", "val": 20.0}
         ]);
-        let err = render(&make_payload(payload_json), &test_fonts()).unwrap_err();
-        assert!(err.contains("overlap") && err.contains("2 series"), "{err}");
+        let err = production_errors(&make_payload(payload_json)).unwrap_err();
+        assert_eq!((err.code, err.params["n_series"].as_u64()), ("ERR-BAR-OVERLAP-SERIES-COUNT", Some(3)));
         let mut payload_json = make_stacked_payload("horizontal", "none");
         payload_json["resolved"]["style"]["overlap"] = json!("touching");
         let err = render(&make_payload(payload_json), &test_fonts()).unwrap_err();
@@ -24672,7 +25095,7 @@ mod tests {
             "visible": true,
             "position": {"edge": "right", "align": "start", "overlay": false},
             "direction": "vertical",
-            "title": {"font": {"family": TEST_FONT, "size": 12.0, "weight": "600"}},
+            "title": {"font": {"case": "title", "family": TEST_FONT, "size": 12.0, "weight": "600"}},
             "label": {"padding": 8.0, "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"}}
         });
         let payload = make_payload(payload_json);
@@ -24934,6 +25357,26 @@ mod tests {
         assert!(production_errors(&make_payload(payload_json)).is_err());
     }
 
+    /// A positive overlap needs exactly two series; the count is the distinct
+    /// color values, or the wide measures.
+    #[test]
+    fn a_positive_overlap_off_two_series_raises_the_series_count_code() {
+        use serde_json::json;
+        let mut payload_json = make_stacked_payload("vertical", "none");
+        payload_json["resolved"]["style"]["overlap"] = json!(0.3);
+        production_errors(&make_payload(payload_json.clone())).expect("two series");
+        payload_json["rows"].as_array_mut().unwrap().push(json!({"cat": "A", "series": "z", "val": 1.0}));
+        let err = production_errors(&make_payload(payload_json)).unwrap_err();
+        assert_eq!(err.code, "ERR-BAR-OVERLAP-SERIES-COUNT");
+        assert_eq!(err.params["n_series"], json!(3));
+        assert_eq!(err.params["chart_id"], json!("stacked_test"));
+
+        let mut payload_json = make_stacked_payload("vertical", "none");
+        payload_json["resolved"]["style"]["overlap"] = json!("flush");
+        payload_json["rows"].as_array_mut().unwrap().push(json!({"cat": "A", "series": "z", "val": 1.0}));
+        production_errors(&make_payload(payload_json)).expect("no positive overlap");
+    }
+
     /// Wide measures are series too: a full overlap names the measures.
     #[test]
     fn production_errors_cover_wide_measures() {
@@ -25044,7 +25487,7 @@ mod tests {
             "visible": true,
             "position": {"edge": "right", "align": "start", "overlay": false},
             "direction": "vertical",
-            "title": {"font": {"family": TEST_FONT, "size": 12.0, "weight": "600"}},
+            "title": {"font": {"case": "title", "family": TEST_FONT, "size": 12.0, "weight": "600"}},
             "label": {"padding": 8.0, "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"}}
         });
         let payload = make_payload(payload_json);
@@ -25096,7 +25539,7 @@ mod tests {
             "visible": true,
             "position": {"edge": "right", "align": "start", "overlay": false},
             "direction": "vertical",
-            "title": {"font": {"family": TEST_FONT, "size": 12.0, "weight": "600"}},
+            "title": {"font": {"case": "title", "family": TEST_FONT, "size": 12.0, "weight": "600"}},
             "label": {"padding": 8.0, "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"}}
         });
         let payload = make_payload(payload_json);
@@ -25676,7 +26119,7 @@ mod tests {
         // headroomed max AFTER the domainMax override ([0, 81436.32] →
         // [0, 90000]), dropping the baked 100k tick past the new top.
         let j = make_vertical_payload(&[("A", 75404.0)], false);
-        let mut ax: AxisStyle = serde_json::from_value(j["resolved"]["style"]["axis_y"].clone()).unwrap();
+        let mut ax: AxisStyle = Deserialize::deserialize(&j["resolved"]["style"]["axis_y"]).unwrap();
         ax.scale = serde_json::json!({"nice": true, "headroom": 0.08});
         ax.domain_max = None;
         ax.tick_values = vec![0.0, 20000.0, 40000.0, 60000.0, 80000.0, 100000.0];
@@ -25690,7 +26133,7 @@ mod tests {
 
     fn baked_floor_axis(tick_values: Vec<f64>, domain_min: f64, domain_max: Option<f64>) -> AxisStyle {
         let j = make_vertical_payload(&[("A", 1.0)], false);
-        let mut ax: AxisStyle = serde_json::from_value(j["resolved"]["style"]["axis_y"].clone()).unwrap();
+        let mut ax: AxisStyle = Deserialize::deserialize(&j["resolved"]["style"]["axis_y"]).unwrap();
         ax.tick_values = tick_values;
         ax.domain_min = Some(domain_min);
         ax.domain_max = domain_max;
@@ -25749,7 +26192,7 @@ mod tests {
     #[test]
     fn unbaked_vertical_domain_stays_raw_not_niced_west_reaches_210k() {
         let j = make_vertical_payload(&[("Jan", 90000.0), ("Feb", 150000.0), ("Mar", 210000.0)], false);
-        let mut ax: AxisStyle = serde_json::from_value(j["resolved"]["style"]["axis_y"].clone()).unwrap();
+        let mut ax: AxisStyle = Deserialize::deserialize(&j["resolved"]["style"]["axis_y"]).unwrap();
         ax.scale = serde_json::json!({});
         ax.domain_max = None;
         ax.tick_values = vec![];
@@ -25773,7 +26216,7 @@ mod tests {
         // below that floor (-20) must not survive the ladder filter.
         use serde_json::json;
         let j = make_stacked_payload("vertical", "zero");
-        let mut ax: AxisStyle = serde_json::from_value(j["resolved"]["style"]["axis_y"].clone()).unwrap();
+        let mut ax: AxisStyle = Deserialize::deserialize(&j["resolved"]["style"]["axis_y"]).unwrap();
         ax.tick_values = vec![-20.0, 0.0, 25.0, 50.0];
         let rows: Vec<serde_json::Map<String, Value>> = serde_json::from_value(json!([
             {"cat": "A", "val": -15.0},
@@ -25796,7 +26239,7 @@ mod tests {
         // extent — same negative data as above, an anchored axis.
         use serde_json::json;
         let j = make_stacked_payload("vertical", "zero");
-        let mut ax: AxisStyle = serde_json::from_value(j["resolved"]["style"]["axis_y"].clone()).unwrap();
+        let mut ax: AxisStyle = Deserialize::deserialize(&j["resolved"]["style"]["axis_y"]).unwrap();
         ax.tick_values = vec![-20.0, 0.0, 25.0, 50.0];
         ax.scale = json!({"continuous": {"zero": true}});
         let rows: Vec<serde_json::Map<String, Value>> = serde_json::from_value(json!([
@@ -25846,7 +26289,7 @@ mod tests {
     fn unbaked_stacked_axis_floors_at_the_negative_running_sum() {
         use serde_json::json;
         let j = make_stacked_payload("vertical", "zero");
-        let mut ax: AxisStyle = serde_json::from_value(j["resolved"]["style"]["axis_y"].clone()).unwrap();
+        let mut ax: AxisStyle = Deserialize::deserialize(&j["resolved"]["style"]["axis_y"]).unwrap();
         ax.tick_values = vec![];
         let rows: Vec<serde_json::Map<String, Value>> = serde_json::from_value(json!([
             {"cat": "A", "val": -15.0},
@@ -25867,7 +26310,7 @@ mod tests {
     #[test]
     fn the_rail_ladder_is_capped_by_the_resolved_step() {
         let j = make_stacked_payload("horizontal", "zero");
-        let mut ax: AxisStyle = serde_json::from_value(j["resolved"]["style"]["axis_y"].clone()).unwrap();
+        let mut ax: AxisStyle = Deserialize::deserialize(&j["resolved"]["style"]["axis_y"]).unwrap();
         ax.tick_values = vec![];
         ax.ticks.count = Some(12.0);
         ax.ticks.step = Some(1.0);
@@ -26264,7 +26707,7 @@ mod tests {
         j["resolved"]["style"]["axis_y"]["grid"]["visible"] = serde_json::json!(false);
         j["resolved"]["style"]["axis_y"]["grid"]["threshold"] =
             serde_json::json!({"visible": true, "color": "#8A8C8F", "width": 2.0});
-        let ax_y: AxisStyle = serde_json::from_value(j["resolved"]["style"]["axis_y"].clone())
+        let ax_y: AxisStyle = Deserialize::deserialize(&j["resolved"]["style"]["axis_y"])
             .expect("axis style deserializes");
         assert!(
             baseline_rules(&ax_y, false, true, true).is_none(),
@@ -26283,7 +26726,7 @@ mod tests {
             j["resolved"]["style"]["axis_y"]["grid"]["threshold"] =
                 serde_json::json!({"visible": true, "color": "#8A8C8F", "width": 2.0});
             j["resolved"]["style"]["axis_y"]["scale"] = serde_json::json!({"continuous": {"domain": domain}});
-            let ax_y: AxisStyle = serde_json::from_value(j["resolved"]["style"]["axis_y"].clone()).unwrap();
+            let ax_y: AxisStyle = Deserialize::deserialize(&j["resolved"]["style"]["axis_y"]).unwrap();
             baseline_rules(&ax_y, false, false, true).is_some_and(|rules| rules.zero)
         };
         assert!(rule_for([0.0, 100.0]) && rule_for([100.0, 0.0]) && rule_for([-50.0, 50.0]));
@@ -28800,7 +29243,7 @@ mod tests {
         #[test]
         fn a_single_pass_column_closes_its_anchor_before_its_group() {
             let mut out = String::new();
-            emit_column_passes(&mut out, 10.0, 10.0, 50.0, 20.0, "#111", "#fff", 1.0, 3.0, Rounded::Positive, false, Some("aria"), Some(crate::href::Anchor { url: "/x", open: crate::href::LinkOpen::Page })).unwrap();
+            emit_column_passes(&mut out, 10.0, 10.0, 50.0, 20.0, "#111", "#fff", 1.0, 3.0, Rounded::Positive, false, None, Some("aria"), Some(crate::href::Anchor { url: "/x", open: crate::href::LinkOpen::Page })).unwrap();
             assert!(out.ends_with("</a></g>"), "{out}");
         }
     }
@@ -28917,34 +29360,13 @@ mod tests {
         })
         .expect("a tick_label ladder paints its suffix");
         assert!(svg.contains(" CHF</text>") && svg.contains(">0</text>"), "{svg}");
-        let err = render_axis_y(&|axis| {
-            axis["tick_label"] = json!(null);
-            axis["labels"]["expr"] = json!("datum.label");
-            axis["labels"]["format"] = json!({"spec": ",.0f", "prefix": "US$"});
-        })
-        .expect_err("refuses");
-        assert!(err.contains("bar: axis_y.labels.format") && err.contains("labels.expr"), "{err}");
-    }
-
-    /// Production turns an authored `ticks.time_unit` into the x axis's
-    /// `tickCount` interval for every cartesian family; only line and area
-    /// draw it, so a bar refuses by name rather than label every bucket.
-    #[test]
-    fn an_authored_x_tick_cadence_refuses_by_name() {
+        // `compose_axis_format` yields to an authored `labels.expr`
+        // (`vl_field_maps.py:228`): the affix is dropped, only the digits stay `datum.label`.
         let mut j = make_vertical_payload(&[("Alpha", 1800.0)], false);
-        j["resolved"]["style"]["axis_x"]["ticks"]["time_unit"] = serde_json::json!("yearmonth");
-        let err = render(&make_payload(j.clone()), &test_fonts()).expect_err("refuses");
-        assert!(err.contains("bar: axis_x.ticks.time_unit \"yearmonth\""), "{err}");
-        j["resolved"]["style"]["axis_x"]["ticks"]["step"] = serde_json::json!(3.0);
-        let err = render(&make_payload(j), &test_fonts()).expect_err("refuses");
-        assert!(err.contains("bar: axis_x.ticks.time_unit \"yearmonth\""), "{err}");
-    }
-
-    #[test]
-    fn a_bare_x_tick_step_refuses_by_name() {
-        let mut j = make_vertical_payload(&[("Alpha", 1800.0)], false);
-        j["resolved"]["style"]["axis_x"]["ticks"]["step"] = serde_json::json!(5.0);
-        let err = render(&make_payload(j), &test_fonts()).expect_err("refuses");
-        assert!(err.contains("bar: axis_x.ticks.step"), "{err}");
+        j["resolved"]["style"]["axis_y"]["tick_label"] = json!(null);
+        j["resolved"]["style"]["axis_y"]["labels"]["expr"] = json!("datum.label + '!'");
+        j["resolved"]["style"]["axis_y"]["labels"]["format"] = json!({"spec": ",.0f", "prefix": "US$"});
+        let svg = render(&make_payload(j), &test_fonts()).expect("an authored expr beside an affix renders");
+        assert!(svg.contains(">1,500!</text>") && !svg.contains("US$"), "{svg}");
     }
 }

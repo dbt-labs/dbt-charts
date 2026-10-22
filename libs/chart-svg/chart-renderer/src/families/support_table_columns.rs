@@ -201,7 +201,7 @@ pub fn build_block(
                 Some(l) => Ok(l.clone()),
                 None => slug_to_display(
                     source.as_deref().expect("entry_values already required a source"),
-                    "title",
+                    "none",
                 ),
             }
         };
@@ -209,7 +209,7 @@ pub fn build_block(
         let headers: Vec<String> = if single_column {
             vec![match &entry.label {
                 Some(l) => l.clone(),
-                None => slug_to_display(entry.per_series.as_deref().expect("single_column implies per_series"), "title")?,
+                None => slug_to_display(entry.per_series.as_deref().expect("single_column implies per_series"), "none")?,
             }]
         } else if entry.per_series.is_some() {
             series_order.to_vec()
@@ -400,8 +400,8 @@ impl ColumnBlock {
         let (label_family, label_size) = label_font_resolved(style);
         let label_ink = self.label_ink.as_str();
         let label_weight = style.label.font.weight_str();
-        let cell_shift = vega_fit::baseline_shift("middle", font_size);
-        let label_shift = vega_fit::baseline_shift("middle", label_size);
+        let cell_shift = crate::measure::baseline_shift("middle", font_size);
+        let label_shift = crate::measure::baseline_shift("middle", label_size);
         let header_y = origin_y - row_height(style) / 2.0 + label_shift;
         let paint = cell_family(style);
         let last = self.columns.len() - 1;

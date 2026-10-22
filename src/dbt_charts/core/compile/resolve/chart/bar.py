@@ -678,6 +678,7 @@ def _resolve_bar(
         None,
         None,
         has_quantitative_axis=True,
+        temporal_band_axes=frozenset(),
     )
     bar = chart_local_style_context.bar
     # Computed here (rather than at their original, later call sites) because
@@ -1177,6 +1178,7 @@ def _resolve_bar(
         datasets,
         normalized.id,
         normalized.query.formats if normalized.query else None,
+        normalized.layer_query_formats,
     )
     if authored_y_domain is not None:
         _check_layers_y_domain(normalized.id, resolved_layers, authored_y_domain)
@@ -1314,6 +1316,7 @@ def _resolve_histogram(
         None,
         None,
         has_quantitative_axis=True,
+        temporal_band_axes=frozenset(),
     )
     primary = plan.primary
     hist = merge_unset(chart_style_context.histogram, primary)

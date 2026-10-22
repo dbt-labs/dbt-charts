@@ -518,7 +518,7 @@ fn evaluate_channel(
         return Ok(None);
     };
     let ch: Channel =
-        serde_json::from_value(raw.clone()).map_err(|e| format!("kpi: resolved_channels.{name}: {e}"))?;
+        Deserialize::deserialize(raw).map_err(|e| format!("kpi: resolved_channels.{name}: {e}"))?;
     match ch.mode.as_str() {
         "literal" => Ok(ch.literal_value),
         "gradient" => match &ch.scale {
@@ -835,7 +835,7 @@ struct ValueRun {
 
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
     refuse_retired_keys(&payload.resolved)?;
-    let r: Resolved = serde_json::from_value(payload.resolved.clone())
+    let r: Resolved = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("kpi payload: {e}"))?;
     let kpi = &r.style.kpi;
     let w = payload.width;

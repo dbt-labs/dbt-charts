@@ -101,7 +101,7 @@ struct Laid {
 }
 
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
-    let r: Resolved = serde_json::from_value(payload.resolved.clone())
+    let r: Resolved = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("sankey: resolved payload: {e}"))?;
     if r.subtitle.is_some() {
         return Err("sankey: subtitle not supported".into());

@@ -1,0 +1,3 @@
+kind: Fixes
+body: Tab labels follow title case like other headings, and acronyms like GDP and iOS print correctly in labels.
+time: 2026-10-20T12:03:59.470355-07:00

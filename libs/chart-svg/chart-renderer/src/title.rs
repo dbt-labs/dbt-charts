@@ -609,8 +609,8 @@ pub(crate) fn title_style_and_fonts() -> (Style, FontSlots) {
         }
     }
     (
-        serde_json::from_value(doc["title_style"].clone()).expect("style deserializes"),
-        serde_json::from_value(doc["title_fonts"].clone()).expect("fonts deserialize"),
+        serde::Deserialize::deserialize(&doc["title_style"]).expect("style deserializes"),
+        serde::Deserialize::deserialize(&doc["title_fonts"]).expect("fonts deserialize"),
     )
 }
 

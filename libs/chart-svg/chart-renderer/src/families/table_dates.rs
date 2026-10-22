@@ -111,6 +111,26 @@ impl Moment {
         Moment { year, month, day, hour: 0, minute: 0, second: 0, micro: 0, utc: false }
     }
 
+    pub(super) fn year(self) -> u32 {
+        self.year
+    }
+
+    /// The UTC instant `ms` milliseconds after the Unix epoch.
+    pub(super) fn from_epoch_millis(ms: i64) -> Result<Self, String> {
+        let days = ms.div_euclid(86_400_000);
+        let (year, month, day) = civil_from_days(days + days_from_epoch(1970, 1, 1));
+        let year = u32::try_from(year).ok().filter(|&y| y >= 1).ok_or_else(|| format!("instant {ms} ms is before year 1"))?;
+        let seconds = ms.rem_euclid(86_400_000) / 1000;
+        Ok(Moment {
+            hour: (seconds / 3600) as u32,
+            minute: (seconds % 3600 / 60) as u32,
+            second: (seconds % 60) as u32,
+            micro: (ms.rem_euclid(1000) * 1000) as u32,
+            utc: true,
+            ..Moment::midnight(year, month, day)
+        })
+    }
+
     /// A naive date at a wall-clock time of day.
     pub(super) fn at_clock(year: u32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> Self {
         Moment { hour, minute, second, ..Moment::midnight(year, month, day) }

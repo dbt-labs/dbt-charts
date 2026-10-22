@@ -28,10 +28,8 @@ def _board_style_with_endpoint_labels(
 ) -> Any:
     """Board style with endpoint_labels.visible set for the given chart type.
 
-    Seeds charts.legend.visible=True explicitly rather than leaning on stark's
-    inherited default (stark now suppresses the legend at the theme root, same
-    as editorial), so these tests observe resolve's own suppression logic, not
-    the theme's.
+    Seeds charts.legend.visible: auto explicitly, so these tests observe
+    resolve's endpoint-label legend suppression rather than a theme pin.
     """
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig

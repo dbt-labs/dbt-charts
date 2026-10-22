@@ -20,6 +20,7 @@
 //!    outside the padded view and get clamped back to it.
 
 use crate::constants::layout::VEGA_SUBTITLE_PADDING;
+use crate::labels_expr::view::FitPlan;
 
 /// Vega-Lite's default `labelLimit` — the width cap it truncates axis and
 /// legend labels to when the theme doesn't override it.
@@ -146,23 +147,10 @@ pub fn vl_y_label_anchor(angle: f64, orient_left: bool) -> (&'static str, &'stat
     (align, baseline)
 }
 
-/// `offset(item)` from vega-scenegraph `util/text.js` — the font-baseline
-/// shift Vega applies to every text item instead of SVG's
-/// `alignment-baseline`.
-pub fn baseline_shift(baseline: &str, font_size: f64) -> f64 {
-    (match baseline {
-        "top" => 0.79 * font_size,
-        "middle" => 0.30 * font_size,
-        "bottom" => -0.21 * font_size,
-        _ => 0.0, // alphabetic
-    })
-    .round()
-}
-
 /// How far a `middle`-baselined text hangs above its anchor: the ink rise
 /// (`0.8 * font_size`, rounded) less Vega's baseline shift.
 pub fn middle_rise(font_size: f64) -> f64 {
-    (0.8 * font_size).round() - baseline_shift("middle", font_size)
+    (0.8 * font_size).round() - crate::measure::baseline_shift("middle", font_size)
 }
 
 /// The advance between the rows of a stacked axis label (Vega's default
@@ -226,13 +214,20 @@ pub fn pad_domain((lo, hi): (f64, f64), pw: f64, pad: f64, bend: Bend) -> (f64, 
 /// `y + baseline_shift − round(0.8·fs)` and spans one `fs` of height;
 /// horizontally it spans `width` from the anchor per `align`.
 pub fn text_ink(x: f64, y: f64, width: f64, font_size: f64, align: &str, baseline: &str) -> Bounds {
-    let dy = baseline_shift(baseline, font_size) - (0.8 * font_size).round();
+    let dy = crate::measure::baseline_shift(baseline, font_size) - (0.8 * font_size).round();
     let dx = match align {
         "center" => -width / 2.0,
         "right" => -width,
         _ => 0.0,
     };
     Bounds::new(x + dx, y + dy, x + dx + width, y + dy + font_size)
+}
+
+/// [`text_ink`] of a label that paints on `rows` lines: each line after the first adds a line height below.
+pub fn text_ink_rows(x: f64, y: f64, width: f64, font_size: f64, align: &str, baseline: &str, rows: usize) -> Bounds {
+    let mut ink = text_ink(x, y, width, font_size, align, baseline);
+    ink.y2 += rows.saturating_sub(1) as f64 * crate::text::line_height(font_size);
+    ink
 }
 
 /// The widest adjacent-pair mean advance in a sequence of label widths —
@@ -543,7 +538,7 @@ impl TitleInk {
 
 /// The negotiated plot rectangle: margins are relative to the padded view
 /// (`plot_left = padding.left + left`).
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FitMargins {
     pub left: f64,
     pub top: f64,
@@ -669,6 +664,24 @@ pub fn fit_passes(
     let mut raw_left = 0.0;
     let mut raw_right = 0.0;
     let mut scenegraph_plot = (pw, ph);
+    // A chart whose axis expressions read the view settles its layout one padding pass at a time
+    // (`labels_expr::view::render_passes`), so the labels each pass measures are the ones its plot size paints.
+    let passes_asked = passes;
+    let (passes, pinned) = match crate::labels_expr::view::fit_plan() {
+        FitPlan::Normal => (passes, None),
+        FitPlan::From((w, h)) => {
+            if !fixed_width {
+                pw = w;
+            }
+            ph = h;
+            (1, None)
+        }
+        FitPlan::Pinned(m) => (0, Some(m)),
+    };
+    if let Some(m) = &pinned {
+        (left, top, right, bottom, pw, ph) = (m.left, m.top, m.right, m.bottom, m.plot_w, m.plot_h);
+        (raw_left, scenegraph_plot) = (m.raw_left, m.scenegraph_plot);
+    }
     for pass in 1..=passes {
         let mut b = Bounds::new(0.0, 0.0, pw, ph);
         ink(pw, ph, &mut b);
@@ -710,7 +723,9 @@ pub fn fit_passes(
         let (tx, ty) = title_layout(&drawn, t);
         (if pad_l > 0.0 { tx.max(-left) } else { tx }, ty)
     });
-    FitMargins { left, top, right, bottom, plot_w: pw, plot_h: ph, title_pos, raw_left, raw_right, scenegraph_plot }
+    let margins = FitMargins { left, top, right, bottom, plot_w: pw, plot_h: ph, title_pos, raw_left, raw_right, scenegraph_plot };
+    crate::labels_expr::view::fit_done((view_w, view_h), passes_asked, &margins);
+    margins
 }
 
 /// Lay out `autosize: {type: pad, contains: padding}` — the mode production
@@ -739,6 +754,7 @@ pub fn pad_plot(
     }
     let raw_left = (-b.x1).max(0.0);
     let raw_right = (b.x2 - pw).max(0.0);
+    crate::labels_expr::view::pad_done((pw, ph));
     FitMargins {
         left: raw_left.ceil(),
         top: (-b.y1).ceil().max(0.0),
@@ -1122,16 +1138,6 @@ mod tests {
         assert_eq!(vl_y_label_anchor(240.0, false), ("right", "top"));
         assert_eq!(vl_y_label_anchor(285.0, false), ("left", "top"));
     }
-
-    #[test]
-    fn baseline_shift_matches_vega_rounding() {
-        assert_eq!(baseline_shift("top", 11.0), 9.0); // round(8.69)
-        assert_eq!(baseline_shift("top", 18.0), 14.0); // round(14.22)
-        assert_eq!(baseline_shift("middle", 11.0), 3.0); // round(3.3)
-        assert_eq!(baseline_shift("bottom", 11.0), -2.0); // round(-2.31)
-        assert_eq!(baseline_shift("alphabetic", 11.0), 0.0);
-    }
-
 
     /// A wheel's slice-label ink is placed by the compiled spec's own
     /// transforms — `x = width/2 + sin(mid)·(min(w,h)/2·0.9 + 6)` — so it

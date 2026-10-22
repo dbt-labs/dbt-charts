@@ -64,6 +64,12 @@ fn group(value: &str, grouping: &Grouping) -> String {
     group_within(value, grouping, usize::MAX)
 }
 
+/// V8's longest string, in UTF-16 units.
+const MAX_STRING_UNITS: usize = (1 << 29) - 24;
+
+/// The most digits `Number.prototype.toFixed`, `toExponential` and `toPrecision` accept.
+const MAX_PRECISION: usize = 100;
+
 /// `formatGroup` with its `width` cap: d3 passes infinity except when zero
 /// padding is grouped with the digits, where it bounds the grouped length.
 fn group_within(value: &str, grouping: &Grouping, width: usize) -> String {
@@ -122,6 +128,11 @@ impl Default for Spec {
     }
 }
 
+/// The width a spec pads to, as `format` would read it, so a caller can price the padded string before it exists.
+pub fn spec_width(spec: &str) -> Result<Option<usize>, String> {
+    Ok(parse_spec(spec)?.width)
+}
+
 fn parse_spec(s: &str) -> Result<Spec, String> {
     let bytes = s.as_bytes();
     let n = bytes.len();
@@ -174,7 +185,9 @@ fn parse_spec(s: &str) -> Result<Spec, String> {
         i += 1;
     }
     if i > width_start {
-        spec.width = Some(s[width_start..i].parse::<usize>().map_err(|e| format!("width in d3 spec {s:?}: {e}"))?);
+        // d3 pads with `new Array(width - length + 1).join(fill)`: V8 refuses a string past its length limit.
+        let width = s[width_start..i].parse::<usize>().ok().filter(|w| *w <= MAX_STRING_UNITS);
+        spec.width = Some(width.ok_or_else(|| "Invalid string length".to_string())?);
     }
 
     // comma grouping
@@ -194,7 +207,9 @@ fn parse_spec(s: &str) -> Result<Spec, String> {
         if i == start {
             return Err(format!("precision requires a digit after '.' in d3 spec {s:?} at {dot}"));
         }
-        spec.precision = Some(s[start..i].parse::<usize>().unwrap());
+        // `toFixed`, `toExponential` and `toPrecision` throw a RangeError past 100 digits.
+        let precision = s[start..i].parse::<usize>().ok().filter(|p| *p <= MAX_PRECISION);
+        spec.precision = Some(precision.ok_or_else(|| format!("toFixed() digits argument must be between 0 and {MAX_PRECISION}"))?);
     }
 
     // trim trailing zeros
@@ -301,7 +316,38 @@ fn fmt_fixed(abs_val: f64, decimals: usize) -> String {
     if abs_val >= 1e21 {
         return js_number_to_string(abs_val);
     }
-    round_exact_abs(abs_val, decimals)
+    round_half_up_abs(abs_val, decimals)
+}
+
+/// Whether `x·10^k` lies exactly halfway between two integers: the only case
+/// where half-up rounding at `k` places can differ from Rust's correctly
+/// rounded (round-half-even) formatting. With `x = odd·2^low`,
+/// `2·x·10^k = odd·5^k·2^(low+k+1)` must be an odd integer.
+fn is_half_tie(x: f64, k: i32) -> bool {
+    if x == 0.0 {
+        return false;
+    }
+    let bits = x.to_bits();
+    let biased = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & ((1 << 52) - 1);
+    let (mantissa, exp) = if biased == 0 { (fraction, -1074) } else { (fraction | (1 << 52), biased - 1075) };
+    let zeros = mantissa.trailing_zeros();
+    let (odd, low) = (mantissa >> zeros, exp + zeros as i32);
+    if k >= 0 {
+        return low + k + 1 == 0;
+    }
+    // A mantissa below 2^53 has at most 22 factors of five.
+    let j = -k;
+    low + 1 == j && j <= 22 && odd % 5u64.pow(j as u32) == 0
+}
+
+/// [`round_exact_abs`], printing only the digits it keeps unless the value
+/// is a tie at `decimals`.
+fn round_half_up_abs(abs_val: f64, decimals: usize) -> String {
+    if is_half_tie(abs_val, decimals as i32) {
+        return round_exact_abs(abs_val, decimals);
+    }
+    format!("{abs_val:.decimals$}")
 }
 
 // Replicate d3's formatDecimalParts(x, p): (coefficient_digits, exponent).
@@ -311,6 +357,18 @@ fn fmt_fixed(abs_val: f64, decimals: usize) -> String {
 fn format_decimal_parts(x: f64, p: usize) -> (String, i32) {
     debug_assert!(x > 0.0 && x.is_finite(), "format_decimal_parts: x must be positive finite");
     let p = p.max(1);
+    let s = format!("{x:.*e}", p - 1);
+    let (mantissa, exp) = s.split_once('e').expect("exponential formatting always prints an e");
+    let exp: i32 = exp.parse().expect("exponential formatting prints an integer exponent");
+    // Only a tie rounded down to even can differ from half-up, and rounding
+    // down never carries, so `exp` is the value's own exponent there.
+    if is_half_tie(x, p as i32 - 1 - exp) {
+        return format_decimal_parts_exact(x, p);
+    }
+    (mantissa.replace('.', ""), exp)
+}
+
+fn format_decimal_parts_exact(x: f64, p: usize) -> (String, i32) {
     let s = format!("{x:.1074}");
     let dot = s.find('.').expect("fixed-precision formatting always prints a dot");
     let (ip, fp) = (&s[..dot], &s[dot + 1..]);
@@ -627,9 +685,116 @@ pub fn format(locale: &Locale, spec: &str, value: f64) -> Result<String, String>
     })
 }
 
+/// d3-format's `exponent(x)`: the decimal exponent of `|x|` in exponential
+/// notation (`0` for zero, NaN for a non-finite `x`).
+fn exponent(x: f64) -> f64 {
+    if !x.is_finite() {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return 0.0;
+    }
+    // `toExponential()` with no digit count keeps every digit, so the exponent never rounds up.
+    format!("{:e}", x.abs()).split('e').nth(1).and_then(|e| e.parse::<i32>().ok()).map_or(f64::NAN, f64::from)
+}
+
+/// d3-format's `precisionFixed(step)`: the fixed-point decimal precision a tick
+/// step implies, `max(0, -exponent(step))`; Vega's default axis and legend
+/// number format derives its precision this way when none is authored.
+pub fn precision_fixed(step: f64) -> usize {
+    (-exponent(step.abs())).max(0.0) as usize
+}
+
+/// vega-format's `formatSpan(start, stop, count, specifier)(value)`: a number
+/// locale's format whose missing precision is derived from the tick step a
+/// scale over `[start, stop]` would use at `count` ticks, so every number of
+/// the span prints at one precision. `specifier` defaults to `,f`.
+pub fn format_span(
+    locale: &Locale,
+    specifier: Option<&str>,
+    start: f64,
+    stop: f64,
+    count: usize,
+    value: f64,
+) -> Result<String, String> {
+    let mut s = parse_spec(specifier.unwrap_or(",f"))?;
+    // d3-array's `tickStep` of a collapsed span is NaN: no precision follows from it.
+    let step = if start == stop { f64::NAN } else { crate::ticks::d3_tick_step(start, stop, count) };
+    let max = start.abs().max(stop.abs());
+    if s.precision.is_none() {
+        let digits = |p: f64| (!p.is_nan()).then_some(p.max(0.0) as usize);
+        match s.type_ {
+            's' => {
+                let prefix_exponent = (exponent(max) / 3.0).floor().clamp(-8.0, 8.0) * 3.0;
+                s.precision = digits(prefix_exponent - exponent(step.abs()));
+                s.type_ = 'f';
+                let scaled = format_parsed(locale, s, value * 10f64.powf(-prefix_exponent))?;
+                return Ok(format!("{scaled}{}", SI_PREFIXES[(SI_PREFIX_OFFSET + (prefix_exponent / 3.0) as i32) as usize]));
+            }
+            'e' | 'g' | 'p' | 'r' => {
+                let range = max.abs() - step.abs();
+                let gap = exponent(range) - exponent(step.abs());
+                let precision = digits(if gap.is_nan() { gap } else { gap.max(0.0) + 1.0 });
+                s.precision = precision.map(|p| p.saturating_sub(usize::from(s.type_ == 'e')));
+            }
+            'f' | '%' => {
+                s.precision = (!step.is_nan()).then(|| precision_fixed(step).saturating_sub(2 * usize::from(s.type_ == '%')));
+            }
+            _ => {}
+        }
+    }
+    format_parsed(locale, s, value)
+}
+
+/// vega-format's `formatFloat(specifier)(value)`: a spec with no precision
+/// prints at twelve significant digits (ten for a percent, eleven for an
+/// exponent) with the trailing zeros of the fraction trimmed. `specifier`
+/// defaults to `,`.
+pub fn format_float(locale: &Locale, specifier: Option<&str>, value: f64) -> Result<String, String> {
+    let mut s = parse_spec(specifier.filter(|spec| !spec.is_empty()).unwrap_or(","))?;
+    if s.type_ == '\0' || s.precision.is_some() {
+        return format_parsed(locale, s, value);
+    }
+    s.precision = Some(12 - 2 * usize::from(s.type_ == '%') - usize::from(s.type_ == 'e'));
+    Ok(trim_zeroes(&format_parsed(locale, s, value)?, &locale.decimal))
+}
+
+/// vega-format's `trimZeroes`: the fraction's trailing zeros (and a bare
+/// decimal mark) removed, an exponent or suffix kept.
+fn trim_zeroes(text: &str, decimal: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let decimal: Vec<char> = decimal.chars().collect();
+    let Some(dec) = chars.windows(decimal.len()).position(|w| w == decimal.as_slice()) else {
+        return text.to_string();
+    };
+    let rightmost_digit = match chars.iter().rposition(|&c| c == 'e') {
+        Some(e) if e > 0 => Some(e),
+        _ => (dec + 1..chars.len()).rev().find(|&i| chars[i].is_ascii_digit()).map(|i| i + 1),
+    };
+    let Some(rightmost) = rightmost_digit else {
+        return text.to_string();
+    };
+    let end: String = chars[rightmost..].iter().collect();
+    let mut idx = rightmost;
+    loop {
+        idx -= 1;
+        if idx <= dec {
+            break;
+        }
+        if chars[idx] != '0' {
+            idx += 1;
+            break;
+        }
+    }
+    format!("{}{end}", chars[..idx].iter().collect::<String>())
+}
+
 // d3's `format(value)` closure up to its closing `numerals(value)` step.
 fn format_ascii_digits(locale: &Locale, spec: &str, value: f64) -> Result<String, String> {
-    let mut s = parse_spec(spec)?;
+    format_parsed(locale, parse_spec(spec)?, value)
+}
+
+fn format_parsed(locale: &Locale, mut s: Spec, value: f64) -> Result<String, String> {
     // d3-format `formatSpecifier.js`: the empty type is `.12~g` — the default
     // precision is 12 (an authored one stands), the trim flag is forced.
     if s.type_ == '\0' {
@@ -721,7 +886,7 @@ fn format_ascii_digits(locale: &Locale, spec: &str, value: f64) -> Result<String
             let body = if abs_val >= 1e21 {
                 js_number_to_string(abs_val)
             } else {
-                round_exact_abs(abs_val, 0)
+                round_half_up_abs(abs_val, 0)
             };
             (body, "")
         }
@@ -889,6 +1054,71 @@ mod tests {
     fn test_si_no_trim() {
         assert_eq!(fmt("s", 4_820_000.0), "4.82000M");
         assert_eq!(fmt("s", 0.0),         "0.00000");
+    }
+
+    // vega-format `formatSpan`/`formatFloat`, expected strings from vega 6.2.
+    fn span(spec: Option<&str>, start: f64, stop: f64, value: f64) -> String {
+        format_span(&Locale::en_us(), spec, start, stop, 5, value).expect("a supported spec")
+    }
+
+    fn float(spec: Option<&str>, value: f64) -> String {
+        format_float(&Locale::en_us(), spec, value).expect("a supported spec")
+    }
+
+    #[test]
+    fn format_span_takes_its_precision_from_the_tick_step() {
+        assert_eq!(span(None, 0.0, 1500.0, 1500.0), "1,500");
+        assert_eq!(span(None, 0.0, 0.5, 0.25), "0.3");
+        assert_eq!(span(Some(".0%"), 0.0, 0.5, 0.5), "50%");
+        assert_eq!(span(Some("%"), 0.0, 1.0, 0.5), "50%");
+        assert_eq!(span(Some("r"), 0.0, 100.0, 33.333), "30");
+        assert_eq!(span(Some("e"), 0.0, 1000.0, 1234.0), "1e+3");
+        assert_eq!(span(Some("g"), 0.0, 10.0, 3.14159), "3");
+        assert_eq!(span(Some(",f"), -5.0, 5.0, -2.5), "\u{2212}3");
+        assert_eq!(span(Some("~s"), 0.0, 4_430_000.0, 4_430_000.0), "4M");
+    }
+
+    /// d3's `exponent` reads the exponent of the value itself, so a value that
+    /// ROUNDS up to a power of ten (9.6 to one digit is 1e1) keeps its own.
+    #[test]
+    fn exponent_never_rounds_across_a_power_of_ten() {
+        assert_eq!(exponent(9.6), 0.0);
+        assert_eq!(exponent(99_999.0), 4.0);
+        assert_eq!(exponent(0.096), -2.0);
+        assert_eq!(precision_fixed(0.096), 2);
+        assert_eq!(precision_fixed(0.0), 0);
+        assert_eq!(precision_fixed(1000.0), 0);
+        assert_eq!(precision_fixed(0.05), 2);
+        // 999.6 sits under 1e3: no SI prefix, where a rounded exponent would pick `k` and print `1k`.
+        assert_eq!(span(Some("s"), 0.0, 999.6, 999.6), "1000");
+    }
+
+    #[test]
+    fn format_span_keeps_an_authored_precision() {
+        assert_eq!(span(Some("$,.0f"), 406_240.0, 605_760.0, 406_240.0), "$406,240");
+    }
+
+    #[test]
+    fn format_span_fixes_one_si_prefix_for_the_whole_span() {
+        assert_eq!(span(Some("s"), 0.0, 81_800.0, 81_800.0), "82k");
+        assert_eq!(span(Some("s"), 0.0, 81_800.0, 40_900.0), "41k");
+    }
+
+    #[test]
+    fn format_span_of_a_collapsed_span_uses_the_default_precision() {
+        assert_eq!(span(Some("f"), 0.0, 0.0, 3.0), "3.000000");
+    }
+
+    #[test]
+    fn format_float_prints_twelve_digits_and_trims_the_fraction() {
+        assert_eq!(float(None, 0.5), "0.5");
+        assert_eq!(float(None, 1234.567_890_123_456_7), "1,234.56789012");
+        assert_eq!(float(Some(".3~s"), 1e8), "100M");
+        assert_eq!(float(Some("s"), 81_800.0), "81.8k");
+        assert_eq!(float(Some(".0%"), 0.25), "25%");
+        assert_eq!(float(Some("e"), 12_345.678), "1.2345678e+4");
+        assert_eq!(float(Some(",.2f"), 1.5), "1.50");
+        assert_eq!(float(Some("%"), 0.123_456_789), "12.3456789%");
     }
 
     // --- Percent type '%' ---
@@ -1136,5 +1366,81 @@ mod tests {
         assert_eq!(fmt(".2e", 0.0), "0.00e+0");
         assert_eq!(fmt(".0e", 12345.0), "1e+4");
         assert_eq!(fmt(".3e", 9.9996), "1.000e+1");
+    }
+}
+
+#[cfg(test)]
+mod fast_rounding_tests {
+    use super::*;
+
+    /// splitmix64: a dependency-free deterministic stream of raw bit patterns.
+    fn doubles(seed: u64, n: usize) -> impl Iterator<Item = f64> {
+        let mut state = seed;
+        std::iter::repeat_with(move || {
+            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        })
+        .map(f64::from_bits)
+        .map(f64::abs)
+        .filter(|x| x.is_finite() && *x > 0.0)
+        .take(n)
+    }
+
+    /// Values a chart formats: short decimals, dyadic ties, carries, and
+    /// magnitudes from subnormal to the 1e21 fixed-notation ceiling.
+    fn cases() -> Vec<f64> {
+        let mut v = vec![
+            102.85, 2.25, 0.5, 1.5, 2.5, 0.125, 0.375, 9.95, 9.5, 99.5, 999.5, 0.05, 0.15,
+            1.005, 25.0, 250.0, 125.0, 75.0, 1e20, 9.999_999_999_999_999e20, 5e-324,
+            f64::MIN_POSITIVE, 1.0, 10.0, 0.1, 0.3, 1e-7, 123_456_789.012_345_68,
+            4_503_599_627_370_496.5, 9_007_199_254_740_993.0, 2.0f64.powi(-20), 3.0 * 2.0f64.powi(-12),
+        ];
+        for den in [2.0, 4.0, 8.0, 16.0, 32.0, 64.0] {
+            for num in 0..400 {
+                v.push(num as f64 / den);
+            }
+        }
+        for i in 0..2000 {
+            v.push((i * 5) as f64);
+            v.push(i as f64 * 0.01);
+        }
+        for (i, x) in doubles(1, 20_000).enumerate() {
+            let scale = 10f64.powi((i % 40) as i32 - 20);
+            v.push((x.to_bits() % 1_000_000_007) as f64 / 1e4 * scale);
+        }
+        v.extend(doubles(2, 20_000).filter(|x| *x < 1e21));
+        v.retain(|x| *x > 0.0 && *x < 1e21);
+        v
+    }
+
+    #[test]
+    fn fast_fixed_rounding_matches_the_exact_expansion() {
+        for x in cases() {
+            for d in 0..=20 {
+                assert_eq!(round_half_up_abs(x, d), round_exact_abs(x, d), "x={x:e} d={d}");
+            }
+        }
+    }
+
+    #[test]
+    fn fast_significant_rounding_matches_the_exact_expansion() {
+        for x in cases() {
+            for p in 1..=21 {
+                assert_eq!(format_decimal_parts(x, p), format_decimal_parts_exact(x, p), "x={x:e} p={p}");
+            }
+        }
+    }
+
+    #[test]
+    fn ties_round_half_up_on_the_absolute_value() {
+        assert_eq!(round_half_up_abs(102.85, 1), "102.8");
+        assert_eq!(round_half_up_abs(2.25, 1), "2.3");
+        assert_eq!(round_half_up_abs(0.5, 0), "1");
+        assert_eq!(round_half_up_abs(9.5, 0), "10");
+        assert_eq!(format_decimal_parts(25.0, 1), ("3".to_string(), 1));
+        assert_eq!(format_decimal_parts(9.5, 1), ("1".to_string(), 1));
     }
 }

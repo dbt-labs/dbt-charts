@@ -146,6 +146,7 @@ def _resolve_scatter(
         normalized.multiples,
         normalized.y,
         has_quantitative_axis=True,
+        temporal_band_axes=frozenset(),
     )
     primary = plan.primary
     scatter = merge_unset(chart_style_context.scatter, primary)
@@ -325,6 +326,7 @@ def _resolve_scatter(
         datasets,
         normalized.id,
         normalized.query.formats if normalized.query else None,
+        normalized.layer_query_formats,
     )
     if authored_y_domain is not None:
         _check_layers_y_domain(normalized.id, resolved_layers, authored_y_domain)

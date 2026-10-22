@@ -1,14 +1,16 @@
 """dbt charts typographic system: title size, weight, and family resolution.
 
-Two title roles, one H-stack
-----------------------------
+Two title roles, two ramps
+--------------------------
 
-``style.fonts.heading.sizes`` is the canonical H1-H6 ramp. Two roles index into it:
+``style.fonts.heading.sizes`` is the canonical H1-H6 ramp;
+``style.fonts.section.sizes`` (H2 first) sizes section titles only.
 
-  1. **Semantic headings** — board titles, prose section titles, Markdown
-     headings. They index the H stack by **semantic level** (``board.level``
-     or the authored Markdown level). ``board_title_spec`` and the mdsvg path
-     own this role.
+  1. **Semantic headings** — board titles, section titles, Markdown headings.
+     They are sized by **semantic level** (``board.level`` or the authored
+     Markdown level): a section title (level >= 2, no authored
+     ``style.title.level``) reads the section ramp, every other one the H
+     ramp. ``board_title_spec`` and the mdsvg path own this role.
 
   2. **Object labels** — chart, table, and spark titles. They pick an H slot
      by **outer card width tier alone**. Board nesting does not affect the
@@ -306,9 +308,12 @@ def board_title_spec(
     Width tiers do not apply — a narrow column does not shrink a board title.
     See ``chart_title_spec`` for the width-responsive object-title path.
 
+    The root title (level 1) and any title with an authored
+    ``style.title.level`` index ``style.fonts.heading.sizes``; every other
+    nested (section) title indexes ``style.fonts.section.sizes`` (H2 first).
+
     Args:
-        level: Heading level for this board title (``board.level``). Indexes
-            ``style.fonts.heading.sizes`` directly: level=1 → sizes[0], etc.
+        level: Heading level for this board title (``board.level``).
         resolved_style: Optional resolved board style whose title typography
             should override global config.
 
@@ -321,9 +326,14 @@ def board_title_spec(
     if resolved_style is None:
         resolved_style = resolve_style(get_theme_style())
     title_style = resolved_style.title
-    sizes = resolved_style.chart_defaults.heading_sizes
-    effective_level = max(1, min(level, len(sizes)))
-    font_size = int(sizes[effective_level - 1])
+    defaults = resolved_style.chart_defaults
+    if level >= 2 and not isinstance(title_style.level, int):
+        sections = defaults.section_sizes
+        font_size = int(sections[min(level, len(sections) + 1) - 2])
+    else:
+        sizes = defaults.heading_sizes
+        effective_level = max(1, min(level, len(sizes)))
+        font_size = int(sizes[effective_level - 1])
 
     weight = _coerce_weight(settled(title_style.font.weight))
     return font_size, weight
@@ -340,8 +350,8 @@ def board_title_markdown(
     Formats the title as an h1 heading (``# title``). Callers pass ``h1_size``
     to ``get_compact_style(h1_size=…)`` so the h1 renders at the exact pixel
     size, and ``font_weight`` to ``heading_font_weight`` so the dbt charts weight tier
-    is applied. The pixel size comes from ``style.fonts.heading.sizes`` indexed by the
-    semantic level — width does not enter (see ``board_title_spec``).
+    is applied. The pixel size comes from ``board_title_spec``, by semantic level;
+    width does not enter.
 
     Args:
         title: Title text (Jinja already resolved by the caller).

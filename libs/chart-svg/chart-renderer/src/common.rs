@@ -4,6 +4,8 @@
 //! (AXIS_FREE_EDGE_PAD, VALUE_AXIS_BREATHING_ROOM), and the tabular-numeric
 //! machinery (TAB_FONT/TAB_STYLE/SUFFIX_GAP, format_numeric_auto).
 
+use std::borrow::Cow;
+
 use crate::codes;
 use crate::diagnostic::Diagnostic;
 use crate::number_locale::active_number_locale;
@@ -96,12 +98,10 @@ pub fn rotated_category_label_ink(
     align: &str,
     baseline: &str,
     angle: f64,
-    extra_row: bool,
+    extra_rows: usize,
 ) -> crate::vega_fit::Bounds {
     let mut ink = crate::vega_fit::text_ink(cx, row_y, label_w, font_size, align, baseline);
-    if extra_row {
-        ink.y2 += font_size + 2.0;
-    }
+    ink.y2 += extra_rows as f64 * crate::text::line_height(font_size);
     if angle != 0.0 {
         ink = ink.rotate(angle, cx, row_y);
     }
@@ -1855,74 +1855,12 @@ impl AxisStyle {
         self.line.as_ref().and_then(|l| l.visible) == Some(true)
     }
 
-    /// Entry gate for a bare x `ticks.step` (no `time_unit`): production
-    /// applies it as `tickMinStep` on a quantitative x and raises
-    /// `ERR_TICKS_STEP_NOT_QUANTITATIVE` on any other
-    /// (`type_inference.py:395-412`). No x axis here reads `axis_x.ticks.step`
-    /// — `cartesian::unbaked_ticks` only ever sees `axis_y` — so it refuses
-    /// by name instead of drawing the default ladder.
-    pub fn refuse_bare_x_tick_step(&self, family: &str) -> Result<(), String> {
-        match (self.ticks.step, &self.ticks.time_unit) {
-            (None, _) | (Some(_), Some(_)) => Ok(()),
-            (Some(step), None) => Err(crate::refuse!(
-                "{family}: axis_x.ticks.step {step} without ticks.time_unit is not supported: production applies it as tickMinStep on a quantitative x and raises on any other, and no x axis here reads it"
-            )),
-        }
-    }
-
-    /// Entry gate for an authored x `ticks.time_unit`, for every family that
-    /// does not draw it. On a temporal x production turns it into the axis's
-    /// `tickCount` interval (`type_inference.py:1026-1052`), which only line
-    /// and area draw; the paths that skip `build_cartesian_x_encoding`
-    /// (histogram, horizontal bar, a quantitative scatter, a multi-measure
-    /// heatmap) ignore it (`:383-387`), and anywhere else production raises.
-    /// None of those is a drawing this port can claim, so each refuses by
-    /// name. It also refuses a bare `step` ([`Self::refuse_bare_x_tick_step`]).
-    pub fn refuse_x_tick_cadence(&self, family: &str) -> Result<(), String> {
-        self.refuse_bare_x_tick_step(family)?;
-        match self.ticks.time_unit.as_deref() {
-            None => Ok(()),
-            Some(unit) => Err(crate::refuse!(
-                "{family}: axis_x.ticks.time_unit {unit:?} is not supported: only line and area draw the tickCount interval production builds from it"
-            )),
-        }
-    }
-
     /// The edge `axis_x.position` hangs the x axis from; Vega-Lite's default is the bottom.
     pub fn x_edge(&self) -> XEdge {
         match self.position.as_deref() {
             Some("top") => XEdge::Top,
             _ => XEdge::Bottom,
         }
-    }
-
-    /// Entry gate for `axis_x.position: top` on the layouts that stay laid out against a bottom
-    /// axis: small multiples (production's `column_header` role), an endpoint rail's panes and
-    /// a support_table strip. A single chart draws its top axis through [`XEdge`].
-    pub fn refuse_top_x_axis(&self, family: &str) -> Result<(), String> {
-        match self.position.as_deref() {
-            Some("top") => Err(crate::refuse!(
-                "{family}: axis_x.position \"top\" in small multiples, beside an endpoint rail or under a support_table strip is not supported: production draws the axis above the plot and these layouts place it below"
-            )),
-            _ => Ok(()),
-        }
-    }
-
-    /// Entry gate for an authored affix no painter here reaches. An authored
-    /// `labels.expr` wins outright in production's `compose_axis_format`
-    /// (`vl_field_maps.py:228`) and no Vega expression evaluator is ported;
-    /// `unmodeled_axis` names an axis kind the family draws without its own
-    /// numeral ladder (line's quantitative x sits on a point scale). Either
-    /// refuses by name instead of dropping the affix.
-    pub fn refuse_unpainted_affix(&self, family: &str, axis: &str, unmodeled_axis: Option<&str>) -> Result<(), String> {
-        let Some(slot) = &self.labels.format else { return Ok(()) };
-        let Some(key) = slot.carried().next() else { return Ok(()) };
-        let reason = match (&self.labels.expr, unmodeled_axis) {
-            (Some(_), _) => "an authored labels.expr replaces the composed label (compose_axis_format, vl_field_maps.py:228)",
-            (None, Some(reason)) => reason,
-            (None, None) => return Ok(()),
-        };
-        Err(crate::refuse!("{family}: {axis}.labels.format {key:?} is not supported: {reason}"))
     }
 
     /// Whether production's axis carries a `labelExpr` that reads `datum.value`
@@ -2004,7 +1942,7 @@ impl AxisStyle {
         }
         let ghost_ruler = match set("ruler") {
             None => None,
-            Some(ruler) => Some(serde_json::from_value::<RulerConfig>(ruler.clone()).map_err(|e| {
+            Some(ruler) => Some(RulerConfig::deserialize(ruler).map_err(|e| {
                 format!("{family}: axis_y.mirror.ruler is not a ResolvedRulerAxis: {e}")
             })?),
         };
@@ -2017,7 +1955,7 @@ impl AxisStyle {
                  its format, mirror_axis.py)"
             ));
         }
-        let slot = serde_json::from_value::<FormatSlot>(format.clone())
+        let slot = FormatSlot::deserialize(format)
             .map_err(|e| format!("{family}: axis_y.mirror.format is not a ResolvedFormat: {e}"))?;
         Ok(Some(MirrorGhost { format: Some(slot), ruler: None }))
     }
@@ -2345,8 +2283,9 @@ pub struct AxisTicks {
     /// The authored x-axis `ticks.time_unit`: a calendar-bucketing grain that
     /// names the d3 interval Vega draws ticks at (with `step`), production's
     /// `axis.tickCount: {interval, step}` (`type_inference.py:1026-1052`).
-    /// Read by line/area; every other family refuses it
-    /// (`AxisStyle::refuse_x_tick_cadence`).
+    /// Read by every family that draws a temporal x axis; a quantitative or
+    /// band x ignores it, as production's paths that skip
+    /// `build_cartesian_x_encoding` do.
     #[serde(default)]
     pub time_unit: Option<String>,
     /// Axis-group offset from the plot edge — production emits this as the
@@ -2406,59 +2345,79 @@ pub struct AxisLabels {
     pub clock: Option<i64>,
     /// Authored VL `labelExpr` (B5) — production compiles it from
     /// `axis_x.labels.expr` and rewrites every category label BEFORE it is
-    /// measured and drawn. `parse_labels_expr_slice_n`/`apply_labels_expr`
-    /// below model the one shape the corpus authors; present in the
-    /// payload on any Vega arm assumed not to read it (bar's fit path,
-    /// line/area — see each family's `AGENTS.md`/comment gap notes) until
-    /// that arm ports it too.
+    /// measured and drawn. Evaluated by [`crate::labels_expr`].
     #[serde(default)]
     pub expr: Option<String>,
 }
 
 impl AxisLabels {
+    /// Whether the labels stand upright, the one layout a family that paints no tilt has.
+    pub fn upright(&self) -> bool {
+        self.angle.unwrap_or(0.0) == 0.0
+    }
+
+    /// What Vega's label mark fixes for these labels, which a `labels.expr` reads off `item`.
+    pub fn item_style(&self) -> Result<crate::labels_expr::view::ItemStyle, String> {
+        use crate::labels_expr::Val;
+        let styled_text = |s: String| crate::labels_expr::Text::new(s).map_err(|e| crate::labels_expr::describe(&e, "axis labels.font"));
+        let font = &self.font;
+        let weight = match font.weight.as_ref().ok_or("axis labels.font.weight absent (theme required)")? {
+            Value::Number(n) => Val::Num(n.as_f64().ok_or("axis labels.font.weight is not a number")?),
+            Value::String(w) => match w.parse() {
+                Ok(n) => Val::Num(n),
+                Err(_) => Val::string(w.clone()).map_err(|e| crate::labels_expr::describe(&e, "axis labels.font.weight"))?,
+            },
+            other => return Err(format!("axis labels.font.weight {other} is neither a number nor a string")),
+        };
+        Ok(crate::labels_expr::view::ItemStyle {
+            font: styled_text(font.family.clone().ok_or("axis labels.font.family absent (theme required)")?)?,
+            size: font.size.ok_or("axis labels.font.size absent (theme required)")?,
+            fill: styled_text(font.color.clone().ok_or("axis labels.font.color absent (theme required)")?)?,
+            weight,
+            limit: self.max_width.unwrap_or(crate::vega_fit::DEFAULT_VL_LABEL_LIMIT),
+        })
+    }
+
+    /// The authored `labels.align` production still sends to Vega: an authored
+    /// `labels.expr` cannot be measured, so `measure_axis_to_vl` drops an own-side
+    /// or centered align and the labels take Vega-Lite's away-from-plot default.
+    pub fn align_kept(&self, own_side: &str) -> Option<&str> {
+        match self.align.as_deref() {
+            Some(a) if self.expr.is_some() && (a == own_side || a == "center") => None,
+            a => a,
+        }
+    }
+
+    /// A value tick's text: `label` (the axis's own formatted text) unless an
+    /// authored `labels.expr` rewrites it, with `datum.value` the tick's number.
+    /// The expr wins over the composed label, so an authored format keeps only its
+    /// d3 digits as `datum.label` (`compose_axis_format`): its affix is dropped.
+    pub fn apply_expr(&self, scale: &'static str, value: f64, label: String, index: usize, count: usize) -> Result<String, String> {
+        let Some(src) = self.expr.as_deref() else { return Ok(label) };
+        let label = match self.spec() {
+            Some(spec) => crate::number_locale::d3_format(spec, value).map_err(|e| format!("labels.format {spec:?}: {e}"))?,
+            None => label,
+        };
+        crate::labels_expr::speak_value(scale, src, value, &label, index, count)
+    }
+
+    /// The text Vega draws for an axis label: each line cut to the axis's `labelLimit` with an ellipsis.
+    pub fn clip(&self, text: &str, fonts: &crate::text::FontBook) -> Result<String, String> {
+        let family = self.font.family.as_deref().unwrap_or("sans-serif");
+        let size = self.font.size_or(11.0);
+        let limit = self.max_width.unwrap_or(crate::vega_fit::DEFAULT_VL_LABEL_LIMIT);
+        text.split(crate::text::LINE_SEP)
+            .map(|line| truncate_label(line, limit, family, size, fonts, true))
+            .collect::<Result<Vec<_>, _>>()
+            .map(|lines| lines.join(&crate::text::LINE_SEP.to_string()))
+    }
+
     /// The d3 spec of the authored format, for a reader that paints digits
     /// alone: its affix is painted by [`format_y_label`] on a plain value
-    /// axis and refused at the family's entry everywhere else
-    /// ([`AxisStyle::refuse_unpainted_affix`]).
+    /// axis; an authored `labels.expr` drops it.
     pub fn spec(&self) -> Option<&str> {
         self.format.as_ref().map(|f| f.spec.as_str())
     }
-}
-
-/// Parse production's ONE modeled `labels.expr` shape — the null-guarded
-/// slice ternary `datum.value ? slice(datum.value, N) : ''`
-/// (whitespace-insensitive) — into the slice start `N`. Any other
-/// expression refuses: a general Vega expression evaluator is out of
-/// scope, and silently drawing the raw label would show text the author
-/// explicitly rewrote.
-pub fn parse_labels_expr_slice_n(expr: &str) -> Result<i64, String> {
-    let stripped: String = expr.chars().filter(|c| !c.is_whitespace()).collect();
-    let (prefix, suffix) = ("datum.value?slice(datum.value,", "):''");
-    stripped
-        .strip_prefix(prefix)
-        .and_then(|s| s.strip_suffix(suffix))
-        .and_then(|n| n.parse::<i64>().ok())
-        .ok_or_else(|| {
-            crate::refuse!(
-                "labels.expr {expr:?} not supported — only the null-guarded \
-                 `datum.value ? slice(datum.value, N) : ''` shape is modeled"
-            )
-        })
-}
-
-/// Apply the parsed slice ternary to one category value. `slice` is JS
-/// `String.prototype.slice`, which counts UTF-16 code units, not Unicode
-/// scalar values — irrelevant for the corpus's BMP-only text (`≤`, `·`),
-/// but modeled correctly rather than assumed. An empty value is JS-falsy,
-/// so it takes the ternary's `''` branch regardless of `n`.
-pub fn apply_labels_expr(value: &str, n: i64) -> String {
-    if value.is_empty() {
-        return String::new();
-    }
-    let units: Vec<u16> = value.encode_utf16().collect();
-    let len = units.len() as i64;
-    let start = if n < 0 { (len + n).max(0) } else { n.min(len) } as usize;
-    String::from_utf16_lossy(&units[start..])
 }
 
 /// B6 — Vega's `labelLimit` truncation (vega-scenegraph's `truncate`): the
@@ -3246,7 +3205,7 @@ pub fn emit_title(
     let size = f.and_then(|f| f.size).unwrap_or(18.0);
     let color = f.and_then(|f| f.color.as_deref()).unwrap_or("#1a1a1a");
     let weight = f.map(|f| f.weight_str()).unwrap_or_else(|| "600".into());
-    let y_baseline = pad_t + crate::vega_fit::baseline_shift("top", size);
+    let y_baseline = pad_t + crate::measure::baseline_shift("top", size);
     // Production applies title_style.font.case at render time
     // (translate.py -> spec_builders.set_chart_title -> text/case.py
     // apply_case); subtitle stays raw (case is never applied there).
@@ -3295,7 +3254,7 @@ pub fn emit_subtitle_vega(
     let sy = title_row_y
         + title_font_size
         + crate::constants::layout::VEGA_SUBTITLE_PADDING
-        + crate::vega_fit::baseline_shift("top", sub_fs);
+        + crate::measure::baseline_shift("top", sub_fs);
     // Extra lines advance by the Vega text mark's default lineHeight
     // (fontSize + LINE_ADVANCE_EXTRA) — same term the fit margins reserve.
     for (i, sub) in subs.iter().enumerate() {
@@ -3328,7 +3287,7 @@ pub fn emit_title_vega(
     let size = f.and_then(|f| f.size).unwrap_or(18.0);
     let color = f.and_then(|f| f.color.as_deref()).unwrap_or("#1a1a1a");
     let weight = f.map(|f| f.weight_str()).unwrap_or_else(|| "600".into());
-    let baseline = y + crate::vega_fit::baseline_shift("top", size);
+    let baseline = y + crate::measure::baseline_shift("top", size);
     let kind_attr = if stamp_kind { crate::contract::authored_kind_attr("title") } else { String::new() };
     let _ = write!(
         out,
@@ -3907,10 +3866,19 @@ pub fn row_str(row: &serde_json::Map<String, Value>, field: &str) -> String {
 
 /// `row_str` of one cell.
 pub fn cell_str(cell: Option<&Value>) -> String {
+    row_cell_str(cell).into_owned()
+}
+
+/// `row_str` without copying a string cell.
+pub fn row_str_ref<'a>(row: &'a serde_json::Map<String, Value>, field: &str) -> Cow<'a, str> {
+    row_cell_str(row.get(field))
+}
+
+fn row_cell_str(cell: Option<&Value>) -> Cow<'_, str> {
     match cell {
-        Some(Value::String(s)) => s.clone(),
-        Some(Value::Null) | None => String::new(),
-        Some(other) => other.to_string(),
+        Some(Value::String(s)) => Cow::Borrowed(s),
+        Some(Value::Null) | None => Cow::Borrowed(""),
+        Some(other) => Cow::Owned(other.to_string()),
     }
 }
 
@@ -5577,51 +5545,6 @@ mod format_y_label_tests {
     }
 }
 
-#[cfg(test)]
-mod labels_expr_tests {
-    use super::*;
-
-    #[test]
-    fn parses_the_null_guarded_slice_ternary_whitespace_insensitively() {
-        // Oracle: dundersign-support-operations' hero_queue_age
-        // (axis_x.labels.expr, B5).
-        assert_eq!(
-            parse_labels_expr_slice_n("datum.value ? slice(datum.value, 4) : ''").unwrap(),
-            4
-        );
-        assert_eq!(
-            parse_labels_expr_slice_n("datum.value?slice(datum.value,4):''").unwrap(),
-            4
-        );
-        assert_eq!(
-            parse_labels_expr_slice_n("  datum.value ?  slice( datum.value,  2 ) : '' ").unwrap(),
-            2
-        );
-    }
-
-    #[test]
-    fn any_other_expression_refuses() {
-        let err = parse_labels_expr_slice_n("datum.value").unwrap_err();
-        assert!(err.contains("not supported"), "{err}");
-        let err = parse_labels_expr_slice_n("format(datum.value, '.0f')").unwrap_err();
-        assert!(err.contains("not supported"), "{err}");
-    }
-
-    #[test]
-    fn applies_the_slice_dropping_the_leading_utf16_units() {
-        // "1 · " is 4 UTF-16 code units (digit, space, U+00B7, space) —
-        // slice(4) drops exactly the ordering prefix, matching the
-        // reference's "≤7 days" (U+2264, single BMP code unit).
-        assert_eq!(apply_labels_expr("1 · ≤7 days", 4), "≤7 days");
-        assert_eq!(apply_labels_expr("5 · 180+ days", 4), "180+ days");
-    }
-
-    #[test]
-    fn empty_value_is_js_falsy_and_takes_the_empty_branch() {
-        assert_eq!(apply_labels_expr("", 4), "");
-    }
-}
-
 /// A color channel's legend/palette domain: the distinct values, sorted the
 /// way Vega-Lite's nominal scale sorts an unpinned domain.
 pub fn color_domain_of<'a>(
@@ -6252,7 +6175,7 @@ mod estimated_gutter_tests {
         let fixture: Value = serde_json::from_str(include_str!("../../fixtures/line_single.json"))
             .expect("fixture parses");
         let mut axis: AxisStyle =
-            serde_json::from_value(fixture["resolved"]["style"]["axis_y"].clone()).expect("axis_y");
+            Deserialize::deserialize(&fixture["resolved"]["style"]["axis_y"]).expect("axis_y");
         axis.scale = json!({ "continuous": continuous });
         axis
     }
@@ -6480,5 +6403,40 @@ mod distinct_values_tests {
     fn distinct_values_follow_pythons_equality() {
         let cells = rows(vec![json!(1), json!(1.0), json!(true), json!("1"), json!(null), json!("")]);
         assert_eq!(distinct_values(&cells, "x"), 4);
+    }
+}
+
+#[cfg(test)]
+mod axis_labels_expr_tests {
+    use super::*;
+
+    fn labels(align: Option<&str>, expr: Option<&str>) -> AxisLabels {
+        serde_json::from_value(serde_json::json!({"font": {}, "align": align, "expr": expr})).unwrap()
+    }
+
+    #[test]
+    fn a_value_tick_speaks_the_expression_over_its_own_text() {
+        let spoken = labels(None, Some("datum.label + 'k' + (datum.value > 100 ? '!' : '')"));
+        assert_eq!(spoken.apply_expr("x", 150.0, "150".into(), 0, 1).unwrap(), "150k!");
+        assert_eq!(spoken.apply_expr("x", 50.0, "50".into(), 0, 1).unwrap(), "50k");
+        assert_eq!(labels(None, None).apply_expr("x", 50.0, "50".into(), 0, 1).unwrap(), "50");
+        assert!(labels(None, Some("nope(1)")).apply_expr("x", 1.0, "1".into(), 0, 1).is_err());
+    }
+
+    #[test]
+    fn an_authored_expression_keeps_only_the_formats_digits_as_the_label() {
+        let affixed: AxisLabels = serde_json::from_value(serde_json::json!({
+            "font": {}, "expr": "datum.label + '!'", "format": {"spec": ",.0f", "prefix": "$", "suffix": "k"},
+        }))
+        .unwrap();
+        assert_eq!(affixed.apply_expr("x", 5000.0, "$5,000k".into(), 0, 1).unwrap(), "5,000!");
+    }
+
+    #[test]
+    fn an_authored_expression_drops_an_own_side_or_centered_align_only() {
+        assert_eq!(labels(Some("right"), None).align_kept("right"), Some("right"));
+        assert_eq!(labels(Some("right"), Some("datum.label")).align_kept("right"), None);
+        assert_eq!(labels(Some("center"), Some("datum.label")).align_kept("right"), None);
+        assert_eq!(labels(Some("left"), Some("datum.label")).align_kept("right"), Some("left"));
     }
 }

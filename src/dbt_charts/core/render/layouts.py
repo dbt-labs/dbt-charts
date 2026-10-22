@@ -49,6 +49,7 @@ from dbt_charts.core.render.svg_utils import (
     px,
     translate_group,
 )
+from dbt_charts.core.text.case import apply_case
 from dbt_charts.core.text.format_d3 import board_word
 
 __all__ = [
@@ -360,6 +361,9 @@ def render_tabs_layout(
 
     tabs_config = resolved_style.layout.tabs
     tab_bar_height = tabs_config.bar_height
+    tab_case = tabs_config.font.case
+    if tab_case is None:
+        raise ValueError("layout.tabs.font.case must be resolved")
 
     # Render only active tab
     content_height = (
@@ -420,7 +424,7 @@ def render_tabs_layout(
             _tab_rect
             + f'<text x="{escape_attr(x + tab_width / 2)}" y="{escape_attr(tab_bar_height / 2 + tabs_config.title_baseline_offset)}" '
             f'text-anchor="middle" font-size="{escape_attr(tabs_config.font.size)}" fill="{escape_attr(resolved_style.title.font.color if is_active else resolved_style.variables.font.color)}" '
-            f'font-weight="{escape_attr(weight)}">{html.escape(title)}</text>'
+            f'font-weight="{escape_attr(weight)}">{html.escape(apply_case(title, tab_case))}</text>'
         )
 
         if tab_variable and not is_active:

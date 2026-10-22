@@ -105,16 +105,14 @@ def test_all_built_in_themes_resolve_tooltip_shadow(compiled_themes):
     assert not errors, "Themes missing tooltip.shadow.visible:\n" + "\n".join(errors)
 
 
-def test_structural_root_resolves_triangle_marker_other_themes_resolve_fill(
+def test_stark_resolves_triangle_marker_other_themes_resolve_fill(
     compiled_themes,
 ):
-    """stark's tooltip active_marker is 'triangle'; every descendant theme 'fill'.
+    """stark's tooltip active_marker is 'triangle'; every other theme 'fill'.
 
-    stark is the structural root every built-in theme extends transitively,
-    so this also guards the leak: descendants must override, not inherit, the
-    'triangle' stark sets for itself. stark itself is excluded from the
-    comparison loop below -- it is the baseline being compared against, not
-    a descendant expected to override it.
+    Guards the leak: the 'triangle' stark sets for itself must not reach any
+    other theme. stark itself is excluded from the comparison loop below --
+    it is the baseline being compared against.
     """
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
@@ -134,16 +132,14 @@ def test_structural_root_resolves_triangle_marker_other_themes_resolve_fill(
     assert not errors, "\n".join(errors)
 
 
-def test_descendant_themes_do_not_leak_structural_root_tooltip_box_overrides(
+def test_soft_tooltip_themes_differ_from_stark_tooltip_box(
     compiled_themes,
 ):
-    """clarity/paper/vivid/neon must not inherit stark's sharp/thin-shadow-off box.
+    """clarity/paper/vivid/neon keep a soft tooltip box, unlike stark's.
 
     stark sets border.width=1.5, shadow.visible=False, and swatch.radius=0
     for its own utilitarian look (and is excluded from the comparison loop
-    below -- it is the baseline, not a descendant). Every descendant that
-    keeps a soft tooltip must explicitly reset these -- otherwise they leak
-    down the cascade silently.
+    below -- it is the baseline).
     """
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context

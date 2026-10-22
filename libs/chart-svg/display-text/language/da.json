@@ -1,5 +1,4 @@
 {
-  "aria.axis": "akse",
   "aria.chart": "diagram",
   "aria.container_arc": "bue-markeringsbeholder",
   "aria.container_group": "gruppe-markeringsbeholder",
@@ -18,8 +17,6 @@
   "aria.role_text": "tekstmarkering",
   "aria.title": "titel",
   "aria.title_text": "Titeltekst ”{header}”",
-  "aria.x_axis": "X-akse",
-  "aria.y_axis": "Y-akse",
   "axis.midnight": "Midnat",
   "axis.noon": "Middag",
   "case.extra_small_words": "",

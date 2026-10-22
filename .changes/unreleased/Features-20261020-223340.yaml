@@ -1,0 +1,3 @@
+kind: Features
+body: Section titles get their own size ladder, `style.fonts.section.sizes` (21, 18, 14, 11, 11 from H2), so a section title sits one step above the chart titles under it; boards with titled sections re-size on upgrade, and `style.fonts.section.size` is rejected.
+time: 2026-10-20T22:33:40.201665-07:00

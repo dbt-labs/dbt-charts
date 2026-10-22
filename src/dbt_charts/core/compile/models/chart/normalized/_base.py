@@ -154,6 +154,10 @@ class _CartesianChartFields(_SharedChartFields, _FieldLabelsField):
         default=None,
         description="Mini data-grid attached to the chart.",
     )
+    layer_query_formats: dict[str, dict[str, str]] = Field(
+        default_factory=dict,
+        description="Column formats declared by layer queries, keyed by query name.",
+    )
     height: int | float | None = Field(
         default=None, description="Explicit chart height in pixels."
     )

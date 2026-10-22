@@ -23,7 +23,7 @@ emoji family is inserted into the stacks only in ``monochrome`` mode.
 them is a face mdsvg measured against, so it takes two readings to see all three:
 
 *Declared italic* — a theme style (``text.blockquote.font.style: italic``, which every
-built-in theme inherits from ``stark``), an authored ``conditional_formatting``, or a
+built-in theme inherits from ``_base``), an authored ``conditional_formatting``, or a
 renderer writing italic ``<text>`` directly (a truncated table's "+ N more rows", a
 spark_bar's "+ N more", a callout's hint line). In every one of those the family and
 ``font-style: italic`` land in the *same declaration scope* — one start tag, or one CSS

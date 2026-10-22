@@ -44,6 +44,7 @@ from dbt_charts.cli.commands import (
     describe as describe_cmd,
     doctor as doctor_cmd,
     examples as examples_cmd,
+    exposures as exposures_cmd,
     extension as extension_cmd,
     impact as impact_cmd,
     init as init_cmd,
@@ -1325,6 +1326,40 @@ def impact(
     impact_cmd.impact_command(
         column,
         table=table,
+        json_output=json_output,
+        project_dir=project_dir,
+        dbt_project_dir=dbt_project_dir,
+    )
+
+
+@app.command("exposures", rich_help_panel="Dashboards")
+def exposures(
+    check: Annotated[
+        bool,
+        typer.Option("--check", help="Exit 1 if the file is stale; write nothing"),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON"),
+    ] = False,
+    project_dir: ProjectDirOption = None,
+    dbt_project_dir: DbtProjectDirOption = None,
+) -> None:
+    """Write one dbt exposure per board that calls ref() or source().
+
+    The file (`exposures.path` in dbt_charts.yml, default
+    models/dbt_charts/exposures.yml) puts boards into dbt's DAG:
+    `dbt ls --select fct_orders+` then lists the boards reading fct_orders.
+    `exposures.owner` is required. Commit the file so dbt platform jobs see
+    it, and run `--check` in CI to catch a board changed without re-running.
+
+    \b
+    Examples:
+      dct exposures            # Regenerate the exposures file
+      dct exposures --check    # CI: fail if it is out of date
+    """
+    exposures_cmd.exposures_command(
+        check=check,
         json_output=json_output,
         project_dir=project_dir,
         dbt_project_dir=dbt_project_dir,

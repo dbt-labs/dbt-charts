@@ -392,21 +392,34 @@ pub fn render_prose_svg(
         .filter(|b| matches!(b, mdsvg::types::AnyBlock::Table(_)))
         .cloned()
         .collect();
-    let mut measure = if tables.is_empty() {
-        // Columns share one measure, so a box a hair short of its span sets it.
-        let narrowest = boxes.iter().map(|b| b.1).fold(f64::INFINITY, f64::min);
-        capped_measure(narrowest - 2.0 * pad, col.max_chars, char_px)
+    let fitted_tables = if tables.is_empty() {
+        None
     } else {
-        let (fitted, measure) =
+        let (fitted, table_measure) =
             fit_tables(&renderer, &tables, &boxes, pad, col.max_chars, char_px, width)?;
         boxes = fitted;
-        measure
+        Some(table_measure)
     };
+    // Columns share one measure, so a box a hair short of its span sets it.
+    let narrowest = boxes.iter().map(|b| b.1).fold(f64::INFINITY, f64::min);
+    let mut measure = capped_measure(narrowest - 2.0 * pad, col.max_chars, char_px);
     let spans = boxes.len() as i64;
 
     // Every column is equal width, so a block wraps identically wherever it
     // lands — the line list is sliced, never re-flowed.
-    let metrics = renderer.measure_blocks(&blocks, measure)?;
+    let mut metrics = renderer.measure_blocks(&blocks, measure)?;
+    // Tables alone take the width that holds them unwrapped; every other
+    // block keeps the capped reading measure.
+    let table_measure = fitted_tables.unwrap_or(measure);
+    let tables_differ = table_measure != measure;
+    if tables_differ {
+        let at_table_width = renderer.measure_blocks(&blocks, table_measure)?;
+        for (i, block) in blocks.iter().enumerate() {
+            if matches!(block, mdsvg::types::AnyBlock::Table(_)) {
+                metrics[i] = at_table_width[i];
+            }
+        }
+    }
     let ceiling = col.max_number.map_or(spans, |m| spans.min(m));
     let total_lines: i64 = metrics.iter().map(|m| m.line_count as i64).sum();
     let n_cols = columns_earned(total_lines, ceiling);
@@ -432,7 +445,7 @@ pub fn render_prose_svg(
         .map(|&(box_x, box_width)| box_x + measure_offset(align, box_width - 2.0 * pad, measure))
         .collect();
 
-    if n_cols <= 1 {
+    if n_cols <= 1 && !tables_differ {
         let result = renderer.render_content(&blocks, measure, 0.0)?;
         let inset = insets[0];
         let w = num_full(width);
@@ -505,17 +518,27 @@ pub fn render_prose_svg(
             }
             let lift = if opens_column { m.leading_margin } else { 0.0 };
             let count = (last - first + 1) as usize;
+            let block_width = if matches!(blocks[block_index], mdsvg::types::AnyBlock::Table(_)) {
+                table_measure
+            } else {
+                measure
+            };
             let rendered = renderer.render_block_window(
                 &blocks[block_index],
-                measure,
+                block_width,
                 first as usize,
                 Some(count),
             )?;
             if style_block.is_empty() {
                 style_block = rendered.style_block.clone();
             }
+            // A block narrower or wider than the column's measure re-aligns
+            // itself within the span; the column itself is placed by `measure`.
+            let available = boxes[ci].1 - 2.0 * pad;
+            let dx = measure_offset(align, available, block_width)
+                - measure_offset(align, available, measure);
             col_elements.push(translate_group(
-                "0",
+                &num_full(px(dx)),
                 &num_full(px(y - lift)),
                 &rendered.elements,
                 "",

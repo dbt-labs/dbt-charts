@@ -2726,7 +2726,11 @@ WARN_CHART_TITLE_TRUNCATED = REGISTRY.register(
             "the authored text {authored_text!r} did not fit within the "
             "available width."
         ),
-        fix_template="Shorten the title or subtitle, or widen the chart.",
+        fix_template=(
+            "Shorten the title or subtitle, or widen the chart: a board without "
+            "an authored `width:` hugs its charts, so set the board's `width:` "
+            "or the chart's `width:`."
+        ),
         doc=(
             "Fires when a chart title or subtitle is wrapped and the last "
             "line is cut with a Unicode ellipsis (…) because the authored "

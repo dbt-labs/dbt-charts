@@ -183,8 +183,8 @@ def test_clarity_themes_rebind_category_role():
         )
 
 
-def test_structural_root_keeps_category_role_family():
-    """stark (and the cascade root) stay on the vivid-10 family."""
+def test_stark_keeps_category_role_family():
+    """stark (and `_base`) stay on the vivid-10 family."""
     bound = get_theme_style("stark").palettes
     assert bound["category"] == "vivid-10"
 
@@ -220,10 +220,10 @@ def test_geoshape_basemap_fill_comes_from_the_scaffold_not_a_data_palette():
         )
 
 
-def test_structural_root_theme_still_uses_vivid_10():
+def test_stark_theme_still_uses_vivid_10():
     """Regression guard: stark keeps vivid-10 unchanged.
 
-    The structural-root theme (stark, opt-in for the stripped-back look)
+    stark (opt-in for the stripped-back look)
     continues to use vivid-10. The shipped default theme uses editorial-10
     (covered by test_clarity_themes_use_editorial_10 above).
     """

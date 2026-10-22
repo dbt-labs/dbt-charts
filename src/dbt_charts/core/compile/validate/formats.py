@@ -232,8 +232,9 @@ def _validate_spec(
 ) -> None:
     """Raise if ``value`` resolves to an unusable spec.
 
-    Also called from ``_validate_board`` on the four global theme-resolved
-    axis slots (``charts.axis``/``axis_x``/``axis_y``/``axis_quantitative``)
+    Also called from ``_validate_board`` on the five global theme-resolved
+    axis slots (``charts.axis``/``axis_x``/``axis_y``/``axis_quantitative``/
+    ``axis_band``)
     to catch a theme-baked default (e.g.
     ``axis_quantitative.labels.format == "number"``) whose alias no
     longer resolves -- a board that clears ``style.formats`` to ``null`` is
@@ -636,6 +637,7 @@ def _validate_board(
         ("axis_x", charts_style.axis_x),
         ("axis_y", charts_style.axis_y),
         ("axis_quantitative", charts_style.axis_quantitative),
+        ("axis_band", charts_style.axis_band),
     ):
         label_format = axis_style.labels.format
         if label_format is not None and label_format != AUTO_AXIS_FORMAT:

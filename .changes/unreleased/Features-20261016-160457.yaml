@@ -1,0 +1,5 @@
+kind: Features
+body: Add `dct exposures` to write a dbt exposure per board, so boards appear in dbt lineage.
+time: 2026-10-16T16:04:57.344736-07:00
+custom:
+    DbtChartsIssue: "72"

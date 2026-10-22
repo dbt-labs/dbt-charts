@@ -30,6 +30,7 @@ from dbt_charts.core.compile.models.style.theme.area import (
 from dbt_charts.core.compile.models.style.theme.axis import (
     AxisXStyle,
     AxisYStyle,
+    BandAxisStyle,
     BaseAxisStyle,
     QuantitativeAxisStyle,
     TooltipStyle,
@@ -277,7 +278,7 @@ class ChartsStyle(_PaintedChartStyleBase, _LegendedChartStyleBase):
     axis: BaseAxisStyle = Field(
         description="Shared axis style applied to all axes before per-axis overrides."
     )
-    # SkipInheritSlots (not InheritSlot): axis_x/axis_y/axis_quantitative are
+    # SkipInheritSlots (not InheritSlot): axis_x/axis_y/axis_quantitative/axis_band are
     # authored-only overlays, never independently filled from `axis`. The
     # render-time merge cascade in resolved_axis_style() already applies them
     # on top of `axis` in the correct layer order — pre-filling their None
@@ -299,6 +300,11 @@ class ChartsStyle(_PaintedChartStyleBase, _LegendedChartStyleBase):
     ] = Field(
         description="Quantitative axis style overrides applied after axis_x/axis_y. "
         "Unset fields fall back to style.charts.axis."
+    )
+    axis_band: Annotated[BandAxisStyle, SkipInheritSlots(), Overlay()] = Field(
+        default_factory=BandAxisStyle,
+        description="Band (category) axis style overrides applied after axis_x/axis_y. "
+        "Unset fields fall back to style.charts.axis.",
     )
 
     # View

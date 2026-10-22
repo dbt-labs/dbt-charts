@@ -1324,6 +1324,120 @@ style:
         assert domain == ["Accessories", "Electronics", "Tools"]
 
 
+class TestAuthoredYearStringPins:
+    """Pins on year-shaped text ("2020") are authored intent, not a time axis.
+
+    Year strings infer as an ordinal color encoding, and the planner treats
+    an unauthored, unanimously date-like field as a time axis it must not
+    bind. Neither may veto a field the author pinned: those values are
+    categories by the author's own word.
+    """
+
+    _ROWS = """
+  years:
+    type: values
+    rows:
+      - {region: East, year: "2020", revenue: 10}
+      - {region: East, year: "2021", revenue: 12}
+      - {region: West, year: "2020", revenue: 8}
+      - {region: West, year: "2021", revenue: 9}
+"""
+    _STYLE = """
+style:
+  charts:
+    category_colors:
+      year:
+        values:
+          "2020": "#abcdef"
+          "2021": "#123456"
+"""
+
+    def _board(self, chart_type: str, extra: str = "") -> str:
+        return _board(
+            f"""
+  a:
+    query: years
+    type: {chart_type}
+    x: region
+    y: revenue
+    color: year
+{extra}
+rows:
+  - a
+""",
+            extra_queries=self._ROWS,
+            style=self._STYLE,
+        )
+
+    def _assert_pinned(self, spec: dict[str, Any]) -> None:
+        assert _color_of(spec, "2020") == "#abcdef"
+        assert _color_of(spec, "2021") == "#123456"
+
+    def test_a_bar_paints_its_pinned_years(self) -> None:
+        self._assert_pinned(_specs(self._board("bar"))["a"])
+
+    def test_a_grouped_bar_paints_its_pinned_years(self) -> None:
+        grouped = "    style:\n      stack: none"
+        self._assert_pinned(_specs(self._board("bar", grouped))["a"])
+
+    def test_a_horizontal_bar_paints_its_pinned_years(self) -> None:
+        horizontal = "    style:\n      orientation: horizontal"
+        self._assert_pinned(_specs(self._board("bar", horizontal))["a"])
+
+    def test_a_line_paints_its_pinned_years(self) -> None:
+        self._assert_pinned(_specs(self._board("line"))["a"])
+
+    def test_a_scatter_paints_its_pinned_years(self) -> None:
+        self._assert_pinned(_specs(self._board("scatter"))["a"])
+
+    def test_a_donut_paints_its_pinned_years(self) -> None:
+        board = _board(
+            """
+  a:
+    query: years
+    type: donut
+    theta: revenue
+    color: year
+rows:
+  - a
+""",
+            extra_queries=self._ROWS,
+            style=self._STYLE,
+        )
+        svg = _pie_svg(board, "a")
+        assert _wedge_fill(svg, "2020") == "#abcdef"
+        assert _wedge_fill(svg, "2021") == "#123456"
+
+    def test_unpinned_year_columns_still_never_bind(self) -> None:
+        """Two charts sharing a year field is a time axis, not a category set."""
+        resolved_board, _ = _resolve_board(
+            _board(
+                """
+  a:
+    query: years
+    type: bar
+    x: region
+    y: revenue
+    color: year
+  b:
+    query: years
+    type: line
+    x: region
+    y: revenue
+    color: year
+rows:
+  - a
+  - b
+""",
+                extra_queries=self._ROWS,
+            )
+        )
+        bound = {
+            s.field for c in resolved_board.charts.values() for s in c.category_colors
+        }
+        assert "year" not in bound, bound
+
+
 class TestLegendStaysHonest:
     _SERIES = _TWO_SERIES_BARS
 

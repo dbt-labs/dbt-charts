@@ -413,10 +413,16 @@ style:
 When set to an integer, it cascades to descendants: titled children render at
 `level + 1`, bare wrappers inherit the locked level unchanged.
 
+Section titles (a titled board inside another titled board) are sized by
+`style.fonts.section.sizes`, H2 first, so a section sits above the chart titles
+under it. A title with an integer `level` reads `style.fonts.heading.sizes`
+instead, the ramp markdown headings use.
+
 ### Named fonts
 
-Text is styled through seven named fonts under `style.fonts`: `heading`
-(board and chart titles, markdown `#` to `######`), `subtitle`, `body` (prose),
+Text is styled through eight named fonts under `style.fonts`: `heading`
+(board and chart titles, markdown `#` to `######`), `section` (section
+title sizes), `subtitle`, `body` (prose),
 `label` (axis, legend, tooltip, KPI label, table cells and header,
 variable controls), `caption` (footers, timestamps), `numeral` (KPI values,
 quantitative axis labels) and `code`. Set a family or size once and every slot
@@ -427,7 +433,9 @@ style:
   fonts:
     heading:
       family: "'Source Serif 4', Georgia, serif"
-      sizes: [30, 20, 16, 14, 11, 11]   # H1 to H6; only heading takes sizes
+      sizes: [30, 20, 16, 14, 11, 11]   # H1 to H6
+    section:
+      sizes: [24, 20, 16, 11, 11]       # section titles, H2 to H6
     body:
       family: Inter
     tag:                                 # a new font extending a shipped one
